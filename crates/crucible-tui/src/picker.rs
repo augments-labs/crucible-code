@@ -221,13 +221,25 @@ impl Picker<'_> {
     /// columns — and two answers to how wide a pane is is how a frame comes to
     /// stand a column off the rows it encloses.
     fn widths(&self, columns: usize) -> (usize, usize, usize) {
-        let list = if self.apart(columns) {
-            2 * columns / 5
-        } else {
-            columns
-        };
+        split_widths(columns, self.apart(columns))
+    }
 
-        (list, list - 2, columns.saturating_sub(list + 3))
+    /// How wide a row handed to [`Picker::preview`] may be, or `None` where this
+    /// window has no preview pane to draw one into.
+    ///
+    /// Whoever draws the session draws it against a width, and that width is
+    /// this one: the pane's, past its frame and past the column its rows open
+    /// on. Answered here because the split is worked out here — a caller doing
+    /// the arithmetic itself would be a second answer to how wide a pane is,
+    /// and it would go wrong on the frame rather than on the fold.
+    #[must_use]
+    pub const fn previewing(columns: usize) -> Option<usize> {
+        if columns < Self::FOLDS_AT {
+            return None;
+        }
+
+        let (_, _, beside) = split_widths(columns, true);
+        Some(beside.saturating_sub(1))
     }
 
     /// The framed line the query is typed into.
@@ -562,6 +574,22 @@ fn ruled(ends: (&str, &str), inside: usize, glyphs: Glyphs, slot: Slot) -> Row {
         .then(slot, ends.0)
         .then(slot, glyphs.horizontal().repeat(inside))
         .then(slot, ends.1)
+}
+
+/// What the split costs across `columns`: the list pane whole, what its frame
+/// leaves inside it, and what the preview's frame leaves inside that.
+///
+/// Free of the picker because the answer is wanted before there is one to ask —
+/// a session is drawn for the pane at the pane's width, and it is drawn before
+/// the picker that shows it exists.
+const fn split_widths(columns: usize, apart: bool) -> (usize, usize, usize) {
+    let list = if apart { 2 * columns / 5 } else { columns };
+
+    (
+        list,
+        list.saturating_sub(2),
+        columns.saturating_sub(list + 3),
+    )
 }
 
 /// How many sessions a list of `body` rows shows.

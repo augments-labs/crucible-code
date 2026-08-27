@@ -14,10 +14,13 @@ use std::cell::Cell;
 use std::time::Duration;
 
 use crucible_auth::Store;
-use crucible_core::{Cancel, Message, Revealed, SessionId, StopReason, ToolId};
+use crucible_core::{
+    Cancel, Message, Revealed, SessionId, StopReason, ToolArgs, ToolCall, ToolId, ToolOutput,
+    ToolResult,
+};
 use crucible_runner::{Model, Runner, Tools};
 use crucible_tools::{Ledger, Plan};
-use crucible_tui::{Recording, Renderer};
+use crucible_tui::{Recording, Renderer, Row};
 
 use crate::cli::converse::{Answers, Held};
 use crate::cli::draw::opening::{Opening, Standing};
@@ -520,6 +523,91 @@ fn a_saved_title_outlives_the_picker_and_the_session() {
 
     let found = on_the_list(&sample, &id);
     assert_eq!(found.title(), "a better name");
+}
+
+#[test]
+fn the_preview_holds_the_work_a_session_did_and_not_only_what_was_said() {
+    // A conversation is its tool work as much as its answers, and the pane is
+    // showing what Enter would leave the reader looking at — so the call line
+    // and the row its result came back on are in it, drawn by whatever draws
+    // them live.
+    let sample = Sample::new("resume-preview-work");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
+    let id = session.id().expect("a recorded session has a name").clone();
+    let call = ToolId::new("c-1");
+
+    session.append(&Message::said("read the config"));
+    session.append(&Message::Agent {
+        text: "I will look at it.".into(),
+        calls: vec![ToolCall {
+            id: call.clone(),
+            name: "read".into(),
+            args: ToolArgs::new(r#"{"path":"crucible.json"}"#),
+        }],
+        stop: Some(StopReason::WantsTools),
+    });
+    session.append(&Message::ToolResults(vec![ToolResult {
+        id: call,
+        output: ToolOutput::ok("theme = midnight"),
+    }]));
+    drop(session);
+
+    let held = glimpse(&sample.logs(), &sample.workspace(), &id).expect("a finished log");
+    let runner = over(recorded(&sample, "another session entirely"));
+    let against = replaying::Replay {
+        runner: &runner,
+        workspace: &sample.workspace(),
+        style: Style::plain(),
+    };
+    let rows = previewed(
+        &held,
+        &against,
+        Picker::previewing(100).expect("a window this wide keeps the pane"),
+    );
+
+    let drawn = rows.iter().map(Row::text).collect::<Vec<_>>().join("\n");
+    assert!(drawn.contains("read the config"), "{drawn}");
+    assert!(drawn.contains("I will look at it."), "{drawn}");
+    assert!(
+        drawn.contains("Read"),
+        "no call line in the preview: {drawn}"
+    );
+    assert!(drawn.contains("theme = midnight"), "{drawn}");
+}
+
+#[test]
+fn a_preview_is_drawn_for_the_pane_the_window_leaves_it() {
+    // The pane's width is the reader's to change under it, so the rows are
+    // drawn against whatever it is now rather than against whatever it was
+    // when the session was first looked at.
+    let sample = Sample::new("resume-preview-width");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
+    let id = session.id().expect("a recorded session has a name").clone();
+    session.append(&Message::said(
+        "a question long enough that no narrow pane holds it on one row at all",
+    ));
+    drop(session);
+
+    let held = glimpse(&sample.logs(), &sample.workspace(), &id).expect("a finished log");
+    let runner = over(recorded(&sample, "another session entirely"));
+
+    for columns in [Picker::FOLDS_AT, 100, 160] {
+        let room = Picker::previewing(columns).expect("a window this wide keeps the pane");
+        let against = replaying::Replay {
+            runner: &runner,
+            workspace: &sample.workspace(),
+            style: Style::plain(),
+        };
+        let rows = previewed(&held, &against, room);
+        assert!(!rows.is_empty(), "nothing drawn at {columns} columns");
+        for row in &rows {
+            assert!(
+                crucible_tui::columns(&row.text()) <= room,
+                "a row wider than the pane at {columns} columns: {:?}",
+                row.text()
+            );
+        }
+    }
 }
 
 #[test]

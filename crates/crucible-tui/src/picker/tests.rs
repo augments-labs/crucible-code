@@ -255,6 +255,35 @@ fn below_the_fold_the_preview_folds_away_and_the_list_takes_every_column() {
 }
 
 #[test]
+fn the_room_a_preview_is_told_it_has_is_the_room_its_rows_are_drawn_into() {
+    // What draws a session for the pane is not the picker, so it has to be told
+    // how wide the pane is — and one width owner is the point: a caller that
+    // worked the split out itself would draw rows a column off the pane and cut
+    // a word off every one of them.
+    for columns in [Picker::FOLDS_AT, 80, 100, 140] {
+        let room = Picker::previewing(columns).expect("a window this wide keeps the pane");
+        let filled = [Row::new().then(Slot::Plain, "x".repeat(room))];
+        let rows = picker(&FIVE, &filled).within(columns, 30, Glyphs::Unicode);
+        let drawn = said(&rows, LISTED);
+        assert!(
+            drawn.contains(&"x".repeat(room)),
+            "{room} columns of preview did not fit its own pane at {columns}: {drawn:?}"
+        );
+
+        let over = [Row::new().then(Slot::Plain, "x".repeat(room + 1))];
+        let rows = picker(&FIVE, &over).within(columns, 30, Glyphs::Unicode);
+        assert!(
+            !said(&rows, LISTED).contains(&"x".repeat(room + 1)),
+            "a row wider than the pane was drawn whole at {columns}"
+        );
+    }
+
+    // Below the fold there is no pane to draw for, and a caller reading a
+    // session's log to fill one would be reading it for nothing.
+    assert_eq!(Picker::previewing(Picker::FOLDS_AT - 1), None);
+}
+
+#[test]
 fn nothing_is_drawn_where_the_window_or_the_room_is_short_of_one_entry() {
     // A picker with nothing to pick is not a picker, and a search line that
     // cannot show the query is the one row here that has to. Written out

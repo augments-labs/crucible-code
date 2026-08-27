@@ -40,7 +40,7 @@ use crate::cli::Fatal;
 use crate::cli::draw::when;
 
 use super::super::region::{self, Ended};
-use super::super::{Held, finding};
+use super::super::{Held, finding, replaying};
 use super::Terms;
 
 /// How many sessions the picker is handed.
@@ -66,6 +66,14 @@ const HINT: &str = "a title, or a branch";
 
 /// What the preview pane says where the query left nothing to preview.
 const NOVIEW: &str = "nothing to preview";
+
+/// How many drawn rows of one session the pane keeps.
+///
+/// Enough to fill any pane several times over, so wheeling back through a
+/// preview reaches further than a glance — and bounded, because these are kept
+/// for every session the mark passes over and a long conversation draws into
+/// thousands of rows.
+const KEPT: usize = 256;
 
 /// What Enter does, said under the marked session's metadata.
 const TAKES: &str = "enter to resume";
@@ -246,6 +254,17 @@ struct Stood {
     /// The tail of every session already previewed, by id. `None` where the
     /// log could not be read, which the pane shows as nothing to preview.
     cached: HashMap<String, Option<Glimpse>>,
+    /// What that tail was drawn into, by id, at the width [`Stood::wide`]
+    /// names. Drawing a session is walking every message of it, which is far
+    /// too much to do again for each key the reader presses.
+    drawn: HashMap<String, Vec<Row>>,
+    /// The room the drawn rows were laid out against — the preview pane's, or
+    /// `None` in a window that folded the pane away.
+    ///
+    /// Rows keep only while it holds: a window pulled wider is a pane nobody
+    /// has drawn for yet, and rows drawn for the old one would leave the
+    /// session looking narrower than the pane it is now in.
+    wide: Option<usize>,
 }
 
 /// Stands the picker over the whole window, and picks up what came off it.
@@ -285,6 +304,18 @@ fn stood<T: Terminal>(
         },
         listed,
         cached: HashMap::new(),
+        drawn: HashMap::new(),
+        wide: None,
+    };
+
+    // What a previewed session is drawn against. The session being drawn is
+    // not the one this runner is in: what the runner is asked for is what each
+    // tool's name and arguments read as, which is a fact about this build
+    // rather than about the log being previewed.
+    let against = replaying::Replay {
+        runner,
+        workspace: &terms.workspace,
+        style,
     };
 
     let ended = region::stand(
@@ -356,23 +387,33 @@ fn stood<T: Terminal>(
             // it is handed to the picker as a shorter slice: the pane shows
             // the end of what it is given, so scrolling back is cutting the
             // slice off before the tail.
-            let (full, meta_line) = match marked {
+            let pane = Picker::previewing(columns);
+            if stood.wide != pane {
+                stood.drawn.clear();
+                stood.wide = pane;
+            }
+
+            let (full, meta_line): (&[Row], String) = match marked {
                 Some(session) => {
-                    let looked = stood
-                        .cached
-                        .entry(session.id().as_str().to_owned())
-                        .or_insert_with(|| {
-                            glimpse(&terms.sessions, &terms.workspace, session.id()).ok()
-                        });
-                    (
-                        looked
-                            .as_ref()
-                            .map(|held| previewed(held, glyphs))
-                            .unwrap_or_default(),
-                        meta(session, looked.as_ref(), now, glyphs),
-                    )
+                    let named = session.id().as_str().to_owned();
+                    let looked = stood.cached.entry(named.clone()).or_insert_with(|| {
+                        glimpse(&terms.sessions, &terms.workspace, session.id()).ok()
+                    });
+                    let line = meta(session, looked.as_ref(), now, glyphs);
+
+                    match (pane, looked.as_ref()) {
+                        (Some(pane), Some(held)) => (
+                            stood
+                                .drawn
+                                .entry(named)
+                                .or_insert_with(|| previewed(held, &against, pane))
+                                .as_slice(),
+                            line,
+                        ),
+                        _ => (&[], line),
+                    }
                 }
-                None => (Vec::new(), String::new()),
+                None => (&[], String::new()),
             };
 
             stood.standing.over = full.len().saturating_sub(1);
@@ -537,37 +578,26 @@ fn meta(session: &Recorded, held: Option<&Glimpse>, now: SystemTime, glyphs: Gly
     parts.join(&format!(" {} ", glyphs.dot()))
 }
 
-/// The tail of a session, drawn the way the transcript spells a conversation:
-/// prompts behind the prompt mark, answers plain, a blank row between turns.
+/// The tail of a session, drawn into `room` columns the way resuming it would
+/// draw it.
 ///
-/// Nothing here is clipped — the picker cuts every row to its pane — and a
-/// tail the glimpse cut short opens on the mark that says so, so the first
+/// Not spelled out here: this is the replay walk on a screen nobody sees, so
+/// the prompt marks, the call lines, the rows results came back on and the
+/// model's prose are the ones the transcript would hold. What the pane shows is
+/// then what Enter would leave the reader looking at.
+///
+/// A tail the glimpse cut short opens on the mark that says so, so the first
 /// words on the pane are not mistaken for the first words of the session.
-fn previewed(held: &Glimpse, glyphs: Glyphs) -> Vec<Row> {
-    let mut rows = Vec::new();
+fn previewed(held: &Glimpse, against: &replaying::Replay<'_>, room: usize) -> Vec<Row> {
+    // A recording takes every write, so nothing here can fail to be drawn —
+    // and an empty pane is what an unreadable log already shows.
+    let mut rows = replaying::glimpsed(held.messages(), against, room, KEPT).unwrap_or_default();
 
     if held.cut() {
-        rows.push(Row::new().then(Slot::Quiet, glyphs.ellipsis()));
-    }
-
-    for said in held.said() {
-        if !rows.is_empty() {
-            rows.push(Row::new());
-        }
-
-        let mut lines = said.text().lines();
-        if said.user() {
-            if let Some(first) = lines.next() {
-                rows.push(Row::new().then(Slot::Accent, "> ").then(Slot::Plain, first));
-            }
-            for line in lines {
-                rows.push(Row::new().then(Slot::Plain, format!("  {line}")));
-            }
-        } else {
-            for line in lines {
-                rows.push(Row::new().then(Slot::Plain, line));
-            }
-        }
+        rows.insert(
+            0,
+            Row::new().then(Slot::Quiet, against.style.glyphs().ellipsis().to_owned()),
+        );
     }
 
     rows

@@ -16,7 +16,7 @@ use std::fs::File;
 use std::io::{Read as _, Seek as _, SeekFrom};
 use std::path::Path;
 
-use crucible_core::{Message, SessionId, Workspace};
+use crucible_core::{Message, SessionId, ToolOutput, ToolResult, Workspace};
 
 use super::wire;
 
@@ -30,8 +30,8 @@ const TAIL: u64 = 64 * 1024;
 /// know before offering to continue it.
 #[derive(Debug)]
 pub struct Glimpse {
-    /// The last things said, oldest first.
-    said: Vec<Said>,
+    /// The last messages of the session, oldest first.
+    messages: Vec<Message>,
     /// Whether the log holds conversation this glimpse does not — an earlier
     /// part past the window, or an end that could not be read whole.
     cut: bool,
@@ -40,10 +40,14 @@ pub struct Glimpse {
 }
 
 impl Glimpse {
-    /// The last things said, oldest first.
+    /// The last messages of the session, oldest first.
+    ///
+    /// The whole message rather than the prose in it, because a session is its
+    /// tool work as much as its answers: what a preview draws is decided by
+    /// whatever draws a live turn, and that is handed messages.
     #[must_use]
-    pub fn said(&self) -> &[Said] {
-        &self.said
+    pub fn messages(&self) -> &[Message] {
+        &self.messages
     }
 
     /// Whether the log holds conversation this glimpse does not.
@@ -60,29 +64,6 @@ impl Glimpse {
     #[must_use]
     pub fn busy(&self) -> bool {
         self.busy
-    }
-}
-
-/// One thing somebody or something said, near the end of a session.
-#[derive(Debug)]
-pub struct Said {
-    /// Whether the user said it; the model otherwise.
-    user: bool,
-    /// What was said, with nothing in it a terminal would act on.
-    text: Box<str>,
-}
-
-impl Said {
-    /// Whether the user said it; the model otherwise.
-    #[must_use]
-    pub fn user(&self) -> bool {
-        self.user
-    }
-
-    /// What was said. Line breaks survive; control characters do not.
-    #[must_use]
-    pub fn text(&self) -> &str {
-        &self.text
     }
 }
 
@@ -147,26 +128,54 @@ pub fn glimpse(
         Some(_) => cut = true,
     }
 
-    let mut said = Vec::new();
+    let mut messages = Vec::new();
     for piece in pieces.into_iter().skip(usize::from(start > 0)) {
-        // The header, tool results, and any line a different build wrote all
-        // parse to nothing a preview shows; only the conversation survives.
+        // The header and any line a different build wrote parse to nothing;
+        // everything a turn is made of survives, because a preview that kept
+        // only the prose would show a conversation nobody had.
         match wire::message(piece) {
-            Some(Message::User { text, .. }) => said.push(Said {
-                user: true,
+            Some(Message::User { text, attachments }) => messages.push(Message::User {
                 text: cleaned(&text),
+                attachments,
             }),
-            Some(Message::Agent { text, .. }) => {
-                let text = cleaned(&text);
-                if !text.is_empty() {
-                    said.push(Said { user: false, text });
-                }
+            Some(Message::Agent { text, calls, stop }) => messages.push(Message::Agent {
+                text: cleaned(&text),
+                calls,
+                stop,
+            }),
+            Some(Message::ToolResults(results)) => {
+                messages.push(Message::ToolResults(
+                    results.into_iter().map(safely).collect(),
+                ));
             }
-            Some(Message::ToolResults(_)) | None => {}
+            None => {}
         }
     }
 
-    Ok(Glimpse { said, cut, busy })
+    Ok(Glimpse {
+        messages,
+        cut,
+        busy,
+    })
+}
+
+/// `result` with nothing in its text a terminal would act on.
+///
+/// A result is text a tool took from a file, a process or the network, so it is
+/// the least trustworthy thing on the screen and reaches the pane through the
+/// same door prose does. What the preview does not draw — the diff a rewrite
+/// showed, the files a search attached — is dropped rather than carried,
+/// because a glimpse is read and never sent anywhere.
+fn safely(result: ToolResult) -> ToolResult {
+    let text = cleaned(result.output.text());
+    ToolResult {
+        id: result.id,
+        output: if result.output.is_failed() {
+            ToolOutput::failed(text)
+        } else {
+            ToolOutput::ok(text)
+        },
+    }
 }
 
 /// `text` with nothing in it a terminal would act on.

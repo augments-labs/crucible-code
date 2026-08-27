@@ -11,6 +11,5 @@ mod session;
 mod sample;
 
 pub use session::{
-    Glimpse, PROMPTS, Recorded, Said, Session, SessionError, glimpse, prompts, recent, remember,
-    retitle,
+    Glimpse, PROMPTS, Recorded, Session, SessionError, glimpse, prompts, recent, remember, retitle,
 };

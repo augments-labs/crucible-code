@@ -4,7 +4,7 @@ use std::fs::OpenOptions;
 use std::io::Write as _;
 use std::str::FromStr as _;
 
-use crucible_core::SessionId;
+use crucible_core::{Message, SessionId, ToolCall, ToolId, ToolOutput, ToolResult};
 
 use super::*;
 use crate::sample::Sample;
@@ -19,8 +19,8 @@ fn planted(sample: &Sample, id: &str, lines: &[String]) {
 /// A user line and an agent line, spelled by the same code that writes logs.
 fn spoken(user: &str, agent: &str) -> Vec<String> {
     vec![
-        wire::line(&crucible_core::Message::said(user)),
-        wire::line(&crucible_core::Message::Agent {
+        wire::line(&Message::said(user)),
+        wire::line(&Message::Agent {
             text: agent.into(),
             calls: Vec::new(),
             stop: None,
@@ -34,6 +34,19 @@ fn glimpsed(sample: &Sample, id: &str) -> Glimpse {
     glimpse(&sample.logs(), &sample.workspace(), &id).expect("a session to glimpse")
 }
 
+/// What each message of a glimpse says, in the order it says it.
+fn said(glimpse: &Glimpse) -> Vec<(bool, String)> {
+    glimpse
+        .messages()
+        .iter()
+        .filter_map(|message| match message {
+            Message::User { text, .. } => Some((true, text.to_string())),
+            Message::Agent { text, .. } => Some((false, text.to_string())),
+            Message::ToolResults(_) => None,
+        })
+        .collect()
+}
+
 #[test]
 fn a_small_log_comes_back_whole_oldest_first() {
     let sample = Sample::new("glimpse-whole");
@@ -43,22 +56,64 @@ fn a_small_log_comes_back_whole_oldest_first() {
 
     let glimpse = glimpsed(&sample, "0000000000001-000001");
 
-    let said: Vec<(bool, &str)> = glimpse
-        .said()
-        .iter()
-        .map(|said| (said.user(), said.text()))
-        .collect();
     assert_eq!(
-        said,
+        said(&glimpse),
         [
-            (true, "does the caret drift"),
-            (false, "it does, one cell per wrap"),
-            (true, "since when"),
-            (false, "since the resize handler moved"),
+            (true, "does the caret drift".to_owned()),
+            (false, "it does, one cell per wrap".to_owned()),
+            (true, "since when".to_owned()),
+            (false, "since the resize handler moved".to_owned()),
         ]
     );
     assert!(!glimpse.cut());
     assert!(!glimpse.busy());
+}
+
+#[test]
+fn the_calls_a_turn_made_and_what_came_back_are_kept_with_it() {
+    // What a session looks like is its tool work as much as its prose, and a
+    // preview that dropped both would show a conversation nobody had: an
+    // answer that mentions a file, with nothing saying the file was read.
+    let sample = Sample::new("glimpse-calls");
+    let lines = vec![
+        wire::line(&Message::said("read the config")),
+        wire::line(&Message::Agent {
+            text: "I will look at it.".into(),
+            calls: vec![ToolCall {
+                id: ToolId::new("c-1"),
+                name: "read".into(),
+                args: crucible_core::ToolArgs::new(r#"{"path":"crucible.json"}"#),
+            }],
+            stop: None,
+        }),
+        wire::line(&Message::ToolResults(vec![ToolResult {
+            id: ToolId::new("c-1"),
+            output: ToolOutput::ok("theme = midnight"),
+        }])),
+    ];
+    planted(&sample, "0000000000001-000001", &lines);
+
+    let glimpse = glimpsed(&sample, "0000000000001-000001");
+
+    let called = glimpse.messages().iter().find_map(|message| match message {
+        Message::Agent { calls, .. } => calls.first(),
+        _ => None,
+    });
+    assert_eq!(
+        called.map(|call| &*call.name),
+        Some("read"),
+        "the call the turn made is missing"
+    );
+
+    let back = glimpse.messages().iter().find_map(|message| match message {
+        Message::ToolResults(results) => results.first(),
+        _ => None,
+    });
+    assert_eq!(
+        back.map(|result| result.output.text()),
+        Some("theme = midnight"),
+        "what came back is missing"
+    );
 }
 
 #[test]
@@ -79,9 +134,8 @@ fn a_log_wider_than_the_window_says_it_was_cut() {
     let glimpse = glimpsed(&sample, "0000000000001-000001");
 
     assert!(glimpse.cut());
-    let last = glimpse.said().last().expect("the newest message");
-    assert!(!glimpse.said().is_empty());
-    assert!(!last.user());
+    let last = said(&glimpse).pop().expect("the newest message");
+    assert!(!last.0);
 }
 
 #[test]
@@ -104,7 +158,7 @@ fn a_line_a_crash_tore_in_half_is_left_out_and_says_so() {
     let glimpse = glimpsed(&sample, "0000000000001-000001");
 
     assert!(glimpse.cut());
-    let texts: Vec<&str> = glimpse.said().iter().map(Said::text).collect();
+    let texts: Vec<String> = said(&glimpse).into_iter().map(|(_, text)| text).collect();
     assert_eq!(texts, ["the whole question", "the whole answer"]);
 }
 
@@ -113,7 +167,7 @@ fn a_session_another_crucible_holds_open_says_it_is_busy() {
     let sample = Sample::new("glimpse-busy");
     let session = crate::Session::start(&sample.logs(), &sample.workspace(), None)
         .expect("a session to start");
-    session.append(&crucible_core::Message::said("still being written"));
+    session.append(&Message::said("still being written"));
     let id = session.id().expect("a recorded session has a name").clone();
 
     let held = glimpse(&sample.logs(), &sample.workspace(), &id).expect("a glimpse while open");
@@ -154,6 +208,29 @@ fn what_a_terminal_would_act_on_does_not_survive_the_read() {
 
     let glimpse = glimpsed(&sample, "0000000000001-000001");
 
-    let texts: Vec<&str> = glimpse.said().iter().map(Said::text).collect();
+    let texts: Vec<String> = said(&glimpse).into_iter().map(|(_, text)| text).collect();
     assert_eq!(texts, ["two\nlines[31m", "an answer"]);
+}
+
+#[test]
+fn what_a_terminal_would_act_on_does_not_survive_a_tool_result_either() {
+    // A result is text a tool produced from a file, a process, or the network,
+    // and it reaches the preview pane through the same door prose does.
+    let sample = Sample::new("glimpse-control-result");
+    let lines = vec![wire::line(&Message::ToolResults(vec![ToolResult {
+        id: ToolId::new("c-1"),
+        output: ToolOutput::ok("two\nlines\u{1b}[31m\u{7}"),
+    }]))];
+    planted(&sample, "0000000000001-000001", &lines);
+
+    let glimpse = glimpsed(&sample, "0000000000001-000001");
+
+    let back = glimpse.messages().iter().find_map(|message| match message {
+        Message::ToolResults(results) => results.first(),
+        _ => None,
+    });
+    assert_eq!(
+        back.map(|result| result.output.text()),
+        Some("two\nlines[31m")
+    );
 }

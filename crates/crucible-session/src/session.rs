@@ -38,7 +38,7 @@ mod replay;
 mod wire;
 
 use claim::{Claim, Claimed, claim};
-pub use glimpse::{Glimpse, Said, glimpse};
+pub use glimpse::{Glimpse, glimpse};
 use log::{Trouble, make, open, shorten};
 pub use prompts::{PROMPTS, prompts, remember};
 pub use recent::{Recorded, recent};
