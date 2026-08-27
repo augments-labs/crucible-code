@@ -643,9 +643,14 @@ fn a_file_read_before_a_resume_has_to_be_read_again_after_one() {
     let ledger = Ledger::new();
     let offered = untouched(&sample, &ledger);
 
-    // Closed before the loop starts, so the list has one row and `/resume 1`
-    // names it.
+    // Closed before the loop starts, so its id names a session `/resume` can
+    // reopen.
     let earlier = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
+    let id = earlier
+        .id()
+        .expect("a recorded session has a name")
+        .as_str()
+        .to_owned();
     earlier.append(&Message::said("what was asked before"));
     drop(earlier);
 
@@ -653,7 +658,7 @@ fn a_file_read_before_a_resume_has_to_be_read_again_after_one() {
         &recording(&sample, &ledger),
         offered,
         looking_then_replacing(),
-        "look at it\n/resume 1\nreplace it\n",
+        &format!("look at it\n/resume {id}\nreplace it\n"),
     );
 
     let held = std::fs::read_to_string(sample.root().join("one.txt")).expect("the file");

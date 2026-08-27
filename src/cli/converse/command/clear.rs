@@ -403,6 +403,10 @@ mod tests {
 
         clearing(&sample, &terms, &mut runner);
         assert_eq!(listed(&sample, 1), ["what was said before"]);
+        let picked = recent(&sample.logs(), &sample.workspace(), 1)
+            .first()
+            .map(|session| session.id().as_str().to_owned())
+            .expect("the cleared session is on the list");
 
         let mut renderer = Renderer::new(Recording::new(80, 24));
         let mut input = std::io::empty();
@@ -416,7 +420,7 @@ mod tests {
             },
             &opening,
         );
-        super::super::resume::run("1", &mut renderer, &mut runner, &mut held, &terms)
+        super::super::resume::run(&picked, &mut renderer, &mut runner, &mut held, &terms)
             .expect("the terminal to be written");
 
         let written = renderer.terminal().written().to_string();

@@ -1,21 +1,24 @@
 //! `/resume`: what was worked on in this directory, and picking one of them
 //! back up.
 //!
-//! A session is named by twenty characters nobody types, so the list is
-//! numbered and a number is what is picked by. The numbers belong to the list
-//! as it was printed: it is read again when one is chosen, and the answer names
-//! the session that was picked up, so a list that changed underneath — another
-//! crucible in the same directory, finishing a session while this one read — is
-//! visible rather than silent.
+//! A session is named by its id — the same word `--resume` takes and the
+//! parting message prints — so an id given here is picked up directly, and
+//! anything else stands the picker: a search line over the sessions recorded
+//! in this workspace, with a window over the tail of whichever one is marked.
+//! What the picker looks like is [`Picker`]'s; which sessions a query keeps
+//! and what each key moves is `finding`'s; what is listed, previewed and
+//! written down is decided here, where the sessions are. A run with no
+//! keyboard has no picker to walk, so it is given the listing instead, each
+//! row carrying the exact id `/resume` and `--resume` take.
 //!
-//! Picking one up leaves nothing behind. The session being left is closed here,
-//! which is the last chance to say that its log stopped being written, and what
-//! it was allowed for the rest of *its* run is forgotten by the runner — see
-//! [`Runner::pick_up`]. The record of what has been read is emptied with it,
-//! because it answers for the session being left rather than for this run —
-//! and so are the images pasted, the tools looked up and the plan, which then
-//! comes back as the session picked up last wrote it, the same read a
-//! `--continue` does.
+//! Picking one up leaves nothing behind. The session being left is closed
+//! here, which is the last chance to say that its log stopped being written,
+//! and what it was allowed for the rest of *its* run is forgotten by the
+//! runner — see [`Runner::pick_up`]. The record of what has been read is
+//! emptied with it, because it answers for the session being left rather than
+//! for this run — and so are the images pasted, the tools looked up and the
+//! plan, which then comes back as the session picked up last wrote it, the
+//! same read a `--continue` does.
 //!
 //! The screen goes the same way. What is put back is a different conversation
 //! rather than the next thing that happened in the one on it, so the transcript
@@ -24,26 +27,53 @@
 //! of the old one is dropped with them, because a key that opens what is behind
 //! a row nobody can see is worse than a row that offers nothing.
 
+use std::collections::HashMap;
+use std::path::Path;
+use std::str::FromStr as _;
 use std::time::SystemTime;
 
-use crucible_core::Compacting;
-use crucible_runner::{Recorded, Runner, Session, recent};
-use crucible_tui::{Renderer, Row, Slot, Terminal, clip};
+use crucible_core::{Compacting, SessionId, Workspace};
+use crucible_runner::{Glimpse, Recorded, Runner, Session, SessionError, glimpse, recent, retitle};
+use crucible_tui::{Editor, Glyphs, Kept, Picker, Renderer, Row, Slot, Terminal, clip};
 
 use crate::cli::Fatal;
 use crate::cli::draw::when;
 
-use super::super::Held;
+use super::super::region::{self, Ended};
+use super::super::{Held, finding};
 use super::Terms;
 
-/// How many sessions the list holds.
+/// How many sessions the picker is handed.
 ///
-/// Nine, so every number on it is one character and the list is read in one
-/// glance. What is older than the last nine sessions in one directory is a
-/// directory listing, and the session directory is already that.
+/// The search line is what reaches past the visible rows, so the ceiling is
+/// about how far back a query looks rather than how tall a window is. What is
+/// older than this in one directory is a directory listing, and the session
+/// directory is already that.
+const OFFERED: usize = 64;
+
+/// How many sessions the keyboardless listing holds.
+///
+/// Nine, because without a search line to narrow it the listing is read in one
+/// glance or not at all, and each row already carries a whole id.
 const SHOWN: usize = 9;
 
-/// Runs it: the list, or the session `said` picked out of it.
+/// What the search line says with nothing typed into it.
+///
+/// Both halves named, because the query is matched against both and nothing on
+/// screen says which one a match came off. Somebody who only knew it searched
+/// titles would never try a branch's name in it.
+const HINT: &str = "a title, or a branch";
+
+/// What the preview pane says where the query left nothing to preview.
+const NOVIEW: &str = "nothing to preview";
+
+/// What Enter does, said under the marked session's metadata.
+const TAKES: &str = "enter to resume";
+
+/// What is said where the picker was left with nothing taken.
+const LEFT: &str = "cancelled, no session picked up";
+
+/// Runs it: the picker, or the session `said` picked up by id.
 pub(super) fn run<T: Terminal>(
     said: &str,
     renderer: &mut Renderer<T>,
@@ -51,41 +81,27 @@ pub(super) fn run<T: Terminal>(
     held: &mut Held<'_>,
     terms: &Terms,
 ) -> Result<Option<Compacting>, Fatal> {
-    let listed = recent(&terms.sessions, &terms.workspace, SHOWN);
-
-    // Read once, here, rather than per row: a list drawn against several
-    // instants is several lists, each dated from a different now.
-    let now = SystemTime::now();
-    let columns = renderer.columns();
-
-    if listed.is_empty() {
-        let rows = [Row::new().then(
-            Slot::Quiet,
-            clip("nothing has been worked on here yet", columns),
-        )];
-        renderer.present(&rows)?;
-        return Ok(None);
-    }
-
+    let said = said.trim();
     if said.is_empty() {
-        renderer.present(&listing(&listed, now, columns))?;
-        return Ok(None);
+        return offered(renderer, runner, held, terms);
     }
 
-    let Some(picked) = chosen(said, &listed) else {
-        // The word came off the line and was never shape-checked — anything at
-        // all can follow `/resume ` — so it goes out the way arrived text does.
-        renderer.commit(&format!("! {said} is not on the list"))?;
-        renderer.present(&listing(&listed, now, columns))?;
-        return Ok(None);
+    // Anything at all can follow `/resume `, and a word that is not even
+    // shaped like an id is refused the same way one nothing here answers to
+    // is: neither names a session recorded in this workspace, and whether
+    // that is spelling or absence is nothing the reader can act on
+    // differently. What to try instead follows the refusal.
+    let Ok(id) = SessionId::from_str(said) else {
+        renderer.commit(&format!("! no session {said} in this workspace"))?;
+        return offered(renderer, runner, held, terms);
     };
 
-    picking(picked, renderer, runner, held, terms)
+    picking(&id, renderer, runner, held, terms)
 }
 
-/// Picks one up, having decided which.
+/// Picks the session `id` names back up.
 fn picking<T: Terminal>(
-    picked: &Recorded,
+    id: &SessionId,
     renderer: &mut Renderer<T>,
     runner: &mut Runner,
     held: &mut Held<'_>,
@@ -97,23 +113,31 @@ fn picking<T: Terminal>(
     // file, so continuing it would come back as "open in another crucible" —
     // which names the wrong crucible, and reads as a reason to go and close
     // something.
-    if runner.session().id() == Some(picked.id()) {
+    if runner.session().id() == Some(id) {
         let rows = [Row::new().then(Slot::Quiet, clip("this is the session you are in", columns))];
         renderer.present(&rows)?;
         return Ok(None);
     }
 
-    let (session, transcript) =
-        match Session::reopen(&terms.sessions, &terms.workspace, picked.id()) {
-            Ok(picked) => picked,
-            // A path is in every one of these, so it is committed rather than
-            // presented. Nothing else changes: the session in hand is still
-            // being recorded, and the loop carries on with it.
-            Err(problem) => {
-                renderer.commit(&format!("! {problem}"))?;
-                return Ok(None);
-            }
-        };
+    let (session, transcript) = match Session::reopen(&terms.sessions, &terms.workspace, id) {
+        Ok(picked) => picked,
+
+        // The one shape of failure the reader can act on from here: the id
+        // names nothing recorded in this workspace, so what is recorded is
+        // offered instead.
+        Err(SessionError::Unknown { .. }) => {
+            renderer.commit(&format!("! no session {} in this workspace", id.as_str()))?;
+            return offered(renderer, runner, held, terms);
+        }
+
+        // A path is in every one of these, so it is committed rather than
+        // presented. Nothing else changes: the session in hand is still
+        // being recorded, and the loop carries on with it.
+        Err(problem) => {
+            renderer.commit(&format!("! {problem}"))?;
+            return Ok(None);
+        }
+    };
 
     let left = runner.pick_up(session, transcript);
 
@@ -173,7 +197,282 @@ fn picking<T: Terminal>(
     super::super::resuming::asked(renderer, runner, terms, held.answers.keys)
 }
 
-/// The list, numbered from one.
+/// Offers what was worked on here: the picker, or the listing for a run that
+/// reads no keys.
+fn offered<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    runner: &mut Runner,
+    held: &mut Held<'_>,
+    terms: &Terms,
+) -> Result<Option<Compacting>, Fatal> {
+    let listed = recent(&terms.sessions, &terms.workspace, OFFERED);
+
+    // Read once, here, rather than per row: a list drawn against several
+    // instants is several lists, each dated from a different now.
+    let now = SystemTime::now();
+    let columns = renderer.columns();
+
+    if listed.is_empty() {
+        let rows = [Row::new().then(
+            Slot::Quiet,
+            clip("nothing has been worked on here yet", columns),
+        )];
+        renderer.present(&rows)?;
+        return Ok(None);
+    }
+
+    if !held.answers.keys {
+        renderer.present(&listing(shown(&listed), now, columns))?;
+        return Ok(None);
+    }
+
+    stood(listed, renderer, runner, held, terms)
+}
+
+/// What the picker keeps between frames, and the frames' own workings beside
+/// it.
+///
+/// The list is here rather than borrowed because a rename replaces it: the
+/// title is written into the index, and the honest list is the one read back
+/// off the index afterwards. The tails are here because a glimpse is a read of
+/// the whole log, and the mark walking a list must not reread a log per row it
+/// passes over — what was looked at once is kept for as long as the picker
+/// stands.
+struct Stood {
+    /// The query, the marks and the staging, as `finding` moves them.
+    standing: finding::Standing,
+    /// The sessions offered, in the order the list shows them.
+    listed: Vec<Recorded>,
+    /// The tail of every session already previewed, by id. `None` where the
+    /// log could not be read, which the pane shows as nothing to preview.
+    cached: HashMap<String, Option<Glimpse>>,
+}
+
+/// Stands the picker over the whole window, and picks up what came off it.
+///
+/// The narrowing is done inside the frame rather than before it, because what
+/// the list holds is decided by what has been typed, and that changes under
+/// the keys. So the frame that narrows is the frame that writes down what the
+/// keys will walk next — marks included, since a query that emptied the list
+/// under the mark leaves it standing past the end.
+fn stood<T: Terminal>(
+    listed: Vec<Recorded>,
+    renderer: &mut Renderer<T>,
+    runner: &mut Runner,
+    held: &mut Held<'_>,
+    terms: &Terms,
+) -> Result<Option<Compacting>, Fatal> {
+    let style = terms.style();
+    let glyphs = style.glyphs();
+    let now = SystemTime::now();
+    let total = listed.len();
+    let root = terms.workspace.root().display().to_string();
+    let empty = nothing(glyphs);
+    let (long, short) = keys(glyphs);
+
+    let mut stood = Stood {
+        standing: finding::Standing {
+            query: Editor::new(),
+            renaming: None,
+            refused: false,
+            saving: None,
+            found: Vec::new(),
+            marked: 0,
+            behind: 0,
+            over: 0,
+            pointer: None,
+            lit: None,
+        },
+        listed,
+        cached: HashMap::new(),
+    };
+
+    let ended = region::stand(
+        renderer,
+        |_| style,
+        &mut stood,
+        |stood, columns, room| {
+            // A title Enter accepted is written down first, so the rows this
+            // frame draws are the rows the index now holds. A rename that
+            // could not be written shows the old title back, which is the
+            // honest answer to where the new one went.
+            if let Some(title) = stood.standing.saving.take() {
+                let renamed = stood
+                    .standing
+                    .found
+                    .get(stood.standing.marked)
+                    .and_then(|&at| stood.listed.get(at))
+                    .map(|session| session.id().clone());
+                if let Some(id) = renamed {
+                    stood.listed = saved(&title, &id, &terms.sessions, &terms.workspace);
+                }
+            }
+
+            let found: Vec<usize> = {
+                let query = stood.standing.query.text();
+                stood
+                    .listed
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, session)| {
+                        finding::matches(session.title(), session.branch(), query)
+                    })
+                    .map(|(at, _)| at)
+                    .collect()
+            };
+            stood.standing.found = found;
+            stood.standing.marked = stood
+                .standing
+                .marked
+                .min(stood.standing.found.len().saturating_sub(1));
+
+            let ages: Vec<String> = stood
+                .standing
+                .found
+                .iter()
+                .filter_map(|&at| stood.listed.get(at))
+                .map(|session| when::ago(session.started(), now))
+                .collect();
+            let kept: Vec<Kept<'_>> = stood
+                .standing
+                .found
+                .iter()
+                .filter_map(|&at| stood.listed.get(at))
+                .zip(&ages)
+                .map(|(session, when)| Kept {
+                    title: session.title(),
+                    when,
+                    branch: session.branch().unwrap_or_default(),
+                })
+                .collect();
+
+            let marked = stood
+                .standing
+                .found
+                .get(stood.standing.marked)
+                .and_then(|&at| stood.listed.get(at));
+
+            // The marked session's tail, read once and kept. The window over
+            // it is handed to the picker as a shorter slice: the pane shows
+            // the end of what it is given, so scrolling back is cutting the
+            // slice off before the tail.
+            let (full, meta_line) = match marked {
+                Some(session) => {
+                    let looked = stood
+                        .cached
+                        .entry(session.id().as_str().to_owned())
+                        .or_insert_with(|| {
+                            glimpse(&terms.sessions, &terms.workspace, session.id()).ok()
+                        });
+                    (
+                        looked
+                            .as_ref()
+                            .map(|held| previewed(held, glyphs))
+                            .unwrap_or_default(),
+                        meta(session, looked.as_ref(), now, glyphs),
+                    )
+                }
+                None => (Vec::new(), String::new()),
+            };
+
+            stood.standing.over = full.len().saturating_sub(1);
+            stood.standing.behind = stood.standing.behind.min(stood.standing.over);
+            let end = full.len().saturating_sub(stood.standing.behind);
+            let windowed = full.get(..end).unwrap_or_default();
+
+            let heading = format!(
+                "{} of {} sessions {} {}",
+                stood.standing.found.len(),
+                total,
+                glyphs.dot(),
+                root
+            );
+
+            let typed = stood
+                .standing
+                .renaming
+                .as_ref()
+                .map_or(stood.standing.query.column(), Editor::column);
+
+            let picker = Picker {
+                heading: &heading,
+                query: stood.standing.query.text(),
+                typed,
+                hint: HINT,
+                sessions: &kept,
+                marked: stood.standing.marked,
+                renaming: stood.standing.renaming.as_ref().map(Editor::text),
+                preview: windowed,
+                preview_meta: &meta_line,
+                takes: TAKES,
+                nothing: &empty,
+                noview: NOVIEW,
+                keys: (&long, &short),
+                pointer: stood.standing.pointer,
+            };
+
+            // What this frame found under the pointer, written down for the
+            // click and the wheel to read back: which pane a place falls on is
+            // a fact about the picture, and this is where the picture is.
+            stood.standing.lit = Some(picker.resting(columns, room));
+
+            (
+                picker.within(columns, room, glyphs),
+                Some(picker.caret(columns, room, glyphs)),
+            )
+        },
+        |arrived, stood| {
+            // Owned before the keys move anything under it: the title a rename
+            // opens over is the marked row's, and the mark is about to be the
+            // key's business.
+            let titled = stood
+                .standing
+                .found
+                .get(stood.standing.marked)
+                .and_then(|&at| stood.listed.get(at))
+                .map(|session| session.title().to_owned());
+            finding::sifting(arrived, &mut stood.standing, titled.as_deref())
+        },
+    )?;
+
+    match ended {
+        Ended::Took => {
+            // Enter on an empty list is refused by the keys, so the mark
+            // stands on a session — but the picker's answer is read back off
+            // the list rather than assumed, the same way every taken mark is.
+            let Some(id) = stood
+                .standing
+                .found
+                .get(stood.standing.marked)
+                .and_then(|&at| stood.listed.get(at))
+                .map(|session| session.id().clone())
+            else {
+                return Ok(None);
+            };
+            picking(&id, renderer, runner, held, terms)
+        }
+        Ended::Left => {
+            super::say(renderer, LEFT)?;
+            Ok(None)
+        }
+        // No room to stand it. The listing needs one row a session and no
+        // keys at all, which is exactly what a window this small has room for.
+        Ended::Cramped => {
+            renderer.present(&listing(shown(&stood.listed), now, renderer.columns()))?;
+            Ok(None)
+        }
+    }
+}
+
+/// The first [`SHOWN`] of them, for the ways in that print rather than stand.
+fn shown(listed: &[Recorded]) -> &[Recorded] {
+    listed.get(..SHOWN).unwrap_or(listed)
+}
+
+/// The listing, one row a session: the id, the age, and the title.
+///
+/// The id leads because it is the row's handle — the exact word `/resume` and
+/// `--resume` take, for the runs that have no picker to walk.
 fn listing(listed: &[Recorded], now: SystemTime, columns: usize) -> Vec<Row> {
     let ages: Vec<String> = listed
         .iter()
@@ -190,26 +489,115 @@ fn listing(listed: &[Recorded], now: SystemTime, columns: usize) -> Vec<Row> {
     listed
         .iter()
         .zip(&ages)
-        .enumerate()
-        .map(|(at, (session, age))| {
+        .map(|(session, age)| {
             let mut row = Row::new()
-                .then(Slot::Accent, format!("{}  ", at + 1))
+                .then(Slot::Accent, format!("{}  ", session.id().as_str()))
                 .then(Slot::Quiet, format!("{age:widest$}  "));
 
             let room = columns.saturating_sub(row.columns());
-            row.push(Slot::Plain, clip(session.asked(), room));
+            row.push(Slot::Plain, clip(session.title(), room));
             row
         })
         .collect()
 }
 
-/// Which session `said` names, if it names one.
+/// Writes `title` over the session `id` names and reads the list back.
 ///
-/// A number, and nothing else. Naming a session by its identifier would be a
-/// second way in that nothing on screen ever offers, and the list is what the
-/// numbers mean.
-fn chosen<'a>(said: &str, listed: &'a [Recorded]) -> Option<&'a Recorded> {
-    listed.get(said.parse::<usize>().ok()?.checked_sub(1)?)
+/// The read-back is the point: the title is written into the index, and the
+/// list the picker goes on showing is the one the index now holds — a rename
+/// that could not be written shows the old title back rather than a new one
+/// that exists nowhere.
+fn saved(title: &str, id: &SessionId, directory: &Path, workspace: &Workspace) -> Vec<Recorded> {
+    drop(retitle(directory, id, title));
+    recent(directory, workspace, OFFERED)
+}
+
+/// The line under the preview: age, count, branch, and whether the session is
+/// held open elsewhere.
+///
+/// The claim is said here, inline, rather than kept for a refusal: the reader
+/// finds out while they are looking at the row, before Enter has closed the
+/// picker over a session that would refuse to open.
+fn meta(session: &Recorded, held: Option<&Glimpse>, now: SystemTime, glyphs: Glyphs) -> String {
+    let count = session.messages();
+
+    let mut parts = vec![
+        when::ago(session.started(), now),
+        format!("{count} message{}", if count == 1 { "" } else { "s" }),
+    ];
+
+    if let Some(branch) = session.branch() {
+        parts.push(branch.to_owned());
+    }
+
+    if held.is_some_and(Glimpse::busy) {
+        parts.push("in use elsewhere".to_owned());
+    }
+
+    parts.join(&format!(" {} ", glyphs.dot()))
+}
+
+/// The tail of a session, drawn the way the transcript spells a conversation:
+/// prompts behind the prompt mark, answers plain, a blank row between turns.
+///
+/// Nothing here is clipped — the picker cuts every row to its pane — and a
+/// tail the glimpse cut short opens on the mark that says so, so the first
+/// words on the pane are not mistaken for the first words of the session.
+fn previewed(held: &Glimpse, glyphs: Glyphs) -> Vec<Row> {
+    let mut rows = Vec::new();
+
+    if held.cut() {
+        rows.push(Row::new().then(Slot::Quiet, glyphs.ellipsis()));
+    }
+
+    for said in held.said() {
+        if !rows.is_empty() {
+            rows.push(Row::new());
+        }
+
+        let mut lines = said.text().lines();
+        if said.user() {
+            if let Some(first) = lines.next() {
+                rows.push(Row::new().then(Slot::Accent, "> ").then(Slot::Plain, first));
+            }
+            for line in lines {
+                rows.push(Row::new().then(Slot::Plain, format!("  {line}")));
+            }
+        } else {
+            for line in lines {
+                rows.push(Row::new().then(Slot::Plain, line));
+            }
+        }
+    }
+
+    rows
+}
+
+/// What the list says where the query left nothing on it.
+///
+/// The way out is named beside the fact, because an empty pane under a line
+/// with words in it is the one place here where a reader can be stuck without
+/// knowing which key gets them out. Built from the glyph set for the dash: a
+/// terminal without one draws a hollow square in the middle of the sentence.
+fn nothing(glyphs: Glyphs) -> String {
+    format!("nothing matches {} backspace to widen it", glyphs.dash())
+}
+
+/// The keys row, long and short.
+///
+/// Built rather than written down, because the arrows in it are the setting's:
+/// a terminal without them draws hollow squares on the one row that exists to
+/// be read by somebody who does not yet know. The short form is what a window
+/// with no room for the long one gets — the same keys, without the words
+/// saying what each of them moves.
+fn keys(glyphs: Glyphs) -> (String, String) {
+    let (up, down) = glyphs.walking();
+    let dot = glyphs.dot();
+
+    (
+        format!("{up}{down} session {dot} enter resumes {dot} ctrl+r renames {dot} esc to cancel"),
+        format!("{up}{down} {dot} enter {dot} ctrl+r {dot} esc"),
+    )
 }
 
 #[cfg(test)]

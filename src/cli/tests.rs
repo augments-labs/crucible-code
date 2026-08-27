@@ -788,8 +788,7 @@ fn resume_round_trip() {
     drop(session);
 
     // The parting message names the command that comes back to this session.
-    let mut renderer =
-        crucible_tui::Renderer::new(crucible_tui::Recording::new(80, 24));
+    let mut renderer = crucible_tui::Renderer::new(crucible_tui::Recording::new(80, 24));
     draw::parting(
         &mut renderer,
         &converse::Parting::Kept(path),
