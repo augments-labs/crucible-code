@@ -7,28 +7,28 @@ expression: "picture(&picker(&FIVE, &preview).within(100, 30, Glyphs::Unicode), 
 <Quiet>╰</><Quiet>──────────────────────────────────────────────────────────────────────────────────────────────────</><Quiet>╯</>
  <Quiet>Resume a session · 5 of 5 · ~/Projects/Github/augments-labs/crucible-code</>
 
- <Accent> </> Prompt history with arrow navigation <Quiet>│</> › scripts/check.sh passes — publish the release
-   <Quiet>now · main</>                           <Quiet>│</>
- <Accent> </> /plugin                              <Quiet>│</> ● Release is live with all artifacts. Running the
-   <Quiet>7 hours ago · fix/background-command</> <Quiet>│</>   after-tag smoke against the published tarball.
- <Accent> </> /plugin                              <Quiet>│</>
-   <Quiet>8 hours ago · fix/minor-session-disp</> <Quiet>│</> ● Bash(scripts/smoke.sh v0.23.0 2>&1 | tail -12)
- <Accent> </> /clear                               <Quiet>│</>   └ all smoke gates passed
-   <Quiet>13 hours ago · main</>                  <Quiet>│</>
- <Accent>›</> <Strong>Release 0.23.0 smoke gates</>           <Quiet>│</> ● crucible 0.23.0 is published. All seven
-   <Quiet>17 hours ago · main</>                  <Quiet>│</>   platforms built, publish attested and
-                                        <Quiet>│</>   checksummed. ↓ wheel to see more
-                                        <Quiet>│</>
-                                        <Quiet>│</>
-                                        <Quiet>│</>
-                                        <Quiet>│</>
-                                        <Quiet>│</>
-                                        <Quiet>│</>
-                                        <Quiet>│</>
-                                        <Quiet>│</>
-                                        <Quiet>│</>
-                                        <Quiet>│</> <Quiet>──────────────────────────────────────────────────────────</>
-                                        <Quiet>│</> <Quiet>17 hours ago · 7 messages · main</>
-                                        <Quiet>│</> <Quiet>Enter to resume · Esc to cancel</>
+<Quiet>╭</><Quiet>──────────────────────────────────────</><Quiet>╮</> <Quiet>╭</><Quiet>─────────────────────────────────────────────────────────</><Quiet>╮</>
+<Quiet>│</> <Accent> </> Prompt history with arrow navigati <Quiet>│</> <Quiet>│</> › scripts/check.sh passes — publish the release         <Quiet>│</>
+<Quiet>│</>   <Quiet>now · main</>                         <Quiet>│</> <Quiet>│</>                                                         <Quiet>│</>
+<Quiet>│</>                                      <Quiet>│</> <Quiet>│</> ● Release is live with all artifacts. Running the       <Quiet>│</>
+<Quiet>│</> <Accent> </> /plugin                            <Quiet>│</> <Quiet>│</>   after-tag smoke against the published tarball.        <Quiet>│</>
+<Quiet>│</>   <Quiet>7 hours ago · fix/background-comma</> <Quiet>│</> <Quiet>│</>                                                         <Quiet>│</>
+<Quiet>│</>                                      <Quiet>│</> <Quiet>│</> ● Bash(scripts/smoke.sh v0.23.0 2>&1 | tail -12)        <Quiet>│</>
+<Quiet>│</> <Accent> </> /plugin                            <Quiet>│</> <Quiet>│</>   └ all smoke gates passed                              <Quiet>│</>
+<Quiet>│</>   <Quiet>8 hours ago · fix/minor-session-di</> <Quiet>│</> <Quiet>│</>                                                         <Quiet>│</>
+<Quiet>│</>                                      <Quiet>│</> <Quiet>│</> ● crucible 0.23.0 is published. All seven               <Quiet>│</>
+<Quiet>│</> <Accent> </> /clear                             <Quiet>│</> <Quiet>│</>   platforms built, publish attested and                 <Quiet>│</>
+<Quiet>│</>   <Quiet>13 hours ago · main</>                <Quiet>│</> <Quiet>│</>   checksummed. ↓ wheel to see more                      <Quiet>│</>
+<Quiet>│</>                                      <Quiet>│</> <Quiet>│</>                                                         <Quiet>│</>
+<Quiet>│</> <Accent>›</> <Strong>Release 0.23.0 smoke gates</>         <Quiet>│</> <Quiet>│</>                                                         <Quiet>│</>
+<Quiet>│</>   <Quiet>17 hours ago · main</>                <Quiet>│</> <Quiet>│</>                                                         <Quiet>│</>
+<Quiet>│</>                                      <Quiet>│</> <Quiet>│</>                                                         <Quiet>│</>
+<Quiet>│</>                                      <Quiet>│</> <Quiet>│</>                                                         <Quiet>│</>
+<Quiet>│</>                                      <Quiet>│</> <Quiet>│</>                                                         <Quiet>│</>
+<Quiet>│</>                                      <Quiet>│</> <Quiet>│</>                                                         <Quiet>│</>
+<Quiet>│</>                                      <Quiet>│</> <Quiet>│</> <Quiet>────────────────────────────────────────────────────────</><Quiet>│</>
+<Quiet>│</>                                      <Quiet>│</> <Quiet>│</> <Quiet>17 hours ago · 7 messages · main</>                        <Quiet>│</>
+<Quiet>│</>                                      <Quiet>│</> <Quiet>│</> <Quiet>Enter to resume · Esc to cancel</>                         <Quiet>│</>
+<Quiet>╰</><Quiet>──────────────────────────────────────</><Quiet>╯</> <Quiet>╰</><Quiet>─────────────────────────────────────────────────────────</><Quiet>╯</>
 
  <Quiet>↑↓ to walk · ctrl+r to rename · type to search · esc to cancel</>

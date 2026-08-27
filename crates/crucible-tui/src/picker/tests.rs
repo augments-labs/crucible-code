@@ -105,10 +105,38 @@ fn each_session_is_two_rows_with_the_title_over_its_age_and_branch() {
     let preview = tail();
     let rows = picker(&FIVE, &preview).within(100, 30, Glyphs::Unicode);
 
-    let title = said(&rows, LISTED + 2);
-    let meta = said(&rows, LISTED + 3);
+    let title = said(&rows, LISTED + 3);
+    let meta = said(&rows, LISTED + 4);
     assert!(title.contains("/plugin"), "{title:?}");
     assert!(meta.contains("7 hours ago · fix/background"), "{meta:?}");
+}
+
+#[test]
+fn a_blank_row_parts_one_session_from_the_next() {
+    // Two rows of words against two more rows of words read as one block of
+    // text the reader has to count through. The row between them is what makes
+    // a session a thing on the list rather than a line in it.
+    let preview = tail();
+    let rows = picker(&FIVE, &preview).within(100, 30, Glyphs::Unicode);
+
+    // The list pane only: the preview beside it goes on saying its own thing
+    // through every row of the split.
+    let parting = said(&rows, LISTED + 2);
+    let listed = parting.split('│').nth(1).expect("the list pane's own row");
+    assert!(
+        listed.trim().is_empty(),
+        "words in the row that parts two sessions: {listed:?}"
+    );
+    assert!(
+        said(&rows, LISTED + 1).contains("now · main"),
+        "{:?}",
+        said(&rows, LISTED + 1)
+    );
+    assert!(
+        said(&rows, LISTED + 3).contains("/plugin"),
+        "{:?}",
+        said(&rows, LISTED + 3)
+    );
 }
 
 #[test]
@@ -118,7 +146,7 @@ fn the_marked_session_carries_the_caret_and_the_others_align_past_it() {
 
     // The crate's one caret mark, not the reference art's: a mark spelled
     // outside `Glyphs` would survive into the ascii set it has no place in.
-    let marked = said(&rows, LISTED + 8);
+    let marked = said(&rows, LISTED + 12);
     assert!(
         marked.contains("› Release 0.23.0 smoke gates"),
         "{marked:?}"
@@ -138,9 +166,9 @@ fn the_preview_ends_in_a_rule_then_the_metadata_then_what_the_keys_take() {
     let preview = tail();
     let rows = picker(&FIVE, &preview).within(100, 30, Glyphs::Unicode);
 
-    let takes = said(&rows, 30 - 3);
-    let meta = said(&rows, 30 - 4);
-    let rule = said(&rows, 30 - 5);
+    let takes = said(&rows, 30 - 4);
+    let meta = said(&rows, 30 - 5);
+    let rule = said(&rows, 30 - 6);
     assert!(
         takes.contains("Enter to resume · Esc to cancel"),
         "{takes:?}"
@@ -170,6 +198,21 @@ fn the_keys_are_the_last_row_and_the_heading_sits_under_the_search_line() {
 }
 
 #[test]
+fn each_pane_stands_in_its_own_rounded_frame() {
+    // The list and the preview each open with corners and close with corners:
+    // one frame apiece, over the first row of the panes and under the last.
+    let preview = tail();
+    let rows = picker(&FIVE, &preview).within(100, 30, Glyphs::Unicode);
+
+    let over = said(&rows, LISTED - 1);
+    let under = said(&rows, 30 - 3);
+    assert_eq!(over.matches('╭').count(), 2, "{over:?}");
+    assert_eq!(over.matches('╮').count(), 2, "{over:?}");
+    assert_eq!(under.matches('╰').count(), 2, "{under:?}");
+    assert_eq!(under.matches('╯').count(), 2, "{under:?}");
+}
+
+#[test]
 fn the_preview_shows_the_end_of_what_it_was_handed() {
     // What a reader opens a session to learn is how it finished. Handed more
     // rows than the pane has room for, the tail is what survives.
@@ -195,16 +238,18 @@ fn below_the_fold_the_preview_folds_away_and_the_list_takes_every_column() {
     let drawn = picture(&folded, Picker::FOLDS_AT - 1);
     assert!(!drawn.contains("Enter to resume"), "{drawn}");
     assert!(!drawn.contains("publish the release"), "{drawn}");
-    assert!(
-        !said(&folded, LISTED).contains('│'),
-        "{:?}",
+    assert_eq!(
+        said(&folded, LISTED).matches('│').count(),
+        2,
+        "more edges than the list's own frame: {:?}",
         said(&folded, LISTED)
     );
 
     let apart = picker.within(Picker::FOLDS_AT, 30, Glyphs::Unicode);
-    assert!(
-        said(&apart, LISTED).contains('│'),
-        "{:?}",
+    assert_eq!(
+        said(&apart, LISTED).matches('│').count(),
+        4,
+        "two panes are two frames: {:?}",
         said(&apart, LISTED)
     );
 }
@@ -224,13 +269,13 @@ fn nothing_is_drawn_where_the_window_or_the_room_is_short_of_one_entry() {
             "drew something into {columns} columns"
         );
     }
-    for room in 0..9 {
+    for room in 0..11 {
         assert!(
             picker.within(100, room, Glyphs::Unicode).is_empty(),
             "drew something into a room of {room}"
         );
     }
-    assert_eq!(picker.within(100, 9, Glyphs::Unicode).len(), 9);
+    assert_eq!(picker.within(100, 11, Glyphs::Unicode).len(), 11);
 }
 
 #[test]
@@ -283,9 +328,10 @@ fn a_workspace_with_no_sessions_says_so_across_the_whole_width() {
         "{:?}",
         said(&rows, LISTED)
     );
-    assert!(
-        !said(&rows, LISTED).contains('│'),
-        "{:?}",
+    assert_eq!(
+        said(&rows, LISTED).matches('│').count(),
+        2,
+        "more edges than the list's own frame: {:?}",
         said(&rows, LISTED)
     );
     assert!(!drawn.contains("Enter to resume"), "{drawn}");
@@ -313,9 +359,10 @@ fn a_query_that_left_nothing_keeps_the_split_and_says_so_on_both_sides() {
         "{:?}",
         said(&rows, LISTED)
     );
-    assert!(
-        said(&rows, LISTED).contains('│'),
-        "{:?}",
+    assert_eq!(
+        said(&rows, LISTED).matches('│').count(),
+        4,
+        "two panes are two frames: {:?}",
         said(&rows, LISTED)
     );
     assert!(drawn.contains("nothing to show"), "{drawn}");
@@ -340,8 +387,10 @@ fn what_is_resting_under_the_pointer_is_what_the_picker_answers_for() {
         ((SEARCHING + 2, 5), Hit::Nothing),
         ((LISTED, 5), Hit::Session(0)),
         ((LISTED + 1, 5), Hit::Session(0)),
-        ((LISTED + 8, 3), Hit::Session(4)),
-        ((LISTED + 10, 3), Hit::Nothing),
+        ((LISTED + 2, 5), Hit::Session(0)),
+        ((LISTED + 12, 3), Hit::Session(4)),
+        ((LISTED + 13, 3), Hit::Session(4)),
+        ((LISTED + 15, 3), Hit::Nothing),
         ((LISTED, 60), Hit::Preview),
         ((29, 5), Hit::Nothing),
     ] {
@@ -373,7 +422,7 @@ fn a_scrolled_list_answers_with_the_session_the_reader_can_see() {
     picker.marked = 7;
     picker.pointer = Some((LISTED, 5));
 
-    assert_eq!(picker.resting(100, 13), Hit::Session(5));
+    assert_eq!(picker.resting(100, 18), Hit::Session(5));
 }
 
 #[test]
@@ -454,14 +503,14 @@ fn a_rename_stands_where_the_title_was_and_holds_the_caret() {
 
     let rows = picker.within(100, 30, Glyphs::Unicode);
     assert!(
-        said(&rows, LISTED + 8).contains("Release gates, renamed"),
+        said(&rows, LISTED + 12).contains("Release gates, renamed"),
         "{:?}",
-        said(&rows, LISTED + 8)
+        said(&rows, LISTED + 12)
     );
     assert!(!picture(&rows, 100).contains("Release 0.23.0 smoke gates"));
 
     let caret = picker.caret(100, 30, Glyphs::Unicode);
-    assert_eq!((caret.row, caret.column), (LISTED + 8, LEADING + 7));
+    assert_eq!((caret.row, caret.column), (LISTED + 12, LEADING + 1 + 7));
 }
 
 #[test]

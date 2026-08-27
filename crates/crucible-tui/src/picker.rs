@@ -27,8 +27,8 @@ use crate::width::{clip, columns as wide};
 /// The rows a picker spends on everything that is not a row of the split.
 ///
 /// The three the search line's frame costs, the heading under it, its blank,
-/// the blank over the keys, and the keys.
-const CHROME: usize = 7;
+/// the two the panes' frames cost, the blank over the keys, and the keys.
+const CHROME: usize = 9;
 
 /// The fewest body rows a picker stands in: one entry of the list.
 ///
@@ -48,11 +48,19 @@ const SEARCHING: usize = 1;
 const TYPED_AT: usize = 10;
 
 /// The first body row, counted the same way: the search frame's three rows,
-/// the heading, and its blank.
-const LISTED: usize = 5;
+/// the heading, its blank, and the row the panes' frames open on.
+const LISTED: usize = 6;
 
 /// What the marks in front of a list row cost: a space, the mark, a space.
 const LEADING: usize = 3;
+
+/// The rows one session takes on the list: its title, its age and branch, and
+/// the row that parts it from the next.
+///
+/// Four rows of words with nothing between them read as one block of text the
+/// reader has to count through. The parting row is what makes a session a thing
+/// on the list rather than a line in it.
+const PAIRED: usize = 3;
 
 /// One session offered on the picker.
 ///
@@ -77,7 +85,9 @@ pub enum Hit {
     /// The line the query is typed into, or either rule of its frame.
     Search,
     /// A session, by its place in the slice the picker was handed. Both of an
-    /// entry's rows answer with it — the pair is one thing to the reader.
+    /// entry's rows answer with it, and so does the row parting it from the
+    /// next — the pair is one thing to the reader, and a click that landed in
+    /// the air just under a title meant the title.
     Session(usize),
     /// The preview pane, which is what the wheel scrolls.
     Preview,
@@ -175,10 +185,49 @@ impl Picker<'_> {
         heading.push(Slot::Quiet, clip(self.heading, columns.saturating_sub(2)));
         rows.push(heading.clipped(columns));
         rows.push(Row::new());
+        rows.push(self.edged(columns, glyphs, glyphs.top()));
         rows.extend(self.split(columns, body, glyphs, under));
+        rows.push(self.edged(columns, glyphs, glyphs.bottom()));
         rows.push(Row::new());
         rows.push(self.keyed(columns));
         rows
+    }
+
+    /// One end of the panes' frames: the list's corners, and the preview's
+    /// beside them where the two stand apart.
+    ///
+    /// Quiet in both panes and at both ends, unlike the search line's frame:
+    /// what an accent under the pointer says there is *this is a field to type
+    /// in*, and a pane is not one. A frame that lit under the pointer here
+    /// would offer something pressing it does not do.
+    fn edged(&self, columns: usize, glyphs: Glyphs, ends: (&str, &str)) -> Row {
+        let (list, inside, beside) = self.widths(columns);
+
+        let row = ruled(ends, inside, glyphs, Slot::Quiet);
+        if list == columns {
+            return row.clipped(columns);
+        }
+
+        row.then(Slot::Plain, " ")
+            .join(ruled(ends, beside, glyphs, Slot::Quiet))
+            .clipped(columns)
+    }
+
+    /// What the split costs across: the list pane whole, what its frame leaves
+    /// inside it, and what the preview's frame leaves inside that.
+    ///
+    /// Worked out once and handed to everything that draws a row of the split,
+    /// because a pane and the frame around it are laid out against the same
+    /// columns — and two answers to how wide a pane is is how a frame comes to
+    /// stand a column off the rows it encloses.
+    fn widths(&self, columns: usize) -> (usize, usize, usize) {
+        let list = if self.apart(columns) {
+            2 * columns / 5
+        } else {
+            columns
+        };
+
+        (list, list - 2, columns.saturating_sub(list + 3))
     }
 
     /// The framed line the query is typed into.
@@ -226,48 +275,62 @@ impl Picker<'_> {
     /// it emptied, so both sides say so. A workspace that never recorded a
     /// session has no split to draw at all.
     fn split(&self, columns: usize, body: usize, glyphs: Glyphs, under: Under) -> Vec<Row> {
-        let apart = self.apart(columns);
-        let list = if apart { 2 * columns / 5 } else { columns };
+        let (list, inside, beside) = self.widths(columns);
 
-        let entries = self.listed(list, body, glyphs, under);
-        if !apart {
-            return entries;
+        let entries = self.listed(inside, body, glyphs, under);
+        if list == columns {
+            return entries
+                .into_iter()
+                .map(|entry| walled(&entry, inside, glyphs).clipped(columns))
+                .collect();
         }
 
-        let inside = columns - list - 2;
-        let tailed = self.previewed(inside, body, glyphs);
+        let tailed = self.previewed(beside, body, glyphs);
         entries
             .into_iter()
             .zip(tailed)
             .map(|(entry, shown)| {
-                let mut row = entry;
-                row.pad(list);
-                row.push(Slot::Quiet, glyphs.vertical());
-                row.push(Slot::Plain, " ");
-                row.join(shown).clipped(columns)
+                walled(&entry, inside, glyphs)
+                    .then(Slot::Plain, " ")
+                    .join(walled(&shown, beside, glyphs))
+                    .clipped(columns)
             })
             .collect()
     }
 
-    /// Each row of the list, two to a session, padded to `body` rows.
+    /// Each row of the list, three to a session, padded to `body` rows.
     ///
-    /// The band under the pointer covers both rows of a pair — the pair is one
-    /// thing to the reader, and half a band would say it is two.
-    fn listed(&self, list: usize, body: usize, glyphs: Glyphs, under: Under) -> Vec<Row> {
+    /// Laid out against `inside` — what the pane's frame leaves it, rather than
+    /// what the pane costs — because a row filled to the frame's own column is
+    /// one the edge is written over.
+    ///
+    /// The band under the pointer covers both rows of a pair but not the row
+    /// that parts it from the next: the pair is one thing to the reader, half a
+    /// band would say it is two, and a band that ran on through the parting
+    /// would close the gap it exists to open.
+    fn listed(&self, inside: usize, body: usize, glyphs: Glyphs, under: Under) -> Vec<Row> {
         if self.sessions.is_empty() {
-            return said_instead(clip(self.nothing, list.saturating_sub(2)), body);
+            return said_instead(clip(self.nothing, inside.saturating_sub(2)), body);
         }
-        let pairs = body / 2;
+        let pairs = shown(body);
         let from = scrolled(self.marked, pairs, self.sessions.len());
-        let word = list.saturating_sub(LEADING + 1);
+        let word = inside.saturating_sub(LEADING + 1);
 
         (0..body)
             .map(|at| {
-                let on = matches!(under, Under::Listed(over) if over / 2 == at / 2)
-                    && self.sessions.get(from + at / 2).is_some();
-                match self.sessions.get(from + at / 2) {
-                    Some(one) if at % 2 == 0 => {
-                        let marked = from + at / 2 == self.marked;
+                // The last session's parting row may fall off the bottom, so an
+                // entry is on the list when both rows of its pair are, and the
+                // rows past that answer with nothing rather than half of one.
+                let one = self
+                    .sessions
+                    .get(from + at / PAIRED)
+                    .filter(|_| at / PAIRED < pairs);
+                let on = matches!(under, Under::Listed(over) if over / PAIRED == at / PAIRED)
+                    && at % PAIRED != PAIRED - 1
+                    && one.is_some();
+                match one {
+                    Some(one) if at % PAIRED == 0 => {
+                        let marked = from + at / PAIRED == self.marked;
                         let title = if marked {
                             self.renaming.unwrap_or(one.title)
                         } else {
@@ -284,10 +347,10 @@ impl Picker<'_> {
                             lit(on, if marked { Slot::Strong } else { Slot::Plain }),
                             clip(title, word),
                         );
-                        row.fill(lit(on, Slot::Plain), list);
+                        row.fill(lit(on, Slot::Plain), inside);
                         row
                     }
-                    Some(one) => {
+                    Some(one) if at % PAIRED == 1 => {
                         let mut row = Row::new();
                         row.fill(lit(on, Slot::Plain), LEADING);
                         let aged = if one.branch.is_empty() {
@@ -296,10 +359,10 @@ impl Picker<'_> {
                             format!("{} {} {}", one.when, glyphs.dot(), one.branch)
                         };
                         row.push(lit(on, Slot::Quiet), clip(&aged, word).to_owned());
-                        row.fill(lit(on, Slot::Plain), list);
+                        row.fill(lit(on, Slot::Plain), inside);
                         row
                     }
-                    None => Row::new(),
+                    Some(_) | None => Row::new(),
                 }
             })
             .collect()
@@ -308,11 +371,16 @@ impl Picker<'_> {
     /// Each row of the preview pane: the tail of what was handed, and the
     /// anchored foot — the rule, the metadata, and what Enter and Esc do.
     ///
+    /// Every row opens a column in from the pane's frame, the list's rows do
+    /// the same behind their mark, and the two panes read as one picture rather
+    /// than as words pressed against two edges.
+    ///
     /// With no session marked there is no tail and nothing for Enter to take,
     /// so the pane says so once and the foot stays undrawn.
     fn previewed(&self, inside: usize, body: usize, glyphs: Glyphs) -> Vec<Row> {
+        let room = inside.saturating_sub(1);
         if self.sessions.is_empty() {
-            return said_instead(clip(self.noview, inside), body);
+            return said_instead(clip(self.noview, room), body);
         }
         let area = body.saturating_sub(FOOTED);
         let shown = self.preview.len().min(area);
@@ -320,21 +388,23 @@ impl Picker<'_> {
 
         (0..body)
             .map(|at| {
-                if at < shown {
+                let said = if at < shown {
                     self.preview
                         .get(from + at)
                         .cloned()
                         .unwrap_or_default()
-                        .clipped(inside)
+                        .clipped(room)
                 } else if at + FOOTED == body {
-                    Row::new().then(Slot::Quiet, glyphs.horizontal().repeat(inside))
+                    Row::new().then(Slot::Quiet, glyphs.horizontal().repeat(room))
                 } else if at + FOOTED == body + 1 {
-                    Row::new().then(Slot::Quiet, clip(self.preview_meta, inside))
+                    Row::new().then(Slot::Quiet, clip(self.preview_meta, room))
                 } else if at + FOOTED == body + 2 {
-                    Row::new().then(Slot::Quiet, clip(self.takes, inside))
+                    Row::new().then(Slot::Quiet, clip(self.takes, room))
                 } else {
-                    Row::new()
-                }
+                    return Row::new();
+                };
+
+                Row::new().then(Slot::Plain, " ").join(said)
             })
             .collect()
     }
@@ -372,10 +442,10 @@ impl Picker<'_> {
             Under::Searching => Hit::Search,
             Under::Previewing => Hit::Preview,
             Under::Listed(at) => {
-                let pairs = body / 2;
+                let pairs = shown(body);
                 let from = scrolled(self.marked, pairs, self.sessions.len());
-                if at / 2 < pairs && from + at / 2 < self.sessions.len() {
-                    Hit::Session(from + at / 2)
+                if at / PAIRED < pairs && from + at / PAIRED < self.sessions.len() {
+                    Hit::Session(from + at / PAIRED)
                 } else {
                     Hit::Nothing
                 }
@@ -394,12 +464,15 @@ impl Picker<'_> {
         let last = columns.saturating_sub(2);
 
         if let Some(renaming) = self.renaming {
-            let pairs = room.saturating_sub(CHROME) / 2;
+            let pairs = shown(room.saturating_sub(CHROME));
             let from = scrolled(self.marked, pairs, self.sessions.len());
             let before: String = renaming.chars().take(self.typed).collect();
             return Caret {
-                row: LISTED + 2 * self.marked.saturating_sub(from),
-                column: (LEADING + wide(&before)).min(last),
+                row: LISTED + PAIRED * self.marked.saturating_sub(from),
+                // The pane's own edge is in front of the title, so the column
+                // the words start in is one past where an unframed list would
+                // have opened.
+                column: (1 + LEADING + wide(&before)).min(last),
             };
         }
 
@@ -432,12 +505,11 @@ impl Picker<'_> {
             return Under::Nothing;
         };
 
-        let apart = self.apart(columns);
-        let list = if apart { 2 * columns / 5 } else { columns };
+        let (list, ..) = self.widths(columns);
         if column < list {
             return Under::Listed(at);
         }
-        if apart && (list + 1..columns).contains(&column) {
+        if list < columns && (list + 1..columns).contains(&column) {
             return Under::Previewing;
         }
 
@@ -470,12 +542,35 @@ fn said_instead(sentence: &str, body: usize) -> Vec<Row> {
         .collect()
 }
 
+/// One row of a pane, between the two edges of its frame.
+///
+/// Padded out to the edge on its right rather than left where the words stop,
+/// so a pointer's band and a pane's frame meet instead of leaving the reader's
+/// own ground showing between them.
+fn walled(content: &Row, inside: usize, glyphs: Glyphs) -> Row {
+    let mut row = Row::new()
+        .then(Slot::Quiet, glyphs.vertical())
+        .join(content.clipped(inside));
+    row.pad(1 + inside);
+    row.push(Slot::Quiet, glyphs.vertical());
+    row
+}
+
 /// A rule from one edge to the other, with no joint in the middle of it.
 fn ruled(ends: (&str, &str), inside: usize, glyphs: Glyphs, slot: Slot) -> Row {
     Row::new()
         .then(slot, ends.0)
         .then(slot, glyphs.horizontal().repeat(inside))
         .then(slot, ends.1)
+}
+
+/// How many sessions a list of `body` rows shows.
+///
+/// A session is on the list when both rows of its pair are: the parting row
+/// under the last one may fall off the bottom without costing anybody a row
+/// they can read, but half a pair is an entry with no age under its name.
+const fn shown(body: usize) -> usize {
+    (body + 1) / PAIRED
 }
 
 /// The first entry on screen, given where the mark is.
