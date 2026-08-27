@@ -64,6 +64,7 @@ fn picker<'a>(sessions: &'a [Kept<'a>], preview: &'a [Row]) -> Picker<'a> {
         sessions,
         marked: 4,
         renaming: None,
+        refused: None,
         preview,
         preview_meta: "17 hours ago · 7 messages · main",
         takes: "Enter to resume · Esc to cancel",
@@ -210,6 +211,27 @@ fn each_pane_stands_in_its_own_rounded_frame() {
     assert_eq!(over.matches('╮').count(), 2, "{over:?}");
     assert_eq!(under.matches('╰').count(), 2, "{under:?}");
     assert_eq!(under.matches('╯').count(), 2, "{under:?}");
+}
+
+#[test]
+fn a_rename_that_was_refused_says_so_where_the_title_is_being_typed() {
+    // In place, under the row being renamed, rather than anywhere the reader
+    // would have to look away to find: what was refused is the line their
+    // hands are on, and the row's age is not what they are reading right now.
+    let preview = tail();
+    let mut picker = picker(&FIVE, &preview);
+    picker.renaming = Some("");
+    picker.refused = Some("a title cannot be empty");
+
+    let drawn = picture(&picker.within(100, 30, Glyphs::Unicode), 100);
+    assert!(
+        drawn.contains("<Trouble>a title cannot be empty</>"),
+        "the refusal is not on the row: {drawn}"
+    );
+    assert!(
+        !drawn.contains("17 hours ago · main"),
+        "the age still stands where the refusal is: {drawn}"
+    );
 }
 
 #[test]

@@ -92,6 +92,14 @@ const NEVER: &str = "no earlier session for this workspace";
 /// guess whether it stands for that or for a sentence that was clipped.
 const CUT: &str = "the rest could not be read";
 
+/// What a rename Enter refused for having nothing in it says, under the row
+/// the title was being typed on.
+///
+/// A session with no title falls back to its first prompt, so an empty rename
+/// could not stick — and saying so where the reader's hands are beats keeping
+/// the old name without a word.
+const REFUSED: &str = "a title cannot be empty";
+
 /// What is said where the picker was left with nothing taken.
 const LEFT: &str = "cancelled, no session picked up";
 
@@ -448,6 +456,7 @@ fn stood<T: Terminal>(
                 sessions: &kept,
                 marked: stood.standing.marked,
                 renaming: stood.standing.renaming.as_ref().map(Editor::text),
+                refused: stood.standing.refused.then_some(REFUSED),
                 preview: windowed,
                 preview_meta: &meta_line,
                 takes: TAKES,

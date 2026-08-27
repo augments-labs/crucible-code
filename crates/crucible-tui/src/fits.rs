@@ -541,6 +541,7 @@ fn a_picker_fits_the_window_it_stands_in() {
         sessions: &SESSIONS,
         marked: 2,
         renaming: Some(LONG),
+        refused: Some(PROSE),
         preview: &preview,
         preview_meta: PROSE,
         takes: LONG,
