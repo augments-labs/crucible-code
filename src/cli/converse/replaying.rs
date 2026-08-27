@@ -111,7 +111,12 @@ pub(super) fn glimpsed(
         return Ok(Vec::new());
     }
 
-    let mut renderer = Renderer::new(Recording::new(columns, most.max(1)));
+    // Redirected, because nobody is looking at this screen: a recording that
+    // claims to be a terminal repaints every row it holds after every message
+    // put back, which turns a long session's preview into the length of that
+    // session squared. What is wanted is the rows, and those are recorded
+    // either way.
+    let mut renderer = Renderer::new(Recording::redirected(columns, most.max(1)));
     renderer.wears(against.style.palette());
     renderer.draws(against.style.glyphs());
 
