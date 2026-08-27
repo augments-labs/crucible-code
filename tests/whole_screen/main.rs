@@ -728,7 +728,7 @@ fn picking_a_session_up_asks_before_carrying_it_whole() {
 
     // The picker stands over the window with the cleared session marked, and
     // Enter takes the mark.
-    window.types_until("/resume\r", "a title, or a branch");
+    window.types_until("/resume\r", "a session, or a branch");
     window.types_until("\r", "This session is large");
 
     insta::assert_snapshot!(window.picture());
@@ -757,7 +757,7 @@ fn choosing_notes_makes_room_and_says_what_it_took() {
 
     // The picker stands over the window with the cleared session marked, and
     // Enter takes the mark.
-    window.types_until("/resume\r", "a title, or a branch");
+    window.types_until("/resume\r", "a session, or a branch");
     window.types_until("\r", "This session is large");
 
     // Enter takes the first answer, which is the one that spends a request.

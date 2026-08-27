@@ -807,9 +807,9 @@ first, and the end of whichever one is marked drawn in the other.
 
 ```
 ╭──────────────────────────────────────────────────────────────────────────────╮
-│ Search    a title, or a branch                                               │
+│ Search    a session, or a branch                                             │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- 3 of 12 sessions · /home/you/code/my-project
+ Resume a session · 3 of 12 · /home/you/code/my-project
 
 ╭──────────────────────────────╮ ╭─────────────────────────────────────────────╮
 │ › rename the parser error    │ │ › rename the parser error type              │
@@ -824,10 +824,10 @@ first, and the end of whichever one is marked drawn in the other.
 │                              │ │   its three call sites. cargo test passes.  │
 │                              │ │ ────────────────────────────────────────────│
 │                              │ │ just now · 7 messages · fix/parser          │
-│                              │ │ enter to resume                             │
+│                              │ │ Enter to resume · Esc to cancel             │
 ╰──────────────────────────────╯ ╰─────────────────────────────────────────────╯
 
- ↑↓ session · enter resumes · ctrl+r renames · esc to cancel
+ ↑↓ to walk · ctrl+r to rename · type to search · esc to cancel
 ```
 
 Type to narrow the list. The line is matched against a session's title *and* the
@@ -837,7 +837,8 @@ what is left, and the preview follows the mark: it is drawn by the code that
 draws the live transcript, so the prompts, the calls, the rows results came back
 on and the model's prose are what picking that session up would put back on
 screen. Under it are the session's age, how many messages are in it, its branch,
-and a note where another crucible still has it open. The wheel scrolls whichever
+and a note where another crucible still has it open — the count only where the
+session has ended at least once since counts were kept. The wheel scrolls whichever
 pane the pointer is over, so a preview can be read back past its last rows, and
 a window too narrow to split folds the preview away and gives the list every
 column.
@@ -850,7 +851,8 @@ because the call that wrote it is in the transcript being replayed.
 
 <kbd>Ctrl+R</kbd> renames the marked session where its title stands, and Enter
 saves it: that is the title the list shows from then on, here and in every later
-run. <kbd>Escape</kbd> steps back one layer at a time — out of a rename, then
+run. A title with nothing in it is refused where it was typed, because a session
+without one falls back to its first prompt. <kbd>Escape</kbd> steps back one layer at a time — out of a rename, then
 out of a query, then off the screen having picked up nothing.
 
 `/resume <id>` skips the picker and takes that session directly. The id is the

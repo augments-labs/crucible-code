@@ -163,7 +163,7 @@ fn typing_after_a_refused_rename_takes_the_refusal_back() {
     // what is on screen.
     let mut standing = standing();
     standing.renaming = Some(Editor::new());
-    drop(sifting(Pressed::Key(Key::Enter), &mut standing, None));
+    let _ = sifting(Pressed::Key(Key::Enter), &mut standing, None);
     assert!(standing.refused);
 
     assert_eq!(
