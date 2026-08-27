@@ -8,6 +8,8 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-08-27
+
 ### Added
 
 - **`/resume` stands this directory's sessions beside a preview of the one you
@@ -20,11 +22,10 @@ change in any release with no deprecation period.
 
 - **`--resume <id>` picks up the exact session the id names.** crucible prints
   that command as it ends, so the way back to a session survives newer sessions
-  started in the same directory. An id this
-  workspace has no record of is refused by name, and `--resume` and
-  `--continue` cannot be asked for together. Session files are now named by
-  UUID v7 — still newest-first by name — and sessions recorded by earlier
-  releases keep their names and stay continuable.
+  started in the same directory. An id this workspace has no record of is
+  refused by name, and `--resume` and `--continue` cannot be asked for together.
+  Session files are now named by UUID v7 — still newest first — and sessions
+  recorded by earlier releases keep their names and stay continuable.
 
 ## [0.24.1] - 2026-08-26
 
@@ -2913,7 +2914,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.24.1...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.25.0...HEAD
+[0.25.0]: https://github.com/augments-labs/crucible-code/compare/v0.24.1...v0.25.0
 [0.24.1]: https://github.com/augments-labs/crucible-code/compare/v0.24.0...v0.24.1
 [0.24.0]: https://github.com/augments-labs/crucible-code/compare/v0.23.5...v0.24.0
 [0.23.5]: https://github.com/augments-labs/crucible-code/compare/v0.23.4...v0.23.5
