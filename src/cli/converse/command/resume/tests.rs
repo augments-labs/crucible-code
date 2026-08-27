@@ -690,6 +690,27 @@ fn the_meta_line_counts_the_messages_and_names_the_branch() {
 }
 
 #[test]
+fn a_session_the_index_holds_no_count_for_says_nothing_about_one() {
+    // The count is written down when a session ends, so a session recorded
+    // before there were counts — or one still being written — has none in the
+    // index. "0 messages" under a preview full of them is a lie about the
+    // session, where the rest of the line is not.
+    let sample = Sample::new("resume-uncounted");
+    let session =
+        Session::start(&sample.logs(), &sample.workspace(), Some("main")).expect("a new session");
+    let id = session.id().expect("a recorded session has a name").clone();
+    session.append(&Message::said("something was said"));
+
+    let listed = on_the_list(&sample, &id);
+    assert_eq!(listed.messages(), 0, "the count is written at the end");
+
+    let said = meta(&listed, None, SystemTime::now(), Style::plain().glyphs());
+    assert!(!said.contains("message"), "{said}");
+    assert!(said.contains("just now"), "{said}");
+    assert!(said.contains("main"), "{said}");
+}
+
+#[test]
 fn a_session_another_crucible_holds_open_is_said_to_be_in_use() {
     // Answered inline on the meta line rather than as a refusal: the reader
     // finds out while they are looking at the row, before Enter has closed the

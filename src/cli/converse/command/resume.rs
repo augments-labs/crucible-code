@@ -576,10 +576,18 @@ fn saved(title: &str, id: &SessionId, directory: &Path, workspace: &Workspace) -
 fn meta(session: &Recorded, held: Option<&Glimpse>, now: SystemTime, glyphs: Glyphs) -> String {
     let count = session.messages();
 
-    let mut parts = vec![
-        when::ago(session.started(), now),
-        format!("{count} message{}", if count == 1 { "" } else { "s" }),
-    ];
+    let mut parts = vec![when::ago(session.started(), now)];
+
+    // Nought is what the index holds for a session that has not ended since
+    // there were counts to hold, rather than a session nobody said anything
+    // in — and a count of none over a pane full of conversation is the one
+    // part of this line that could be wrong. Left out instead.
+    if count > 0 {
+        parts.push(format!(
+            "{count} message{}",
+            if count == 1 { "" } else { "s" }
+        ));
+    }
 
     if let Some(branch) = session.branch() {
         parts.push(branch.to_owned());
