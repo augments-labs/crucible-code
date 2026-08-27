@@ -851,9 +851,13 @@ because the call that wrote it is in the transcript being replayed.
 
 <kbd>Ctrl+R</kbd> renames the marked session where its title stands, and Enter
 saves it: that is the title the list shows from then on, here and in every later
-run. A title with nothing in it is refused where it was typed, because a session
-without one falls back to its first prompt. <kbd>Escape</kbd> steps back one layer at a time — out of a rename, then
-out of a query, then off the screen having picked up nothing.
+run. The row becomes a field — it takes the accent the search line takes, the
+keys row under the panes changes to `enter to save · esc to cancel`, and a title
+longer than the pane scrolls under the cursor as you type rather than stopping
+at the edge. A title with nothing in it is refused where it was typed, because a
+session without one falls back to its first prompt. <kbd>Escape</kbd> steps back
+one layer at a time — out of a rename, then out of a query, then off the screen
+having picked up nothing.
 
 `/resume <id>` skips the picker and takes that session directly. The id is the
 one the parting message prints and the one `crucible --resume` takes, so a
