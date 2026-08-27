@@ -8,6 +8,8 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.25.1] - 2026-08-27
+
 ### Fixed
 
 - **Wheeling back through a preview no longer empties it.** The window over a
@@ -2930,6 +2932,7 @@ that say what it is allowed to become.
 - Linux x86-64 only. The release builds one artifact.
 
 [Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.25.0...HEAD
+[0.25.1]: https://github.com/augments-labs/crucible-code/compare/v0.25.0...v0.25.1
 [0.25.0]: https://github.com/augments-labs/crucible-code/compare/v0.24.1...v0.25.0
 [0.24.1]: https://github.com/augments-labs/crucible-code/compare/v0.24.0...v0.24.1
 [0.24.0]: https://github.com/augments-labs/crucible-code/compare/v0.23.5...v0.24.0
