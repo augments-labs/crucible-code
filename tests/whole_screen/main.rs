@@ -717,6 +717,45 @@ fn a_window_that_narrows_mid_session_redraws_what_is_live_at_the_new_width() {
 }
 
 #[test]
+fn the_session_picker_stands_over_the_whole_window() {
+    // The picker in the binary rather than in a component test: the words a
+    // reader is actually handed, the two panes, and the row of keys under
+    // them, on a real screen at a real size — which is where a row that falls
+    // off the bottom of the window shows up and a component test cannot.
+    let vendor = Vendor::answering("The first thing this session said.");
+    let mut window = Watched::asking_on_resume("resume-picture", 80, 24, &vendor);
+
+    window.types_until("say something\r", "The first thing");
+    window.types_until("/clear\r", "ask mode on");
+    window.types_until("/resume\r", "a session, or a branch");
+
+    // Not a snapshot: the heading carries the directory the sessions were
+    // recorded in, which is a fresh one per run.
+    let picture = window.picture();
+    let rows: Vec<&str> = picture.lines().map(str::trim_end).collect();
+    for said in [
+        "Resume a session · 1 of 1 ·",
+        "Enter to resume · Esc to cancel",
+        "↑↓ to walk · ctrl+r to rename · type to search · esc to cancel",
+    ] {
+        assert!(rows.iter().any(|row| row.contains(said)), "{picture}");
+    }
+
+    // The keys row is the last thing on the window rather than the first thing
+    // off the bottom of it: a panel laid out into a height it does not get
+    // loses exactly this row, and loses it silently.
+    let keys = rows
+        .iter()
+        .rposition(|row| row.contains("↑↓ to walk"))
+        .expect("the keys row");
+    let framed = rows
+        .iter()
+        .rposition(|row| row.contains('╯'))
+        .expect("the foot of the panes");
+    assert!(keys > framed, "the keys stand above the panes: {picture}");
+}
+
+#[test]
 fn picking_a_session_up_asks_before_carrying_it_whole() {
     // The panel in the binary rather than in a component test: it stands where
     // the box was, and what it says has to be readable against a real screen.
@@ -728,7 +767,7 @@ fn picking_a_session_up_asks_before_carrying_it_whole() {
 
     // The picker stands over the window with the cleared session marked, and
     // Enter takes the mark.
-    window.types_until("/resume\r", "a title, or a branch");
+    window.types_until("/resume\r", "a session, or a branch");
     window.types_until("\r", "This session is large");
 
     insta::assert_snapshot!(window.picture());
@@ -757,7 +796,7 @@ fn choosing_notes_makes_room_and_says_what_it_took() {
 
     // The picker stands over the window with the cleared session marked, and
     // Enter takes the mark.
-    window.types_until("/resume\r", "a title, or a branch");
+    window.types_until("/resume\r", "a session, or a branch");
     window.types_until("\r", "This session is large");
 
     // Enter takes the first answer, which is the one that spends a request.

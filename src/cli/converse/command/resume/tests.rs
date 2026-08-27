@@ -194,10 +194,7 @@ fn a_directory_nothing_was_recorded_in_says_so() {
 
     let written = resuming("", &sample, &mut runner);
 
-    assert!(
-        written.contains("nothing has been worked on here yet"),
-        "{written}"
-    );
+    assert!(written.contains(NEVER), "{written}");
 }
 
 #[test]
@@ -611,6 +608,59 @@ fn a_preview_is_drawn_for_the_pane_the_window_leaves_it() {
 }
 
 #[test]
+fn wheeling_the_preview_back_never_empties_the_pane() {
+    // The pane shows the end of the slice it is handed, so a window allowed
+    // to shrink past the pane is a pane going blank under a reader who is
+    // only wheeling back through a tail that has more.
+    let room = 30;
+    let shows = Picker::previews(room);
+    assert!(shows > 0, "a window this tall keeps the pane");
+
+    let behind = furthest(shows + 12, room);
+    assert_eq!(
+        shows + 12 - behind,
+        shows,
+        "the pane stands short of full at its furthest back"
+    );
+
+    // A tail no longer than the pane has nothing to wheel back through.
+    assert_eq!(furthest(shows, room), 0);
+    assert_eq!(furthest(shows / 2, room), 0);
+}
+
+#[test]
+fn the_picker_says_the_words_it_was_drawn_to_say() {
+    // The component draws whatever words it is handed, and its own tests hand
+    // it the design's. These are the ones a reader gets, so they are asserted
+    // where they are written down rather than where they are drawn.
+    let glyphs = Glyphs::Unicode;
+
+    assert_eq!(HINT, "a session, or a branch");
+    assert_eq!(NOVIEW, "nothing to show");
+    assert_eq!(TAKES, "Enter to resume · Esc to cancel");
+    assert_eq!(NEVER, "no earlier session for this workspace");
+    assert_eq!(CUT, "the rest could not be read");
+
+    assert_eq!(nothing("deploy"), "no session holds \"deploy\"");
+    assert_eq!(
+        heading(5, 5, "/w", glyphs),
+        "Resume a session · 5 of 5 · /w"
+    );
+
+    let (walking, _) = keys(glyphs, true);
+    assert_eq!(
+        walking,
+        "↑↓ to walk · ctrl+r to rename · type to search · esc to cancel"
+    );
+
+    // With nothing on the list there is nothing to walk to and nothing to
+    // rename: what is left to do is narrow the query, or leave.
+    let (narrowing, short) = keys(glyphs, false);
+    assert_eq!(narrowing, "type to narrow · esc to cancel");
+    assert_eq!(short, narrowing);
+}
+
+#[test]
 fn the_meta_line_counts_the_messages_and_names_the_branch() {
     // One line under the preview: age, count and branch. The count is spelled
     // singular where it is one, because "1 messages" is the kind of line that
@@ -637,6 +687,27 @@ fn the_meta_line_counts_the_messages_and_names_the_branch() {
     assert!(!said.contains("1 messages"), "{said}");
     assert!(said.contains("feature/x"), "{said}");
     assert!(!said.contains("in use elsewhere"), "{said}");
+}
+
+#[test]
+fn a_session_the_index_holds_no_count_for_says_nothing_about_one() {
+    // The count is written down when a session ends, so a session recorded
+    // before there were counts — or one still being written — has none in the
+    // index. "0 messages" under a preview full of them is a lie about the
+    // session, where the rest of the line is not.
+    let sample = Sample::new("resume-uncounted");
+    let session =
+        Session::start(&sample.logs(), &sample.workspace(), Some("main")).expect("a new session");
+    let id = session.id().expect("a recorded session has a name").clone();
+    session.append(&Message::said("something was said"));
+
+    let listed = on_the_list(&sample, &id);
+    assert_eq!(listed.messages(), 0, "the count is written at the end");
+
+    let said = meta(&listed, None, SystemTime::now(), Style::plain().glyphs());
+    assert!(!said.contains("message"), "{said}");
+    assert!(said.contains("just now"), "{said}");
+    assert!(said.contains("main"), "{said}");
 }
 
 #[test]

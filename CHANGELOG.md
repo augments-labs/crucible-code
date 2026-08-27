@@ -8,6 +8,21 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Wheeling back through a preview no longer empties it.** The window over a
+  marked session's tail could shrink to a single row, so scrolling back blanked
+  the pane instead of walking it; it now stops where the pane is full.
+
+- **The picker keeps the row saying which keys it answers to.** A panel standing
+  over the box was laid out into the whole window while the row under the box
+  stayed the session's, so its last row fell off the bottom.
+
+- **`/resume` says what it was designed to say.** The search hint, the heading,
+  the line under the preview, the empty states and the keys row are the agreed
+  wording, an empty rename is refused where it was typed, and a session the
+  index holds no message count for no longer claims to hold none.
+
 ## [0.25.0] - 2026-08-27
 
 ### Added

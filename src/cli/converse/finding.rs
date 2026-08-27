@@ -121,15 +121,18 @@ pub(super) fn sifting(arrived: Pressed, standing: &mut Standing, titled: Option<
                 Moved::Redraw
             }
 
+            // A key that changed the title answers the refusal the last one
+            // earned, so the line saying the name was empty comes down with
+            // the name that was.
             Pressed::Pasted(pasted) => {
                 let answered = renaming.paste(&pasted);
                 standing.renaming = Some(renaming);
-                moved(answered)
+                retyped(answered, standing)
             }
             Pressed::Key(key) => {
                 let answered = renaming.press(key);
                 standing.renaming = Some(renaming);
-                moved(answered)
+                retyped(answered, standing)
             }
 
             other => {
@@ -285,6 +288,15 @@ fn queried(answered: Typed, rewrites: bool, standing: &mut Standing) -> Moved {
     }
 
     Moved::Redraw
+}
+
+/// [`moved`], with a refusal the reader has started answering taken back.
+fn retyped(answered: Typed, standing: &mut Standing) -> Moved {
+    if answered != Typed::Ignored {
+        standing.refused = false;
+    }
+
+    moved(answered)
 }
 
 /// What an editor's answer means to the frame: an ignored key moved nothing.

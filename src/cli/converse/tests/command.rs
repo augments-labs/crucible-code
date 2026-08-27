@@ -675,7 +675,7 @@ fn asking_what_was_worked_on_here_costs_no_turn_and_leaves_the_loop_running() {
 
     assert_eq!(asked, 1, "{written}");
     assert!(
-        written.contains("nothing has been worked on here yet"),
+        written.contains("no earlier session for this workspace"),
         "{written}"
     );
     assert!(written.contains("answered"), "{written}");

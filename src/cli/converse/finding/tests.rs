@@ -156,6 +156,24 @@ fn enter_refuses_a_title_with_nothing_in_it() {
 }
 
 #[test]
+fn typing_after_a_refused_rename_takes_the_refusal_back() {
+    // The refusal answers the title that was there when Enter was pressed. A
+    // reader who has started typing is answering it, and a line still saying
+    // the name is empty over a name being typed is the picker arguing with
+    // what is on screen.
+    let mut standing = standing();
+    standing.renaming = Some(Editor::new());
+    let _ = sifting(Pressed::Key(Key::Enter), &mut standing, None);
+    assert!(standing.refused);
+
+    assert_eq!(
+        sifting(Pressed::Key(Key::Char('a')), &mut standing, None),
+        Moved::Redraw
+    );
+    assert!(!standing.refused);
+}
+
+#[test]
 fn typing_lands_in_the_rename_while_one_is_open() {
     let mut standing = standing();
     standing.query.put("caret");

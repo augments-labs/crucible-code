@@ -129,6 +129,9 @@ pub struct Picker<'a> {
     /// The marked title mid-rename, standing where the title was. `None` is a
     /// list that is only being walked.
     pub renaming: Option<&'a str>,
+    /// Why the last rename was refused, said under the row it was typed on.
+    /// `None` is a rename that has not been refused, or none at all.
+    pub refused: Option<&'a str>,
     /// The tail of the marked session, already drawn. The pane shows the end
     /// of this slice; a caller scrolls by handing a shorter one.
     pub preview: &'a [Row],
@@ -240,6 +243,23 @@ impl Picker<'_> {
 
         let (_, _, beside) = split_widths(columns, true);
         Some(beside.saturating_sub(1))
+    }
+
+    /// How many rows of a session the preview pane shows in this room.
+    ///
+    /// The pane's own answer to how far back a caller may scroll it: the pane
+    /// shows the end of what it is handed, so a slice shorter than this is a
+    /// pane standing half empty rather than one scrolled back.
+    #[must_use]
+    pub const fn previews(room: usize) -> usize {
+        if room < CHROME + FLOOR {
+            return 0;
+        }
+
+        // The pane's foot stands under the tail rather than over it, so the
+        // rows a session gets are what is left once the foot has been paid
+        // for.
+        (room - CHROME).saturating_sub(FOOTED)
     }
 
     /// The framed line the query is typed into.
@@ -363,8 +383,20 @@ impl Picker<'_> {
                         row
                     }
                     Some(one) if at % PAIRED == 1 => {
+                        let marked = from + at / PAIRED == self.marked;
                         let mut row = Row::new();
                         row.fill(lit(on, Slot::Plain), LEADING);
+
+                        // A refused rename stands where the row's age would:
+                        // it is about the line the reader's hands are on, and
+                        // the age is not what they are reading while a title
+                        // they typed is being refused.
+                        if let Some(refused) = self.refused.filter(|_| marked) {
+                            row.push(lit(on, Slot::Trouble), clip(refused, word).to_owned());
+                            row.fill(lit(on, Slot::Plain), inside);
+                            return row;
+                        }
+
                         let aged = if one.branch.is_empty() {
                             one.when.to_owned()
                         } else {

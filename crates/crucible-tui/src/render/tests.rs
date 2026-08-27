@@ -337,6 +337,27 @@ fn crossing_from_the_command_target_to_the_transcript_map_waits_for_one_foot_fra
 }
 
 #[test]
+fn a_panel_that_fills_the_room_keeps_its_last_row() {
+    // The row under the box is the session's for the whole of its run, so the
+    // height a panel is laid out into is not the window's. A panel handed the
+    // window's own height loses its bottom row — which is the row every one of
+    // them says which keys it answers to on.
+    let mut drawn = Drawn::new(40, 10);
+    drawn.foots().unwrap();
+    drawn.cover_map().unwrap();
+
+    let room = drawn.room();
+    let rows: Vec<Row> = (0..room)
+        .map(|at| Row::new().then(Slot::Plain, format!("row {at}")))
+        .collect();
+    drawn.under(&rows, None, Palette::plain()).unwrap();
+
+    let last = format!("row {}", room - 1);
+    let said = drawn.screen().said();
+    assert!(said.iter().any(|row| row == &last), "{said:?}");
+}
+
+#[test]
 fn taking_a_standing_row_back_takes_it_off_the_screen() {
     let mut drawn = Drawn::new(40, 10);
     drawn.under(&standing(), None, Palette::plain()).unwrap();

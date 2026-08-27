@@ -62,10 +62,10 @@ const SHOWN: usize = 9;
 /// Both halves named, because the query is matched against both and nothing on
 /// screen says which one a match came off. Somebody who only knew it searched
 /// titles would never try a branch's name in it.
-const HINT: &str = "a title, or a branch";
+const HINT: &str = "a session, or a branch";
 
 /// What the preview pane says where the query left nothing to preview.
-const NOVIEW: &str = "nothing to preview";
+const NOVIEW: &str = "nothing to show";
 
 /// How many drawn rows of one session the pane keeps.
 ///
@@ -75,8 +75,30 @@ const NOVIEW: &str = "nothing to preview";
 /// thousands of rows.
 const KEPT: usize = 256;
 
-/// What Enter does, said under the marked session's metadata.
-const TAKES: &str = "enter to resume";
+/// What Enter does and what Escape does, said under the marked session's
+/// metadata.
+///
+/// Both keys, because this line is under the reader's eyes while they decide,
+/// and the way out is half of that decision.
+const TAKES: &str = "Enter to resume · Esc to cancel";
+
+/// What a workspace nothing was ever recorded in says.
+const NEVER: &str = "no earlier session for this workspace";
+
+/// What a preview says where the bounded read did not reach the whole log.
+///
+/// Words rather than a mark: what is missing is the earlier part of the
+/// conversation, and a bare ellipsis over the first row leaves a reader to
+/// guess whether it stands for that or for a sentence that was clipped.
+const CUT: &str = "the rest could not be read";
+
+/// What a rename Enter refused for having nothing in it says, under the row
+/// the title was being typed on.
+///
+/// A session with no title falls back to its first prompt, so an empty rename
+/// could not stick — and saying so where the reader's hands are beats keeping
+/// the old name without a word.
+const REFUSED: &str = "a title cannot be empty";
 
 /// What is said where the picker was left with nothing taken.
 const LEFT: &str = "cancelled, no session picked up";
@@ -221,10 +243,7 @@ fn offered<T: Terminal>(
     let columns = renderer.columns();
 
     if listed.is_empty() {
-        let rows = [Row::new().then(
-            Slot::Quiet,
-            clip("nothing has been worked on here yet", columns),
-        )];
+        let rows = [Row::new().then(Slot::Quiet, clip(NEVER, columns))];
         renderer.present(&rows)?;
         return Ok(None);
     }
@@ -286,8 +305,6 @@ fn stood<T: Terminal>(
     let now = SystemTime::now();
     let total = listed.len();
     let root = terms.workspace.root().display().to_string();
-    let empty = nothing(glyphs);
-    let (long, short) = keys(glyphs);
 
     let mut stood = Stood {
         standing: finding::Standing {
@@ -416,18 +433,14 @@ fn stood<T: Terminal>(
                 None => (&[], String::new()),
             };
 
-            stood.standing.over = full.len().saturating_sub(1);
+            stood.standing.over = furthest(full.len(), room);
             stood.standing.behind = stood.standing.behind.min(stood.standing.over);
             let end = full.len().saturating_sub(stood.standing.behind);
             let windowed = full.get(..end).unwrap_or_default();
 
-            let heading = format!(
-                "{} of {} sessions {} {}",
-                stood.standing.found.len(),
-                total,
-                glyphs.dot(),
-                root
-            );
+            let heading = heading(stood.standing.found.len(), total, &root, glyphs);
+            let empty = nothing(stood.standing.query.text());
+            let (long, short) = keys(glyphs, !stood.standing.found.is_empty());
 
             let typed = stood
                 .standing
@@ -443,6 +456,7 @@ fn stood<T: Terminal>(
                 sessions: &kept,
                 marked: stood.standing.marked,
                 renaming: stood.standing.renaming.as_ref().map(Editor::text),
+                refused: stood.standing.refused.then_some(REFUSED),
                 preview: windowed,
                 preview_meta: &meta_line,
                 takes: TAKES,
@@ -562,10 +576,18 @@ fn saved(title: &str, id: &SessionId, directory: &Path, workspace: &Workspace) -
 fn meta(session: &Recorded, held: Option<&Glimpse>, now: SystemTime, glyphs: Glyphs) -> String {
     let count = session.messages();
 
-    let mut parts = vec![
-        when::ago(session.started(), now),
-        format!("{count} message{}", if count == 1 { "" } else { "s" }),
-    ];
+    let mut parts = vec![when::ago(session.started(), now)];
+
+    // Nought is what the index holds for a session that has not ended since
+    // there were counts to hold, rather than a session nobody said anything
+    // in — and a count of none over a pane full of conversation is the one
+    // part of this line that could be wrong. Left out instead.
+    if count > 0 {
+        parts.push(format!(
+            "{count} message{}",
+            if count == 1 { "" } else { "s" }
+        ));
+    }
 
     if let Some(branch) = session.branch() {
         parts.push(branch.to_owned());
@@ -594,38 +616,66 @@ fn previewed(held: &Glimpse, against: &replaying::Replay<'_>, room: usize) -> Ve
     let mut rows = replaying::glimpsed(held.messages(), against, room, KEPT).unwrap_or_default();
 
     if held.cut() {
-        rows.insert(
-            0,
-            Row::new().then(Slot::Quiet, against.style.glyphs().ellipsis().to_owned()),
-        );
+        rows.insert(0, Row::new().then(Slot::Quiet, clip(CUT, room)));
     }
 
     rows
 }
 
-/// What the list says where the query left nothing on it.
+/// How far back the preview window may stand over a tail of `rows`, in a
+/// window `room` rows tall.
 ///
-/// The way out is named beside the fact, because an empty pane under a line
-/// with words in it is the one place here where a reader can be stuck without
-/// knowing which key gets them out. Built from the glyph set for the dash: a
-/// terminal without one draws a hollow square in the middle of the sentence.
-fn nothing(glyphs: Glyphs) -> String {
-    format!("nothing matches {} backspace to widen it", glyphs.dash())
+/// The pane shows the end of the slice it is handed, so scrolling back is
+/// handing it a shorter one — and a slice shorter than the pane is a pane
+/// standing half empty rather than one scrolled back. The floor is therefore
+/// the pane's own count, which it is the pane's to say.
+fn furthest(rows: usize, room: usize) -> usize {
+    rows.saturating_sub(Picker::previews(room))
 }
 
-/// The keys row, long and short.
+/// The line over the panes: what this is, how much of the list the query left,
+/// and which directory the sessions were recorded in.
+///
+/// The lead says what the screen is for, because a picker that opens on a
+/// count alone reads as a report on sessions rather than as a way into one.
+fn heading(found: usize, total: usize, root: &str, glyphs: Glyphs) -> String {
+    let dot = glyphs.dot();
+    format!("Resume a session {dot} {found} of {total} {dot} {root}")
+}
+
+/// What the list says where the query left nothing on it.
+///
+/// The query is quoted back rather than described, because what a reader
+/// checks first is whether the thing they typed is the thing they meant to
+/// type.
+fn nothing(query: &str) -> String {
+    format!("no session holds \"{query}\"")
+}
+
+/// The keys row, long and short, for a list with something on it or without.
 ///
 /// Built rather than written down, because the arrows in it are the setting's:
 /// a terminal without them draws hollow squares on the one row that exists to
 /// be read by somebody who does not yet know. The short form is what a window
 /// with no room for the long one gets — the same keys, without the words
 /// saying what each of them moves.
-fn keys(glyphs: Glyphs) -> (String, String) {
+///
+/// A list the query left empty is offered neither, because there is nothing to
+/// walk to and nothing to rename: what is left to do is narrow the query or
+/// leave, and a row naming keys that do nothing is worse than a shorter one.
+fn keys(glyphs: Glyphs, listed: bool) -> (String, String) {
     let (up, down) = glyphs.walking();
     let dot = glyphs.dot();
 
+    if !listed {
+        let said = format!("type to narrow {dot} esc to cancel");
+        return (said.clone(), said);
+    }
+
     (
-        format!("{up}{down} session {dot} enter resumes {dot} ctrl+r renames {dot} esc to cancel"),
+        format!(
+            "{up}{down} to walk {dot} ctrl+r to rename {dot} type to search {dot} esc to cancel"
+        ),
         format!("{up}{down} {dot} enter {dot} ctrl+r {dot} esc"),
     )
 }

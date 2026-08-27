@@ -64,6 +64,7 @@ fn picker<'a>(sessions: &'a [Kept<'a>], preview: &'a [Row]) -> Picker<'a> {
         sessions,
         marked: 4,
         renaming: None,
+        refused: None,
         preview,
         preview_meta: "17 hours ago · 7 messages · main",
         takes: "Enter to resume · Esc to cancel",
@@ -213,6 +214,27 @@ fn each_pane_stands_in_its_own_rounded_frame() {
 }
 
 #[test]
+fn a_rename_that_was_refused_says_so_where_the_title_is_being_typed() {
+    // In place, under the row being renamed, rather than anywhere the reader
+    // would have to look away to find: what was refused is the line their
+    // hands are on, and the row's age is not what they are reading right now.
+    let preview = tail();
+    let mut picker = picker(&FIVE, &preview);
+    picker.renaming = Some("");
+    picker.refused = Some("a title cannot be empty");
+
+    let drawn = picture(&picker.within(100, 30, Glyphs::Unicode), 100);
+    assert!(
+        drawn.contains("<Trouble>a title cannot be empty</>"),
+        "the refusal is not on the row: {drawn}"
+    );
+    assert!(
+        !drawn.contains("17 hours ago · main"),
+        "the age still stands where the refusal is: {drawn}"
+    );
+}
+
+#[test]
 fn the_preview_shows_the_end_of_what_it_was_handed() {
     // What a reader opens a session to learn is how it finished. Handed more
     // rows than the pane has room for, the tail is what survives.
@@ -224,6 +246,50 @@ fn the_preview_shows_the_end_of_what_it_was_handed() {
     let drawn = picture(&rows, 100);
     assert!(drawn.contains("line 39"), "the tail is missing:\n{drawn}");
     assert!(!drawn.contains("line 0\n"), "drawn from the top:\n{drawn}");
+}
+
+#[test]
+fn the_pane_says_how_many_rows_of_a_session_it_shows() {
+    // What a caller scrolling the preview needs to know: handed fewer rows
+    // than this the pane cannot fill, so shortening the slice past it empties
+    // the pane instead of scrolling it. Read off what the pane actually drew,
+    // rather than trusted — the two are one fact or the reader loses rows.
+    let preview: Vec<Row> = (0..80)
+        .map(|line| Row::new().then(Slot::Plain, format!("line {line}")))
+        .collect();
+
+    for room in [CHROME + FLOOR, 14, 20, 30, 60] {
+        let rows = picker(&FIVE, &preview).within(100, room, Glyphs::Unicode);
+        let drawn = picture(&rows, 100)
+            .lines()
+            .filter(|line| line.contains("line "))
+            .count();
+        assert_eq!(Picker::previews(room), drawn, "in room for {room}");
+    }
+}
+
+#[test]
+fn a_pane_handed_exactly_what_it_shows_has_no_blank_left_over_the_rule() {
+    // The row under the last of a session's rows is the rule of the foot, and
+    // nothing between them: a gap there is the pane half empty while the
+    // reader is still wheeling back through a tail that has more.
+    let room = 30;
+    let preview: Vec<Row> = (0..Picker::previews(room))
+        .map(|line| Row::new().then(Slot::Plain, format!("line {line}")))
+        .collect();
+
+    let rows = picker(&FIVE, &preview).within(100, room, Glyphs::Unicode);
+    let drawn = picture(&rows, 100);
+    let last = format!("line {}", Picker::previews(room) - 1);
+    let at = drawn
+        .lines()
+        .position(|line| line.contains(&last))
+        .expect("the last row of the tail");
+    let under = drawn.lines().nth(at + 1).expect("the row under it");
+    assert!(
+        under.contains('─'),
+        "a blank stands over the rule: {under:?}"
+    );
 }
 
 #[test]
