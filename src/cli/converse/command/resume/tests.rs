@@ -194,10 +194,7 @@ fn a_directory_nothing_was_recorded_in_says_so() {
 
     let written = resuming("", &sample, &mut runner);
 
-    assert!(
-        written.contains("nothing has been worked on here yet"),
-        "{written}"
-    );
+    assert!(written.contains(NEVER), "{written}");
 }
 
 #[test]
@@ -629,6 +626,38 @@ fn wheeling_the_preview_back_never_empties_the_pane() {
     // A tail no longer than the pane has nothing to wheel back through.
     assert_eq!(furthest(shows, room), 0);
     assert_eq!(furthest(shows / 2, room), 0);
+}
+
+#[test]
+fn the_picker_says_the_words_it_was_drawn_to_say() {
+    // The component draws whatever words it is handed, and its own tests hand
+    // it the design's. These are the ones a reader gets, so they are asserted
+    // where they are written down rather than where they are drawn.
+    let glyphs = Glyphs::Unicode;
+
+    assert_eq!(HINT, "a session, or a branch");
+    assert_eq!(NOVIEW, "nothing to show");
+    assert_eq!(TAKES, "Enter to resume · Esc to cancel");
+    assert_eq!(NEVER, "no earlier session for this workspace");
+    assert_eq!(CUT, "the rest could not be read");
+
+    assert_eq!(nothing("deploy"), "no session holds \"deploy\"");
+    assert_eq!(
+        heading(5, 5, "/w", glyphs),
+        "Resume a session · 5 of 5 · /w"
+    );
+
+    let (walking, _) = keys(glyphs, true);
+    assert_eq!(
+        walking,
+        "↑↓ to walk · ctrl+r to rename · type to search · esc to cancel"
+    );
+
+    // With nothing on the list there is nothing to walk to and nothing to
+    // rename: what is left to do is narrow the query, or leave.
+    let (narrowing, short) = keys(glyphs, false);
+    assert_eq!(narrowing, "type to narrow · esc to cancel");
+    assert_eq!(short, narrowing);
 }
 
 #[test]
