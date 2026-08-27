@@ -1,0 +1,185 @@
+//! The end of one session's log, as much of it as a preview pane wants.
+//!
+//! A third read, beside [`super::recent`]'s first line and [`super::replay`]'s
+//! everything, for a third reason: somebody is deciding whether to pick a
+//! session back up, and what says most about one is how it left off. The read
+//! is bounded from the end of the file, so a log of any size costs the same —
+//! and a glimpse that could not hold the whole conversation says so, rather
+//! than reading as all there was.
+//!
+//! The glimpse also answers the one question a picker cannot ask any other
+//! way without consequences: whether another crucible still holds the log
+//! open. Continuing a session cuts its file, so the picker has to know before
+//! Enter, not after.
+
+use std::fs::File;
+use std::io::{Read as _, Seek as _, SeekFrom};
+use std::path::Path;
+
+use crucible_core::{Message, SessionId, Workspace};
+
+use super::wire;
+
+/// How much of the end of one log may be read.
+///
+/// Enough conversation to fill any pane many times over, and small enough
+/// that the read costs the same for a log of half a line or half a gigabyte.
+const TAIL: u64 = 64 * 1024;
+
+/// The end of one session's conversation, and what else a picker needs to
+/// know before offering to continue it.
+#[derive(Debug)]
+pub struct Glimpse {
+    /// The last things said, oldest first.
+    said: Vec<Said>,
+    /// Whether the log holds conversation this glimpse does not — an earlier
+    /// part past the window, or an end that could not be read whole.
+    cut: bool,
+    /// Whether another crucible holds the session open right now.
+    busy: bool,
+}
+
+impl Glimpse {
+    /// The last things said, oldest first.
+    #[must_use]
+    pub fn said(&self) -> &[Said] {
+        &self.said
+    }
+
+    /// Whether the log holds conversation this glimpse does not.
+    ///
+    /// What is shown under a glimpse with this set has to say it is
+    /// incomplete: a bounded read that reads as everything is a lie about the
+    /// session it previews.
+    #[must_use]
+    pub fn cut(&self) -> bool {
+        self.cut
+    }
+
+    /// Whether another crucible holds the session open right now.
+    #[must_use]
+    pub fn busy(&self) -> bool {
+        self.busy
+    }
+}
+
+/// One thing somebody or something said, near the end of a session.
+#[derive(Debug)]
+pub struct Said {
+    /// Whether the user said it; the model otherwise.
+    user: bool,
+    /// What was said, with nothing in it a terminal would act on.
+    text: Box<str>,
+}
+
+impl Said {
+    /// Whether the user said it; the model otherwise.
+    #[must_use]
+    pub fn user(&self) -> bool {
+        self.user
+    }
+
+    /// What was said. Line breaks survive; control characters do not.
+    #[must_use]
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+}
+
+/// The end of the session `id` names, read without touching the log.
+///
+/// # Errors
+///
+/// [`super::SessionError::Unknown`] where this workspace has no such session,
+/// and [`super::SessionError`] where what is there cannot be opened.
+pub fn glimpse(
+    directory: &Path,
+    workspace: &Workspace,
+    id: &SessionId,
+) -> Result<Glimpse, super::SessionError> {
+    // The same door `/resume` uses, refused the same way: naming a session is
+    // a shorter way to reach one, not a way past whose it is.
+    let path = directory.join(format!("{}.{}", id.as_str(), super::SUFFIX));
+
+    if !path.is_file() || !super::belongs(&path, workspace)? {
+        return Err(super::SessionError::Unknown {
+            id: id.as_str().into(),
+            at: workspace.root().display().to_string().into(),
+        });
+    }
+
+    // Taken and let go rather than held: the question is whether anybody else
+    // holds it, and a glimpse keeping the claim would be the picker doing the
+    // thing it exists to warn about.
+    let busy = match super::claimed(&path)? {
+        super::Claimed::Busy => true,
+        super::Claimed::Taken(held) => {
+            drop(held);
+            false
+        }
+        super::Claimed::Lockless => false,
+    };
+
+    let failed = |source| super::SessionError::Log {
+        at: path.display().to_string().into(),
+        source,
+    };
+
+    let mut file = File::open(&path).map_err(failed)?;
+    let length = file.seek(SeekFrom::End(0)).map_err(failed)?;
+    let start = length.saturating_sub(TAIL);
+    file.seek(SeekFrom::Start(start)).map_err(failed)?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).map_err(failed)?;
+
+    // Lossy because the window can open in the middle of a multi-byte
+    // character; the piece it lands in is dropped below anyway.
+    let text = String::from_utf8_lossy(&bytes);
+
+    let mut cut = start > 0;
+    let mut pieces: Vec<&str> = text.split('\n').collect();
+
+    // A last piece with no newline after it is a line a crash tore in half.
+    // Left out rather than parsed, and said so: half a line is not something
+    // anybody said.
+    match pieces.pop() {
+        Some("") | None => {}
+        Some(_) => cut = true,
+    }
+
+    let mut said = Vec::new();
+    for piece in pieces.into_iter().skip(usize::from(start > 0)) {
+        // The header, tool results, and any line a different build wrote all
+        // parse to nothing a preview shows; only the conversation survives.
+        match wire::message(piece) {
+            Some(Message::User { text, .. }) => said.push(Said {
+                user: true,
+                text: cleaned(&text),
+            }),
+            Some(Message::Agent { text, .. }) => {
+                let text = cleaned(&text);
+                if !text.is_empty() {
+                    said.push(Said { user: false, text });
+                }
+            }
+            Some(Message::ToolResults(_)) | None => {}
+        }
+    }
+
+    Ok(Glimpse { said, cut, busy })
+}
+
+/// `text` with nothing in it a terminal would act on.
+///
+/// The glimpse goes straight to a screen, and a file on disk can claim
+/// anything. Line breaks are the one control character that means what the
+/// preview means by it.
+fn cleaned(text: &str) -> Box<str> {
+    text.chars()
+        .filter(|c| *c == '\n' || !c.is_control())
+        .collect::<String>()
+        .into()
+}
+
+#[cfg(test)]
+mod tests;

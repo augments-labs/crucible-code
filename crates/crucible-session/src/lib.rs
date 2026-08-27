@@ -10,4 +10,7 @@ mod session;
 #[cfg(test)]
 mod sample;
 
-pub use session::{PROMPTS, Recorded, Session, SessionError, prompts, recent, remember, retitle};
+pub use session::{
+    Glimpse, PROMPTS, Recorded, Said, Session, SessionError, glimpse, prompts, recent, remember,
+    retitle,
+};

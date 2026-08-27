@@ -28,6 +28,7 @@ use crucible_core::{Calibration, Message, SessionId, Transcript, Workspace};
 
 mod beside;
 mod claim;
+mod glimpse;
 mod index;
 mod log;
 mod privacy;
@@ -37,6 +38,7 @@ mod replay;
 mod wire;
 
 use claim::{Claim, Claimed, claim};
+pub use glimpse::{Glimpse, Said, glimpse};
 use log::{Trouble, make, open, shorten};
 pub use prompts::{PROMPTS, prompts, remember};
 pub use recent::{Recorded, recent};
