@@ -242,6 +242,23 @@ impl Picker<'_> {
         Some(beside.saturating_sub(1))
     }
 
+    /// How many rows of a session the preview pane shows in this room.
+    ///
+    /// The pane's own answer to how far back a caller may scroll it: the pane
+    /// shows the end of what it is handed, so a slice shorter than this is a
+    /// pane standing half empty rather than one scrolled back.
+    #[must_use]
+    pub const fn previews(room: usize) -> usize {
+        if room < CHROME + FLOOR {
+            return 0;
+        }
+
+        // The pane's foot stands under the tail rather than over it, so the
+        // rows a session gets are what is left once the foot has been paid
+        // for.
+        (room - CHROME).saturating_sub(FOOTED)
+    }
+
     /// The framed line the query is typed into.
     ///
     /// The one frame here that changes colour, and for the one reason a reader

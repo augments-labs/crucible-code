@@ -416,7 +416,7 @@ fn stood<T: Terminal>(
                 None => (&[], String::new()),
             };
 
-            stood.standing.over = full.len().saturating_sub(1);
+            stood.standing.over = furthest(full.len(), room);
             stood.standing.behind = stood.standing.behind.min(stood.standing.over);
             let end = full.len().saturating_sub(stood.standing.behind);
             let windowed = full.get(..end).unwrap_or_default();
@@ -601,6 +601,17 @@ fn previewed(held: &Glimpse, against: &replaying::Replay<'_>, room: usize) -> Ve
     }
 
     rows
+}
+
+/// How far back the preview window may stand over a tail of `rows`, in a
+/// window `room` rows tall.
+///
+/// The pane shows the end of the slice it is handed, so scrolling back is
+/// handing it a shorter one — and a slice shorter than the pane is a pane
+/// standing half empty rather than one scrolled back. The floor is therefore
+/// the pane's own count, which it is the pane's to say.
+fn furthest(rows: usize, room: usize) -> usize {
+    rows.saturating_sub(Picker::previews(room))
 }
 
 /// What the list says where the query left nothing on it.

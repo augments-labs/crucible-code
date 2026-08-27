@@ -227,6 +227,50 @@ fn the_preview_shows_the_end_of_what_it_was_handed() {
 }
 
 #[test]
+fn the_pane_says_how_many_rows_of_a_session_it_shows() {
+    // What a caller scrolling the preview needs to know: handed fewer rows
+    // than this the pane cannot fill, so shortening the slice past it empties
+    // the pane instead of scrolling it. Read off what the pane actually drew,
+    // rather than trusted — the two are one fact or the reader loses rows.
+    let preview: Vec<Row> = (0..80)
+        .map(|line| Row::new().then(Slot::Plain, format!("line {line}")))
+        .collect();
+
+    for room in [CHROME + FLOOR, 14, 20, 30, 60] {
+        let rows = picker(&FIVE, &preview).within(100, room, Glyphs::Unicode);
+        let drawn = picture(&rows, 100)
+            .lines()
+            .filter(|line| line.contains("line "))
+            .count();
+        assert_eq!(Picker::previews(room), drawn, "in room for {room}");
+    }
+}
+
+#[test]
+fn a_pane_handed_exactly_what_it_shows_has_no_blank_left_over_the_rule() {
+    // The row under the last of a session's rows is the rule of the foot, and
+    // nothing between them: a gap there is the pane half empty while the
+    // reader is still wheeling back through a tail that has more.
+    let room = 30;
+    let preview: Vec<Row> = (0..Picker::previews(room))
+        .map(|line| Row::new().then(Slot::Plain, format!("line {line}")))
+        .collect();
+
+    let rows = picker(&FIVE, &preview).within(100, room, Glyphs::Unicode);
+    let drawn = picture(&rows, 100);
+    let last = format!("line {}", Picker::previews(room) - 1);
+    let at = drawn
+        .lines()
+        .position(|line| line.contains(&last))
+        .expect("the last row of the tail");
+    let under = drawn.lines().nth(at + 1).expect("the row under it");
+    assert!(
+        under.contains('─'),
+        "a blank stands over the rule: {under:?}"
+    );
+}
+
+#[test]
 fn below_the_fold_the_preview_folds_away_and_the_list_takes_every_column() {
     // Two panes under seventy columns leave neither side room for a sentence.
     // What must not survive the fold is any piece of the preview: its rows,

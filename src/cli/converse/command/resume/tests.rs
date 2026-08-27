@@ -611,6 +611,27 @@ fn a_preview_is_drawn_for_the_pane_the_window_leaves_it() {
 }
 
 #[test]
+fn wheeling_the_preview_back_never_empties_the_pane() {
+    // The pane shows the end of the slice it is handed, so a window allowed
+    // to shrink past the pane is a pane going blank under a reader who is
+    // only wheeling back through a tail that has more.
+    let room = 30;
+    let shows = Picker::previews(room);
+    assert!(shows > 0, "a window this tall keeps the pane");
+
+    let behind = furthest(shows + 12, room);
+    assert_eq!(
+        shows + 12 - behind,
+        shows,
+        "the pane stands short of full at its furthest back"
+    );
+
+    // A tail no longer than the pane has nothing to wheel back through.
+    assert_eq!(furthest(shows, room), 0);
+    assert_eq!(furthest(shows / 2, room), 0);
+}
+
+#[test]
 fn the_meta_line_counts_the_messages_and_names_the_branch() {
     // One line under the preview: age, count and branch. The count is spelled
     // singular where it is one, because "1 messages" is the kind of line that
