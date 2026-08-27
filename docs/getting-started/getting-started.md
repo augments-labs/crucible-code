@@ -680,7 +680,7 @@ session.
 | `/logout` | Signs out from your provider account |
 | `/mode` | The [permission mode](../permissions/modes.md) in force, or the one you name |
 | `/theme` | Picks the colours crucible draws with, and the one code is drawn in |
-| `/resume` | Lists what was worked on in this directory, and picks one back up |
+| `/resume` | Stands what was worked on in this directory beside a preview of it, and picks one back up |
 | `/compact` | Replaces what is behind you with the model's own notes on it, making room |
 | `/clear` | Starts a new session, leaving this one on `/resume` |
 | `/exit` | Ends the session |
@@ -801,23 +801,67 @@ something a session decided. The screen empties too, down to the welcome card
 a fresh start draws: the one you left is read back with `/resume` rather than
 by scrolling into it.
 
-`/resume` lists this directory's last nine [sessions](../sessions/sessions.md),
-newest first, each numbered and shown with when it started and what it was first
-asked:
+`/resume` stands this directory's [sessions](../sessions/sessions.md) over the
+whole shell: a search line across the top, the sessions in one pane newest
+first, and the end of whichever one is marked drawn in the other.
 
 ```
-1  just now      rename the parser's error type
-2  2 hours ago   why does the grep tool miss hidden files
-3  yesterday     add a --json flag to the report command
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ Search    a title, or a branch                                               │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ 3 of 12 sessions · /home/you/code/my-project
+
+╭──────────────────────────────╮ ╭─────────────────────────────────────────────╮
+│ › rename the parser error    │ │ › rename the parser error type              │
+│   just now · fix/parser      │ │                                             │
+│                              │ │ ● Reading the parser to see what the error  │
+│   grep misses hidden files   │ │   type is called now.                       │
+│   2 hours ago · main         │ │                                             │
+│                              │ │ ● Read(src/parse/error.rs)                  │
+│   add --json to the report   │ │   └ 84 lines                                │
+│   yesterday · feature/json   │ │                                             │
+│                              │ │ ● Renamed ParseFailure to ParseError, and   │
+│                              │ │   its three call sites. cargo test passes.  │
+│                              │ │ ────────────────────────────────────────────│
+│                              │ │ just now · 7 messages · fix/parser          │
+│                              │ │ enter to resume                             │
+╰──────────────────────────────╯ ╰─────────────────────────────────────────────╯
+
+ ↑↓ session · enter resumes · ctrl+r renames · esc to cancel
 ```
 
-`/resume 2` picks that one up. The session you were in is closed — its log is
-finished and stays readable — and the one you named becomes the session this
-crucible is recording to, with everything already in it back in the transcript.
-The plan comes back with it, standing over the box where it stood, because the
-call that wrote it is in the transcript being replayed. The number is the row on
-the list you were just shown, so read it again if something else has been
-recorded here since.
+Type to narrow the list. The line is matched against a session's title *and* the
+branch it was recorded on, and does not ask which of the two it was just given —
+`parser` and `fix/` both leave the first row above. The up and down arrows walk
+what is left, and the preview follows the mark: it is drawn by the code that
+draws the live transcript, so the prompts, the calls, the rows results came back
+on and the model's prose are what picking that session up would put back on
+screen. Under it are the session's age, how many messages are in it, its branch,
+and a note where another crucible still has it open. The wheel scrolls whichever
+pane the pointer is over, so a preview can be read back past its last rows, and
+a window too narrow to split folds the preview away and gives the list every
+column.
+
+<kbd>Enter</kbd> picks up the marked session. The one you were in is closed —
+its log is finished and stays readable — and the one you took becomes the
+session this crucible is recording to, with everything already in it back in the
+transcript. The plan comes back with it, standing over the box where it stood,
+because the call that wrote it is in the transcript being replayed.
+
+<kbd>Ctrl+R</kbd> renames the marked session where its title stands, and Enter
+saves it: that is the title the list shows from then on, here and in every later
+run. <kbd>Escape</kbd> steps back one layer at a time — out of a rename, then
+out of a query, then off the screen having picked up nothing.
+
+`/resume <id>` skips the picker and takes that session directly. The id is the
+one the parting message prints and the one `crucible --resume` takes, so a
+session named there can be picked up here without looking for it. Anything else
+after `/resume` is not read as a search: it says no session here is called that,
+and stands the picker so you can go and find it.
+
+A run with no keyboard — input redirected from a file — has nothing to walk, so
+it gets a numbered list of the last nine sessions instead, each row carrying the
+whole id `/resume` and `--resume` take.
 
 Two things are worth knowing before you switch. The [permission
 mode](../permissions/modes.md) comes with you, but what you allowed *for the

@@ -9,11 +9,11 @@ The screen crucible opens with lists the last few sessions started in the
 current directory, newest first, each one showing what it was first asked and
 how long ago it began. A directory nobody has worked in says so instead.
 
-The list is short on purpose, and so is the work behind it: crucible reads the
-names in its sessions directory to put them in order — a session's name carries
-the time it started — and opens only the newest handful of files it finds
-there. A machine that has held crucible for a year opens the same number as one
-that installed it this morning.
+The list is short on purpose, and so is the work behind it: the names come from
+a small index kept beside the logs, already in the order the sessions were
+started, and only the newest handful of the files it names are opened. A machine
+that has held crucible for a year opens the same number as one that installed it
+this morning.
 
 Only sessions that were asked something appear. Starting crucible and leaving
 without typing records a file with no turns in it, and there is no row to draw
@@ -25,12 +25,14 @@ crucible draws on a screen it borrows from the terminal and hands back when it
 ends, so what you scroll up to afterwards is the shell you started from. The
 transcript is not in the terminal's scrollback and never was.
 
-What crucible writes on its way out is a line naming the file the transcript is
-in, a line saying `crucible --continue` picks the session up, and a
-`crucible --resume` command naming this exact session — the one that still works
-after another session has been started in the same directory. Where the log
-stopped being written part-way through, that first line says so beside the
-file — a transcript missing its tail is never handed over as a whole one.
+What crucible writes on its way out is two lines: how to come back, and the
+`crucible --resume` command naming this exact session. That command still works
+after another session has been started in the same directory, and the id in it
+is the one thing about the session the screen never said — everything else it
+drew is in the scrollback the shell has just been handed back. Where the log
+stopped being written part-way through, a line above them says so and names the
+file, because that was reported on a screen which no longer exists and a
+transcript missing its tail should not be opened later as a whole one.
 
 Nothing is written where crucible had no screen to borrow, which is every run
 whose input or output is not a terminal. Nothing was hidden from you in one, so
@@ -100,15 +102,46 @@ A log that stops between a tool call and its result is the one case where the
 last recorded turn does not come back: an unanswered question is not something
 to send a provider, so the replay ends before it and the file is cut to match.
 
+## Picking one by name
+
+```bash
+crucible --resume 019854c2-9a1e-73f1-b0d6-2f1c4e7a58d1
+```
+
+Every session has an id, and that id is the whole of how a session is named: the
+parting message prints it, `/resume` takes it, and this flag takes it. Where
+`--continue` asks for whichever session is newest here, this asks for one exact
+session, which is what makes it survive somebody starting another one in the
+same directory in the meantime.
+
+The id carries the millisecond the session began, so a directory of logs is
+already in the order it was worked in. Sessions recorded before this shape of id
+was minted are named differently and are still listed, previewed and picked up
+exactly as these are: a listing orders them by the time inside the name rather
+than by the name, so a directory holding both kinds is still one timeline, and
+nothing has to be renamed to stay reachable.
+
+An id nothing here was recorded under is refused by name, rather than being
+taken for the nearest thing to it. Everything `--continue` does with the log it
+reads, this does with the log it names.
+
 ## Switching without restarting
 
-`/resume` shows the same list the opening screen does — this directory's last
-nine sessions, newest first, numbered — and picking a number off it changes
-which session the crucible you are in is recording to. It reads a log the way
+`/resume` stands this directory's sessions over the shell — a search line, the
+sessions beside a preview of the marked one — and taking one changes which
+session the crucible you are in is recording to. `/resume <id>` takes that
+session without standing anything. Either way it reads a log the way
 `--continue` reads one, and everything above applies to it: the transcript comes
 back, the file is cut to what was replayed before anything new is appended, a
 log this build cannot read is refused rather than half-understood, and a session
-another crucible has open is not available.
+another crucible has open is not available — the picker says so on the marked
+session's own line rather than waiting for Enter to find out.
+
+The preview is that log read from its end and drawn by the code that draws the
+live transcript, so what the pane shows is what taking the session would leave
+on the screen. It is a read of the tail rather than of the file: a session too
+long for it opens on a mark saying so, so the first words on the pane are not
+mistaken for the first words of the session.
 
 What is different is the session being left. It is finished here rather than
 when the process ends, so its log is complete and can be continued from
@@ -126,6 +159,12 @@ belonged to is still on disk, and picking it back up is how you read it again.
 
 The one session `/resume` will not pick up is the one you are in. It says so,
 rather than reporting the claim it would find on that file as another crucible's.
+
+Renaming a session with <kbd>Ctrl+R</kbd> saves the title beside the logs rather
+than in one, so it survives the picker being closed and this crucible ending. It
+changes what the session is called and nothing about what is in it: the
+transcript, the id and the log file are untouched, and a name cleared back to
+nothing goes back to being the session's first prompt.
 
 ## What comes back looks like what you left
 
@@ -161,9 +200,10 @@ Continuing a session cuts its log back to what was replayed, so without this the
 second crucible would delete the turns the first had already written and still
 believes are there, and both would append to one file from then on.
 
-Starting a session is refused only if it cannot find itself a free name — eight tries, each a millisecond and seventy-four bits of randomness. Two crucibles in one directory are two
-sessions, each recording a log of its own — it is only continuing that has to
-pick one, and only continuing that can be told no.
+Starting a session is refused only if it cannot find itself a free name — eight
+tries, each a millisecond and seventy-four bits of randomness. Two crucibles in
+one directory are two sessions, each recording a log of its own — it is only
+continuing that has to pick one, and only continuing that can be told no.
 
 The claim is the operating system's, taken on a `.lock` file beside the log and
 released however the process ends, so a crucible that crashed leaves no session

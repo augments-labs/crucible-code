@@ -10,9 +10,17 @@ change in any release with no deprecation period.
 
 ### Added
 
-- **`--resume <id>` picks up the exact session the id names.** The parting
-  message prints the command beside the transcript path, so the way back to a
-  session survives newer sessions started in the same directory. An id this
+- **`/resume` stands this directory's sessions beside a preview of the one you
+  are on.** Type to narrow the list by title or branch, walk it with the arrows,
+  and the pane beside it draws the end of the marked session the way the live
+  transcript draws it, so what <kbd>Enter</kbd> puts back is what you were just
+  reading. <kbd>Ctrl+R</kbd> renames a session and the name is kept for later
+  runs, <kbd>Esc</kbd> steps out of a rename, then a query, then the screen, and
+  a run with no keyboard still gets the numbered listing.
+
+- **`--resume <id>` picks up the exact session the id names.** crucible prints
+  that command as it ends, so the way back to a session survives newer sessions
+  started in the same directory. An id this
   workspace has no record of is refused by name, and `--resume` and
   `--continue` cannot be asked for together. Session files are now named by
   UUID v7 — still newest-first by name — and sessions recorded by earlier
