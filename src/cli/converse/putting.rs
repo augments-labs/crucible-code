@@ -552,6 +552,7 @@ fn moving(arrived: Pressed, standing: &mut Standing, questions: &[Question]) -> 
         | Pressed::Queue
         | Pressed::Copy
         | Pressed::PasteImage
+        | Pressed::Rename
         | Pressed::Scrolled { .. }
         | Pressed::Dragged { .. }
         | Pressed::Hovered { .. }

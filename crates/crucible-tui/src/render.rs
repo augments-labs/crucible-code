@@ -1272,6 +1272,21 @@ impl<T: Terminal> Renderer<T> {
         self.record.lines()
     }
 
+    /// The last `rows` display rows of what has been drawn, as rows.
+    ///
+    /// What the transcript band would be showing, folded at the width this
+    /// renderer was opened at, for a caller that puts them somewhere this
+    /// renderer does not own. Fewer than asked for where less has been drawn.
+    ///
+    /// It is how a session is shown without being picked up: replayed onto a
+    /// renderer of its own and taken back out here, so a preview of a session
+    /// is drawn by the code that draws the session, down to the mark in front
+    /// of a prompt and the row a cut result was cut on.
+    #[must_use]
+    pub fn tail(&self, rows: usize) -> Vec<Row> {
+        self.record.view(rows)
+    }
+
     /// What is under window row `at`.
     ///
     /// The whole of what a click means. On a screen this process owns, the

@@ -313,6 +313,65 @@ fn the_workspace_a_scan_is_for_is_the_one_it_answers_about() {
 }
 
 #[test]
+fn a_session_says_the_branch_its_header_recorded() {
+    let sample = Sample::new("recent-branch");
+    let id = nth(1);
+    let header = serde_json::json!({
+        "format": wire::FORMAT,
+        "session": id,
+        "workspace": sample.workspace().root().display().to_string(),
+        "branch": "feature/picker",
+    })
+    .to_string();
+    sample.plant(
+        &id,
+        &[
+            header,
+            serde_json::json!({"user": "on a branch"}).to_string(),
+        ],
+    );
+    planted(&sample, &nth(2), &["nowhere in particular"]);
+
+    let offered = offered(&sample, 4);
+
+    let branches: Vec<Option<&str>> = offered.iter().map(Recorded::branch).collect();
+    assert_eq!(branches, [None, Some("feature/picker")]);
+}
+
+#[test]
+fn the_title_is_the_saved_override_or_the_first_prompt() {
+    let sample = Sample::new("recent-title");
+    planted(&sample, &nth(1), &["the words that were typed"]);
+    planted(&sample, &nth(2), &["about to be renamed"]);
+    super::index::ensure(&sample.logs()).expect("the sessions indexed");
+    let renamed: crucible_core::SessionId = nth(2).parse().expect("a session identifier");
+    super::super::retitle(&sample.logs(), &renamed, "the debugging one").expect("the title kept");
+
+    let offered = offered(&sample, 4);
+
+    let titles: Vec<&str> = offered.iter().map(Recorded::title).collect();
+    assert_eq!(titles, ["the debugging one", "the words that were typed"]);
+    assert_eq!(
+        offered.first().map(Recorded::asked),
+        Some("about to be renamed"),
+        "the first prompt stays underneath the saved title"
+    );
+}
+
+#[test]
+fn a_session_says_how_many_messages_the_index_counted() {
+    let sample = Sample::new("recent-messages");
+    planted(&sample, &nth(1), &["count me"]);
+    super::index::ensure(&sample.logs()).expect("the session indexed");
+    let counted: crucible_core::SessionId = nth(1).parse().expect("a session identifier");
+    super::index::tally(&sample.logs(), &counted, 7).expect("the count kept");
+
+    let offered = offered(&sample, 4);
+
+    assert_eq!(offered.first().map(Recorded::messages), Some(7));
+}
+
+#[test]
 fn a_session_that_opened_with_a_file_still_says_what_was_asked() {
     // The row is drawn from the first prompt, and format 6 writes that prompt
     // with a key beside it. A reader that stopped at the shape it knew would

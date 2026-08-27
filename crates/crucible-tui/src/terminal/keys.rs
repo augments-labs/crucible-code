@@ -119,6 +119,13 @@ pub enum Pressed {
     /// the other clipboard shape, whose bytes a terminal does not put into an
     /// editor buffer and whose path may not exist on this machine at all.
     PasteImage,
+    /// Ctrl+R: turn whatever is marked into a line being renamed.
+    ///
+    /// Readline's reverse-search, which the box already answers with the up
+    /// arrow through what was asked before, so the letter is free — and it is
+    /// the one "rename" starts with. A component with nothing to rename reads
+    /// it as any other key it has no use for.
+    Rename,
     /// Escape, pressed on its own rather than opening a sequence.
     Escape,
     /// The up arrow: back one row through whatever is listed above the box.
@@ -452,6 +459,11 @@ fn key_pressed(key: KeyEvent) -> Pressed {
         // the distinct press is therefore available for clipboard image bytes.
         KeyCode::Char('v') if bound => Pressed::PasteImage,
 
+        // Ctrl+R is readline's reverse-search, a want the box already answers
+        // with the up arrow through what was asked before. The letter is free,
+        // and it is the one "rename" starts with.
+        KeyCode::Char('r') if bound => Pressed::Rename,
+
         // A word either way, spelled the three ways the terminals here spell
         // it: control and an arrow on Linux and Windows, alt and an arrow on
         // macOS, and the pair readline has answered to for as long as there
@@ -615,6 +627,14 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_r_arrives_as_the_rename_press() {
+        // Readline spells reverse-search with this letter, and the box answers
+        // that want with the up arrow through what was asked before — so the
+        // letter is free for the component that renames what its mark is on.
+        assert_eq!(meaning(control(KeyCode::Char('r'))), Pressed::Rename);
+    }
+
+    #[test]
     fn a_letter_held_with_shift_as_well_is_not_the_binding_control_alone_is() {
         // Ctrl+Shift+C is the copy every desktop has, and a terminal asked to
         // spell modified keys distinctly forwards it rather than answering it
@@ -675,7 +695,7 @@ mod tests {
         // Its neighbours in that arm, unbound and staying so. Typed as bare
         // characters they would be the letters without the modifier, which is
         // not what was pressed.
-        for letter in ['r', 'x'] {
+        for letter in ['g', 'x'] {
             assert_eq!(
                 meaning(control(KeyCode::Char(letter))),
                 Pressed::Ignored,
@@ -720,7 +740,7 @@ mod tests {
         // The arm that would otherwise have taken Ctrl+J: a letter held with
         // control that this release has given no meaning to is ignored, and
         // reaching one of these arms is what says the newline is above it.
-        assert_eq!(meaning(control(KeyCode::Char('r'))), Pressed::Ignored);
+        assert_eq!(meaning(control(KeyCode::Char('g'))), Pressed::Ignored);
     }
 
     #[test]

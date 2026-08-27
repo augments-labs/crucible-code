@@ -1256,7 +1256,7 @@ fn everything_a_turn_adds_to_the_transcript_is_also_recorded() {
         calling("a", "read", r#"{"path":"x"}"#),
         saying("done"),
     ]);
-    let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
     let mut scripted = Scripted::recording(
         script,
         tools([Fixed::new("read").answering("fn main() {}")]),
@@ -1305,7 +1305,7 @@ fn the_calls_of_a_pass_are_recorded_before_the_tools_run() {
     // calls first costs a line the replay knows how to drop; recording them
     // last costs the work.
     let sample = Sample::new("runner-recorded");
-    let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
     let log = session.path().to_owned();
 
     let mut offered = Tools::new();
@@ -1515,7 +1515,7 @@ fn a_turn_that_was_cut_off_comes_back_from_a_replay_still_cut_off() {
         Delta::Text("as I was say".into()),
         Delta::Stopped(StopReason::OutOfTokens),
     ]]);
-    let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
     let mut scripted = Scripted::recording(script, Tools::new(), Verdict::Allow, session);
 
     scripted.turn("write it all out").unwrap();

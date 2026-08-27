@@ -1361,14 +1361,17 @@ fn parted(went: &Parting) -> String {
 }
 
 #[test]
-fn a_transcript_that_went_with_the_screen_is_named_by_a_path_that_can_be_opened() {
-    // The address is the whole point of the line, and an address cut to the
-    // window is a reader sent nowhere. Every other word here is a sentence and
-    // would survive losing its tail; this one would not.
+fn a_clean_quit_says_only_the_command_that_comes_back() {
+    // The transcript is in the shell's own scrollback, so the two lines here
+    // are the one thing the screen has never shown: the id that resumes this
+    // exact session. Anything more -- the file's path, a second command --
+    // would be noise at the moment the terminal is the shell's again.
     let written = parted(&Parting::Kept(FILE.into()));
 
-    assert!(written.contains(FILE), "{written}");
-    assert!(written.contains("--continue"), "{written}");
+    assert!(written.contains("Resume this session with:"), "{written}");
+    assert!(written.contains("crucible --resume one"), "{written}");
+    assert!(!written.contains("--continue"), "{written}");
+    assert!(!written.contains(".jsonl"), "{written}");
 }
 
 #[test]
@@ -1376,11 +1379,14 @@ fn a_log_that_stopped_recording_says_so_where_it_says_where_the_file_is() {
     // The session said this on the screen it was running on too, and that
     // screen has just been handed back. So the same sentence has to be here,
     // beside the file, or a reader opens a truncated transcript believing it
-    // whole.
+    // whole. The way back still holds -- a truncated log resumes as far as it
+    // reached -- so the resume command stays under the failure.
     let written = parted(&Parting::Lost(FILE.into()));
 
     assert!(written.contains(FILE), "{written}");
     assert!(written.contains("stopped recording"), "{written}");
+    assert!(written.contains("crucible --resume one"), "{written}");
+    assert!(!written.contains("--continue"), "{written}");
 }
 
 #[test]

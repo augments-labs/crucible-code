@@ -25,7 +25,7 @@ use serde_json::{Value, json};
 /// is refused rather than half-understood, which is the difference between
 /// telling the user their session cannot be continued and silently continuing
 /// a different one.
-pub(crate) const FORMAT: u32 = 7;
+pub(crate) const FORMAT: u32 = 8;
 
 /// The formats this build reads, newest first.
 ///
@@ -37,12 +37,14 @@ pub(crate) const FORMAT: u32 = 7;
 /// nothing changed meaning, so a log from either replays whole; what it is
 /// missing is a line saying what its last request carried, and a session with
 /// no such line is a session that measures itself again on its next answer.
+/// Format 7 is, because format 8 only added a branch to the header, and a
+/// header without one already means "branch unknown".
 ///
 /// A format that changed the meaning of a line does not go on this list however
 /// small the change looks. What it would buy is somebody's history; what it
 /// would cost is a session that looks fine and is missing turns, which is the
 /// failure the refusal exists for.
-pub(crate) const READS: &[u32] = &[7, 6, 5, 4, 3];
+pub(crate) const READS: &[u32] = &[8, 7, 6, 5, 4, 3];
 
 /// Whether this build can replay a log written under `format`.
 pub(crate) fn readable(format: u32) -> bool {
@@ -160,13 +162,21 @@ pub(crate) fn measure(line: &str) -> Option<Calibration> {
 }
 
 /// The first line, which says what the file is and what it belongs to.
-pub(crate) fn header(session: &SessionId, workspace: &Path) -> String {
-    json!({
+///
+/// The branch is whatever the caller says the workspace's version control had
+/// checked out when the session began — this crate does not run git, so the
+/// caller that can look supplies it and a caller that cannot passes `None`,
+/// and the key is left off the line rather than written null.
+pub(crate) fn header(session: &SessionId, workspace: &Path, branch: Option<&str>) -> String {
+    let mut value = json!({
         "format": FORMAT,
         "session": session.as_str(),
         "workspace": workspace.display().to_string(),
-    })
-    .to_string()
+    });
+    if let (Some(branch), Some(object)) = (branch, value.as_object_mut()) {
+        object.insert("branch".to_owned(), Value::String(branch.to_owned()));
+    }
+    value.to_string()
 }
 
 /// What a header says, or `None` if this is not one.
@@ -176,6 +186,10 @@ pub(crate) fn opening(line: &str) -> Option<Opening> {
     Some(Opening {
         format: u32::try_from(value.get("format")?.as_u64()?).ok()?,
         workspace: value.get("workspace")?.as_str()?.to_owned(),
+        branch: value
+            .get("branch")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
     })
 }
 
@@ -183,6 +197,7 @@ pub(crate) fn opening(line: &str) -> Option<Opening> {
 pub(crate) struct Opening {
     pub(crate) format: u32,
     pub(crate) workspace: String,
+    pub(crate) branch: Option<String>,
 }
 
 /// One message as the line that records it.
@@ -580,7 +595,35 @@ mod tests {
 
     #[test]
     fn the_format_moves_with_the_line_shape() {
-        assert_eq!(FORMAT, 7);
+        assert_eq!(FORMAT, 8);
         assert!(readable(FORMAT));
+    }
+
+    #[test]
+    fn the_branch_the_caller_supplied_survives_the_header() {
+        let id: SessionId = "018bcfe5-687b-7abc-8def-0123456789ab"
+            .parse()
+            .expect("a uuid session id parses");
+
+        let written = header(&id, Path::new("/somewhere"), Some("feature/picker"));
+        let read = opening(&written).expect("the header this build writes opens");
+
+        assert_eq!(read.branch.as_deref(), Some("feature/picker"));
+        assert_eq!(read.workspace, "/somewhere");
+        assert_eq!(read.format, FORMAT);
+    }
+
+    #[test]
+    fn a_header_without_a_branch_opens_with_none() {
+        // Frozen bytes, not a round trip: this is the header a format 7 build
+        // wrote, and a session that never learned its branch writes the same
+        // absence today.
+        let old = r#"{"format":7,"session":"0000000000001-000001","workspace":"/w"}"#;
+
+        let read = opening(old).expect("a format 7 header still opens");
+
+        assert_eq!(read.branch, None);
+        assert_eq!(read.workspace, "/w");
+        assert!(readable(read.format), "a format 7 log must still replay");
     }
 }

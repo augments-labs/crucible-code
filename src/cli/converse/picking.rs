@@ -508,7 +508,7 @@ fn typed<M>(answered: Typed, rewrites: bool, standing: &mut Standing<M>) -> Move
 /// to be answered here: the two halves differ by whether the shelf underneath
 /// is about to be a different shelf, and a new key guessed into the wrong half
 /// moves a mark nobody touched.
-const fn rewrites(key: Key) -> bool {
+pub(super) const fn rewrites(key: Key) -> bool {
     match key {
         Key::Char(_)
         | Key::Backspace

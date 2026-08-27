@@ -513,7 +513,7 @@ fn a_full_window_prunes_tool_output_from_the_active_turn_and_carries_on() {
     ]);
     let output = "x".repeat(90_000);
     let sample = Sample::new("runner-active-prune-history");
-    let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
     let mut scripted = Scripted::recording(
         script,
         tools([Fixed::new("read").answering(&output)]),
@@ -609,7 +609,7 @@ fn a_full_window_recaps_a_complete_active_turn_when_pruning_cannot_help() {
         saying("carried on"),
     ]);
     let sample = Sample::new("runner-active-recap-history");
-    let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
     let mut scripted =
         Scripted::recording(script, tools([Fixed::new("read")]), Verdict::Allow, session);
     scripted.runner.model.window = Some(30_000);

@@ -54,7 +54,11 @@ pub(super) fn run<T: Terminal>(
         return Ok(renderer.present(&rows)?);
     }
 
-    let session = match Session::start(&terms.sessions, &terms.workspace) {
+    // Read again rather than carried from startup, because a conversation can
+    // outlive a checkout: the session starting now records where the user is
+    // now.
+    let branch = crate::cli::branching::current(terms.workspace.root());
+    let session = match Session::start(&terms.sessions, &terms.workspace, branch.as_deref()) {
         Ok(session) => session,
         // A path is in every one of these, so it is committed rather than
         // presented — the same as `/resume`'s. Nothing else changes: the
@@ -216,7 +220,8 @@ mod tests {
             stop: Some(StopReason::Yielded),
         };
 
-        let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+        let session =
+            Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
         session.append(&Message::said(asked));
         session.append(&answered);
 
@@ -398,6 +403,10 @@ mod tests {
 
         clearing(&sample, &terms, &mut runner);
         assert_eq!(listed(&sample, 1), ["what was said before"]);
+        let picked = recent(&sample.logs(), &sample.workspace(), 1)
+            .first()
+            .map(|session| session.id().as_str().to_owned())
+            .expect("the cleared session is on the list");
 
         let mut renderer = Renderer::new(Recording::new(80, 24));
         let mut input = std::io::empty();
@@ -411,7 +420,7 @@ mod tests {
             },
             &opening,
         );
-        super::super::resume::run("1", &mut renderer, &mut runner, &mut held, &terms)
+        super::super::resume::run(&picked, &mut renderer, &mut runner, &mut held, &terms)
             .expect("the terminal to be written");
 
         let written = renderer.terminal().written().to_string();
@@ -425,7 +434,8 @@ mod tests {
         // second one about to be, which is two files for a session that never
         // happened -- and `--continue` picks the newest of them.
         let sample = Sample::new("clear-said-nothing");
-        let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+        let session =
+            Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
         let held = session.id().cloned().expect("a recorded session");
         let mut runner = Runner::new(
             Box::new(Script::new(Vec::new())),

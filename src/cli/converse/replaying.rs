@@ -37,7 +37,7 @@
 
 use crucible_core::{Message, RECAP, Workspace};
 use crucible_runner::Runner;
-use crucible_tui::{Renderer, Row, Slot, Terminal, clip};
+use crucible_tui::{Recording, Renderer, Row, Slot, Terminal, clip};
 
 use crate::cli::Fatal;
 use crate::cli::draw;
@@ -72,13 +72,70 @@ pub(super) fn replayed<T: Terminal>(
         return Ok(());
     }
 
-    let against = Replay {
-        runner,
-        workspace,
-        style,
-    };
-    for message in runner.transcript().messages() {
-        said(renderer, &against, kept, message)?;
+    walked(
+        renderer,
+        runner.transcript().messages(),
+        &Replay {
+            runner,
+            workspace,
+            style,
+        },
+        kept,
+    )
+}
+
+/// The tail of a session nobody has picked up, drawn into rows `columns` wide.
+///
+/// The picker's preview, and the reason this is one function rather than two:
+/// what a session looks like is answered here for the screen it is resumed on
+/// and for the pane it is offered in, so the pane shows what pressing Enter
+/// would leave the reader holding. The walk goes onto a renderer of its own,
+/// which is a screen nobody sees and a width nobody set — the pane's, which the
+/// reader can change under it — and what comes back out is the last `most` rows.
+///
+/// Bounded by `most` for the same reason the log is read from its end: a
+/// preview is a glance, and one that kept every row of a long session would
+/// spend a session's memory answering it.
+///
+/// # Errors
+///
+/// [`Fatal::Terminal`] if the rows could not be drawn, which a recording does
+/// not do.
+pub(super) fn glimpsed(
+    messages: &[Message],
+    against: &Replay<'_>,
+    columns: usize,
+    most: usize,
+) -> Result<Vec<Row>, Fatal> {
+    if messages.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Redirected, because nobody is looking at this screen: a recording that
+    // claims to be a terminal repaints every row it holds after every message
+    // put back, which turns a long session's preview into the length of that
+    // session squared. What is wanted is the rows, and those are recorded
+    // either way.
+    let mut renderer = Renderer::new(Recording::redirected(columns, most.max(1)));
+    renderer.wears(against.style.palette());
+    renderer.draws(against.style.glyphs());
+
+    // A held of its own, dropped with the renderer: what a key would open is
+    // the business of the session on the screen, and this one is not on it.
+    walked(&mut renderer, messages, against, &mut Kept::default())?;
+
+    Ok(renderer.tail(most))
+}
+
+/// The walk itself: every message put back, then the tail ended.
+fn walked<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    messages: &[Message],
+    against: &Replay<'_>,
+    kept: &mut Kept,
+) -> Result<(), Fatal> {
+    for message in messages {
+        said(renderer, against, kept, message)?;
     }
 
     // Whatever the last message left live, ended: a session whose last turn was
@@ -95,11 +152,16 @@ pub(super) fn replayed<T: Terminal>(
 ///
 /// One value rather than three parameters carried down the walk — what changes
 /// from one call to the next is the message, and this is everything that does
-/// not.
-struct Replay<'a> {
-    runner: &'a Runner,
-    workspace: &'a Workspace,
-    style: Style,
+/// not. It is what [`glimpsed`] is handed too, for the same reason: a caller
+/// drawing a session it is not in still has to say which build's tools are
+/// being named and whose files a path in one is named against.
+pub(super) struct Replay<'a> {
+    /// The session in hand, for what each tool's call line reads as.
+    pub(super) runner: &'a Runner,
+    /// The root a file a call named is named against.
+    pub(super) workspace: &'a Workspace,
+    /// The dress the rows are drawn in.
+    pub(super) style: Style,
 }
 
 /// One message, put back the way it went down.
@@ -202,7 +264,7 @@ mod tests {
         Workspace,
     };
     use crucible_runner::{Model, Session, Tools};
-    use crucible_tui::{Picture, Recording, Renderer};
+    use crucible_tui::Picture;
 
     use crate::cli::fake::Script;
     use crate::cli::kept::Whole;
@@ -214,6 +276,16 @@ mod tests {
     /// name is measured from.
     fn here() -> Workspace {
         Workspace::open(std::env::current_dir().expect("a directory")).expect("a workspace")
+    }
+
+    /// What a session is drawn against in these tests: this build's tools, this
+    /// directory, and no theme at all.
+    fn against<'a>(runner: &'a Runner, workspace: &'a Workspace) -> Replay<'a> {
+        Replay {
+            runner,
+            workspace,
+            style: Style::plain(),
+        }
     }
 
     /// A runner with the real `read` tool on it, so what a call is about is
@@ -361,6 +433,90 @@ mod tests {
         let (kept, _) = holding(transcript, 80);
 
         assert!(kept.is_empty());
+    }
+
+    #[test]
+    fn a_session_glimpsed_is_drawn_the_way_picking_it_up_would_draw_it() {
+        // The picker's preview is this walk on a renderer of its own, so the
+        // rows it shows are the rows the screen would hold — the prompt's mark,
+        // the call line, the row the result came back on, the model's prose
+        // through the same markdown. A preview built from a second set of
+        // builders would be a second answer to what a session looks like.
+        let runner = resumed(everything());
+        let mut renderer = Renderer::new(Recording::new(60, 24));
+        renderer.wears(Style::plain().palette());
+        replayed(
+            &mut renderer,
+            &runner,
+            &here(),
+            &mut Kept::default(),
+            Style::plain(),
+        )
+        .expect("a recording cannot fail");
+        let live: Vec<String> = renderer.tail(64).iter().map(Row::text).collect();
+
+        let transcript = everything();
+        let shown = glimpsed(transcript.messages(), &against(&runner, &here()), 60, 64)
+            .expect("a recording cannot fail");
+
+        assert_eq!(
+            shown.iter().map(Row::text).collect::<Vec<_>>(),
+            live,
+            "the preview and the resume drew the same session differently"
+        );
+        assert!(
+            live.iter().any(|row| row.contains("read the config")),
+            "nothing was drawn at all: {live:?}"
+        );
+    }
+
+    #[test]
+    fn a_glimpse_is_drawn_against_the_width_the_pane_has() {
+        // The pane is half a window that the reader can resize under it, so
+        // what fits is answered at the width being drawn at rather than once.
+        let runner = resumed(everything());
+        let transcript = everything();
+
+        for columns in [30, 48, 96] {
+            let shown = glimpsed(
+                transcript.messages(),
+                &against(&runner, &here()),
+                columns,
+                64,
+            )
+            .expect("a recording cannot fail");
+
+            for row in &shown {
+                assert!(
+                    crucible_tui::columns(&row.text()) <= columns,
+                    "a row {} wide in {columns} columns: {:?}",
+                    crucible_tui::columns(&row.text()),
+                    row.text()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_glimpse_keeps_no_more_rows_than_it_was_asked_for() {
+        // A log is read from its end under a ceiling, and what is drawn from it
+        // is bounded the same way: a pane cannot show more than a window of
+        // rows, and a preview that kept every row of a long session would spend
+        // a session's memory on a glance.
+        let runner = resumed(everything());
+        let mut transcript = Transcript::new();
+        for nth in 0..200 {
+            transcript.push(Message::said(format!("question {nth}").as_str()));
+        }
+
+        let shown = glimpsed(transcript.messages(), &against(&runner, &here()), 60, 32)
+            .expect("a recording cannot fail");
+
+        assert!(shown.len() <= 32, "{} rows kept", shown.len());
+        assert!(
+            shown.iter().any(|row| row.text().contains("question 199")),
+            "the end of the session is what a preview is for"
+        );
     }
 
     #[test]

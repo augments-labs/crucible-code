@@ -12,7 +12,7 @@ use crate::session::Session;
 
 /// Records one message in a fresh session and returns where it was written.
 fn record(sample: &Sample) -> PathBuf {
-    let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
     let path = session.path().to_owned();
     session.append(&Message::said("hello"));
 

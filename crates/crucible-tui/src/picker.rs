@@ -1,0 +1,616 @@
+//! A picker: a search line, a two-line list beside a live preview, and keys.
+//!
+//! Like [`Shelf`](crate::Shelf) it **fills** the room it is handed, because the
+//! band it stands in has no share and takes what it asks for. Where the room
+//! shortens, the preview gives its rows up before the list gives any of its
+//! own — what the reader is here to do is pick, and picking needs the list.
+//! Short of the rows one entry needs it answers with nothing at all, which a
+//! caller reads as *there was no room to stand one*.
+//!
+//! It is handed strings and pre-drawn rows and knows no domain type. What
+//! narrowed the query, what the preview holds, and what the metadata line says
+//! are all decided before they arrive. Nothing here names a colour: every span
+//! asks for a [`Slot`] and the palette settles what one is worth.
+//!
+//! The preview is drawn from the *end* of the rows it was handed: what a
+//! reader opens a session to learn is how it finished, so the tail is what the
+//! pane shows when there is more than fits. A caller scrolls it by handing a
+//! shorter slice, never by telling this component a position it would have to
+//! keep.
+
+use crate::color::Slot;
+use crate::glyphs::Glyphs;
+use crate::render::Caret;
+use crate::row::Row;
+use crate::width::{clip, columns as wide};
+
+/// The rows a picker spends on everything that is not a row of the split.
+///
+/// The three the search line's frame costs, the heading under it, its blank,
+/// the two the panes' frames cost, the blank over the keys, and the keys.
+const CHROME: usize = 9;
+
+/// The fewest body rows a picker stands in: one entry of the list.
+///
+/// Below it there is nothing to pick, and a picker with nothing to pick is not
+/// a picker. The preview has already surrendered by this point.
+const FLOOR: usize = 2;
+
+/// What the preview's anchored foot costs: the rule, the metadata line, and
+/// the line naming what Enter and Esc do.
+const FOOTED: usize = 3;
+
+/// The row the search line is on, counted from the top of what `within`
+/// answered: the frame's own top.
+const SEARCHING: usize = 1;
+
+/// Where the search line opens, counted from the left of the window.
+const TYPED_AT: usize = 10;
+
+/// The first body row, counted the same way: the search frame's three rows,
+/// the heading, its blank, and the row the panes' frames open on.
+const LISTED: usize = 6;
+
+/// What the marks in front of a list row cost: a space, the mark, a space.
+const LEADING: usize = 3;
+
+/// The rows one session takes on the list: its title, its age and branch, and
+/// the row that parts it from the next.
+///
+/// Four rows of words with nothing between them read as one block of text the
+/// reader has to count through. The parting row is what makes a session a thing
+/// on the list rather than a line in it.
+const PAIRED: usize = 3;
+
+/// One session offered on the picker.
+///
+/// Everything already in the reader's words: how old it is is a phrase rather
+/// than a timestamp, and a branch nothing recorded is an empty string rather
+/// than a sentinel.
+#[derive(Debug, Clone, Copy)]
+pub struct Kept<'a> {
+    /// What it is called, in whatever spelling the reader is shown it in.
+    pub title: &'a str,
+    /// How long ago it began, as words.
+    pub when: &'a str,
+    /// The branch it was recorded on, or empty where nothing was.
+    pub branch: &'a str,
+}
+
+/// What a place on the picker answers to, for a caller that has to act on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Hit {
+    /// Nothing the picker lights up.
+    Nothing,
+    /// The line the query is typed into, or either rule of its frame.
+    Search,
+    /// A session, by its place in the slice the picker was handed. Both of an
+    /// entry's rows answer with it, and so does the row parting it from the
+    /// next — the pair is one thing to the reader, and a click that landed in
+    /// the air just under a title meant the title.
+    Session(usize),
+    /// The preview pane, which is what the wheel scrolls.
+    Preview,
+}
+
+/// What the pointer is resting on, in the picker's own rows.
+///
+/// [`Hit`] is the public reading in slice terms; this one is in pane rows,
+/// before the scroll has been counted back out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Under {
+    /// Nothing the picker lights up.
+    Nothing,
+    /// The line the query is typed into, or either rule of its frame.
+    Searching,
+    /// A row of the list, counted from the first row inside it.
+    Listed(usize),
+    /// The preview pane.
+    Previewing,
+}
+
+/// The whole picker, as one borrowing view.
+#[derive(Debug, Clone, Copy)]
+pub struct Picker<'a> {
+    /// The line under the search field: what this is, how many the query
+    /// left of how many there are, and where — already joined by the caller.
+    pub heading: &'a str,
+    /// What has been typed into the search line.
+    pub query: &'a str,
+    /// The caret's place within `query` — or within `renaming`, while there is
+    /// one — counted in characters.
+    pub typed: usize,
+    /// What the search line says when `query` is empty.
+    pub hint: &'a str,
+    /// The sessions the query left, in the order the list walks them.
+    pub sessions: &'a [Kept<'a>],
+    /// Which of them the mark is on.
+    pub marked: usize,
+    /// The marked title mid-rename, standing where the title was. `None` is a
+    /// list that is only being walked.
+    pub renaming: Option<&'a str>,
+    /// The tail of the marked session, already drawn. The pane shows the end
+    /// of this slice; a caller scrolls by handing a shorter one.
+    pub preview: &'a [Row],
+    /// The line under the preview's rule: age, count and branch, and whatever
+    /// else is true of the marked session right now.
+    pub preview_meta: &'a str,
+    /// What Enter and Esc do, said under the metadata.
+    pub takes: &'a str,
+    /// What the list says where `sessions` is empty.
+    pub nothing: &'a str,
+    /// What the preview says where `sessions` is empty and a query did it.
+    pub noview: &'a str,
+    /// The keys row, and the short form for a narrow window.
+    pub keys: (&'a str, &'a str),
+    /// Where the pointer is resting: a row of what [`Picker::within`] answered,
+    /// and a column of the window. `None` is a pointer never reported.
+    pub pointer: Option<(usize, usize)>,
+}
+
+impl Picker<'_> {
+    /// The width at which the preview stops being a pane.
+    ///
+    /// Below it the split leaves neither side room for a sentence, so the
+    /// preview folds away and the list takes every column.
+    pub const FOLDS_AT: usize = 70;
+
+    /// The narrowest window a picker is drawn in at all.
+    ///
+    /// Under this the search line has no room left for what was typed into it,
+    /// and a search line that cannot show the query is the one row here that
+    /// has to.
+    pub const NARROWEST: usize = 24;
+
+    /// Every row of the picker, filled to `room`.
+    ///
+    /// Nothing at all where the window is too narrow or the room too short for
+    /// one entry — the caller's answer to that is its own.
+    #[must_use]
+    pub fn within(&self, columns: usize, room: usize, glyphs: Glyphs) -> Vec<Row> {
+        if columns < Self::NARROWEST || room < CHROME + FLOOR {
+            return Vec::new();
+        }
+        let body = room - CHROME;
+
+        // Worked out once and handed down: the frame's colour and the band
+        // under a pair are one answer about where the pointer is, and asking
+        // twice is how two rows of one picture come to disagree.
+        let under = self.under(columns, body);
+
+        let mut rows = Vec::with_capacity(room);
+        rows.extend(self.searched(columns, glyphs, under));
+        let mut heading = Row::new();
+        heading.push(Slot::Plain, " ");
+        heading.push(Slot::Quiet, clip(self.heading, columns.saturating_sub(2)));
+        rows.push(heading.clipped(columns));
+        rows.push(Row::new());
+        rows.push(self.edged(columns, glyphs, glyphs.top()));
+        rows.extend(self.split(columns, body, glyphs, under));
+        rows.push(self.edged(columns, glyphs, glyphs.bottom()));
+        rows.push(Row::new());
+        rows.push(self.keyed(columns));
+        rows
+    }
+
+    /// One end of the panes' frames: the list's corners, and the preview's
+    /// beside them where the two stand apart.
+    ///
+    /// Quiet in both panes and at both ends, unlike the search line's frame:
+    /// what an accent under the pointer says there is *this is a field to type
+    /// in*, and a pane is not one. A frame that lit under the pointer here
+    /// would offer something pressing it does not do.
+    fn edged(&self, columns: usize, glyphs: Glyphs, ends: (&str, &str)) -> Row {
+        let (list, inside, beside) = self.widths(columns);
+
+        let row = ruled(ends, inside, glyphs, Slot::Quiet);
+        if list == columns {
+            return row.clipped(columns);
+        }
+
+        row.then(Slot::Plain, " ")
+            .join(ruled(ends, beside, glyphs, Slot::Quiet))
+            .clipped(columns)
+    }
+
+    /// What the split costs across: the list pane whole, what its frame leaves
+    /// inside it, and what the preview's frame leaves inside that.
+    ///
+    /// Worked out once and handed to everything that draws a row of the split,
+    /// because a pane and the frame around it are laid out against the same
+    /// columns — and two answers to how wide a pane is is how a frame comes to
+    /// stand a column off the rows it encloses.
+    fn widths(&self, columns: usize) -> (usize, usize, usize) {
+        split_widths(columns, self.apart(columns))
+    }
+
+    /// How wide a row handed to [`Picker::preview`] may be, or `None` where this
+    /// window has no preview pane to draw one into.
+    ///
+    /// Whoever draws the session draws it against a width, and that width is
+    /// this one: the pane's, past its frame and past the column its rows open
+    /// on. Answered here because the split is worked out here — a caller doing
+    /// the arithmetic itself would be a second answer to how wide a pane is,
+    /// and it would go wrong on the frame rather than on the fold.
+    #[must_use]
+    pub const fn previewing(columns: usize) -> Option<usize> {
+        if columns < Self::FOLDS_AT {
+            return None;
+        }
+
+        let (_, _, beside) = split_widths(columns, true);
+        Some(beside.saturating_sub(1))
+    }
+
+    /// The framed line the query is typed into.
+    ///
+    /// The one frame here that changes colour, and for the one reason a reader
+    /// would want it to: a field is a thing to put a pointer in, and the accent
+    /// under the pointer says this is one. The split's divider stays quiet — it
+    /// parts the picture rather than offers anything.
+    fn searched(&self, columns: usize, glyphs: Glyphs, under: Under) -> [Row; 3] {
+        let frame = if under == Under::Searching {
+            Slot::Accent
+        } else {
+            Slot::Quiet
+        };
+
+        let mut line = Row::new();
+        line.push(frame, glyphs.vertical());
+        line.push(Slot::Quiet, " Search");
+
+        let room = columns - TYPED_AT - 1;
+        line.pad(TYPED_AT);
+        if self.query.is_empty() {
+            // Two columns on: the one the cursor is standing in, and one to
+            // part it from the words. A hint drawn under the cursor is a line
+            // that looks like it already has something typed into it.
+            line.pad(TYPED_AT + 2);
+            line.push(Slot::Quiet, clip(self.hint, room - 2));
+        } else {
+            line.push(Slot::Plain, clip(self.query, room));
+        }
+        line.pad(columns - 1);
+        line.push(frame, glyphs.vertical());
+
+        [
+            ruled(glyphs.top(), columns - 2, glyphs, frame),
+            line.clipped(columns),
+            ruled(glyphs.bottom(), columns - 2, glyphs, frame),
+        ]
+    }
+
+    /// The list beside the preview, or the list alone where the window folded
+    /// the preview away.
+    ///
+    /// An empty list splits only while a query stands: the query is the reason
+    /// it emptied, so both sides say so. A workspace that never recorded a
+    /// session has no split to draw at all.
+    fn split(&self, columns: usize, body: usize, glyphs: Glyphs, under: Under) -> Vec<Row> {
+        let (list, inside, beside) = self.widths(columns);
+
+        let entries = self.listed(inside, body, glyphs, under);
+        if list == columns {
+            return entries
+                .into_iter()
+                .map(|entry| walled(&entry, inside, glyphs).clipped(columns))
+                .collect();
+        }
+
+        let tailed = self.previewed(beside, body, glyphs);
+        entries
+            .into_iter()
+            .zip(tailed)
+            .map(|(entry, shown)| {
+                walled(&entry, inside, glyphs)
+                    .then(Slot::Plain, " ")
+                    .join(walled(&shown, beside, glyphs))
+                    .clipped(columns)
+            })
+            .collect()
+    }
+
+    /// Each row of the list, three to a session, padded to `body` rows.
+    ///
+    /// Laid out against `inside` — what the pane's frame leaves it, rather than
+    /// what the pane costs — because a row filled to the frame's own column is
+    /// one the edge is written over.
+    ///
+    /// The band under the pointer covers both rows of a pair but not the row
+    /// that parts it from the next: the pair is one thing to the reader, half a
+    /// band would say it is two, and a band that ran on through the parting
+    /// would close the gap it exists to open.
+    fn listed(&self, inside: usize, body: usize, glyphs: Glyphs, under: Under) -> Vec<Row> {
+        if self.sessions.is_empty() {
+            return said_instead(clip(self.nothing, inside.saturating_sub(2)), body);
+        }
+        let pairs = shown(body);
+        let from = scrolled(self.marked, pairs, self.sessions.len());
+        let word = inside.saturating_sub(LEADING + 1);
+
+        (0..body)
+            .map(|at| {
+                // The last session's parting row may fall off the bottom, so an
+                // entry is on the list when both rows of its pair are, and the
+                // rows past that answer with nothing rather than half of one.
+                let one = self
+                    .sessions
+                    .get(from + at / PAIRED)
+                    .filter(|_| at / PAIRED < pairs);
+                let on = matches!(under, Under::Listed(over) if over / PAIRED == at / PAIRED)
+                    && at % PAIRED != PAIRED - 1
+                    && one.is_some();
+                match one {
+                    Some(one) if at % PAIRED == 0 => {
+                        let marked = from + at / PAIRED == self.marked;
+                        let title = if marked {
+                            self.renaming.unwrap_or(one.title)
+                        } else {
+                            one.title
+                        };
+                        let mut row = Row::new();
+                        row.push(lit(on, Slot::Plain), " ");
+                        row.push(
+                            lit(on, Slot::Accent),
+                            if marked { glyphs.caret() } else { " " }.to_owned(),
+                        );
+                        row.push(lit(on, Slot::Plain), " ");
+                        row.push(
+                            lit(on, if marked { Slot::Strong } else { Slot::Plain }),
+                            clip(title, word),
+                        );
+                        row.fill(lit(on, Slot::Plain), inside);
+                        row
+                    }
+                    Some(one) if at % PAIRED == 1 => {
+                        let mut row = Row::new();
+                        row.fill(lit(on, Slot::Plain), LEADING);
+                        let aged = if one.branch.is_empty() {
+                            one.when.to_owned()
+                        } else {
+                            format!("{} {} {}", one.when, glyphs.dot(), one.branch)
+                        };
+                        row.push(lit(on, Slot::Quiet), clip(&aged, word).to_owned());
+                        row.fill(lit(on, Slot::Plain), inside);
+                        row
+                    }
+                    Some(_) | None => Row::new(),
+                }
+            })
+            .collect()
+    }
+
+    /// Each row of the preview pane: the tail of what was handed, and the
+    /// anchored foot — the rule, the metadata, and what Enter and Esc do.
+    ///
+    /// Every row opens a column in from the pane's frame, the list's rows do
+    /// the same behind their mark, and the two panes read as one picture rather
+    /// than as words pressed against two edges.
+    ///
+    /// With no session marked there is no tail and nothing for Enter to take,
+    /// so the pane says so once and the foot stays undrawn.
+    fn previewed(&self, inside: usize, body: usize, glyphs: Glyphs) -> Vec<Row> {
+        let room = inside.saturating_sub(1);
+        if self.sessions.is_empty() {
+            return said_instead(clip(self.noview, room), body);
+        }
+        let area = body.saturating_sub(FOOTED);
+        let shown = self.preview.len().min(area);
+        let from = self.preview.len() - shown;
+
+        (0..body)
+            .map(|at| {
+                let said = if at < shown {
+                    self.preview
+                        .get(from + at)
+                        .cloned()
+                        .unwrap_or_default()
+                        .clipped(room)
+                } else if at + FOOTED == body {
+                    Row::new().then(Slot::Quiet, glyphs.horizontal().repeat(room))
+                } else if at + FOOTED == body + 1 {
+                    Row::new().then(Slot::Quiet, clip(self.preview_meta, room))
+                } else if at + FOOTED == body + 2 {
+                    Row::new().then(Slot::Quiet, clip(self.takes, room))
+                } else {
+                    return Row::new();
+                };
+
+                Row::new().then(Slot::Plain, " ").join(said)
+            })
+            .collect()
+    }
+
+    /// What the keys do, in the longest form the window has room for.
+    fn keyed(&self, columns: usize) -> Row {
+        let room = columns - 2;
+        let said = if wide(self.keys.0) <= room {
+            self.keys.0
+        } else {
+            self.keys.1
+        };
+
+        let mut row = Row::new();
+        row.push(Slot::Plain, " ");
+        row.push(Slot::Quiet, clip(said, room));
+        row.clipped(columns)
+    }
+
+    /// What the pointer is resting on, at the size the picker is drawn at.
+    ///
+    /// The same reading the drawing is made from, so what this answers and what
+    /// the reader sees lit are one fact. Counted into the slice the picker was
+    /// handed, not into the rows it drew — a scrolled list is showing its sixth
+    /// session on its first row, and the caller is owed the one on screen.
+    #[must_use]
+    pub fn resting(&self, columns: usize, room: usize) -> Hit {
+        if columns < Self::NARROWEST || room < CHROME + FLOOR {
+            return Hit::Nothing;
+        }
+        let body = room - CHROME;
+
+        match self.under(columns, body) {
+            Under::Nothing => Hit::Nothing,
+            Under::Searching => Hit::Search,
+            Under::Previewing => Hit::Preview,
+            Under::Listed(at) => {
+                let pairs = shown(body);
+                let from = scrolled(self.marked, pairs, self.sessions.len());
+                if at / PAIRED < pairs && from + at / PAIRED < self.sessions.len() {
+                    Hit::Session(from + at / PAIRED)
+                } else {
+                    Hit::Nothing
+                }
+            }
+        }
+    }
+
+    /// Where the terminal cursor belongs, inside the rows [`Picker::within`]
+    /// answered: the search line, or the title being renamed while one is.
+    ///
+    /// The glyph set is taken and not read — the frame is the same one column
+    /// wide in both sets — so a caller cannot draw with one set and place the
+    /// cursor against another.
+    #[must_use]
+    pub fn caret(&self, columns: usize, room: usize, _glyphs: Glyphs) -> Caret {
+        let last = columns.saturating_sub(2);
+
+        if let Some(renaming) = self.renaming {
+            let pairs = shown(room.saturating_sub(CHROME));
+            let from = scrolled(self.marked, pairs, self.sessions.len());
+            let before: String = renaming.chars().take(self.typed).collect();
+            return Caret {
+                row: LISTED + PAIRED * self.marked.saturating_sub(from),
+                // The pane's own edge is in front of the title, so the column
+                // the words start in is one past where an unframed list would
+                // have opened.
+                column: (1 + LEADING + wide(&before)).min(last),
+            };
+        }
+
+        let before: String = self.query.chars().take(self.typed).collect();
+        Caret {
+            row: SEARCHING,
+            column: (TYPED_AT + wide(&before)).min(last),
+        }
+    }
+
+    /// Whether the preview stands beside the list at this width.
+    ///
+    /// An empty list splits only while a query stands — the query is why it
+    /// emptied — and a workspace that never recorded a session has no split.
+    fn apart(&self, columns: usize) -> bool {
+        columns >= Self::FOLDS_AT && (!self.sessions.is_empty() || !self.query.is_empty())
+    }
+
+    /// What the pointer is resting on, in pane rows.
+    fn under(&self, columns: usize, body: usize) -> Under {
+        let Some((row, column)) = self.pointer else {
+            return Under::Nothing;
+        };
+
+        if (SEARCHING - 1..=SEARCHING + 1).contains(&row) {
+            return Under::Searching;
+        }
+
+        let Some(at) = row.checked_sub(LISTED).filter(|at| *at < body) else {
+            return Under::Nothing;
+        };
+
+        let (list, ..) = self.widths(columns);
+        if column < list {
+            return Under::Listed(at);
+        }
+        if list < columns && (list + 1..columns).contains(&column) {
+            return Under::Previewing;
+        }
+
+        Under::Nothing
+    }
+}
+
+/// The slot a span takes, given whether the pointer is resting on its row.
+///
+/// One slot for the whole pair rather than one per span, because the ground is
+/// the point: a ground that changed halfway along would be two rectangles where
+/// the reader is being shown one thing — and the row the mark is on still
+/// carries its caret, so the two never have to be told apart by colour.
+const fn lit(on: bool, slot: Slot) -> Slot {
+    if on { Slot::Pointed } else { slot }
+}
+
+/// A pane with nothing to show: one quiet sentence, then blank to `body`.
+fn said_instead(sentence: &str, body: usize) -> Vec<Row> {
+    (0..body)
+        .map(|at| {
+            if at == 0 {
+                Row::new()
+                    .then(Slot::Plain, " ")
+                    .then(Slot::Quiet, sentence)
+            } else {
+                Row::new()
+            }
+        })
+        .collect()
+}
+
+/// One row of a pane, between the two edges of its frame.
+///
+/// Padded out to the edge on its right rather than left where the words stop,
+/// so a pointer's band and a pane's frame meet instead of leaving the reader's
+/// own ground showing between them.
+fn walled(content: &Row, inside: usize, glyphs: Glyphs) -> Row {
+    let mut row = Row::new()
+        .then(Slot::Quiet, glyphs.vertical())
+        .join(content.clipped(inside));
+    row.pad(1 + inside);
+    row.push(Slot::Quiet, glyphs.vertical());
+    row
+}
+
+/// A rule from one edge to the other, with no joint in the middle of it.
+fn ruled(ends: (&str, &str), inside: usize, glyphs: Glyphs, slot: Slot) -> Row {
+    Row::new()
+        .then(slot, ends.0)
+        .then(slot, glyphs.horizontal().repeat(inside))
+        .then(slot, ends.1)
+}
+
+/// What the split costs across `columns`: the list pane whole, what its frame
+/// leaves inside it, and what the preview's frame leaves inside that.
+///
+/// Free of the picker because the answer is wanted before there is one to ask —
+/// a session is drawn for the pane at the pane's width, and it is drawn before
+/// the picker that shows it exists.
+const fn split_widths(columns: usize, apart: bool) -> (usize, usize, usize) {
+    let list = if apart { 2 * columns / 5 } else { columns };
+
+    (
+        list,
+        list.saturating_sub(2),
+        columns.saturating_sub(list + 3),
+    )
+}
+
+/// How many sessions a list of `body` rows shows.
+///
+/// A session is on the list when both rows of its pair are: the parting row
+/// under the last one may fall off the bottom without costing anybody a row
+/// they can read, but half a pair is an entry with no age under its name.
+const fn shown(body: usize) -> usize {
+    (body + 1) / PAIRED
+}
+
+/// The first entry on screen, given where the mark is.
+///
+/// The mark is kept on screen at every rung of the scroll: a list scrolled to
+/// its top would leave Enter about to resume something the reader cannot see.
+fn scrolled(mark: usize, seen: usize, all: usize) -> usize {
+    if all <= seen || seen == 0 {
+        return 0;
+    }
+    mark.saturating_sub(seen - 1).min(all - seen)
+}
+
+#[cfg(test)]
+mod tests;

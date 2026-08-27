@@ -5,42 +5,49 @@
 //! ordinal belongs. Text arriving from a file name or a command-line flag is
 //! parsed into one of these at the boundary and never re-validated inside.
 
-use std::collections::hash_map::RandomState;
 use std::fmt;
-use std::hash::{BuildHasher, Hasher};
 use std::str::FromStr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use uuid::Uuid;
 
 /// Why a string could not become an identifier.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum IdError {
-    /// A session identifier was not `<millis>-<6 hex>`.
-    #[error("not a session id: expected <millis>-<6 hex>, got {0:?}")]
+    /// A session identifier was neither a UUID v7 nor `<millis>-<6 hex>`.
+    #[error("not a session id: expected a uuid or <millis>-<6 hex>, got {0:?}")]
     NotASessionId(Box<str>),
 }
 
 /// Names one session: a conversation bound to a working directory.
 ///
-/// The text form is `<unix-millis>-<6 hex>` with the timestamp zero-padded to a
-/// fixed thirteen digits, so sorting session file names as text sorts them by
-/// start time. The random suffix breaks ties between two sessions started in
-/// the same millisecond; it is not a uniqueness guarantee across machines,
-/// which nothing here needs.
+/// The text form is a hyphenated lowercase UUID v7. Its first twelve hex
+/// digits are the start time in milliseconds, so sorting session file names as
+/// text sorts them by start time, and ids minted in the same millisecond of
+/// one process stay ordered by the version's tie-break counter.
+///
+/// Releases before the uuid form named sessions `<unix-millis>-<6 hex>` with
+/// the timestamp zero-padded to thirteen digits. Those names still parse,
+/// sort among themselves by start time, and yield their start time — they
+/// only stop being minted. A directory holding both shapes groups every uuid
+/// name before every legacy name (a real legacy timestamp leads with `1`, a
+/// uuid with `0`), so ordering across the two families is not time order;
+/// listings that need one timeline sort on [`SessionId::started`].
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SessionId(Box<str>);
 
-/// Width of the millisecond field. Thirteen digits covers every instant from
-/// 2001 to 2286; the padding is what makes text order match time order.
+/// Width of the legacy millisecond field. Thirteen digits covers every instant
+/// from 2001 to 2286; the padding is what made text order match time order.
 const MILLIS_WIDTH: usize = 13;
 
-/// Hex digits of randomness after the timestamp.
+/// Hex digits of randomness after a legacy timestamp.
 const SUFFIX_WIDTH: usize = 6;
 
 impl SessionId {
     /// Mints an identifier for a session starting now.
     #[must_use]
     pub fn new() -> Self {
-        Self::at(SystemTime::now(), random_suffix())
+        Self(Uuid::now_v7().to_string().into())
     }
 
     /// The identifier as text — also its file name in the session directory.
@@ -56,28 +63,57 @@ impl SessionId {
     /// something, and this is when it started. Naming a directory's sessions by
     /// the second is also a read of the directory that never opens anything.
     ///
-    /// The epoch stands in for a name whose timestamp is too large to be an
-    /// instant this machine can hold. Nothing can construct one — the field is
-    /// thirteen digits of milliseconds — but a file name can be anything
-    /// somebody typed, and a date is not worth a panic.
+    /// The epoch stands in for a name whose timestamp cannot become an instant
+    /// this machine holds. Nothing crucible writes looks like that, but a file
+    /// name can be anything somebody typed, and a date is not worth a panic.
     #[must_use]
     pub fn started(&self) -> SystemTime {
-        self.0
-            .split_once('-')
-            .and_then(|(millis, _)| millis.parse().ok())
-            .and_then(|millis| UNIX_EPOCH.checked_add(Duration::from_millis(millis)))
+        let millis = if uuid_shaped(&self.0) {
+            Uuid::try_parse(&self.0)
+                .ok()
+                .and_then(|uuid| uuid.get_timestamp())
+                .map(|timestamp| {
+                    let (seconds, nanos) = timestamp.to_unix();
+                    Duration::new(seconds, nanos)
+                })
+        } else {
+            self.0
+                .split_once('-')
+                .and_then(|(millis, _)| millis.parse().ok())
+                .map(Duration::from_millis)
+        };
+        millis
+            .and_then(|since| UNIX_EPOCH.checked_add(since))
             .unwrap_or(UNIX_EPOCH)
     }
 
     /// Splitting this out is what makes minting testable: the caller supplies
-    /// the clock and the randomness, so a test can pin both.
-    fn at(started: SystemTime, suffix: u32) -> Self {
-        let millis = started
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |since| since.as_millis());
-        let suffix = suffix & 0x00ff_ffff;
-        Self(format!("{millis:0MILLIS_WIDTH$}-{suffix:0SUFFIX_WIDTH$x}").into())
+    /// the clock and the tie-break bytes, so a test can pin both.
+    #[cfg(test)]
+    fn at(started: SystemTime, entropy: [u8; 10]) -> Self {
+        let millis = started.duration_since(UNIX_EPOCH).map_or(0, |since| {
+            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+        });
+        let uuid = uuid::Builder::from_unix_timestamp_millis(millis, &entropy).into_uuid();
+        Self(uuid.to_string().into())
     }
+}
+
+/// Whether text is the hyphenated lowercase form of a UUID v7 — the only uuid
+/// spelling a session file is ever named with. `Uuid::try_parse` also accepts
+/// braced, urn and unhyphenated spellings, and those would name a second file
+/// for the same session, so the shape is pinned here before the parse.
+fn uuid_shaped(text: &str) -> bool {
+    text.len() == 36
+        && text
+            .bytes()
+            .enumerate()
+            .all(|(position, byte)| match position {
+                8 | 13 | 18 | 23 => byte == b'-',
+                14 => byte == b'7',
+                19 => matches!(byte, b'8' | b'9' | b'a' | b'b'),
+                _ => byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase(),
+            })
 }
 
 impl Default for SessionId {
@@ -103,16 +139,8 @@ impl FromStr for SessionId {
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
         let reject = || IdError::NotASessionId(text.into());
-        let (millis, suffix) = text.split_once('-').ok_or_else(reject)?;
 
-        let shaped = millis.len() >= MILLIS_WIDTH
-            && millis.bytes().all(|b| b.is_ascii_digit())
-            && suffix.len() == SUFFIX_WIDTH
-            && suffix
-                .bytes()
-                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase());
-
-        if shaped {
+        if uuid_shaped(text) || legacy_shaped(text) {
             Ok(Self(text.into()))
         } else {
             Err(reject())
@@ -120,23 +148,16 @@ impl FromStr for SessionId {
     }
 }
 
-/// Twenty-four bits of randomness, without a dependency.
-///
-/// `RandomState` takes its keys from the operating system once per thread and
-/// advances one of them on every construction after that, so two hashers built
-/// in the same millisecond disagree. That is the whole requirement: this suffix
-/// breaks ties, it does not identify. Within one thread the sequence follows
-/// from the two keys it started with, so nothing may come to depend on a
-/// session name being unguessable.
-fn random_suffix() -> u32 {
-    let mut hasher = RandomState::new().build_hasher();
-    hasher.write_u8(0);
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "the mask keeps the low 24 bits; truncation is the point"
-    )]
-    let low = hasher.finish() as u32;
-    low & 0x00ff_ffff
+/// Whether text is a legacy `<millis>-<6 hex>` session name.
+fn legacy_shaped(text: &str) -> bool {
+    text.split_once('-').is_some_and(|(millis, suffix)| {
+        millis.len() >= MILLIS_WIDTH
+            && millis.bytes().all(|b| b.is_ascii_digit())
+            && suffix.len() == SUFFIX_WIDTH
+            && suffix
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    })
 }
 
 /// Position of a turn within a session, counting from one.
@@ -201,29 +222,41 @@ mod tests {
 
     #[test]
     fn a_session_id_sorts_by_start_time() {
-        // Across a digit boundary, and with the earlier session given the
-        // larger random suffix. Unpadded, "999" sorts after "1000" as text and
-        // both of those would go the wrong way — which is what the padding is
-        // for, and why this pair rather than two neighbouring milliseconds.
-        let earlier = SessionId::at(UNIX_EPOCH + Duration::from_millis(999), 0xff_ffff);
-        // One second is 1000 ms — a digit wider than 999, which is the point.
-        let later = SessionId::at(UNIX_EPOCH + Duration::from_secs(1), 0x00_0000);
+        // The earlier session gets the larger tie-break bytes, so only the
+        // timestamp field can put this pair in the right order.
+        let earlier = SessionId::at(UNIX_EPOCH + Duration::from_millis(999), [0xff; 10]);
+        let later = SessionId::at(UNIX_EPOCH + Duration::from_secs(1), [0x00; 10]);
 
         assert!(earlier < later, "{earlier} should sort before {later}");
     }
 
     #[test]
-    fn the_timestamp_is_padded_so_text_order_is_time_order() {
-        let id = SessionId::at(UNIX_EPOCH + Duration::from_millis(7), 0xabc);
-        assert_eq!(id.as_str(), "0000000000007-000abc");
+    fn an_id_says_when_the_session_it_names_started() {
+        let started = UNIX_EPOCH + Duration::from_millis(1_700_000_000_123);
+        let id = SessionId::at(started, [0xab; 10]);
+
+        assert_eq!(id.started(), started);
     }
 
     #[test]
-    fn an_id_says_when_the_session_it_names_started() {
-        let started = UNIX_EPOCH + Duration::from_millis(1_700_000_000_123);
-        let id = SessionId::at(started, 0xabc);
+    fn a_legacy_id_still_parses_sorts_and_says_when_it_started() {
+        let earlier: SessionId = "0000000000999-ffffff".parse().expect("the legacy shape");
+        let later: SessionId = "0000000001000-000000".parse().expect("the legacy shape");
 
-        assert_eq!(id.started(), started);
+        assert!(earlier < later, "{earlier} should sort before {later}");
+        assert_eq!(earlier.started(), UNIX_EPOCH + Duration::from_millis(999));
+    }
+
+    #[test]
+    fn uuid_names_group_before_legacy_names() {
+        // Not time order across the families — the module doc owns this wart.
+        // A real legacy timestamp leads with `1`; a uuid, for centuries, with
+        // `0`. Anything wanting one timeline sorts on `started()`.
+        let legacy: SessionId = "1756246123456-abcdef".parse().expect("the legacy shape");
+        let newer = SessionId::at(legacy.started() + Duration::from_hours(1), [0x00; 10]);
+
+        assert!(newer < legacy, "{newer} should group before {legacy}");
+        assert!(newer.started() > legacy.started());
     }
 
     #[test]
@@ -238,12 +271,48 @@ mod tests {
     }
 
     #[test]
-    fn two_ids_minted_together_still_differ() {
+    fn ids_minted_together_differ_and_stay_in_minting_order() {
+        let minted: Vec<SessionId> = (0..64).map(|_| SessionId::new()).collect();
+
         let mut seen = std::collections::HashSet::new();
-        for _ in 0..64 {
-            seen.insert(random_suffix());
+        for id in &minted {
+            assert!(seen.insert(id.clone()), "minted twice: {id}");
         }
-        assert!(seen.len() > 1, "the suffix is not random: {seen:?}");
+
+        let mut sorted = minted.clone();
+        sorted.sort();
+        assert_eq!(minted, sorted, "same-millisecond ids left minting order");
+    }
+
+    #[test]
+    fn a_new_session_id_is_a_uuid_v7() {
+        let id = SessionId::new();
+        let text = id.as_str();
+
+        let hyphens_where_a_uuid_puts_them = text.len() == 36
+            && text.char_indices().all(|(i, c)| match i {
+                8 | 13 | 18 | 23 => c == '-',
+                _ => c.is_ascii_hexdigit() && !c.is_ascii_uppercase(),
+            });
+        assert!(hyphens_where_a_uuid_puts_them, "not uuid-shaped: {text:?}");
+        assert_eq!(&text[14..15], "7", "not version 7: {text:?}");
+        assert!(
+            matches!(&text[19..20], "8" | "9" | "a" | "b"),
+            "not an RFC variant: {text:?}"
+        );
+    }
+
+    #[test]
+    fn a_uuid_v7_session_id_parses_and_says_when_it_started() {
+        // The first twelve hex digits are 1_700_000_000_123 milliseconds.
+        let id: SessionId = "018bcfe5-687b-7abc-8def-0123456789ab"
+            .parse()
+            .expect("a v7 uuid is a session id");
+
+        assert_eq!(
+            id.started(),
+            UNIX_EPOCH + Duration::from_millis(1_700_000_000_123)
+        );
     }
 
     #[test]
@@ -265,6 +334,11 @@ mod tests {
             "0000000000007-00ABCD",  // hex must be lower case, so names sort
             "000000000000-000abc",   // timestamp too short to pad-sort
             "not-000abc",
+            "018bcfe5-687b-4abc-8def-0123456789ab", // v4: no timestamp to read
+            "018bcfe5-687b-7abc-cdef-0123456789ab", // variant outside 8..=b
+            "018BCFE5-687B-7ABC-8DEF-0123456789AB", // hex must be lower case
+            "018bcfe5687b7abc8def0123456789ab",     // unhyphenated spelling
+            "{018bcfe5-687b-7abc-8def-0123456789ab}", // braced spelling
         ] {
             assert_eq!(
                 bad.parse::<SessionId>(),
@@ -276,8 +350,11 @@ mod tests {
 
     #[test]
     fn a_session_id_debug_shows_the_id() {
-        let id = SessionId::at(UNIX_EPOCH + Duration::from_millis(7), 0xabc);
-        assert_eq!(format!("{id:?}"), "SessionId(0000000000007-000abc)");
+        let id = SessionId::at(UNIX_EPOCH + Duration::from_millis(7), [0x00; 10]);
+        assert_eq!(
+            format!("{id:?}"),
+            "SessionId(00000000-0007-7000-8000-000000000000)"
+        );
     }
 
     #[test]

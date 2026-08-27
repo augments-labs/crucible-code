@@ -16,7 +16,7 @@ use crucible_auth::StoredCredentials;
 use crucible_config::Settings;
 use crucible_core::{
     ApiKey, Cancel, Credential, Effort, Fetch, Header, HeaderKey, Message, Modalities, Mode,
-    Provider, Revealed, Search, Tool, Transcript, Workspace,
+    Provider, Revealed, Search, SessionId, Tool, Transcript, Workspace,
 };
 use crucible_provider::{
     Anthropic, AnthropicWeb, Endpoint, Https, Moonshot, MoonshotWeb, OpenAi, OpenAiWeb, Unavailable,
@@ -60,6 +60,21 @@ pub(super) const UNKNOWN_CEILING: u32 = 8192;
 /// is a tool behind it at all.
 const PLANNING: &str = "todo_write";
 
+/// Which earlier session, if any, a run picks back up.
+///
+/// One value rather than two flags, because the command line already refuses
+/// `--continue` and `--resume` together: by the time a startup is being built
+/// the three answers are one decision, and an enum is what keeps a fourth
+/// combination from ever being wired.
+pub(super) enum Resuming {
+    /// Start a new session.
+    No,
+    /// Carry on the newest session for this directory: `--continue`.
+    Newest,
+    /// Pick up the exact session this id names: `--resume`.
+    Exact(SessionId),
+}
+
 /// Everything the wiring needs to build a runner.
 ///
 /// A struct rather than a parameter list because most of these are parameters
@@ -80,8 +95,8 @@ pub(super) struct Startup<'a> {
     /// How hard to ask it to think, resolved the same way again. `None` sends
     /// no such field at all, which is the vendor's own default for the model.
     pub(super) effort: Option<Effort>,
-    /// Whether to carry on the most recent session for this directory.
-    pub(super) resuming: bool,
+    /// Which earlier session, if any, this run picks back up.
+    pub(super) resuming: Resuming,
     /// The mode the permission engine starts in. The caller resolves it once
     /// and gives the same value to the prompt line, which is what keeps the
     /// mode on screen the mode in force.
@@ -164,11 +179,22 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<Runner, Fatal> {
     // billed a plan session's searches to whatever key the shell carried.
     let reaching = web(startup, settings);
 
-    let (session, earlier) = if startup.resuming {
-        let (session, transcript) = Session::resume(sessions, workspace)?;
-        (session, Some(transcript))
-    } else {
-        (Session::start(sessions, workspace)?, None)
+    let (session, earlier) = match &startup.resuming {
+        Resuming::Newest => {
+            let (session, transcript) = Session::resume(sessions, workspace)?;
+            (session, Some(transcript))
+        }
+        Resuming::Exact(id) => {
+            let (session, transcript) = reopening(sessions, workspace, id)?;
+            (session, Some(transcript))
+        }
+        Resuming::No => {
+            let branch = super::branching::current(workspace.root());
+            (
+                Session::start(sessions, workspace, branch.as_deref())?,
+                None,
+            )
+        }
     };
 
     // Read before the provider is handed over, because which vendor is being
@@ -195,6 +221,25 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<Runner, Fatal> {
     }
 
     Ok(runner)
+}
+
+/// The session `--resume` named, and everything it already holds.
+///
+/// A name nothing here answers to gets [`Fatal::NoSession`]'s sentence rather
+/// than the session crate's: the id came off the command line a moment ago,
+/// and what the user needs to hear is that the address is wrong in this
+/// workspace, not which file was looked for.
+pub(super) fn reopening(
+    sessions: &Path,
+    workspace: &Workspace,
+    id: &SessionId,
+) -> Result<(Session, Transcript), Fatal> {
+    use crucible_runner::SessionError;
+
+    Session::reopen(sessions, workspace, id).map_err(|problem| match problem {
+        SessionError::Unknown { id, .. } => Fatal::NoSession(id),
+        other => Fatal::Session(other),
+    })
 }
 
 /// Fills the plan from the last time the session wrote one.

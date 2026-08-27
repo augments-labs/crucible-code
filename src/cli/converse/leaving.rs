@@ -178,6 +178,7 @@ impl Leaving {
                 | Pressed::Queue
                 | Pressed::Copy
                 | Pressed::PasteImage
+                | Pressed::Rename
                 | Pressed::Dragged { .. }
                 | Pressed::Hovered { .. }
                 | Pressed::Released { .. }
@@ -265,6 +266,7 @@ impl Leaving {
             | Pressed::Queue
             | Pressed::Copy
             | Pressed::PasteImage
+            | Pressed::Rename
             | Pressed::Scrolled { .. }
             | Pressed::Dragged { .. }
             | Pressed::Hovered { .. }

@@ -1,0 +1,28 @@
+---
+source: crates/crucible-tui/src/picker/tests.rs
+expression: "picture(&picker(&FIVE, &preview).within(58, 24, Glyphs::Unicode), 58)"
+---
+<Quiet>╭</><Quiet>────────────────────────────────────────────────────────</><Quiet>╮</>
+<Quiet>│</><Quiet> Search</>    <Quiet>a session, or a branch</>                       <Quiet>│</>
+<Quiet>╰</><Quiet>────────────────────────────────────────────────────────</><Quiet>╯</>
+ <Quiet>Resume a session · 5 of 5 · ~/Projects/Github/augments-l</>
+
+<Quiet>╭</><Quiet>────────────────────────────────────────────────────────</><Quiet>╮</>
+<Quiet>│</> <Accent> </> Prompt history with arrow navigation                 <Quiet>│</>
+<Quiet>│</>   <Quiet>now · main</>                                           <Quiet>│</>
+<Quiet>│</>                                                        <Quiet>│</>
+<Quiet>│</> <Accent> </> /plugin                                              <Quiet>│</>
+<Quiet>│</>   <Quiet>7 hours ago · fix/background-command-offer</>           <Quiet>│</>
+<Quiet>│</>                                                        <Quiet>│</>
+<Quiet>│</> <Accent> </> /plugin                                              <Quiet>│</>
+<Quiet>│</>   <Quiet>8 hours ago · fix/minor-session-display</>              <Quiet>│</>
+<Quiet>│</>                                                        <Quiet>│</>
+<Quiet>│</> <Accent> </> /clear                                               <Quiet>│</>
+<Quiet>│</>   <Quiet>13 hours ago · main</>                                  <Quiet>│</>
+<Quiet>│</>                                                        <Quiet>│</>
+<Quiet>│</> <Accent>›</> <Strong>Release 0.23.0 smoke gates</>                           <Quiet>│</>
+<Quiet>│</>   <Quiet>17 hours ago · main</>                                  <Quiet>│</>
+<Quiet>│</>                                                        <Quiet>│</>
+<Quiet>╰</><Quiet>────────────────────────────────────────────────────────</><Quiet>╯</>
+
+ <Quiet>↑↓ · ctrl+r · esc</>

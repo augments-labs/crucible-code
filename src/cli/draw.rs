@@ -456,16 +456,15 @@ pub(crate) fn trouble<T: Terminal>(
     ))
 }
 
-/// Says where the transcript went, on the screen the session did not run on.
+/// Says how to come back, on the screen the session did not run on.
 ///
-/// The last thing crucible writes. By the time this is reached the screen the
-/// transcript was drawn on has been handed back, so what is under the cursor is
-/// the shell the reader started in, and everything the session drew is gone
-/// from it. A line saying where the record of it is, and a line saying how to
-/// open it again, is what stands in for the scrollback that went.
-///
-/// Nothing at all where the session took no screen: what it drew went into the
-/// reader's own scrollback and is still there to be scrolled to.
+/// The last thing crucible writes. A quit that was asked for gets exactly two
+/// lines — the command that resumes this session — because that command names
+/// an id nothing on the screen has said, and everything else about the session
+/// is already in the scrollback the shell just got back. A log that stopped
+/// recording earns one more line first: that failure was said while the session
+/// ran, on a screen that no longer exists, so it is said once more or a reader
+/// later opens a truncated transcript believing it whole.
 ///
 /// Through [`Renderer::parting`] rather than [`Renderer::commit`], because
 /// there is no picture left to commit under — the frame this renderer is
@@ -475,29 +474,43 @@ pub(crate) fn parting<T: Terminal>(
     parting: &Parting,
     style: Style,
 ) -> Result<(), TerminalError> {
-    let (path, whole) = match parting {
+    let (path, lost) = match parting {
         Parting::Nothing => return Ok(()),
-        Parting::Kept(path) => (path, true),
-        Parting::Lost(path) => (path, false),
+        Parting::Kept(path) => (path, false),
+        Parting::Lost(path) => (path, true),
     };
 
-    let glyphs = style.glyphs();
-    let said = if whole {
-        "the transcript is in"
-    } else {
-        "the log stopped recording — the transcript up to then is in"
-    };
+    let mut rows = vec![Row::new()];
 
-    // The path is written whole. Everything else here is a sentence and would
-    // survive losing its tail; this is an address, and one clipped to the
-    // window is a reader sent nowhere.
-    renderer.parting(&[
-        Row::new(),
-        Row::new()
-            .then(Slot::Quiet, format!("{} {said} ", glyphs.dot()))
-            .then(Slot::Plain, path.display().to_string()),
-        Row::new().then(Slot::Quiet, "  crucible --continue picks this session up"),
-    ])
+    // The path is written whole. The sentence would survive losing its tail;
+    // this is an address, and one clipped to the window is a reader sent
+    // nowhere.
+    if lost {
+        rows.push(
+            Row::new()
+                .then(
+                    Slot::Quiet,
+                    format!(
+                        "{} the log stopped recording — the transcript up to then is in ",
+                        style.glyphs().dot()
+                    ),
+                )
+                .then(Slot::Plain, path.display().to_string()),
+        );
+    }
+
+    // The id is the file's stem because the file is named by it; a log kept
+    // somewhere unnameable has no command worth printing.
+    if let Some(id) = path.file_stem().and_then(|stem| stem.to_str()) {
+        rows.push(Row::new().then(Slot::Quiet, "Resume this session with:"));
+        rows.push(Row::new().then(Slot::Plain, format!("  crucible --resume {id}")));
+    }
+
+    if rows.len() == 1 {
+        return Ok(());
+    }
+
+    renderer.parting(&rows)
 }
 
 /// Draws a permission question and leaves the cursor where the answer goes.

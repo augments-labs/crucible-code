@@ -23,6 +23,7 @@ authors.workspace = true
 [dependencies]
 globset.workspace = true
 thiserror.workspace = true
+uuid.workspace = true
 
 # The descriptor walk that opens a path the workspace proved, which is what
 # makes containment hold against something else writing into the tree at the

@@ -1,17 +1,26 @@
-//! What the list says, and what picking one off it changes.
+//! What the listing says, and what picking a session up by its id changes.
 //!
 //! The sessions are recorded through the runner's own API rather than planted
 //! as text: what `/resume` picks up has to be what a session leaves behind, and
 //! a fixture written by hand is a second opinion about that.
+//!
+//! The picker's keys are not driven from here: a [`Recording`] takes writes and
+//! answers no key, so what a key does is proven where the key tables live, in
+//! `finding`'s own tests. What these prove is everything around the keys — the
+//! id-bearing listing a keyboardless run prints, what an id picks up, what a
+//! rename writes down, and what the marked row's meta line says.
 
 use std::cell::Cell;
 use std::time::Duration;
 
 use crucible_auth::Store;
-use crucible_core::{Cancel, Message, Revealed, StopReason, ToolId};
+use crucible_core::{
+    Cancel, Message, Revealed, SessionId, StopReason, ToolArgs, ToolCall, ToolId, ToolOutput,
+    ToolResult,
+};
 use crucible_runner::{Model, Runner, Tools};
 use crucible_tools::{Ledger, Plan};
-use crucible_tui::{Recording, Renderer};
+use crucible_tui::{Recording, Renderer, Row};
 
 use crate::cli::converse::{Answers, Held};
 use crate::cli::draw::opening::{Opening, Standing};
@@ -41,7 +50,7 @@ fn standing(sample: &Sample) -> Standing {
 
 /// A session recorded in `sample` and closed again, holding one exchange.
 fn recorded(sample: &Sample, asked: &str) -> Session {
-    let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
 
     session.append(&Message::said(asked));
     session.append(&Message::Agent {
@@ -51,6 +60,15 @@ fn recorded(sample: &Sample, asked: &str) -> Session {
     });
 
     session
+}
+
+/// The id a recorded session answers to, as `/resume` is handed it.
+fn named(session: &Session) -> String {
+    session
+        .id()
+        .expect("a recorded session has a name")
+        .as_str()
+        .to_owned()
 }
 
 /// A runner that answers nothing, recording to `session`.
@@ -103,7 +121,7 @@ fn terms(sample: &Sample) -> Terms {
     }
 }
 
-/// How long the list is given to hold every session that belongs on it.
+/// How long the list is given to hold a session that belongs on it.
 ///
 /// Generous, because it is only ever waited out by a failure: what is being
 /// waited for is a queue draining, which takes no time at all on a machine that
@@ -111,33 +129,25 @@ fn terms(sample: &Sample) -> Terms {
 /// expected" into a pass rather than into a report about `/resume`.
 const SETTLING: Duration = Duration::from_secs(5);
 
-/// Where on the list the session that was asked `wanted` sits, as `/resume`
-/// would be told it — once the list holds all `of` of them.
+/// The session `id` names, once the list holds it.
 ///
 /// A session reaches the list when its first prompt reaches its log, and the
-/// session in hand is written to by the thread that owns its queue. So a
-/// position read while one of them is still missing is a position that names a
-/// different row by the time `/resume` reads the list for itself: the one still
-/// arriving is the newest, and it arrives at the top.
-fn at(sample: &Sample, wanted: &str, of: usize) -> String {
+/// log is written by the thread that owns its queue — so a read racing that
+/// thread would find the list one row short.
+fn on_the_list(sample: &Sample, id: &SessionId) -> Recorded {
     let since = std::time::Instant::now();
 
     loop {
-        let listed = recent(&sample.logs(), &sample.workspace(), SHOWN);
-
-        if listed.len() == of {
-            let found = listed
-                .iter()
-                .position(|session| session.asked() == wanted)
-                .expect("the session is on the list");
-
-            return (found + 1).to_string();
+        if let Some(found) = recent(&sample.logs(), &sample.workspace(), SHOWN)
+            .into_iter()
+            .find(|session| session.id() == id)
+        {
+            return found;
         }
 
         assert!(
             since.elapsed() < SETTLING,
-            "{} of {of} sessions reached the list",
-            listed.len()
+            "the session never reached the list"
         );
 
         std::thread::sleep(Duration::from_millis(1));
@@ -191,29 +201,30 @@ fn a_directory_nothing_was_recorded_in_says_so() {
 }
 
 #[test]
-fn the_list_is_numbered_from_one_in_the_order_it_came_back_in() {
-    // Which order that is belongs to `recent` and is proven there. What is
-    // proven here is that the numbers follow it and start at one: they are the
-    // only way to pick a session, so a number beside the wrong row picks the
-    // wrong session.
+fn the_list_names_each_session_by_its_id() {
+    // The id is the only handle a keyboardless run leaves: there is no picker
+    // to walk, so the row has to carry the exact word `--resume` and
+    // `/resume` take. The order belongs to `recent` and is proven there.
     let sample = Sample::new("resume-list");
-    drop(recorded(&sample, "one question"));
-    drop(recorded(&sample, "another question"));
+    let one = recorded(&sample, "one question");
+    let first = named(&one);
+    drop(one);
+    let two = recorded(&sample, "another question");
+    let second = named(&two);
+    drop(two);
     let mut runner = over(Session::nowhere());
 
-    let listed = recent(&sample.logs(), &sample.workspace(), SHOWN);
     let written = resuming("", &sample, &mut runner);
     let rows: Vec<&str> = written
         .lines()
         .filter(|row| row.contains("question"))
         .collect();
 
-    assert_eq!(rows.len(), listed.len(), "{written}");
-    for (at, session) in listed.iter().enumerate() {
-        let wanted = format!("{}  ", at + 1);
+    assert_eq!(rows.len(), 2, "{written}");
+    for (id, asked) in [(&first, "one question"), (&second, "another question")] {
         assert!(
-            rows.get(at)
-                .is_some_and(|row| row.starts_with(&wanted) && row.contains(session.asked())),
+            rows.iter()
+                .any(|row| row.starts_with(id.as_str()) && row.contains(asked)),
             "{written}"
         );
     }
@@ -221,18 +232,22 @@ fn the_list_is_numbered_from_one_in_the_order_it_came_back_in() {
 }
 
 #[test]
-fn a_number_that_names_nothing_says_so_and_shows_the_list_again() {
-    // Both halves matter. The list is what the numbers mean, so a refusal
-    // without it leaves nothing to try instead.
+fn an_id_that_names_nothing_says_so_and_shows_the_list_again() {
+    // Both halves matter. The refusal is the same sentence `--resume` refuses
+    // with, and the listing after it is something to try instead. The two
+    // shapes fail the same way because they are the same fact: neither names a
+    // session recorded here, and whether that is spelling or absence is
+    // nothing the reader can act on differently.
     let sample = Sample::new("resume-unknown");
     drop(recorded(&sample, "the only question"));
     let mut runner = over(Session::nowhere());
 
-    for said in ["4", "0", "-1", "the second one"] {
+    let absent = SessionId::new();
+    for said in ["the second one", absent.as_str()] {
         let written = resuming(said, &sample, &mut runner);
 
         assert!(
-            written.contains(&format!("! {said} is not on the list")),
+            written.contains(&format!("! no session {said} in this workspace")),
             "{written}"
         );
         assert!(written.contains("the only question"), "{written}");
@@ -243,11 +258,12 @@ fn a_number_that_names_nothing_says_so_and_shows_the_list_again() {
 fn picking_one_up_makes_it_the_session_being_recorded_to() {
     let sample = Sample::new("resume-picked");
     let earlier = recorded(&sample, "what was asked before");
+    let id = named(&earlier);
     let path = earlier.path().to_owned();
     drop(earlier);
 
     let mut runner = over(Session::nowhere());
-    let written = resuming("1", &sample, &mut runner);
+    let written = resuming(&id, &sample, &mut runner);
 
     assert_eq!(runner.session().path(), path);
     assert_eq!(
@@ -268,16 +284,17 @@ fn the_session_already_open_is_refused_as_the_one_being_used() {
     // say: the claim on that file is this process's own, and being sent to
     // close a crucible that is this one is worse than not being answered.
     // Continued the way `--continue` continues one, so the session in hand is
-    // both on the list and claimed by this process — which is the arrangement
-    // the answer is about.
+    // both recorded and claimed by this process — which is the arrangement the
+    // answer is about.
     let sample = Sample::new("resume-itself");
     drop(recorded(&sample, "the session in hand"));
     let (open, transcript) =
         Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
+    let id = named(&open);
     let path = open.path().to_owned();
     let mut runner = over(open).resuming(transcript);
 
-    let written = resuming("1", &sample, &mut runner);
+    let written = resuming(&id, &sample, &mut runner);
 
     assert!(
         written.contains("this is the session you are in"),
@@ -293,20 +310,17 @@ fn what_was_being_recorded_to_is_closed_and_stays_readable() {
     // complete before this process moves on — and complete means a later
     // crucible can continue it.
     let sample = Sample::new("resume-leaving");
-    drop(recorded(&sample, "the one picked up"));
+    let wanted = recorded(&sample, "the one picked up");
+    let id = named(&wanted);
+    drop(wanted);
 
-    let leaving = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+    let leaving = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
     let left = leaving.path().to_owned();
     let mut runner = over(leaving);
 
     runner.session().append(&Message::said("said in passing"));
 
-    // Asked for by where it is on the list rather than by a number written
-    // here, and asked once both sessions are on it. The session being left is
-    // being written to as this runs, so a number written here would name
-    // whichever row that log had reached by then — and the row it reaches is
-    // the first one, which is this session asking to resume itself.
-    let written = resuming(&at(&sample, "the one picked up", 2), &sample, &mut runner);
+    let written = resuming(&id, &sample, &mut runner);
 
     assert_ne!(runner.session().path(), left, "{written}");
 
@@ -320,7 +334,9 @@ fn the_transcript_a_session_replaces_is_not_left_standing_above_it() {
     // and a reader scrolling back would walk out of the session they picked up
     // and into the one they left without being told.
     let sample = Sample::new("resume-replaces");
-    drop(recorded(&sample, "what was asked before"));
+    let earlier = recorded(&sample, "what was asked before");
+    let id = named(&earlier);
+    drop(earlier);
 
     let mut runner = over(Session::nowhere());
     let mut renderer = Renderer::new(Recording::new(80, 24));
@@ -331,7 +347,7 @@ fn the_transcript_a_session_replaces_is_not_left_standing_above_it() {
     let mut input = std::io::empty();
     let opening = standing(&sample);
     run(
-        "1",
+        &id,
         &mut renderer,
         &mut runner,
         &mut lent(&mut input, &opening),
@@ -354,7 +370,9 @@ fn an_image_pasted_in_the_session_being_left_is_not_attached_after_it() {
     // numbering starts over with the session. An image still held here would be
     // attached to the first prompt after the resume that says the marker.
     let sample = Sample::new("resume-forgets-the-images");
-    drop(recorded(&sample, "what was asked before"));
+    let earlier = recorded(&sample, "what was asked before");
+    let id = named(&earlier);
+    drop(earlier);
 
     let mut runner = over(Session::nowhere());
     let mut renderer = Renderer::new(Recording::new(80, 24));
@@ -363,7 +381,7 @@ fn an_image_pasted_in_the_session_being_left_is_not_attached_after_it() {
     let mut held = lent(&mut input, &opening);
     held.images.push("a-picture.png".into());
 
-    run("1", &mut renderer, &mut runner, &mut held, &terms(&sample))
+    run(&id, &mut renderer, &mut runner, &mut held, &terms(&sample))
         .expect("the terminal to be written");
 
     assert!(held.images.is_empty());
@@ -376,6 +394,7 @@ fn the_plan_that_comes_back_is_the_one_the_session_picked_up_wrote() {
     // the session being left — work this agent now has no memory of — is not.
     let sample = Sample::new("resume-replays-the-plan");
     let planned = recorded(&sample, "plan the work");
+    let id = named(&planned);
     planned.append(&Message::Agent {
         text: "".into(),
         calls: vec![crucible_core::ToolCall {
@@ -405,7 +424,7 @@ fn the_plan_that_comes_back_is_the_one_the_session_picked_up_wrote() {
     let mut input = std::io::empty();
     let opening = standing(&sample);
     run(
-        "1",
+        &id,
         &mut renderer,
         &mut runner,
         &mut lent(&mut input, &opening),
@@ -427,7 +446,9 @@ fn the_tools_looked_up_by_the_session_being_left_are_forgotten() {
     // `/clear` forgets them: left standing they would be advertised to a
     // session that never asked.
     let sample = Sample::new("resume-forgets-the-lookups");
-    drop(recorded(&sample, "what was asked before"));
+    let earlier = recorded(&sample, "what was asked before");
+    let id = named(&earlier);
+    drop(earlier);
 
     let mut runner = over(Session::nowhere());
     let terms = terms(&sample);
@@ -438,7 +459,7 @@ fn the_tools_looked_up_by_the_session_being_left_are_forgotten() {
     let mut input = std::io::empty();
     let opening = standing(&sample);
     run(
-        "1",
+        &id,
         &mut renderer,
         &mut runner,
         &mut lent(&mut input, &opening),
@@ -454,7 +475,9 @@ fn what_was_held_behind_rows_that_have_gone_is_dropped_with_them() {
     // A key opening what is behind a row nobody can see is the one thing worse
     // than not offering at all.
     let sample = Sample::new("resume-forgets");
-    drop(recorded(&sample, "what was asked before"));
+    let earlier = recorded(&sample, "what was asked before");
+    let id = named(&earlier);
+    drop(earlier);
 
     let mut runner = over(Session::nowhere());
     let mut renderer = Renderer::new(Recording::new(80, 24));
@@ -467,10 +490,186 @@ fn what_was_held_behind_rows_that_have_gone_is_dropped_with_them() {
     held.kept.finished(&call, "line\nline\nline".into(), 0);
     assert!(!held.kept.is_empty());
 
-    run("1", &mut renderer, &mut runner, &mut held, &terms(&sample))
+    run(&id, &mut renderer, &mut runner, &mut held, &terms(&sample))
         .expect("the terminal to be written");
 
     // The session picked up made no calls of its own, so anything left here is
     // the old session's.
     assert!(held.kept.is_empty());
+}
+
+#[test]
+fn a_saved_title_outlives_the_picker_and_the_session() {
+    // A rename is written into the index rather than held on the frame, so it
+    // has to still be there after the picker is gone — and after the session
+    // has been continued and finished, which rewrites the index entry.
+    let sample = Sample::new("resume-retitle");
+    let session = recorded(&sample, "the first question");
+    let id = session.id().expect("a recorded session has a name").clone();
+    drop(session);
+    drop(on_the_list(&sample, &id));
+
+    let listed = saved("a better name", &id, &sample.logs(), &sample.workspace());
+    let found = listed
+        .iter()
+        .find(|session| session.id() == &id)
+        .expect("the renamed session stays on the list");
+    assert_eq!(found.title(), "a better name");
+
+    let (reopened, _) = Session::reopen(&sample.logs(), &sample.workspace(), &id)
+        .expect("the session the id names");
+    reopened.append(&Message::said("carried on"));
+    drop(reopened);
+
+    let found = on_the_list(&sample, &id);
+    assert_eq!(found.title(), "a better name");
+}
+
+#[test]
+fn the_preview_holds_the_work_a_session_did_and_not_only_what_was_said() {
+    // A conversation is its tool work as much as its answers, and the pane is
+    // showing what Enter would leave the reader looking at — so the call line
+    // and the row its result came back on are in it, drawn by whatever draws
+    // them live.
+    let sample = Sample::new("resume-preview-work");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
+    let id = session.id().expect("a recorded session has a name").clone();
+    let call = ToolId::new("c-1");
+
+    session.append(&Message::said("read the config"));
+    session.append(&Message::Agent {
+        text: "I will look at it.".into(),
+        calls: vec![ToolCall {
+            id: call.clone(),
+            name: "read".into(),
+            args: ToolArgs::new(r#"{"path":"crucible.json"}"#),
+        }],
+        stop: Some(StopReason::WantsTools),
+    });
+    session.append(&Message::ToolResults(vec![ToolResult {
+        id: call,
+        output: ToolOutput::ok("theme = midnight"),
+    }]));
+    drop(session);
+
+    let held = glimpse(&sample.logs(), &sample.workspace(), &id).expect("a finished log");
+    let runner = over(recorded(&sample, "another session entirely"));
+    let against = replaying::Replay {
+        runner: &runner,
+        workspace: &sample.workspace(),
+        style: Style::plain(),
+    };
+    let rows = previewed(
+        &held,
+        &against,
+        Picker::previewing(100).expect("a window this wide keeps the pane"),
+    );
+
+    let drawn = rows.iter().map(Row::text).collect::<Vec<_>>().join("\n");
+    assert!(drawn.contains("read the config"), "{drawn}");
+    assert!(drawn.contains("I will look at it."), "{drawn}");
+    assert!(
+        drawn.contains("Read"),
+        "no call line in the preview: {drawn}"
+    );
+    assert!(drawn.contains("theme = midnight"), "{drawn}");
+}
+
+#[test]
+fn a_preview_is_drawn_for_the_pane_the_window_leaves_it() {
+    // The pane's width is the reader's to change under it, so the rows are
+    // drawn against whatever it is now rather than against whatever it was
+    // when the session was first looked at.
+    let sample = Sample::new("resume-preview-width");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
+    let id = session.id().expect("a recorded session has a name").clone();
+    session.append(&Message::said(
+        "a question long enough that no narrow pane holds it on one row at all",
+    ));
+    drop(session);
+
+    let held = glimpse(&sample.logs(), &sample.workspace(), &id).expect("a finished log");
+    let runner = over(recorded(&sample, "another session entirely"));
+
+    for columns in [Picker::FOLDS_AT, 100, 160] {
+        let room = Picker::previewing(columns).expect("a window this wide keeps the pane");
+        let against = replaying::Replay {
+            runner: &runner,
+            workspace: &sample.workspace(),
+            style: Style::plain(),
+        };
+        let rows = previewed(&held, &against, room);
+        assert!(!rows.is_empty(), "nothing drawn at {columns} columns");
+        for row in &rows {
+            assert!(
+                crucible_tui::columns(&row.text()) <= room,
+                "a row wider than the pane at {columns} columns: {:?}",
+                row.text()
+            );
+        }
+    }
+}
+
+#[test]
+fn the_meta_line_counts_the_messages_and_names_the_branch() {
+    // One line under the preview: age, count and branch. The count is spelled
+    // singular where it is one, because "1 messages" is the kind of line that
+    // says nobody read it.
+    let sample = Sample::new("resume-meta");
+    let session = Session::start(&sample.logs(), &sample.workspace(), Some("feature/x"))
+        .expect("a new session");
+    let id = session.id().expect("a recorded session has a name").clone();
+    session.append(&Message::said("the only thing said"));
+    drop(session);
+
+    let listed = on_the_list(&sample, &id);
+    let held = glimpse(&sample.logs(), &sample.workspace(), &id).expect("a finished log");
+    assert!(!held.busy());
+
+    let said = meta(
+        &listed,
+        Some(&held),
+        SystemTime::now(),
+        Style::plain().glyphs(),
+    );
+    assert!(said.contains("just now"), "{said}");
+    assert!(said.contains("1 message"), "{said}");
+    assert!(!said.contains("1 messages"), "{said}");
+    assert!(said.contains("feature/x"), "{said}");
+    assert!(!said.contains("in use elsewhere"), "{said}");
+}
+
+#[test]
+fn a_session_another_crucible_holds_open_is_said_to_be_in_use() {
+    // Answered inline on the meta line rather than as a refusal: the reader
+    // finds out while they are looking at the row, before Enter has closed the
+    // picker over a session that would refuse to open.
+    let sample = Sample::new("resume-busy");
+    let open = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
+    let id = open.id().expect("a recorded session has a name").clone();
+    open.append(&Message::said("held open elsewhere"));
+
+    let listed = on_the_list(&sample, &id);
+    let held = glimpse(&sample.logs(), &sample.workspace(), &id).expect("a claimed log");
+    assert!(held.busy());
+
+    let said = meta(
+        &listed,
+        Some(&held),
+        SystemTime::now(),
+        Style::plain().glyphs(),
+    );
+    assert!(said.contains("in use elsewhere"), "{said}");
+
+    drop(open);
+    let held = glimpse(&sample.logs(), &sample.workspace(), &id).expect("a finished log");
+    assert!(!held.busy());
+
+    let said = meta(
+        &on_the_list(&sample, &id),
+        Some(&held),
+        SystemTime::now(),
+        Style::plain().glyphs(),
+    );
+    assert!(!said.contains("in use elsewhere"), "{said}");
 }

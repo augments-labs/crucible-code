@@ -49,7 +49,7 @@ fn answered(id: &str, output: ToolOutput) -> Message {
 
 /// Records `messages` in a fresh session and returns where it was written.
 fn record(sample: &Sample, messages: &[Message]) -> PathBuf {
-    let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
     let path = session.path().to_owned();
 
     for message in messages {
@@ -344,7 +344,7 @@ fn a_log_from_the_format_before_this_one_is_still_a_session_to_continue() {
     // here exactly what it meant there, and refusing it would cost somebody
     // their history to protect them from nothing.
     let sample = Sample::new("session-older-format");
-    let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
     let path = session.path().to_owned();
     session.append(&said("what an older build recorded"));
     drop(session);
@@ -375,7 +375,7 @@ fn a_compacted_session_replays_as_the_notes_and_what_they_did_not_replace() {
     // mean everything standing above it, which is a fact about the file rather
     // than about the compaction.
     let sample = Sample::new("session-compacted");
-    let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
 
     session.append(&said("one"));
     session.append(&said("two"));
@@ -408,7 +408,7 @@ fn a_pruned_result_is_cleared_again_when_the_session_is_continued() {
     // never re-sent what it stopped seeing. The clearing rides on the result's
     // own id, which it shares with the call it answered.
     let sample = Sample::new("session-pruned");
-    let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
 
     session.append(&calling("a", "read", r#"{"path":"big.rs"}"#));
     session.append(&answered("a", ToolOutput::ok("x".repeat(80_000))));
@@ -453,7 +453,7 @@ fn a_log_that_says_it_forgot_is_continued_from_where_it_says_so() {
     const FORGOTTEN: &str = r#"{"forgotten":true}"#;
 
     let sample = Sample::new("session-forgot");
-    let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
     let path = session.path().to_owned();
 
     session.append(&said("what was said first"));
@@ -578,11 +578,49 @@ fn the_newest_session_for_this_workspace_is_the_one_continued() {
 }
 
 #[test]
+fn the_branch_a_session_starts_on_reaches_the_listing() {
+    let sample = Sample::new("session-branch");
+    let session = Session::start(&sample.logs(), &sample.workspace(), Some("feature/picker"))
+        .expect("a new session");
+    session.append(&said("work on the branch"));
+    drop(session);
+
+    let offered = super::recent(&sample.logs(), &sample.workspace(), 4);
+
+    assert_eq!(
+        offered.first().and_then(super::Recorded::branch),
+        Some("feature/picker")
+    );
+}
+
+#[test]
+fn the_message_count_follows_appends_and_survives_a_resume() {
+    let sample = Sample::new("session-counted");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
+    session.append(&said("one"));
+    session.append(&answering("two"));
+    session.append(&said("three"));
+    drop(session);
+
+    let offered = super::recent(&sample.logs(), &sample.workspace(), 4);
+    assert_eq!(offered.first().map(super::Recorded::messages), Some(3));
+
+    let (continued, transcript) =
+        Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
+    assert_eq!(transcript.len(), 3);
+    continued.append(&answering("four"));
+    drop(continued);
+
+    let offered = super::recent(&sample.logs(), &sample.workspace(), 4);
+    assert_eq!(offered.first().map(super::Recorded::messages), Some(4));
+}
+
+#[test]
 fn a_session_from_another_workspace_is_not_offered() {
     // Sessions share one directory, so the workspace in the header is the only
     // thing keeping one project's session out of another's.
     let sample = Sample::new("session-elsewhere");
-    Session::start(&sample.logs(), &sample.elsewhere()).expect("a new session");
+    Session::start(&sample.logs(), &sample.elsewhere(), None).expect("a new session");
 
     let problem = Session::resume(&sample.logs(), &sample.workspace()).expect_err("nothing here");
 
@@ -648,7 +686,7 @@ fn reading(tokens: u64, spent: u64) -> Calibration {
 #[test]
 fn a_session_picked_up_is_told_again_what_its_last_request_carried() {
     let sample = Sample::new("session-carried");
-    let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
     let told = reading(12_345, 678);
 
     session.append(&said("what came before"));
@@ -670,7 +708,7 @@ fn a_reading_with_a_turn_written_after_it_is_not_about_this_transcript() {
     // transcript than the one being handed back — and a load told that number
     // would under-state itself, which is the direction that costs a turn.
     let sample = Sample::new("session-carried-stale");
-    let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
 
     session.append(&answering("all done"));
     session.measured(&reading(12_345, 678));
@@ -689,7 +727,7 @@ fn a_reading_covering_an_answer_nothing_answered_goes_with_it() {
     // has its last message cut off, so a reading written over that message
     // describes more transcript than comes back.
     let sample = Sample::new("session-carried-cut");
-    let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
 
     session.append(&said("fix the parser"));
     session.append(&calling("call-1", "read", r#"{"path":"src/main.rs"}"#));
@@ -706,7 +744,7 @@ fn a_reading_covering_an_answer_nothing_answered_goes_with_it() {
 #[test]
 fn a_session_started_here_was_never_told_anything() {
     let sample = Sample::new("session-carried-fresh");
-    let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
 
     assert_eq!(session.calibrated(), None);
 }

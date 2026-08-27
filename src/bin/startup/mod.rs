@@ -1,6 +1,6 @@
 //! Timing the real binary from `exec` through a real terminal.
 //!
-//! Shared by the two startup probes. Measuring in-process would leave out
+//! Shared by the probes that time a screen. Measuring in-process would leave out
 //! everything that actually costs a startup — the exec, dynamic loader, first
 //! page faults and binary size — so this spawns `crucible` the way a person does
 //! and reads what a terminal receives.
@@ -11,6 +11,9 @@
 //! redirected-output probe. The clock starts before `spawn`, so the small cost
 //! of `setsid` and the probe's own fork is charged too; that makes the reading a
 //! little worse than a shell launch, which is the safe direction for a budget.
+//!
+//! A screen reached by typing is timed from the keystroke instead, because the
+//! launch under it is already two budgets of its own.
 
 use std::collections::HashSet;
 #[cfg(target_os = "linux")]
@@ -105,8 +108,8 @@ const CONFIG: &str = r#"{
 
 /// What proves that the timed startup operation happened.
 ///
-/// This source is compiled separately into two probes, so each resulting
-/// binary deliberately constructs one of the two variants and not the other.
+/// This source is compiled separately into one probe per variant, so each
+/// resulting binary deliberately constructs one of them and not the others.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Measure {
@@ -118,12 +121,23 @@ pub(crate) enum Measure {
         ready: &'static str,
         probe: &'static str,
     },
+    /// Once ready, a whole line was typed and the screen it opens arrived.
+    ///
+    /// Timed from the moment the line was sent rather than from `exec`: what
+    /// startup costs is already a budget of its own two rows above, and
+    /// charging it again here would leave a screen's budget moving whenever
+    /// startup did.
+    Typed {
+        ready: &'static str,
+        line: &'static str,
+        needle: &'static str,
+    },
 }
 
 impl Measure {
     fn label(self) -> &'static str {
         match self {
-            Self::Frame { needle } => needle,
+            Self::Frame { needle } | Self::Typed { needle, .. } => needle,
             Self::Input { probe, .. } => probe,
         }
     }
@@ -375,6 +389,9 @@ impl Running {
         let deadline = Instant::now() + CEILING;
         let mut seen = Vec::with_capacity(4096);
         let mut sent = false;
+        // Moved to the send for a typed line, which is where that reading
+        // starts; every other measure is charged from `exec`.
+        let mut from = started;
 
         loop {
             let now = Instant::now();
@@ -410,7 +427,17 @@ impl Running {
                 Measure::Input { probe, .. } if sent && contains(&seen, probe) => {
                     return Ok(started.elapsed());
                 }
-                Measure::Frame { .. } | Measure::Input { .. } => {}
+                Measure::Typed { ready, line, .. } if !sent && contains(&seen, ready) => {
+                    seen.clear();
+                    from = Instant::now();
+                    self.terminal.write_all(line.as_bytes())?;
+                    self.terminal.flush()?;
+                    sent = true;
+                }
+                Measure::Typed { needle, .. } if sent && contains(&seen, needle) => {
+                    return Ok(from.elapsed());
+                }
+                Measure::Frame { .. } | Measure::Input { .. } | Measure::Typed { .. } => {}
             }
         }
     }
@@ -500,12 +527,43 @@ const USABLE: std::ops::Range<usize> = 44..48;
 /// What every usable planted session was first asked.
 const TITLE: &str = "what the last person to sit here asked";
 
+/// The one planted session somebody worked in for an afternoon.
+///
+/// The newest usable log, so it is the entry a picker opens marked and the
+/// session its preview is drawn from. A directory of first questions would say
+/// nothing about what previewing costs, and would keep saying nothing as real
+/// sessions grew.
+const DEEPEST: usize = USABLE.end - 1;
+
+/// Turns written into that one.
+///
+/// Enough to carry the log past the tail a preview reads, which [`worked_in`]
+/// checks through the production glimpse rather than trusting: the reading is
+/// meant to cover a read that had to stop early, not a file that happened to
+/// fit.
+const WORKED: usize = 240;
+
+/// What each of those turns asked, answered, and read back.
+const ASKED: &str = "where does this one get decided, and what reads it after";
+const ANSWERED: &str = "In the module below. I will read it and say what it holds.";
+const RETURNED: &str = "the file, as far as the tool was willing to read it, which is \
+enough lines of it to stand for what a tool puts back into a session and not so many \
+that one turn is the whole of the log";
+
+/// The last thing the deepest session said, and so the last row of its preview.
+///
+/// A probe waiting on it reads it from here: a fixture's last word and the word
+/// a measurement waits for are one fact, and two spellings of it would be a
+/// probe that hangs for five seconds to say so.
+pub(crate) const ENDED: &str = "the deepest session ends here";
+
 /// The session logs, planted.
 ///
 /// Each is a header and one message, which is what a session that was asked one
-/// thing and then closed leaves behind. The ones outside [`USABLE`] name a
-/// directory the child is not started in, so they are read and put down again;
-/// the ones inside it name the directory it is, so their titles are read too.
+/// thing and then closed leaves behind — except [`DEEPEST`], which is a session
+/// that was worked in. The ones outside [`USABLE`] name a directory the child is
+/// not started in, so they are read and put down again; the ones inside it name
+/// the directory it is, so their titles are read too.
 ///
 /// Written through the production session API, so a file-format change cannot
 /// quietly turn the title path into a scan of foreign logs. Fixture creation is
@@ -529,18 +587,80 @@ fn worked_in(sessions: &Path) -> Result<HashSet<OsString>, StartupError> {
     // sixty-four-log bound. The pause is outside the timed region.
     for nth in 0..LOGS {
         let workspace = if USABLE.contains(&nth) { &here } else { &away };
-        let session = crucible_runner::Session::start(sessions, workspace)?;
-        if let Some(id) = session.id() {
+        let session = crucible_runner::Session::start(sessions, workspace, None)?;
+        let name = session.id().cloned();
+        if let Some(id) = name.as_ref() {
             planted.insert(OsString::from(format!("{}.jsonl", id.as_str())));
         }
         session.append(&crucible_core::Message::said(TITLE));
+        if nth == DEEPEST {
+            worked(&session);
+        }
         if let Some(trouble) = session.finish() {
             return Err(StartupError::Record(trouble));
+        }
+        if nth == DEEPEST
+            && let Some(id) = name.as_ref()
+        {
+            deep_enough(sessions, &here, id)?;
         }
         std::thread::sleep(Duration::from_millis(1));
     }
 
     Ok(planted)
+}
+
+/// Writes [`WORKED`] turns of real work into one open session.
+///
+/// Prompts, answers, calls and results, because a preview draws all four and a
+/// log of prose alone would measure the cheapest of them. The last word is
+/// [`ENDED`], which is what a probe waits to see.
+fn worked(session: &crucible_runner::Session) {
+    use crucible_core::{Message, StopReason, ToolArgs, ToolCall, ToolId, ToolOutput, ToolResult};
+
+    for turn in 0..WORKED {
+        let call = ToolId::new(format!("call-{turn}"));
+
+        session.append(&Message::said(format!("{ASKED} — turn {turn}?")));
+        session.append(&Message::Agent {
+            text: ANSWERED.into(),
+            calls: vec![ToolCall {
+                id: call.clone(),
+                name: "read".into(),
+                args: ToolArgs::new(format!(r#"{{"path":"src/module-{turn}.rs"}}"#)),
+            }],
+            stop: Some(StopReason::WantsTools),
+        });
+        session.append(&Message::ToolResults(vec![ToolResult {
+            id: call,
+            output: ToolOutput::ok(RETURNED),
+        }]));
+    }
+
+    session.append(&Message::Agent {
+        text: ENDED.into(),
+        calls: Vec::new(),
+        stop: Some(StopReason::Yielded),
+    });
+}
+
+/// Refuses a fixture the preview would not have to cut.
+///
+/// Asked through the production glimpse rather than of the file's size, because
+/// the bound belongs to that read: a log big enough today is a log that quietly
+/// stops standing for one the day the bound moves.
+fn deep_enough(
+    sessions: &Path,
+    workspace: &crucible_core::Workspace,
+    id: &crucible_core::SessionId,
+) -> Result<(), StartupError> {
+    if crucible_runner::glimpse(sessions, workspace, id)?.cut() {
+        return Ok(());
+    }
+
+    Err(StartupError::Io(io::Error::other(
+        "the deepest planted session fits inside the tail a preview reads",
+    )))
 }
 
 /// The probe's sibling in `target/release/`.

@@ -11,6 +11,7 @@
 //! Nothing above this file knows what an HTTP client is, and nothing below it
 //! knows what the command line said.
 
+mod branching;
 mod browser;
 mod choice;
 mod converse;
@@ -38,7 +39,8 @@ use clap::Parser;
 use crucible_auth::{Store, StoredCredentials};
 use crucible_config::{ConfigError, Home, Settings};
 use crucible_core::{
-    Cancel, CredentialError, Effort, Modalities, PathError, Provider, Revealed, Workspace,
+    Cancel, CredentialError, Effort, Modalities, PathError, Provider, Revealed, SessionId,
+    Workspace,
 };
 use crucible_provider::EndpointError;
 use crucible_runner::SessionError;
@@ -427,7 +429,9 @@ crucible keeps its own files in ~/.crucible, and reads config.json there, then \
 started in. Nearer wins; the command line is nearer than all of them.
 
 Sessions are written one file per session, and --continue picks up the most \
-recent one for this directory.
+recent one for this directory. --resume picks up the exact session an id \
+names instead; a quitting session prints its own id on the way out, and \
+/resume inside a session lists the rest.
 
 Flags, session files and config are unstable for the whole 0.x line."
 )]
@@ -435,6 +439,11 @@ struct Cli {
     /// Carry on the most recent session for this directory.
     #[arg(short, long)]
     r#continue: bool,
+
+    /// Pick up the exact session this id names, from the parting message or
+    /// the /resume picker.
+    #[arg(short, long, value_name = "SESSION_ID", conflicts_with = "continue")]
+    resume: Option<String>,
 
     /// The model to ask, optionally as provider/model. Left off, it is
     /// whatever your configuration chose for the provider whose key is set.
@@ -462,6 +471,14 @@ pub(crate) enum Fatal {
     /// The session could not be recorded or continued.
     #[error(transparent)]
     Session(#[from] SessionError),
+
+    /// `--resume` named a session this workspace has no record of.
+    ///
+    /// Its own sentence rather than the session crate's, because the id came
+    /// from the command line a moment ago: what the user needs to hear is that
+    /// the address is wrong here, not which file was looked for.
+    #[error("no session {0} in this workspace")]
+    NoSession(Box<str>),
 
     /// crucible's own files could not be found or read.
     #[error(transparent)]
@@ -829,7 +846,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         unasked: launch.unasked,
         model: launch.model.as_deref(),
         effort: launch.effort,
-        resuming: cli.r#continue,
+        resuming: resuming(cli)?,
         mode,
         settings: &settings,
         sessions: home.sessions(),
@@ -1097,6 +1114,23 @@ fn wanted(choice: &Choice, settings: &Settings, serving: Option<Served>) -> Opti
 /// run — the same reading `--model openai/` gets.
 fn thinking(asked: Option<Effort>, settings: &Settings, serving: Option<Served>) -> Option<Effort> {
     asked.or_else(|| settings.effort(serving?.name))
+}
+
+/// Which earlier session the command line asked for, parsed at the boundary.
+///
+/// An identifier that does not parse names no session anywhere, so it gets the
+/// same sentence an unknown one does rather than a parser's complaint: either
+/// way, nothing recorded here answers to it.
+fn resuming(cli: &Cli) -> Result<startup::Resuming, Fatal> {
+    use std::str::FromStr as _;
+
+    match &cli.resume {
+        Some(text) => SessionId::from_str(text)
+            .map(startup::Resuming::Exact)
+            .map_err(|_| Fatal::NoSession(text.as_str().into())),
+        None if cli.r#continue => Ok(startup::Resuming::Newest),
+        None => Ok(startup::Resuming::No),
+    }
 }
 
 /// Writes a fatal error where the user will see it.

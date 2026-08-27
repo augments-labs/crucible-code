@@ -23,7 +23,9 @@ mod runner;
 mod sample;
 mod tools;
 
-pub use crucible_session::{PROMPTS, Recorded, Session, SessionError, prompts, recent, remember};
+pub use crucible_session::{
+    Glimpse, PROMPTS, Recorded, Session, SessionError, glimpse, prompts, recent, remember, retitle,
+};
 pub use runner::attachments;
 pub use runner::{Compaction, Model, Runner};
 pub use tools::Tools;
