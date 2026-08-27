@@ -125,7 +125,7 @@ pub(super) fn stand_while<T: Terminal, S>(
     loop {
         while_waiting(renderer)?;
         if changed {
-            let (rows, caret) = laid(state, renderer.columns(), renderer.rows());
+            let (rows, caret) = laid(state, renderer.columns(), renderer.room());
             // Asked per frame rather than taken once, because one caller
             // changes it between frames: `/theme` draws its specimen in
             // whatever the mark is standing on, which is the whole of how a
@@ -254,7 +254,7 @@ fn drawn<T: Terminal>(
     let Some(last) = rows
         .len()
         .checked_sub(1)
-        .filter(|_| rows.len() <= renderer.rows())
+        .filter(|_| rows.len() <= renderer.room())
     else {
         return Ok(false);
     };

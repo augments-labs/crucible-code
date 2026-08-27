@@ -1258,6 +1258,17 @@ impl<T: Terminal> Renderer<T> {
         self.size.rows
     }
 
+    /// How many rows a panel standing over the box gets.
+    ///
+    /// Fewer than the window has, once a session has named itself: the row the
+    /// transcript-map door sits on belongs to the session for the whole of its
+    /// run, and a panel that laid itself out into the window's own height
+    /// would have its last row fall off the bottom against it.
+    #[must_use]
+    pub fn room(&self) -> usize {
+        self.size.rows - usize::from(self.footed)
+    }
+
     /// How many lines the transcript has taken this session.
     ///
     /// Read straight after writing something, to learn where it went: a caller
