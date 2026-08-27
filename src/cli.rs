@@ -430,8 +430,8 @@ started in. Nearer wins; the command line is nearer than all of them.
 
 Sessions are written one file per session, and --continue picks up the most \
 recent one for this directory. --resume picks up the exact session an id \
-names instead; the parting message prints the command that comes back to the \
-session just ended.
+names instead; a quitting session prints its own id on the way out, and \
+/resume inside a session lists the rest.
 
 Flags, session files and config are unstable for the whole 0.x line."
 )]
@@ -441,7 +441,7 @@ struct Cli {
     r#continue: bool,
 
     /// Pick up the exact session this id names, from the parting message or
-    /// the resume picker.
+    /// the /resume picker.
     #[arg(short, long, value_name = "SESSION_ID", conflicts_with = "continue")]
     resume: Option<String>,
 

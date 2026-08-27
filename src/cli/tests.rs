@@ -777,7 +777,6 @@ fn resume_and_continue_cannot_be_asked_for_together() {
 #[test]
 fn resume_round_trip() {
     use crucible_runner::Session;
-    use crucible_tui::Recording;
 
     let sample = Sample::new("resume-round-trip");
     let workspace = sample.workspace();
@@ -788,12 +787,13 @@ fn resume_round_trip() {
     session.append(&crucible_core::Message::said("keep this turn"));
     drop(session);
 
-    // The parting names the exact command that comes back to this session.
-    let mut renderer = Renderer::new(Recording::new(120, 24));
+    // The parting message names the command that comes back to this session.
+    let mut renderer =
+        crucible_tui::Renderer::new(crucible_tui::Recording::new(80, 24));
     draw::parting(
         &mut renderer,
         &converse::Parting::Kept(path),
-        Style::plain(),
+        style::Style::plain(),
     )
     .expect("a parting to draw");
     let written = renderer.terminal().written().to_string();
@@ -802,7 +802,7 @@ fn resume_round_trip() {
         "{written}"
     );
 
-    // And that command reopens the session it names, with its transcript.
+    // The recorded id reopens the session it names, with its transcript.
     let (reopened, transcript) =
         startup::reopening(&sample.logs(), &workspace, &id).expect("the session named");
     assert_eq!(transcript.len(), 1);

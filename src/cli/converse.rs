@@ -24,8 +24,8 @@
 //!
 //! Which is also the last thing a session does. The screen it drew on is
 //! borrowed and handed back, so the transcript goes with it — and this loop
-//! returns a [`Parting`] naming the file it went into, for the caller to write
-//! once the screen is the reader's again.
+//! returns a [`Parting`] saying where the log is and whether it kept up, for
+//! the caller to report once the screen is the reader's again.
 
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
@@ -258,7 +258,7 @@ pub(crate) enum Parting {
     ///
     /// Either no screen was taken — so the session drew into the reader's own
     /// scrollback and is still sitting there — or nothing was recorded, which
-    /// is a run that asked not to be kept and has no file to point at.
+    /// is a run that asked not to be kept and has no session to come back to.
     Nothing,
 
     /// The transcript went with the screen, and this file holds all of it.

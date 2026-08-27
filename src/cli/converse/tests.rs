@@ -1289,7 +1289,10 @@ fn a_session_that_took_no_screen_has_nothing_to_say_about_where_it_went() {
 }
 
 #[test]
-fn a_transcript_that_went_with_the_screen_is_pointed_at() {
+fn a_session_that_ended_cleanly_leaves_only_the_way_back() {
+    // The quit was asked for, so there is no failure to report -- but the id
+    // that comes back to this exact session has never been on the screen, and
+    // the file's name is where it lives.
     let file = PathBuf::from("/sessions/one.jsonl");
 
     assert_eq!(
