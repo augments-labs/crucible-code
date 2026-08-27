@@ -270,6 +270,26 @@ fn below_fifty_nine_columns_the_providers_fold_into_the_header_and_the_border_st
 }
 
 #[test]
+fn a_query_longer_than_the_search_line_is_typed_at_its_end() {
+    // The line is a field, and a field that goes on showing its front answers
+    // every keystroke with the same picture — the reader is typing somewhere
+    // they cannot see.
+    let providers = serving();
+    let models = stocked();
+    let mut shelf = shelf(&providers, &models);
+    let typed = "sonnet with a much longer thing typed after it";
+    shelf.query = typed;
+    shelf.typed = typed.chars().count();
+
+    let rows = shelf.within(40, 30, Glyphs::Unicode);
+    let line = said(&rows, SEARCHING);
+    assert!(
+        line.contains("typed after it"),
+        "the end of the query is not on the line: {line:?}"
+    );
+}
+
+#[test]
 fn the_caret_lands_inside_the_search_line_at_every_width_the_line_is_drawn_at() {
     // The one row here whose column is a fact about the terminal cursor rather
     // than about a span, so it is the one that can be put outside the frame.

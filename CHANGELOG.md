@@ -8,6 +8,20 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Renaming a session with a long title now types where you can see it.** A
+  title is usually the first thing that was asked — a sentence, in a pane half
+  a window wide — and the field was cut at the pane's edge, so every keystroke
+  after that redrew the same picture and the cursor sat in the pane beside it.
+  The field follows its cursor now, and so does the search line above it,
+  here and in `/model`.
+
+- **The picker says when a rename is open.** The row being typed on takes the
+  accent a field takes, and the keys row under the panes says
+  `enter to save · esc to cancel` — the preview stops offering to resume,
+  because <kbd>Enter</kbd> is the rename's while one is open.
+
 ## [0.25.1] - 2026-08-27
 
 ### Fixed

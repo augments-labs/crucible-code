@@ -22,7 +22,7 @@ use crate::color::Slot;
 use crate::glyphs::Glyphs;
 use crate::render::Caret;
 use crate::row::Row;
-use crate::width::{clip, columns as wide};
+use crate::width::{clip, columns as wide, windowed};
 
 /// The rows a picker spends on everything that is not a row of the split.
 ///
@@ -288,7 +288,9 @@ impl Picker<'_> {
             line.pad(TYPED_AT + 2);
             line.push(Slot::Quiet, clip(self.hint, room - 2));
         } else {
-            line.push(Slot::Plain, clip(self.query, room));
+            // The line follows its caret rather than showing the front of a
+            // query that has outgrown it, for the reason a renamed title does.
+            line.push(Slot::Plain, windowed(self.query, self.typed, room).0);
         }
         line.pad(columns - 1);
         line.push(frame, glyphs.vertical());
@@ -363,11 +365,16 @@ impl Picker<'_> {
                 match one {
                     Some(one) if at % PAIRED == 0 => {
                         let marked = from + at / PAIRED == self.marked;
-                        let title = if marked {
-                            self.renaming.unwrap_or(one.title)
-                        } else {
-                            one.title
+                        let renaming = self.renaming.filter(|_| marked);
+
+                        // A title being typed is a field and follows its
+                        // caret; a title being read is prose and is cut where
+                        // the pane ends.
+                        let title = match renaming {
+                            Some(typed) => windowed(typed, self.typed, word).0,
+                            None => clip(one.title, word),
                         };
+
                         let mut row = Row::new();
                         row.push(lit(on, Slot::Plain), " ");
                         row.push(
@@ -376,8 +383,20 @@ impl Picker<'_> {
                         );
                         row.push(lit(on, Slot::Plain), " ");
                         row.push(
-                            lit(on, if marked { Slot::Strong } else { Slot::Plain }),
-                            clip(title, word),
+                            lit(
+                                on,
+                                match (marked, renaming.is_some()) {
+                                    // The accent the search line's frame takes
+                                    // under the pointer, for the reason it
+                                    // takes it there: this is a field being
+                                    // typed into, and nothing else on the row
+                                    // says so.
+                                    (_, true) => Slot::Accent,
+                                    (true, false) => Slot::Strong,
+                                    (false, false) => Slot::Plain,
+                                },
+                            ),
+                            title,
                         );
                         row.fill(lit(on, Slot::Plain), inside);
                         row
@@ -510,20 +529,27 @@ impl Picker<'_> {
         if let Some(renaming) = self.renaming {
             let pairs = shown(room.saturating_sub(CHROME));
             let from = scrolled(self.marked, pairs, self.sessions.len());
-            let before: String = renaming.chars().take(self.typed).collect();
+
+            // The same window the row was drawn from, asked for again rather
+            // than worked out a second way: a caret placed against one window
+            // and a title drawn against another is a cursor standing where the
+            // letters are not.
+            let (_, inside, _) = self.widths(columns);
+            let word = inside.saturating_sub(LEADING + 1);
+            let (_, at) = windowed(renaming, self.typed, word);
             return Caret {
                 row: LISTED + PAIRED * self.marked.saturating_sub(from),
                 // The pane's own edge is in front of the title, so the column
                 // the words start in is one past where an unframed list would
                 // have opened.
-                column: (1 + LEADING + wide(&before)).min(last),
+                column: (1 + LEADING + at).min(last),
             };
         }
 
-        let before: String = self.query.chars().take(self.typed).collect();
+        let (_, at) = windowed(self.query, self.typed, columns - TYPED_AT - 1);
         Caret {
             row: SEARCHING,
-            column: (TYPED_AT + wide(&before)).min(last),
+            column: (TYPED_AT + at).min(last),
         }
     }
 

@@ -661,6 +661,19 @@ fn the_picker_says_the_words_it_was_drawn_to_say() {
 }
 
 #[test]
+fn a_rename_says_what_its_own_keys_do_and_not_the_list_s() {
+    // The one row on screen that says what the keys do, while the keys have
+    // all changed underneath it: none of walking, renaming or searching is
+    // what a key does with a title open, and a row that went on offering them
+    // is the picker disagreeing with itself about the mode the reader is in.
+    let glyphs = Glyphs::Unicode;
+
+    let (saving, short) = renaming(glyphs);
+    assert_eq!(saving, "enter to save · esc to cancel");
+    assert_eq!(short, "enter · esc");
+}
+
+#[test]
 fn the_meta_line_counts_the_messages_and_names_the_branch() {
     // One line under the preview: age, count and branch. The count is spelled
     // singular where it is one, because "1 messages" is the kind of line that

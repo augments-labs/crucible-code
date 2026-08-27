@@ -609,6 +609,88 @@ fn a_rename_stands_where_the_title_was_and_holds_the_caret() {
 }
 
 #[test]
+fn a_title_longer_than_the_pane_is_typed_at_its_end_and_not_past_it() {
+    // The case every session in a real workspace is: a title is the first
+    // thing that was asked, which is a sentence, and the pane it is renamed in
+    // is half a narrow window. Cut to the pane and left there, the field
+    // answers every keystroke with the same picture and parks its caret past
+    // the pane's own edge — typing into it looks like a key that does nothing.
+    let preview = tail();
+    let mut picker = picker(&FIVE, &preview);
+    let typed = "please tell me everything about the quick brown fox and the dog";
+    picker.renaming = Some(typed);
+    picker.typed = typed.chars().count();
+
+    let rows = picker.within(80, 30, Glyphs::Unicode);
+    let row = said(&rows, LISTED + 12);
+    assert!(
+        row.contains("and the dog"),
+        "the end of what was typed is not on the row: {row:?}"
+    );
+
+    // Inside the pane the title is drawn in, rather than inside the window:
+    // the caret belongs to the field, and the field stops at the pane's edge.
+    let caret = picker.caret(80, 30, Glyphs::Unicode);
+    let (list, _, _) = picker.widths(80);
+    assert_eq!(caret.row, LISTED + 12);
+    assert!(
+        (1..list - 1).contains(&caret.column),
+        "the caret stands outside the list pane: {} of {list}",
+        caret.column
+    );
+}
+
+#[test]
+fn the_caret_of_a_rename_lands_inside_the_pane_at_every_width_it_is_drawn_at() {
+    // The row's own sweep, because the title is the one field here that is
+    // drawn inside a pane rather than across the window: a caret worked out
+    // against the window stands past the pane's edge at every width the pane
+    // is narrower than the window, which is all of them.
+    let preview = tail();
+    let typed = "please tell me everything about the quick brown fox and the dog";
+
+    for columns in Picker::NARROWEST..=200 {
+        let mut picker = picker(&FIVE, &preview);
+        picker.renaming = Some(typed);
+        picker.typed = typed.chars().count();
+
+        let rows = picker.within(columns, 30, Glyphs::Unicode);
+        let caret = picker.caret(columns, 30, Glyphs::Unicode);
+        let (list, _, _) = picker.widths(columns);
+
+        assert!(caret.row < rows.len(), "{columns}: past the last row");
+        assert!(
+            (1..list - 1).contains(&caret.column),
+            "{columns}: caret at column {} of a pane {list} wide",
+            caret.column
+        );
+    }
+}
+
+#[test]
+fn a_query_longer_than_the_search_line_is_typed_at_its_end_too() {
+    let preview = tail();
+    let mut picker = picker(&FIVE, &preview);
+    let typed = "please tell me everything about the quick brown fox and the dog";
+    picker.query = typed;
+    picker.typed = typed.chars().count();
+
+    let rows = picker.within(40, 30, Glyphs::Unicode);
+    let row = said(&rows, SEARCHING);
+    assert!(
+        row.contains("and the dog"),
+        "the end of the query is not on the line: {row:?}"
+    );
+
+    let caret = picker.caret(40, 30, Glyphs::Unicode);
+    assert!(
+        (1..39).contains(&caret.column),
+        "the caret stands outside the search line: {}",
+        caret.column
+    );
+}
+
+#[test]
 fn the_whole_picker() {
     let preview = tail();
     insta::assert_snapshot!(picture(

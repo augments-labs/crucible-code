@@ -25,7 +25,7 @@ use crate::color::Slot;
 use crate::glyphs::Glyphs;
 use crate::render::Caret;
 use crate::row::Row;
-use crate::width::{clip, columns as wide};
+use crate::width::{clip, columns as wide, windowed};
 
 /// The rows a shelf spends on everything that is not a row of a pane.
 ///
@@ -280,12 +280,16 @@ impl Shelf<'_> {
     /// against another.
     #[must_use]
     pub fn caret(&self, columns: usize, _glyphs: Glyphs) -> Caret {
-        let before: String = self.query.chars().take(self.typed).collect();
         let last = columns.saturating_sub(2);
+
+        // The same window the line was drawn from: a caret placed against one
+        // window and a query drawn against another is a cursor standing where
+        // the letters are not.
+        let (_, at) = windowed(self.query, self.typed, columns - TYPED_AT - 1);
 
         Caret {
             row: SEARCHING,
-            column: (TYPED_AT + wide(&before)).min(last),
+            column: (TYPED_AT + at).min(last),
         }
     }
 
@@ -365,7 +369,10 @@ impl Shelf<'_> {
             line.pad(TYPED_AT + GAP);
             line.push(Slot::Quiet, clip(self.hint, room - GAP));
         } else {
-            line.push(Slot::Plain, clip(self.query, room));
+            // The line follows its caret rather than showing the front of a
+            // query that has outgrown it: a field cut at its width answers
+            // every keystroke past that width with the same picture.
+            line.push(Slot::Plain, windowed(self.query, self.typed, room).0);
         }
         line.pad(columns - 1);
         line.push(frame, glyphs.vertical());

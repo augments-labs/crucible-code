@@ -307,6 +307,54 @@ fn walk(text: &str, ceiling: usize) -> (usize, Option<usize>) {
     (column, None)
 }
 
+/// What a one-line field `room` columns wide shows of `text`, and the column
+/// its caret stands in, with the caret `at` characters into the line.
+///
+/// A field is not a row of prose: prose that outgrows its width is cut and the
+/// reader has read it, while a line being typed into outgrows its width in
+/// front of the hands that are typing it. Cut, it answers every keystroke with
+/// the same picture — and the caret, placed past the cut, stands somewhere the
+/// field is not. So the window slides instead: it ends at the caret once the
+/// text in front of the caret is wider than the field, and the caret keeps the
+/// last column for itself, which is the column a terminal parks a cursor in.
+///
+/// The window is worked out from the caret alone rather than remembered
+/// between frames. A field that remembered where it had scrolled to would need
+/// somewhere to keep it, and every party that draws one would have to keep it
+/// the same way; this asks the two facts a caller already has.
+#[must_use]
+pub(crate) fn windowed(text: &str, at: usize, room: usize) -> (&str, usize) {
+    if room == 0 {
+        return ("", 0);
+    }
+
+    let caret = text
+        .char_indices()
+        .nth(at)
+        .map_or(text.len(), |(offset, _)| offset);
+
+    // Walked back from the caret rather than forward from the start: what has
+    // to be on screen is the caret, and everything else is what happens to fit
+    // in front of it.
+    let last = room - 1;
+    let mut start = caret;
+    let mut column = 0;
+    let mut base = None;
+    for (offset, character) in text.get(..caret).unwrap_or_default().char_indices().rev() {
+        let Some(step) = along(column, character, base) else {
+            continue;
+        };
+        if column + step > last {
+            break;
+        }
+        column += step;
+        start = offset;
+        base = Some(character);
+    }
+
+    (clip(text.get(start..).unwrap_or_default(), room), column)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -463,5 +511,25 @@ mod tests {
             assert_eq!(rows.concat(), text);
             assert!(rows.iter().all(|row| columns(row) <= 3));
         }
+    }
+
+    #[test]
+    fn a_field_narrower_than_what_was_typed_shows_where_the_caret_is() {
+        // The end of the line, because that is where a caret at the end of it
+        // is: a field that went on showing the beginning would answer every
+        // keystroke with the same picture, and typing into it looks broken
+        // rather than full.
+        let typed = "please tell me everything about the fox";
+        assert_eq!(windowed(typed, typed.chars().count(), 10), ("t the fox", 9));
+
+        // And back at the front, where the whole of it fits in front of the
+        // caret, the window is the front of the line.
+        assert_eq!(windowed(typed, 3, 10), ("please tel", 3));
+    }
+
+    #[test]
+    fn a_field_wider_than_what_was_typed_is_the_whole_of_it() {
+        assert_eq!(windowed("hello", 5, 20), ("hello", 5));
+        assert_eq!(windowed("", 0, 20), ("", 0));
     }
 }

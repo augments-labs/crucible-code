@@ -440,7 +440,11 @@ fn stood<T: Terminal>(
 
             let heading = heading(stood.standing.found.len(), total, &root, glyphs);
             let empty = nothing(stood.standing.query.text());
-            let (long, short) = keys(glyphs, !stood.standing.found.is_empty());
+            let (long, short) = if stood.standing.renaming.is_some() {
+                renaming(glyphs)
+            } else {
+                keys(glyphs, !stood.standing.found.is_empty())
+            };
 
             let typed = stood
                 .standing
@@ -459,7 +463,14 @@ fn stood<T: Terminal>(
                 refused: stood.standing.refused.then_some(REFUSED),
                 preview: windowed,
                 preview_meta: &meta_line,
-                takes: TAKES,
+                // What Enter does belongs to whichever thing is open. With a
+                // title being typed it is the keys row's to say, and a foot
+                // still offering to resume would be the second answer.
+                takes: if stood.standing.renaming.is_some() {
+                    ""
+                } else {
+                    TAKES
+                },
                 nothing: &empty,
                 noview: NOVIEW,
                 keys: (&long, &short),
@@ -677,6 +688,21 @@ fn keys(glyphs: Glyphs, listed: bool) -> (String, String) {
             "{up}{down} to walk {dot} ctrl+r to rename {dot} type to search {dot} esc to cancel"
         ),
         format!("{up}{down} {dot} enter {dot} ctrl+r {dot} esc"),
+    )
+}
+
+/// The keys row while a title is being renamed.
+///
+/// Its own row rather than the walking one with a word changed: with a title
+/// open none of walking, renaming or searching is what a key does, and the row
+/// that says what the keys do is the one place a reader finds out which mode
+/// they are in.
+fn renaming(glyphs: Glyphs) -> (String, String) {
+    let dot = glyphs.dot();
+
+    (
+        format!("enter to save {dot} esc to cancel"),
+        format!("enter {dot} esc"),
     )
 }
 

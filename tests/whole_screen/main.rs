@@ -859,3 +859,30 @@ fn a_prompt_typed_while_room_is_being_made_is_sent_once_there_is_room() {
 
     insta::assert_snapshot!(window.picture());
 }
+
+#[test]
+fn renaming_a_long_title_types_where_the_reader_can_see_it() {
+    // A title is the first thing that was asked, which is a sentence, and the
+    // pane it is renamed in is half a narrow window — so every real rename is
+    // this one. Cut to the pane, the field answered every keystroke with the
+    // same picture and parked the cursor in the pane beside it: ctrl+r looked
+    // like a key that does nothing.
+    let vendor = Vendor::answering("The first thing this session said.");
+    let mut window = Watched::asking_on_resume("resume-rename", 80, 24, &vendor);
+
+    window.types_until(
+        "please tell me everything about the quick brown fox\r",
+        "The first thing",
+    );
+    window.types_until("/clear\r", "ask mode on");
+    window.types_until("/resume\r", "a session, or a branch");
+
+    // Ctrl+R, then something typed onto the end of the title it opened over.
+    window.types_until("\u{12}ZZZ", "enter to save · esc to cancel");
+
+    let picture = window.picture();
+    assert!(
+        picture.contains("ZZZ"),
+        "what was typed never reached the screen: {picture}"
+    );
+}
