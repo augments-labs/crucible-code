@@ -188,7 +188,13 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<Runner, Fatal> {
             let (session, transcript) = reopening(sessions, workspace, id)?;
             (session, Some(transcript))
         }
-        Resuming::No => (Session::start(sessions, workspace, None)?, None),
+        Resuming::No => {
+            let branch = super::branching::current(workspace.root());
+            (
+                Session::start(sessions, workspace, branch.as_deref())?,
+                None,
+            )
+        }
     };
 
     // Read before the provider is handed over, because which vendor is being

@@ -11,6 +11,7 @@
 //! Nothing above this file knows what an HTTP client is, and nothing below it
 //! knows what the command line said.
 
+mod branching;
 mod browser;
 mod choice;
 mod converse;

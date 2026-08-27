@@ -54,7 +54,11 @@ pub(super) fn run<T: Terminal>(
         return Ok(renderer.present(&rows)?);
     }
 
-    let session = match Session::start(&terms.sessions, &terms.workspace, None) {
+    // Read again rather than carried from startup, because a conversation can
+    // outlive a checkout: the session starting now records where the user is
+    // now.
+    let branch = crate::cli::branching::current(terms.workspace.root());
+    let session = match Session::start(&terms.sessions, &terms.workspace, branch.as_deref()) {
         Ok(session) => session,
         // A path is in every one of these, so it is committed rather than
         // presented — the same as `/resume`'s. Nothing else changes: the

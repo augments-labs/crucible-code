@@ -39,8 +39,16 @@ fn a_query_reaches_a_title_without_matching_its_case() {
 fn a_query_reaches_a_branch_the_same_way_it_reaches_a_title() {
     // The branch is on the row beside the title, and nothing on screen says
     // which of the two a reader is looking at when they start typing.
-    assert!(matches("fix the caret drift", Some("feature/caret"), "feature"));
-    assert!(matches("fix the caret drift", Some("Feature/Caret"), "feature"));
+    assert!(matches(
+        "fix the caret drift",
+        Some("feature/caret"),
+        "feature"
+    ));
+    assert!(matches(
+        "fix the caret drift",
+        Some("Feature/Caret"),
+        "feature"
+    ));
     assert!(!matches("fix the caret drift", None, "feature"));
 }
 
@@ -84,7 +92,10 @@ fn an_interrupt_leaves_through_everything_at_once() {
     standing.query.put("caret");
     standing.renaming = Some(Editor::new());
 
-    assert_eq!(sifting(Pressed::Key(Key::Interrupt), &mut standing, None), Moved::Left);
+    assert_eq!(
+        sifting(Pressed::Key(Key::Interrupt), &mut standing, None),
+        Moved::Left
+    );
 }
 
 #[test]
