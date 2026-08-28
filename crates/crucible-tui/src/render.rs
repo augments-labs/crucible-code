@@ -160,6 +160,21 @@ impl Standing {
     }
 }
 
+/// Whether an answer is on its way in.
+///
+/// Two states rather than a flag because they are what the transcript is doing,
+/// and a reader of [`Renderer::apart`] should not have to work out which way
+/// round the flag ran.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum Arriving {
+    /// Nothing is being said. Whatever goes down next is a block of its own.
+    #[default]
+    Nothing,
+    /// An answer is under way, in whatever pieces the wire cut it into. No row
+    /// parts a block from itself.
+    Answer,
+}
+
 /// Draws the session onto a screen this process owns.
 #[derive(Debug)]
 pub struct Renderer<T: Terminal> {
@@ -208,6 +223,18 @@ pub struct Renderer<T: Terminal> {
     /// Held here rather than made fresh per delta, for the reason the escapes
     /// above are: a fence arrives split across two deltas as often as not.
     markdown: Markdown,
+    /// Whether an answer is still arriving.
+    ///
+    /// Set by the first piece of one and put down by [`Renderer::settle`],
+    /// which is the call that ends an answer however it ended. What it is for
+    /// is [`Renderer::apart`]: a caller asking for the row between two blocks
+    /// asks on every piece, because the first is the only one worth asking on
+    /// and the caller cannot tell which that was. Nothing the record or the
+    /// markdown reader holds can tell it either — a piece cut exactly at a line
+    /// break leaves both of them settled while the block it was in the middle
+    /// of is still open — so the one thing that knows is whether an answer is
+    /// under way at all.
+    arriving: Arriving,
     /// The palette this run resolved.
     ///
     /// Read at the moment a row is drawn rather than at the moment it was said,
@@ -277,6 +304,7 @@ impl<T: Terminal> Renderer<T> {
             free: String::new(),
             escapes: Escapes::default(),
             markdown: Markdown::default(),
+            arriving: Arriving::Nothing,
             palette: Palette::plain(),
             glyphs: Glyphs::default(),
             map: TranscriptMap::default(),
@@ -653,6 +681,10 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn stream(&mut self, delta: &str) -> Result<(), TerminalError> {
+        // Before either branch, because both of them are an answer arriving and
+        // the row between blocks is owed to neither.
+        self.arriving = Arriving::Answer;
+
         // Nowhere to put a slot is nowhere to put a marker either. A redirected
         // run, `NO_COLOR`, `--color never`: the answer arrives as the model
         // wrote it, which is markdown, and a file of markdown is worth more
@@ -988,6 +1020,10 @@ impl<T: Terminal> Renderer<T> {
         // as code, and the whole of the next answer after that.
         self.markdown = Markdown::new(self.glyphs);
 
+        // And the answer they belonged to is over, whatever ended it: the next
+        // block down is a block of its own and is owed the row that says so.
+        self.arriving = Arriving::Nothing;
+
         if redirected && self.record.writing() {
             self.terminal.write("\n")?;
         }
@@ -1151,19 +1187,21 @@ impl<T: Terminal> Renderer<T> {
     /// before the answer and none inside it. That is what the record's own
     /// open line answers.
     ///
-    /// Except where the answer is markdown, because then the record is not the
-    /// only place a row can be open. A reader holding the opening characters of
-    /// a row — a `- ` that is about to become a bullet, a fence that has not
-    /// said what it is written in yet — has written nothing down, so the record
-    /// looks settled while the row is mid-air. Asking the reader too is what
-    /// keeps the same answer from drawing differently for having been cut into
-    /// different pieces on the way here.
+    /// Except while an answer is arriving, because then the record is not the
+    /// whole of the question. A piece cut mid-row leaves the reader holding
+    /// characters the record has not been told about; a piece cut exactly at a
+    /// line break leaves nothing held at all, and the record ending in a
+    /// finished line looks the same whether the block above it closed or is
+    /// still being written. Neither can say which, so the answer being under
+    /// way is what is asked instead — and that is what keeps the same answer
+    /// from drawing differently for having been cut into different pieces on
+    /// the way here.
     ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn apart(&mut self) -> Result<(), TerminalError> {
-        if self.record.parted() || self.record.writing() || self.markdown.holding() {
+        if self.record.parted() || self.record.writing() || self.arriving == Arriving::Answer {
             return Ok(());
         }
 

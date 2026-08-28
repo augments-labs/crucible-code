@@ -284,8 +284,14 @@ fn whole(text: &str) -> Vec<String> {
 }
 
 /// The events that open a message and carry `text` into it, a word at a time.
+///
+/// At the line break as well as at the space, because where the cut falls is
+/// the whole of what these cases are about. A cut mid-row leaves the markdown
+/// reader holding characters; a cut at the break leaves it holding nothing
+/// while the block is still open — and a vendor that only ever broke at a
+/// space could never produce the second, so nothing here could see it.
 fn opening(text: &str) -> Vec<String> {
-    carrying(text.split_inclusive(' '))
+    carrying(text.split_inclusive([' ', '\n']))
 }
 
 /// The events that open a message and carry `pieces` of it in, in order.
