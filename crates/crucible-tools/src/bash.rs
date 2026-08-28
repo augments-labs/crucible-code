@@ -82,6 +82,18 @@ const TICK: Duration = Duration::from_millis(20);
 /// next step inventing a way to poll it — duplicating the watcher already here.
 const LEFT_RUNNING: &str = "completion is reported automatically; do not poll or wait";
 
+/// What the model is told when the developer let go of the command rather than
+/// the call asking to.
+///
+/// It is the same command in the same registry, and the sentence above is as
+/// true of it — but the model asked for this one to be waited for and is
+/// getting it back early, which is a thing to have been told rather than to
+/// work out. Somebody watching decided the wait was not worth it, so the useful
+/// next move is to carry on with whatever does not depend on the command, and
+/// say so, rather than to ask for it again.
+const PRESSED: &str = "the developer pressed ctrl+b to leave it running rather than keep waiting; \
+     carry on with what does not depend on it";
+
 /// The root `description` is the tool's own; everything below it describes the
 /// arguments.
 ///
@@ -431,11 +443,17 @@ impl Tool for Bash {
                     ));
                 };
                 let printed = taking.printed();
+                let why = taking.why;
 
                 match left.keep(command, taking) {
-                    Some(number) => Ok(ToolOutput::ok(format!(
-                        "{printed}\n\n[left running as #{number}; {LEFT_RUNNING}]"
-                    ))),
+                    Some(number) => Ok(ToolOutput::ok(match why {
+                        output::Why::Asked => {
+                            format!("{printed}\n\n[left running as #{number}; {LEFT_RUNNING}]")
+                        }
+                        output::Why::Pressed => format!(
+                            "{printed}\n\n[left running as #{number}; {PRESSED}; {LEFT_RUNNING}]"
+                        ),
+                    })),
                     None => Ok(ToolOutput::failed(format!(
                         "{MOST} commands are already running; stop one before leaving another"
                     ))),

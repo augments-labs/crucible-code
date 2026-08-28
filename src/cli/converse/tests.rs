@@ -15,6 +15,10 @@ use crucible_core::{
 use crucible_runner::{Model, Session, Tools};
 use crucible_tui::{Picture, Recording, Size, Terminal, TerminalError};
 
+use std::sync::mpsc::channel;
+
+use crucible_tui::Key;
+
 use super::*;
 use crate::cli::fake::{Fixed, Script, Stalling, changing, running};
 use crate::cli::sample::Sample;
@@ -65,6 +69,7 @@ pub(super) fn plain() -> Terms {
         reading: std::cell::RefCell::default(),
         cancel: Cancel::new(),
         steer: crucible_core::Steer::new(),
+        aside: crucible_core::Aside::new(),
         ledger: Ledger::new(),
         revealed: Revealed::new(),
         plan: Plan::new(),

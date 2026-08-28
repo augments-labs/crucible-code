@@ -8,6 +8,22 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Changed
+
+- **<kbd>Ctrl</kbd>+<kbd>B</kbd> tells the agent you were the one who let go.**
+  A command the agent asked to run in the background and a command you pressed
+  the key on came back with the same sentence, so an agent that had asked to
+  wait was left to guess why it was not waiting any more — and would sometimes
+  start the command again. The result now says the developer stepped in and to
+  carry on with whatever does not depend on it.
+
+- **A command that ends mid-turn reaches the agent mid-turn.** Its ending was
+  written on the screen the moment it happened but held for the agent until the
+  next turn started, so a long turn could finish an entire plan around a server
+  that had already fallen over. It now arrives between one step and the next, in
+  the same words, and is still told exactly once — whichever gets there first
+  says it.
+
 ## [0.27.0] - 2026-08-28
 
 ### Changed

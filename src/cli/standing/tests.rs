@@ -4,7 +4,7 @@ use crucible_core::{Effort, Workspace};
 
 use crucible_tools::Ended;
 
-use super::under;
+use super::{said, under};
 
 /// A workspace at a path that is on no machine, which is all this needs: the
 /// root is put into the prompt as text and never opened.
@@ -59,10 +59,9 @@ fn a_session_with_no_model_chosen_is_told_nothing_about_what_it_is() {
 
 #[test]
 fn a_command_that_ended_while_nobody_waited_is_in_the_note_the_next_turn_gets() {
-    // The other audience. The reader was told when it happened; the model is told
-    // here, because a turn already in flight has nowhere to put a new fact and a
-    // server that fell over is something to know before answering rather than
-    // after.
+    // The other audience. The reader was told when it happened; the model is
+    // told here, because nothing was in flight to hand it to — a turn that was
+    // running takes its own notes, and what is left over is what nobody took.
     let ended = [
         Ended {
             tool: "bash",
@@ -80,7 +79,8 @@ fn a_command_that_ended_while_nobody_waited_is_in_the_note_the_next_turn_gets() 
         },
     ];
 
-    let said = under("claude-opus-5", None, &somewhere(), &ended);
+    let notes = Vec::from_iter(said(&ended));
+    let said = under("claude-opus-5", None, &somewhere(), &notes);
 
     assert!(said.contains("#1 Bash(npm run dev)"), "{said}");
     assert!(said.contains("failed with exit status 1"), "{said}");

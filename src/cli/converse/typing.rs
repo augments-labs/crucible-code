@@ -32,7 +32,7 @@
 use std::borrow::Cow;
 use std::time::{Duration, Instant};
 
-use crucible_core::{Cancel, Effort, Mode};
+use crucible_core::{Aside, Cancel, Effort, Mode};
 use crucible_runner::Runner;
 use crucible_tools::{Background, Ended};
 use crucible_tui::{
@@ -327,6 +327,11 @@ pub(crate) struct Between<'a> {
     /// What is still running behind the box: the count on the row under it, and
     /// what this loop wakes on a clock for while there is anything left to end.
     pub(crate) left: &'a Background,
+    /// What a command that ended while the last turn ran was pushed into, where
+    /// the turn was over before it could take it. Read here because a note
+    /// nobody took is a turn the model still owes, and this loop is what stands
+    /// between the two.
+    pub(crate) aside: &'a Aside,
     /// Whether there is a keyboard to read. A session with a terminal at only
     /// one end reads whole lines instead, and the caller is what does that.
     pub(crate) keys: bool,
@@ -410,14 +415,20 @@ fn arriving<T: Terminal>(
     }
 }
 
-/// The turn `ended` asks for, where it asks for one.
+/// The turn what has ended asks for, where it asks for one.
 ///
-/// The endings are taken from the one place a typed turn's note is taken from,
-/// so a command that ended is either the turn or under one and never both.
-/// `None` is what almost every call gets, and it is the answer that costs
-/// nothing.
-fn woken(ended: &[Ended]) -> Option<Asked> {
-    standing::said(ended).map(Asked::Woke)
+/// Both queues, because there are two ways a command's ending can still be owed
+/// by the time the keyboard is idle: it ended with nothing running to be told,
+/// or it was handed to a turn that finished before taking it. Each is take-once,
+/// so an ending is the turn or under one and never both.
+///
+/// The aside is read first because what is in it is older. `None` is what almost
+/// every call gets, and it is the answer that costs nothing.
+fn woken(ended: &[Ended], aside: &Aside) -> Option<Asked> {
+    let mut notes = aside.take();
+    notes.extend(standing::said(ended));
+
+    (!notes.is_empty()).then(|| Asked::Woke(notes.join("\n\n")))
 }
 
 /// Reads one prompt, drawing it as it arrives.
@@ -434,6 +445,7 @@ pub(crate) fn ask<T: Terminal>(
         images,
         clipboard: board,
         left,
+        aside,
         keys,
     } = between;
 
@@ -470,7 +482,7 @@ pub(crate) fn ask<T: Terminal>(
     // it, while this was between two calls — leaves the model owing a turn, and
     // drawing the box first would put a cursor under it and wait for a person
     // who is waiting for the agent.
-    if let Some(woke) = woken(&left.reported()) {
+    if let Some(woke) = woken(&left.reported(), aside) {
         return Ok(woke);
     }
 
@@ -498,7 +510,7 @@ pub(crate) fn ask<T: Terminal>(
                 // command ended, and the line above it is now on screen. The
                 // model is owed the turn from here rather than from the top of
                 // the call, since this is where the waiting was happening.
-                if let Some(woke) = woken(&left.reported()) {
+                if let Some(woke) = woken(&left.reported(), aside) {
                     return Ok(woke);
                 }
 

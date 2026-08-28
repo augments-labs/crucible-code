@@ -88,7 +88,7 @@ pub(super) fn collect(
         // Asked before the deadline and before the cancel, because it is the one
         // of the three that keeps the command: a press and a timeout landing in
         // the same tick should leave the command running rather than kill it.
-        if leaving.as_ref().is_some_and(|leaving| leaving.now(started))
+        if let Some(why) = leaving.as_ref().and_then(|leaving| leaving.now(started))
             && let Some((child, scope)) = running.given()
         {
             return Ok(Left::Running(Taking {
@@ -97,6 +97,7 @@ pub(super) fn collect(
                 out,
                 err,
                 since: started,
+                why,
             }));
         }
 
@@ -325,10 +326,23 @@ pub(super) struct Waiting<'a> {
     pub(super) leaving: Option<Leaving<'a>>,
 }
 
+/// Which of the two ways in let go of the command.
+///
+/// The command cannot tell them apart, and nothing about how it runs depends on
+/// which — but the model reading the result can act on it, and the two are not
+/// the same thing to act on. One is its own call coming back; the other is the
+/// developer stepping in mid-command and saying carry on without it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Why {
+    /// The call asked for it, and the moment it was watched for has passed.
+    Asked,
+    /// Somebody pressed the key while it ran.
+    Pressed,
+}
+
 /// When a command is to be let go of rather than waited for.
 ///
-/// Two ways in and one answer, because the command cannot tell them apart: the
-/// call asked to leave it running, or somebody pressed the key while it ran.
+/// Two ways in, kept apart on the way out: see [`Why`].
 pub(super) struct Leaving<'a> {
     /// Where it goes once it is let go of.
     pub(super) left: &'a Background,
@@ -338,14 +352,19 @@ pub(super) struct Leaving<'a> {
 }
 
 impl Leaving<'_> {
-    /// Whether the command should be let go of now.
+    /// Whether the command should be let go of now, and on whose account.
     ///
     /// The key is asked about second and its answer is *spent* — read and
     /// cleared — so one press cannot let go of two commands. Asking the clock
     /// first is what keeps a call that asked to be left running from also
-    /// swallowing a press meant for the next command.
-    fn now(&self, started: Instant) -> bool {
-        self.after.is_some_and(|after| started.elapsed() >= after) || self.left.wanted()
+    /// swallowing a press meant for the next command, and it is why a call that
+    /// asked is never reported as a press.
+    fn now(&self, started: Instant) -> Option<Why> {
+        if self.after.is_some_and(|after| started.elapsed() >= after) {
+            return Some(Why::Asked);
+        }
+
+        self.left.wanted().then_some(Why::Pressed)
     }
 }
 

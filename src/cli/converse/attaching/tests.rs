@@ -2,9 +2,9 @@ use std::fs;
 use std::sync::mpsc;
 
 use crucible_core::{
-    Ask, Cancel, Delta, DeltaStream, Event, Message, Modalities, Modality, Provider, ProviderError,
-    Remember, Request, Sensitivity, Steer, StopReason, ToolCall, Transcript, Verdict, Workspace,
-    written,
+    Aside, Ask, Cancel, Delta, DeltaStream, Event, Message, Modalities, Modality, Provider,
+    ProviderError, Remember, Request, Sensitivity, Steer, StopReason, ToolCall, Transcript,
+    Verdict, Workspace, written,
 };
 use crucible_runner::{Model, Pruned, Runner, Session, Tools};
 
@@ -572,6 +572,7 @@ fn what_the_prompt_attached_reaches_the_transcript() {
             &events,
             &Cancel::new(),
             &Steer::new(),
+            &Aside::new(),
         )
         .expect("the turn to finish");
 
@@ -613,6 +614,7 @@ fn a_prompt_naming_no_file_records_the_message_it_always_did() {
             &events,
             &Cancel::new(),
             &Steer::new(),
+            &Aside::new(),
         )
         .expect("the turn to finish");
 
