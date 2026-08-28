@@ -35,6 +35,8 @@ mod screen;
 mod vendor;
 mod watched;
 
+use std::fmt::Write as _;
+
 use vendor::Vendor;
 use watched::Watched;
 
@@ -507,6 +509,7 @@ const IN_MARKDOWN: &str = "## What I found\n\n\
     beside them.\n\n\
     - one\n- two\n\n\
     > and a line somebody else said\n\n\
+    | what | how |\n| --- | --- |\n| one | first |\n| two | after |\n\n\
     ```rust\nfn main() {}\n```\n";
 
 #[test]
@@ -527,6 +530,34 @@ fn an_answer_reaches_the_screen_with_its_markers_read_rather_than_drawn() {
     window.types_until("say something in markdown\r", "fn main");
 
     insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn markdown_rows_survive_chunking() {
+    // How the wire was cut is the vendor's business. A reader holds the opening
+    // bytes of a row across a delta — a `- ` that is about to become a bullet,
+    // a fence that has not said what it is written in yet — and what asks for a
+    // row boundary between two deltas cannot see that it is holding one. So the
+    // same answer arriving in pieces gains rows the same answer arriving whole
+    // does not, mid-block, where a reader counting bullets would notice.
+    //
+    // Both sides are drawn rather than one being written down, because what is
+    // asserted is that they agree: a snapshot of either would freeze whichever
+    // was current and say nothing about the other.
+    let arriving = pictured("markdown-chunked", &Vendor::answering(IN_MARKDOWN));
+    let at_once = pictured("markdown-whole", &Vendor::answering_whole(IN_MARKDOWN));
+
+    assert_eq!(
+        arriving, at_once,
+        "the same answer drew differently for having been cut differently"
+    );
+}
+
+/// The screen an answer from `vendor` leaves behind, in colour.
+fn pictured(case: &str, vendor: &Vendor) -> String {
+    let mut window = Watched::in_colour(case, 80, 32, vendor);
+    window.types_until("say something in markdown\r", "fn main");
+    window.picture()
 }
 
 /// The file the call in [`a_call_that_changed_a_file_is_drawn_with_the_change`]
@@ -558,6 +589,243 @@ fn a_call_that_changed_a_file_is_drawn_with_the_change() {
     assert_eq!(after, BEFORE.replace("# trend data", "# what stops a tag"));
 
     insta::assert_snapshot!(window.picture());
+}
+
+/// How many lines the file in [`change_header_survives_resume`] has, on each
+/// side of the call that rewrites it.
+///
+/// Two of these is more lines than a block may draw, which is the whole of why
+/// the number is this one: the header then has something to say that the block
+/// cannot show, and that sentence is the one thing the live screen and a resumed
+/// one are meant to differ on.
+const REWRITTEN: usize = 40;
+
+/// The header that call leaves on the row answering it.
+const CHANGED: &str = "Added 40 lines, removed 40 lines";
+
+/// What the live screen adds to it, and a resumed screen has no lines to earn.
+const UNSHOWN: &str = "16 of them not shown";
+
+/// Every line of one version of that file, each saying which version it is.
+fn spelling(tense: &str) -> String {
+    (1..=REWRITTEN).fold(String::new(), |mut file, at| {
+        let _ = writeln!(file, "the line that {tense} here, number {at}");
+        file
+    })
+}
+
+#[test]
+fn change_header_survives_resume() {
+    // One call, drawn twice: as it came back, and again off the log once the
+    // session was picked up. The header is what the reader is owed both times —
+    // a session put back on the screen that forgot what a call changed reads as
+    // though nothing happened in it.
+    //
+    // The lines under the header are the reader's alone and never reach the log,
+    // so the block is live-only by construction. The sentence counting what the
+    // block could not fit goes with them: on a screen with no block, a header
+    // still claiming lines nobody is being shown would be the header lying.
+    let input = serde_json::json!({
+        "path": "notes.md",
+        "find": spelling("was"),
+        "replace": spelling("is now"),
+    })
+    .to_string();
+    let vendor = Vendor::calling("edit", &input, "Rewrote it whole.");
+
+    // Tall, because the live screen draws the block. A window the block scrolled
+    // the header off the top of would be comparing what fitted rather than what
+    // was drawn.
+    let mut window = Watched::allowing("resume-change", 80, 100, &vendor, "edit(*)");
+    std::fs::write(window.workspace().join("notes.md"), spelling("was"))
+        .expect("a file for the call to rewrite");
+
+    window.types_until("rewrite that file\r", "Rewrote it whole");
+    let live = window.picture();
+
+    window.types_until("/clear\r", "ask mode on");
+    window.types_until("/resume\r", "a session, or a branch");
+    window.types_until("\r", "Rewrote it whole");
+    let again = window.picture();
+
+    assert!(live.contains(CHANGED), "the live header: {live}");
+    assert!(live.contains(UNSHOWN), "the live header's tail: {live}");
+    assert!(
+        live.contains("the line that is now here, number 1"),
+        "the live block: {live}"
+    );
+
+    assert!(
+        again.contains(CHANGED),
+        "the resumed screen forgot what the call changed: {again}"
+    );
+    assert!(
+        !again.contains("the line that"),
+        "the resumed screen drew lines the log never held: {again}"
+    );
+    assert!(
+        !again.contains(UNSHOWN),
+        "the resumed header counted lines nothing is showing: {again}"
+    );
+}
+
+/// How many files the turn in [`a_resumed_session_says_what_the_reader_watched`]
+/// reads before it changes one.
+///
+/// Enough that the oldest of them fall outside the window of recent output a
+/// pruning protects, and that what falls outside is worth clearing. Both are
+/// figures the runner holds, and this is the smallest count that clears the
+/// first two whatever the reader's own cap does to each result.
+const READ: usize = 5;
+
+/// How many lines each of those files has.
+///
+/// More than the reader returns, so every result comes back at its ceiling
+/// rather than at the file's length: what the pruning is measured against is
+/// bytes, and a case whose results were short would clear nothing.
+const LONG: usize = 2_000;
+
+/// The first line of the file numbered `at`, which is the line its row says.
+///
+/// A result's row is its first line, so this is the whole of what a reader sees
+/// of a thirty-kilobyte answer — and therefore the whole of what a pruning
+/// takes away and a resumed screen has to give back.
+fn top(at: usize) -> String {
+    format!("the top of the file numbered {at}")
+}
+
+/// That file, whole.
+fn filled(at: usize) -> String {
+    let mut file = top(at);
+    for line in 2..=LONG {
+        let _ = writeln!(file);
+        let _ = write!(file, "line {line} of the file numbered {at}");
+    }
+    file.push('\n');
+    file
+}
+
+#[test]
+fn a_resumed_session_says_what_the_reader_watched() {
+    // Everything this change is about, in one session, drawn twice. A turn that
+    // reads five long files and rewrites a sixth, answered in markdown a word at
+    // a time on a terminal taking colour; then room asked for, which finds no
+    // middle to recap and clears the oldest results instead; then the session
+    // put down and picked up again.
+    //
+    // What the resumed screen owes the reader is what the live one showed: the
+    // header saying what the call changed, and the results the pruning cleared
+    // saying again what they said. Neither is in the transcript a request is
+    // built from — the header is drawn from counts recorded beside the result,
+    // and the words come from beside the transcript rather than out of it.
+    //
+    // The two pictures are not the same picture, and the assertions below say
+    // which rows are one screen's alone rather than pretending otherwise. Every
+    // other row matches, the cleared results' among them. What differs is the
+    // block of lines the call moved, which reaches no log; the sentence counting
+    // what that block could not fit, which would be a lie on a screen with no
+    // block; and the note saying room was made together with the line that asked
+    // for it, which are things that happened to the session rather than messages
+    // in it.
+    let mut calls: Vec<(&str, String)> = (1..=READ)
+        .map(|at| {
+            (
+                "read",
+                serde_json::json!({ "path": format!("file-{at}.txt") }).to_string(),
+            )
+        })
+        .collect();
+    calls.push((
+        "edit",
+        serde_json::json!({
+            "path": "notes.md",
+            "find": spelling("was"),
+            "replace": spelling("is now"),
+        })
+        .to_string(),
+    ));
+
+    let vendor = Vendor::calling_each(&calls, IN_MARKDOWN);
+
+    // Tall enough to hold the whole session at once. The results a pruning
+    // clears are the oldest rows on the screen, so a window that scrolled them
+    // away would be comparing what fitted rather than what was drawn.
+    let mut window =
+        Watched::pruning_in_colour("resume-parity", 100, 200, &vendor, &["read(*)", "edit(*)"]);
+
+    for at in 1..=READ {
+        std::fs::write(
+            window.workspace().join(format!("file-{at}.txt")),
+            filled(at),
+        )
+        .expect("a file for the call to read");
+    }
+    std::fs::write(window.workspace().join("notes.md"), spelling("was"))
+        .expect("a file for the call to rewrite");
+
+    window.types_until("read those files and rewrite the notes\r", "fn main");
+    window.types_until("/compact\r", "old tool output was cleared");
+    let live = window.picture();
+
+    window.types_until("/clear\r", "ask mode on");
+    window.types_until("/resume\r", "a session, or a branch");
+    window.types_until("\r", "fn main");
+    let again = window.picture();
+
+    // The live screen first, because everything asserted of the resumed one is
+    // only worth asserting if this is what the reader was actually shown.
+    assert!(live.contains(CHANGED), "the live header: {live}");
+    assert!(live.contains(UNSHOWN), "the live header's tail: {live}");
+    assert!(
+        live.contains("the line that is now here, number 1"),
+        "the live block: {live}"
+    );
+    assert!(
+        live.contains(&top(1)),
+        "the live row for the first read: {live}"
+    );
+    assert!(
+        live.contains(&top(2)),
+        "the live row for the second read: {live}"
+    );
+    assert!(
+        live.contains("old tool output was cleared"),
+        "nothing was cleared, so there is no pruning to replay: {live}"
+    );
+
+    // And then the same session, off its own log.
+    assert!(
+        again.contains(CHANGED),
+        "the resumed screen forgot what the call changed: {again}"
+    );
+    assert!(
+        again.contains(&top(1)) && again.contains(&top(2)),
+        "the resumed screen kept the placeholder where the reader saw an answer: {again}"
+    );
+    assert!(
+        !again.contains("cleared to make room"),
+        "the resumed screen showed the model's placeholder to a person: {again}"
+    );
+    assert!(
+        again.contains("What I found") && again.contains("fn main"),
+        "the resumed screen lost the answer: {again}"
+    );
+
+    // The three rows that are the live screen's alone, named rather than
+    // stumbled over: a resumed screen drawing any of them would be drawing
+    // something the log does not hold.
+    assert!(
+        !again.contains("the line that"),
+        "the resumed screen drew lines the log never held: {again}"
+    );
+    assert!(
+        !again.contains(UNSHOWN),
+        "the resumed header counted lines nothing is showing: {again}"
+    );
+    assert!(
+        !again.contains("old tool output was cleared"),
+        "the resumed screen reported a compaction as though it had just run: {again}"
+    );
 }
 
 #[test]

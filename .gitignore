@@ -2,6 +2,10 @@
 # Never referenced from production code, docs, or CI.
 .sdlc-skills/
 
+# A contributor's own scratch space, per checkout. Nothing here is part of the
+# program, and a stray file under it is one an `add -A` would otherwise commit.
+.tmp/
+
 # Per-machine Claude Code settings. The committed .claude/ holds skills, which
 # are shared; anything ending in .local.json is one contributor's own.
 .claude/settings.local.json

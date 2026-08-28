@@ -14,8 +14,8 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use crucible_core::{
-    Attachment, Calibration, Carried, Message, Modality, SessionId, Spend, StopReason, ToolCall,
-    ToolId, ToolOutput, ToolResult,
+    Attachment, Calibration, Carried, Changed, Message, Modality, SessionId, Spend, StopReason,
+    ToolCall, ToolId, ToolOutput, ToolResult,
 };
 use serde_json::{Value, json};
 
@@ -25,7 +25,7 @@ use serde_json::{Value, json};
 /// is refused rather than half-understood, which is the difference between
 /// telling the user their session cannot be continued and silently continuing
 /// a different one.
-pub(crate) const FORMAT: u32 = 8;
+pub(crate) const FORMAT: u32 = 9;
 
 /// The formats this build reads, newest first.
 ///
@@ -38,13 +38,17 @@ pub(crate) const FORMAT: u32 = 8;
 /// missing is a line saying what its last request carried, and a session with
 /// no such line is a session that measures itself again on its next answer.
 /// Format 7 is, because format 8 only added a branch to the header, and a
-/// header without one already means "branch unknown".
+/// header without one already means "branch unknown". Format 8 is, because
+/// format 9 only added a key to a line of tool results — the count a change came
+/// to — and a result written without one already means a call that changed no
+/// file, which is what a build with nowhere to say it could only ever have
+/// meant.
 ///
 /// A format that changed the meaning of a line does not go on this list however
 /// small the change looks. What it would buy is somebody's history; what it
 /// would cost is a session that looks fine and is missing turns, which is the
 /// failure the refusal exists for.
-pub(crate) const READS: &[u32] = &[8, 7, 6, 5, 4, 3];
+pub(crate) const READS: &[u32] = &[9, 8, 7, 6, 5, 4, 3];
 
 /// Whether this build can replay a log written under `format`.
 pub(crate) fn readable(format: u32) -> bool {
@@ -417,25 +421,44 @@ fn call(value: &Value) -> Option<ToolCall> {
 
 /// One tool result as the line that records it.
 ///
-/// The files go down beside the text under the key a prompt's do, and are left
-/// off entirely where there are none — so a session whose tools showed nothing
-/// is written exactly as format 6 wrote it.
+/// The files go down beside the text under the key a prompt's do, and the count
+/// a change came to goes down beside them. Both are left off entirely where
+/// there is nothing to say — so a session whose tools showed nothing and changed
+/// nothing is written exactly as format 6 wrote it, and one that only changed
+/// nothing exactly as format 8 did.
+///
+/// The count and not the lines. A log is a file on disk that outlives the
+/// session, and a line of a file that held a key is a key; two integers name
+/// nothing and are the whole of what a change header is written from.
 fn answered(result: &ToolResult) -> Value {
+    let mut object = serde_json::Map::new();
+    object.insert("id".to_owned(), json!(result.id.as_str()));
+    object.insert("failed".to_owned(), json!(result.output.is_failed()));
+    object.insert("text".to_owned(), json!(result.output.text()));
+
     let attachments = result.output.attachments();
-    if attachments.is_empty() {
-        return json!({
-            "id": result.id.as_str(),
-            "failed": result.output.is_failed(),
-            "text": result.output.text(),
-        });
+    if !attachments.is_empty() {
+        object.insert(
+            "attached".to_owned(),
+            json!(attachments.iter().map(attached).collect::<Vec<_>>()),
+        );
     }
 
-    json!({
-        "id": result.id.as_str(),
-        "failed": result.output.is_failed(),
-        "text": result.output.text(),
-        "attached": attachments.iter().map(attached).collect::<Vec<_>>(),
-    })
+    // A call that left the file as it was is a call with no header to draw, and
+    // writing a count of nothing would say there was one.
+    if let Some(changed) = result.output.changed().filter(|counts| !counts.is_empty()) {
+        object.insert(
+            "change".to_owned(),
+            json!({ "added": changed.added(), "removed": changed.removed() }),
+        );
+    }
+
+    Value::Object(object)
+}
+
+/// One count off a `change`, or `None` where it is not one.
+fn counted(change: &Value, name: &str) -> Option<usize> {
+    usize::try_from(change.get(name)?.as_u64()?).ok()
 }
 
 fn result(value: &Value) -> Option<ToolResult> {
@@ -448,15 +471,28 @@ fn result(value: &Value) -> Option<ToolResult> {
         ToolOutput::ok(text)
     };
 
+    // Restored rather than admitted again. The verdict that let this tool read
+    // is over and no log holds one; what says it was reached is that this build
+    // wrote the line at all.
+    let output = match value.get("attached") {
+        Some(attached) => output.replayed(read(attached, attachment)?),
+        None => output,
+    };
+
+    // A line with no `change` is a call that changed no file, or one an older
+    // build recorded before there was anywhere to say so. Neither has a header,
+    // and both fall through to the words instead.
+    let output = match value.get("change") {
+        Some(change) => output.counting(Changed::new(
+            counted(change, "added")?,
+            counted(change, "removed")?,
+        )),
+        None => output,
+    };
+
     Some(ToolResult {
         id: ToolId::new(value.get("id")?.as_str()?),
-        // Restored rather than admitted again. The verdict that let this tool
-        // read is over and no log holds one; what says it was reached is that
-        // this build wrote the line at all.
-        output: match value.get("attached") {
-            Some(attached) => output.replayed(read(attached, attachment)?),
-            None => output,
-        },
+        output,
     })
 }
 
@@ -507,6 +543,47 @@ mod tests {
             media_type: "image/png".into(),
             hash: [0xab; 32],
         }
+    }
+
+    /// A result for a call that rewrote a file, counted and no longer showing.
+    fn rewrote(changed: Changed) -> Message {
+        Message::ToolResults(vec![ToolResult {
+            id: ToolId::new("call-1"),
+            output: ToolOutput::ok("rewrote main.rs").counting(changed),
+        }])
+    }
+
+    #[test]
+    fn the_count_a_change_came_to_survives_the_line_and_a_count_of_nothing_does_not() {
+        // Two cases, and they end differently on purpose. A call that moved
+        // lines writes what it moved and reads back as the same message. A call
+        // that moved none writes no key at all -- which is what keeps a
+        // diff-less line the bytes the format before this one wrote -- so it
+        // comes back saying there was no count rather than saying the count was
+        // zero, and the message it comes back as is not the one that went in.
+        let moved = rewrote(Changed::new(2, 1));
+        assert_eq!(message(&line(&moved)).as_ref(), Some(&moved));
+
+        let still = rewrote(Changed::new(0, 0));
+        let read = message(&line(&still)).expect("the line to read back as a message");
+        assert_ne!(read, still, "a count of nothing came back as one");
+
+        let Message::ToolResults(results) = &read else {
+            panic!("a line of results reads back as results")
+        };
+        let [only] = results.as_slice() else {
+            panic!("one result went in")
+        };
+        assert_eq!(only.output.changed(), None);
+        assert_eq!(only.output.text(), "rewrote main.rs");
+    }
+
+    #[test]
+    fn a_count_goes_down_beside_the_result_and_not_inside_its_words() {
+        assert_eq!(
+            line(&rewrote(Changed::new(2, 1))),
+            r#"{"results":[{"change":{"added":2,"removed":1},"failed":false,"id":"call-1","text":"rewrote main.rs"}]}"#
+        );
     }
 
     #[test]
@@ -595,7 +672,7 @@ mod tests {
 
     #[test]
     fn the_format_moves_with_the_line_shape() {
-        assert_eq!(FORMAT, 8);
+        assert_eq!(FORMAT, 9);
         assert!(readable(FORMAT));
     }
 

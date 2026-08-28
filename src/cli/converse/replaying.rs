@@ -32,14 +32,20 @@
 //!
 //! One thing does not come back, and it is the record's doing rather than this
 //! module's: a diff reaches no log, for the reason `crucible-core` gives beside
-//! the type, so a call that changed a file replays as the result it returned
-//! rather than as the lines it moved.
+//! the type. What a call changed still reads the same — the counts are recorded
+//! beside the result and the header is drawn from them — but the lines it moved
+//! are not there to show under it, so the block that held them live does not go
+//! down again.
+//!
+//! What a pruning cleared does come back, and it comes from beside the
+//! transcript rather than out of it. See [`Pruned`].
 
 use crucible_core::{Message, RECAP, Workspace};
-use crucible_runner::Runner;
+use crucible_runner::{Pruned, Runner};
 use crucible_tui::{Recording, Renderer, Row, Slot, Terminal, clip};
 
 use crate::cli::Fatal;
+use crate::cli::converse::Terms;
 use crate::cli::draw;
 use crate::cli::kept::Kept;
 use crate::cli::style::Style;
@@ -63,25 +69,16 @@ const NOTES: &str = "notes on everything before this";
 /// [`Fatal::Terminal`] if the terminal could not be written to.
 pub(super) fn replayed<T: Terminal>(
     renderer: &mut Renderer<T>,
-    runner: &Runner,
-    workspace: &Workspace,
+    against: &Replay<'_>,
     kept: &mut Kept,
-    style: Style,
 ) -> Result<(), Fatal> {
-    if runner.transcript().is_empty() {
+    let transcript = against.runner.transcript();
+
+    if transcript.is_empty() {
         return Ok(());
     }
 
-    walked(
-        renderer,
-        runner.transcript().messages(),
-        &Replay {
-            runner,
-            workspace,
-            style,
-        },
-        kept,
-    )
+    walked(renderer, transcript.messages(), against, kept)
 }
 
 /// The tail of a session nobody has picked up, drawn into rows `columns` wide.
@@ -148,9 +145,10 @@ fn walked<T: Terminal>(
 
 /// What a whole replay is drawn against, and what does not change while it
 /// runs: the session being put back, the root a file it named is named
-/// against, and the dress the renderer is already wearing.
+/// against, what a pruning cleared out of it, and the dress the renderer is
+/// already wearing.
 ///
-/// One value rather than three parameters carried down the walk — what changes
+/// One value rather than four parameters carried down the walk — what changes
 /// from one call to the next is the message, and this is everything that does
 /// not. It is what [`glimpsed`] is handed too, for the same reason: a caller
 /// drawing a session it is not in still has to say which build's tools are
@@ -160,8 +158,29 @@ pub(super) struct Replay<'a> {
     pub(super) runner: &'a Runner,
     /// The root a file a call named is named against.
     pub(super) workspace: &'a Workspace,
+    /// What the results a pruning cleared said, so a row a reader watched come
+    /// back says it again. Empty where nothing was ever cleared, which is every
+    /// session short enough not to have needed the room.
+    pub(super) pruned: &'a Pruned,
     /// The dress the rows are drawn in.
     pub(super) style: Style,
+}
+
+impl<'a> Replay<'a> {
+    /// What a session this run is in is drawn against.
+    ///
+    /// The two ways into a session — the command line and `/resume` — both put
+    /// it back on the screen, and this is what keeps them putting it back
+    /// against the same four things. A preview builds its own, because the
+    /// session it draws is not the one this run is in.
+    pub(super) fn of(runner: &'a Runner, terms: &'a Terms, pruned: &'a Pruned) -> Self {
+        Self {
+            runner,
+            workspace: &terms.workspace,
+            pruned,
+            style: terms.style(),
+        }
+    }
 }
 
 /// One message, put back the way it went down.
@@ -249,7 +268,16 @@ fn said<T: Terminal>(
                 // a second copy of one result. Bounded by the tool that made it
                 // and by the ceiling the record keeps, so what a replay costs is
                 // the same after four hundred messages as after four.
-                draw::came_back(renderer, kept, &result.id, result.output.clone(), style)?;
+                // And saying what it said, where a pruning has since cleared it.
+                // The transcript keeps the placeholder, because that is what the
+                // model is being sent; the row gets the words back, because that
+                // is what the reader was shown. Neither is told about the other.
+                let output = match against.pruned.showed(&result.id) {
+                    Some(showed) => result.output.clone().saying(showed),
+                    None => result.output.clone(),
+                };
+
+                draw::came_back(renderer, kept, &result.id, output, style)?;
             }
         }
     }
@@ -280,10 +308,11 @@ mod tests {
 
     /// What a session is drawn against in these tests: this build's tools, this
     /// directory, and no theme at all.
-    fn against<'a>(runner: &'a Runner, workspace: &'a Workspace) -> Replay<'a> {
+    fn against<'a>(runner: &'a Runner, workspace: &'a Workspace, pruned: &'a Pruned) -> Replay<'a> {
         Replay {
             runner,
             workspace,
+            pruned,
             style: Style::plain(),
         }
     }
@@ -353,8 +382,17 @@ mod tests {
         let mut renderer = Renderer::new(Recording::new(columns, 24));
         renderer.wears(style.palette());
 
-        replayed(&mut renderer, &runner, &here(), &mut Kept::default(), style)
-            .expect("a recording cannot fail");
+        replayed(
+            &mut renderer,
+            &Replay {
+                runner: &runner,
+                workspace: &here(),
+                pruned: &Pruned::default(),
+                style,
+            },
+            &mut Kept::default(),
+        )
+        .expect("a recording cannot fail");
 
         renderer.terminal().written().to_string()
     }
@@ -366,10 +404,62 @@ mod tests {
         let mut renderer = Renderer::new(Recording::new(columns, 24));
         renderer.wears(Style::plain().palette());
 
-        replayed(&mut renderer, &runner, &here(), &mut kept, Style::plain())
-            .expect("a recording cannot fail");
+        replayed(
+            &mut renderer,
+            &against(&runner, &here(), &Pruned::default()),
+            &mut kept,
+        )
+        .expect("a recording cannot fail");
 
         (kept, renderer)
+    }
+
+    #[test]
+    fn a_result_a_pruning_cleared_replays_as_what_the_reader_was_shown() {
+        // The two halves of the same row, and they answer to different owners.
+        // The transcript holds the placeholder, because that is what the model
+        // is being sent and a resumed session may not undo the pruning that
+        // made room for it. The screen holds the words, because the reader
+        // watched them come back and a session picked up is meant to look like
+        // the session they left.
+        let mut transcript = Transcript::new();
+        transcript.push(Message::said("read the config and tell me what it says"));
+        transcript.push(Message::Agent {
+            text: "I will look at it.".into(),
+            calls: vec![ToolCall {
+                id: ToolId::new("c-1"),
+                name: "read".into(),
+                args: ToolArgs::new(r#"{"path":"crucible.json"}"#),
+            }],
+            stop: Some(StopReason::WantsTools),
+        });
+        transcript.push(Message::ToolResults(vec![ToolResult {
+            id: ToolId::new("c-1"),
+            output: ToolOutput::ok("[cleared to make room — 4096 bytes]"),
+        }]));
+
+        let mut pruned = Pruned::default();
+        pruned.keep(ToolId::new("c-1"), "theme = midnight".to_owned());
+
+        let runner = resumed(transcript);
+        let mut renderer = Renderer::new(Recording::new(80, 24));
+        renderer.wears(Style::plain().palette());
+        replayed(
+            &mut renderer,
+            &against(&runner, &here(), &pruned),
+            &mut Kept::default(),
+        )
+        .expect("a recording cannot fail");
+
+        let shown = renderer.terminal().written().to_string();
+        assert!(
+            shown.contains("theme = midnight"),
+            "the row forgot what the reader was shown: {shown}"
+        );
+        assert!(
+            !shown.contains("cleared to make room"),
+            "the row said out loud what the model is being sent instead: {shown}"
+        );
     }
 
     #[test]
@@ -447,17 +537,20 @@ mod tests {
         renderer.wears(Style::plain().palette());
         replayed(
             &mut renderer,
-            &runner,
-            &here(),
+            &against(&runner, &here(), &Pruned::default()),
             &mut Kept::default(),
-            Style::plain(),
         )
         .expect("a recording cannot fail");
         let live: Vec<String> = renderer.tail(64).iter().map(Row::text).collect();
 
         let transcript = everything();
-        let shown = glimpsed(transcript.messages(), &against(&runner, &here()), 60, 64)
-            .expect("a recording cannot fail");
+        let shown = glimpsed(
+            transcript.messages(),
+            &against(&runner, &here(), &Pruned::default()),
+            60,
+            64,
+        )
+        .expect("a recording cannot fail");
 
         assert_eq!(
             shown.iter().map(Row::text).collect::<Vec<_>>(),
@@ -480,7 +573,7 @@ mod tests {
         for columns in [30, 48, 96] {
             let shown = glimpsed(
                 transcript.messages(),
-                &against(&runner, &here()),
+                &against(&runner, &here(), &Pruned::default()),
                 columns,
                 64,
             )
@@ -509,8 +602,13 @@ mod tests {
             transcript.push(Message::said(format!("question {nth}").as_str()));
         }
 
-        let shown = glimpsed(transcript.messages(), &against(&runner, &here()), 60, 32)
-            .expect("a recording cannot fail");
+        let shown = glimpsed(
+            transcript.messages(),
+            &against(&runner, &here(), &Pruned::default()),
+            60,
+            32,
+        )
+        .expect("a recording cannot fail");
 
         assert!(shown.len() <= 32, "{} rows kept", shown.len());
         assert!(

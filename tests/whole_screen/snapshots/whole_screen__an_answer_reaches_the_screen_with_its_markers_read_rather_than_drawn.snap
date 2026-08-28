@@ -3,10 +3,6 @@ source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
 80x32 cursor 28,4 scrolled 0
-|│                                  │ ───────────────────────────────────────── │|
-|│  /…/workspace                    │                                           │|
-|│                                  │ Tips                                      │|
-|│                                  │                                           │|
 |│                                  │ · /          opens the command list       │|
 |│                                  │ · \ enter    adds a line without sending  │|
 |│                                  │ · shift+tab  steps the permission mode    │|
@@ -22,10 +18,14 @@ expression: window.picture()
 |The loud part, a span of code and a page (https://example.invalid) beside them. |
 |                                                                                |
 |· one                                                                           |
-|                                                                                |
 |· two                                                                           |
 |                                                                                |
 |│ and a line somebody else said                                                 |
+|                                                                                |
+|what │ how                                                                      |
+|─────┼──────                                                                    |
+|one  │ first                                                                    |
+|two  │ after                                                                    |
 |                                                                                |
 |fn main() {}                                                                    |
 |                                                                                |

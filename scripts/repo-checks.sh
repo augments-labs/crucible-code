@@ -216,18 +216,53 @@ else
     fi
 fi
 
+# Both spellings, and the tests with the source. A call written
+# `ToolOutput::replayed(output, ..)` is the same call as `output.replayed(..)`,
+# and a pin that only knew the dot form would be a pin anyone could walk past
+# without meaning to. Occurrences rather than lines, because two calls on one
+# line are two calls.
+doors() {
+    grep -rEoh --include='*.rs' "$1" "${@:2}" | wc -l
+}
+
 section "the replay seam"
 replay="crates/crucible-session/src/session/wire.rs"
-elsewhere=$(grep -rln '\.replayed(' --include='*.rs' crates src | grep -Fxv "$replay" || true)
+opens='(\.|ToolOutput::)replayed\('
+elsewhere=$(grep -rlE --include='*.rs' "$opens" crates src tests | grep -Fxv "$replay" || true)
 if [[ -n "$elsewhere" ]]; then
     while IFS= read -r file; do
         printf '    FAIL %s calls ToolOutput::replayed; only %s may\n' "$file" "$replay"
     done <<<"$elsewhere"
     failed=1
 fi
-here=$(grep -c '\.replayed(' "$replay" || true)
+here=$(doors "$opens" "$replay")
 if ((here != 1)); then
     printf '    FAIL %s calls ToolOutput::replayed %d times; the replay is one call\n' "$replay" "$here"
+    failed=1
+fi
+
+# The other half of the same seam. What a pruning cleared is held beside the
+# transcript so a resumed screen can say it again, and Pruned::showed is the one
+# door out of that side-table. A second caller is how text the model was told to
+# stop being sent finds its way back into a request, which is the whole thing the
+# side-table is shaped to prevent. The one file that defines and tests the type
+# is left alone; the rest of its crate is not, because a door is no narrower for
+# being opened by a neighbour.
+reader="src/cli/converse/replaying.rs"
+owner="crates/crucible-session/src/session/replay.rs"
+reads='(\.|Pruned::)showed\('
+elsewhere=$(grep -rlE --include='*.rs' "$reads" crates src tests |
+    grep -Fxv "$reader" |
+    grep -Fxv "$owner" || true)
+if [[ -n "$elsewhere" ]]; then
+    while IFS= read -r file; do
+        printf '    FAIL %s reads Pruned::showed; only %s may\n' "$file" "$reader"
+    done <<<"$elsewhere"
+    failed=1
+fi
+here=$(doors "$reads" "$reader")
+if ((here != 1)); then
+    printf '    FAIL %s reads Pruned::showed %d times; the substitution is one call\n' "$reader" "$here"
     failed=1
 fi
 

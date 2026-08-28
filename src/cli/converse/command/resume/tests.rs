@@ -554,6 +554,7 @@ fn the_preview_holds_the_work_a_session_did_and_not_only_what_was_said() {
     let against = replaying::Replay {
         runner: &runner,
         workspace: &sample.workspace(),
+        pruned: &Pruned::default(),
         style: Style::plain(),
     };
     let rows = previewed(
@@ -593,6 +594,7 @@ fn a_preview_is_drawn_for_the_pane_the_window_leaves_it() {
         let against = replaying::Replay {
             runner: &runner,
             workspace: &sample.workspace(),
+            pruned: &Pruned::default(),
             style: Style::plain(),
         };
         let rows = previewed(&held, &against, room);

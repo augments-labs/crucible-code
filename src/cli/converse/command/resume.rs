@@ -33,7 +33,9 @@ use std::str::FromStr as _;
 use std::time::SystemTime;
 
 use crucible_core::{Compacting, SessionId, Workspace};
-use crucible_runner::{Glimpse, Recorded, Runner, Session, SessionError, glimpse, recent, retitle};
+use crucible_runner::{
+    Glimpse, Pruned, Recorded, Runner, Session, SessionError, glimpse, recent, retitle,
+};
 use crucible_tui::{Editor, Glyphs, Kept, Picker, Renderer, Row, Slot, Terminal, clip};
 
 use crate::cli::Fatal;
@@ -217,13 +219,10 @@ fn picking<T: Terminal>(
     // reader scrolling back after a `/resume` finds exactly the screen a
     // launch would have drawn.
     held.opening.commit(renderer)?;
-    super::super::replaying::replayed(
-        renderer,
-        runner,
-        &terms.workspace,
-        &mut held.kept,
-        terms.style(),
-    )?;
+    let pruned = runner.take_pruned();
+    let against = replaying::Replay::of(runner, terms, &pruned);
+    super::super::replaying::replayed(renderer, &against, &mut held.kept)?;
+    drop(pruned);
     super::super::resuming::asked(renderer, runner, terms, held.answers.keys)
 }
 
@@ -329,9 +328,14 @@ fn stood<T: Terminal>(
     // not the one this runner is in: what the runner is asked for is what each
     // tool's name and arguments read as, which is a fact about this build
     // rather than about the log being previewed.
+    // Nothing beside it, because a preview is drawn from the tail of a log
+    // nobody has opened: no pruning has been replayed, so there is nothing a
+    // pruning cleared to put back.
+    let uncleared = Pruned::default();
     let against = replaying::Replay {
         runner,
         workspace: &terms.workspace,
+        pruned: &uncleared,
         style,
     };
 

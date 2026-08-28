@@ -13,9 +13,16 @@
 //! the session, so one that kept a diff per edit would grow with what had been
 //! *shown* where what bounds it is what was *said*.
 //!
+//! What parts there is the lines. The two counts over them go on as
+//! [`crate::Changed`], because the row a reader was shown has to be drawable
+//! again from the copy that was kept, and a count names no file and holds no
+//! line. This type stays what it always was: a thing with lines in it.
+//!
 //! And it reaches no log, error or panic payload either. A diff of a file
 //! holding a key is a key, so [`Debug`] is written by hand and redacts, the same
-//! as everything else in this crate that carries what a file said.
+//! as everything else in this crate that carries what a file said. That governs
+//! the counts as well as the lines — it is what makes two integers the most a
+//! log may be told, and the reason nothing here grew a way to say more.
 //!
 //! Both bounds are taken here rather than trusted from above: a diff crosses a
 //! thread and is held until it is drawn, and a producer that forgot to cut one

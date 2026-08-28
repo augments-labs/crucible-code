@@ -391,13 +391,13 @@ pub(crate) fn converse<T: Terminal>(
     // Before the first prompt, because a session picked up on the command line
     // reaches this loop the same way one picked up by `/resume` does, and the
     // question is about the session rather than about how it was reached.
-    replaying::replayed(
-        renderer,
-        &runner,
-        &terms.workspace,
-        &mut held.kept,
-        terms.style(),
-    )?;
+    // Taken from the session here and dropped at the end of the walk: it is the
+    // room a pruning gave back, and holding it for the length of the run would
+    // be this screen undoing what that pruning was run to do.
+    let pruned = runner.take_pruned();
+    let against = replaying::Replay::of(&runner, terms, &pruned);
+    replaying::replayed(renderer, &against, &mut held.kept)?;
+    drop(pruned);
 
     // Answered rather than acted on. Making room is a request, and a request is
     // run the one way this file runs one — on a worker, with the box live under

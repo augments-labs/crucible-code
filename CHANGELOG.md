@@ -8,6 +8,37 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Changed
+
+- **Session logs are written at format 9.** A tool result now records how many
+  lines the call added and removed, so a resumed session can draw the change
+  header the live screen drew. Logs from format 8 and earlier still replay, and a
+  session started before this release keeps the format its header was written at.
+  A log started now says format 9, which an older build refuses rather than
+  half-understands.
+
+### Fixed
+
+- **A resumed session says again what a long conversation cleared.** Making room
+  replaces the oldest tool results with a placeholder, because the model stops
+  being sent them — but the reader watched those results come back, so a session
+  picked up again showed a placeholder where they remembered an answer. The
+  words are put back on the row now, beside the transcript rather than in it:
+  nothing that builds a request can reach them.
+
+- **A resumed session says again what a call changed.** A file-changing call
+  came back on the screen as the tool's own sentence about it, so a session
+  picked up again read as though nothing had moved. The counts header is drawn
+  from the log now, in the transcript and in the picker preview. The lines
+  themselves stay live-only — they are never written down — and with them the
+  note saying how many the block left out.
+
+- **Markdown answers no longer gain blank rows as they stream.** A bullet list
+  or fenced block arriving in pieces drew a blank row inside itself, because the
+  row separator between blocks was asked for while the block was still open —
+  whether the piece stopped mid-row or exactly at a line break. The same answer
+  now draws the same rows however the wire was cut.
+
 ## [0.26.0] - 2026-08-28
 
 ### Added

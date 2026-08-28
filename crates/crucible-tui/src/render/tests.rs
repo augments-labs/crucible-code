@@ -975,6 +975,34 @@ fn a_row_is_never_parted_into_a_line_that_is_still_arriving() {
 }
 
 #[test]
+fn a_block_cut_at_a_line_break_draws_what_an_uncut_one_draws() {
+    // The cut the reader cannot see. A delta ending exactly at the line break
+    // leaves it holding nothing at all — the line it was reading is finished,
+    // and the block that line belongs to is not — so the row a caller asks for
+    // between blocks lands inside one.
+    const SAID: &str = "```\nfirst\nsecond\n```\n";
+
+    let whole = {
+        let mut drawn = Drawn::new(80, 24);
+        drawn.wears(colourful());
+        drawn.apart().unwrap();
+        drawn.stream(SAID).unwrap();
+        drawn.settle().unwrap();
+        drawn.screen().rows()
+    };
+
+    let mut drawn = Drawn::new(80, 24);
+    drawn.wears(colourful());
+    for piece in SAID.split_inclusive('\n') {
+        drawn.apart().unwrap();
+        drawn.stream(piece).unwrap();
+    }
+    drawn.settle().unwrap();
+
+    assert_eq!(drawn.screen().rows(), whole);
+}
+
+#[test]
 fn rows_this_program_composed_settle_the_question_too() {
     let mut drawn = Drawn::new(80, 24);
     drawn.present(&[Row::plain("composed")]).unwrap();

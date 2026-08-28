@@ -7,12 +7,14 @@
 //! finding the right log, refusing the wrong one and stopping at the first
 //! line that cannot be read all live here together.
 
+use std::collections::HashMap;
+use std::fmt;
 use std::fs::File;
 use std::io::{self, BufRead as _, BufReader};
 use std::path::{Path, PathBuf};
 use std::str::{self, FromStr as _};
 
-use crucible_core::{Calibration, Message, SessionId, Transcript, Workspace};
+use crucible_core::{Calibration, Message, SessionId, ToolId, Transcript, Workspace};
 
 use super::{SUFFIX, SessionError, wire};
 
@@ -157,6 +159,7 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
     let mut before = through;
 
     let mut transcript = Transcript::new();
+    let mut pruned = Pruned::default();
     // Taken only where nothing follows it, which is why it is cleared by every
     // other line rather than kept until something replaces it. See [`Replayed`].
     let mut calibration = None;
@@ -210,6 +213,21 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
         // answers to nothing — cleared first and compacted away since — frees
         // nothing and is nobody's damage.
         if let Some(results) = whole.and_then(wire::cleared) {
+            // Read first, because after the clearing the text is gone from the
+            // only place it was. A result the clearing then leaves alone — too
+            // small for a placeholder to be worth it — is held here too, and
+            // that is harmless: it is still what the reader was shown, so
+            // putting it back on the screen puts back what is already there.
+            for message in transcript.messages() {
+                if let Message::ToolResults(answers) = message {
+                    for answer in answers {
+                        if results.contains(&answer.id) {
+                            pruned.keep(answer.id.clone(), answer.output.text().to_owned());
+                        }
+                    }
+                }
+            }
+
             transcript.prune(&results);
             calibration = None;
             through += read as u64;
@@ -252,6 +270,7 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
         // left is a shorter transcript than the number describes.
         return Ok(Replayed {
             transcript: without_last(&transcript),
+            pruned,
             settled_at: before,
             calibration: None,
         });
@@ -259,6 +278,7 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
 
     Ok(Replayed {
         transcript,
+        pruned,
         settled_at: through,
         calibration,
     })
@@ -274,8 +294,73 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
 /// itself: the one direction that costs a turn rather than some context.
 pub(super) struct Replayed {
     pub(super) transcript: Transcript,
+    pub(super) pruned: Pruned,
     pub(super) settled_at: u64,
     pub(super) calibration: Option<Calibration>,
+}
+
+/// What results said before a pruning cleared them.
+///
+/// A pruning takes text out of the transcript because the model stopped being
+/// sent it. The reader never stopped being shown it — the rows went down when
+/// the call answered and are still what the session looks like — so a resumed
+/// screen drawn from the transcript alone shows a reader a placeholder where
+/// they remember an answer.
+///
+/// Beside the transcript rather than inside it, and this is the whole of why
+/// the type exists. There is one transcript, it is the pruned one, and it is
+/// what every request is built from; nothing that builds a request can reach
+/// this. A second transcript holding the fuller text would be one wrong
+/// argument away from re-sending what a session was told to stop sending.
+///
+/// Keyed by the id a result shares with the call it answered, which is what a
+/// pruning line names and what the walk has in hand at the row it is drawing.
+#[derive(Default)]
+pub struct Pruned(HashMap<ToolId, String>);
+
+/// Written by hand, because what is held here is what a tool printed.
+///
+/// Which is how a model reads a file and how it runs `env`. A key printed once
+/// is a key in every `{:?}` this value reaches, and this one is reached from
+/// further away than most: [`super::Session`] holds it and the runner holds
+/// that, so a derived `Debug` here would put the whole of what a session ever
+/// cleared into any line either of them was ever printed on.
+impl fmt::Debug for Pruned {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Pruned")
+            .field(&format_args!("{} redacted", self.0.len()))
+            .finish()
+    }
+}
+
+impl Pruned {
+    /// Keeps what the result `call` answered with said, unless something
+    /// already is.
+    ///
+    /// A log may clear one result twice — a session continued, pruned again,
+    /// continued again — and by the second line the transcript holds the
+    /// placeholder the first one left. First keep wins, so what is held is what
+    /// the reader saw rather than what the last pruning found.
+    ///
+    /// Public because the walk that reads a log is not the only thing that
+    /// fills one: what draws a session back onto a screen is judged against a
+    /// side-table built by hand, and a table nothing outside this file could
+    /// build would be one nothing outside this file could test.
+    pub fn keep(&mut self, call: ToolId, text: String) {
+        self.0.entry(call).or_insert(text);
+    }
+
+    /// What the result `call` answered with said, where a pruning cleared it.
+    #[must_use]
+    pub fn showed(&self, call: &ToolId) -> Option<&str> {
+        self.0.get(call).map(String::as_str)
+    }
+
+    /// Whether nothing in this session was ever cleared.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
 }
 
 /// Whether the last message is still waiting on tools.
@@ -304,4 +389,123 @@ fn without_last(transcript: &Transcript) -> Transcript {
     }
 
     settled
+}
+
+#[cfg(test)]
+mod tests {
+    use crucible_core::{Message, ToolId};
+
+    use super::{Pruned, replay};
+    use crate::sample::Sample;
+    use crate::session::wire::FORMAT;
+
+    /// What the call in these cases answered with, before anything cleared it.
+    ///
+    /// Longer than [`crucible_core::ToolOutput::MIN_PRUNE_BYTES`] on purpose:
+    /// under that a
+    /// result is left alone, because the placeholder would cost more than the
+    /// text it replaced. A shorter string here would make a case about pruning
+    /// out of a log where no pruning happens.
+    const WHOLE: &str =
+        "every line the file had in it, and then every line it had after that, and more besides";
+
+    /// A log holding one answered call and, after it, a line saying that result
+    /// was cleared to make room.
+    fn cleared_after_answering(name: &str) -> Sample {
+        let sample = Sample::new(name);
+        let id = "0000000000001-000001";
+
+        sample.plant(
+            id,
+            &[
+                sample.header(FORMAT, id),
+                r#"{"user":"what is in this"}"#.to_owned(),
+                r#"{"agent":"on it","calls":[{"args":"{}","id":"call-1","name":"read"}],"stop":"tools"}"#
+                    .to_owned(),
+                format!(r#"{{"results":[{{"failed":false,"id":"call-1","text":"{WHOLE}"}}]}}"#),
+                r#"{"pruned":{"freed":80000,"results":["call-1"]}}"#.to_owned(),
+            ],
+        );
+
+        sample
+    }
+
+    /// The one result in `messages`.
+    fn only(messages: &[Message]) -> &crucible_core::ToolResult {
+        messages
+            .iter()
+            .find_map(|message| match message {
+                Message::ToolResults(results) => results.first(),
+                _ => None,
+            })
+            .expect("the result the log recorded")
+    }
+
+    #[test]
+    fn a_cleared_result_replays_as_a_placeholder_and_is_kept_beside_it_whole() {
+        // Both halves of the same read, asserted together, because either alone
+        // is the bug. The transcript is what every request is built from and it
+        // has to hold the placeholder — a resumed session that re-sent what it
+        // was told to stop sending would undo the pruning that made room. And
+        // the reader watched that result come back, so a screen drawn from the
+        // transcript alone shows them a placeholder where they remember an
+        // answer.
+        let sample = cleared_after_answering("replay-pruned");
+
+        let read = replay(&sample.logs().join("0000000000001-000001.jsonl"))
+            .expect("a log this build wrote");
+
+        let result = only(read.transcript.messages());
+        assert!(
+            result.output.text().contains("cleared to make room"),
+            "the transcript kept text the model stopped being sent: {}",
+            result.output.text()
+        );
+
+        assert_eq!(
+            read.pruned.showed(&ToolId::new("call-1")),
+            Some(WHOLE),
+            "what the reader was shown is gone with what the model was sent"
+        );
+    }
+
+    #[test]
+    fn a_log_that_cleared_nothing_keeps_nothing_beside_it() {
+        // The cost of the side-table is what it holds, and an ordinary session
+        // prunes nothing at all. This is the case that says so.
+        let sample = Sample::new("replay-unpruned");
+        let id = "0000000000001-000001";
+
+        sample.plant(
+            id,
+            &[
+                sample.header(FORMAT, id),
+                r#"{"user":"what is in this"}"#.to_owned(),
+            ],
+        );
+
+        let read =
+            replay(&sample.logs().join(format!("{id}.jsonl"))).expect("a log this build wrote");
+
+        assert!(read.pruned.is_empty(), "a session that pruned nothing");
+    }
+
+    #[test]
+    fn what_a_pruning_cleared_does_not_reach_a_debug_line() {
+        // The side-table holds what a tool printed, which is how a model reads
+        // a file and how it runs `env`. Every other value in this tree that
+        // carries that material writes its own `Debug` and redacts, and this
+        // one is held by `Session`, which is held by the runner — so one
+        // `{:?}` of either would otherwise print the whole of what a session
+        // ever cleared.
+        let mut pruned = Pruned::default();
+        pruned.keep(ToolId::new("call-1"), WHOLE.to_owned());
+
+        let shown = format!("{pruned:?}");
+        assert!(
+            !shown.contains("every line the file had"),
+            "cleared text reached a log: {shown}"
+        );
+        assert!(shown.contains("redacted"), "{shown}");
+    }
 }
