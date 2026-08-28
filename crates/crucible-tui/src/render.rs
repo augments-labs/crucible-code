@@ -1151,11 +1151,19 @@ impl<T: Terminal> Renderer<T> {
     /// before the answer and none inside it. That is what the record's own
     /// open line answers.
     ///
+    /// Except where the answer is markdown, because then the record is not the
+    /// only place a row can be open. A reader holding the opening characters of
+    /// a row — a `- ` that is about to become a bullet, a fence that has not
+    /// said what it is written in yet — has written nothing down, so the record
+    /// looks settled while the row is mid-air. Asking the reader too is what
+    /// keeps the same answer from drawing differently for having been cut into
+    /// different pieces on the way here.
+    ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn apart(&mut self) -> Result<(), TerminalError> {
-        if self.record.parted() || self.record.writing() {
+        if self.record.parted() || self.record.writing() || self.markdown.holding() {
             return Ok(());
         }
 

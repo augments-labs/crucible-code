@@ -507,6 +507,7 @@ const IN_MARKDOWN: &str = "## What I found\n\n\
     beside them.\n\n\
     - one\n- two\n\n\
     > and a line somebody else said\n\n\
+    | what | how |\n| --- | --- |\n| one | first |\n| two | after |\n\n\
     ```rust\nfn main() {}\n```\n";
 
 #[test]
@@ -527,6 +528,34 @@ fn an_answer_reaches_the_screen_with_its_markers_read_rather_than_drawn() {
     window.types_until("say something in markdown\r", "fn main");
 
     insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn markdown_rows_survive_chunking() {
+    // How the wire was cut is the vendor's business. A reader holds the opening
+    // bytes of a row across a delta — a `- ` that is about to become a bullet,
+    // a fence that has not said what it is written in yet — and what asks for a
+    // row boundary between two deltas cannot see that it is holding one. So the
+    // same answer arriving in pieces gains rows the same answer arriving whole
+    // does not, mid-block, where a reader counting bullets would notice.
+    //
+    // Both sides are drawn rather than one being written down, because what is
+    // asserted is that they agree: a snapshot of either would freeze whichever
+    // was current and say nothing about the other.
+    let arriving = pictured("markdown-chunked", &Vendor::answering(IN_MARKDOWN));
+    let at_once = pictured("markdown-whole", &Vendor::answering_whole(IN_MARKDOWN));
+
+    assert_eq!(
+        arriving, at_once,
+        "the same answer drew differently for having been cut differently"
+    );
+}
+
+/// The screen an answer from `vendor` leaves behind, in colour.
+fn pictured(case: &str, vendor: &Vendor) -> String {
+    let mut window = Watched::in_colour(case, 80, 32, vendor);
+    window.types_until("say something in markdown\r", "fn main");
+    window.picture()
 }
 
 /// The file the call in [`a_call_that_changed_a_file_is_drawn_with_the_change`]

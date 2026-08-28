@@ -71,6 +71,17 @@ impl Vendor {
         Self::serving(vec![stream(text)])
     }
 
+    /// The same answer, arriving in one delta instead of many.
+    ///
+    /// How the wire happened to be cut is the vendor's business and none of
+    /// the screen's, so a case that holds the text still and varies only that
+    /// is asking whether the reader agrees. It is the one arrangement where
+    /// nothing can be held across a delta, which makes it the answer the
+    /// chunked one has to match rather than merely another sample of it.
+    pub(crate) fn answering_whole(text: &str) -> Self {
+        Self::serving(vec![whole(text)])
+    }
+
     /// Starts with ordinary answers, then returns a structured recap and the
     /// answer after it.
     pub(crate) fn recapping_after(before: &[&str], note: &str, after: Option<&str>) -> Self {
@@ -242,15 +253,31 @@ fn holding(text: &str) -> Vec<String> {
     events
 }
 
-/// The events that open a message and carry `text` into it.
+/// The same events as [`stream`], with the answer whole in one delta.
+fn whole(text: &str) -> Vec<String> {
+    let mut events = carrying([text]);
+
+    events.push(ENDED.to_owned());
+    events.push(stopped("end_turn"));
+    events.push(STOPPED.to_owned());
+
+    events
+}
+
+/// The events that open a message and carry `text` into it, a word at a time.
 fn opening(text: &str) -> Vec<String> {
+    carrying(text.split_inclusive(' '))
+}
+
+/// The events that open a message and carry `pieces` of it in, in order.
+fn carrying<'a>(pieces: impl IntoIterator<Item = &'a str>) -> Vec<String> {
     let mut events = vec![
         STARTED.to_owned(),
         "event: content_block_start\ndata: {\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"
             .to_owned(),
     ];
 
-    events.extend(text.split_inclusive(' ').map(|word| {
+    events.extend(pieces.into_iter().map(|word| {
         format!(
             "event: content_block_delta\ndata: {{\"index\":0,\"delta\":{{\"type\":\"text_delta\",\"text\":{}}}}}\n\n",
             serde_json::Value::from(word)

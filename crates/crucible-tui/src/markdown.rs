@@ -976,6 +976,30 @@ impl Markdown {
         }
     }
 
+    /// Whether the reader is holding the opening of a row nobody has seen yet.
+    ///
+    /// Exactly what [`Markdown::finish`] would have to hand on if the message
+    /// ended here: a run of markers waiting for the character that says what it
+    /// was, an indent, a bullet's mark owed until the first thing on its item,
+    /// a link or a table still being written, a line of code waiting to be read.
+    /// None of it has reached whatever is drawing, and none of it can, until the
+    /// character that settles it arrives in some later piece of the answer.
+    ///
+    /// Which is why this is asked from outside. A caller deciding whether a row
+    /// boundary is owed looks at what has been drawn, and what has been drawn
+    /// says nothing here — the row is open, and the only thing that knows it is
+    /// the reader still holding its first characters.
+    pub(crate) fn holding(&self) -> bool {
+        self.held.is_some()
+            || self.address.is_some()
+            || self.escaped
+            || self.indent > 0
+            || self.line.marked == Marked::Owed
+            || self.link.is_some()
+            || self.table.is_some()
+            || !self.code.is_empty()
+    }
+
     /// Ends the line, and with it everything markdown ends at one.
     fn end_line(&mut self, room: usize, say: &mut dyn FnMut(Slot, &str)) {
         let ended = self.inside;

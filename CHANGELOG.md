@@ -8,6 +8,14 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Markdown answers no longer gain blank rows as they stream.** A bullet list
+  or fenced block arriving in pieces drew a blank row inside itself, because the
+  row separator between blocks was asked for while the markdown reader was still
+  holding the opening characters of a row. The same answer now draws the same
+  rows however the wire was cut.
+
 ## [0.26.0] - 2026-08-28
 
 ### Added
