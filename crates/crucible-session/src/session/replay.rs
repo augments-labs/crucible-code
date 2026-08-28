@@ -8,6 +8,7 @@
 //! line that cannot be read all live here together.
 
 use std::collections::HashMap;
+use std::fmt;
 use std::fs::File;
 use std::io::{self, BufRead as _, BufReader};
 use std::path::{Path, PathBuf};
@@ -314,8 +315,23 @@ pub(super) struct Replayed {
 ///
 /// Keyed by the id a result shares with the call it answered, which is what a
 /// pruning line names and what the walk has in hand at the row it is drawing.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct Pruned(HashMap<ToolId, String>);
+
+/// Written by hand, because what is held here is what a tool printed.
+///
+/// Which is how a model reads a file and how it runs `env`. A key printed once
+/// is a key in every `{:?}` this value reaches, and this one is reached from
+/// further away than most: [`super::Session`] holds it and the runner holds
+/// that, so a derived `Debug` here would put the whole of what a session ever
+/// cleared into any line either of them was ever printed on.
+impl fmt::Debug for Pruned {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Pruned")
+            .field(&format_args!("{} redacted", self.0.len()))
+            .finish()
+    }
+}
 
 impl Pruned {
     /// Keeps what the result `call` answered with said, unless something
@@ -379,7 +395,7 @@ fn without_last(transcript: &Transcript) -> Transcript {
 mod tests {
     use crucible_core::{Message, ToolId};
 
-    use super::replay;
+    use super::{Pruned, replay};
     use crate::sample::Sample;
     use crate::session::wire::FORMAT;
 
@@ -471,5 +487,24 @@ mod tests {
             replay(&sample.logs().join(format!("{id}.jsonl"))).expect("a log this build wrote");
 
         assert!(read.pruned.is_empty(), "a session that pruned nothing");
+    }
+
+    #[test]
+    fn what_a_pruning_cleared_does_not_reach_a_debug_line() {
+        // The side-table holds what a tool printed, which is how a model reads
+        // a file and how it runs `env`. Every other value in this tree that
+        // carries that material writes its own `Debug` and redacts, and this
+        // one is held by `Session`, which is held by the runner — so one
+        // `{:?}` of either would otherwise print the whole of what a session
+        // ever cleared.
+        let mut pruned = Pruned::default();
+        pruned.keep(ToolId::new("call-1"), WHOLE.to_owned());
+
+        let shown = format!("{pruned:?}");
+        assert!(
+            !shown.contains("every line the file had"),
+            "cleared text reached a log: {shown}"
+        );
+        assert!(shown.contains("redacted"), "{shown}");
     }
 }
