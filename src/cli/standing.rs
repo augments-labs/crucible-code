@@ -59,18 +59,20 @@ pub(crate) fn under(
     model: &str,
     effort: Option<Effort>,
     workspace: &Workspace,
-    ended: &[Ended],
+    notes: &[String],
 ) -> String {
     let root = workspace.root().display();
     let standing =
         format!("{SYSTEM}\n\nThe workspace root is {root}. Every tool path is relative to it.");
 
-    // At the top of the turn rather than pushed into the last one: a turn already
-    // in flight has nowhere to put a new fact, and a command that fell over is
-    // something the model needs before it answers rather than after.
-    let standing = match said(ended) {
-        Some(said) => format!("{standing}\n\n{said}"),
-        None => standing,
+    // What is left to say at the top of a turn, which since a turn in flight
+    // gained somewhere to put a fact is less than it was: a note the running
+    // turn was handed has already been said, and only the ones nothing was
+    // running to take — or that arrived after the last pass — are still owed.
+    let standing = if notes.is_empty() {
+        standing
+    } else {
+        format!("{standing}\n\n{}", notes.join("\n\n"))
     };
 
     if model.is_empty() {
@@ -90,24 +92,31 @@ pub(crate) fn under(
     )
 }
 
-/// What ended since the last turn, in the words the model is told it in.
+/// What has ended, in the words the model is told it in.
 ///
-/// `None` where nothing did, which is almost every turn: a note about nothing is
+/// `None` where nothing has, which is almost every turn: a note about nothing is
 /// a sentence the model has to read past to find the ones that mean something.
 ///
-/// One wording for two ways of arriving. Where a turn is already being started
-/// it goes under that turn, and where none is, it *is* the turn — see
-/// `converse::typing`. A model that read one sentence about a build
-/// that fell over and a different one about the same build depending on who
-/// happened to type first would be reading about two builds.
+/// One wording for three ways of arriving. Under a turn being started, into a
+/// turn already running, or — where nobody is at the keyboard and nothing is
+/// running — as the turn itself; see `converse::typing`. A model that read one
+/// sentence about a build that fell over and a different one about the same
+/// build depending on who happened to get there first would be reading about
+/// two builds. So it says "have ended" rather than naming a boundary: which
+/// turn it lands in is not a fact about the command.
+///
+/// It opens by saying who is speaking because two of those three ways record it
+/// as a message from the developer — that is the only channel a turn already
+/// running has — and a model that took this for something a person typed would
+/// answer the person about it.
 pub(crate) fn said(ended: &[Ended]) -> Option<String> {
     if ended.is_empty() {
         return None;
     }
 
     let mut said = String::from(
-        "Commands you left running have ended since your last turn. They are gone; \
-         nothing is waiting on them, and starting one again is a new call:",
+        "crucible, not the developer: commands you left running have ended. They are \
+         gone; nothing is waiting on them, and starting one again is a new call:",
     );
 
     for one in ended {

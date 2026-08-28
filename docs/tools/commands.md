@@ -94,6 +94,18 @@ VITE v5.4.2  ready in 412 ms
 [left running as #1; completion is reported automatically; do not poll or wait]
 ```
 
+A command you pressed the key on says who let go of it, because the model asked
+for that one to be waited for and is getting it back early:
+
+```
+[left running as #2; the developer pressed ctrl+b to leave it running rather
+than keep waiting; carry on with what does not depend on it; completion is
+reported automatically; do not poll or wait]
+```
+
+Without that it reads as its own call coming back, and a model that wanted the
+command waited for will reasonably ask for it again.
+
 `timeout` and `background` together are refused rather than one of them ignored: a
 command left running has no deadline, so a call that sent both asked for two
 different things.
@@ -145,12 +157,17 @@ believing a server is up:
 
 The line is written the moment it happens, even between turns.
 
-The model is told at the top of a turn, because a turn already in flight has
-nowhere to put a new fact. Where there is no next turn — the model left a build
-running and yielded, and the box is sitting there waiting — the ending starts
-one. A model waiting on your machine should not also be waiting on your
-keyboard. Everything that ended since the last turn arrives in that one turn,
-and whatever you had half-written in the box is still there afterwards.
+The model is told the moment there is somewhere to put it. A turn that is
+running takes the ending between one step and the next, so a plan built around a
+server that has already fallen over gets interrupted rather than finished. Where
+nothing is running, the next turn carries it — and where there is no next turn
+— the model left a build running and yielded, and the box is sitting there
+waiting — the ending starts one. A model waiting on your machine should not also
+be waiting on your keyboard. Whatever you had half-written in the box is still
+there afterwards.
+
+Whichever route gets there first is the only one that says it. An ending is told
+exactly once however long the turn it landed in was.
 
 Nothing starts a turn where you have already begun one: a prompt you typed or
 queued takes the ending with it instead, so it is said once either way.

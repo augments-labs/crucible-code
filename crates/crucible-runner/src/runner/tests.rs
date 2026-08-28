@@ -7,7 +7,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    Approved, Attachment, Carried, Change, Diff, Line, Modalities, Modality, ProviderError,
+    Approved, Aside, Attachment, Carried, Change, Diff, Line, Modalities, Modality, ProviderError,
     Sensitivity, SessionId, Spend, Summary, Target, Tool, ToolArgs, ToolError, ToolId, ToolOutput,
     Verdict, Watch,
 };
@@ -33,6 +33,7 @@ struct Scripted {
     says: Says,
     cancel: Cancel,
     steer: Steer,
+    aside: Aside,
     events: Sender<Event>,
     seen: Receiver<Event>,
 }
@@ -64,6 +65,7 @@ impl Scripted {
             says: Says::new(verdict),
             cancel: Cancel::new(),
             steer: Steer::new(),
+            aside: Aside::new(),
             events,
             seen,
         }
@@ -98,6 +100,7 @@ impl Scripted {
             &self.events,
             &self.cancel,
             &self.steer,
+            &self.aside,
         )
     }
 
@@ -376,6 +379,7 @@ struct Steering {
     sent: Sent,
     says: Says,
     steer: Steer,
+    aside: Aside,
     events: Sender<Event>,
     seen: Receiver<Event>,
 }
@@ -401,6 +405,7 @@ impl Steering {
             sent,
             says: Says::new(Verdict::Allow),
             steer: Steer::new(),
+            aside: Aside::new(),
             events,
             seen,
         }
@@ -414,6 +419,7 @@ impl Steering {
             &self.events,
             &Cancel::new(),
             &self.steer,
+            &self.aside,
         )
     }
 
@@ -920,11 +926,12 @@ fn tool_results_share_one_retained_boundary_across_a_turn() {
 
     let problem = scripted
         .runner
-        .exchange_with_tool_output_limit(
+        .exchange(
             &mut scripted.says,
             &scripted.events,
             &scripted.cancel,
             &scripted.steer,
+            &scripted.aside,
             8,
         )
         .unwrap_err();
@@ -1783,4 +1790,102 @@ fn a_picture_a_model_does_not_read_is_named_where_its_answer_arrives() {
         panic!("one request went out, and it went out without the picture");
     };
     assert_eq!(unread, &[named]);
+}
+
+#[test]
+fn a_command_that_ended_while_the_turn_ran_reaches_it_at_the_next_pass() {
+    // The case the whole type is for. A command left running exits mid-turn;
+    // the agent was told not to poll for it, so the fact has to be pushed at
+    // the turn, and the pass after it is pushed has to carry it. Without this
+    // the model is told at the top of the *next* turn — which is no use to an
+    // agent that is waiting inside this one.
+    let script = Script::new(vec![calling("a", "read", "{}"), saying("done")]);
+    let mut steering = Steering::new(script, tools([Fixed::new("read")]));
+    steering
+        .aside
+        .say("#1 `sleep 5` finished after printing 0 lines.".into());
+
+    steering.turn("start the build").expect("a turn");
+
+    let asked = steering.asked();
+    let [first, second] = asked.as_slice() else {
+        panic!("two passes: {asked:?}");
+    };
+    assert!(
+        second > first,
+        "the pass after the note carries it: {asked:?}"
+    );
+    assert!(
+        !steering.aside.any(),
+        "a note the turn took is a note nothing still owes"
+    );
+}
+
+#[test]
+fn a_note_handed_to_a_turn_is_not_recorded_as_something_the_reader_typed() {
+    // An aside is the harness speaking, not the reader. It joins the transcript
+    // because that is the only channel a running turn has, but it must not be
+    // drawn back as the reader's own words — `Steered` is what the panel and
+    // the transcript read to decide somebody typed something.
+    let script = Script::new(vec![calling("a", "read", "{}"), saying("done")]);
+    let mut steering = Steering::new(script, tools([Fixed::new("read")]));
+    steering
+        .aside
+        .say("#1 `sleep 5` finished after printing 0 lines.".into());
+
+    steering.turn("start the build").expect("a turn");
+
+    let steered: Vec<String> = steering
+        .seen
+        .try_iter()
+        .filter_map(|event| match event {
+            Event::Steered { line } => Some(line.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        steered.is_empty(),
+        "a machine note was drawn as the reader's typing: {steered:?}"
+    );
+}
+
+#[test]
+fn a_note_and_a_typed_line_both_land_on_the_pass_that_follows_them() {
+    // The two queues are drained at the same boundary and neither swallows the
+    // other: a command that ended while the reader was typing is one turn that
+    // knows both.
+    let script = Script::new(vec![calling("a", "read", "{}"), saying("done")]);
+    let mut steering = Steering::new(script, tools([Fixed::new("read")]));
+    steering.steer.say("check the log too".into());
+    steering
+        .aside
+        .say("#1 `sleep 5` finished after printing 0 lines.".into());
+
+    steering.turn("start the build").expect("a turn");
+
+    assert!(!steering.steer.any());
+    assert!(!steering.aside.any());
+
+    // Both are in the transcript, and as two messages rather than one run
+    // together: what the reader asked for and what the machine reported are
+    // different kinds of fact, and a model reading them spliced would read the
+    // note as part of the request.
+    let said: Vec<&str> = steering
+        .runner
+        .transcript()
+        .messages()
+        .iter()
+        .filter_map(|message| match message {
+            Message::User { text, .. } => Some(text.as_ref()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        said.contains(&"check the log too"),
+        "the typed line is missing: {said:?}"
+    );
+    assert!(
+        said.contains(&"#1 `sleep 5` finished after printing 0 lines."),
+        "the note is missing: {said:?}"
+    );
 }

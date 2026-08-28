@@ -5,7 +5,7 @@
 //! being run in — so [`super::ask`] is exercised only where it declines to, and
 //! everything after that point is called directly.
 
-use crucible_core::{Mode, Permission, Rules, ToolArgs};
+use crucible_core::{Aside, Mode, Permission, Rules, ToolArgs};
 use crucible_runner::{Model, Session, Tools};
 use crucible_tui::{Aimed, Key, Recording};
 
@@ -247,6 +247,7 @@ fn a_run_with_nothing_to_type_into_says_so_rather_than_reading_keys() {
             images: &mut Vec::new(),
             clipboard: &mut None,
             left: &crucible_tools::Background::new(),
+            aside: &Aside::new(),
             keys: false,
         },
     )
@@ -1347,12 +1348,12 @@ fn ended(number: usize, code: Option<i32>) -> Ended {
 
 #[test]
 fn nothing_having_ended_asks_for_no_turn() {
-    assert!(woken(&[]).is_none());
+    assert!(woken(&[], &Aside::new()).is_none());
 }
 
 #[test]
 fn a_command_that_ended_asks_for_the_turn_nobody_typed() {
-    let Some(Asked::Woke(said)) = woken(&[ended(1, Some(0))]) else {
+    let Some(Asked::Woke(said)) = woken(&[ended(1, Some(0))], &Aside::new()) else {
         panic!("an ending to ask for a turn");
     };
 
@@ -1369,12 +1370,46 @@ fn every_command_that_ended_is_in_the_one_turn_they_ask_for() {
     // Two servers falling over between one turn and the next is one turn about
     // both of them. A turn each would be the second one arriving after the
     // model had already answered about the first.
-    let Some(Asked::Woke(said)) = woken(&[ended(1, Some(0)), ended(2, Some(2)), ended(3, None)])
-    else {
+    let Some(Asked::Woke(said)) = woken(
+        &[ended(1, Some(0)), ended(2, Some(2)), ended(3, None)],
+        &Aside::new(),
+    ) else {
         panic!("the endings to ask for a turn");
     };
 
     assert!(said.contains("#1"), "{said}");
     assert!(said.contains("exit status 2"), "{said}");
     assert!(said.contains("killed"), "{said}");
+}
+
+#[test]
+fn a_note_the_last_turn_never_took_still_asks_for_a_turn() {
+    // The gap this closes from the other side. A command that ended in the last
+    // seconds of a turn is handed to that turn, and a turn that finished before
+    // its next pass never took it — so the note is still owed, and the reader
+    // sitting at an idle prompt is exactly who is waiting on it.
+    let aside = Aside::new();
+    aside.say("crucible, not the developer: #1 finished".to_owned());
+
+    let Some(Asked::Woke(said)) = woken(&[], &aside) else {
+        panic!("a note nobody took to ask for a turn");
+    };
+
+    assert!(said.contains("#1 finished"), "{said}");
+    assert!(!aside.any(), "the note was taken, not copied");
+}
+
+#[test]
+fn a_note_and_an_ending_are_one_turn_rather_than_two() {
+    // Same reason two endings are one turn: the second would arrive after the
+    // model had already answered about the first.
+    let aside = Aside::new();
+    aside.say("crucible, not the developer: #1 finished".to_owned());
+
+    let Some(Asked::Woke(said)) = woken(&[ended(2, Some(2))], &aside) else {
+        panic!("both to ask for one turn");
+    };
+
+    assert!(said.contains("#1 finished"), "{said}");
+    assert!(said.contains("exit status 2"), "{said}");
 }

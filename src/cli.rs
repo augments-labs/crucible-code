@@ -747,6 +747,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         reading: RefCell::new(settings.syntax_theme().map(str::to_owned)),
         cancel: cancel.clone(),
         steer: crucible_core::Steer::new(),
+        aside: crucible_core::Aside::new(),
         ledger: ledger.clone(),
         revealed: revealed.clone(),
         plan: plan.clone(),

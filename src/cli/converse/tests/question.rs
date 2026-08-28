@@ -4,6 +4,10 @@
 //! This is the moment in the middle, where the loop is drawing and waiting
 //! at once — and it is enough of a subject to be read on its own.
 
+use crucible_core::{Answer as Chosen, Question, Remember, Verdict};
+use crucible_tui::{Key, Pressed};
+
+use super::super::answering::{Heard, Numbered, heard, numbered, verdict};
 use super::*;
 
 #[test]

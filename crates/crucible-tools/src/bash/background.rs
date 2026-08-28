@@ -82,9 +82,8 @@ pub struct Standing {
 
 /// One command that ended while nobody was waiting for it.
 ///
-/// Taken once and gone: the reader is told in a line and the model in the note
-/// under the next turn, and a fact reported twice would be two servers falling
-/// over.
+/// Taken once and gone: the reader is told in a line and the model in a note,
+/// and a fact reported twice would be two servers falling over.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ended {
     /// The name of the tool that started it, as that tool knows it.
@@ -267,11 +266,12 @@ impl Background {
 
     /// Every command that has ended and not yet been reported to the model.
     ///
-    /// Drained, because a note is written fresh before every turn and a fact
-    /// carried into two of them would be one server falling over twice. The
-    /// reader was told when it happened; this is the other audience, and it is
-    /// told at the top of the next turn because a turn already in flight has
-    /// nowhere to put a new fact.
+    /// Drained, because a note is written fresh from what this hands over and a
+    /// fact carried into two of them would be one server falling over twice. The
+    /// reader was told when it happened; this is the other audience, and where it
+    /// is told depends only on who asks first — a turn in flight reads this
+    /// between its passes, and a turn being started reads it under its
+    /// instructions. The drain is what makes it exactly one of the two.
     #[must_use]
     pub fn reported(&self) -> Vec<Ended> {
         self.standing
@@ -287,8 +287,8 @@ impl Background {
     /// it has costs four system calls a frame to learn nothing.
     ///
     /// Each one is reported exactly once. What is returned is owed to two
-    /// audiences — a line for the reader now, and the note the model is given at
-    /// the top of its next turn — so it is taken by the caller that has both.
+    /// audiences — a line for the reader now, and a note for the model — so it is
+    /// taken by the caller that has both.
     pub fn reap(&self) -> Vec<Ended> {
         let Ok(mut standing) = self.standing.lock() else {
             return Vec::new();
@@ -332,13 +332,18 @@ impl Background {
 ///
 /// Named rather than passed as five arguments, because the ceiling on how many a
 /// function takes is there to stop exactly this call from being unreadable — and
-/// because the five belong together: they are one command's lifetime.
+/// because they belong together: they are one command's lifetime, and how it
+/// came to have one.
 pub(super) struct Taking {
     pub(super) child: Child,
     pub(super) scope: Scope,
     pub(super) out: Pipe,
     pub(super) err: Pipe,
     pub(super) since: Instant,
+    /// Which of the two ways in let go of it, which is the one thing about a
+    /// command left running that the model reads differently depending on the
+    /// answer.
+    pub(super) why: super::output::Why,
 }
 
 impl Taking {

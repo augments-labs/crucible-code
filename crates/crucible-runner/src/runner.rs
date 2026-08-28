@@ -17,9 +17,9 @@ use std::thread;
 use std::time::Duration;
 
 use crucible_core::{
-    Ask, Attached, Attachment, Cancel, Compacting, Content, Delta, DeltaStream, Effort, Event,
-    Message, Modalities, Mode, Permission, Post, Provider, ProviderError, Request, Room, Spend,
-    Steer, StopReason, Summary, ToolCall, ToolSchema, Transcript, TurnError, TurnId,
+    Aside, Ask, Attached, Attachment, Cancel, Compacting, Content, Delta, DeltaStream, Effort,
+    Event, Message, Modalities, Mode, Permission, Post, Provider, ProviderError, Request, Room,
+    Spend, Steer, StopReason, Summary, ToolCall, ToolSchema, Transcript, TurnError, TurnId,
 };
 
 use crucible_session::{Pruned, Session};
@@ -615,9 +615,10 @@ impl Runner {
     /// [`TurnError`] when the provider failed or the user refused a tool. A
     /// tool that ran and did not like what it found is not an error — that
     /// goes back to the model as a result it can work around.
-    // The cancel and the steer are both read off the thread the turn runs on,
-    // and bundling them would drag the two through every signature the cancel
-    // already crosses. The lint counts to five; the turn needs seven.
+    // The cancel, the steer and the aside are all read off the thread the turn
+    // runs on, and bundling them would drag the three through every signature
+    // the cancel already crosses. The lint counts to five; the turn needs
+    // eight.
     #[allow(clippy::too_many_arguments)]
     pub fn turn(
         &mut self,
@@ -627,6 +628,7 @@ impl Runner {
         events: &dyn Post,
         cancel: &Cancel,
         steer: &Steer,
+        aside: &Aside,
     ) -> Result<StopReason, TurnError> {
         // The number this turn would have, worked out before it is known
         // whether the turn gets to take it. One expression rather than two, so
@@ -653,7 +655,14 @@ impl Runner {
         // that a turn cannot acquire a second way to finish without one. The
         // reason is what tells a truncated answer from a complete one, and it
         // has to reach the thread that draws — a return value never does.
-        let stop = self.exchange(ask, events, cancel, steer)?;
+        let stop = self.exchange(
+            ask,
+            events,
+            cancel,
+            steer,
+            aside,
+            MAX_TOOL_OUTPUT_BYTES_PER_TURN,
+        )?;
         events.post(Event::TurnFinished {
             turn: self.turn,
             stop,
@@ -685,37 +694,27 @@ impl Runner {
         stop
     }
 
-    /// Passes of asking and running, until something ends the turn.
+    /// Passes of asking and running, until something ends the turn, under an
+    /// explicit tool-result byte ceiling.
     ///
     /// A failure returns instead, and the caller posts nothing: the failure is
     /// its own event, and a turn with two endings on screen has one too many.
+    ///
+    /// The ceiling is an argument rather than the constant so a test can put a
+    /// turn over it without printing megabytes to get there. Every caller that
+    /// is not a test passes [`MAX_TOOL_OUTPUT_BYTES_PER_TURN`].
+    // The cancel, the steer and the aside are all read off the thread the turn
+    // runs on, and bundling them would drag the three through every signature
+    // the cancel already crosses. The lint counts to five; the turn needs
+    // seven.
+    #[allow(clippy::too_many_arguments)]
     fn exchange(
         &mut self,
         ask: &mut dyn Ask,
         events: &dyn Post,
         cancel: &Cancel,
         steer: &Steer,
-    ) -> Result<StopReason, TurnError> {
-        self.exchange_with_tool_output_limit(
-            ask,
-            events,
-            cancel,
-            steer,
-            MAX_TOOL_OUTPUT_BYTES_PER_TURN,
-        )
-    }
-
-    /// Completes a turn under an explicit tool-result byte ceiling.
-    // The cancel and the steer are both read off the thread the turn runs on,
-    // and bundling them would drag the two through every signature the cancel
-    // already crosses. The lint counts to five; the turn needs six.
-    #[allow(clippy::too_many_arguments)]
-    fn exchange_with_tool_output_limit(
-        &mut self,
-        ask: &mut dyn Ask,
-        events: &dyn Post,
-        cancel: &Cancel,
-        steer: &Steer,
+        aside: &Aside,
         tool_output_maximum: usize,
     ) -> Result<StopReason, TurnError> {
         let mut bounds = TurnBounds::default();
@@ -742,6 +741,19 @@ impl Runner {
             for line in steer.take() {
                 events.post(Event::Steered { line: line.clone() });
                 self.record(Message::said(line));
+                events.post(Event::Carried {
+                    left: self.load.left(counting.window, counting.reserve),
+                });
+            }
+
+            // And what happened while it ran, in the same place for the same
+            // reason: a command the agent was told not to poll for has exited,
+            // and the pass that follows is the first one that can do anything
+            // about it. No `Steered` goes with it — the reader did not type it,
+            // and an event saying they did would put a sentence in the panel
+            // that nobody wrote. The line above it is already on their screen.
+            for note in aside.take() {
+                self.record(Message::said(note));
                 events.post(Event::Carried {
                     left: self.load.left(counting.window, counting.reserve),
                 });

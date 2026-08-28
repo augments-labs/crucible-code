@@ -29,30 +29,31 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
-use std::io::{self, BufRead};
+use std::io::BufRead;
 use std::path::PathBuf;
-use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, SyncSender, channel, sync_channel};
+use std::sync::mpsc::{RecvTimeoutError, sync_channel};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use crucible_auth::Store;
 use crucible_core::{
-    Answer as Chosen, Answered, Attachment, Cancel, Compacting, Event, Mode, Post as _, Question,
-    Remember, Revealed, Room, Sensitivity, SessionId, Spend, ToolCall, Verdict, Workspace,
+    Attachment, Cancel, Compacting, Event, Mode, Post as _, Revealed, Room, SessionId, Spend,
+    Workspace,
 };
 use crucible_runner::Runner;
 use crucible_tools::{Background, Ledger, Plan};
 use crucible_tui::{
-    Editor, Key, Pasting, Pressed, Raw, Renderer, Reporting, Screen, Sending, Spelling, Terminal,
+    Editor, Pasting, Raw, Renderer, Reporting, Screen, Sending, Spelling, Terminal,
 };
 
 use super::draw;
 use super::kept::Kept;
-use super::seen::{Answer, Asking, CAPACITY, Given, Inbox, Putting, Relay, Seen};
+use super::seen::{Asking, CAPACITY, Inbox, Putting, Relay, Seen};
 use super::style::Style;
 use super::subscription::Subscriptions;
 use super::unasked;
 use super::{Fatal, Served, Serving, standing};
+use answering::{Answering, Answers, asked, cramped, read, verdict};
 use command::Ran;
 use expanding::Standing;
 use planning::Planning;
@@ -60,6 +61,7 @@ use recalling::Recalling;
 use turning::Turning;
 use typing::{Asked, Says};
 
+mod answering;
 mod asking;
 mod attaching;
 mod command;
@@ -136,6 +138,16 @@ pub(crate) struct Terms {
     /// cancel is: it is made once beside it, and the turn's thread and the loop
     /// that reads the keyboard each hold an end.
     pub(crate) steer: crucible_core::Steer,
+    /// What a fact the session learned mid-turn is pushed into, and the turn
+    /// draws from at the same boundary it draws steering from.
+    ///
+    /// Held beside the steer for the same reason, and separate from it for a
+    /// different one: what goes in here is the harness reporting something,
+    /// not the reader asking for something. A command left running that has
+    /// exited is the only thing that goes in it today, and the agent was told
+    /// not to poll for that — so this is the channel that makes the promise
+    /// true.
+    pub(crate) aside: crucible_core::Aside,
     /// Which files this session has read, which is what `write` asks before it
     /// replaces one.
     ///
@@ -513,6 +525,7 @@ pub(crate) fn converse<T: Terminal>(
             images: &mut held.images,
             clipboard: &mut held.clipboard,
             left,
+            aside: &terms.aside,
             keys,
         };
         let asked = typing::ask(renderer, style, between)?;
@@ -894,7 +907,8 @@ impl Turn<'_, '_> {
         // finished while the turn ran is otherwise a count that moved with no
         // line to say why, and the reader is owed the line the moment there is
         // room for it rather than after the turn. The model is told separately,
-        // at the top of its next turn.
+        // just below, and out of a different queue — the reader reads a screen
+        // and the model reads a transcript, and neither is the other's copy.
         if self.drawn.is_ok() {
             for ended in self.terms.leaving.reap() {
                 *self.drawn = stop_if_failed(
@@ -906,6 +920,20 @@ impl Turn<'_, '_> {
             drop(self.terms.leaving.reap());
         }
         self.says.running = self.terms.leaving.count();
+
+        // And the model, now rather than at the top of a turn it may be waiting
+        // to reach. The tool result promised that completion would be reported
+        // and told it not to poll; this is the half of that promise that comes
+        // due while it is still working, and without it an agent that believed
+        // the promise waits for something nothing was going to send.
+        //
+        // Taken from `reported`, which is the same take-once queue the note
+        // between turns is taken from, so whichever gets there first says it and
+        // the other says nothing. What the turn does not take before it ends is
+        // still in the aside, and the next turn starts by reading it back.
+        if let Some(said) = standing::said(&self.terms.leaving.reported()) {
+            self.terms.aside.say(said);
+        }
 
         true
     }
@@ -1096,13 +1124,21 @@ fn take<T: Terminal>(
     // Written once at startup it would go on describing the session the first
     // turn was taken in, so it is written again for each.
     // Drained here rather than when it happened: the reader was told at the
-    // moment, and this is the other audience being told at the one moment there
-    // is room for it. A turn already in flight has nowhere to put a new fact.
+    // moment, and this is the other audience being told at the one moment a
+    // turn that is not running can be told anything.
+    //
+    // The aside first, because what is in it is older: a note the last turn was
+    // handed but ended before it could take is still owed, and it is owed ahead
+    // of anything that has happened since. Both queues are take-once, so a fact
+    // that reached the running turn is not in either of them and is not said
+    // twice.
+    let mut notes = terms.aside.take();
+    notes.extend(standing::said(&terms.leaving.reported()));
     runner.telling(&standing::under(
         runner.model(),
         runner.effort(),
         &terms.workspace,
-        &terms.leaving.reported(),
+        &notes,
     ));
 
     // Whatever stopped the last turn is spent, and this is the last moment at
@@ -1124,7 +1160,15 @@ fn take<T: Terminal>(
     turning.queueing(held.queued.waiting_all(), renderer.columns(), terms.style());
 
     attaching::refresh_store(held, &runner);
-    let working = sent(runner, work, asking, relay, running, terms.steer.clone())?;
+    let working = sent(
+        runner,
+        work,
+        asking,
+        relay,
+        running,
+        terms.steer.clone(),
+        terms.aside.clone(),
+    )?;
 
     // The first thing drawn, and held like everything drawn after it: the runner
     // is with the worker now, so a terminal that failed here has to be carried
@@ -1193,9 +1237,9 @@ fn take<T: Terminal>(
 /// what makes the transcript and the permission memory survive a turn without
 /// being shared between threads. Nothing on this side waits on the provider,
 /// which is what keeps the box under the turn live while it runs.
-// The cancel and the steer are both read off the worker the turn runs on, and
-// bundling them would drag the two through every signature the cancel crosses.
-// The lint counts to five; the worker needs six.
+// The cancel, the steer and the aside are all read off the worker the turn runs
+// on, and bundling them would drag the three through every signature the cancel
+// crosses. The lint counts to five; the worker needs seven.
 #[allow(clippy::too_many_arguments)]
 fn sent(
     mut runner: Runner,
@@ -1204,6 +1248,7 @@ fn sent(
     relay: Relay,
     running: Cancel,
     steer: crucible_core::Steer,
+    aside: crucible_core::Aside,
 ) -> Result<thread::JoinHandle<(Runner, Did)>, Fatal> {
     thread::Builder::new()
         .name("turn".to_owned())
@@ -1213,9 +1258,15 @@ fn sent(
             // visible.
             let did = match work {
                 Work::Turn(prompt, attached) => {
-                    if let Err(problem) =
-                        runner.turn(&prompt, attached, &mut asking, &relay, &running, &steer)
-                    {
+                    if let Err(problem) = runner.turn(
+                        &prompt,
+                        attached,
+                        &mut asking,
+                        &relay,
+                        &running,
+                        &steer,
+                        &aside,
+                    ) {
                         relay.post(Event::Failed { error: problem });
                     }
                     Did::Reported
@@ -1555,184 +1606,6 @@ impl<'a> Held<'a> {
     }
 }
 
-/// How a permission question gets answered.
-struct Answers<'a> {
-    /// Standard input, for a session with no terminal to read keys from.
-    input: &'a mut dyn BufRead,
-    /// Whether keys are being read rather than lines.
-    keys: bool,
-}
-
-/// Where the two kinds of answer go back.
-///
-/// Two channels rather than one carrying both: a verdict and an ask's answers
-/// are different types, and one channel would need a union nothing keeps apart.
-/// One value rather than two arguments, because they are made together, handed
-/// over together, and neither is ever the other's.
-struct Answering {
-    /// Where a permission verdict goes.
-    reply: Sender<Answer>,
-    /// Where an ask's answers go.
-    give: Sender<Given>,
-}
-
-impl Answering {
-    /// Both reply channels for one turn, with the ask's end already lent to
-    /// whoever asks.
-    ///
-    /// Fresh for each turn, because a reply channel that outlived its turn could
-    /// hand the next question an answer meant for the last one. Making the
-    /// channel and lending its far end are one act here, so there is no state in
-    /// between where one exists and the other has not been given away.
-    fn new(putting: &Putting, post: &SyncSender<Seen>) -> (Self, Receiver<Answer>) {
-        let (reply, hear) = channel();
-        let (give, given) = channel();
-        putting.open(post.clone(), given);
-
-        (Self { reply, give }, hear)
-    }
-}
-
-/// One answer to one question.
-///
-/// A key where there is a keyboard, because raw mode is held for the whole
-/// session now and a line-reading terminal is not collecting one. The letter is
-/// written out afterwards, since nothing echoed it: an answer that left no mark
-/// would leave the record showing a question and no reply.
-///
-/// This is the one place in the session that waits on a key with no clock on
-/// it: the question stands until somebody decides. So it is also the longest a
-/// window can change without anybody noticing, which is why the key that says
-/// it did is acted on here rather than passed over with the arrows.
-fn answered<T: Terminal>(
-    renderer: &mut Renderer<T>,
-    answers: &mut Answers<'_>,
-) -> Result<Answer, Fatal> {
-    if !answers.keys {
-        return Ok(verdict(read(answers.input)?.as_deref()));
-    }
-
-    loop {
-        let Some(arrived) = renderer.pressed()? else {
-            continue;
-        };
-        let said = match heard(arrived) {
-            Heard::Said(said) => said,
-
-            // The renderer is holding a size the screen no longer has, and
-            // every band it shares the window out into is measured against it.
-            // Taking the new one is the whole of the answer: the question is
-            // committed, so its rows are folded again at the width the window
-            // has now, and the frame that follows puts them back.
-            Heard::Resized => {
-                renderer.resized()?;
-                continue;
-            }
-
-            // The question is committed too, which is what makes the wheel
-            // worth answering here: a reader deciding whether to allow a call
-            // is reading what was said above it to decide.
-            Heard::Scrolled { back } => {
-                renderer.notched(back)?;
-                continue;
-            }
-
-            Heard::Ignored => continue,
-        };
-
-        draw::answered(renderer, &said)?;
-        return Ok(verdict(Some(&said)));
-    }
-}
-
-/// What one key pressed at a question means.
-///
-/// Three answers rather than two, and the third is the whole reason this is a
-/// function: a key that is not an answer is not therefore nothing. Written apart
-/// from the loop above because that loop cannot be driven from a test — the
-/// keyboard it reads is the process's own — and this much of the reading can be.
-enum Heard {
-    /// What was typed, to be read as a verdict. Empty is a refusal.
-    Said(String),
-    /// The window changed under the question.
-    Resized,
-    /// The wheel turned, so the transcript the question stands at the foot of
-    /// moves. `back` is towards the top of the session.
-    Scrolled {
-        /// Whether the notch was towards the top of the session.
-        back: bool,
-    },
-    /// Not an answer and not news. Wait for the next key.
-    Ignored,
-}
-
-/// Reads one key as an answer, as news, or as neither.
-///
-/// Anything that is not one of the letters is a refusal, which is what an
-/// unrecognised line already meant. Escape and Ctrl-C are spelled out among
-/// them so that the way out of a question is the way out of everything else.
-///
-/// Every remaining key is named rather than caught by a rest arm. A key that
-/// arrives while a permission question is on screen is either an answer or
-/// something this has decided to ignore, and a new one added to `Pressed` must
-/// be decided about here rather than silently join the second group.
-// An event token is handed over, not lent: the handler takes the one thing
-// the reader produced, and a reference would say the caller kept a say in it.
-#[allow(clippy::needless_pass_by_value)]
-fn heard(arrived: Pressed) -> Heard {
-    match arrived {
-        Pressed::Key(Key::Char(letter)) => Heard::Said(letter.to_string()),
-        Pressed::Key(Key::Interrupt | Key::Eof | Key::Enter) | Pressed::Escape => {
-            Heard::Said(String::new())
-        }
-
-        Pressed::Resized => Heard::Resized,
-        Pressed::Scrolled { back } => Heard::Scrolled { back },
-
-        // An arrow, a click, a mode step, a key that means nothing here — the key
-        // about what is already running among them, since this question is what
-        // decides whether the command runs at all. None of them is an answer, and
-        // none of them may be read as one.
-        //
-        // Ctrl+E is here for now rather than because it belongs here: the
-        // question joins the transcript a row at a time, and there is no second
-        // shape of it to toggle into until the panel is what draws it.
-        //
-        // Ctrl+O is here because this is the question with nowhere to stand: it
-        // was put a row at a time precisely because there was no room for a
-        // panel, and a view of what was cut needs more room than the panel did.
-        //
-        // Ctrl+T for the same reason as Ctrl+E: the question took the rows the
-        // plan stands in, so there is no panel on screen for the key to open.
-        //
-        // And Ctrl+Y, which copies the line in the box: this question is what
-        // the reader is answering, and no line is being typed behind it.
-        //
-        // And the key that crosses regions, which needs regions to cross: this
-        // question was put a row at a time precisely because there was no room
-        // for a panel, and a row at a time is not divided into anything.
-        Pressed::Key(_)
-        | Pressed::Up
-        | Pressed::Down
-        | Pressed::Background
-        | Pressed::Cycle
-        | Pressed::Tab
-        | Pressed::Explain
-        | Pressed::Expand
-        | Pressed::Plan
-        | Pressed::Pasted(_)
-        | Pressed::Clicked { .. }
-        | Pressed::Queue
-        | Pressed::Copy
-        | Pressed::PasteImage
-        | Pressed::Rename
-        | Pressed::Dragged { .. }
-        | Pressed::Hovered { .. }
-        | Pressed::Released { .. }
-        | Pressed::Ignored => Heard::Ignored,
-    }
-}
-
 /// Draws one thing the worker sent, and answers it if it was a question.
 fn shown<T: Terminal>(
     one: Seen,
@@ -1814,186 +1687,6 @@ fn shown<T: Terminal>(
     }
 
     Ok(())
-}
-
-/// Puts one question and waits for its answer.
-///
-/// The panel where there is a keyboard and room to stand one; otherwise the
-/// question a row at a time, which is what a redirected run and a window with
-/// four rows both get.
-fn asked<T: Terminal>(
-    renderer: &mut Renderer<T>,
-    call: &ToolCall,
-    sensitivity: &Sensitivity,
-    answers: &mut Answers<'_>,
-    style: Style,
-) -> Result<Answer, Fatal> {
-    if answers.keys {
-        // Read here rather than carried from the worker, because the panel is
-        // the only thing that shows it: the row a call gets in the transcript
-        // is drawn from what the tool made of the arguments, and this is the
-        // model's own sentence about them.
-        let account = crucible_tools::account(&call.args);
-
-        // Nothing is drawn under it. The panel stood over the transcript and
-        // the rows it covered are back, so a call that was allowed reads exactly
-        // like one nothing asked about — which is what the reader is looking at
-        // anyway, since the result of the call is the row underneath.
-        match asking::ask(renderer, style, call, sensitivity, &account)? {
-            asking::Answered::Said(answer) => return Ok(answer),
-
-            // Nothing was drawn and no key was read, so the question still has
-            // to be put. Falling through rather than refusing: a window this
-            // small is not somebody saying no.
-            asking::Answered::Cramped => {}
-        }
-    }
-
-    draw::question(renderer, call, sensitivity, style)?;
-    answered(renderer, answers)
-}
-
-/// Puts the questions a row at a time, where there was no room to stand a panel.
-///
-/// One key per question, which is what a window this small can offer: the panel
-/// adds an answer somebody writes themselves, and writing one wants a line
-/// editor and the rows to draw it in. Anything that is not one of the numbers
-/// leaves the whole ask, the way escape does on the panel.
-fn cramped<T: Terminal>(
-    renderer: &mut Renderer<T>,
-    questions: &[Question],
-    style: Style,
-) -> Result<Given, Fatal> {
-    let mut given = Vec::new();
-
-    for (at, question) in questions.iter().enumerate() {
-        draw::asking(renderer, question, at, questions.len(), style)?;
-
-        let Some(taken) = took(renderer, question)? else {
-            return Ok(None);
-        };
-
-        draw::answered(renderer, taken.answer())?;
-        given.push(Answered::new([taken.answer()]));
-    }
-
-    Ok(Some(given))
-}
-
-/// Reads one key as one of `question`'s answers, or nothing where it means to
-/// leave.
-fn took<T: Terminal>(
-    renderer: &mut Renderer<T>,
-    question: &Question,
-) -> Result<Option<Chosen>, Fatal> {
-    loop {
-        let Some(arrived) = renderer.pressed()? else {
-            continue;
-        };
-
-        match numbered(arrived, question) {
-            Numbered::Chose(answer) => return Ok(Some(answer)),
-            Numbered::Left => return Ok(None),
-
-            // The renderer is holding a size the screen no longer has, and the
-            // question after this one would be drawn against it — a row folded
-            // for a window that has gone. Taking the new size is the whole of
-            // the answer, the same as it is one question above: the rows already
-            // committed are folded again at the width the window has now, and
-            // the next frame puts them back.
-            Numbered::Resized => renderer.resized()?,
-        }
-    }
-}
-
-/// What one key pressed at a question put a row at a time means.
-///
-/// Three answers for the reason [`Heard`] has three: a key that is not one of
-/// the numbers is not therefore nothing, and the one that says the window
-/// changed has to be told apart from the one that says leave. Written apart
-/// from the loop above because that loop cannot be driven from a test — the
-/// keyboard it reads is the process's own — and this much of the reading can
-/// be.
-enum Numbered {
-    /// The answer whose number was typed.
-    Chose(Chosen),
-    /// The window changed under the question.
-    Resized,
-    /// Anything else, which leaves the whole ask.
-    Left,
-}
-
-/// Reads one key as one of `question`'s numbered answers.
-// An event token is handed over, not lent: the handler takes the one thing
-// the reader produced, and a reference would say the caller kept a say in it.
-#[allow(clippy::needless_pass_by_value)]
-fn numbered(arrived: Pressed, question: &Question) -> Numbered {
-    if arrived == Pressed::Resized {
-        return Numbered::Resized;
-    }
-
-    let Pressed::Key(Key::Char(typed)) = arrived else {
-        return Numbered::Left;
-    };
-
-    let at = usize::try_from(typed.to_digit(10).unwrap_or(0))
-        .ok()
-        .and_then(|digit| digit.checked_sub(1));
-
-    at.and_then(|at| question.answers().nth(at))
-        .map_or(Numbered::Left, |answer| Numbered::Chose(answer.clone()))
-}
-
-/// Reads one bounded line, or `None` at end of input.
-///
-/// `fill_buf` exposes each source block before any of it is copied, so a pipe
-/// with no newline can cross the prompt bound without making this process
-/// retain the rest first.
-fn read(input: &mut dyn BufRead) -> Result<Option<String>, Fatal> {
-    let mut line = Vec::new();
-
-    loop {
-        let available = input.fill_buf().map_err(Fatal::Input)?;
-        if available.is_empty() {
-            break;
-        }
-
-        let newline = available.iter().position(|byte| *byte == b'\n');
-        let take = newline.map_or(available.len(), |at| at + 1);
-        if take > QUEUED_BYTES.saturating_sub(line.len()) {
-            return Err(Fatal::InputTooLong);
-        }
-
-        line.extend_from_slice(available.get(..take).unwrap_or_default());
-        input.consume(take);
-        if newline.is_some() {
-            break;
-        }
-    }
-
-    if line.is_empty() {
-        return Ok(None);
-    }
-
-    String::from_utf8(line)
-        .map(Some)
-        .map_err(|problem| Fatal::Input(io::Error::new(io::ErrorKind::InvalidData, problem)))
-}
-
-/// What an answer to a permission question means.
-///
-/// Anything unrecognised is a refusal, and so is end of input. Every way to say
-/// yes is explicit; everything else, including a typo and a closed pipe, leaves
-/// the tool unrun.
-///
-/// Durable rules have no trusted per-workspace store yet, so `always` is not an
-/// answer. Treating it as a session answer would promise more than was kept.
-fn verdict(answer: Option<&str>) -> Answer {
-    match answer.map(str::trim) {
-        Some("y" | "Y" | "yes") => (Verdict::Allow, Remember::Never),
-        Some("s" | "S" | "session") => (Verdict::Allow, Remember::Session),
-        _ => (Verdict::Deny, Remember::Never),
-    }
 }
 
 #[cfg(test)]

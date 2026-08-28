@@ -652,12 +652,79 @@ fn a_command_left_running_answers_at_once_and_keeps_running() {
         "the result invited the model to monitor work Crucible already watches: {}",
         output.text()
     );
+    assert!(
+        !output.text().contains("ctrl+b"),
+        "its own call coming back was reported as somebody stepping in: {}",
+        output.text()
+    );
     assert_eq!(left.running().len(), 1);
 
     // And it is ended by letting go of the registry, which is what the process
     // leaving does.
     left.stop(1);
     assert!(left.running().is_empty());
+}
+
+#[test]
+fn a_command_the_developer_let_go_of_says_who_let_go_of_it() {
+    // The call asked to be waited for and is coming back early, which is not
+    // the same result as its own `background` coming back. A model told only
+    // that the command is running would reasonably ask for it again; told that
+    // somebody decided the wait was not worth it, the useful move is to carry
+    // on with whatever does not depend on it.
+    let sample = Sample::new("bash-pressed");
+    let left = Background::new();
+    let tool = Bash::new(sample.workspace(), Cancel::new()).leaving(left.clone());
+
+    // Asked for before the command starts rather than raced with it: the wait
+    // loop reads the request every pass, so the first pass takes it, and the
+    // test does not depend on how fast a press lands.
+    left.ask();
+
+    let started = Instant::now();
+    let output = tool
+        .run(
+            allowed(&tool, r#"{"command":"printf 'up\n'; sleep 30"}"#),
+            &Unwatched,
+        )
+        .expect("the command started");
+
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "the press was not read until the command was over"
+    );
+    assert!(!output.is_failed(), "{}", output.text());
+    assert!(
+        output.text().contains("left running as #1"),
+        "the result never said how to reach it: {}",
+        output.text()
+    );
+    assert!(
+        output.text().contains("ctrl+b"),
+        "the model was never told the developer stepped in: {}",
+        output.text()
+    );
+    assert!(
+        output
+            .text()
+            .contains("completion is reported automatically; do not poll or wait"),
+        "the result invited the model to poll a command Crucible is watching: {}",
+        output.text()
+    );
+
+    left.stop(1);
+}
+
+#[test]
+fn one_press_lets_go_of_one_command_rather_than_every_command_after_it() {
+    // The request is spent when it is read. Without that, a press meant for a
+    // slow build would leave every command after it running too, and the model
+    // would be told the developer stepped in each time nobody had.
+    let left = Background::new();
+
+    left.ask();
+    assert!(left.wanted());
+    assert!(!left.wanted(), "one press was read twice");
 }
 
 #[test]

@@ -95,6 +95,7 @@ fn terms(sample: &Sample) -> Terms {
         reading: std::cell::RefCell::default(),
         cancel: Cancel::new(),
         steer: crucible_core::Steer::new(),
+        aside: crucible_core::Aside::new(),
         ledger: Ledger::new(),
         revealed: Revealed::new(),
         plan: Plan::new(),
