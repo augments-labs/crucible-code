@@ -94,9 +94,9 @@ fn document(vendor: Option<&Vendor>, allowed: Option<&str>) -> String {
 
 /// A kept tail no session started by a case here can reach past, in tokens.
 ///
-/// `keep` bounds the turns before the newest one that survive a recap word for
-/// word. Set this high and every turn is inside it, so compaction finds no
-/// middle to replace and does only the other thing it can do.
+/// `keep` is how many tokens of recent turns survive a recap word for word.
+/// Set this high and every turn is inside it, so compaction finds no middle to
+/// replace and does only the other thing it can do.
 const NO_MIDDLE: u64 = 100_000_000;
 
 /// The directory a case is given to work in, below the one it is given.

@@ -145,9 +145,10 @@ fn walked<T: Terminal>(
 
 /// What a whole replay is drawn against, and what does not change while it
 /// runs: the session being put back, the root a file it named is named
-/// against, and the dress the renderer is already wearing.
+/// against, what a pruning cleared out of it, and the dress the renderer is
+/// already wearing.
 ///
-/// One value rather than three parameters carried down the walk — what changes
+/// One value rather than four parameters carried down the walk — what changes
 /// from one call to the next is the message, and this is everything that does
 /// not. It is what [`glimpsed`] is handed too, for the same reason: a caller
 /// drawing a session it is not in still has to say which build's tools are
@@ -170,7 +171,7 @@ impl<'a> Replay<'a> {
     ///
     /// The two ways into a session — the command line and `/resume` — both put
     /// it back on the screen, and this is what keeps them putting it back
-    /// against the same three things. A preview builds its own, because the
+    /// against the same four things. A preview builds its own, because the
     /// session it draws is not the one this run is in.
     pub(super) fn of(runner: &'a Runner, terms: &'a Terms, pruned: &'a Pruned) -> Self {
         Self {

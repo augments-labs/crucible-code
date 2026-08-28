@@ -424,7 +424,7 @@ fn call(value: &Value) -> Option<ToolCall> {
 /// The files go down beside the text under the key a prompt's do, and the count
 /// a change came to goes down beside them. Both are left off entirely where
 /// there is nothing to say — so a session whose tools showed nothing and changed
-/// nothing is written exactly as format 6 wrote it, and one that only showed
+/// nothing is written exactly as format 6 wrote it, and one that only changed
 /// nothing exactly as format 8 did.
 ///
 /// The count and not the lines. A log is a file on disk that outlives the

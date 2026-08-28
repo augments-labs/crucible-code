@@ -401,7 +401,8 @@ mod tests {
 
     /// What the call in these cases answered with, before anything cleared it.
     ///
-    /// Longer than [`ToolOutput::MIN_PRUNE_BYTES`] on purpose: under that a
+    /// Longer than [`crucible_core::ToolOutput::MIN_PRUNE_BYTES`] on purpose:
+    /// under that a
     /// result is left alone, because the placeholder would cost more than the
     /// text it replaced. A shorter string here would make a case about pruning
     /// out of a log where no pruning happens.

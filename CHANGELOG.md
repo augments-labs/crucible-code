@@ -12,8 +12,10 @@ change in any release with no deprecation period.
 
 - **Session logs are written at format 9.** A tool result now records how many
   lines the call added and removed, so a resumed session can draw the change
-  header the live screen drew. Logs from format 8 and earlier still replay; a log
-  written now is refused by an older build rather than half-understood.
+  header the live screen drew. Logs from format 8 and earlier still replay, and a
+  session started before this release keeps the format its header was written at.
+  A log started now says format 9, which an older build refuses rather than
+  half-understands.
 
 ### Fixed
 
@@ -33,9 +35,9 @@ change in any release with no deprecation period.
 
 - **Markdown answers no longer gain blank rows as they stream.** A bullet list
   or fenced block arriving in pieces drew a blank row inside itself, because the
-  row separator between blocks was asked for while the markdown reader was still
-  holding the opening characters of a row. The same answer now draws the same
-  rows however the wire was cut.
+  row separator between blocks was asked for while the block was still open —
+  whether the piece stopped mid-row or exactly at a line break. The same answer
+  now draws the same rows however the wire was cut.
 
 ## [0.26.0] - 2026-08-28
 
