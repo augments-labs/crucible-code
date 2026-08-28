@@ -166,14 +166,24 @@ pub fn glimpse(
 /// same door prose does. What the preview does not draw — the diff a rewrite
 /// showed, the files a search attached — is dropped rather than carried,
 /// because a glimpse is read and never sent anywhere.
+///
+/// What a call changed does come through, because the preview draws it: two
+/// integers name no file and hold no line, and a pane that showed a call without
+/// them would be offering a reader a different session from the one they are
+/// about to pick up.
 fn safely(result: ToolResult) -> ToolResult {
     let text = cleaned(result.output.text());
+    let output = if result.output.is_failed() {
+        ToolOutput::failed(text)
+    } else {
+        ToolOutput::ok(text)
+    };
+
     ToolResult {
         id: result.id,
-        output: if result.output.is_failed() {
-            ToolOutput::failed(text)
-        } else {
-            ToolOutput::ok(text)
+        output: match result.output.changed() {
+            Some(changed) => output.counting(changed),
+            None => output,
         },
     }
 }

@@ -35,6 +35,8 @@ mod screen;
 mod vendor;
 mod watched;
 
+use std::fmt::Write as _;
+
 use vendor::Vendor;
 use watched::Watched;
 
@@ -587,6 +589,84 @@ fn a_call_that_changed_a_file_is_drawn_with_the_change() {
     assert_eq!(after, BEFORE.replace("# trend data", "# what stops a tag"));
 
     insta::assert_snapshot!(window.picture());
+}
+
+/// How many lines the file in [`change_header_survives_resume`] has, on each
+/// side of the call that rewrites it.
+///
+/// Two of these is more lines than a block may draw, which is the whole of why
+/// the number is this one: the header then has something to say that the block
+/// cannot show, and that sentence is the one thing the live screen and a resumed
+/// one are meant to differ on.
+const REWRITTEN: usize = 40;
+
+/// The header that call leaves on the row answering it.
+const CHANGED: &str = "Added 40 lines, removed 40 lines";
+
+/// What the live screen adds to it, and a resumed screen has no lines to earn.
+const UNSHOWN: &str = "16 of them not shown";
+
+/// Every line of one version of that file, each saying which version it is.
+fn spelling(tense: &str) -> String {
+    (1..=REWRITTEN).fold(String::new(), |mut file, at| {
+        let _ = writeln!(file, "the line that {tense} here, number {at}");
+        file
+    })
+}
+
+#[test]
+fn change_header_survives_resume() {
+    // One call, drawn twice: as it came back, and again off the log once the
+    // session was picked up. The header is what the reader is owed both times —
+    // a session put back on the screen that forgot what a call changed reads as
+    // though nothing happened in it.
+    //
+    // The lines under the header are the reader's alone and never reach the log,
+    // so the block is live-only by construction. The sentence counting what the
+    // block could not fit goes with them: on a screen with no block, a header
+    // still claiming lines nobody is being shown would be the header lying.
+    let input = serde_json::json!({
+        "path": "notes.md",
+        "find": spelling("was"),
+        "replace": spelling("is now"),
+    })
+    .to_string();
+    let vendor = Vendor::calling("edit", &input, "Rewrote it whole.");
+
+    // Tall, because the live screen draws the block. A window the block scrolled
+    // the header off the top of would be comparing what fitted rather than what
+    // was drawn.
+    let mut window = Watched::allowing("resume-change", 80, 100, &vendor, "edit(*)");
+    std::fs::write(window.workspace().join("notes.md"), spelling("was"))
+        .expect("a file for the call to rewrite");
+
+    window.types_until("rewrite that file\r", "Rewrote it whole");
+    let live = window.picture();
+
+    window.types_until("/clear\r", "ask mode on");
+    window.types_until("/resume\r", "a session, or a branch");
+    window.types_until("\r", "Rewrote it whole");
+    let again = window.picture();
+
+    assert!(live.contains(CHANGED), "the live header: {live}");
+    assert!(live.contains(UNSHOWN), "the live header's tail: {live}");
+    assert!(
+        live.contains("the line that is now here, number 1"),
+        "the live block: {live}"
+    );
+
+    assert!(
+        again.contains(CHANGED),
+        "the resumed screen forgot what the call changed: {again}"
+    );
+    assert!(
+        !again.contains("the line that"),
+        "the resumed screen drew lines the log never held: {again}"
+    );
+    assert!(
+        !again.contains(UNSHOWN),
+        "the resumed header counted lines nothing is showing: {again}"
+    );
 }
 
 #[test]

@@ -17,6 +17,13 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **A resumed session says again what a call changed.** A file-changing call
+  came back on the screen as the tool's own sentence about it, so a session
+  picked up again read as though nothing had moved. The counts header is drawn
+  from the log now, in the transcript and in the picker preview. The lines
+  themselves stay live-only — they are never written down — and with them the
+  note saying how many the block left out.
+
 - **Markdown answers no longer gain blank rows as they stream.** A bullet list
   or fenced block arriving in pieces drew a blank row inside itself, because the
   row separator between blocks was asked for while the markdown reader was still

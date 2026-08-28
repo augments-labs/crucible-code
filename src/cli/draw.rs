@@ -46,8 +46,8 @@ use std::fmt;
 use std::path::Path;
 
 use crucible_core::{
-    Attachment, Change, Compacted, Compacting, Diff, Event, Modality, Question, Sensitivity,
-    StopReason, Summary, ToolCall, ToolId, ToolOutput, Workspace, written,
+    Attachment, Change, Changed, Compacted, Compacting, Diff, Event, Modality, Question,
+    Sensitivity, StopReason, Summary, ToolCall, ToolId, ToolOutput, Workspace, written,
 };
 use crucible_tools::Ended;
 use crucible_tui::{
@@ -818,8 +818,13 @@ fn finished(output: &ToolOutput, beyond: usize, window: usize, style: Style) -> 
         .output(window)
         .min(window.saturating_sub(row.columns()));
 
-    if let Some(diff) = output.diff().filter(|diff| !diff.is_empty()) {
-        counted(&mut row, diff, room);
+    if let Some(counts) = changed(output) {
+        counted(
+            &mut row,
+            counts,
+            output.diff().map_or(0, Diff::dropped),
+            room,
+        );
         return row;
     }
 
@@ -945,7 +950,7 @@ pub(crate) fn came_back<T: Terminal>(
     style: Style,
 ) -> Result<(), TerminalError> {
     let beyond = beyond(&output);
-    let rows = if output.diff().is_some_and(|diff| !diff.is_empty()) && renderer.is_terminal() {
+    let rows = if changed(&output).is_some() && renderer.is_terminal() {
         let retained = output.clone();
         let rows = finished_rows(&retained, renderer.columns(), style);
         let bytes = retained.diff().map_or(0, Diff::retained);
@@ -987,12 +992,35 @@ pub(crate) fn came_back<T: Terminal>(
 /// itself and the block under the row is where its lines are; what the block
 /// could not fit was cut where the change was built rather than here, so there
 /// is nothing left over to offer.
+///
+/// Zero on the way back in too, where the counts came off the log and the lines
+/// did not. There is even less to offer then — the key would open a result whose
+/// text is the tool's sentence about the call, which the row already says.
 fn beyond(output: &ToolOutput) -> usize {
-    if output.diff().is_some_and(|diff| !diff.is_empty()) {
+    if changed(output).is_some() {
         return 0;
     }
 
     output.text().lines().count().saturating_sub(1)
+}
+
+/// What a call changed, from whichever of the two still knows.
+///
+/// Live, the lines are here and the counts are read off them. On the way back in
+/// they are not: a diff is the reader's alone and never reaches the log, so what
+/// a resumed session has is the two numbers the result carried down beside it.
+/// One question, asked once, so the header a reader met live is the header they
+/// meet again — a row that counted lines one way live and another way on the way
+/// back in is the same call behaving as two.
+///
+/// A change of nothing is no change: a call that left the file as it was has a
+/// header to draw only if `Added 0 lines` is worth a row, and it is not.
+fn changed(output: &ToolOutput) -> Option<Changed> {
+    output
+        .diff()
+        .map(|diff| Changed::new(diff.added(), diff.removed()))
+        .or_else(|| output.changed())
+        .filter(|counts| !counts.is_empty())
 }
 
 /// What a change did, counted.
@@ -1004,10 +1032,16 @@ fn beyond(output: &ToolOutput) -> usize {
 /// because this is the row that claims a number — a reader told nine lines went
 /// in and shown six of them has been told the truth about the call, and a block
 /// that stopped without saying so reads as the whole of what happened.
-fn counted(row: &mut Row, diff: &Diff, room: usize) {
+///
+/// `dropped` is what the block below is leaving out, and it is passed in rather
+/// than read off the counts because it is a fact about lines being drawn. A
+/// resumed session has the counts and no lines, so nothing is being left out of
+/// anything, and a row that said otherwise would be counting rows nobody is
+/// looking at.
+fn counted(row: &mut Row, counts: Changed, dropped: usize, room: usize) {
     let before = row.columns();
 
-    match (diff.added(), diff.removed()) {
+    match (counts.added(), counts.removed()) {
         (0, removed) => count(row, "Removed ", removed),
         (added, 0) => count(row, "Added ", added),
         (added, removed) => {
@@ -1020,8 +1054,8 @@ fn counted(row: &mut Row, diff: &Diff, room: usize) {
     // Left off a window with no room for it rather than clipped, and the
     // numbers above are never either: half of "(5 of them not shown)" says
     // nothing, and a clipped count says something untrue.
-    let said = format!(" ({} of them not shown)", diff.dropped());
-    if diff.dropped() > 0 && row.columns() - before + columns(&said) <= room {
+    let said = format!(" ({dropped} of them not shown)");
+    if dropped > 0 && row.columns() - before + columns(&said) <= room {
         row.push(Slot::Quiet, said);
     }
 }
