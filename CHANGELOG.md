@@ -8,6 +8,8 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-08-28
+
 ### Changed
 
 - **Session logs are written at format 9.** A tool result now records how many
@@ -2999,7 +3001,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.26.0...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.27.0...HEAD
+[0.27.0]: https://github.com/augments-labs/crucible-code/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/augments-labs/crucible-code/compare/v0.25.2...v0.26.0
 [0.25.2]: https://github.com/augments-labs/crucible-code/compare/v0.25.1...v0.25.2
 [0.25.1]: https://github.com/augments-labs/crucible-code/compare/v0.25.0...v0.25.1
