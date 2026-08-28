@@ -56,8 +56,8 @@ pub use revealed::Revealed;
 pub use source::{Fetch, Page, Search, SearchResult, SourceError};
 pub use steer::Steer;
 pub use tool::{
-    Account, Remembered, Summary, Tool, ToolArgs, ToolCall, ToolError, ToolOutput, Unwatched,
-    Watch, Wrote,
+    Account, Changed, Remembered, Summary, Tool, ToolArgs, ToolCall, ToolError, ToolOutput,
+    Unwatched, Watch, Wrote,
 };
 pub use transcript::{Attachment, Message, StopReason, ToolResult, Transcript};
 pub use workspace::{PathError, WalkFiles, Workspace, WorkspacePath, written};

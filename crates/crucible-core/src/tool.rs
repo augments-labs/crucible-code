@@ -339,18 +339,68 @@ impl Watch for Unwatched {
     fn wrote(&self, _text: Wrote) {}
 }
 
+/// How many lines a call changed, once the lines themselves are gone.
+///
+/// The two numbers a change header is written from — `Added 3 lines`, and the
+/// rest of that wording — and nothing else. A [`Diff`] is the detail under that
+/// header and is for the reader alone; this is the header itself, and it names
+/// no file and holds no line, which is what lets it outlive the diff and be
+/// written down where a diff may never go.
+///
+/// Not `dropped`. That is a fact about a block of lines that was drawn, and
+/// somewhere with no lines to draw it would let a header claim rows nothing is
+/// showing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Changed {
+    added: usize,
+    removed: usize,
+}
+
+impl Changed {
+    /// The counts a call ended with.
+    #[must_use]
+    pub fn new(added: usize, removed: usize) -> Self {
+        Self { added, removed }
+    }
+
+    /// How many lines the change put in.
+    #[must_use]
+    pub fn added(&self) -> usize {
+        self.added
+    }
+
+    /// How many it took out.
+    #[must_use]
+    pub fn removed(&self) -> usize {
+        self.removed
+    }
+
+    /// Whether the call left the file exactly as it was.
+    ///
+    /// The same question [`Diff::is_empty`] answers and the same answer, so a
+    /// call that changed nothing reads as nothing to say from either side of
+    /// the moment the lines were dropped.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.added == 0 && self.removed == 0
+    }
+}
+
 /// What a tool produced, on its way back to the model.
 ///
 /// And on its way to the reader, which is not the same journey. The text is
 /// what both are shown; a [`Diff`] is what only the reader is, and it comes off
-/// at [`ToolOutput::forget_diff`] where the two copies part company. Files go
-/// the other way: they are for the model to look at, so they stay on the copy
-/// the transcript keeps and are absent from the row that is drawn.
+/// at [`ToolOutput::forget_diff`] where the two copies part company. What
+/// survives that is [`Changed`], two integers naming no file, because the header
+/// a reader was shown has to be drawable again from the copy that was kept.
+/// Files go the other way: they are for the model to look at, so they stay on
+/// the copy the transcript keeps and are absent from the row that is drawn.
 #[derive(Clone, PartialEq, Eq)]
 pub struct ToolOutput {
     text: Box<str>,
     failed: bool,
     diff: Option<Diff>,
+    changed: Option<Changed>,
     attachments: Box<[Attachment]>,
 }
 
@@ -360,6 +410,7 @@ impl fmt::Debug for ToolOutput {
             .field("text", &"[redacted]")
             .field("failed", &self.failed)
             .field("diff", &self.diff)
+            .field("changed", &self.changed)
             .field("attachments", &self.attachments)
             .finish()
     }
@@ -373,6 +424,7 @@ impl ToolOutput {
             text: text.into(),
             failed: false,
             diff: None,
+            changed: None,
             attachments: Box::new([]),
         }
     }
@@ -385,6 +437,7 @@ impl ToolOutput {
             text: text.into(),
             failed: true,
             diff: None,
+            changed: None,
             attachments: Box::new([]),
         }
     }
@@ -398,6 +451,19 @@ impl ToolOutput {
     #[must_use]
     pub fn showing(mut self, diff: Diff) -> Self {
         self.diff = Some(diff);
+        self
+    }
+
+    /// The same result, with the header a reader was shown and no lines under
+    /// it.
+    ///
+    /// What [`ToolOutput::forget_diff`] leaves behind, said outright. A result
+    /// read back from somewhere a diff may not go arrives already parted from
+    /// its lines, and this is how it says so — there is nothing to draw a
+    /// header from otherwise, and nothing to work one out from either.
+    #[must_use]
+    pub fn counting(mut self, changed: Changed) -> Self {
+        self.changed = Some(changed);
         self
     }
 
@@ -486,14 +552,34 @@ impl ToolOutput {
         self.diff.as_ref()
     }
 
-    /// Drops it, for the copy that is kept rather than drawn.
+    /// How much it changed, where the lines are no longer here to be counted.
+    ///
+    /// Set as the lines are dropped rather than beside them, so a copy that
+    /// still holds its [`Diff`] answers `None` here and is drawn from the
+    /// lines. Two integers is what a header needs and all that survives.
+    #[must_use]
+    pub fn changed(&self) -> Option<Changed> {
+        self.changed
+    }
+
+    /// Drops it, keeping the count it came to, for the copy that is kept
+    /// rather than drawn.
     ///
     /// A diff is drawn once and a transcript is replayed every turn for the
     /// rest of the session, so the copy going into one keeps only what the
     /// model was told. Otherwise the transcript would grow with what had been
     /// *shown*, where what bounds it is what was *said*.
+    ///
+    /// The lines are the whole of that weight, and the header over them is two
+    /// integers. So the header stays: a session put back together later has to
+    /// draw the row the reader was shown, and this is the last moment anything
+    /// still knows what it said. Called again on a copy that has already parted
+    /// with its lines, this leaves the count where it is — there is nothing
+    /// left to count, and a second call is not a different answer.
     pub fn forget_diff(&mut self) {
-        self.diff = None;
+        if let Some(diff) = self.diff.take() {
+            self.changed = Some(Changed::new(diff.added(), diff.removed()));
+        }
     }
 
     /// Replaces the text with a placeholder saying it was cleared, and says how
@@ -675,6 +761,76 @@ mod tests {
             media_type: "image/png".into(),
             hash: [0xab; 32],
         }
+    }
+
+    /// The lines a call changed, whose text nothing outside the reader may see.
+    fn rewrote() -> Diff {
+        Diff::new([
+            Line::new(1, Change::Removed, "let key = \"hunter2\";"),
+            Line::new(1, Change::Added, "let key = read_key()?;"),
+            Line::new(2, Change::Added, "audit(&key);"),
+        ])
+    }
+
+    #[test]
+    fn the_lines_are_dropped_and_the_count_they_added_up_to_is_not() {
+        let mut output = ToolOutput::ok("rewrote main.rs").showing(rewrote());
+        assert_eq!(output.changed(), None, "the lines are still here to count");
+
+        output.forget_diff();
+
+        assert!(output.diff().is_none(), "a line survived the copy parting");
+        assert_eq!(output.changed(), Some(Changed::new(2, 1)));
+    }
+
+    #[test]
+    fn forgetting_a_diff_that_is_already_gone_keeps_what_it_left() {
+        let mut output = ToolOutput::ok("rewrote main.rs").showing(rewrote());
+        output.forget_diff();
+        output.forget_diff();
+
+        assert_eq!(output.changed(), Some(Changed::new(2, 1)));
+    }
+
+    #[test]
+    fn a_call_that_showed_no_change_has_no_count_to_keep() {
+        let mut output = ToolOutput::ok("no such pattern");
+        output.forget_diff();
+
+        assert_eq!(output.changed(), None);
+    }
+
+    #[test]
+    fn a_count_is_all_that_can_be_read_off_a_result_that_changed_a_file() {
+        // The counts go where a diff may not, so what a `Debug` of one prints
+        // decides whether that is safe: an integer says how many lines moved
+        // and a line says what was in the file, and only one of those is fit
+        // for a log. Asserted on both sides of the moment the lines are
+        // dropped, because the lines are present for one of them.
+        let mut output = ToolOutput::ok("rewrote main.rs").showing(rewrote());
+        let showing = format!("{output:?}");
+
+        output.forget_diff();
+        let counting = format!("{output:?}");
+
+        for said in [&showing, &counting] {
+            assert!(
+                !said.contains("hunter2"),
+                "a line body reached a log: {said}"
+            );
+            assert!(
+                !said.contains("read_key"),
+                "a line body reached a log: {said}"
+            );
+        }
+        assert!(
+            counting.contains("added: 2"),
+            "the count is unreadable: {counting}"
+        );
+        assert!(
+            counting.contains("removed: 1"),
+            "the count is unreadable: {counting}"
+        );
     }
 
     #[test]
