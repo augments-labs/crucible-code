@@ -253,8 +253,8 @@ fn write_tool(tool: &mut Object<'_>, schema: &ToolSchema) {
 #[cfg(test)]
 mod tests {
     use crucible_core::{
-        Attached, Change, Content, Diff, Effort, Line, Modality, ToolArgs, ToolCall, ToolId,
-        ToolOutput, Transcript,
+        Attached, Change, Changed, Content, Diff, Effort, Line, Modality, ToolArgs, ToolCall,
+        ToolId, ToolOutput, Transcript,
     };
 
     use super::*;
@@ -817,13 +817,21 @@ mod tests {
         );
     }
 
-    /// A diff is for the reader, and the request must not be able to tell.
+    /// What the reader was shown is for the reader, and the request must not be
+    /// able to tell.
     ///
     /// The bytes rather than the value: two bodies that parse alike could still
     /// have been written differently, and what is promised is the request itself
     /// rather than a reading of it. Green before an output carries anything
     /// reader-side and green afterwards — a guard written beside the change it
     /// exists to catch would be recording that change instead of catching it.
+    ///
+    /// Both shapes, because only one of them is the shape a request is ever built
+    /// from. The lines are dropped where the call answers, before the result joins
+    /// the transcript, so a result on its way to a provider carries the counts and
+    /// never the diff — and a guard that only varied the diff would be pinning the
+    /// shape this path cannot produce while leaving the shape it always produces
+    /// free to move.
     #[test]
     fn the_request_body_is_the_same_whatever_the_reader_was_shown() {
         let text = "fn main() {}";
@@ -833,6 +841,12 @@ mod tests {
             Vec::new(),
         ));
 
+        let counted = serialize(&answering(
+            one(ToolOutput::ok(text).counting(Changed::new(2, 1))),
+            Vec::new(),
+        ));
+
         assert_eq!(plain, shown, "the reader's copy reached the wire");
+        assert_eq!(plain, counted, "the reader's counts reached the wire");
     }
 }

@@ -1,4 +1,4 @@
-use crucible_core::{Change, Diff, Line, ToolOutput, ToolResult};
+use crucible_core::{Change, Changed, Diff, Line, ToolOutput, ToolResult};
 
 use super::*;
 
@@ -603,12 +603,25 @@ fn results_showing(bytes: usize) -> Message {
     }])
 }
 
+/// The same result again, with the counts a reader was shown beside it.
+///
+/// The shape a transcript actually holds: the lines are dropped where the call
+/// answers, so a result the load ever counts carries the counts and not the
+/// diff. Both are here because the diff is what the estimate could have been
+/// written to charge for, and the counts are what it would meet.
+fn results_counting(bytes: usize) -> Message {
+    Message::ToolResults(vec![ToolResult {
+        id: crucible_core::ToolId::new("call-1"),
+        output: ToolOutput::ok("x".repeat(bytes)).counting(Changed::new(2, 1)),
+    }])
+}
+
 /// The window is spent on what was said, never on what was drawn.
 ///
-/// A diff reaches no request, so it must reach no estimate of what a request
-/// will cost either: a load that charged for the reader's copy would compact a
-/// session earlier the more of it had been shown, which is the one thing the
-/// reader's copy is not allowed to do.
+/// Neither the lines nor the counts reach a request, so neither may reach an
+/// estimate of what a request will cost: a load that charged for the reader's
+/// copy would compact a session earlier the more of it had been shown, which is
+/// the one thing the reader's copy is not allowed to do.
 #[test]
 fn the_load_does_not_charge_for_what_only_the_reader_saw() {
     let mut plain = Load::default();
@@ -617,5 +630,9 @@ fn the_load_does_not_charge_for_what_only_the_reader_saw() {
     let mut shown = Load::default();
     shown.recorded(&results_showing(3_000));
 
+    let mut counted = Load::default();
+    counted.recorded(&results_counting(3_000));
+
     assert_eq!(plain.tokens(), shown.tokens());
+    assert_eq!(plain.tokens(), counted.tokens());
 }
