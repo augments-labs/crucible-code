@@ -231,6 +231,28 @@ if ((here != 1)); then
     failed=1
 fi
 
+# The other half of the same seam. What a pruning cleared is held beside the
+# transcript so a resumed screen can say it again, and Pruned::showed is the one
+# door out of that side-table. A second caller is how text the model was told to
+# stop being sent finds its way back into a request, which is the whole thing the
+# side-table is shaped to prevent. The crate that owns the type is left alone —
+# it defines and tests it there.
+reader="src/cli/converse/replaying.rs"
+elsewhere=$(grep -rln '\.showed(' --include='*.rs' crates src |
+    grep -Fxv "$reader" |
+    grep -v '^crates/crucible-session/' || true)
+if [[ -n "$elsewhere" ]]; then
+    while IFS= read -r file; do
+        printf '    FAIL %s reads Pruned::showed; only %s may\n' "$file" "$reader"
+    done <<<"$elsewhere"
+    failed=1
+fi
+here=$(grep -c '\.showed(' "$reader" || true)
+if ((here != 1)); then
+    printf '    FAIL %s reads Pruned::showed %d times; the substitution is one call\n' "$reader" "$here"
+    failed=1
+fi
+
 member_manifests=(crates/*/Cargo.toml)
 manifests=(Cargo.toml "${member_manifests[@]}")
 

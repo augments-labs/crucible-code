@@ -182,9 +182,10 @@ waiting for its next answer to measure it — unless it is picked up under
 different instructions or a different set of tools, where the reading is about
 a request this run would not send and the row waits, as it always did.
 
-One thing does not: a call that changed a file replays as the result it
-returned rather than as the lines it moved, because a diff is never written to
-a log.
+One thing comes back smaller: a call that changed a file replays as the header
+saying how many lines it added and removed, and not as the lines themselves. The
+counts are recorded; the line bodies never are, because a diff of a file holding
+a key is a key.
 
 ## One at a time
 
@@ -425,7 +426,7 @@ One JSON object per line, in the order things happened. The first line says what
 the file is and where it belongs:
 
 ```json
-{"format":8,"session":"…","workspace":"/home/you/code/my-project","branch":"main"}
+{"format":9,"session":"…","workspace":"/home/you/code/my-project","branch":"main"}
 ```
 
 Then one line per message — what you typed, what the model said and asked to
@@ -446,6 +447,8 @@ value is ever written to one of these files.
 ## Stability
 
 The session format is unstable for the whole 0.x line. `format` may be
-incremented in any 0.x release, and when it is, older files are refused rather
-than migrated — a refusal says a session cannot be continued, which is a better
-answer than continuing a different one.
+incremented in any 0.x release. A build goes on reading the older formats whose
+lines still mean what they meant, so your history keeps replaying across an
+upgrade; a file from a *newer* build is refused rather than half-understood, and
+so is one whose format changed the meaning of a line. A refusal says a session
+cannot be continued, which is a better answer than continuing a different one.
