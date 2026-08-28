@@ -363,7 +363,7 @@ fn the_transcript_a_session_replaces_is_not_left_standing_above_it() {
 
 #[test]
 fn an_image_pasted_in_the_session_being_left_is_not_attached_after_it() {
-    // The paste put `[image 1]` in a prompt of the session being left, and the
+    // The paste put `[Image #1]` in a prompt of the session being left, and the
     // numbering starts over with the session. An image still held here would be
     // attached to the first prompt after the resume that says the marker.
     let sample = Sample::new("resume-forgets-the-images");

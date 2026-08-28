@@ -84,7 +84,8 @@ impl Kind {
 }
 
 /// Every kind crucible will attach: the picture formats all three vendors
-/// document accepting, and the one document format any of them reads.
+/// document accepting, the document format any of them reads, and the video
+/// container Moonshot documents carrying as a base64 data URL.
 ///
 /// A closed list rather than a guess from the extension, because the cost of
 /// being wrong is a refused request the user paid for. Anything not here is
@@ -126,6 +127,12 @@ pub const KINDS: &[Kind] = &[
         media_type: "application/pdf",
         confirms: pdf,
     },
+    Kind {
+        extension: "mp4",
+        modality: Modality::Video,
+        media_type: "video/mp4",
+        confirms: mp4,
+    },
 ];
 
 /// The eight bytes a PNG starts with, of which the last four catch a file a
@@ -155,4 +162,106 @@ fn webp(bytes: &[u8]) -> bool {
 /// The header a PDF opens with, version and all.
 fn pdf(bytes: &[u8]) -> bool {
     bytes.starts_with(b"%PDF-")
+}
+
+/// An MP4-family file whose first box declares a bounded `ftyp` payload.
+///
+/// A four-byte major brand and minor version are mandatory; compatible brands
+/// are extensible but must each be complete. An `ftyp` box consuming the whole
+/// file is not a usable video because it leaves no room for media boxes.
+fn mp4(bytes: &[u8]) -> bool {
+    if bytes.get(4..8) != Some(&b"ftyp"[..]) {
+        return false;
+    }
+
+    let Some(size) = bytes
+        .get(..4)
+        .and_then(|size| <[u8; 4]>::try_from(size).ok())
+        .map(u32::from_be_bytes)
+    else {
+        return false;
+    };
+    let (header, size) = match size {
+        0 => return false,
+        1 => {
+            let Some(size) = bytes
+                .get(8..16)
+                .and_then(|size| <[u8; 8]>::try_from(size).ok())
+                .map(u64::from_be_bytes)
+                .and_then(|size| usize::try_from(size).ok())
+            else {
+                return false;
+            };
+            (16, size)
+        }
+        size => (8, size as usize),
+    };
+
+    size >= header + 8 && size <= bytes.len() && (size - header - 8).is_multiple_of(4)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A minimal whole `ftyp` box with one compatible brand.
+    fn video(major: [u8; 4], compatible: [u8; 4]) -> Vec<u8> {
+        let mut bytes = Vec::from(&20_u32.to_be_bytes()[..]);
+        bytes.extend_from_slice(b"ftyp");
+        bytes.extend_from_slice(&major);
+        bytes.extend_from_slice(&0_u32.to_be_bytes());
+        bytes.extend_from_slice(&compatible);
+        bytes
+    }
+
+    /// Rewrites the ordinary box size in a fixture known to contain it.
+    fn sized(bytes: &mut [u8], size: u32) {
+        bytes
+            .get_mut(..4)
+            .expect("the fixture starts with a four-byte size")
+            .copy_from_slice(&size.to_be_bytes());
+    }
+
+    #[test]
+    fn mp4_names_are_case_insensitive_and_name_video() {
+        let kind = kind("clips/demo.MP4").expect("mp4 is attachable");
+
+        assert_eq!(kind.modality, Modality::Video);
+        assert_eq!(kind.media_type, "video/mp4");
+        assert!((kind.confirms)(&video(*b"isom", *b"mp42")));
+    }
+
+    #[test]
+    fn moonshots_documented_quicktime_branded_mp4_is_accepted() {
+        assert!(mp4(&video(*b"qt  ", *b"qt  ")));
+    }
+
+    #[test]
+    fn mp4_brands_are_extensible() {
+        assert!(mp4(&video(*b"vend", *b"more")));
+    }
+
+    #[test]
+    fn an_mp4_name_does_not_make_unrelated_bytes_a_video() {
+        assert!(!mp4(b"this is not an ISO base media file"));
+    }
+
+    #[test]
+    fn a_truncated_or_malformed_ftyp_box_is_refused() {
+        let mut truncated = video(*b"isom", *b"mp42");
+        truncated.pop();
+        assert!(!mp4(&truncated));
+
+        let mut partial_brand = video(*b"isom", *b"mp42");
+        sized(&mut partial_brand, 19);
+        assert!(!mp4(&partial_brand));
+
+        let mut too_small = video(*b"isom", *b"mp42");
+        sized(&mut too_small, 12);
+        assert!(!mp4(&too_small));
+
+        let mut unbounded = video(*b"isom", *b"mp42");
+        sized(&mut unbounded, 0);
+        assert!(!mp4(&unbounded));
+    }
 }

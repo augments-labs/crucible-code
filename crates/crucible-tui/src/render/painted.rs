@@ -26,6 +26,8 @@
 //! worth writing.
 
 use crate::color::Palette;
+use std::ops::Range;
+
 use crate::row::Row;
 use crate::select::{self, Taken};
 
@@ -44,6 +46,8 @@ pub(crate) struct Painted {
     lit: String,
     /// What the reader has selected, if anything.
     taken: Option<Taken>,
+    /// Structural columns on each row, absent from highlights and copied text.
+    structural: Vec<Vec<Range<usize>>>,
     /// How wide the window is, which is how far a covered row reaches.
     columns: usize,
     /// Whether this frame has written a row.
@@ -66,6 +70,8 @@ impl Painted {
     /// Starts a frame for a window `rows` tall and `columns` wide.
     pub(crate) fn open(&mut self, rows: usize, columns: usize) {
         self.was.resize(rows, None);
+        self.structural.clear();
+        self.structural.resize_with(rows, Vec::new);
         self.columns = columns;
         self.changed = false;
         self.frame.open();
@@ -94,7 +100,8 @@ impl Painted {
             .filter_map(|at| {
                 let covered = taken.covers(at, self.columns)?;
                 let was = self.was.get(at)?.as_deref().unwrap_or_default();
-                Some(select::said(was, &covered))
+                let structural = self.structural.get(at).map_or(&[][..], Vec::as_slice);
+                Some(select::said(was, &covered, structural))
             })
             .collect();
 
@@ -115,17 +122,26 @@ impl Painted {
         let mut into = std::mem::take(&mut self.row);
         into.clear();
         row.paint_into(palette, &mut into);
+        if let Some(structural) = self.structural.get_mut(at) {
+            *structural = row.structural();
+        }
         self.show(at, &into);
         self.row = into;
     }
 
     /// Draws bytes something else painted on screen row `at`.
     pub(crate) fn put(&mut self, at: usize, painted: &str) {
+        if let Some(structural) = self.structural.get_mut(at) {
+            structural.clear();
+        }
         self.show(at, painted);
     }
 
     /// Leaves screen row `at` empty.
     pub(crate) fn blank(&mut self, at: usize) {
+        if let Some(structural) = self.structural.get_mut(at) {
+            structural.clear();
+        }
         self.show(at, "");
     }
 
@@ -136,8 +152,9 @@ impl Painted {
             return;
         };
 
+        let structural = self.structural.get(at).map_or(&[][..], Vec::as_slice);
         let mut into = std::mem::take(&mut self.lit);
-        select::lit(painted, &covered, &mut into);
+        select::lit(painted, &covered, structural, &mut into);
         self.set(at, &into);
         self.lit = into;
     }

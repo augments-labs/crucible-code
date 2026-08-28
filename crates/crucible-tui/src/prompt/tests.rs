@@ -1251,8 +1251,8 @@ fn a_count_that_does_not_fit_makes_the_status_row_no_door() {
     assert!(!box_of.counting(1, rows.len() - 1));
 }
 
-/// One file, as the caller hands it over: what it is called, and what it is.
-const PICTURE: (&str, &str) = ("screenshots/holiday.png", "image");
+/// One file display, as its domain-aware caller hands it over.
+const PICTURE: &str = "[Image #1] screenshots/holiday.png";
 
 #[test]
 fn a_file_sent_with_a_line_is_named_on_a_row_under_it() {
@@ -1262,7 +1262,12 @@ fn a_file_sent_with_a_line_is_named_on_a_row_under_it() {
 
     assert_eq!(
         rows_of(&rows),
-        vec!["  · screenshots/holiday.png — image".to_owned()]
+        vec!["  ⎿ [Image #1] screenshots/holiday.png".to_owned()]
+    );
+    assert_eq!(
+        rows.first().map(Row::structural),
+        Some(std::iter::once(2..3).collect()),
+        "the attachment row exists and only its glyph is structural"
     );
 }
 
@@ -1270,17 +1275,17 @@ fn a_file_sent_with_a_line_is_named_on_a_row_under_it() {
 fn every_file_sent_with_a_line_gets_a_row_of_its_own() {
     let files = [
         PICTURE,
-        ("notes/receipt.pdf", "pdf"),
-        ("diagrams/wiring.jpg", "image"),
+        "[Video #1] clips/demo.mp4",
+        "[Image #2] diagrams/wiring.jpg",
     ];
     let rows = Prompt::attached(&files, 60, Glyphs::Unicode, false);
 
     assert_eq!(
         rows_of(&rows),
         vec![
-            "  · screenshots/holiday.png — image".to_owned(),
-            "  · notes/receipt.pdf — pdf".to_owned(),
-            "  · diagrams/wiring.jpg — image".to_owned(),
+            "  ⎿ [Image #1] screenshots/holiday.png".to_owned(),
+            "  ⎿ [Video #1] clips/demo.mp4".to_owned(),
+            "  ⎿ [Image #2] diagrams/wiring.jpg".to_owned(),
         ]
     );
 }
@@ -1292,13 +1297,13 @@ fn a_line_that_sent_no_files_draws_nothing_under_itself() {
 
 #[test]
 fn the_row_naming_a_file_spells_itself_for_the_set_in_force() {
-    // Both marks it uses differ between the sets, so a terminal without the
-    // glyphs gets a row that still parts the name from what it is.
+    // The subordinate mark follows the set in force, while the label and path
+    // remain the same transcript words in either one.
     let rows = Prompt::attached(&[PICTURE], 60, Glyphs::Ascii, false);
 
     assert_eq!(
         rows_of(&rows),
-        vec!["  - screenshots/holiday.png -- image".to_owned()]
+        vec!["  + [Image #1] screenshots/holiday.png".to_owned()]
     );
 }
 

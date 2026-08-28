@@ -18,7 +18,7 @@ expression: window.picture()
 |                                                                                |
 |› /logout                                                                       |
 |                                                                                |
-|anthropic still uses ANTHROPIC_API_KEY; unset it in the shell before restarting |
+|⎿ anthropic still uses ANTHROPIC_API_KEY; unset it in the shell before restartin|
 |                                                                                |
 |                                                                                |
 |                                                                100% window left|

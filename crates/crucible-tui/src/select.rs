@@ -128,7 +128,12 @@ impl Taken {
 /// is one attribute, and it changes it back: a row that leaves here has the
 /// same colours it arrived with, which is what lets the frame underneath go on
 /// comparing bytes to decide what to write.
-pub(crate) fn lit(painted: &str, covered: &Range<usize>, into: &mut String) {
+pub(crate) fn lit(
+    painted: &str,
+    covered: &Range<usize>,
+    structural: &[Range<usize>],
+    into: &mut String,
+) {
     into.clear();
 
     if covered.is_empty() {
@@ -140,6 +145,7 @@ pub(crate) fn lit(painted: &str, covered: &Range<usize>, into: &mut String) {
     let mut column = 0;
     let mut last: Option<char> = None;
     let mut inside = false;
+    let mut selected = false;
 
     for character in painted.chars() {
         let held = escapes;
@@ -157,10 +163,13 @@ pub(crate) fn lit(painted: &str, covered: &Range<usize>, into: &mut String) {
             continue;
         }
 
-        if !inside && covered.contains(&column) {
+        selected |= covered.contains(&column);
+        let selectable =
+            covered.contains(&column) && !structural.iter().any(|range| range.contains(&column));
+        if !inside && selectable {
             inside = true;
             into.push_str(LIT);
-        } else if inside && column >= covered.end {
+        } else if inside && !selectable {
             inside = false;
             into.push_str(DIM);
         }
@@ -182,16 +191,20 @@ pub(crate) fn lit(painted: &str, covered: &Range<usize>, into: &mut String) {
     // block they took — without this a selection over a transcript is a ragged
     // right edge rather than a shape.
     if column < covered.end {
-        if !inside {
+        if inside || selected {
+            for _ in column..covered.end {
+                into.push(' ');
+            }
+        } else {
             for _ in column..covered.start {
                 into.push(' ');
             }
             column = column.max(covered.start);
             inside = true;
             into.push_str(LIT);
-        }
-        for _ in column..covered.end {
-            into.push(' ');
+            for _ in column..covered.end {
+                into.push(' ');
+            }
         }
     }
 
@@ -205,7 +218,7 @@ pub(crate) fn lit(painted: &str, covered: &Range<usize>, into: &mut String) {
 /// Sequences dropped, because this is on its way to a clipboard: what the
 /// reader selected is the words, and an attribute pasted into a shell is bytes
 /// in the middle of a command.
-pub(crate) fn said(painted: &str, covered: &Range<usize>) -> String {
+pub(crate) fn said(painted: &str, covered: &Range<usize>, structural: &[Range<usize>]) -> String {
     let mut escapes = Escapes::default();
     let mut column = 0;
     let mut last: Option<char> = None;
@@ -220,7 +233,7 @@ pub(crate) fn said(painted: &str, covered: &Range<usize>) -> String {
             continue;
         };
 
-        if covered.contains(&column) {
+        if covered.contains(&column) && !structural.iter().any(|range| range.contains(&column)) {
             taken.push(character);
         }
 
@@ -247,7 +260,7 @@ mod tests {
     /// What `lit` makes of a row, for a test that only wants to read it.
     fn drawn(painted: &str, covered: &Range<usize>) -> String {
         let mut into = String::new();
-        lit(painted, covered, &mut into);
+        lit(painted, covered, &[], &mut into);
         into
     }
 
@@ -369,20 +382,41 @@ mod tests {
     }
 
     #[test]
+    fn structural_art_is_neither_lit_nor_read_back() {
+        let structural = std::slice::from_ref(&(2..3));
+        let drawn = {
+            let mut into = String::new();
+            lit("  ⎿ result", &(2..3), structural, &mut into);
+            into
+        };
+
+        assert!(!drawn.contains(LIT), "{drawn:?}");
+        assert_eq!(said("  ⎿ result", &(0..10), structural), "   result");
+    }
+
+    #[test]
+    fn the_same_character_in_literal_text_remains_selectable() {
+        let drawn = drawn("literal ⎿ text", &(8..9));
+
+        assert!(drawn.contains("\x1b[7m⎿"), "{drawn:?}");
+        assert_eq!(said("literal ⎿ text", &(8..9), &[]), "⎿");
+    }
+
+    #[test]
     fn what_is_read_back_is_the_words_and_not_the_sequences() {
-        assert_eq!(said("\x1b[36mfn main\x1b[0m()", &(0..7)), "fn main");
+        assert_eq!(said("\x1b[36mfn main\x1b[0m()", &(0..7), &[]), "fn main");
     }
 
     #[test]
     fn what_is_read_back_stops_where_the_drag_did() {
-        assert_eq!(said("one two three", &(4..7)), "two");
+        assert_eq!(said("one two three", &(4..7), &[]), "two");
     }
 
     #[test]
     fn a_wide_character_is_read_back_whole_from_the_column_it_starts_in() {
         // Two columns and one character. Selected by its first column it comes
         // back; selected by its second it does not come back twice.
-        assert_eq!(said("日本", &(0..2)), "日");
-        assert_eq!(said("日本", &(0..4)), "日本");
+        assert_eq!(said("日本", &(0..2), &[]), "日");
+        assert_eq!(said("日本", &(0..4), &[]), "日本");
     }
 }

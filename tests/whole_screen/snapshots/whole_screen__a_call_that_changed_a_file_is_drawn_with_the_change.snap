@@ -13,7 +13,7 @@ expression: window.picture()
 |› rename that comment                                                           |
 |                                                                                |
 |● Edit(release.yml)                                                             |
-|  └ Added 1 line, removed 1 line                                                |
+|  ⎿ Added 1 line, removed 1 line                                                |
 |        1 -  # trend data                                                       |
 |        1 +  # what stops a tag                                                 |
 |        2    budgets:                                                           |

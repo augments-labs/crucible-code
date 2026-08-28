@@ -234,6 +234,43 @@ fn copy<T: Terminal>(
     Ok(Some(if took { COPIED } else { UNCOPIED }))
 }
 
+/// Opens the desktop clipboard once, then reuses it for every image paste.
+fn clipboard(held: &mut Option<arboard::Clipboard>) -> Result<&mut arboard::Clipboard, String> {
+    if held.is_none() {
+        *held = Some(
+            arboard::Clipboard::new()
+                .map_err(|problem| format!("the clipboard could not be opened: {problem}"))?,
+        );
+    }
+
+    held.as_mut()
+        .ok_or_else(|| "the clipboard could not be opened".to_owned())
+}
+
+/// Inserts one imported image's marker without imposing a count limit.
+fn mark_image(editor: &mut Editor, images: &mut Vec<Box<str>>, path: String) -> Typed {
+    let marker = format!("[Image #{}]", images.len() + 1);
+    let pasted = editor.paste(&marker);
+    if pasted == Typed::Changed {
+        images.push(path.into_boxed_str());
+    }
+    pasted
+}
+
+/// Reads one image and inserts its marker.
+fn paste_image(
+    store: Option<(&std::path::Path, &crucible_core::SessionId)>,
+    board: &mut arboard::Clipboard,
+    editor: &mut Editor,
+    images: &mut Vec<Box<str>>,
+) -> Result<Typed, String> {
+    let Some((path, id)) = store else {
+        return Err("this session has nowhere durable to keep a clipboard image".to_owned());
+    };
+    let path = super::attaching::clipboard(path, id, board)?;
+    Ok(mark_image(editor, images, path))
+}
+
 /// What inserting one immediately ready character run changed.
 struct Inserted {
     /// Whether the line changed and therefore its filtered list is stale.
@@ -282,9 +319,11 @@ pub(crate) struct Between<'a> {
     /// the key that edits the line, not by the turn that answered it.
     pub(crate) recalling: &'a mut Recalling,
     /// The images pasted so far, which Ctrl+V adds to. The line gets
-    /// `[image N]` and this gets the path the marker stands for, so the
+    /// `[Image #N]` and this gets the path the marker stands for, so the
     /// session owns the list the way it owns the line.
     pub(crate) images: &'a mut Vec<Box<str>>,
+    /// The lazily opened desktop clipboard, retained across every Ctrl+V.
+    pub(crate) clipboard: &'a mut Option<arboard::Clipboard>,
     /// What is still running behind the box: the count on the row under it, and
     /// what this loop wakes on a clock for while there is anything left to end.
     pub(crate) left: &'a Background,
@@ -393,6 +432,7 @@ pub(crate) fn ask<T: Terminal>(
         planning,
         recalling,
         images,
+        clipboard: board,
         left,
         keys,
     } = between;
@@ -506,27 +546,29 @@ pub(crate) fn ask<T: Terminal>(
 
             // Image bytes come from the desktop clipboard, into the same durable
             // session store an external path is imported through. The editor
-            // holds only `[image N]` and the session holds the path the marker
+            // holds only `[Image #N]` and the session holds the path the marker
             // stands for, so submission takes the ordinary attachment path and
             // all of its capability checks.
-            Pressed::PasteImage => match super::attaching::clipboard(runner) {
-                Ok(path) => {
-                    // The path joins the list only once its marker is in the
-                    // line, or a refused paste would leave a number nobody sees.
-                    let marker = format!("[image {}]", images.len() + 1);
-                    match editor.paste(&marker) {
-                        Typed::Changed => {
-                            images.push(path.into_boxed_str());
-                            open = Opened::filtered(editor.projection().text(), glyphs);
-                            true
-                        }
-                        Typed::Refused => {
-                            says.asking = Some(Cow::Borrowed(LIMITED));
-                            true
-                        }
-                        _ => offered.is_some(),
-                    }
+            Pressed::PasteImage => match clipboard(board).and_then(|board| {
+                paste_image(
+                    runner
+                        .session()
+                        .id()
+                        .map(|id| (runner.session().path(), id)),
+                    board,
+                    editor,
+                    images,
+                )
+            }) {
+                Ok(Typed::Changed) => {
+                    open = Opened::filtered(editor.projection().text(), glyphs);
+                    true
                 }
+                Ok(Typed::Refused) => {
+                    says.asking = Some(Cow::Borrowed(LIMITED));
+                    true
+                }
+                Ok(_) => offered.is_some(),
                 Err(problem) => {
                     says.asking = Some(Cow::Owned(problem));
                     true
@@ -871,12 +913,16 @@ pub(super) fn under(runner: &Runner) -> Says {
 /// the worker thread for the length of the turn, and a key that moved the row
 /// on screen and nothing else would be a lie about what the next tool call
 /// costs.
+#[allow(clippy::too_many_lines)]
 pub(super) fn during<T: Terminal>(
     renderer: &mut Renderer<T>,
     during: During<'_>,
 ) -> Result<Meanwhile, Fatal> {
     let During {
         editor,
+        images,
+        clipboard: board,
+        attachment_store,
         queued,
         turning,
         planning,
@@ -1179,7 +1225,20 @@ pub(super) fn during<T: Terminal>(
                 renderer.notched(back)?;
             }
 
-            Meant::Background | Meant::PasteImage | Meant::Ignored => {}
+            Meant::PasteImage => {
+                moved |= pasted_during(
+                    attachment_store,
+                    board,
+                    editor,
+                    images,
+                    opened_list,
+                    says,
+                    style,
+                    &mut notice,
+                );
+            }
+
+            Meant::Background | Meant::Ignored => {}
         }
     }
 
@@ -1284,6 +1343,72 @@ pub(super) enum Meanwhile {
     /// acted on here: the worker still holds the runner, and the session's log
     /// is finished by a thread its `Drop` waits for.
     Leaving,
+}
+
+/// Everything one Ctrl+V during a turn reads or may change.
+struct PasteImageDuring<'a> {
+    store: Option<(&'a std::path::Path, &'a crucible_core::SessionId)>,
+    board: &'a mut Option<arboard::Clipboard>,
+    editor: &'a mut Editor,
+    images: &'a mut Vec<Box<str>>,
+    opened: &'a mut Opened,
+    says: &'a mut Says,
+    style: Style,
+    notice: &'a mut Option<&'static str>,
+}
+
+/// Reads and applies one mid-turn image paste, saying whether the box moved.
+#[allow(clippy::too_many_arguments)]
+fn pasted_during<'a>(
+    store: Option<(&'a std::path::Path, &'a crucible_core::SessionId)>,
+    board: &'a mut Option<arboard::Clipboard>,
+    editor: &'a mut Editor,
+    images: &'a mut Vec<Box<str>>,
+    opened: &'a mut Opened,
+    says: &'a mut Says,
+    style: Style,
+    notice: &'a mut Option<&'static str>,
+) -> bool {
+    // These are one operation's complete borrowed state, not independent
+    // parameters callers can combine: the bundle gives the branches below
+    // names and keeps the key loop itself readable.
+    let pasted = PasteImageDuring {
+        store,
+        board,
+        editor,
+        images,
+        opened,
+        says,
+        style,
+        notice,
+    };
+    let PasteImageDuring {
+        store,
+        board,
+        editor,
+        images,
+        opened,
+        says,
+        style,
+        notice,
+    } = pasted;
+    let result = clipboard(board).and_then(|board| paste_image(store, board, editor, images));
+    match result {
+        Ok(Typed::Changed) => {
+            *notice = None;
+            *opened = Opened::filtered(editor.projection().text(), style.glyphs());
+            true
+        }
+        Ok(Typed::Refused) => {
+            *notice = Some(LIMITED);
+            true
+        }
+        Ok(_) => false,
+        Err(problem) => {
+            says.asking = Some(Cow::Owned(problem));
+            true
+        }
+    }
 }
 
 /// What one key pressed while a turn is running means.
@@ -1440,6 +1565,11 @@ fn meant(arrived: Pressed) -> Meant {
 /// What can change while one turn is running.
 pub(super) struct During<'a> {
     pub(super) editor: &'a mut Editor,
+    /// Image paths and clipboard state shared with the between-turn prompt.
+    pub(super) images: &'a mut Vec<Box<str>>,
+    pub(super) clipboard: &'a mut Option<arboard::Clipboard>,
+    /// Where clipboard images are durably imported while the runner is away.
+    pub(super) attachment_store: Option<(&'a std::path::Path, &'a crucible_core::SessionId)>,
     pub(super) queued: &'a mut Prompts,
     /// The row above the box, which is the one thing on screen that changes
     /// without anybody pressing anything.

@@ -270,16 +270,14 @@ impl Glyphs {
         }
     }
 
-    /// The corner a tool call's result hangs under.
+    /// The mark a subordinate result hangs under its parent.
     ///
-    /// Square where a frame's corner is round, so a result row and the bottom
-    /// of the box never read as the same shape. The ascii set has one corner
-    /// for every purpose and this is it, which costs that distinction — but a
-    /// terminal drawing hollow squares has already lost more than that.
+    /// Larger than the square corner it replaces, so the relationship stays
+    /// visible beside text. The ascii set keeps its existing corner fallback.
     #[must_use]
     pub fn hangs(self) -> &'static str {
         match self {
-            Self::Unicode => "└",
+            Self::Unicode => "⎿",
             Self::Ascii => "+",
         }
     }

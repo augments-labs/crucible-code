@@ -13,7 +13,7 @@
 //! `model` rather than an object of its own.
 
 use crucible_core::{
-    Attached, Content, Message, Request, StopReason, ToolCall, ToolResult, ToolSchema,
+    Attached, Content, Message, Modality, Request, StopReason, ToolCall, ToolResult, ToolSchema,
 };
 #[cfg(test)]
 use serde_json::{Value, json};
@@ -183,12 +183,31 @@ fn append(messages: &mut Array<'_>, message: &Message, nth: usize, attached: &[A
 ///
 /// The URL is an object of its own rather than the string the neighbouring
 /// protocol takes — one nesting deeper, for the same bytes, which is why the
-/// three of these are written out separately instead of shared.
+/// three of these are written out separately instead of shared. The provider's
+/// declared modalities and the runner's intersection make every byte attachment
+/// here an image or video. If that invariant is ever broken, a valid diagnostic
+/// text part is safer than either mislabelling bytes as an image or emitting an
+/// empty object.
 fn write_attached(part: &mut Object<'_>, attached: &Attached<'_>) {
     match attached.content {
         Content::Bytes(bytes) => {
-            part.text("type", "image_url");
-            part.object("image_url", |url| {
+            let field = match attached.modality {
+                Modality::Image => "image_url",
+                Modality::Video => "video_url",
+                Modality::Text | Modality::Pdf | Modality::Audio => {
+                    part.text("type", "text");
+                    part.text(
+                        "text",
+                        &format!(
+                            "attachment omitted: Moonshot requests do not support {} input",
+                            attached.modality.as_str()
+                        ),
+                    );
+                    return;
+                }
+            };
+            part.text("type", field);
+            part.object(field, |url| {
                 url.prefixed_encoded(
                     "url",
                     &format!("data:{};base64,", attached.media_type),

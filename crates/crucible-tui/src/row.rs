@@ -16,6 +16,8 @@
 //! part that would have to be rewritten to draw the same component somewhere
 //! else is [`Row::paint`] and nothing above it.
 
+use std::ops::Range;
+
 use crate::color::{Palette, Slot};
 use crate::width;
 
@@ -26,6 +28,8 @@ struct Span {
     text: String,
     /// The job the colour does, if the palette writes one.
     slot: Slot,
+    /// Columns to exclude from selection, counted from this span's start.
+    structural: Vec<Range<usize>>,
 }
 
 /// One row of a component: its spans, left to right.
@@ -62,11 +66,42 @@ impl Row {
     /// measure nothing, and painted it would be an opening sequence and a reset
     /// around no text at all.
     pub fn push(&mut self, slot: Slot, text: impl Into<String>) {
+        self.push_span(slot, text, Vec::new());
+    }
+
+    /// The row with structural art appended in `slot`.
+    ///
+    /// Structural art is painted and measured like every other span, but a drag
+    /// does not highlight it or copy it. Marks supplied by a component use this;
+    /// the same character in text supplied by the reader remains ordinary text.
+    #[must_use]
+    pub fn then_structural(mut self, slot: Slot, text: impl Into<String>) -> Self {
+        self.push_structural(slot, text);
+        self
+    }
+
+    /// Appends structural art in `slot`.
+    pub fn push_structural(&mut self, slot: Slot, text: impl Into<String>) {
+        let text = text.into();
+        let columns = width::columns(&text);
+        self.push_span(
+            slot,
+            text,
+            (columns > 0).then_some(0..columns).into_iter().collect(),
+        );
+    }
+
+    /// Appends one span, dropping an empty one.
+    fn push_span(&mut self, slot: Slot, text: impl Into<String>, structural: Vec<Range<usize>>) {
         let text = text.into();
         if text.is_empty() {
             return;
         }
-        self.0.push(Span { text, slot });
+        self.0.push(Span {
+            text,
+            slot,
+            structural,
+        });
     }
 
     /// The row with `other`'s spans appended.
@@ -78,6 +113,13 @@ impl Row {
     pub fn join(mut self, other: Self) -> Self {
         self.0.extend(other.0);
         self
+    }
+
+    /// Inserts `other`'s spans at the start of this row.
+    pub(crate) fn prepend(&mut self, other: Self) {
+        let mut spans = other.0;
+        spans.append(&mut self.0);
+        self.0 = spans;
     }
 
     /// Appends spaces until the row is `columns` wide.
@@ -183,7 +225,11 @@ impl Row {
             if from >= to {
                 continue;
             }
-            cut.push(span.slot, &span.text[from - start..to - start]);
+            cut.push_span(
+                span.slot,
+                &span.text[from - start..to - start],
+                structural_between(span, from - start, to - start),
+            );
         }
 
         cut
@@ -209,6 +255,31 @@ impl Row {
     /// sent, and neither can answer this.
     pub fn kinds(&self) -> impl Iterator<Item = Slot> + '_ {
         self.0.iter().map(|span| span.slot)
+    }
+
+    /// Whether structural art already occupies the row's first column.
+    pub(crate) fn starts_structural(&self) -> bool {
+        self.0
+            .first()
+            .is_some_and(|span| span.structural.iter().any(|range| range.start == 0))
+    }
+
+    /// Display columns occupied by structural art in this row.
+    pub(crate) fn structural(&self) -> Vec<Range<usize>> {
+        let mut column = 0;
+        let mut ranges = Vec::new();
+
+        for span in &self.0 {
+            let end = column + width::columns(&span.text);
+            ranges.extend(
+                span.structural
+                    .iter()
+                    .map(|range| column + range.start..column + range.end),
+            );
+            column = end;
+        }
+
+        ranges
     }
 
     /// The runs the row is made of: the slot each asked for, and what it says.
@@ -270,6 +341,24 @@ impl Row {
     fn bytes(&self) -> usize {
         self.0.iter().map(|span| span.text.len()).sum()
     }
+}
+
+/// Structural display columns from `span` retained by one byte slice.
+fn structural_between(span: &Span, from: usize, to: usize) -> Vec<Range<usize>> {
+    if span.structural.is_empty() {
+        return Vec::new();
+    }
+
+    let before = width::columns(&span.text[..from]);
+    let kept = width::columns(&span.text[from..to]);
+    span.structural
+        .iter()
+        .filter_map(|range| {
+            let start = range.start.max(before);
+            let end = range.end.min(before + kept);
+            (start < end).then_some(start - before..end - before)
+        })
+        .collect()
 }
 
 /// Bytes to reserve per coloured span: the longest opening sequence the palette
@@ -376,6 +465,35 @@ mod tests {
         for columns in 1..40 {
             assert_eq!(row.folds(columns), row.fold(columns).len(), "at {columns}");
         }
+    }
+
+    #[test]
+    fn structural_columns_survive_folding_and_clipping() {
+        // Deliberately the same slot on both spans: slicing the joined text must
+        // not spread the first span's structural meaning over the result words.
+        let row = Row::new()
+            .then_structural(Slot::Quiet, "⎿")
+            .then(Slot::Quiet, " a result long enough to fold");
+
+        let folded = row.fold(12);
+        assert_eq!(
+            folded.first().map(Row::structural),
+            Some(std::iter::once(0..1).collect())
+        );
+        assert!(folded.iter().skip(1).all(|row| row.structural().is_empty()));
+        assert_eq!(
+            row.clipped(1).structural(),
+            std::iter::once(0..1).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            row.clipped(5).structural(),
+            std::iter::once(0..1).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_literal_result_glyph_has_no_structural_columns() {
+        assert!(Row::plain("⎿ literal").structural().is_empty());
     }
 
     #[test]
