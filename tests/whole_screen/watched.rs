@@ -92,6 +92,13 @@ fn document(vendor: Option<&Vendor>, allowed: Option<&str>) -> String {
     format!("{{\n  \"updates\": {{\n    \"check\": \"never\"\n  }}{providers}{rules}\n}}\n")
 }
 
+/// A kept tail no session started by a case here can reach past, in tokens.
+///
+/// `keep` bounds the turns before the newest one that survive a recap word for
+/// word. Set this high and every turn is inside it, so compaction finds no
+/// middle to replace and does only the other thing it can do.
+const NO_MIDDLE: u64 = 100_000_000;
+
 /// The directory a case is given to work in, below the one it is given.
 ///
 /// Deep enough that everything drawing it shortens it, and shortens it past the
@@ -194,6 +201,40 @@ impl Watched {
         rule: &str,
     ) -> Self {
         let document = document(Some(vendor), Some(rule));
+        Self::configured(case, columns, rows, &document, true)
+    }
+
+    /// Colour, rules for the calls a case makes, and no middle to recap.
+    ///
+    /// Three things at once, which no other case here needs together. Colour,
+    /// because the markdown reader is unreached without it. Rules, because the
+    /// case makes calls and the question a call is asked has its own cases
+    /// already. And `keep` set past anything a session started here can reach,
+    /// so that asking for room finds no older middle worth replacing and the
+    /// clearing of old tool output is the whole of what compaction does — which
+    /// is the one thing this arrangement exists to put on a screen.
+    pub(crate) fn pruning_in_colour(
+        case: &str,
+        columns: u16,
+        rows: u16,
+        vendor: &Vendor,
+        rules: &[&str],
+    ) -> Self {
+        let allowed = rules
+            .iter()
+            .map(|rule| format!("\"{rule}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let document = format!(
+            "{{\n  \"updates\": {{\"check\": \"never\"}},\n  \
+             \"output\": {{\"color\": \"always\", \"theme\": \"ansi\"}},\n  \
+             \"permissions\": {{\"allow\": [{allowed}]}},\n  \
+             \"compaction\": {{\"keep\": {NO_MIDDLE}}},\n  \
+             \"providers\": {{\n    \"anthropic\": {{\n      \
+             \"model\": \"{MODEL}\",\n      \"baseUrl\": \"{}\"\n    }}\n  }}\n}}\n",
+            vendor.address()
+        );
+
         Self::configured(case, columns, rows, &document, true)
     }
 

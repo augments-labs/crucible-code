@@ -57,6 +57,9 @@ const PINGED: &str = "event: ping\ndata: {\"type\":\"ping\"}\n\n";
 /// on fails and `answer` returns.
 const HOLDING: usize = 2_000;
 
+/// What a case with one call in it names that call.
+const ONE: &str = "toolu_1";
+
 /// A provider listening on this machine.
 pub(crate) struct Vendor {
     /// Where crucible is told to send its requests.
@@ -100,7 +103,7 @@ impl Vendor {
     /// one that came back asking, and the one sent with what the call
     /// returned. They arrive in that order, each on its own connection.
     pub(crate) fn calling(tool: &str, input: &str, text: &str) -> Self {
-        Self::serving(vec![asking(tool, input), stream(text)])
+        Self::serving(vec![asking(tool, input, ONE), stream(text)])
     }
 
     /// The same, except the second answer holds the turn open behind `text`.
@@ -113,7 +116,23 @@ impl Vendor {
     /// holding the message open afterwards pins the screen and still leaves the
     /// turn where the case wants it.
     pub(crate) fn calling_then_holding(tool: &str, input: &str, text: &str) -> Self {
-        Self::serving(vec![asking(tool, input), holding(text)])
+        Self::serving(vec![asking(tool, input, ONE), holding(text)])
+    }
+
+    /// Starts one that asks for each of `calls` in turn, then answers `text`.
+    ///
+    /// One body per call and one for the answer, which is what a turn with
+    /// several calls in it actually costs in requests. Each call is named
+    /// after its place in the sequence, so the results come back told apart.
+    pub(crate) fn calling_each(calls: &[(&str, String)], text: &str) -> Self {
+        let mut bodies: Vec<Vec<String>> = calls
+            .iter()
+            .enumerate()
+            .map(|(at, (tool, input))| asking(tool, input, &format!("toolu_{}", at + 1)))
+            .collect();
+        bodies.push(stream(text));
+
+        Self::serving(bodies)
     }
 
     /// Starts one that answers each request with the next of `bodies`.
@@ -294,17 +313,21 @@ fn recap(note: &str) -> String {
     )
 }
 
-/// A call for `tool` with `input`, as the same API streams one.
+/// A call for `tool` with `input` under `id`, as the same API streams one.
+///
+/// The id is the caller's, because a turn tells its results apart by it: two
+/// calls sharing one would be one call answered twice everywhere downstream.
 ///
 /// The arguments go out as one delta of the text that spells them rather than
 /// as an object, because that is what the wire does: crucible reads them back
 /// as text and parses them once, when the block ends.
-fn asking(tool: &str, input: &str) -> Vec<String> {
+fn asking(tool: &str, input: &str, id: &str) -> Vec<String> {
     vec![
         STARTED.to_owned(),
         format!(
             "event: content_block_start\ndata: {{\"index\":0,\"content_block\":{{\"type\":\
-             \"tool_use\",\"id\":\"toolu_1\",\"name\":{},\"input\":{{}}}}}}\n\n",
+             \"tool_use\",\"id\":{},\"name\":{},\"input\":{{}}}}}}\n\n",
+            serde_json::Value::from(id),
             serde_json::Value::from(tool)
         ),
         format!(

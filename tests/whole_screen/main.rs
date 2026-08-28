@@ -669,6 +669,165 @@ fn change_header_survives_resume() {
     );
 }
 
+/// How many files the turn in [`a_resumed_session_says_what_the_reader_watched`]
+/// reads before it changes one.
+///
+/// Enough that the oldest of them fall outside the window of recent output a
+/// pruning protects, and that what falls outside is worth clearing. Both are
+/// figures the runner holds, and this is the smallest count that clears the
+/// first two whatever the reader's own cap does to each result.
+const READ: usize = 5;
+
+/// How many lines each of those files has.
+///
+/// More than the reader returns, so every result comes back at its ceiling
+/// rather than at the file's length: what the pruning is measured against is
+/// bytes, and a case whose results were short would clear nothing.
+const LONG: usize = 2_000;
+
+/// The first line of the file numbered `at`, which is the line its row says.
+///
+/// A result's row is its first line, so this is the whole of what a reader sees
+/// of a thirty-kilobyte answer — and therefore the whole of what a pruning
+/// takes away and a resumed screen has to give back.
+fn top(at: usize) -> String {
+    format!("the top of the file numbered {at}")
+}
+
+/// That file, whole.
+fn filled(at: usize) -> String {
+    let mut file = top(at);
+    for line in 2..=LONG {
+        let _ = writeln!(file);
+        let _ = write!(file, "line {line} of the file numbered {at}");
+    }
+    file.push('\n');
+    file
+}
+
+#[test]
+fn a_resumed_session_says_what_the_reader_watched() {
+    // Everything this change is about, in one session, drawn twice. A turn that
+    // reads five long files and rewrites a sixth, answered in markdown a word at
+    // a time on a terminal taking colour; then room asked for, which finds no
+    // middle to recap and clears the oldest results instead; then the session
+    // put down and picked up again.
+    //
+    // What the resumed screen owes the reader is what the live one showed: the
+    // header saying what the call changed, and the results the pruning cleared
+    // saying again what they said. Neither is in the transcript a request is
+    // built from — the header is drawn from counts recorded beside the result,
+    // and the words come from beside the transcript rather than out of it.
+    //
+    // The two pictures are not the same picture, and the assertions below say
+    // which rows are one screen's alone rather than pretending otherwise. Every
+    // other row matches, the cleared results' among them. What differs is the
+    // block of lines the call moved, which reaches no log; the sentence counting
+    // what that block could not fit, which would be a lie on a screen with no
+    // block; and the note saying room was made together with the line that asked
+    // for it, which are things that happened to the session rather than messages
+    // in it.
+    let mut calls: Vec<(&str, String)> = (1..=READ)
+        .map(|at| {
+            (
+                "read",
+                serde_json::json!({ "path": format!("file-{at}.txt") }).to_string(),
+            )
+        })
+        .collect();
+    calls.push((
+        "edit",
+        serde_json::json!({
+            "path": "notes.md",
+            "find": spelling("was"),
+            "replace": spelling("is now"),
+        })
+        .to_string(),
+    ));
+
+    let vendor = Vendor::calling_each(&calls, IN_MARKDOWN);
+
+    // Tall enough to hold the whole session at once. The results a pruning
+    // clears are the oldest rows on the screen, so a window that scrolled them
+    // away would be comparing what fitted rather than what was drawn.
+    let mut window =
+        Watched::pruning_in_colour("resume-parity", 100, 200, &vendor, &["read(*)", "edit(*)"]);
+
+    for at in 1..=READ {
+        std::fs::write(
+            window.workspace().join(format!("file-{at}.txt")),
+            filled(at),
+        )
+        .expect("a file for the call to read");
+    }
+    std::fs::write(window.workspace().join("notes.md"), spelling("was"))
+        .expect("a file for the call to rewrite");
+
+    window.types_until("read those files and rewrite the notes\r", "fn main");
+    window.types_until("/compact\r", "old tool output was cleared");
+    let live = window.picture();
+
+    window.types_until("/clear\r", "ask mode on");
+    window.types_until("/resume\r", "a session, or a branch");
+    window.types_until("\r", "fn main");
+    let again = window.picture();
+
+    // The live screen first, because everything asserted of the resumed one is
+    // only worth asserting if this is what the reader was actually shown.
+    assert!(live.contains(CHANGED), "the live header: {live}");
+    assert!(live.contains(UNSHOWN), "the live header's tail: {live}");
+    assert!(
+        live.contains("the line that is now here, number 1"),
+        "the live block: {live}"
+    );
+    assert!(
+        live.contains(&top(1)),
+        "the live row for the first read: {live}"
+    );
+    assert!(
+        live.contains(&top(2)),
+        "the live row for the second read: {live}"
+    );
+    assert!(
+        live.contains("old tool output was cleared"),
+        "nothing was cleared, so there is no pruning to replay: {live}"
+    );
+
+    // And then the same session, off its own log.
+    assert!(
+        again.contains(CHANGED),
+        "the resumed screen forgot what the call changed: {again}"
+    );
+    assert!(
+        again.contains(&top(1)) && again.contains(&top(2)),
+        "the resumed screen kept the placeholder where the reader saw an answer: {again}"
+    );
+    assert!(
+        !again.contains("cleared to make room"),
+        "the resumed screen showed the model's placeholder to a person: {again}"
+    );
+    assert!(
+        again.contains("What I found") && again.contains("fn main"),
+        "the resumed screen lost the answer: {again}"
+    );
+
+    // The three rows that are the live screen's alone, named rather than
+    // stumbled over: a resumed screen drawing any of them would be drawing
+    // something the log does not hold.
+    assert!(
+        !again.contains("the line that"),
+        "the resumed screen drew lines the log never held: {again}"
+    );
+    assert!(
+        !again.contains(UNSHOWN),
+        "the resumed header counted lines nothing is showing: {again}"
+    );
+    assert!(
+        !again.contains("old tool output was cleared"),
+        "the resumed screen reported a compaction as though it had just run: {again}"
+    );
+}
+
 #[test]
 fn an_environment_authenticated_session_never_claims_logout_removed_it() {
     // The key belongs to the shell that launched this real process. `/logout`
