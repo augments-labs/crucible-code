@@ -940,8 +940,13 @@ fn the_effort_ladder_stands_in_a_window_a_panel_of_the_same_five_would_fill() {
 
     window.types("/login anthropic\r");
     window.types_until("not-a-key-and-nothing-reads-it\r", "logged in to anthropic");
-    window.types("/model claude-test-1\r");
-    window.types("/effort\r");
+    // Waited on rather than typed and left: a command is drawn in two frames
+    // with the work between them, and quiet alone cannot tell that gap from the
+    // end of the last frame. Without a mark this case reads the screen where
+    // the composer has echoed `/effort` and the ladder has not been drawn yet,
+    // and blames the renderer for a picture the keyboard was simply ahead of.
+    window.types_until("/model claude-test-1\r", "anthropic/claude-test-1");
+    window.types_until("/effort\r", "Effort · claude-test-1");
 
     insta::assert_snapshot!(window.picture());
 }
