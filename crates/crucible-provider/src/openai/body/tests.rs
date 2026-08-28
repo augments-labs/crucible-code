@@ -4,7 +4,8 @@
 //! per-file cap.
 
 use crucible_core::{
-    Attached, Content, Effort, Modality, ToolArgs, ToolId, ToolOutput, Transcript,
+    Attached, Change, Content, Diff, Effort, Line, Modality, ToolArgs, ToolId, ToolOutput,
+    Transcript,
 };
 use serde_json::json;
 
@@ -569,4 +570,29 @@ fn each_result_gets_the_files_its_own_call_found() {
         &json!("input_file"),
         "the second found the document: {body}"
     );
+}
+
+/// A diff is for the reader, and the request must not be able to tell.
+///
+/// The bytes rather than the value: two bodies that parse alike could still
+/// have been written differently, and what is promised is the request itself
+/// rather than a reading of it. Green before an output carries anything
+/// reader-side and green afterwards — a guard written beside the change it
+/// exists to catch would be recording that change instead of catching it.
+#[test]
+fn the_request_body_is_the_same_whatever_the_reader_was_shown() {
+    let text = "fn main() {}";
+    let plain = serialize(
+        &answering(one(ToolOutput::ok(text)), Vec::new()),
+        Serving::Api,
+    );
+    let shown = serialize(
+        &answering(
+            one(ToolOutput::ok(text).showing(Diff::new([Line::new(1, Change::Added, text)]))),
+            Vec::new(),
+        ),
+        Serving::Api,
+    );
+
+    assert_eq!(plain, shown, "the reader's copy reached the wire");
 }

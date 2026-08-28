@@ -1,6 +1,6 @@
 use crucible_core::{
-    Attached, Attachment, Content, Effort, Modality, ToolArgs, ToolCall, ToolId, ToolOutput,
-    Transcript,
+    Attached, Attachment, Change, Content, Diff, Effort, Line, Modality, ToolArgs, ToolCall,
+    ToolId, ToolOutput, Transcript,
 };
 
 use super::*;
@@ -586,4 +586,23 @@ fn each_result_gets_the_files_its_own_call_found() {
         &json!("data:image/jpeg;base64,iVBORw=="),
         "the second found the jpeg: {body}"
     );
+}
+
+/// A diff is for the reader, and the request must not be able to tell.
+///
+/// The bytes rather than the value: two bodies that parse alike could still
+/// have been written differently, and what is promised is the request itself
+/// rather than a reading of it. Green before an output carries anything
+/// reader-side and green afterwards — a guard written beside the change it
+/// exists to catch would be recording that change instead of catching it.
+#[test]
+fn the_request_body_is_the_same_whatever_the_reader_was_shown() {
+    let text = "fn main() {}";
+    let plain = serialize(&answering(one(ToolOutput::ok(text)), Vec::new()));
+    let shown = serialize(&answering(
+        one(ToolOutput::ok(text).showing(Diff::new([Line::new(1, Change::Added, text)]))),
+        Vec::new(),
+    ));
+
+    assert_eq!(plain, shown, "the reader's copy reached the wire");
 }

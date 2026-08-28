@@ -1,4 +1,4 @@
-use crucible_core::{ToolOutput, ToolResult};
+use crucible_core::{Change, Diff, Line, ToolOutput, ToolResult};
 
 use super::*;
 
@@ -589,4 +589,33 @@ fn an_attachment_aged_out_of_the_request_stops_being_charged() {
     load.responding(0);
 
     assert_eq!(both, load.tokens() + PER_ATTACHMENT * 2);
+}
+
+/// The same result, with the change a reader was shown beside it.
+fn results_showing(bytes: usize) -> Message {
+    Message::ToolResults(vec![ToolResult {
+        id: crucible_core::ToolId::new("call-1"),
+        output: ToolOutput::ok("x".repeat(bytes)).showing(Diff::new([Line::new(
+            1,
+            Change::Added,
+            "x".repeat(bytes),
+        )])),
+    }])
+}
+
+/// The window is spent on what was said, never on what was drawn.
+///
+/// A diff reaches no request, so it must reach no estimate of what a request
+/// will cost either: a load that charged for the reader's copy would compact a
+/// session earlier the more of it had been shown, which is the one thing the
+/// reader's copy is not allowed to do.
+#[test]
+fn the_load_does_not_charge_for_what_only_the_reader_saw() {
+    let mut plain = Load::default();
+    plain.recorded(&results(3_000));
+
+    let mut shown = Load::default();
+    shown.recorded(&results_showing(3_000));
+
+    assert_eq!(plain.tokens(), shown.tokens());
 }
