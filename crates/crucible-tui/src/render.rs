@@ -1283,6 +1283,29 @@ impl<T: Terminal> Renderer<T> {
         self.record.lines()
     }
 
+    /// Hangs every transcript row written since `from` under one result mark.
+    ///
+    /// The first row receives `glyphs.hangs()` and the rest align beneath its
+    /// text. The mark is structural, so custom selection neither lights nor
+    /// copies it. A command that emptied the record is handled by the record's
+    /// stable line numbering: only output written after that reset is changed.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be redrawn.
+    pub fn subordinate(&mut self, from: usize, glyphs: Glyphs) -> Result<(), TerminalError> {
+        if !self.terminal.is_terminal() {
+            // Redirected output was written through as each command produced it,
+            // so a post-hoc record rewrite cannot insert bytes before it. Keep
+            // that path byte-for-byte compatible rather than printing a late
+            // prefix after the answer.
+            return Ok(());
+        }
+
+        self.record.subordinate(from, glyphs.hangs());
+        self.draw()
+    }
+
     /// The last `rows` display rows of what has been drawn, as rows.
     ///
     /// What the transcript band would be showing, folded at the width this

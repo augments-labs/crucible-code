@@ -1060,6 +1060,59 @@ fn drag(drawn: &mut Drawn, from: (usize, usize), to: (usize, usize)) -> String {
 }
 
 #[test]
+fn a_structural_result_glyph_is_not_lit_or_copied() {
+    let mut drawn = Drawn::new(40, 10);
+    let from = drawn.lines();
+    drawn.commit("result").unwrap();
+    drawn.subordinate(from, Glyphs::Unicode).unwrap();
+    drawn.take();
+
+    drawn.took(Pressed::Clicked { row: 0, column: 0 }).unwrap();
+    drawn.took(Pressed::Dragged { row: 0, column: 7 }).unwrap();
+    let highlighted = drawn.take();
+    assert!(!highlighted.contains("\x1b[7m⎿"), "{highlighted:?}");
+
+    drawn.took(Pressed::Released { row: 0, column: 7 }).unwrap();
+    let copied = drawn.take();
+    assert!(
+        copied.contains(&onto_the_clipboard(" result")),
+        "{copied:?}"
+    );
+    assert!(
+        !copied.contains(&onto_the_clipboard("⎿ result")),
+        "{copied:?}"
+    );
+}
+
+#[test]
+fn a_redirected_result_is_not_given_a_late_trailing_prefix() {
+    let mut drawn = Drawn {
+        render: Renderer::new(Recording::redirected(40, 10)),
+    };
+    let from = drawn.lines();
+    drawn.commit("result").unwrap();
+    drawn.subordinate(from, Glyphs::Unicode).unwrap();
+
+    assert_eq!(drawn.render.terminal.written(), "result\n");
+}
+
+#[test]
+fn a_literal_result_glyph_remains_lit_and_copied() {
+    let mut drawn = Drawn::new(40, 10);
+    drawn.commit("⎿ literal").unwrap();
+    drawn.take();
+
+    drawn.took(Pressed::Clicked { row: 0, column: 0 }).unwrap();
+    drawn.took(Pressed::Dragged { row: 0, column: 1 }).unwrap();
+    let highlighted = drawn.take();
+    assert!(highlighted.contains("\x1b[7m⎿"), "{highlighted:?}");
+
+    drawn.took(Pressed::Released { row: 0, column: 1 }).unwrap();
+    let copied = drawn.take();
+    assert!(copied.contains(&onto_the_clipboard("⎿")), "{copied:?}");
+}
+
+#[test]
 fn a_drag_across_the_transcript_puts_what_it_covered_on_the_clipboard() {
     // The whole gesture, end to end: where it opened, how far it reached, and
     // the text that came back off the rows it covered rather than off the

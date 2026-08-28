@@ -8,6 +8,25 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Added
+
+- **MP4 videos can be attached to Moonshot models that accept video.** Named
+  `.mp4` files are checked as ISO base-media containers before being sent with
+  Moonshot's native video request shape.
+
+### Changed
+
+- **Transcript result rows now read as subordinate output.** Slash-command
+  answers, tool results, attachments, and API failures use `⎿`; structural marks
+  stay out of copied text while a literal `⎿` remains selectable. Attachments are
+  labelled by kind and sequence, such as `[Image #1]` and `[Video #1]`.
+
+### Fixed
+
+- **Repeated Ctrl+V image pastes keep working, including during a turn.** The
+  desktop clipboard connection is reused, session changes refresh the attachment
+  destination, and attachment count is not artificially limited.
+
 ## [0.25.2] - 2026-08-27
 
 ### Fixed

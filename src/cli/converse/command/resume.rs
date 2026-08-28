@@ -189,7 +189,7 @@ fn picking<T: Terminal>(
 
     // The images pasted were named by markers in prompts of the session just
     // left, and the numbering starts over with the session. Held on, one would
-    // ride the first prompt after the resume that says `[image 1]`.
+    // ride the first prompt after the resume that says `[Image #1]`.
     held.images.clear();
 
     // The last chance to say that the log of the session being left stopped

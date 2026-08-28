@@ -1,5 +1,6 @@
 use crucible_core::{
-    Attached, Content, Effort, Modality, ToolArgs, ToolCall, ToolId, ToolOutput, Transcript,
+    Attached, Attachment, Content, Effort, Modality, ToolArgs, ToolCall, ToolId, ToolOutput,
+    Transcript,
 };
 
 use super::*;
@@ -33,16 +34,36 @@ const PIXEL: &[u8] = &[0x89, b'P', b'N', b'G'];
 const INSTEAD: &str = "holiday.png is not attached to this request, to keep the request \
      within its size limit: read it again if you need it.";
 
+/// One video a tool result says it found; resolved bytes travel separately.
+fn video() -> Attachment {
+    Attachment {
+        path: "clips/demo.mp4".into(),
+        modality: Modality::Video,
+        media_type: "video/mp4".into(),
+        hash: [0xcd; 32],
+    }
+}
+
 /// A prompt the runner resolved one attachment for.
 fn holding(text: &str, content: Content<'static>) -> Request<'static> {
+    holding_kind(text, "image/png", Modality::Image, content)
+}
+
+/// A prompt whose one resolved attachment has the specified wire kind.
+fn holding_kind(
+    text: &str,
+    media_type: &'static str,
+    modality: Modality,
+    content: Content<'static>,
+) -> Request<'static> {
     // The transcript's own reference is deliberately absent: a provider reads
     // what the runner resolved and never a path.
     let mut request = request(said(text));
     request.attached = Box::leak(Box::new([Attached {
         message: 0,
         index: 0,
-        media_type: "image/png",
-        modality: Modality::Image,
+        media_type,
+        modality,
         content,
     }]));
     request
@@ -359,6 +380,30 @@ fn an_image_is_a_nested_data_url_part_before_the_prompt() {
     );
 }
 
+/// The video shape `MoonshotAI` documents for Kimi K2.5: a nested `video_url`
+/// object carrying the MP4 as a base64 data URL.
+#[test]
+fn a_video_is_a_nested_data_url_part_before_the_prompt() {
+    let body = build(&holding_kind(
+        "what happens in this",
+        "video/mp4",
+        Modality::Video,
+        Content::Bytes(b"mp4"),
+    ));
+
+    assert_eq!(
+        at(&body, "/messages/0/content"),
+        &json!([
+            {
+                "type": "video_url",
+                "video_url": { "url": "data:video/mp4;base64,bXA0" }
+            },
+            { "type": "text", "text": "what happens in this" }
+        ]),
+        "{body}"
+    );
+}
+
 #[test]
 fn a_file_that_was_not_sent_is_the_runners_sentence_in_its_place() {
     let body = build(&holding("what is in this", Content::Instead(INSTEAD)));
@@ -456,6 +501,28 @@ fn a_tool_that_found_a_picture_sends_it_inside_the_result() {
             ]
         }),
         "{body}"
+    );
+}
+
+#[test]
+fn a_tool_that_found_a_video_sends_a_video_url_inside_the_result() {
+    let body = build(&answering(
+        one(found("one match: demo.mp4", vec![video()])),
+        vec![resolved(
+            0,
+            "video/mp4",
+            Modality::Video,
+            Content::Bytes(b"mp4"),
+        )],
+    ));
+
+    assert_eq!(
+        at(&body, "/messages/1/content/1"),
+        &json!({
+            "type": "video_url",
+            "video_url": { "url": "data:video/mp4;base64,bXA0" }
+        }),
+        "a resolved tool video uses the video shape: {body}"
     );
 }
 

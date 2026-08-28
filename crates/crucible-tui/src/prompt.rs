@@ -634,24 +634,20 @@ impl Prompt<'_> {
     /// The rows the files sent with a line are named on, under it.
     ///
     /// One row each, indented past the mark so the block reads as one thing
-    /// somebody sent rather than as a stack of separate lines. Each is handed
-    /// over already decided: what the file is called, and what it is. Choosing
-    /// those two words is the caller's, because they come off a domain this
-    /// crate is not told about.
+    /// somebody sent rather than as a stack of separate lines. Each display is
+    /// handed over already composed: choosing the label, its number, and the
+    /// path is the caller's, because they come off a domain this crate is not
+    /// told about.
     ///
     /// No picture is drawn. What is on screen is this process's to account for,
     /// and putting an image on it is a separate question nobody has answered.
     #[must_use]
-    pub fn attached(
-        files: &[(&str, &str)],
-        columns: usize,
-        glyphs: Glyphs,
-        banded: bool,
-    ) -> Vec<Row> {
+    pub fn attached(files: &[&str], columns: usize, glyphs: Glyphs, banded: bool) -> Vec<Row> {
         let indent = width::columns(glyphs.caret()) + 1;
-        let dot = glyphs.dot();
-        // The dot and the space after it. Everything past them is the file.
-        let opening = width::columns(dot) + 1;
+        let hangs = glyphs.hangs();
+        // The subordinate mark and the space after it. Everything past them is
+        // the file.
+        let opening = width::columns(hangs) + 1;
         let room = columns.saturating_sub(indent + opening);
 
         // A window with no room for any of the name draws none of these. The
@@ -664,15 +660,14 @@ impl Prompt<'_> {
 
         files
             .iter()
-            .map(|(name, what)| {
+            .map(|said| {
                 // Clipped rather than broken: a path is one thing to read, and
                 // a second row of it under the first reads as a second file.
-                let said = format!("{name} {} {what}", glyphs.dash());
                 let mut row = Row::new()
                     .then(Slot::Prompt, " ".repeat(indent))
-                    .then(Slot::PromptMark, dot)
+                    .then_structural(Slot::PromptMark, hangs)
                     .then(Slot::Prompt, " ")
-                    .then(Slot::Prompt, width::clip(&said, room).to_owned());
+                    .then(Slot::Prompt, width::clip(said, room).to_owned());
 
                 // The same ground the line above took, for the same reason it
                 // reaches the last column there: the file went with the words,

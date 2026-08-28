@@ -10,7 +10,7 @@ use std::fs;
 use std::io::{Cursor, Write as _};
 use std::path::{Path, PathBuf};
 
-use crucible_core::{Attachment, CEILING, Provider, Workspace, kind, written};
+use crucible_core::{Attachment, CEILING, Provider, SessionId, Workspace, kind, written};
 use crucible_runner::Runner;
 use crucible_tui::{Renderer, Row, Terminal, TerminalError, fold};
 use sha2::{Digest as _, Sha256};
@@ -18,6 +18,24 @@ use sha2::{Digest as _, Sha256};
 use crate::cli::attachable;
 use crate::cli::draw;
 use crate::cli::style::Style;
+
+use super::Held;
+
+/// Refreshes the durable image store after a command may replace the session.
+pub(super) fn refresh_store(held: &mut Held<'_>, runner: &Runner) {
+    let store = runner
+        .session()
+        .id()
+        .cloned()
+        .map(|id: SessionId| (runner.session().path().to_owned(), id));
+    if held.attachment_store != store {
+        // A platform clipboard connection has no session identity itself, but
+        // dropping it here prevents a long-lived handle from crossing a session
+        // reset and keeps retry semantics simple after a display reconnect.
+        held.clipboard = None;
+    }
+    held.attachment_store = store;
+}
 
 /// What a prompt turned out to be carrying.
 #[cfg(test)]
@@ -28,7 +46,7 @@ pub(super) struct Attaching {
     pub(super) refusals: Vec<String>,
 }
 
-/// One prompt, beside the pasted images its `[image N]` markers can name.
+/// One prompt, beside the pasted images its `[Image #N]` markers can name.
 ///
 /// One value because the two are read together everywhere a prompt is read:
 /// a marker is a word standing for the Nth path here, and a prompt handed
@@ -37,7 +55,7 @@ pub(super) struct Attaching {
 pub(super) struct Sent<'a> {
     /// What was typed.
     pub(super) prompt: &'a str,
-    /// The paths pasted so far, `[image 1]` first.
+    /// The paths pasted so far, `[Image #1]` first.
     pub(super) images: &'a [Box<str>],
 }
 
@@ -59,7 +77,7 @@ pub(super) fn attaching(
 }
 
 /// Everything one prompt is sending: the files its words name, and the images
-/// its `[image N]` markers point back at.
+/// its `[Image #N]` markers point back at.
 ///
 /// One function under both readers of a prompt, because the two must agree on
 /// what a prompt carries or the tested answer is not the shipped one. An image
@@ -154,19 +172,18 @@ pub(super) fn beside<T: Terminal>(
 }
 
 /// Imports the image on the operating-system clipboard, and answers with the
-/// path a `[image N]` marker will stand for.
+/// path an `[Image #N]` marker will stand for.
 ///
 /// Copying a *file* puts its name on the clipboard rather than its pixels, so
 /// a clipboard with no image on it is read again as text before the paste is
 /// refused — and where the text names an image file, that file is the paste.
 /// It goes back as its own path rather than an imported copy, so submission
 /// decides about it the way it decides about a path typed by hand.
-pub(super) fn clipboard(runner: &Runner) -> Result<String, String> {
-    let Some(id) = runner.session().id() else {
-        return Err("this session has nowhere durable to keep a clipboard image".to_owned());
-    };
-    let mut board = arboard::Clipboard::new()
-        .map_err(|problem| format!("the clipboard could not be opened: {problem}"))?;
+pub(super) fn clipboard(
+    path: &Path,
+    id: &crucible_core::SessionId,
+    board: &mut arboard::Clipboard,
+) -> Result<String, String> {
     let image = match board.get_image() {
         Ok(image) => image,
         Err(problem) => {
@@ -207,11 +224,7 @@ pub(super) fn clipboard(runner: &Runner) -> Result<String, String> {
     }
 
     let hash = <[u8; 32]>::from(Sha256::digest(&bytes));
-    let directory = runner
-        .session()
-        .path()
-        .with_file_name("attachments")
-        .join(id.as_str());
+    let directory = path.with_file_name("attachments").join(id.as_str());
     let path = import(&directory, "png", hash, &bytes)
         .map_err(|problem| format!("the clipboard image could not be imported: {problem}"))?;
 
@@ -422,12 +435,13 @@ fn names(prompt: &str) -> Vec<String> {
     names
 }
 
-/// The `N` of every `[image N]` marker in a prompt, in the order they appear.
+/// The `N` of every `[Image #N]` marker in a prompt, in the order they appear.
 ///
-/// Exactly that shape: an open bracket, the word, one space, digits, a close
-/// bracket. Anything looser and prose about images starts sending files.
+/// Exactly that shape: an open bracket, the capitalized word, a space, a hash,
+/// digits, and a close bracket. Anything looser and prose about images starts
+/// sending files.
 fn marked(prompt: &str) -> Vec<usize> {
-    const OPENS: &str = "[image ";
+    const OPENS: &str = "[Image #";
     let mut numbers = Vec::new();
     let mut rest = prompt;
 

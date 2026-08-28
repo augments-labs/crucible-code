@@ -245,8 +245,8 @@ fn the_prompt_box_fits_the_window_it_is_typed_into() {
     across("the files a prompt sent", |columns, glyphs| {
         Prompt::attached(
             &[
-                ("screenshots/holiday.png", "image"),
-                ("notes/the quarterly receipt.pdf", "pdf"),
+                "[Image #1] screenshots/holiday.png",
+                "[PDF #1] notes/the quarterly receipt.pdf",
             ],
             columns,
             glyphs,

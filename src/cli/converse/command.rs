@@ -512,7 +512,9 @@ pub(super) fn run<T: Terminal>(
     // block's neighbours — the line that asked, the box below — are rows the
     // eye is already resting on.
     renderer.commit("")?;
+    let start = renderer.lines();
     let making = answer(wanted, renderer, runner, held, terms)?;
+    renderer.subordinate(start, terms.style().glyphs())?;
     renderer.commit("")?;
 
     Ok(making.map_or(Ran::Again, Ran::Room))

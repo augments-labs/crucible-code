@@ -9,11 +9,11 @@ expression: window.picture()
 |                                                                                |
 |› /login anthropic                                                              |
 |                                                                                |
-|logged in to anthropic; choose a model with /model                              |
+|⎿ logged in to anthropic; choose a model with /model                            |
 |                                                                                |
 |› /model claude-test-1                                                          |
 |                                                                                |
-|anthropic/claude-test-1                                                         |
+|⎿ anthropic/claude-test-1                                                       |
 |                                                                                |
 |› /effort                                                                       |
 |                                                                                |

@@ -109,7 +109,7 @@ pub(super) fn run<T: Terminal>(
 
     // The images pasted go too: the markers naming them were in prompts of the
     // session just left, and the numbering starts over with the session. Held
-    // on, one would ride the first prompt after the clear that says `[image 1]`.
+    // on, one would ride the first prompt after the clear that says `[Image #1]`.
     held.images.clear();
     renderer.empties()?;
 
@@ -372,7 +372,7 @@ mod tests {
 
     #[test]
     fn an_image_pasted_before_a_clear_is_not_attached_after_it() {
-        // The paste put `[image 1]` in a prompt of the session being left, and
+        // The paste put `[Image #1]` in a prompt of the session being left, and
         // the numbering starts over with the session. An image still held here
         // would be attached to the first prompt after the clear that says the
         // marker — a picture the agent was never shown and the user never sent

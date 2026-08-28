@@ -116,8 +116,9 @@ fn call(name: &str, args: &str) -> ToolCall {
 /// Through `event` rather than around it: a test that rebuilds the line
 /// with the same expression the code uses agrees with itself whatever the
 /// code does.
-fn drawn(problem: &str) -> String {
+fn drawn_in(problem: &str, style: Style) -> String {
     let mut renderer = Renderer::new(Recording::new(80, 24));
+    renderer.wears(style.palette());
 
     event(
         &mut renderer,
@@ -128,12 +129,16 @@ fn drawn(problem: &str) -> String {
             }),
         },
         &here(),
-        Style::plain(),
+        style,
         &mut Kept::default(),
     )
     .expect("the failure to draw");
 
     renderer.terminal().written().to_string()
+}
+
+fn drawn(problem: &str) -> String {
+    drawn_in(problem, Style::plain())
 }
 
 /// What the terminal ends up with when the model asks for `name`. Through
@@ -351,7 +356,7 @@ fn a_pretty_structured_result_does_not_use_its_bare_opening_as_the_summary() {
 fn a_bracketed_diagnostic_is_not_mistaken_for_a_structural_opening() {
     assert_eq!(
         hung(&ToolOutput::failed("[exit status 3]"), WIDE, Style::plain()),
-        "  └ ✗ [exit status 3]"
+        "  ⎿ ✗ [exit status 3]"
     );
 }
 
@@ -365,7 +370,7 @@ fn output_shows_its_first_line_and_says_how_much_more_there_was() {
 
     assert_eq!(
         hung(&output, WIDE, Style::plain()),
-        "  └ one (+2 lines · ctrl+o to expand)"
+        "  ⎿ one (+2 lines · ctrl+o to expand)"
     );
 }
 
@@ -379,12 +384,13 @@ fn a_cut_result_says_it_is_one_by_the_slot_its_words_are_in() {
     let row = finished(&output, beyond(&output), WIDE, Style::plain());
 
     // The slots in the order the row asked for them, which is what says *which*
-    // run carries what: the indent, the corner, the line that came back, the
-    // count, the key, and the bracket that shuts it.
+    // run carries what: the indent, the corner, its ordinary separator, the
+    // line that came back, the count, the key, and the bracket that shuts it.
     assert_eq!(
         row.kinds().collect::<Vec<_>>(),
         [
             Slot::Plain,
+            Slot::Quiet,
             Slot::Quiet,
             Slot::Cut,
             Slot::Quiet,
@@ -392,7 +398,7 @@ fn a_cut_result_says_it_is_one_by_the_slot_its_words_are_in() {
             Slot::Quiet
         ]
     );
-    assert_eq!(row.text(), "  └ one (+2 lines · ctrl+o to expand)");
+    assert_eq!(row.text(), "  ⎿ one (+2 lines · ctrl+o to expand)");
 }
 
 #[test]
@@ -429,7 +435,7 @@ fn a_single_line_of_output_gets_no_count() {
     // not in.
     assert_eq!(
         hung(&ToolOutput::ok("done"), WIDE, Style::plain()),
-        "  └ done"
+        "  ⎿ done"
     );
 }
 
@@ -442,7 +448,7 @@ fn a_failure_is_marked_as_one() {
     let line = hung(&ToolOutput::failed("no such file"), WIDE, Style::plain());
 
     assert!(line.contains('✗'), "{line}");
-    assert!(line.starts_with("  └ ✗ "), "{line}");
+    assert!(line.starts_with("  ⎿ ✗ "), "{line}");
 }
 
 #[test]
@@ -462,7 +468,7 @@ fn a_result_hangs_off_the_column_the_mark_that_opened_the_call_is_in() {
 
 #[test]
 fn no_output_at_all_is_still_a_line() {
-    assert_eq!(hung(&ToolOutput::ok(""), WIDE, Style::plain()), "  └ ");
+    assert_eq!(hung(&ToolOutput::ok(""), WIDE, Style::plain()), "  ⎿ ");
 }
 
 #[test]
@@ -616,6 +622,22 @@ fn a_question_is_never_drawn_wider_than_the_window() {
             assert!(wide <= columns, "{row:?} is {wide} of {columns} columns");
         }
     }
+}
+
+#[test]
+fn an_api_failure_is_a_red_subordinate_result() {
+    let style = Style::coloured();
+    let trouble = style.palette().open(Slot::Trouble);
+    let written = drawn_in("broke", style);
+
+    assert!(!trouble.is_empty());
+    assert!(written.contains(&format!("{trouble}⎿")), "{written:?}");
+    assert!(written.contains(&format!("{trouble} ")), "{written:?}");
+
+    assert!(
+        written.contains(&format!("{trouble}openai: unexpected response: broke")),
+        "{written:?}"
+    );
 }
 
 #[test]
@@ -913,10 +935,10 @@ fn a_turn_is_a_column_of_blocks_with_one_blank_row_between_them() {
             "Looking at both.\n",
             "\n",
             "● Read(src/main.rs)\n",
-            "  └ 128 lines\n",
+            "  ⎿ 128 lines\n",
             "\n",
             "● Read(src/lib.rs)\n",
-            "  └ 60 lines\n",
+            "  ⎿ 60 lines\n",
             "\n",
             "Neither imports the other.\n",
         )
@@ -1027,7 +1049,7 @@ fn the_row_above_a_block_counts_the_change_rather_than_answering_the_model() {
 
     assert_eq!(
         hung(&output, WIDE, Style::plain()),
-        "  └ Added 3 lines, removed 3 lines"
+        "  ⎿ Added 3 lines, removed 3 lines"
     );
 }
 
@@ -1036,8 +1058,8 @@ fn a_change_in_one_direction_only_says_the_one_thing_that_happened() {
     let one = |change| ToolOutput::ok("wrote it").showing(Diff::new([Line::new(1, change, "a")]));
     let said = |output| hung(&output, WIDE, Style::plain());
 
-    assert_eq!(said(one(Change::Added)), "  └ Added 1 line");
-    assert_eq!(said(one(Change::Removed)), "  └ Removed 1 line");
+    assert_eq!(said(one(Change::Added)), "  ⎿ Added 1 line");
+    assert_eq!(said(one(Change::Removed)), "  ⎿ Removed 1 line");
 }
 
 #[test]
@@ -1152,7 +1174,7 @@ fn a_call_that_changed_nothing_is_drawn_as_what_it_said() {
 
     assert_eq!(
         hung(&output, WIDE, Style::plain()),
-        "  └ created one.rs, 0 lines"
+        "  ⎿ created one.rs, 0 lines"
     );
     assert!(block(&Diff::new([]), 40, unicode()).is_empty());
 }
@@ -1400,12 +1422,43 @@ fn a_session_that_hid_nothing_writes_nothing_on_its_way_out() {
 
 /// One picture, named where a workspace file would be.
 fn picture(under: &Path, name: &str) -> Attachment {
+    attached(under, name, Modality::Image, "image/png")
+}
+
+/// One attachment of a specified kind, named under the workspace.
+fn attached(under: &Path, name: &str, modality: Modality, media_type: &str) -> Attachment {
     Attachment {
         path: under.join(name).to_string_lossy().into_owned().into(),
-        modality: Modality::Image,
-        media_type: "image/png".into(),
+        modality,
+        media_type: media_type.into(),
         hash: [0; 32],
     }
+}
+
+#[test]
+fn attachment_labels_count_each_kind_separately_and_put_the_label_first() {
+    let workspace = here();
+    let root = workspace.root();
+    let attachments = [
+        picture(root, "screenshots/holiday.png"),
+        attached(root, "clips/demo.mp4", Modality::Video, "video/mp4"),
+        picture(root, "diagrams/wiring.png"),
+    ];
+    let mut renderer = Renderer::new(Recording::new(WIDE, 24));
+
+    super::attached(&mut renderer, &attachments, &workspace, Style::plain())
+        .expect("a recording cannot fail");
+    let screen = renderer.terminal().written();
+
+    assert!(
+        screen.contains("[Image #1] screenshots/holiday.png"),
+        "{screen}"
+    );
+    assert!(screen.contains("[Video #1] clips/demo.mp4"), "{screen}");
+    assert!(
+        screen.contains("[Image #2] diagrams/wiring.png"),
+        "{screen}"
+    );
 }
 
 /// What the terminal ends up with when a request goes out without `files`.

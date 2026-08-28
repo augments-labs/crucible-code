@@ -64,6 +64,8 @@ enum Line {
     Responsive {
         /// The display rows at the record's current width.
         rows: Vec<Row>,
+        /// A prefix applied to each row after every responsive rebuild.
+        prefix: Option<Subordinate>,
         /// How many ordinary record lines this retained source costs.
         weight: usize,
         /// What lays the whole block out at a width.
@@ -71,6 +73,32 @@ enum Line {
     },
     /// Rows a component laid out against a width. Clipped, never re-folded.
     Set(Row),
+}
+
+/// A subordinate block's structural mark and text-column width.
+#[derive(Debug, Clone)]
+struct Subordinate {
+    mark: Box<str>,
+    opening: usize,
+    /// Whether this prefix contributes the first row's mark.
+    marks_first: bool,
+    /// Whether a responsive rebuild already contributes that first-row mark.
+    keeps_first: bool,
+}
+
+impl Subordinate {
+    /// The mark on the first row, or its text-column indent after that.
+    fn row(&self, first: &mut bool) -> Row {
+        let mut row = Row::new();
+        if *first && self.marks_first {
+            row.push_structural(Slot::Quiet, &*self.mark);
+            *first = false;
+        } else {
+            row.push_structural(Slot::Quiet, " ".repeat(self.opening));
+        }
+        row.push(Slot::Plain, " ");
+        row
+    }
 }
 
 impl Line {
@@ -271,7 +299,12 @@ impl Record {
         let rows = responsive_rows(lay(self.columns));
         if !rows.is_empty() {
             let weight = rows.len().max(retained.div_ceil(RETAINED_ROW_BYTES)).max(1);
-            self.put(Line::Responsive { rows, weight, lay });
+            self.put(Line::Responsive {
+                rows,
+                prefix: None,
+                weight,
+                lay,
+            });
         }
     }
 
@@ -409,6 +442,22 @@ impl Record {
         *was = now;
     }
 
+    /// Work out every retained line's height again after rows were rewritten.
+    fn remeasure_all(&mut self) {
+        self.rows = 0;
+        self.tall.clear();
+        self.ends.clear();
+        let mut after = self.before;
+        for line in &self.lines {
+            let tall = Self::measure(line, self.columns);
+            self.tall.push_back(tall);
+            self.rows += usize::from(tall);
+            after += usize::from(tall);
+            self.ends.push_back(after);
+        }
+        self.top.into = 0;
+    }
+
     /// How many display rows a line comes to at the current width.
     ///
     /// Saturating rather than wrapping: a line taller than a `u16` is one
@@ -457,14 +506,17 @@ impl Record {
     /// What a session picked up asks for: the transcript it replaces is the
     /// whole of the band, so the lines that were there go rather than being
     /// pushed up out of sight. Nothing else in this process is asked to forget
-    /// with it — the numbering carries on past the lines it dropped, so a
-    /// number some other part of the program is holding still names the line it
-    /// named, and names nothing once that line has gone.
+    /// with it — the numbering carries on past the lines it dropped and one
+    /// reset boundary, so a number some other part of the program is holding
+    /// still names the line it named, and names nothing once that line has gone.
     ///
     /// The opening goes too, and cannot come back: what a resize redraws is a
     /// card whose lines are still held, and these are not.
     pub(crate) fn empties(&mut self) {
-        self.gone += self.lines.len();
+        // Advance past a reset boundary as well as every removed line, so a
+        // stable boundary taken before the reset cannot alias the first line of
+        // the replacement conversation.
+        self.gone += self.lines.len() + 1;
         self.lines.clear();
         self.tall.clear();
         self.weight = 0;
@@ -485,6 +537,73 @@ impl Record {
     /// the record has spilled underneath it.
     pub(crate) fn lines(&self) -> usize {
         self.gone + self.lines.len()
+    }
+
+    /// Hangs the output written since `from` under one structural mark.
+    ///
+    /// The first retained display row receives the mark. Every row after it is
+    /// indented to the same text column, making a multiline answer one block
+    /// rather than a list of unrelated results. If the beginning spilled or the
+    /// command replaced the transcript, nothing is changed: the retained rows no
+    /// longer identify one complete answer block.
+    pub(crate) fn subordinate(&mut self, from: usize, mark: &str) {
+        self.end();
+        if from < self.gone || from >= self.lines() || mark.is_empty() {
+            return;
+        }
+
+        let opening = self
+            .opening
+            .as_ref()
+            .map(|opening| opening.from..opening.from + opening.lines);
+        let from = from - self.gone;
+        let subordinate = Subordinate {
+            mark: mark.into(),
+            opening: crate::width::columns(mark),
+            marks_first: true,
+            keeps_first: false,
+        };
+        let mut first = true;
+
+        for (at, line) in self.lines.iter_mut().enumerate().skip(from) {
+            if opening
+                .as_ref()
+                .is_some_and(|opening| opening.contains(&(self.gone + at)))
+            {
+                continue;
+            }
+            match line {
+                Line::Flowed(row) | Line::Set(row) => {
+                    if first && row.starts_structural() {
+                        first = false;
+                    } else {
+                        row.prepend(subordinate.row(&mut first));
+                    }
+                }
+                Line::Responsive { rows, prefix, .. } => {
+                    if first && rows.first().is_some_and(Row::starts_structural) {
+                        first = false;
+                        let mut retained = subordinate.clone();
+                        retained.marks_first = false;
+                        retained.keeps_first = true;
+                        for row in rows.iter_mut().skip(1) {
+                            row.prepend(subordinate.row(&mut first));
+                        }
+                        *prefix = Some(retained);
+                        continue;
+                    }
+                    let mut retained = subordinate.clone();
+                    retained.marks_first = first && !rows.is_empty();
+                    retained.keeps_first = false;
+                    for row in rows {
+                        row.prepend(subordinate.row(&mut first));
+                    }
+                    *prefix = Some(retained);
+                }
+            }
+        }
+
+        self.remeasure_all();
     }
 
     /// Marks the next line laid down as the start of a prompt.
@@ -918,8 +1037,19 @@ impl Record {
     /// Rebuilds responsive blocks once for the new width.
     fn relay_responsive(&mut self, columns: usize) {
         for line in &mut self.lines {
-            if let Line::Responsive { rows, lay, .. } = line {
+            if let Line::Responsive {
+                rows, prefix, lay, ..
+            } = line
+            {
                 *rows = responsive_rows(lay(columns));
+                if let Some(prefix) = prefix {
+                    let mut first = prefix.marks_first;
+                    for (at, row) in rows.iter_mut().enumerate() {
+                        if !(prefix.keeps_first && at == 0) {
+                            row.prepend(prefix.row(&mut first));
+                        }
+                    }
+                }
             }
         }
     }
@@ -1078,18 +1208,136 @@ mod tests {
     }
 
     #[test]
+    fn a_subordinate_block_gets_one_mark_and_aligned_continuations() {
+        let mut record = Record::new(80);
+        let from = record.lines();
+        record.write(Slot::Plain, "first\nsecond\n");
+
+        record.subordinate(from, "⎿");
+
+        assert_eq!(said(&record, 8), ["⎿ first", "  second"]);
+        let one = || std::iter::once(0..1).collect::<Vec<_>>();
+        assert_eq!(
+            record
+                .view(8)
+                .iter()
+                .map(Row::structural)
+                .collect::<Vec<_>>(),
+            [one(), one()]
+        );
+    }
+
+    #[test]
+    fn a_result_already_starting_with_structural_art_gets_no_second_mark() {
+        let mut record = Record::new(80);
+        let from = record.lines();
+        record.lay([Row::new()
+            .then_structural(Slot::Trouble, "⎿")
+            .then(Slot::Trouble, " failed")]);
+
+        record.subordinate(from, "⎿");
+
+        assert_eq!(said(&record, 8), ["⎿ failed"]);
+    }
+
+    #[test]
+    fn a_premarked_responsive_result_aligns_later_rows_after_resize() {
+        let mut record = Record::new(8);
+        let from = record.lines();
+        record.responsive(
+            8,
+            Box::new(|columns| {
+                vec![
+                    Row::new()
+                        .then_structural(Slot::Trouble, "⎿")
+                        .then(Slot::Trouble, format!(" failed at {columns}")),
+                    Row::new().then(Slot::Trouble, "details"),
+                ]
+            }),
+        );
+
+        record.subordinate(from, "⎿");
+
+        assert_eq!(said(&record, 8), ["⎿ failed at 8", "  details"]);
+        record.resized(12);
+        assert_eq!(said(&record, 8), ["⎿ failed at 12", "  details"]);
+    }
+
+    #[test]
+    fn literal_art_at_the_start_of_a_result_still_gets_the_structural_mark() {
+        let mut record = Record::new(80);
+        let from = record.lines();
+        record.write(Slot::Plain, "⎿ literal\n");
+
+        record.subordinate(from, "⎿");
+
+        assert_eq!(said(&record, 8), ["⎿ ⎿ literal"]);
+    }
+
+    #[test]
+    fn a_subordinate_block_that_starts_after_old_rows_leaves_them_alone() {
+        let mut record = Record::new(80);
+        record.write(Slot::Plain, "before\n");
+        let from = record.lines();
+        record.write(Slot::Plain, "answer\n");
+
+        record.subordinate(from, "⎿");
+
+        assert_eq!(said(&record, 8), ["before", "⎿ answer"]);
+    }
+
+    #[test]
+    fn a_subordinate_block_keeps_one_mark_after_a_responsive_resize() {
+        let mut record = Record::new(8);
+        let from = record.lines();
+        record.responsive(
+            8,
+            Box::new(|columns| vec![Row::plain(format!("at {columns}"))]),
+        );
+        record.write(Slot::Plain, "after\n");
+        record.subordinate(from, "⎿");
+
+        assert_eq!(said(&record, 8), ["⎿ at 8", "  after"]);
+        record.resized(12);
+        assert_eq!(said(&record, 8), ["⎿ at 12", "  after"]);
+    }
+
+    #[test]
+    fn an_empty_command_answer_adds_no_mark() {
+        let mut record = Record::new(80);
+        let from = record.lines();
+
+        record.subordinate(from, "⎿");
+
+        assert!(said(&record, 8).is_empty());
+    }
+
+    #[test]
+    fn a_command_that_emptied_the_record_does_not_mark_the_replacement() {
+        let mut record = Record::new(80);
+        let from = record.lines();
+        record.empties();
+        record.write(Slot::Plain, "new opening\n");
+
+        record.subordinate(from, "⎿");
+
+        assert_eq!(said(&record, 8), ["new opening"]);
+    }
+
+    #[test]
     fn the_numbering_carries_on_past_the_lines_a_record_dropped() {
         let mut record = filled(8, 6);
         let numbered = record.lines();
 
         record.empties();
-        assert_eq!(record.lines(), numbered);
+        assert_eq!(record.lines(), numbered + 1);
 
         // So a number some other part of the program is holding names the line
         // it named, and names nothing once that line has gone — rather than
-        // quietly naming whatever was written in its place.
+        // quietly naming whatever was written in its place. The extra number is
+        // the reset boundary itself.
         record.write(Slot::Plain, "after\n");
-        assert_eq!(record.lines(), numbered + 1);
+        assert_eq!(record.lines(), numbered + 2);
         assert_eq!(said(&record, 8), ["after"]);
     }
 

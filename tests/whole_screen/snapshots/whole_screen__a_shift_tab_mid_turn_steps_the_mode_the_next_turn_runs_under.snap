@@ -15,7 +15,7 @@ expression: window.picture()
 |› start it                                                                      |
 |                                                                                |
 |● Bash(sleep 30)                                                                |
-|  └ (no output yet) (+2 lines · ctrl+o to expand)                               |
+|  ⎿ (no output yet) (+2 lines · ctrl+o to expand)                               |
 |                                                                                |
 |the quick brown fox jumps                                                       |
 |                                                                                |

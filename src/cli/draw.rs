@@ -46,8 +46,8 @@ use std::fmt;
 use std::path::Path;
 
 use crucible_core::{
-    Attachment, Change, Compacted, Compacting, Diff, Event, Question, Sensitivity, StopReason,
-    Summary, ToolCall, ToolId, ToolOutput, Workspace, written,
+    Attachment, Change, Compacted, Compacting, Diff, Event, Modality, Question, Sensitivity,
+    StopReason, Summary, ToolCall, ToolId, ToolOutput, Workspace, written,
 };
 use crucible_tools::Ended;
 use crucible_tui::{
@@ -211,10 +211,16 @@ pub(crate) fn event<T: Terminal>(
         Event::Failed { error } => {
             renderer.settle()?;
             renderer.apart()?;
-            renderer.commit(&format!(
-                "! {}",
-                clipped(error, style.output(columns), style.glyphs())
-            ))
+            let glyphs = style.glyphs();
+            let mark = glyphs.hangs();
+            let room = style
+                .output(columns)
+                .min(columns.saturating_sub(crucible_tui::columns(mark) + 1));
+            let row = Row::new()
+                .then_structural(Slot::Trouble, mark)
+                .then(Slot::Trouble, " ")
+                .then(Slot::Trouble, clipped(error, room, glyphs));
+            renderer.present(&[row])
         }
     }
 }
@@ -350,9 +356,17 @@ pub(crate) fn attached<T: Terminal>(
         return Ok(());
     }
 
-    let named: Vec<(String, &str)> = attachments
+    let mut numbers = Numbers::default();
+    let named: Vec<String> = attachments
         .iter()
-        .map(|one| (names(one, workspace), one.modality.as_str()))
+        .map(|one| {
+            let number = numbers.next(one.modality);
+            format!(
+                "[{} #{number}] {}",
+                label(one.modality),
+                names(one, workspace)
+            )
+        })
         .collect();
 
     rows(renderer, &named, style)
@@ -379,9 +393,9 @@ pub(crate) fn without<T: Terminal>(
         return Ok(());
     }
 
-    let named: Vec<(String, &str)> = attachments
+    let named: Vec<String> = attachments
         .iter()
-        .map(|one| (names(one, workspace), word))
+        .map(|one| format!("{} {word}", names(one, workspace)))
         .collect();
 
     // Settled first because a retry posts this again, and the second reading
@@ -401,21 +415,48 @@ fn names(attachment: &Attachment, workspace: &Workspace) -> String {
     written(path.strip_prefix(workspace.root()).unwrap_or(path))
 }
 
-/// One row per file, each already named and already said what it is.
-///
-/// Borrowed rather than built twice: the rows are composed from words this side
-/// chose, because the crate that draws them is told nothing about a modality
-/// and has no business learning.
+/// Separate per-kind sequence numbers for the files one prompt sent.
+#[derive(Default)]
+struct Numbers {
+    text: usize,
+    image: usize,
+    pdf: usize,
+    video: usize,
+    audio: usize,
+}
+
+impl Numbers {
+    fn next(&mut self, modality: Modality) -> usize {
+        let one = match modality {
+            Modality::Text => &mut self.text,
+            Modality::Image => &mut self.image,
+            Modality::Pdf => &mut self.pdf,
+            Modality::Video => &mut self.video,
+            Modality::Audio => &mut self.audio,
+        };
+        *one += 1;
+        *one
+    }
+}
+
+/// The modality word as it starts an attachment label.
+fn label(modality: Modality) -> &'static str {
+    match modality {
+        Modality::Text => "Text",
+        Modality::Image => "Image",
+        Modality::Pdf => "PDF",
+        Modality::Video => "Video",
+        Modality::Audio => "Audio",
+    }
+}
+
+/// One row per already-composed file display.
 fn rows<T: Terminal>(
     renderer: &mut Renderer<T>,
-    named: &[(String, &str)],
+    named: &[String],
     style: Style,
 ) -> Result<(), TerminalError> {
-    let files: Vec<(&str, &str)> = named
-        .iter()
-        .map(|(name, what)| (name.as_str(), *what))
-        .collect();
-
+    let files: Vec<&str> = named.iter().map(String::as_str).collect();
     let columns = renderer.columns();
     renderer.present(&crucible_tui::Prompt::attached(
         &files,
@@ -748,7 +789,8 @@ pub(crate) fn pascal(name: &str) -> String {
 fn finished(output: &ToolOutput, beyond: usize, window: usize, style: Style) -> Row {
     let glyphs = style.glyphs();
     let mut row = Row::new().then(Slot::Plain, " ".repeat(columns(glyphs.called()) + 1));
-    row.push(Slot::Quiet, format!("{} ", glyphs.hangs()));
+    row.push_structural(Slot::Quiet, glyphs.hangs());
+    row.push(Slot::Quiet, " ");
 
     if output.is_failed() {
         row.push(Slot::Plain, format!("{} ", glyphs.failed()));

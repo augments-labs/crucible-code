@@ -38,7 +38,7 @@ use std::time::{Duration, Instant};
 use crucible_auth::Store;
 use crucible_core::{
     Answer as Chosen, Answered, Attachment, Cancel, Compacting, Event, Mode, Post as _, Question,
-    Remember, Revealed, Room, Sensitivity, Spend, ToolCall, Verdict, Workspace,
+    Remember, Revealed, Room, Sensitivity, SessionId, Spend, ToolCall, Verdict, Workspace,
 };
 use crucible_runner::Runner;
 use crucible_tools::{Background, Ledger, Plan};
@@ -382,6 +382,8 @@ pub(crate) fn converse<T: Terminal>(
     // every frame until the first prompt goes.
     opening.commit(renderer)?;
 
+    attaching::refresh_store(&mut held, &runner);
+
     // What the session already said, before what it will be asked about it: a
     // resumed session is one the model can see and the reader cannot, and the
     // screen it is being read on was opened empty a moment ago.
@@ -509,6 +511,7 @@ pub(crate) fn converse<T: Terminal>(
             planning: &mut held.planning,
             recalling: &mut held.recalling,
             images: &mut held.images,
+            clipboard: &mut held.clipboard,
             left,
             keys,
         };
@@ -543,7 +546,9 @@ pub(crate) fn converse<T: Terminal>(
         // the transcript either — what the model is told about a session is
         // what was said to it, and `/help` was not.
         if local && let Some(wanted) = command::wanted(&prompt) {
-            match command::run(wanted, renderer, &mut runner, &mut held, terms)? {
+            let ran = command::run(wanted, renderer, &mut runner, &mut held, terms)?;
+            attaching::refresh_store(&mut held, &runner);
+            match ran {
                 Ran::Again => continue,
                 Ran::Leave => break,
                 Ran::Room(why) => {
@@ -712,6 +717,7 @@ fn ran<T: Terminal>(
         runner.switch(mode);
     }
 
+    let command = matches!(work, Work::Room(_)).then(|| renderer.lines());
     let took = take(runner, renderer, terms, work, held)?;
     let style = terms.style();
 
@@ -725,6 +731,10 @@ fn ran<T: Terminal>(
         Did::Reported => {}
         Did::Nothing => draw::unmade(renderer)?,
         Did::Stopped => draw::stopped(renderer)?,
+    }
+
+    if let Some(from) = command {
+        renderer.subordinate(from, style.glyphs())?;
     }
 
     Ok((
@@ -920,6 +930,13 @@ impl Turn<'_, '_> {
                 typing::During {
                     background: &self.terms.leaving,
                     editor: &mut self.held.editor,
+                    images: &mut self.held.images,
+                    clipboard: &mut self.held.clipboard,
+                    attachment_store: self
+                        .held
+                        .attachment_store
+                        .as_ref()
+                        .map(|(path, id)| (path.as_path(), id)),
                     queued: &mut self.held.queued,
                     turning: self.turning,
                     planning: &mut self.held.planning,
@@ -1106,6 +1123,7 @@ fn take<T: Terminal>(
     // panel naming what is coming is right on the frame it first appears in.
     turning.queueing(held.queued.waiting_all(), renderer.columns(), terms.style());
 
+    attaching::refresh_store(held, &runner);
     let working = sent(runner, work, asking, relay, running, terms.steer.clone())?;
 
     // The first thing drawn, and held like everything drawn after it: the runner
@@ -1476,10 +1494,21 @@ struct Held<'a> {
     /// question they are about to ask again.
     recalling: Recalling,
     /// The images pasted at the prompt, in the order they were pasted. The
-    /// paste puts `[image N]` in the line and the path of the Nth here, and a
+    /// paste puts `[Image #N]` in the line and the path of the Nth here, and a
     /// prompt saying the marker sends the image. For the session rather than
     /// for a prompt, so a later prompt can still say an earlier number.
     images: Vec<Box<str>>,
+    /// The desktop clipboard connection used by every image paste.
+    ///
+    /// Opened lazily, then kept so repeated Ctrl+V presses reuse the platform
+    /// clipboard connection. An opening failure leaves `None` and is retried.
+    clipboard: Option<arboard::Clipboard>,
+    /// Durable identity copied before a turn lends the runner to its worker.
+    ///
+    /// Clipboard image import needs these while the box remains live under that
+    /// turn. `None` in a session configured not to record, where there is nowhere
+    /// to keep an imported image safely.
+    attachment_store: Option<(PathBuf, SessionId)>,
     /// Whether the log's trouble has been said. Once is all it is worth, for
     /// the reason [`troubled`] gives.
     told: bool,
@@ -1517,6 +1546,8 @@ impl<'a> Held<'a> {
             // every other holder of a `Held` is a test of something else.
             recalling: Recalling::default(),
             images: Vec::new(),
+            clipboard: None,
+            attachment_store: None,
             told: false,
             answers,
             opening,

@@ -116,12 +116,13 @@ impl Provider for Moonshot {
     }
 
     fn spells(&self) -> Modalities {
-        // `chat/completions` spells a picture as an `image_url` part carrying
-        // a `data:` URL, which is what this module writes. It is the only
-        // attachment this wire has a shape for, so it is the only one offered.
+        // `chat/completions` carries pictures and videos as nested URL parts,
+        // each holding a base64 `data:` URL. They are the two attachment shapes
+        // this module writes, so they are the two it offers.
         Modalities::empty()
             .insert(Modality::Text)
             .insert(Modality::Image)
+            .insert(Modality::Video)
     }
 
     fn stream(

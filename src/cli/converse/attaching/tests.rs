@@ -53,7 +53,7 @@ impl Provider for Spelling {
     }
 }
 
-/// Text and pictures, which is what all three protocols spell today.
+/// Text and pictures, the common baseline used by tests not about video.
 fn spelling(named: &'static str) -> Spelling {
     Spelling {
         named,
@@ -61,6 +61,26 @@ fn spelling(named: &'static str) -> Spelling {
             .insert(Modality::Text)
             .insert(Modality::Image),
     }
+}
+
+/// A Moonshot-shaped provider that can carry named MP4 videos.
+fn videos() -> Spelling {
+    Spelling {
+        named: "moonshot",
+        spells: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Video),
+    }
+}
+
+/// A minimal MP4 `ftyp` box accepted by the core attachment detector.
+fn mp4() -> Vec<u8> {
+    let mut bytes = Vec::from(&20_u32.to_be_bytes()[..]);
+    bytes.extend_from_slice(b"ftypisom");
+    bytes.extend_from_slice(&0_u32.to_be_bytes());
+    bytes.extend_from_slice(b"mp42");
+    bytes
 }
 
 /// A workspace holding one file, and the prompt that names it.
@@ -153,6 +173,87 @@ fn a_picture_named_at_the_prompt_is_attached() {
         one.path.ends_with("holiday.png"),
         "the path is resolved against the workspace, not left as typed: {}",
         one.path,
+    );
+}
+
+#[test]
+fn an_mp4_is_attached_only_when_provider_and_model_both_accept_video() {
+    let sample = Sample::new("attaching-a-video");
+    let workspace = holding(&sample, "demo.MP4", &mp4());
+
+    let Attaching {
+        attachments,
+        refusals,
+    } = attaching(
+        &workspace,
+        &videos(),
+        "k3",
+        Sent {
+            prompt: "describe demo.MP4",
+            images: &[],
+        },
+        None,
+    );
+
+    assert!(refusals.is_empty(), "nothing was refused: {refusals:?}");
+    let one = attachments.first().expect("the MP4 is attached");
+    assert_eq!(one.modality, Modality::Video);
+    assert_eq!(one.media_type.as_ref(), "video/mp4");
+}
+
+#[test]
+fn an_mp4_is_refused_when_the_provider_has_no_video_shape() {
+    let sample = Sample::new("attaching-provider-refuses-video");
+    let workspace = holding(&sample, "demo.mp4", &mp4());
+
+    let Attaching {
+        attachments,
+        refusals,
+    } = attaching(
+        &workspace,
+        &spelling("moonshot"),
+        "k3",
+        Sent {
+            prompt: "describe demo.mp4",
+            images: &[],
+        },
+        None,
+    );
+
+    assert!(attachments.is_empty());
+    assert_eq!(
+        refusals,
+        [
+            "demo.mp4 is not attached: crucible's moonshot requests have no shape for a video. Nothing you type changes that — a later release adds the shape."
+        ]
+    );
+}
+
+#[test]
+fn an_mp4_name_with_non_mp4_bytes_is_refused() {
+    let sample = Sample::new("attaching-a-video-liar");
+    let workspace = holding(&sample, "demo.mp4", PNG);
+
+    let Attaching {
+        attachments,
+        refusals,
+    } = attaching(
+        &workspace,
+        &videos(),
+        "k3",
+        Sent {
+            prompt: "describe demo.mp4",
+            images: &[],
+        },
+        None,
+    );
+
+    assert!(attachments.is_empty());
+    assert_eq!(
+        refusals,
+        [
+            "demo.mp4 is not attached: it is named .mp4 and its bytes are not a mp4. Rename it to what it is."
+        ]
     );
 }
 
@@ -578,7 +679,7 @@ fn a_file_sent_with_a_prompt_is_named_under_it_whichever_way_it_reached_the_scre
 
     // The file is named the way every other path this program prints is: by
     // what it is called under the root, not by where the root happens to be.
-    let named = "holiday.png \u{2014} image";
+    let named = "[Image #1] holiday.png";
     let live = live.terminal().written().to_string();
     let replayed = replay.terminal().written().to_string();
 
@@ -622,7 +723,7 @@ fn a_marker_names_the_image_pasted_before_it() {
         &spelling("anthropic"),
         "claude-opus-5",
         Sent {
-            prompt: "what is in [image 1]",
+            prompt: "what is in [Image #1]",
             images: &pasted,
         },
         Some(&imported),
@@ -651,7 +752,7 @@ fn a_marker_with_nothing_pasted_behind_it_is_a_word() {
         &spelling("anthropic"),
         "claude-opus-5",
         Sent {
-            prompt: "the plan in [image 3] step one",
+            prompt: "the plan in [Image #3] step one",
             images: &[],
         },
         None,
@@ -682,7 +783,7 @@ fn a_marker_said_twice_attaches_the_image_once() {
         &spelling("anthropic"),
         "claude-opus-5",
         Sent {
-            prompt: "compare [image 1] with [image 1]",
+            prompt: "compare [Image #1] with [Image #1]",
             images: &pasted,
         },
         Some(&imported),
@@ -695,11 +796,11 @@ fn a_marker_said_twice_attaches_the_image_once() {
 #[test]
 fn every_marker_in_a_prompt_is_read_in_order() {
     assert_eq!(
-        marked("start [image 1] middle [image 12] end [image 2]"),
+        marked("start [Image #1] middle [Image #12] end [Image #2]"),
         [1, 12, 2]
     );
     assert_eq!(
-        marked("[image] [image ] [image x] [image 1x] image 2]"),
+        marked("[Image] [Image #] [Image #x] [Image #1x] [image #2] Image #3]"),
         [] as [usize; 0],
         "a marker is the exact shape or it is words",
     );

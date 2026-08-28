@@ -18,6 +18,23 @@ use crate::cli::fake::Script;
 /// The mode is what this file is after: it is the one thing the box reads from
 /// the session rather than from its own state, and the row under the box is
 /// what proves it read it rather than a copy.
+#[test]
+fn sequential_image_markers_have_no_application_count_limit() {
+    let mut editor = Editor::new().multiline();
+    let mut images = Vec::new();
+
+    for at in 1..=10_000 {
+        assert_eq!(
+            mark_image(&mut editor, &mut images, format!("/tmp/image-{at}.png")),
+            Typed::Changed,
+            "image {at} was refused"
+        );
+    }
+
+    assert_eq!(images.len(), 10_000);
+    assert!(editor.text().ends_with("[Image #10000]"));
+}
+
 fn engine(mode: Mode) -> Runner {
     Runner::new(
         Box::new(Script::new(vec![])),
@@ -228,6 +245,7 @@ fn a_run_with_nothing_to_type_into_says_so_rather_than_reading_keys() {
             planning: &mut nothing(),
             recalling: &mut unwalked(),
             images: &mut Vec::new(),
+            clipboard: &mut None,
             left: &crucible_tools::Background::new(),
             keys: false,
         },
