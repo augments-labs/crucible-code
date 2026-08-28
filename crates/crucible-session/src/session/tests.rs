@@ -500,6 +500,63 @@ fn continuing_a_session_appends_to_the_same_log() {
 }
 
 #[test]
+fn a_log_from_the_format_that_could_not_say_what_a_call_changed_still_replays_whole() {
+    // Frozen bytes: a whole session as the build before this one left it on
+    // somebody's disk, spelled out rather than produced, because the build that
+    // wrote it is gone and only its output has to keep meaning what it meant.
+    //
+    // Format 9 added one key to a line of tool results and renamed nothing. A
+    // result written without that key is a call that changed no file — which is
+    // the only thing a build with nowhere to say otherwise could have meant —
+    // so every line here reads here as it read there, files and all.
+    let sample = Sample::new("session-format-eight");
+    let id = "0000000000001-000001";
+
+    sample.plant(
+        id,
+        &[
+            sample.header(8, id),
+            r#"{"user":"what is in this"}"#.to_owned(),
+            r#"{"agent":"on it","calls":[{"args":"{}","id":"call-1","name":"read"}],"stop":"tools"}"#
+                .to_owned(),
+            concat!(
+                r#"{"results":[{"attached":[{"hash":"HASH","#,
+                r#""media_type":"image/png","modality":"image","path":"pictures/holiday.png"}],"#,
+                r#""failed":false,"id":"call-1","text":"one match"}]}"#,
+            )
+            .replace("HASH", &"ab".repeat(32)),
+        ],
+    );
+
+    let (_session, transcript) =
+        Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
+
+    let [asked, agent, results] = transcript.messages() else {
+        panic!("three lines went in")
+    };
+    assert_eq!(asked, &said("what is in this"));
+    assert_eq!(agent, &calling("call-1", "read", "{}"));
+
+    let Message::ToolResults(answers) = results else {
+        panic!("the third line is a line of results")
+    };
+    let [only] = answers.as_slice() else {
+        panic!("one result went in")
+    };
+    assert_eq!(only.output.text(), "one match");
+    assert_eq!(
+        only.output.changed(),
+        None,
+        "a build with nowhere to say what it changed said it changed something"
+    );
+    let [file] = only.output.attachments() else {
+        panic!("the file the result showed did not survive the older log")
+    };
+    assert_eq!(file.path.as_ref(), "pictures/holiday.png");
+    assert_eq!(file.hash, [0xab; 32]);
+}
+
+#[test]
 fn an_agent_line_with_a_stop_word_this_build_lacks_is_not_read_as_a_finish() {
     // A word from a build that spelled things differently cannot reach here —
     // the format in the header refuses that log outright. What can is a line

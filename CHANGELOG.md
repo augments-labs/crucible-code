@@ -8,6 +8,13 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Changed
+
+- **Session logs are written at format 9.** A tool result now records how many
+  lines the call added and removed, so a resumed session can draw the change
+  header the live screen drew. Logs from format 8 and earlier still replay; a log
+  written now is refused by an older build rather than half-understood.
+
 ### Fixed
 
 - **Markdown answers no longer gain blank rows as they stream.** A bullet list
