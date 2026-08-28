@@ -1436,6 +1436,20 @@ fn attached(under: &Path, name: &str, modality: Modality, media_type: &str) -> A
 }
 
 #[test]
+fn a_forward_slashed_persisted_path_is_named_under_its_workspace() {
+    let workspace = here();
+    let root = written(workspace.root());
+    let one = Attachment {
+        path: format!("{root}/screenshots/holiday.png").into(),
+        modality: Modality::Image,
+        media_type: "image/png".into(),
+        hash: [0; 32],
+    };
+
+    assert_eq!(super::names(&one, &workspace), "screenshots/holiday.png");
+}
+
+#[test]
 fn attachment_labels_count_each_kind_separately_and_put_the_label_first() {
     let workspace = here();
     let root = workspace.root();

@@ -412,7 +412,19 @@ pub(crate) fn without<T: Terminal>(
 /// one.
 fn names(attachment: &Attachment, workspace: &Workspace) -> String {
     let path = Path::new(&*attachment.path);
-    written(path.strip_prefix(workspace.root()).unwrap_or(path))
+    if let Ok(relative) = path.strip_prefix(workspace.root()) {
+        return written(relative);
+    }
+
+    // `Attachment::path` is persisted with forward slashes. Compare that
+    // normalized spelling on Windows too, where a `Path` built from it does not
+    // necessarily share native components with the canonical workspace root.
+    let path = written(path);
+    let root = written(workspace.root());
+    path.strip_prefix(&root)
+        .and_then(|relative| relative.strip_prefix('/'))
+        .unwrap_or(&path)
+        .to_owned()
 }
 
 /// Separate per-kind sequence numbers for the files one prompt sent.
