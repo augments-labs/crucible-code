@@ -6,7 +6,7 @@ use crucible_core::{
     Remember, Request, Sensitivity, Steer, StopReason, ToolCall, Transcript, Verdict, Workspace,
     written,
 };
-use crucible_runner::{Model, Runner, Session, Tools};
+use crucible_runner::{Model, Pruned, Runner, Session, Tools};
 
 use crucible_tui::{Glyphs, Recording, Renderer};
 
@@ -16,7 +16,7 @@ use crate::cli::kept::Kept;
 use crate::cli::sample::Sample;
 use crate::cli::style::Style;
 
-use super::super::replaying::replayed;
+use super::super::replaying::{Replay, replayed};
 use super::{Attaching, Named, Sent, attaching, beside, decide, marked, names, pictured};
 
 /// The eight bytes every PNG starts with.
@@ -674,8 +674,17 @@ fn a_file_sent_with_a_prompt_is_named_under_it_whichever_way_it_reached_the_scre
     let back = sending().resuming(transcript);
     let mut replay = Renderer::new(Recording::new(120, 24));
     replay.wears(style.palette());
-    replayed(&mut replay, &back, &workspace, &mut Kept::default(), style)
-        .expect("a recording cannot fail");
+    replayed(
+        &mut replay,
+        &Replay {
+            runner: &back,
+            workspace: &workspace,
+            pruned: &Pruned::default(),
+            style,
+        },
+        &mut Kept::default(),
+    )
+    .expect("a recording cannot fail");
 
     // The file is named the way every other path this program prints is: by
     // what it is called under the root, not by where the root happens to be.

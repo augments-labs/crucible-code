@@ -42,6 +42,7 @@ pub use glimpse::{Glimpse, glimpse};
 use log::{Trouble, make, open, shorten};
 pub use prompts::{PROMPTS, prompts, remember};
 pub use recent::{Recorded, recent};
+pub use replay::Pruned;
 use replay::{Replayed, belongs, newest, replay};
 
 /// How many lines may be waiting to be written.
@@ -191,6 +192,10 @@ pub struct Session {
     /// transcript, not its lines. Written to the index once, from [`Drop`],
     /// which is also what repairs the zero a legacy session was indexed with.
     messages: AtomicUsize,
+    /// What the results a pruning cleared said, for whatever draws the session
+    /// back onto a screen. Empty in a session that was started rather than
+    /// continued, and in one whose log never pruned anything.
+    pruned: Pruned,
     trouble: Trouble,
 }
 
@@ -368,6 +373,7 @@ impl Session {
             transcript,
             settled_at,
             calibration,
+            pruned,
         } = replay(path)?;
 
         // Before a single byte is appended, and before the handle that will
@@ -378,6 +384,7 @@ impl Session {
         let mut session = Self::writing(path.to_owned(), open(path)?);
         session.claim = held;
         session.calibration = calibration;
+        session.pruned = pruned;
         // What a continue replays is what the session now holds: a stale or
         // legacy index count is repaired from here when the session ends.
         session.messages = AtomicUsize::new(transcript.len());
@@ -396,8 +403,23 @@ impl Session {
             claim: None,
             calibration: None,
             messages: AtomicUsize::new(0),
+            pruned: Pruned::default(),
             trouble: Trouble::default(),
         }
+    }
+
+    /// What the results a pruning cleared said, before it cleared them.
+    ///
+    /// Taken rather than borrowed, and taken once. A pruning exists to give
+    /// back the bytes a long conversation is carrying, and this is those exact
+    /// bytes: leaving them on the session would hold, for as long as the run
+    /// lasts, what the pruning was run to let go of. The screen wants them at
+    /// the replay and never again, so it takes them and drops them there.
+    ///
+    /// Empty in a session that was started rather than continued, and in one
+    /// whose log never cleared anything.
+    pub fn take_pruned(&mut self) -> Pruned {
+        std::mem::take(&mut self.pruned)
     }
 
     /// Which file this session is being written to.
@@ -544,6 +566,7 @@ impl Session {
             claim: None,
             calibration: None,
             messages: AtomicUsize::new(0),
+            pruned: Pruned::default(),
             trouble,
         }
     }

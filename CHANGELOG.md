@@ -17,6 +17,13 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **A resumed session says again what a long conversation cleared.** Making room
+  replaces the oldest tool results with a placeholder, because the model stops
+  being sent them — but the reader watched those results come back, so a session
+  picked up again showed a placeholder where they remembered an answer. The
+  words are put back on the row now, beside the transcript rather than in it:
+  nothing that builds a request can reach them.
+
 - **A resumed session says again what a call changed.** A file-changing call
   came back on the screen as the tool's own sentence about it, so a session
   picked up again read as though nothing had moved. The counts header is drawn

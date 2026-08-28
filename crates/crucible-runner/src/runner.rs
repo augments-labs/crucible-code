@@ -22,7 +22,7 @@ use crucible_core::{
     Steer, StopReason, Summary, ToolCall, ToolSchema, Transcript, TurnError, TurnId,
 };
 
-use crucible_session::Session;
+use crucible_session::{Pruned, Session};
 
 use crate::tools::Tools;
 
@@ -401,6 +401,16 @@ impl Runner {
     #[must_use]
     pub fn session(&self) -> &Session {
         &self.session
+    }
+
+    /// What the results a pruning cleared said, before it cleared them.
+    ///
+    /// Straight through to the session, and taken from it rather than borrowed:
+    /// [`Session::take_pruned`] says why. Here rather than reached through
+    /// [`Runner::session`] because that hands back a shared borrow, and this is
+    /// the one thing about a session that leaves it.
+    pub fn take_pruned(&mut self) -> Pruned {
+        self.session.take_pruned()
     }
 
     /// The permission mode this session is in, which the prompt shows at all

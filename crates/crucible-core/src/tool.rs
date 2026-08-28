@@ -515,6 +515,25 @@ impl ToolOutput {
         self
     }
 
+    /// The same result, saying again what it said before something replaced
+    /// its text.
+    ///
+    /// What replaces it is a pruning: a long session gives back the room its
+    /// oldest results are taking by putting a sentence in place of what they
+    /// held, so the model stops being sent them. The reader never stopped being
+    /// shown them — the rows went down when the calls answered, and are still
+    /// what the session looks like — so a screen drawing that session again puts
+    /// the words back on the row and leaves the transcript as it is.
+    ///
+    /// Only the text. Whether the call failed, and what it changed, are what
+    /// they always were: a pruning takes the words and touches nothing else, so
+    /// nothing else is worth putting back.
+    #[must_use]
+    pub fn saying(mut self, text: impl Into<Box<str>>) -> Self {
+        self.text = text.into();
+        self
+    }
+
     /// The files this result asks the model to look at.
     #[must_use]
     pub fn attachments(&self) -> &[Attachment] {
