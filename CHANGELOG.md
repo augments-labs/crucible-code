@@ -8,6 +8,8 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-08-28
+
 ### Added
 
 - **MP4 videos can be attached to Moonshot models that accept video.** Named
@@ -2966,7 +2968,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.25.0...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.26.0...HEAD
+[0.26.0]: https://github.com/augments-labs/crucible-code/compare/v0.25.2...v0.26.0
 [0.25.2]: https://github.com/augments-labs/crucible-code/compare/v0.25.1...v0.25.2
 [0.25.1]: https://github.com/augments-labs/crucible-code/compare/v0.25.0...v0.25.1
 [0.25.0]: https://github.com/augments-labs/crucible-code/compare/v0.24.1...v0.25.0
