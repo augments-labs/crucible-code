@@ -637,7 +637,7 @@ impl Runner {
         // that a turn cannot acquire a second way to finish without one. The
         // reason is what tells a truncated answer from a complete one, and it
         // has to reach the thread that draws — a return value never does.
-        let stop = self.exchange(ask, &run)?.stop;
+        let stop = self.exchange(ask, &run)?.stop();
         events.post(Event::TurnFinished {
             turn: self.turn,
             stop,
@@ -815,7 +815,7 @@ impl Runner {
 
                 // A pause the user sat through and then had to interrupt would
                 // be this program keeping them waiting rather than the provider.
-                if Self::pausing(pause, listening.run.cancel) {
+                if Self::pausing(pause, listening.run.cancel()) {
                     pause = pause.saturating_mul(2);
                     continue;
                 }
@@ -893,7 +893,7 @@ impl Runner {
 
         let mut stream = self.provider.stream(
             self.request(listening.advertised, &attached),
-            listening.run.cancel,
+            listening.run.cancel(),
         )?;
 
         Self::hear(

@@ -37,18 +37,25 @@ pub struct RunContext<'a> {
     to: &'a dyn Post,
 
     /// Whether somebody has asked this run to stop.
-    pub cancel: &'a Cancel,
+    cancel: &'a Cancel,
 
     /// Lines the reader typed while the run was working.
-    pub steer: &'a Steer,
+    steer: &'a Steer,
 
     /// And what finished behind it while it worked.
-    pub aside: &'a Aside,
+    aside: &'a Aside,
 }
 
 impl<'a> RunContext<'a> {
     /// A run nothing started: its own root, under the policy it was given.
-    pub fn new(
+    ///
+    /// Crate-visible, because a root is what a descendant is not: everything
+    /// outside reaches a context through the runner that started it, and a
+    /// nested run is spelled [`RunContext::child`] or it is not spelled at
+    /// all. Public, this is the two-line way to give a descendant a fresh
+    /// ancestry and a policy nobody narrowed.
+    #[must_use]
+    pub(crate) fn new(
         policy: RunPolicy,
         events: &'a dyn Post,
         cancel: &'a Cancel,
@@ -74,9 +81,11 @@ impl<'a> RunContext<'a> {
     /// [`RunPolicy::narrowed`].
     ///
     /// The services are handed straight down: a descendant stops when its
-    /// parent is stopped, and its progress reaches the same screen. Nothing
-    /// calls this yet — it is here because the ancestry and the narrowing are
-    /// the two things that have to be right before anything does.
+    /// parent is stopped, and its progress reaches the same screen. They are
+    /// private fields with read-only accessors, so that is a property of the
+    /// type rather than of what its callers remember to do. Nothing calls this
+    /// yet — it is here because the ancestry and the narrowing are the two
+    /// things that have to be right before anything does.
     #[must_use]
     pub fn child(&self, wanted: RunPolicy) -> Self {
         Self {
@@ -120,6 +129,29 @@ impl<'a> RunContext<'a> {
     pub const fn policy(&self) -> &RunPolicy {
         &self.policy
     }
+
+    /// Whether somebody has asked this run to stop.
+    ///
+    /// Read-only for the same reason the policy is: a descendant that could
+    /// be pointed at a different flag would go on working after the run that
+    /// started it was stopped, which is the one thing [`RunContext::child`]
+    /// hands down specifically so it cannot happen.
+    #[must_use]
+    pub const fn cancel(&self) -> &'a Cancel {
+        self.cancel
+    }
+
+    /// Lines the reader typed while this run was working.
+    #[must_use]
+    pub const fn steer(&self) -> &'a Steer {
+        self.steer
+    }
+
+    /// What finished behind this run while it worked.
+    #[must_use]
+    pub const fn aside(&self) -> &'a Aside {
+        self.aside
+    }
 }
 
 impl fmt::Debug for RunContext<'_> {
@@ -145,7 +177,9 @@ mod tests {
 
     use crucible_core::EventEnvelope;
 
-    use crate::policy::Bounds;
+    use std::time::Duration;
+
+    use crate::policy::{Bounds, Compaction, Retry};
 
     /// Somewhere for a context's services to point, since these tests are
     /// about what the context says rather than what it carries.
@@ -207,7 +241,15 @@ mod tests {
                 tool_output_bytes: 512,
                 spend: Some(50),
             },
-            ..RunPolicy::default()
+            retry: Retry {
+                attempts: 1,
+                first_pause: Duration::from_millis(250),
+            },
+            compaction: Compaction {
+                keep_tokens: 1_000,
+                recap_tokens: 256,
+                ..Compaction::default()
+            },
         });
 
         let child = run.child(RunPolicy {
@@ -216,12 +258,27 @@ mod tests {
                 tool_output_bytes: usize::MAX,
                 spend: None,
             },
-            ..RunPolicy::default()
+            retry: Retry {
+                attempts: u8::MAX,
+                first_pause: Duration::from_secs(3600),
+            },
+            compaction: Compaction {
+                keep_tokens: u64::MAX,
+                recap_tokens: u32::MAX,
+                ..Compaction::default()
+            },
         });
 
+        // Every budget, not only the three in `Bounds`: the name says what a
+        // descendant may not do, so the body has to look at everything it
+        // could have done it with.
         assert_eq!(child.policy().bounds.response_bytes, 1024);
         assert_eq!(child.policy().bounds.tool_output_bytes, 512);
         assert_eq!(child.policy().bounds.spend, Some(50));
+        assert_eq!(child.policy().retry.attempts, 1);
+        assert_eq!(child.policy().retry.first_pause, Duration::from_millis(250));
+        assert_eq!(child.policy().compaction.keep_tokens, 1_000);
+        assert_eq!(child.policy().compaction.recap_tokens, 256);
     }
 
     #[test]
@@ -233,7 +290,7 @@ mod tests {
         nowhere.cancel.request();
 
         assert!(
-            child.cancel.requested(),
+            child.cancel().requested(),
             "a descendant did not hear the stop its parent heard"
         );
     }

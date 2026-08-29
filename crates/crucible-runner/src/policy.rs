@@ -9,10 +9,19 @@
 //!
 //! A run started by another run inherits this policy and may **narrow** it.
 //! Never widen it: a descendant cannot raise a ceiling its parent is under,
-//! cannot lift a spend bound its parent set, and cannot grant itself authority
-//! the parent does not hold. [`RunPolicy::narrowed`] is that rule written down
-//! — it takes what a descendant asks for and returns what it actually gets, so
-//! a caller cannot get the answer wrong by writing the comparison itself.
+//! cannot lift a spend bound its parent set, and cannot lengthen the wait its
+//! parent is willing to sit through. [`RunPolicy::narrowed`] is that rule
+//! written down — it takes what a descendant asks for and returns what it
+//! actually gets, so a caller cannot get the answer wrong by writing the
+//! comparison itself.
+//!
+//! The rule is about budgets, which is everything here except the three window
+//! answers [`RunPolicy::narrowed`] names. Permission is not one of them and is
+//! not modelled here at all: what a run may do lives behind [`Ask`] and the
+//! runner's own permission state, so nothing in this file either grants or
+//! withholds authority.
+//!
+//! [`Ask`]: crucible_core::Ask
 //!
 //! There is one run today and nothing calls this with a second policy. It is
 //! defined now because the alternative is defining it later, once descendants
@@ -110,12 +119,23 @@ pub struct RunPolicy {
 impl RunPolicy {
     /// What a run asking for `wanted` under this policy actually gets.
     ///
-    /// Every limit is the tighter of the two, so a descendant asking for more
+    /// Every budget is the tighter of the two, so a descendant asking for more
     /// than its parent holds is given the parent's figure rather than refused:
     /// widening is not an error a caller has to handle, it is a request that
-    /// has no effect. What the window does — whether to compact, how much to
-    /// keep — is carried down unchanged, because those are not budgets and
-    /// there is no tighter or looser answer to take.
+    /// has no effect. Six figures are budgets that way — the two byte
+    /// ceilings, the spend, the retry count and pause, and the two token
+    /// figures inside the compaction answer.
+    ///
+    /// Three are not, and are the descendant's whichever way they differ:
+    /// whether to compact at all, how much room to leave, and how large a
+    /// session must be before picking it up asks about it. None of those is a
+    /// quantity a parent can be said to hold, so there is no tighter answer to
+    /// take — a descendant that declines to compact is not spending anything
+    /// its parent did not allow.
+    ///
+    /// Written out field by field rather than by carrying a struct across
+    /// whole, so a figure added to [`Bounds`], [`Retry`] or [`Compaction`]
+    /// later fails to compile here until somebody says which of the two it is.
     #[must_use]
     pub fn narrowed(&self, wanted: Self) -> Self {
         Self {
@@ -127,10 +147,22 @@ impl RunPolicy {
                     .min(wanted.bounds.tool_output_bytes),
                 spend: tighter(self.bounds.spend, wanted.bounds.spend),
             },
-            compaction: wanted.compaction,
+            compaction: Compaction {
+                automatic: wanted.compaction.automatic,
+                reserve: wanted.compaction.reserve,
+                keep_tokens: self
+                    .compaction
+                    .keep_tokens
+                    .min(wanted.compaction.keep_tokens),
+                recap_tokens: self
+                    .compaction
+                    .recap_tokens
+                    .min(wanted.compaction.recap_tokens),
+                ask_on_resume: wanted.compaction.ask_on_resume,
+            },
             retry: Retry {
                 attempts: self.retry.attempts.min(wanted.retry.attempts),
-                first_pause: wanted.retry.first_pause,
+                first_pause: self.retry.first_pause.min(wanted.retry.first_pause),
             },
         }
     }
@@ -250,7 +282,11 @@ mod tests {
                 attempts: 1,
                 first_pause: Duration::from_millis(250),
             },
-            compaction: Compaction::default(),
+            compaction: Compaction {
+                keep_tokens: 1_000,
+                recap_tokens: 256,
+                ..Compaction::default()
+            },
         };
         let asked = RunPolicy {
             bounds: Bounds {
@@ -260,9 +296,13 @@ mod tests {
             },
             retry: Retry {
                 attempts: u8::MAX,
-                first_pause: Duration::from_millis(250),
+                first_pause: Duration::from_secs(3600),
             },
-            compaction: Compaction::default(),
+            compaction: Compaction {
+                keep_tokens: u64::MAX,
+                recap_tokens: u32::MAX,
+                ..Compaction::default()
+            },
         };
 
         let held = parent.narrowed(asked);
@@ -271,6 +311,51 @@ mod tests {
         assert_eq!(held.bounds.tool_output_bytes, 512);
         assert_eq!(held.bounds.spend, Some(50));
         assert_eq!(held.retry.attempts, 1);
+        assert_eq!(
+            held.retry.first_pause,
+            Duration::from_millis(250),
+            "a descendant lengthened the wait its parent set"
+        );
+        assert_eq!(
+            held.compaction.keep_tokens, 1_000,
+            "a descendant raised the retained-token bound its parent set"
+        );
+        assert_eq!(
+            held.compaction.recap_tokens, 256,
+            "a descendant raised an output-token ceiling its parent set"
+        );
+    }
+
+    #[test]
+    fn a_descendant_keeps_the_window_answer_it_asked_for() {
+        // The three that are genuinely not budgets: whether to compact at all,
+        // how much room to leave, and how large a session has to be before
+        // picking it up asks. There is no tighter or looser answer to take, so
+        // these are the descendant's whichever way they differ.
+        let parent = RunPolicy {
+            compaction: Compaction {
+                automatic: true,
+                reserve: Some(1_000),
+                ask_on_resume: Some(10),
+                ..Compaction::default()
+            },
+            ..RunPolicy::default()
+        };
+        let asked = RunPolicy {
+            compaction: Compaction {
+                automatic: false,
+                reserve: Some(9_000),
+                ask_on_resume: None,
+                ..Compaction::default()
+            },
+            ..RunPolicy::default()
+        };
+
+        let held = parent.narrowed(asked);
+
+        assert!(!held.compaction.automatic);
+        assert_eq!(held.compaction.reserve, Some(9_000));
+        assert_eq!(held.compaction.ask_on_resume, None);
     }
 
     #[test]

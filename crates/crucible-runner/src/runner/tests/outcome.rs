@@ -42,10 +42,10 @@ fn a_finished_run_reports_the_run_it_was_given_and_what_it_spent() {
         .exchange(&mut scripted.says, &run)
         .expect("a finished run");
 
-    assert_eq!(result.run, run.run(), "the result named a different run");
-    assert_eq!(result.status, RunStatus::Completed);
-    assert_eq!(result.stop, StopReason::Yielded);
-    assert_eq!(result.spent.tokens(), 120);
+    assert_eq!(result.run(), run.run(), "the result named a different run");
+    assert_eq!(result.status(), RunStatus::Completed);
+    assert_eq!(result.stop(), StopReason::Yielded);
+    assert_eq!(result.spent().tokens(), 120);
 }
 
 #[test]
@@ -62,6 +62,6 @@ fn a_stopped_run_says_a_person_ended_it_rather_than_that_it_finished() {
         .exchange(&mut scripted.says, &run)
         .expect("a stopped run is not a failure");
 
-    assert_eq!(result.status, RunStatus::Cancelled);
-    assert_eq!(result.stop, StopReason::Cancelled);
+    assert_eq!(result.status(), RunStatus::Cancelled);
+    assert_eq!(result.stop(), StopReason::Cancelled);
 }

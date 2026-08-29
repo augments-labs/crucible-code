@@ -54,9 +54,9 @@ impl<'a> AgentLoop<'a> {
     pub(super) fn drive(&mut self, counting: &mut Counting) -> Result<StopReason, TurnError> {
         let run = self.run;
         let events = run.reporting();
-        let cancel = run.cancel;
-        let steer = run.steer;
-        let aside = run.aside;
+        let cancel = run.cancel();
+        let steer = run.steer();
+        let aside = run.aside();
         let tool_output_maximum = run.policy().bounds.tool_output_bytes;
 
         let mut bounds = TurnBounds::default();
