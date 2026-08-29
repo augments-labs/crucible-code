@@ -59,7 +59,7 @@ pub(crate) struct Work<'a> {
     /// How to put a call to the user.
     pub(crate) ask: &'a mut dyn Ask,
     /// Where progress is reported.
-    pub(crate) events: &'a Reporter<'a>,
+    pub(crate) events: Reporter<'a>,
     /// Whether the user has asked everything to stop.
     pub(crate) cancel: &'a Cancel,
 }
@@ -221,7 +221,7 @@ struct Watching<'a> {
     /// The call whose output this is.
     call: ToolId,
     /// Where it goes.
-    events: &'a Reporter<'a>,
+    events: Reporter<'a>,
 }
 
 impl Watch for Watching<'_> {
@@ -353,7 +353,7 @@ mod tests {
                 tools: &self.tools,
                 permission: &mut self.permission,
                 ask: &mut self.says,
-                events: &events,
+                events,
                 cancel: &self.cancel,
             }
             .pass(calls, held, maximum)

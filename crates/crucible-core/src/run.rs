@@ -22,7 +22,7 @@ use crate::ids::RunId;
 /// different root than the parent it was derived from, which is the structural
 /// half of the rule that a descendant may narrow what it was given and never
 /// widen it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 pub struct Ancestry {
     run: RunId,
     parent: Option<RunId>,
@@ -85,6 +85,7 @@ impl Ancestry {
     }
 }
 
+/// Every call is a different root, for the reason [`RunId`]'s is.
 impl Default for Ancestry {
     fn default() -> Self {
         Self::new()

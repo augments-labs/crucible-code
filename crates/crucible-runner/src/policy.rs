@@ -36,7 +36,14 @@ use std::time::Duration;
 /// long because there is work in it, and what actually has to be bounded is
 /// memory. Tokens for the spend, because that is the unit the thing being
 /// spent is sold in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// The two byte figures are `usize` where every other figure here is
+/// fixed-width, which is deliberate: they are compared against the length of
+/// something held in memory and nothing else, so a fixed width would buy a
+/// portable spelling at the price of a cast at every comparison. The day one
+/// of them is written to a document or a journal line is the day it wants a
+/// width that means the same thing on the machine that reads it back.
+#[derive(Debug, Clone, Copy)]
 pub struct Bounds {
     /// The most provider-controlled response data one turn retains, in bytes.
     ///
@@ -72,7 +79,7 @@ impl Default for Bounds {
 /// socket a provider closed while the tools ran is the usual reason, and it is
 /// safe to ask again for exactly the reason it is worth doing: nothing
 /// arrived, so nothing has been drawn that a second answer could contradict.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 pub struct Retry {
     /// How many more times one response may be asked for after it failed.
     ///
@@ -106,7 +113,7 @@ impl Default for Retry {
 /// answered by different people: the bounds are this program's, the compaction
 /// policy is the user's documents, and the retry policy is about one provider.
 /// A fourth family later is a fourth field, not eight more loose ones.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct RunPolicy {
     /// Everything this run may spend.
     pub bounds: Bounds,
@@ -185,7 +192,7 @@ fn tighter(held: Option<u64>, wanted: Option<u64>) -> Option<u64> {
 /// has a spelling in a file. The default is a session that compacts when it
 /// has to and is bounded by nothing else, which is the answer for somebody who
 /// has never heard of any of this.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 pub struct Compaction {
     /// Whether a full window is answered by making room rather than by failing.
     pub automatic: bool,

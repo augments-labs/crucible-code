@@ -23,9 +23,9 @@ use std::thread;
 use std::time::Duration;
 
 use crucible_core::{
-    AgentId, Aside, Ask, Attached, Attachment, Cancel, Compacting, Content, Delta, DeltaStream,
-    Effort, Event, Message, Modalities, Mode, Permission, Post, Provider, Reporter, Request, Room,
-    Spend, Steer, StopReason, Summary, ToolCall, ToolSchema, Transcript, TurnError, TurnId,
+    Aside, Ask, Attached, Attachment, Cancel, Compacting, Content, Delta, DeltaStream, Effort,
+    Event, Message, Modalities, Mode, Permission, Post, Provider, Reporter, Request, Room, Spend,
+    Steer, StopReason, Summary, ToolCall, ToolSchema, Transcript, TurnError, TurnId,
 };
 
 use crucible_session::{Pruned, Session};
@@ -392,16 +392,6 @@ impl Runner {
     /// reason.
     pub fn switch(&mut self, mode: Mode) {
         self.permission.switch(mode);
-    }
-
-    /// Which agent this run is driving.
-    ///
-    /// One agent today. Read rather than assumed, because what the answer is
-    /// for is naming the run in a log or a diagnostic, and a name written down
-    /// from the outside would go on saying `coding` after there were two.
-    #[must_use]
-    pub const fn agent(&self) -> &AgentId {
-        &self.spec.id
     }
 
     /// The model this session is asking, as the provider spells it.

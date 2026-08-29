@@ -139,8 +139,9 @@ impl EventEnvelope {
 ///
 /// The stamp lives here rather than at each of the several dozen places that
 /// report something, so that a worker still says what happened and nothing
-/// else. Cheap to make and cheap to hand down: an [`Ancestry`] is `Copy` and
-/// the destination is borrowed.
+/// else. `Copy`, because it is an [`Ancestry`] and a borrow and holding one by
+/// reference would tie a caller to where it was made for no gain.
+#[derive(Clone, Copy)]
 pub struct Reporter<'a> {
     ancestry: Ancestry,
     to: &'a dyn Post,
@@ -156,12 +157,6 @@ impl<'a> Reporter<'a> {
     /// Reports one event as this execution's.
     pub fn post(&self, event: Event) {
         self.to.post(EventEnvelope::new(self.ancestry, event));
-    }
-
-    /// Where the execution reporting through this sits.
-    #[must_use]
-    pub const fn ancestry(&self) -> Ancestry {
-        self.ancestry
     }
 }
 

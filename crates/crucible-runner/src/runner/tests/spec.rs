@@ -20,18 +20,6 @@ fn described() -> AgentSpec {
 }
 
 #[test]
-fn a_run_reports_the_agent_it_was_built_to_drive() {
-    let runner = Runner::new(
-        Box::new(Script::new(Vec::new())),
-        Tools::new(),
-        described(),
-        Session::nowhere(),
-    );
-
-    assert_eq!(runner.agent().as_str(), "coding");
-}
-
-#[test]
 fn a_definition_given_only_an_id_answers_to_it_and_claims_nothing_else() {
     let spec = AgentSpec::new(AgentId::new("coding"), described().model);
 

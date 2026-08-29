@@ -188,6 +188,12 @@ impl RunId {
     }
 }
 
+/// Every call is a different id.
+///
+/// Not the usual `Default`, which answers with one agreed value. Here there is
+/// no such value — a run that has not been named is not a run — so this exists
+/// only because [`RunId::new`] takes nothing, and a struct deriving `Default`
+/// around one would be minting rather than defaulting.
 impl Default for RunId {
     fn default() -> Self {
         Self::new()

@@ -7,9 +7,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    Approved, Aside, Attachment, Carried, Change, Diff, EventEnvelope, Line, Modalities, Modality,
-    Post, ProviderError, Sensitivity, SessionId, Spend, Summary, Target, Tool, ToolArgs, ToolError,
-    ToolId, ToolOutput, Verdict, Watch,
+    AgentId, Approved, Aside, Attachment, Carried, Change, Diff, EventEnvelope, Line, Modalities,
+    Modality, Post, ProviderError, Sensitivity, SessionId, Spend, Summary, Target, Tool, ToolArgs,
+    ToolError, ToolId, ToolOutput, Verdict, Watch,
 };
 
 use sha2::{Digest as _, Sha256};

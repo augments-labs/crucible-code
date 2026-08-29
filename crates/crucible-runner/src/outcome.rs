@@ -87,7 +87,7 @@ impl RunStatus {
 }
 
 /// What one run ended as.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 pub struct RunResult {
     /// Which run this was — the same identity its events carried.
     run: RunId,

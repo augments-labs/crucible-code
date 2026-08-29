@@ -282,7 +282,7 @@ impl<'a> AgentLoop<'a> {
                 tools: &self.runner.tools,
                 permission: &mut self.runner.permission,
                 ask: &mut *self.ask,
-                events: &events,
+                events,
                 cancel,
             }
             .pass(&calls, bounds.tool_output, tool_output_maximum);

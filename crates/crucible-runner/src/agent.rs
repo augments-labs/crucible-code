@@ -7,6 +7,14 @@
 //! running the agent, because those are facts about one run rather than about
 //! the agent, and two runs of the same agent must not share them.
 //!
+//! Configuration is not the same as constant. A session answers under the
+//! instructions and the model it was started with until somebody changes them,
+//! and both can be changed mid-session — so a runner rewrites those two fields
+//! on the definition it holds, which is its own. What a definition may never
+//! acquire is one of the four things above; that is the line this type draws,
+//! and `Clone` is what keeps whoever handed the definition over on the other
+//! side of it.
+//!
 //! One of these is built during wiring today and there is exactly one agent to
 //! build it for. The split is worth making before there are two: a definition
 //! that had ever held a live connection could not be reused by a second run,
@@ -44,6 +52,10 @@ pub struct AgentSpec {
     /// `None` is no instructions rather than empty ones: a request that carries
     /// no system field and one that carries an empty string are two different
     /// requests, and only the first is what "nobody said" means.
+    ///
+    /// Rewritten by [`crate::Runner::telling`] on the runner's own definition:
+    /// part of what these say is about the session — which model is answering,
+    /// how hard it was asked to think — and both of those move while it runs.
     pub instructions: Option<Box<str>>,
 
     /// Which model answers for this agent, and how.
@@ -52,6 +64,10 @@ pub struct AgentSpec {
     /// short word a person types — is resolved during wiring and never reaches
     /// here, because the same alias means different models at different
     /// vendors and this definition is meant to outlive one run's provider.
+    ///
+    /// Rewritten by [`crate::Runner::ask`] and [`crate::Runner::think`] on the
+    /// runner's own definition, for the same reason `instructions` is: a
+    /// session can be asked to change model or effort without being restarted.
     pub model: Model,
 }
 
