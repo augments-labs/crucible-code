@@ -43,6 +43,7 @@ mod outcome;
 mod pick_up;
 mod preserved;
 mod spec;
+mod spending;
 
 /// A destination that keeps the event and lets the attribution go.
 ///

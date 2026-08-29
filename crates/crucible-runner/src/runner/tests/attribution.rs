@@ -92,10 +92,29 @@ fn a_turn_stopped_before_it_began_still_says_which_run_was_refused() {
 
     let reported = attributed(&mut scripted, "go");
 
+    // Balanced, and both halves the same run: a start with no finish leaves the
+    // turn looking as though it is still running, and a finish with no start is
+    // a shape nothing else here produces.
     let [started, finished] = &reported[..] else {
         panic!("a refused turn starts and finishes, but reported {reported:?}");
     };
 
+    assert!(
+        matches!(started.event(), Event::TurnStarted { .. }),
+        "the pair did not open with a start: {:?}",
+        started.event()
+    );
+    assert!(
+        matches!(
+            finished.event(),
+            Event::TurnFinished {
+                stop: StopReason::Cancelled,
+                ..
+            }
+        ),
+        "the pair did not close with a stopped finish: {:?}",
+        finished.event()
+    );
     assert_eq!(started.run(), finished.run());
     assert_eq!(started.ancestry().depth(), 0, "nothing started it");
 }
