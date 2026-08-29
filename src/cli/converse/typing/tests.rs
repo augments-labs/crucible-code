@@ -5,8 +5,9 @@
 //! being run in — so [`super::ask`] is exercised only where it declines to, and
 //! everything after that point is called directly.
 
+use crucible_core::AgentId;
 use crucible_core::{Aside, Mode, Permission, Rules, ToolArgs};
-use crucible_runner::{Model, Session, Tools};
+use crucible_runner::{AgentSpec, Model, Session, Tools};
 use crucible_tui::{Aimed, Key, Recording};
 
 use super::drawing::writing;
@@ -39,14 +40,16 @@ fn engine(mode: Mode) -> Runner {
     Runner::new(
         Box::new(Script::new(vec![])),
         Tools::new(),
-        Model {
-            name: "script".into(),
-            max_tokens: 64,
-            window: None,
-            accepts: None,
-            system: None,
-            effort: None,
-        },
+        AgentSpec::new(
+            AgentId::new("test"),
+            Model {
+                name: "script".into(),
+                max_tokens: 64,
+                window: None,
+                accepts: None,
+                effort: None,
+            },
+        ),
         Session::nowhere(),
     )
     .permitting(Permission::with(mode, Rules::new()))

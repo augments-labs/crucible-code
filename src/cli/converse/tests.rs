@@ -9,10 +9,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crucible_auth::Store;
+use crucible_core::AgentId;
 use crucible_core::{
     Compacting, Delta, Event, Mode, Permission, Revealed, Rules, StopReason, ToolId,
 };
-use crucible_runner::{Model, Session, Tools};
+use crucible_runner::{AgentSpec, Model, Session, Tools};
 use crucible_tui::{Picture, Recording, Size, Terminal, TerminalError};
 
 use std::sync::mpsc::channel;
@@ -123,14 +124,16 @@ fn scripted(script: Script, offered: Tools) -> Runner {
     Runner::new(
         Box::new(script),
         offered,
-        Model {
-            name: "script".into(),
-            max_tokens: 64,
-            window: None,
-            accepts: None,
-            system: None,
-            effort: None,
-        },
+        AgentSpec::new(
+            AgentId::new("test"),
+            Model {
+                name: "script".into(),
+                max_tokens: 64,
+                window: None,
+                accepts: None,
+                effort: None,
+            },
+        ),
         Session::nowhere(),
     )
 }
@@ -263,14 +266,16 @@ fn a_theme_taken_mid_session_is_what_the_rows_after_it_are_drawn_in() {
     let runner = Runner::new(
         Box::new(Script::new(vec![])),
         Tools::new(),
-        Model {
-            name: "".into(),
-            max_tokens: 64,
-            window: None,
-            accepts: None,
-            system: None,
-            effort: None,
-        },
+        AgentSpec::new(
+            AgentId::new("test"),
+            Model {
+                name: "".into(),
+                max_tokens: 64,
+                window: None,
+                accepts: None,
+                effort: None,
+            },
+        ),
         Session::nowhere(),
     );
 
@@ -608,14 +613,16 @@ fn a_log_that_failed_with_the_last_line_still_queued_is_reported_before_the_prom
     let runner = Runner::new(
         Box::new(Script::new(vec![])),
         Tools::new(),
-        Model {
-            name: "script".into(),
-            max_tokens: 64,
-            window: None,
-            accepts: None,
-            system: None,
-            effort: None,
-        },
+        AgentSpec::new(
+            AgentId::new("test"),
+            Model {
+                name: "script".into(),
+                max_tokens: 64,
+                window: None,
+                accepts: None,
+                effort: None,
+            },
+        ),
         session,
     );
 
@@ -646,14 +653,16 @@ fn a_terminal_that_fails_mid_turn_leaves_the_turn_recorded_all_the_same() {
     let runner = Runner::new(
         Box::new(provider),
         Tools::new(),
-        Model {
-            name: "script".into(),
-            max_tokens: 64,
-            window: None,
-            accepts: None,
-            system: None,
-            effort: None,
-        },
+        AgentSpec::new(
+            AgentId::new("test"),
+            Model {
+                name: "script".into(),
+                max_tokens: 64,
+                window: None,
+                accepts: None,
+                effort: None,
+            },
+        ),
         session,
     );
 
@@ -687,14 +696,16 @@ fn a_terminal_failure_cancels_a_provider_that_would_otherwise_stay_live() {
     let runner = Runner::new(
         Box::new(provider),
         Tools::new(),
-        Model {
-            name: "stalling".into(),
-            max_tokens: 64,
-            window: None,
-            accepts: None,
-            system: None,
-            effort: None,
-        },
+        AgentSpec::new(
+            AgentId::new("test"),
+            Model {
+                name: "stalling".into(),
+                max_tokens: 64,
+                window: None,
+                accepts: None,
+                effort: None,
+            },
+        ),
         Session::nowhere(),
     );
     let terms = plain();
@@ -1255,14 +1266,16 @@ fn a_prompt_that_cannot_be_answered_down_a_pipe_fails_rather_than_ending_quietly
     let runner = Runner::new(
         Box::new(Script::new(Vec::new())),
         Tools::new(),
-        Model {
-            name: String::new().into(),
-            max_tokens: 64,
-            window: None,
-            accepts: None,
-            system: None,
-            effort: None,
-        },
+        AgentSpec::new(
+            AgentId::new("test"),
+            Model {
+                name: String::new().into(),
+                max_tokens: 64,
+                window: None,
+                accepts: None,
+                effort: None,
+            },
+        ),
         Session::nowhere(),
     );
 

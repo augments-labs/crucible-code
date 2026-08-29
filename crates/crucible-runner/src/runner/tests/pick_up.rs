@@ -197,7 +197,7 @@ fn a_session_picked_up_estimates_window_left_before_it_answers_again() {
     let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
     let id = named(&session);
     let mut scripted = Scripted::recording(measured(), Tools::new(), Verdict::Allow, session);
-    scripted.runner.model.window = Some(200_000);
+    scripted.runner.spec.model.window = Some(200_000);
 
     scripted.turn("go").expect("a measured turn");
     assert_eq!(
@@ -235,13 +235,13 @@ fn a_reading_taken_against_other_instructions_is_reestimated_for_this_run() {
     let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
     let id = named(&session);
     let mut scripted = Scripted::recording(measured(), Tools::new(), Verdict::Allow, session);
-    scripted.runner.model.window = Some(200_000);
+    scripted.runner.spec.model.window = Some(200_000);
 
     scripted.turn("go").expect("a measured turn");
 
     let fresh = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
     drop(scripted.runner.pick_up(fresh, Transcript::new()));
-    scripted.runner.model.system = Some("answer only in French".into());
+    scripted.runner.spec.instructions = Some("answer only in French".into());
 
     drop(picking(&mut scripted, &sample, &id));
 

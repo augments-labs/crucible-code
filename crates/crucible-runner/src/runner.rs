@@ -17,13 +17,14 @@ use std::thread;
 use std::time::Duration;
 
 use crucible_core::{
-    Aside, Ask, Attached, Attachment, Cancel, Compacting, Content, Delta, DeltaStream, Effort,
-    Event, Message, Modalities, Mode, Permission, Post, Provider, ProviderError, Request, Room,
-    Spend, Steer, StopReason, Summary, ToolCall, ToolSchema, Transcript, TurnError, TurnId,
+    AgentId, Aside, Ask, Attached, Attachment, Cancel, Compacting, Content, Delta, DeltaStream,
+    Effort, Event, Message, Modalities, Mode, Permission, Post, Provider, ProviderError, Request,
+    Room, Spend, Steer, StopReason, Summary, ToolCall, ToolSchema, Transcript, TurnError, TurnId,
 };
 
 use crucible_session::{Pruned, Session};
 
+use crate::agent::AgentSpec;
 use crate::tools::Tools;
 
 mod answer;
@@ -115,6 +116,11 @@ impl TurnBounds {
 }
 
 /// Which model to ask, and how.
+///
+/// Model selection only. What the model is *told* is the agent's, and lives on
+/// [`crate::AgentSpec::instructions`]: one session asks two models under the
+/// same instructions when a key arrives mid-run, and one agent is asked under
+/// different instructions every turn as what they describe moves.
 #[derive(Debug, Clone)]
 pub struct Model {
     /// The model's name, as the provider spells it.
@@ -139,8 +145,6 @@ pub struct Model {
     /// the alternative is bytes labelled with a shape the request has no word
     /// for, which is a wrong request rather than a refused one.
     pub accepts: Option<Modalities>,
-    /// The system prompt, if the session has one.
-    pub system: Option<Box<str>>,
     /// How hard to think, where somebody said. `None` leaves it to the vendor.
     pub effort: Option<Effort>,
 }
@@ -202,7 +206,7 @@ impl Default for Compaction {
 pub struct Runner {
     provider: Box<dyn Provider>,
     tools: Tools,
-    model: Model,
+    spec: AgentSpec,
     permission: Permission,
     transcript: Transcript,
     session: Session,
@@ -214,11 +218,16 @@ pub struct Runner {
 impl Runner {
     /// A session that has not said anything yet.
     #[must_use]
-    pub fn new(provider: Box<dyn Provider>, tools: Tools, model: Model, session: Session) -> Self {
+    pub fn new(
+        provider: Box<dyn Provider>,
+        tools: Tools,
+        spec: AgentSpec,
+        session: Session,
+    ) -> Self {
         let mut runner = Self {
             provider,
             tools,
-            model,
+            spec,
             permission: Permission::new(),
             transcript: Transcript::new(),
             session,
@@ -226,9 +235,10 @@ impl Runner {
             compacting: Compaction::default(),
             load: Load::default(),
         };
-        runner
-            .load
-            .requesting(runner.model.system.as_deref(), &runner.tools.advertised());
+        runner.load.requesting(
+            runner.spec.instructions.as_deref(),
+            &runner.tools.advertised(),
+        );
         runner
     }
 
@@ -286,7 +296,7 @@ impl Runner {
             self.load.recounted(message);
         }
         self.load
-            .requesting(self.model.system.as_deref(), &self.tools.advertised());
+            .requesting(self.spec.instructions.as_deref(), &self.tools.advertised());
 
         // After the fixed content of this run's request is known, and never
         // before: what the log remembers is taken only where it still covers
@@ -379,13 +389,13 @@ impl Runner {
     #[must_use]
     pub fn left(&self) -> Option<u8> {
         self.load
-            .left(self.model.window, self.reserve(self.model.window))
+            .left(self.spec.model.window, self.reserve(self.spec.model.window))
     }
 
     /// Room that automatic compaction keeps free for an exchange in progress.
     fn reserve(&self, window: Option<u32>) -> u64 {
         if self.compacting.automatic {
-            load::reserve(self.model.max_tokens, window, self.compacting.reserve)
+            load::reserve(self.spec.model.max_tokens, window, self.compacting.reserve)
         } else {
             0
         }
@@ -438,6 +448,16 @@ impl Runner {
         self.permission.switch(mode);
     }
 
+    /// Which agent this run is driving.
+    ///
+    /// One agent today. Read rather than assumed, because what the answer is
+    /// for is naming the run in a log or a diagnostic, and a name written down
+    /// from the outside would go on saying `coding` after there were two.
+    #[must_use]
+    pub const fn agent(&self) -> &AgentId {
+        &self.spec.id
+    }
+
     /// The model this session is asking, as the provider spells it.
     ///
     /// Empty where nothing has chosen one. That is a session that can do
@@ -445,7 +465,7 @@ impl Runner {
     /// this crate is handed a name and does not decide which names are real.
     #[must_use]
     pub fn model(&self) -> &str {
-        &self.model.name
+        &self.spec.model.name
     }
 
     /// The tools this session is advertising, by name.
@@ -463,13 +483,13 @@ impl Runner {
     /// The maximum output carried with the next provider request.
     #[must_use]
     pub fn maximum_output(&self) -> u32 {
-        self.model.max_tokens
+        self.spec.model.max_tokens
     }
 
     /// The context window used for proactive compaction, where known.
     #[must_use]
     pub fn context_window(&self) -> Option<u32> {
-        self.model.window
+        self.spec.model.window
     }
 
     /// The provider this runner is asking, for the questions only it can answer.
@@ -516,10 +536,10 @@ impl Runner {
         window: Option<u32>,
         accepts: Option<Modalities>,
     ) {
-        self.model.name = model.into();
-        self.model.max_tokens = max_tokens;
-        self.model.window = window;
-        self.model.accepts = accepts;
+        self.spec.model.name = model.into();
+        self.spec.model.max_tokens = max_tokens;
+        self.spec.model.window = window;
+        self.spec.model.accepts = accepts;
         self.load.reestimated();
     }
 
@@ -535,9 +555,9 @@ impl Runner {
     /// Reachable between turns, where [`Runner::ask`] is and for the same
     /// reason: a turn owns the runner while it runs.
     pub fn telling(&mut self, system: &str) {
-        self.model.system = Some(system.into());
+        self.spec.instructions = Some(system.into());
         self.load
-            .requesting(self.model.system.as_deref(), &self.tools.advertised());
+            .requesting(self.spec.instructions.as_deref(), &self.tools.advertised());
     }
 
     /// Writes to a different vendor from the next turn on.
@@ -570,7 +590,7 @@ impl Runner {
     /// request that does not carry one is the vendor's own default per model.
     #[must_use]
     pub const fn effort(&self) -> Option<Effort> {
-        self.model.effort
+        self.spec.model.effort
     }
 
     /// Asks for a different rung from the next turn on.
@@ -583,7 +603,7 @@ impl Runner {
     /// Reachable between turns, where [`Runner::ask`] is and for the same
     /// reason: a turn owns the runner while it runs.
     pub const fn think(&mut self, effort: Effort) {
-        self.model.effort = Some(effort);
+        self.spec.model.effort = Some(effort);
     }
 
     /// Hands the session out, for the caller that is finished driving turns.
@@ -737,8 +757,8 @@ impl Runner {
         let mut counting = Counting {
             spent: Spend::NONE,
             load: self.load,
-            window: self.model.window,
-            reserve: self.reserve(self.model.window),
+            window: self.spec.model.window,
+            reserve: self.reserve(self.spec.model.window),
         };
 
         let mut fruitless = 0;
@@ -782,7 +802,7 @@ impl Runner {
             counting.load = self.load;
             counting
                 .load
-                .requesting(self.model.system.as_deref(), &advertised);
+                .requesting(self.spec.instructions.as_deref(), &advertised);
 
             // Worked out per pass rather than once, because what it is measured
             // against can be corrected mid-turn: a window learned from a
@@ -835,7 +855,7 @@ impl Runner {
             counting.load = self.load;
             counting
                 .load
-                .requesting(self.model.system.as_deref(), &advertised);
+                .requesting(self.spec.instructions.as_deref(), &advertised);
 
             let heard = match self.listen(
                 &bounds,
@@ -873,7 +893,7 @@ impl Runner {
             // provider sends are read here and belong to the session, as does a
             // window it proved larger than anybody had written down.
             self.load = counting.load;
-            self.model.window = counting.window;
+            self.spec.model.window = counting.window;
 
             // The provider read the request and could not fit it. Making room
             // and asking the same question again is the whole remedy, and it is
@@ -1119,7 +1139,8 @@ impl Runner {
     /// and a protocol module with no word for one leave nothing between them,
     /// and a set with nothing in it is the honest answer to that.
     fn carries(&self) -> Modalities {
-        self.model
+        self.spec
+            .model
             .accepts
             .unwrap_or_else(Modalities::empty)
             .intersection(self.provider.spells())
@@ -1328,12 +1349,12 @@ impl Runner {
         attached: &'a [Attached<'a>],
     ) -> Request<'a> {
         Request {
-            model: &self.model.name,
+            model: &self.spec.model.name,
             transcript: &self.transcript,
             tools: advertised,
-            max_tokens: self.model.max_tokens,
-            system: self.model.system.as_deref(),
-            effort: self.model.effort,
+            max_tokens: self.spec.model.max_tokens,
+            system: self.spec.instructions.as_deref(),
+            effort: self.spec.model.effort,
             attached,
         }
     }

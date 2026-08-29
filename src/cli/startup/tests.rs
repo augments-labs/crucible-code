@@ -483,7 +483,7 @@ fn a_session_with_nothing_chosen_starts_and_asks_for_no_model() {
 fn a_rung_the_run_resolved_is_on_the_model_every_turn_is_asked_of() {
     // The one thing this function does with it: a rung that stopped here would
     // be shown on the welcome and asked for nowhere.
-    let asking = model(
+    let asking = coding(
         "anthropic",
         "claude-opus-5",
         Some(Effort::Xhigh),
@@ -491,18 +491,19 @@ fn a_rung_the_run_resolved_is_on_the_model_every_turn_is_asked_of() {
         String::new(),
     );
 
-    assert_eq!(asking.effort, Some(Effort::Xhigh));
+    assert_eq!(asking.model.effort, Some(Effort::Xhigh));
 
     // And nothing where nothing said, which is the field left off rather than
     // a rung this program chose on the vendor's behalf.
     assert_eq!(
-        model(
+        coding(
             "anthropic",
             "claude-opus-5",
             None,
             &Settings::default(),
             String::new()
         )
+        .model
         .effort,
         None
     );
@@ -562,25 +563,25 @@ fn an_explicit_context_window_can_opt_back_into_a_larger_window() {
 fn how_long_an_answer_may_be_is_the_model_own_limit_held_under_the_ceiling() {
     // A model this build has the limits of: its own output limit is far above
     // the ceiling, so the ceiling is what is asked for.
-    let known = model(
+    let known = coding(
         "anthropic",
         "claude-opus-5",
         None,
         &Settings::default(),
         String::new(),
     );
-    assert_eq!(known.max_tokens, CEILING);
+    assert_eq!(known.model.max_tokens, CEILING);
 
     // And one it has never heard of, where nothing is known and the lower
     // figure is what keeps a request from being refused outright.
-    let unknown = model(
+    let unknown = coding(
         "anthropic",
         "claude-from-the-future",
         None,
         &Settings::default(),
         String::new(),
     );
-    assert_eq!(unknown.max_tokens, UNKNOWN_CEILING);
+    assert_eq!(unknown.model.max_tokens, UNKNOWN_CEILING);
 }
 
 /// What `named` gets to reach the web with, given a key and maybe a model.

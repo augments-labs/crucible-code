@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use crucible_auth::StoredCredentials;
 use crucible_config::Settings;
+use crucible_core::AgentId;
 use crucible_core::{
     ApiKey, Cancel, Credential, Effort, Fetch, Header, HeaderKey, Message, Modalities, Mode,
     Provider, Revealed, Search, SessionId, Tool, Transcript, Workspace,
@@ -21,7 +22,7 @@ use crucible_core::{
 use crucible_provider::{
     Anthropic, AnthropicWeb, Endpoint, Https, Moonshot, MoonshotWeb, OpenAi, OpenAiWeb, Unavailable,
 };
-use crucible_runner::{Compaction, Model, Runner, Session, Tools};
+use crucible_runner::{AgentSpec, Compaction, Model, Runner, Session, Tools};
 use crucible_tools::{
     AskUser, Background, Bash, Edit, Glob, Grep, Held, Ledger, Plan, Read, TodoWrite, ToolSearch,
     WebFetch, WebSearch, Write,
@@ -218,7 +219,7 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<Runner, Fatal> {
 
     // Read before the provider is handed over, because which vendor is being
     // written to is what says which model's limits are being asked about.
-    let asking = model(provider.name(), name, startup.effort, settings, asked);
+    let asking = coding(provider.name(), name, startup.effort, settings, asked);
 
     let mut runner = Runner::new(provider, offering, asking, session)
         .permitting(settings.permission(startup.mode))
@@ -810,7 +811,12 @@ fn about(schema: &str) -> Box<str> {
     }
 }
 
-/// Which model to ask, and what it is asked under.
+/// The one agent crucible runs, as a definition its loop can be handed.
+///
+/// Built here rather than read from a document because there is one of these
+/// and it is this program: an agent nobody can choose between needs no way to
+/// be named in a file. What is configurable about it — the model, the effort,
+/// the window — is already configurable, and arrives here resolved.
 ///
 /// What a turn is asked under is [`standing::under`], read again before every
 /// turn because half of it is about the model in force — this is only the
@@ -825,20 +831,25 @@ fn about(schema: &str) -> Box<str> {
 /// The effort stays an `Option` for the opposite reason: there is no rung that
 /// means "nobody said", and the field left off is what a vendor reads as its own
 /// default.
-fn model(
+fn coding(
     provider: &str,
     name: &str,
     effort: Option<Effort>,
     settings: &Settings,
     asked: String,
-) -> Model {
-    Model {
-        system: Some(asked.into()),
-        name: name.into(),
-        max_tokens: ceiling(provider, name),
-        window: window(provider, name, settings),
-        accepts: accepts(provider, name),
-        effort,
+) -> AgentSpec {
+    AgentSpec {
+        id: AgentId::new("coding"),
+        name: "Coding".into(),
+        description: "Reads, changes and checks the code in this workspace.".into(),
+        instructions: Some(asked.into()),
+        model: Model {
+            name: name.into(),
+            max_tokens: ceiling(provider, name),
+            window: window(provider, name, settings),
+            accepts: accepts(provider, name),
+            effort,
+        },
     }
 }
 

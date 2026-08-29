@@ -88,7 +88,7 @@ fn the_structured_recap_uses_its_configured_ceiling_capped_by_the_model() {
     let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
     scripted.runner.compacting = keeping_one();
     scripted.runner.compacting.recap_tokens = 10_240;
-    scripted.runner.model.max_tokens = 12_000;
+    scripted.runner.spec.model.max_tokens = 12_000;
     scripted.turn("first").expect("a turn to compact from");
     scripted.turn("second").expect("a middle to replace");
 
@@ -115,7 +115,7 @@ fn the_structured_recap_uses_its_configured_ceiling_capped_by_the_model() {
     let mut capped = Scripted::new(script, Tools::new(), Verdict::Allow);
     capped.runner.compacting = keeping_one();
     capped.runner.compacting.recap_tokens = 10_240;
-    capped.runner.model.max_tokens = 8_000;
+    capped.runner.spec.model.max_tokens = 8_000;
     capped.turn("first").expect("a turn to compact from");
     capped.turn("second").expect("a middle to replace");
     capped
@@ -520,7 +520,7 @@ fn a_full_window_prunes_tool_output_from_the_active_turn_and_carries_on() {
         Verdict::Allow,
         session,
     );
-    scripted.runner.model.window = Some(80_000);
+    scripted.runner.spec.model.window = Some(80_000);
     scripted.runner.compacting = Compaction {
         reserve: Some(1),
         ..Compaction::default()
@@ -612,7 +612,7 @@ fn a_full_window_recaps_a_complete_active_turn_when_pruning_cannot_help() {
     let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
     let mut scripted =
         Scripted::recording(script, tools([Fixed::new("read")]), Verdict::Allow, session);
-    scripted.runner.model.window = Some(30_000);
+    scripted.runner.spec.model.window = Some(30_000);
     scripted.runner.compacting = Compaction {
         reserve: Some(14_000),
         ..Compaction::default()
@@ -736,7 +736,7 @@ fn a_window_the_provider_disproves_stops_being_claimed_at_all() {
     // exactly the size of the thing that just fitted would pin the reading at
     // nothing all over again.
     assert_eq!(
-        scripted.runner.model.window, None,
+        scripted.runner.spec.model.window, None,
         "a figure the provider disproved is still being claimed"
     );
     assert_eq!(
@@ -760,7 +760,7 @@ fn a_request_smaller_than_the_window_says_nothing_about_how_much_larger_it_is() 
     let mut scripted = Scripted::within(script, 200_000, Compaction::default());
     scripted.turn("go").expect("a turn");
 
-    assert_eq!(scripted.runner.model.window, Some(200_000));
+    assert_eq!(scripted.runner.spec.model.window, Some(200_000));
 }
 
 #[test]

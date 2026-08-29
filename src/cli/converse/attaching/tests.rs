@@ -1,12 +1,13 @@
 use std::fs;
 use std::sync::mpsc;
 
+use crucible_core::AgentId;
 use crucible_core::{
     Aside, Ask, Cancel, Delta, DeltaStream, Event, Message, Modalities, Modality, Provider,
     ProviderError, Remember, Request, Sensitivity, Steer, StopReason, ToolCall, Transcript,
     Verdict, Workspace, written,
 };
-use crucible_runner::{Model, Pruned, Runner, Session, Tools};
+use crucible_runner::{AgentSpec, Model, Pruned, Runner, Session, Tools};
 
 use crucible_tui::{Glyphs, Recording, Renderer};
 
@@ -523,14 +524,16 @@ fn answering() -> (Runner, mpsc::Sender<Event>) {
                 Delta::Stopped(StopReason::Yielded),
             ]])),
             Tools::new(),
-            Model {
-                name: "script".into(),
-                max_tokens: 64,
-                window: None,
-                accepts: None,
-                system: None,
-                effort: None,
-            },
+            AgentSpec::new(
+                AgentId::new("test"),
+                Model {
+                    name: "script".into(),
+                    max_tokens: 64,
+                    window: None,
+                    accepts: None,
+                    effort: None,
+                },
+            ),
             Session::nowhere(),
         ),
         events,
@@ -631,14 +634,16 @@ fn sending() -> Runner {
     Runner::new(
         Box::new(spelling("anthropic")),
         Tools::new(),
-        Model {
-            name: "claude-opus-5".into(),
-            max_tokens: 64,
-            window: None,
-            accepts: None,
-            system: None,
-            effort: None,
-        },
+        AgentSpec::new(
+            AgentId::new("test"),
+            Model {
+                name: "claude-opus-5".into(),
+                max_tokens: 64,
+                window: None,
+                accepts: None,
+                effort: None,
+            },
+        ),
         Session::nowhere(),
     )
 }

@@ -246,7 +246,7 @@ impl Runner {
             self.load.recounted(message);
         }
         self.load
-            .requesting(self.model.system.as_deref(), &self.tools.advertised());
+            .requesting(self.spec.instructions.as_deref(), &self.tools.advertised());
 
         // Turns kept whole rather than messages, because that is the shape a
         // reader thinks in: the recap stands in for the front, and what is left
@@ -420,13 +420,13 @@ impl Runner {
             .load
             .tokens()
             .saturating_add(Load::cautious(asking_bytes));
-        let safe = self.model.window.map_or(u32::MAX, |window| {
+        let safe = self.spec.model.window.map_or(u32::MAX, |window| {
             u32::try_from(u64::from(window).saturating_sub(request_tokens)).unwrap_or(u32::MAX)
         });
         let room = self
             .compacting
             .recap_tokens
-            .min(self.model.max_tokens)
+            .min(self.spec.model.max_tokens)
             .min(safe);
         if room == 0 {
             self.transcript.pop();
@@ -435,12 +435,12 @@ impl Runner {
 
         let asked = self.provider.stream(
             Request {
-                model: &self.model.name,
+                model: &self.spec.model.name,
                 transcript: &self.transcript,
                 tools: &[],
                 max_tokens: room,
                 system: None,
-                effort: self.model.effort,
+                effort: self.spec.model.effort,
                 // Nothing, deliberately. This request exists to turn a
                 // transcript into a recap, and a recap is text; re-sending
                 // megabytes of pictures to write one would spend the whole
@@ -599,7 +599,7 @@ impl Runner {
             self.load.recounted(message);
         }
         self.load
-            .requesting(self.model.system.as_deref(), &self.tools.advertised());
+            .requesting(self.spec.instructions.as_deref(), &self.tools.advertised());
     }
 }
 

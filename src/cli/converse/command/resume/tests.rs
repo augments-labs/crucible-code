@@ -14,11 +14,12 @@ use std::cell::Cell;
 use std::time::Duration;
 
 use crucible_auth::Store;
+use crucible_core::AgentId;
 use crucible_core::{
     Cancel, Message, Revealed, SessionId, StopReason, ToolArgs, ToolCall, ToolId, ToolOutput,
     ToolResult,
 };
-use crucible_runner::{Model, Runner, Tools};
+use crucible_runner::{AgentSpec, Model, Runner, Tools};
 use crucible_tools::{Ledger, Plan};
 use crucible_tui::{Recording, Renderer, Row};
 
@@ -76,14 +77,16 @@ fn over(session: Session) -> Runner {
     Runner::new(
         Box::new(Script::new(Vec::new())),
         Tools::new(),
-        Model {
-            name: "script".into(),
-            max_tokens: 64,
-            window: None,
-            accepts: None,
-            system: None,
-            effort: None,
-        },
+        AgentSpec::new(
+            AgentId::new("test"),
+            Model {
+                name: "script".into(),
+                max_tokens: 64,
+                window: None,
+                accepts: None,
+                effort: None,
+            },
+        ),
         session,
     )
 }

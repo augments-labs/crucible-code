@@ -26,6 +26,7 @@ const READS: Modalities = Modalities::empty()
 mod compaction;
 mod pick_up;
 mod preserved;
+mod spec;
 
 /// A runner over a scripted provider, with somewhere for its events to go.
 struct Scripted {
@@ -52,14 +53,16 @@ impl Scripted {
             runner: Runner::new(
                 Box::new(script),
                 tools,
-                Model {
-                    name: "claude-test".into(),
-                    max_tokens: 1024,
-                    window: None,
-                    accepts: Some(READS),
-                    system: None,
-                    effort: None,
-                },
+                AgentSpec::new(
+                    AgentId::new("test"),
+                    Model {
+                        name: "claude-test".into(),
+                        max_tokens: 1024,
+                        window: None,
+                        accepts: Some(READS),
+                        effort: None,
+                    },
+                ),
                 session,
             ),
             sent,
@@ -79,7 +82,7 @@ impl Scripted {
     /// here and the thing this one has to undo.
     fn within(script: Script, window: u32, compacting: Compaction) -> Self {
         let mut scripted = Self::new(script, Tools::new(), Verdict::Allow);
-        scripted.runner.model.window = Some(window);
+        scripted.runner.spec.model.window = Some(window);
         scripted.runner.compacting = compacting;
         scripted
     }
@@ -334,7 +337,7 @@ fn a_tool_result_keeps_a_known_window_reading_present() {
         tools([Fixed::new("read").answering(&output)]),
         Verdict::Allow,
     );
-    scripted.runner.model.window = Some(200_000);
+    scripted.runner.spec.model.window = Some(200_000);
 
     scripted.turn(&"x".repeat(200_000)).expect("a turn");
 
@@ -364,7 +367,7 @@ fn exact_usage_cannot_make_streamed_tool_content_appear_to_free_room() {
         saying("done"),
     ]);
     let mut scripted = Scripted::new(script, tools([Fixed::new("read")]), Verdict::Allow);
-    scripted.runner.model.window = Some(200_000);
+    scripted.runner.spec.model.window = Some(200_000);
 
     scripted.turn(&"x".repeat(200_000)).expect("a tool turn");
 
@@ -393,14 +396,16 @@ impl Steering {
             runner: Runner::new(
                 Box::new(script),
                 tools,
-                Model {
-                    name: "claude-test".into(),
-                    max_tokens: 1024,
-                    window: None,
-                    accepts: Some(READS),
-                    system: None,
-                    effort: None,
-                },
+                AgentSpec::new(
+                    AgentId::new("test"),
+                    Model {
+                        name: "claude-test".into(),
+                        max_tokens: 1024,
+                        window: None,
+                        accepts: Some(READS),
+                        effort: None,
+                    },
+                ),
                 Session::nowhere(),
             ),
             sent,
@@ -486,7 +491,7 @@ fn a_steered_line_keeps_a_known_window_reading_present() {
         Delta::Stopped(StopReason::Yielded),
     ]]);
     let mut steering = Steering::new(script, Tools::new());
-    steering.runner.model.window = Some(200_000);
+    steering.runner.spec.model.window = Some(200_000);
     steering.steer.say("take this route".into());
 
     steering.turn("first").expect("a turn");
@@ -625,7 +630,7 @@ fn how_hard_the_session_was_told_to_think_is_on_every_request() {
     // the user paid for on the turn that did the least work.
     let script = Script::new(vec![calling("a", "read", "{}"), saying("done")]);
     let mut scripted = Scripted::new(script, tools([Fixed::new("read")]), Verdict::Allow);
-    scripted.runner.model.effort = Some(Effort::Max);
+    scripted.runner.spec.model.effort = Some(Effort::Max);
 
     scripted.turn("go").expect("the turn to finish");
 
@@ -679,7 +684,7 @@ fn changing_model_replaces_its_limits_and_reestimates_the_load() {
         Delta::Stopped(StopReason::Yielded),
     ]]);
     let mut scripted = Scripted::new(script, tools([]), Verdict::Allow);
-    scripted.runner.model.window = Some(200_000);
+    scripted.runner.spec.model.window = Some(200_000);
     scripted.turn("go").expect("a measured turn");
     assert_eq!(
         scripted.runner.left(),
@@ -692,8 +697,8 @@ fn changing_model_replaces_its_limits_and_reestimates_the_load() {
         .ask("other", 4096, Some(1_000_000), Some(READS));
 
     assert_eq!(scripted.runner.model(), "other");
-    assert_eq!(scripted.runner.model.max_tokens, 4096);
-    assert_eq!(scripted.runner.model.window, Some(1_000_000));
+    assert_eq!(scripted.runner.spec.model.max_tokens, 4096);
+    assert_eq!(scripted.runner.spec.model.window, Some(1_000_000));
     assert_eq!(
         scripted.runner.left(),
         Some(99),
@@ -717,7 +722,7 @@ fn changing_to_a_model_with_no_known_window_clears_the_numeric_reading() {
         Delta::Stopped(StopReason::Yielded),
     ]]);
     let mut scripted = Scripted::new(script, tools([]), Verdict::Allow);
-    scripted.runner.model.window = Some(200_000);
+    scripted.runner.spec.model.window = Some(200_000);
     scripted.turn("go").expect("a measured turn");
     assert_eq!(scripted.runner.left(), Some(77));
 
@@ -736,7 +741,7 @@ fn changing_provider_reestimates_usage_reported_by_the_old_one() {
         Delta::Stopped(StopReason::Yielded),
     ]]);
     let mut scripted = Scripted::new(script, tools([]), Verdict::Allow);
-    scripted.runner.model.window = Some(200_000);
+    scripted.runner.spec.model.window = Some(200_000);
     scripted.turn("go").expect("a measured turn");
     assert_eq!(
         scripted.runner.left(),
@@ -1774,7 +1779,7 @@ fn a_picture_a_model_does_not_read_is_named_where_its_answer_arrives() {
         Tools::new(),
         Verdict::Allow,
     );
-    scripted.runner.model.accepts = Some(Modalities::empty().insert(Modality::Text));
+    scripted.runner.spec.model.accepts = Some(Modalities::empty().insert(Modality::Text));
 
     let one = file(&under, "chart.png", &[3; 64]);
     let named = one.path.clone();
