@@ -785,3 +785,51 @@ fn a_configured_spend_ceiling_is_what_a_turn_is_held_to() {
     let configured = sample.settings(r#"{"compaction":{"spendCeiling":500000}}"#);
     assert_eq!(policy(&configured).bounds.spend, Some(500_000));
 }
+
+#[test]
+fn the_figures_no_document_reaches_are_the_ones_this_program_ships() {
+    // The other half of the resolution above: four compaction figures and the
+    // spend ceiling come out of a document, and the two byte ceilings and the
+    // retry policy deliberately do not. Nothing else in the tree reads them
+    // back, so without this a composition root that zeroed either one would
+    // leave every test green while the loop lost its memory bound and its
+    // patience with a provider.
+    let shipped = RunPolicy::default();
+
+    let sample = Sample::new("startup-unreached-figures");
+    let configured = sample.settings(
+        r#"{"compaction":{"spendCeiling":500000,"keep":1000,"recap":12000,"askOnResume":10}}"#,
+    );
+
+    for (named, built) in [
+        ("a machine with no document", policy(&Settings::default())),
+        (
+            "a document that set every figure it can",
+            policy(&configured),
+        ),
+    ] {
+        assert_eq!(
+            built.bounds.response_bytes, shipped.bounds.response_bytes,
+            "{named} moved the response ceiling"
+        );
+        assert_eq!(
+            built.bounds.tool_output_bytes, shipped.bounds.tool_output_bytes,
+            "{named} moved the tool-output ceiling"
+        );
+        assert_eq!(
+            built.retry.attempts, shipped.retry.attempts,
+            "{named} moved how many times a failed response is asked for again"
+        );
+        assert_eq!(
+            built.retry.first_pause, shipped.retry.first_pause,
+            "{named} moved the wait before the first retry"
+        );
+    }
+
+    assert_eq!(
+        policy(&configured).bounds.spend,
+        Some(500_000),
+        "the document above was not read, so the figures it left alone prove nothing"
+    );
+    assert_eq!(policy(&configured).compaction.keep_tokens, 1_000);
+}
