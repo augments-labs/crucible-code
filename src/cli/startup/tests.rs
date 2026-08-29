@@ -754,3 +754,34 @@ fn recap_room_defaults_to_ten_k_and_accepts_a_configured_ceiling() {
     let configured = sample.settings(r#"{"compaction":{"recap":12000}}"#);
     assert_eq!(policy(&configured).compaction.recap_tokens, 12_000);
 }
+
+#[test]
+fn the_agent_is_named_coding_and_stands_under_what_the_wiring_asked() {
+    // The two fields of the definition that nothing else in the tree looks at:
+    // the id a later registry would select on, and the prose the model works
+    // under. Both could be dropped here and every other test would still pass,
+    // which is what a whole missing system prompt would look like.
+    let asked = "read the workspace before changing it";
+    let built = coding(
+        "anthropic",
+        "claude-opus-5",
+        None,
+        &Settings::default(),
+        asked.into(),
+    );
+
+    assert_eq!(built.id.as_str(), "coding");
+    assert_eq!(built.instructions.as_deref(), Some(asked));
+}
+
+#[test]
+fn a_configured_spend_ceiling_is_what_a_turn_is_held_to() {
+    // The figure a document sets and the loop enforces, with the composition
+    // root the only place the two meet. Nothing said means no ceiling, which is
+    // the same absence a document that never mentions it leaves.
+    assert_eq!(policy(&Settings::default()).bounds.spend, None);
+
+    let sample = Sample::new("startup-spend-ceiling");
+    let configured = sample.settings(r#"{"compaction":{"spendCeiling":500000}}"#);
+    assert_eq!(policy(&configured).bounds.spend, Some(500_000));
+}
