@@ -37,8 +37,8 @@ use std::time::{Duration, Instant};
 
 use crucible_auth::Store;
 use crucible_core::{
-    Attachment, Cancel, Compacting, Event, Mode, Post as _, Revealed, Room, SessionId, Spend,
-    Workspace,
+    Ancestry, Attachment, Cancel, Compacting, Event, Mode, Reporter, Revealed, Room, SessionId,
+    Spend, Workspace,
 };
 use crucible_runner::Runner;
 use crucible_tools::{Background, Ledger, Plan};
@@ -1257,6 +1257,13 @@ fn sent(
             // The runner reports what happened and returns why it stopped;
             // nothing else has posted the failure, so this is where it becomes
             // visible.
+            // This worker's own way of reporting. A turn mints a run of its
+            // own inside the runner and reports through that; what is left for
+            // this to say is the failure below, which happens once the work is
+            // over. Making room has no turn around it, so this is the whole of
+            // its identity.
+            let reporting = Reporter::new(Ancestry::new(), &relay);
+
             let did = match work {
                 Work::Turn(prompt, attached) => {
                     if let Err(problem) = runner.turn(
@@ -1268,7 +1275,7 @@ fn sent(
                         &steer,
                         &aside,
                     ) {
-                        relay.post(Event::Failed { error: problem });
+                        reporting.post(Event::Failed { error: problem });
                     }
                     Did::Reported
                 }
@@ -1283,12 +1290,12 @@ fn sent(
                 // what it comes to is the recap request's own cost — posted
                 // on the way, which is all the row above the box asks.
                 Work::Room(why) => {
-                    match runner.compact(why, &relay, &running, &mut Spend::default()) {
+                    match runner.compact(why, &reporting, &running, &mut Spend::default()) {
                         Ok(Room::Made(_)) => Did::Reported,
                         Ok(Room::Nothing) => Did::Nothing,
                         Ok(Room::Stopped) => Did::Stopped,
                         Err(problem) => {
-                            relay.post(Event::Failed { error: problem });
+                            reporting.post(Event::Failed { error: problem });
                             Did::Reported
                         }
                     }

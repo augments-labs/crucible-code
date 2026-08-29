@@ -53,7 +53,7 @@ impl<'a> AgentLoop<'a> {
     /// [`TurnError`] where a request, a tool or the transcript itself failed.
     pub(super) fn drive(&mut self, counting: &mut Counting) -> Result<StopReason, TurnError> {
         let run = self.run;
-        let events = run.events;
+        let events = run.reporting();
         let cancel = run.cancel;
         let steer = run.steer;
         let aside = run.aside;
@@ -131,7 +131,7 @@ impl<'a> AgentLoop<'a> {
                 });
                 match self.runner.made_room(
                     Compacting::Full,
-                    events,
+                    &events,
                     cancel,
                     &mut fruitless,
                     &mut counting.spent,
@@ -169,7 +169,7 @@ impl<'a> AgentLoop<'a> {
                 {
                     match self.runner.made_room(
                         Compacting::Refused,
-                        events,
+                        &events,
                         cancel,
                         &mut fruitless,
                         &mut counting.spent,
@@ -217,7 +217,7 @@ impl<'a> AgentLoop<'a> {
                 }
                 match self.runner.made_room(
                     Compacting::Refused,
-                    events,
+                    &events,
                     cancel,
                     &mut fruitless,
                     &mut counting.spent,
@@ -275,7 +275,7 @@ impl<'a> AgentLoop<'a> {
                 tools: &self.runner.tools,
                 permission: &mut self.runner.permission,
                 ask: &mut *self.ask,
-                events,
+                events: &events,
                 cancel,
             }
             .pass(&calls, bounds.tool_output, tool_output_maximum);

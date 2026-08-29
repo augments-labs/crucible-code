@@ -29,7 +29,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crucible_core::{
-    Answered, Ask, Event, Post, Put, Question, Remember, Sensitivity, ToolCall, Verdict, Wrote,
+    Answered, Ask, Event, EventEnvelope, Post, Put, Question, Remember, Sensitivity, ToolCall,
+    Verdict, Wrote,
 };
 
 /// Events allowed to wait for the terminal.
@@ -107,8 +108,15 @@ impl Drop for Relay {
 }
 
 impl Post for Relay {
-    fn post(&self, event: Event) {
-        drop(self.to.send(Seen::Turn(event)));
+    /// Where the attribution stops.
+    ///
+    /// One run reports to this screen at a time, so the loop that draws has
+    /// nothing to tell apart: every `match` in it asks what happened rather
+    /// than whose it was. Dropped here, in one named place, so that the day a
+    /// second run reports to the same screen it is this line that has to
+    /// change rather than every pattern downstream of it.
+    fn post(&self, reported: EventEnvelope) {
+        drop(self.to.send(Seen::Turn(reported.into_event())));
     }
 }
 
@@ -254,7 +262,7 @@ mod tests {
     use std::sync::mpsc::{channel, sync_channel};
     use std::time::Duration;
 
-    use crucible_core::{Command, ToolArgs, ToolId, TurnId, Wrote};
+    use crucible_core::{Ancestry, Command, Reporter, ToolArgs, ToolId, TurnId, Wrote};
 
     use super::*;
 
@@ -280,7 +288,7 @@ mod tests {
         let (to, seen) = sync_channel(2);
         let relay = Relay::new(to, Putting::new());
 
-        relay.post(Event::Delta {
+        Reporter::new(Ancestry::new(), &relay).post(Event::Delta {
             text: "hello".into(),
         });
 
@@ -435,7 +443,7 @@ mod tests {
         let flooding = std::thread::spawn(move || {
             let relay = Relay::new(to, Putting::new());
             for _ in 0..POSTED {
-                relay.post(Event::Delta { text: "x".into() });
+                Reporter::new(Ancestry::new(), &relay).post(Event::Delta { text: "x".into() });
             }
             done.store(true, Ordering::Release);
         });
@@ -472,7 +480,7 @@ mod tests {
         let flooding = std::thread::spawn(move || {
             let relay = Relay::new(to, Putting::new());
             for _ in 0..POSTED {
-                relay.post(Event::Delta {
+                Reporter::new(Ancestry::new(), &relay).post(Event::Delta {
                     text: "x".repeat(BATCH_BYTES).into(),
                 });
             }

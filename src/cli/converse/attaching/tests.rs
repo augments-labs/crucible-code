@@ -3,7 +3,7 @@ use std::sync::mpsc;
 
 use crucible_core::AgentId;
 use crucible_core::{
-    Aside, Ask, Cancel, Delta, DeltaStream, Event, Message, Modalities, Modality, Provider,
+    Aside, Ask, Cancel, Delta, DeltaStream, EventEnvelope, Message, Modalities, Modality, Provider,
     ProviderError, Remember, Request, Sensitivity, Steer, StopReason, ToolCall, Transcript,
     Verdict, Workspace, written,
 };
@@ -514,7 +514,7 @@ fn a_png_that_is_not_a_png_is_refused_before_any_request() {
 /// runner's to decide and is proved where the ageing rule is. What is proved
 /// here is the step before it — that what the prompt attached is what the
 /// transcript ends up holding, for this turn and every one after it.
-fn answering() -> (Runner, mpsc::Sender<Event>) {
+fn answering() -> (Runner, mpsc::Sender<EventEnvelope>) {
     let (events, _seen) = mpsc::channel();
 
     (

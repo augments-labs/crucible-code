@@ -49,7 +49,7 @@ fn a_compaction_posts_the_rebuilt_window_reading_immediately() {
         .runner
         .compact(
             Compacting::Asked,
-            &scripted.events,
+            &reporting(&scripted.events),
             &scripted.cancel,
             &mut Spend::default(),
         )
@@ -96,7 +96,7 @@ fn the_structured_recap_uses_its_configured_ceiling_capped_by_the_model() {
         .runner
         .compact(
             Compacting::Asked,
-            &scripted.events,
+            &reporting(&scripted.events),
             &scripted.cancel,
             &mut Spend::default(),
         )
@@ -122,7 +122,7 @@ fn the_structured_recap_uses_its_configured_ceiling_capped_by_the_model() {
         .runner
         .compact(
             Compacting::Asked,
-            &capped.events,
+            &reporting(&capped.events),
             &capped.cancel,
             &mut Spend::default(),
         )
@@ -154,7 +154,7 @@ fn a_recap_cut_off_at_its_token_ceiling_replaces_nothing() {
         .runner
         .compact(
             Compacting::Asked,
-            &scripted.events,
+            &reporting(&scripted.events),
             &scripted.cancel,
             &mut Spend::default(),
         )
@@ -181,7 +181,7 @@ fn a_cleanly_stopped_but_malformed_recap_replaces_nothing() {
         .runner
         .compact(
             Compacting::Asked,
-            &scripted.events,
+            &reporting(&scripted.events),
             &scripted.cancel,
             &mut Spend::default(),
         )
@@ -209,7 +209,7 @@ fn a_recap_past_the_response_ceiling_replaces_nothing() {
         .runner
         .compact(
             Compacting::Asked,
-            &scripted.events,
+            &reporting(&scripted.events),
             &scripted.cancel,
             &mut Spend::default(),
         )
@@ -252,7 +252,7 @@ fn a_recap_stopped_part_way_replaces_nothing() {
         .runner
         .compact(
             Compacting::Asked,
-            &scripted.events,
+            &reporting(&scripted.events),
             &scripted.cancel,
             &mut Spend::default(),
         )
@@ -296,7 +296,7 @@ fn a_recap_whose_connection_broke_says_so_and_replaces_nothing() {
         .runner
         .compact(
             Compacting::Asked,
-            &scripted.events,
+            &reporting(&scripted.events),
             &scripted.cancel,
             &mut Spend::default(),
         )
@@ -815,7 +815,7 @@ fn a_compaction_clears_the_bulk_of_old_tool_output_before_the_recap() {
         .runner
         .compact(
             Compacting::Asked,
-            &scripted.events,
+            &reporting(&scripted.events),
             &scripted.cancel,
             &mut Spend::default(),
         )
@@ -910,7 +910,7 @@ fn a_turn_that_outweighs_the_budget_is_not_kept_whole_for_being_recent() {
         .runner
         .compact(
             Compacting::Asked,
-            &scripted.events,
+            &reporting(&scripted.events),
             &scripted.cancel,
             &mut Spend::default(),
         )
@@ -986,7 +986,7 @@ fn the_recap_request_carries_no_system_prompt_so_a_standing_note_cannot_become_a
         .runner
         .compact(
             Compacting::Asked,
-            &scripted.events,
+            &reporting(&scripted.events),
             &scripted.cancel,
             &mut Spend::default(),
         )

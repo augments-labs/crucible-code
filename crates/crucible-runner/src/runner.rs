@@ -24,8 +24,8 @@ use std::time::Duration;
 
 use crucible_core::{
     AgentId, Aside, Ask, Attached, Attachment, Cancel, Compacting, Content, Delta, DeltaStream,
-    Effort, Event, Message, Modalities, Mode, Permission, Post, Provider, Request, Room, Spend,
-    Steer, StopReason, Summary, ToolCall, ToolSchema, Transcript, TurnError, TurnId,
+    Effort, Event, Message, Modalities, Mode, Permission, Post, Provider, Reporter, Request, Room,
+    Spend, Steer, StopReason, Summary, ToolCall, ToolSchema, Transcript, TurnError, TurnId,
 };
 
 use crucible_session::{Pruned, Session};
@@ -614,13 +614,17 @@ impl Runner {
             self.turn.next()
         };
 
-        if cancel.requested() {
-            return Ok(Self::stopped(turn, events));
-        }
-
-        // One run for the whole turn, minted after the stop check so that a
-        // turn nobody got to take does not spend an identity on being refused.
+        // One run for the whole turn, minted before the stop check rather than
+        // after it: the pair of events below is still something that happened,
+        // and an event with nothing to attribute it to is the one shape the
+        // path is not allowed to carry. A refused turn costs an identity, which
+        // is a `Uuid` nobody will ever look up.
         let run = RunContext::new(self.policy, events, cancel, steer, aside);
+        let events = run.reporting();
+
+        if cancel.requested() {
+            return Ok(Self::stopped(turn, &events));
+        }
 
         self.turn = turn;
         events.post(Event::TurnStarted { turn: self.turn });
@@ -656,7 +660,7 @@ impl Runner {
     /// a start with no finish leaves the turn looking as though it is still
     /// running, and a finish with no start is a shape nothing else here
     /// produces.
-    fn stopped(turn: TurnId, events: &dyn Post) -> StopReason {
+    fn stopped(turn: TurnId, events: &Reporter<'_>) -> StopReason {
         let stop = StopReason::Cancelled;
 
         events.post(Event::TurnStarted { turn });
@@ -718,7 +722,7 @@ impl Runner {
     fn made_room(
         &mut self,
         why: Compacting,
-        events: &dyn Post,
+        events: &Reporter<'_>,
         cancel: &Cancel,
         fruitless: &mut u8,
         spent: &mut Spend,
@@ -807,7 +811,7 @@ impl Runner {
 
             if left > 0 && Self::again(&problem, &answer) {
                 left -= 1;
-                listening.run.events.post(Event::Retrying);
+                listening.run.reporting().post(Event::Retrying);
 
                 // A pause the user sat through and then had to interrupt would
                 // be this program keeping them waiting rather than the provider.
@@ -874,14 +878,17 @@ impl Runner {
         // sentence about it.
         let aged = resolved.aged(&self.transcript);
         if !aged.is_empty() {
-            listening.run.events.post(Event::Aged { files: aged });
+            listening.run.reporting().post(Event::Aged { files: aged });
         }
         // Beside it rather than folded into it: a file the model does not read
         // stayed behind for a reason the reader answers differently, and a row
         // that said one thing about both would be wrong about one of them.
         let unread = resolved.unread(&self.transcript);
         if !unread.is_empty() {
-            listening.run.events.post(Event::Unread { files: unread });
+            listening
+                .run
+                .reporting()
+                .post(Event::Unread { files: unread });
         }
 
         let mut stream = self.provider.stream(
@@ -892,7 +899,7 @@ impl Runner {
         Self::hear(
             stream.as_mut(),
             answer,
-            listening.run.events,
+            &listening.run.reporting(),
             listening.counting,
         )
         .and_then(|()| answer.reached().map_err(TurnError::from))
@@ -934,7 +941,7 @@ impl Runner {
     fn hear(
         stream: &mut dyn DeltaStream,
         answer: &mut Answer,
-        events: &dyn Post,
+        events: &Reporter<'_>,
         counting: &mut Counting,
     ) -> Result<(), TurnError> {
         // What the turn had spent before this response opened. Each reading a
@@ -1016,7 +1023,7 @@ impl Runner {
     }
 
     /// Updates the reading when unreported response bytes cross a percentage.
-    fn output_grew(events: &dyn Post, counting: &mut Counting, bytes: usize) {
+    fn output_grew(events: &Reporter<'_>, counting: &mut Counting, bytes: usize) {
         let before = counting.left();
         counting.load.produced(bytes);
         let left = counting.left();

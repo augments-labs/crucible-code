@@ -28,8 +28,8 @@
 use std::fmt::Write as _;
 
 use crucible_core::{
-    Cancel, Compacted, Compacting, Delta, Message, Post, Request, Room, Spend, StopReason, ToolId,
-    ToolOutput, Transcript, TurnError,
+    Cancel, Compacted, Compacting, Delta, Message, Reporter, Request, Room, Spend, StopReason,
+    ToolId, ToolOutput, Transcript, TurnError,
 };
 
 use super::{Load, Runner};
@@ -141,7 +141,7 @@ impl Runner {
     pub fn compact(
         &mut self,
         why: Compacting,
-        events: &dyn Post,
+        events: &Reporter<'_>,
         cancel: &Cancel,
         spent: &mut Spend,
     ) -> Result<Room, TurnError> {
@@ -402,7 +402,7 @@ impl Runner {
         &mut self,
         why: Compacting,
         touched: &(Vec<String>, Vec<String>),
-        events: &dyn Post,
+        events: &Reporter<'_>,
         cancel: &Cancel,
         spent: &mut Spend,
     ) -> Result<Recap, TurnError> {

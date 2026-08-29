@@ -7,7 +7,7 @@
 //! saying why there is nothing in it.
 
 use crucible_core::{
-    Approved, Ask, Cancel, Event, Permission, Post, Settled, StopReason, ToolCall, ToolError,
+    Approved, Ask, Cancel, Event, Permission, Reporter, Settled, StopReason, ToolCall, ToolError,
     ToolId, ToolOutput, ToolResult, Watch, Wrote,
 };
 
@@ -59,7 +59,7 @@ pub(crate) struct Work<'a> {
     /// How to put a call to the user.
     pub(crate) ask: &'a mut dyn Ask,
     /// Where progress is reported.
-    pub(crate) events: &'a dyn Post,
+    pub(crate) events: &'a Reporter<'a>,
     /// Whether the user has asked everything to stop.
     pub(crate) cancel: &'a Cancel,
 }
@@ -221,7 +221,7 @@ struct Watching<'a> {
     /// The call whose output this is.
     call: ToolId,
     /// Where it goes.
-    events: &'a dyn Post,
+    events: &'a Reporter<'a>,
 }
 
 impl Watch for Watching<'_> {
@@ -242,7 +242,7 @@ fn failure(problem: &ToolError) -> ToolOutput {
 mod tests {
     use std::sync::mpsc::{Receiver, Sender, channel};
 
-    use crucible_core::{ToolArgs, ToolId, Verdict};
+    use crucible_core::{Ancestry, EventEnvelope, Post, ToolArgs, ToolId, Verdict};
 
     use super::*;
     use crate::fake::{Fixed, Says, changing};
@@ -293,13 +293,23 @@ mod tests {
         assert!(finished, "the call never answered");
     }
 
+    /// A destination that keeps the event and lets the attribution go: these
+    /// assertions are about what a pass does, not about whose pass it was.
+    struct Watching(Sender<Event>);
+
+    impl Post for Watching {
+        fn post(&self, reported: EventEnvelope) {
+            drop(self.0.send(reported.into_event()));
+        }
+    }
+
     /// One pass, with everything it needed set up around it.
     struct Proof {
         tools: Tools,
         permission: Permission,
         says: Says,
         cancel: Cancel,
-        events: Sender<Event>,
+        events: Watching,
         seen: Receiver<Event>,
     }
 
@@ -316,7 +326,7 @@ mod tests {
                 permission: Permission::new(),
                 says,
                 cancel: Cancel::new(),
-                events,
+                events: Watching(events),
                 seen,
             }
         }
@@ -337,11 +347,13 @@ mod tests {
             held: usize,
             maximum: usize,
         ) -> (Vec<ToolResult>, Went, usize) {
+            let events = Reporter::new(Ancestry::new(), &self.events);
+
             Work {
                 tools: &self.tools,
                 permission: &mut self.permission,
                 ask: &mut self.says,
-                events: &self.events,
+                events: &events,
                 cancel: &self.cancel,
             }
             .pass(calls, held, maximum)

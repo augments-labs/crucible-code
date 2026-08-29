@@ -8,8 +8,9 @@
 //! A closed set, deliberately. Adding an event must break every `match` that
 //! decides how to draw one.
 
-use crate::ids::{ToolId, TurnId};
+use crate::ids::{RunId, ToolId, TurnId};
 use crate::provider::{ProviderError, Spend};
+use crate::run::Ancestry;
 use crate::tool::{Summary, ToolCall, ToolError, ToolOutput, Wrote};
 use crate::transcript::{Attachment, StopReason};
 
@@ -67,18 +68,103 @@ pub enum TurnError {
 /// in the binary, a vector in a test — and a channel of something wider than
 /// [`Event`] is then a wrapper rather than a change to the runner.
 pub trait Post {
-    /// Reports one event.
+    /// Reports one event, and which execution produced it.
     ///
     /// Cannot fail. Nothing a worker does depends on anyone still listening,
     /// and a worker that stopped to handle a closed channel would be stopping
     /// for the one condition that already means the process is leaving.
-    fn post(&self, event: Event);
+    fn post(&self, reported: EventEnvelope);
 }
 
 /// The ordinary case: events go to the thread that draws.
-impl Post for std::sync::mpsc::Sender<Event> {
-    fn post(&self, event: Event) {
-        drop(self.send(event));
+impl Post for std::sync::mpsc::Sender<EventEnvelope> {
+    fn post(&self, reported: EventEnvelope) {
+        drop(self.send(reported));
+    }
+}
+
+/// One event, and the execution it came from.
+///
+/// A wrapper rather than a field on every variant, so that the set of events
+/// stays a statement about what happened and attribution stays a statement
+/// about who it happened to. A reader that only draws still matches on
+/// [`Event`]; a reader that has to tell two runs apart reaches past it.
+#[derive(Debug)]
+pub struct EventEnvelope {
+    ancestry: Ancestry,
+    event: Event,
+}
+
+impl EventEnvelope {
+    /// One event, attributed to `ancestry`.
+    #[must_use]
+    pub const fn new(ancestry: Ancestry, event: Event) -> Self {
+        Self { ancestry, event }
+    }
+
+    /// Which execution produced it.
+    #[must_use]
+    pub const fn run(&self) -> RunId {
+        self.ancestry.run()
+    }
+
+    /// Where that execution sits among the ones around it.
+    #[must_use]
+    pub const fn ancestry(&self) -> Ancestry {
+        self.ancestry
+    }
+
+    /// What happened.
+    #[must_use]
+    pub const fn event(&self) -> &Event {
+        &self.event
+    }
+
+    /// What happened, with the attribution dropped.
+    ///
+    /// For a destination that has nothing to tell apart. Named so that giving
+    /// up the attribution is something a reader can see being done.
+    #[must_use]
+    pub fn into_event(self) -> Event {
+        self.event
+    }
+}
+
+/// A destination, and the execution everything sent to it came from.
+///
+/// The stamp lives here rather than at each of the several dozen places that
+/// report something, so that a worker still says what happened and nothing
+/// else. Cheap to make and cheap to hand down: an [`Ancestry`] is `Copy` and
+/// the destination is borrowed.
+pub struct Reporter<'a> {
+    ancestry: Ancestry,
+    to: &'a dyn Post,
+}
+
+impl<'a> Reporter<'a> {
+    /// Everything sent through this will be attributed to `ancestry`.
+    #[must_use]
+    pub const fn new(ancestry: Ancestry, to: &'a dyn Post) -> Self {
+        Self { ancestry, to }
+    }
+
+    /// Reports one event as this execution's.
+    pub fn post(&self, event: Event) {
+        self.to.post(EventEnvelope::new(self.ancestry, event));
+    }
+
+    /// Where the execution reporting through this sits.
+    #[must_use]
+    pub const fn ancestry(&self) -> Ancestry {
+        self.ancestry
+    }
+}
+
+impl std::fmt::Debug for Reporter<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Reporter")
+            .field("ancestry", &self.ancestry)
+            .finish_non_exhaustive()
     }
 }
 
@@ -383,7 +469,7 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel();
         drop(rx);
 
-        tx.post(Event::TurnStarted {
+        Reporter::new(Ancestry::new(), &tx).post(Event::TurnStarted {
             turn: TurnId::FIRST,
         });
     }
@@ -392,12 +478,12 @@ mod tests {
     fn what_a_call_wrote_arrives_under_the_call_that_wrote_it() {
         let (tx, rx) = std::sync::mpsc::channel();
 
-        tx.post(Event::Wrote {
+        Reporter::new(Ancestry::new(), &tx).post(Event::Wrote {
             call: ToolId::new("a"),
             text: Wrote::new("Compiling crucible-core v0.5.0\n"),
         });
 
-        let Event::Wrote { call, text } = rx.recv().unwrap() else {
+        let Event::Wrote { call, text } = rx.recv().unwrap().into_event() else {
             panic!("the event that arrived was not the one posted");
         };
         assert_eq!(call, ToolId::new("a"));
@@ -439,10 +525,12 @@ mod tests {
     fn what_is_posted_is_what_arrives() {
         let (tx, rx) = std::sync::mpsc::channel();
 
-        tx.post(Event::Delta {
+        Reporter::new(Ancestry::new(), &tx).post(Event::Delta {
             text: "streamed".into(),
         });
 
-        assert!(matches!(rx.recv().unwrap(), Event::Delta { text } if &*text == "streamed"));
+        assert!(
+            matches!(rx.recv().unwrap().into_event(), Event::Delta { text } if &*text == "streamed")
+        );
     }
 }

@@ -7,9 +7,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    Approved, Aside, Attachment, Carried, Change, Diff, Line, Modalities, Modality, ProviderError,
-    Sensitivity, SessionId, Spend, Summary, Target, Tool, ToolArgs, ToolError, ToolId, ToolOutput,
-    Verdict, Watch,
+    Ancestry, Approved, Aside, Attachment, Carried, Change, Diff, EventEnvelope, Line, Modalities,
+    Modality, Post, ProviderError, Reporter, Sensitivity, SessionId, Spend, Summary, Target, Tool,
+    ToolArgs, ToolError, ToolId, ToolOutput, Verdict, Watch,
 };
 
 use sha2::{Digest as _, Sha256};
@@ -37,11 +37,35 @@ const READS: Modalities = Modalities::empty()
     .insert(Modality::Text)
     .insert(Modality::Image);
 
+mod attribution;
 mod compaction;
 mod outcome;
 mod pick_up;
 mod preserved;
 mod spec;
+
+/// A destination that keeps the event and lets the attribution go.
+///
+/// These assertions are about what a turn does rather than about whose turn it
+/// was, so they go on reading plain events; the one test that is about the
+/// attribution reads the envelopes itself.
+struct Watching(Sender<Event>);
+
+impl Post for Watching {
+    fn post(&self, reported: EventEnvelope) {
+        drop(self.0.send(reported.into_event()));
+    }
+}
+
+/// Where a compaction asked for outside a turn reports.
+///
+/// `/compact` is its own piece of work with no turn around it, so it gets a run
+/// of its own — which is what the caller in the binary does too. A function
+/// rather than a method on the harness, so that it borrows the destination and
+/// leaves the runner beside it free to be asked to compact.
+fn reporting(to: &Watching) -> Reporter<'_> {
+    Reporter::new(Ancestry::new(), to)
+}
 
 /// A runner over a scripted provider, with somewhere for its events to go.
 struct Scripted {
@@ -51,7 +75,7 @@ struct Scripted {
     cancel: Cancel,
     steer: Steer,
     aside: Aside,
-    events: Sender<Event>,
+    events: Watching,
     seen: Receiver<Event>,
 }
 
@@ -85,7 +109,7 @@ impl Scripted {
             cancel: Cancel::new(),
             steer: Steer::new(),
             aside: Aside::new(),
-            events,
+            events: Watching(events),
             seen,
         }
     }
@@ -399,7 +423,7 @@ struct Steering {
     says: Says,
     steer: Steer,
     aside: Aside,
-    events: Sender<Event>,
+    events: Watching,
     seen: Receiver<Event>,
 }
 
@@ -427,7 +451,7 @@ impl Steering {
             says: Says::new(Verdict::Allow),
             steer: Steer::new(),
             aside: Aside::new(),
-            events,
+            events: Watching(events),
             seen,
         }
     }

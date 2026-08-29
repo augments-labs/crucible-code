@@ -17,7 +17,7 @@
 
 use std::fmt;
 
-use crucible_core::{Ancestry, Aside, Cancel, Post, RunId, Steer};
+use crucible_core::{Ancestry, Aside, Cancel, Post, Reporter, RunId, Steer};
 
 use crate::policy::RunPolicy;
 
@@ -30,7 +30,11 @@ pub struct RunContext<'a> {
     policy: RunPolicy,
 
     /// Where progress goes, because the thread that draws is not this one.
-    pub events: &'a dyn Post,
+    ///
+    /// Private, because reaching it directly is how an event gets reported
+    /// without saying which run it belongs to. [`RunContext::reporting`] is
+    /// the way to it, and it stamps.
+    to: &'a dyn Post,
 
     /// Whether somebody has asked this run to stop.
     pub cancel: &'a Cancel,
@@ -54,7 +58,7 @@ impl<'a> RunContext<'a> {
         Self {
             ancestry: Ancestry::new(),
             policy,
-            events,
+            to: events,
             cancel,
             steer,
             aside,
@@ -78,11 +82,22 @@ impl<'a> RunContext<'a> {
         Self {
             ancestry: self.ancestry.child(),
             policy: self.policy.narrowed(wanted),
-            events: self.events,
+            to: self.to,
             cancel: self.cancel,
             steer: self.steer,
             aside: self.aside,
         }
+    }
+
+    /// Where this run reports, saying it was this run that did.
+    ///
+    /// Returned by value rather than borrowed from the context, so the loop can
+    /// keep one in hand while it holds the runner mutably. Both halves are
+    /// cheap: an [`Ancestry`] is `Copy` and the destination is a shared borrow
+    /// this context is already holding.
+    #[must_use]
+    pub const fn reporting(&self) -> Reporter<'a> {
+        Reporter::new(self.ancestry, self.to)
     }
 
     /// Which run this is.
@@ -128,14 +143,14 @@ mod tests {
 
     use std::sync::mpsc::channel;
 
-    use crucible_core::Event;
+    use crucible_core::EventEnvelope;
 
     use crate::policy::Bounds;
 
     /// Somewhere for a context's services to point, since these tests are
     /// about what the context says rather than what it carries.
     struct Nowhere {
-        events: std::sync::mpsc::Sender<Event>,
+        events: std::sync::mpsc::Sender<EventEnvelope>,
         cancel: Cancel,
         steer: Steer,
         aside: Aside,

@@ -45,7 +45,7 @@ pub use credential::{
     ApiKey, Credential, CredentialError, Header, HeaderKey, Outgoing, Redactions,
 };
 pub use diff::{Change, Diff, Line};
-pub use event::{Event, Post, TurnError};
+pub use event::{Event, EventEnvelope, Post, Reporter, TurnError};
 pub use ids::{AgentId, IdError, RunId, SessionId, ToolId, TurnId};
 pub use modality::{Modalities, Modality, ModalityError};
 pub use permission::{
