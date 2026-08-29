@@ -83,7 +83,7 @@ impl Scripted {
     fn within(script: Script, window: u32, compacting: Compaction) -> Self {
         let mut scripted = Self::new(script, Tools::new(), Verdict::Allow);
         scripted.runner.spec.model.window = Some(window);
-        scripted.runner.compacting = compacting;
+        scripted.runner.policy.compaction = compacting;
         scripted
     }
 
@@ -1113,8 +1113,14 @@ fn a_response_that_keeps_going_away_ends_the_turn() {
 
     // Bounded, and the bound is the constant rather than a number written out
     // here: what this pins is that the loop stops rather than how soon.
-    assert_eq!(scripted.retried(), usize::from(RETRIES));
-    assert_eq!(scripted.asked().len(), 1 + usize::from(RETRIES));
+    assert_eq!(
+        scripted.retried(),
+        usize::from(RunPolicy::default().retry.attempts)
+    );
+    assert_eq!(
+        scripted.asked().len(),
+        1 + usize::from(RunPolicy::default().retry.attempts)
+    );
 }
 
 #[test]
@@ -1123,7 +1129,10 @@ fn a_service_that_says_it_is_busy_is_asked_again_and_a_key_without_access_is_not
     // of what `transient` decides: 503 is about the moment, 401 about the key.
     let mut busy = Scripted::new(Script::refusing(503), Tools::new(), Verdict::Allow);
     busy.turn("go").unwrap_err();
-    assert_eq!(busy.asked().len(), 1 + usize::from(RETRIES));
+    assert_eq!(
+        busy.asked().len(),
+        1 + usize::from(RunPolicy::default().retry.attempts)
+    );
 
     let mut refused = Scripted::new(Script::refusing(403), Tools::new(), Verdict::Allow);
     refused.turn("go").unwrap_err();
@@ -1178,7 +1187,7 @@ fn asking_to_stop_during_the_pause_stops_the_retry() {
     esc.join().unwrap();
 
     assert!(
-        scripted.asked().len() < 1 + usize::from(RETRIES),
+        scripted.asked().len() < 1 + usize::from(RunPolicy::default().retry.attempts),
         "every attempt went out anyway"
     );
 }

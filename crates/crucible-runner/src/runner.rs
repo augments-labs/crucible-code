@@ -25,6 +25,7 @@ use crucible_core::{
 use crucible_session::{Pruned, Session};
 
 use crate::agent::AgentSpec;
+use crate::policy::{Compaction, RunPolicy};
 use crate::tools::Tools;
 
 mod answer;
@@ -37,19 +38,6 @@ use answer::Answer;
 use load::{Counting, Load};
 use work::{Went, Work};
 
-/// The most provider-controlled response data one turn retains, in bytes.
-///
-/// A bound on memory rather than on how long a turn may run: it exists against
-/// a provider that will not stop talking, and it is what keeps the peak-memory
-/// budget true. The counts that used to sit beside it — responses, tool calls —
-/// bounded the wrong thing. A turn is long because there is work in it, and
-/// what actually runs out is the model's window, which is now measured and
-/// answered by making room rather than by ending the turn.
-const MAX_TURN_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
-
-/// And the most tool-result text, for the same reason.
-const MAX_TOOL_OUTPUT_BYTES_PER_TURN: usize = 4 * 1024 * 1024;
-
 /// How many compactions one turn may run without getting anywhere.
 ///
 /// A compaction that frees nothing and is asked for again is the one way this
@@ -57,21 +45,6 @@ const MAX_TOOL_OUTPUT_BYTES_PER_TURN: usize = 4 * 1024 * 1024;
 /// counted. Two, because the first may legitimately free little on a session
 /// that is mostly one enormous turn, and a third has proved the point.
 const COMPACTIONS_WITHOUT_PROGRESS: u8 = 2;
-
-/// How many more times one response may be asked for after it failed.
-///
-/// Small on purpose. What this recovers is the moment rather than the request —
-/// a connection the provider closed while the tools ran, a service busy for a
-/// second — and a failure that outlives two goes is one the user is better off
-/// being told about than waited through.
-const RETRIES: u8 = 2;
-
-/// How long to wait before the first of them, doubling for the next.
-///
-/// Short, because the failure this recovers is usually a socket that was
-/// already gone rather than a service asking to be left alone — and because a
-/// user watching a row that says `retrying` is watching this number.
-const FIRST_PAUSE: Duration = Duration::from_millis(250);
 
 /// How long a pause holds before it looks at the cancel again.
 const CANCEL_SLICE: Duration = Duration::from_millis(25);
@@ -149,55 +122,6 @@ pub struct Model {
     pub effort: Option<Effort>,
 }
 
-/// What a session does when the window fills.
-///
-/// Handed over whole by the wiring, so this crate never learns that any of it
-/// has a spelling in a file. The default is a session that compacts when it has
-/// to and is bounded by nothing else, which is the answer for somebody who has
-/// never heard of any of this.
-#[derive(Debug, Clone, Copy)]
-pub struct Compaction {
-    /// Whether a full window is answered by making room rather than by failing.
-    pub automatic: bool,
-    /// Room to leave for the next exchange, in tokens, where somebody said.
-    pub reserve: Option<u64>,
-    /// How many tokens of recent turns are kept word for word after the recap.
-    ///
-    /// Bounded in tokens rather than counted in turns because a turn can be
-    /// enormous: the kept tail is what has to fit beside the recap, and only a
-    /// figure in the window's own unit can promise that.
-    pub keep_tokens: u64,
-    /// Maximum output tokens given to the structured recap request.
-    pub recap_tokens: u32,
-    /// The most one turn may produce before it is stopped, in tokens.
-    pub spend_ceiling: Option<u64>,
-    /// How large a session must be before picking it up asks about it.
-    ///
-    /// Carried here rather than read where it is used, so the wiring resolves
-    /// every compaction answer in one place. This loop never asks anybody
-    /// anything about it — a turn already running has nobody to ask.
-    pub ask_on_resume: Option<u64>,
-}
-
-impl Default for Compaction {
-    fn default() -> Self {
-        Self {
-            automatic: true,
-            reserve: None,
-            // Enough of the recent turns to hold what the model is doing and
-            // the exchange that led to it, which is what "carry on from here"
-            // needs. In tokens, so a turn that is mostly tool output cannot
-            // blow straight past it.
-            keep_tokens: 20_000,
-            // A ceiling rather than a target. Ordinary checkpoints finish far
-            // below it; long technical sessions are not forced through 4k.
-            recap_tokens: 10_240,
-            spend_ceiling: None,
-            ask_on_resume: None,
-        }
-    }
-}
-
 /// Drives turns to completion.
 ///
 /// Holds what outlives a turn: the provider, the tools, the session's
@@ -211,7 +135,7 @@ pub struct Runner {
     transcript: Transcript,
     session: Session,
     turn: TurnId,
-    compacting: Compaction,
+    policy: RunPolicy,
     load: Load,
 }
 
@@ -232,7 +156,7 @@ impl Runner {
             transcript: Transcript::new(),
             session,
             turn: TurnId::FIRST,
-            compacting: Compaction::default(),
+            policy: RunPolicy::default(),
             load: Load::default(),
         };
         runner.load.requesting(
@@ -254,13 +178,16 @@ impl Runner {
         self
     }
 
-    /// Takes the compaction settings described, rather than the default ones.
+    /// Runs under the policy described, rather than the default one.
     ///
     /// Handed over whole for the reason [`Runner::permitting`] is: this crate
-    /// never learns that any of it has a spelling in a file.
+    /// never learns that any of it has a spelling in a file. Whole rather than
+    /// one family at a time because a run is under one policy — a builder per
+    /// family would let a caller set half of one and leave the rest at figures
+    /// nobody chose.
     #[must_use]
-    pub fn compacting(mut self, compacting: Compaction) -> Self {
-        self.compacting = compacting;
+    pub const fn under(mut self, policy: RunPolicy) -> Self {
+        self.policy = policy;
         self
     }
 
@@ -394,8 +321,12 @@ impl Runner {
 
     /// Room that automatic compaction keeps free for an exchange in progress.
     fn reserve(&self, window: Option<u32>) -> u64 {
-        if self.compacting.automatic {
-            load::reserve(self.spec.model.max_tokens, window, self.compacting.reserve)
+        if self.policy.compaction.automatic {
+            load::reserve(
+                self.spec.model.max_tokens,
+                window,
+                self.policy.compaction.reserve,
+            )
         } else {
             0
         }
@@ -404,7 +335,7 @@ impl Runner {
     /// What this session was told to do when the window fills.
     #[must_use]
     pub const fn compaction(&self) -> Compaction {
-        self.compacting
+        self.policy.compaction
     }
 
     /// Where the session is being recorded.
@@ -693,7 +624,7 @@ impl Runner {
             cancel,
             steer,
             aside,
-            MAX_TOOL_OUTPUT_BYTES_PER_TURN,
+            self.policy.bounds.tool_output_bytes,
         )?;
         events.post(Event::TurnFinished {
             turn: self.turn,
@@ -734,7 +665,7 @@ impl Runner {
     ///
     /// The ceiling is an argument rather than the constant so a test can put a
     /// turn over it without printing megabytes to get there. Every caller that
-    /// is not a test passes [`MAX_TOOL_OUTPUT_BYTES_PER_TURN`].
+    /// is not a test passes the run policy's own figure.
     // The cancel, the steer and the aside are all read off the thread the turn
     // runs on, and bundling them would drag the three through every signature
     // the cancel already crosses. The lint counts to five; the turn needs
@@ -811,7 +742,7 @@ impl Runner {
             let reserve = self.reserve(counting.window);
             counting.reserve = reserve;
 
-            if let Some(ceiling) = self.compacting.spend_ceiling
+            if let Some(ceiling) = self.policy.bounds.spend
                 && counting.spent.tokens() >= ceiling
             {
                 return Err(TurnError::Spent { ceiling });
@@ -822,7 +753,7 @@ impl Runner {
             // of the last pass are already in it. Checked at the top of the
             // loop, so it cannot run while a tool call is out, and the turn
             // carries on afterwards rather than ending.
-            if self.compacting.automatic && counting.load.full(counting.window, reserve) {
+            if self.policy.compaction.automatic && counting.load.full(counting.window, reserve) {
                 // The prompt may itself have crossed the boundary, in which
                 // case no preceding load event exists. State the zero the same
                 // arithmetic reached before replacing it with the compaction
@@ -867,7 +798,7 @@ impl Runner {
                 },
             ) {
                 Err(TurnError::Provider(ProviderError::WindowExceeded { provider }))
-                    if self.compacting.automatic =>
+                    if self.policy.compaction.automatic =>
                 {
                     match self.made_room(
                         Compacting::Refused,
@@ -914,7 +845,7 @@ impl Runner {
                         stop: Some(said),
                     });
                 }
-                if !self.compacting.automatic {
+                if !self.policy.compaction.automatic {
                     return Ok(said);
                 }
                 match self.made_room(
@@ -1078,7 +1009,7 @@ impl Runner {
     /// have in common.
     ///
     /// A failure that reached none of that is asked again instead, up to
-    /// [`RETRIES`] times. The one it exists for is a connection the provider
+    /// [`Retry::attempts`] times. The one it exists for is a connection the provider
     /// closed while the tools ran — the turn's own pauses are exactly where a
     /// pooled connection goes stale, so the request that fails is the one after
     /// a tool pass rather than the first, and the discussion stops part way
@@ -1092,14 +1023,14 @@ impl Runner {
         bounds: &TurnBounds,
         mut listening: Listening<'_>,
     ) -> Result<(Answer, StopReason), TurnError> {
-        let mut left = RETRIES;
-        let mut pause = FIRST_PAUSE;
+        let mut left = self.policy.retry.attempts;
+        let mut pause = self.policy.retry.first_pause;
 
         loop {
             let mut answer = Answer::within(
                 self.provider.name(),
                 bounds.retained,
-                MAX_TURN_RESPONSE_BYTES,
+                self.policy.bounds.response_bytes,
             );
 
             let problem = match self.hearing(&mut answer, &mut listening) {

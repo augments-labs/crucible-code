@@ -22,7 +22,7 @@ use crucible_core::{
 use crucible_provider::{
     Anthropic, AnthropicWeb, Endpoint, Https, Moonshot, MoonshotWeb, OpenAi, OpenAiWeb, Unavailable,
 };
-use crucible_runner::{AgentSpec, Compaction, Model, Runner, Session, Tools};
+use crucible_runner::{AgentSpec, Bounds, Compaction, Model, RunPolicy, Runner, Session, Tools};
 use crucible_tools::{
     AskUser, Background, Bash, Edit, Glob, Grep, Held, Ledger, Plan, Read, TodoWrite, ToolSearch,
     WebFetch, WebSearch, Write,
@@ -223,7 +223,7 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<Runner, Fatal> {
 
     let mut runner = Runner::new(provider, offering, asking, session)
         .permitting(settings.permission(startup.mode))
-        .compacting(compacting(settings));
+        .under(policy(settings));
     if let Some(transcript) = earlier {
         planned(startup.plan, &transcript);
         runner = runner.resuming(transcript);
@@ -853,24 +853,36 @@ fn coding(
     }
 }
 
-/// What the documents together say to do when the window fills.
+/// What the documents together say one run may spend, and what it does when
+/// the window fills.
 ///
 /// Resolved here, whole, so the loop is handed an answer rather than learning
 /// that any of this has a spelling in a file. `keep` is the one figure with a
 /// default of crucible's own: a session carried on from needs enough of the
 /// recent turns to say what it is doing and how it got there, which is what
 /// "carry on from here" means, and nothing about a document makes that number.
-fn compacting(settings: &Settings) -> Compaction {
+///
+/// The two byte ceilings and the retry policy are not configurable and are not
+/// read here: they bound this program's own memory and its own patience with a
+/// provider, and a document that could raise them could raise them past what
+/// the machine has.
+fn policy(settings: &Settings) -> RunPolicy {
     let said = settings.compaction();
-    let asked = Compaction::default();
+    let asked = RunPolicy::default();
 
-    Compaction {
-        automatic: said.when.automatic(),
-        reserve: said.reserve,
-        keep_tokens: said.keep.unwrap_or(asked.keep_tokens),
-        recap_tokens: said.recap.unwrap_or(asked.recap_tokens),
-        spend_ceiling: said.spend_ceiling,
-        ask_on_resume: said.ask_on_resume,
+    RunPolicy {
+        bounds: Bounds {
+            spend: said.spend_ceiling,
+            ..asked.bounds
+        },
+        compaction: Compaction {
+            automatic: said.when.automatic(),
+            reserve: said.reserve,
+            keep_tokens: said.keep.unwrap_or(asked.compaction.keep_tokens),
+            recap_tokens: said.recap.unwrap_or(asked.compaction.recap_tokens),
+            ask_on_resume: said.ask_on_resume,
+        },
+        retry: asked.retry,
     }
 }
 

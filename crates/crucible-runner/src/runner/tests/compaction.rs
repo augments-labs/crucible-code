@@ -86,8 +86,8 @@ fn the_structured_recap_uses_its_configured_ceiling_capped_by_the_model() {
         recap("notes to self"),
     ]);
     let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
-    scripted.runner.compacting = keeping_one();
-    scripted.runner.compacting.recap_tokens = 10_240;
+    scripted.runner.policy.compaction = keeping_one();
+    scripted.runner.policy.compaction.recap_tokens = 10_240;
     scripted.runner.spec.model.max_tokens = 12_000;
     scripted.turn("first").expect("a turn to compact from");
     scripted.turn("second").expect("a middle to replace");
@@ -113,8 +113,8 @@ fn the_structured_recap_uses_its_configured_ceiling_capped_by_the_model() {
         recap("notes to self"),
     ]);
     let mut capped = Scripted::new(script, Tools::new(), Verdict::Allow);
-    capped.runner.compacting = keeping_one();
-    capped.runner.compacting.recap_tokens = 10_240;
+    capped.runner.policy.compaction = keeping_one();
+    capped.runner.policy.compaction.recap_tokens = 10_240;
     capped.runner.spec.model.max_tokens = 8_000;
     capped.turn("first").expect("a turn to compact from");
     capped.turn("second").expect("a middle to replace");
@@ -145,7 +145,7 @@ fn a_recap_cut_off_at_its_token_ceiling_replaces_nothing() {
         ],
     ]);
     let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
-    scripted.runner.compacting = keeping_one();
+    scripted.runner.policy.compaction = keeping_one();
     scripted.turn("first").expect("a turn to compact from");
     scripted.turn("second").expect("a middle to replace");
     let before = scripted.runner.transcript().messages().to_vec();
@@ -172,7 +172,7 @@ fn a_cleanly_stopped_but_malformed_recap_replaces_nothing() {
         saying("notes without sections"),
     ]);
     let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
-    scripted.runner.compacting = keeping_one();
+    scripted.runner.policy.compaction = keeping_one();
     scripted.turn("first").expect("a turn to compact from");
     scripted.turn("second").expect("a middle to replace");
     let before = scripted.runner.transcript().messages().to_vec();
@@ -200,7 +200,7 @@ fn a_recap_past_the_response_ceiling_replaces_nothing() {
     let note = "x".repeat(3 * 1024 * 1024);
     let script = Script::new(vec![saying("first"), saying("second"), recap(&note)]);
     let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
-    scripted.runner.compacting = keeping_one();
+    scripted.runner.policy.compaction = keeping_one();
     scripted.turn("first").expect("a turn to compact from");
     scripted.turn("second").expect("a middle to replace");
     let before = scripted.runner.transcript().messages().to_vec();
@@ -274,7 +274,7 @@ fn a_recap_whose_connection_broke_says_so_and_replaces_nothing() {
     // was the wire. The transcript stands exactly as it was either way.
     let script = Script::breaking(vec![vec![Delta::Text("## Goal\nhalf the".into())]]);
     let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
-    scripted.runner.compacting = keeping_one();
+    scripted.runner.policy.compaction = keeping_one();
 
     let mut earlier = Transcript::new();
     earlier.push(Message::said("first"));
@@ -438,7 +438,7 @@ fn an_answer_cut_off_by_the_window_is_recorded_when_room_is_not_made() {
         Delta::Stopped(StopReason::WindowExceeded),
     ]]);
     let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
-    scripted.runner.compacting = Compaction {
+    scripted.runner.policy.compaction = Compaction {
         automatic: false,
         ..Compaction::default()
     };
@@ -521,7 +521,7 @@ fn a_full_window_prunes_tool_output_from_the_active_turn_and_carries_on() {
         session,
     );
     scripted.runner.spec.model.window = Some(80_000);
-    scripted.runner.compacting = Compaction {
+    scripted.runner.policy.compaction = Compaction {
         reserve: Some(1),
         ..Compaction::default()
     };
@@ -613,7 +613,7 @@ fn a_full_window_recaps_a_complete_active_turn_when_pruning_cannot_help() {
     let mut scripted =
         Scripted::recording(script, tools([Fixed::new("read")]), Verdict::Allow, session);
     scripted.runner.spec.model.window = Some(30_000);
-    scripted.runner.compacting = Compaction {
+    scripted.runner.policy.compaction = Compaction {
         reserve: Some(14_000),
         ..Compaction::default()
     };
@@ -801,7 +801,7 @@ fn a_compaction_clears_the_bulk_of_old_tool_output_before_the_recap() {
     // the uncalibrated three bytes to the token — so their results survive the
     // recap and the clearing is what the test reads. The first turn is the
     // middle that gets replaced.
-    scripted.runner.compacting = Compaction {
+    scripted.runner.policy.compaction = Compaction {
         keep_tokens: 70_000,
         ..Compaction::default()
     };
@@ -900,7 +900,7 @@ fn a_turn_that_outweighs_the_budget_is_not_kept_whole_for_being_recent() {
         tools([Fixed::new("read").answering(&big)]),
         Verdict::Allow,
     );
-    scripted.runner.compacting = budget;
+    scripted.runner.policy.compaction = budget;
 
     scripted.turn("first").expect("a turn");
     scripted.turn("read the file").expect("a turn");

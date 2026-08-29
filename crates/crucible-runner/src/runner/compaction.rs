@@ -288,7 +288,7 @@ impl Runner {
     /// has been seen — the same figure the load is measured by, so a full
     /// window is judged by the number that decided it was full.
     fn replacing(&self) -> Option<usize> {
-        let budget = self.compacting.keep_tokens.max(1);
+        let budget = self.policy.compaction.keep_tokens.max(1);
         let messages = self.transcript.messages();
 
         // The newest turn is kept whole. Starting one user prompt back from the
@@ -424,7 +424,8 @@ impl Runner {
             u32::try_from(u64::from(window).saturating_sub(request_tokens)).unwrap_or(u32::MAX)
         });
         let room = self
-            .compacting
+            .policy
+            .compaction
             .recap_tokens
             .min(self.spec.model.max_tokens)
             .min(safe);
