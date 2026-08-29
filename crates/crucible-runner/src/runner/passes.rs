@@ -4,13 +4,17 @@
 //! sharing a name. A [`Runner`] is what a session holds: the provider it talks
 //! to, the transcript it is building, what the user has already allowed, the
 //! log it is writing. The passes are what one run *does* with those, for as
-//! long as one turn lasts, and they need three things the runner does not own —
-//! which run this is, where to ask the user, and how much room is left.
+//! long as one turn lasts, and they need two things the runner does not own —
+//! which run this is, and where to ask the user.
 //!
-//! So they are three fields on a value that lives exactly that long. The
-//! borrow is what says it: an [`AgentLoop`] holds the runner rather than being
-//! one, cannot outlive the run it was given, and nothing that survives the turn
-//! can be reached through it afterwards.
+//! So those two sit beside a borrow of the session, on a value that lives
+//! exactly that long. The borrow is what says it: an [`AgentLoop`] holds the
+//! runner rather than being one, cannot outlive the run it was given, and
+//! nothing that survives the turn can be reached through it afterwards. How
+//! much room is left is not among them: it is measured per pass and travels
+//! through [`AgentLoop::drive`], because a window learned from a response is
+//! a different window and a figure kept on the loop would outlive the answer
+//! that corrected it.
 //!
 //! Nothing here decides anything the runner did not already decide. This is
 //! where the loop lives now, not a second opinion about how a turn should go.
@@ -107,7 +111,9 @@ impl<'a> AgentLoop<'a> {
             // against can be corrected mid-turn: a window learned from a
             // response is a different window, and a reserve left behind would
             // be held against the figure that was just disproved.
-            let reserve = self.runner.reserve(counting.window);
+            let reserve = self
+                .runner
+                .reserve(run.policy().compaction, counting.window);
             counting.reserve = reserve;
 
             if let Some(ceiling) = run.policy().bounds.spend
@@ -131,8 +137,7 @@ impl<'a> AgentLoop<'a> {
                 });
                 match self.runner.made_room(
                     Compacting::Full,
-                    &events,
-                    cancel,
+                    run,
                     &mut fruitless,
                     &mut counting.spent,
                 )? {
@@ -169,8 +174,7 @@ impl<'a> AgentLoop<'a> {
                 {
                     match self.runner.made_room(
                         Compacting::Refused,
-                        &events,
-                        cancel,
+                        run,
                         &mut fruitless,
                         &mut counting.spent,
                     )? {
@@ -217,8 +221,7 @@ impl<'a> AgentLoop<'a> {
                 }
                 match self.runner.made_room(
                     Compacting::Refused,
-                    &events,
-                    cancel,
+                    run,
                     &mut fruitless,
                     &mut counting.spent,
                 )? {

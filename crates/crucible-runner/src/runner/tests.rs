@@ -7,9 +7,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    Ancestry, Approved, Aside, Attachment, Carried, Change, Diff, EventEnvelope, Line, Modalities,
-    Modality, Post, ProviderError, Reporter, Sensitivity, SessionId, Spend, Summary, Target, Tool,
-    ToolArgs, ToolError, ToolId, ToolOutput, Verdict, Watch,
+    Approved, Aside, Attachment, Carried, Change, Diff, EventEnvelope, Line, Modalities, Modality,
+    Post, ProviderError, Sensitivity, SessionId, Spend, Summary, Target, Tool, ToolArgs, ToolError,
+    ToolId, ToolOutput, Verdict, Watch,
 };
 
 use sha2::{Digest as _, Sha256};
@@ -56,16 +56,6 @@ impl Post for Watching {
     fn post(&self, reported: EventEnvelope) {
         drop(self.0.send(reported.into_event()));
     }
-}
-
-/// Where a compaction asked for outside a turn reports.
-///
-/// `/compact` is its own piece of work with no turn around it, so it gets a run
-/// of its own — which is what the caller in the binary does too. A function
-/// rather than a method on the harness, so that it borrows the destination and
-/// leaves the runner beside it free to be asked to compact.
-fn reporting(to: &Watching) -> Reporter<'_> {
-    Reporter::new(Ancestry::new(), to)
 }
 
 /// A runner over a scripted provider, with somewhere for its events to go.
@@ -131,21 +121,30 @@ impl Scripted {
         self.turning(prompt, Box::new([]))
     }
 
+    /// Makes room the way `/compact` does.
+    ///
+    /// Its own piece of work with no turn around it, so it gets a run of its
+    /// own — which is what the caller in the binary does too.
+    fn compacting(&mut self) -> Result<Room, TurnError> {
+        let run = self
+            .runner
+            .starting(&self.events, &self.cancel, &self.steer, &self.aside);
+
+        self.runner
+            .compact(Compacting::Asked, &run, &mut Spend::default())
+    }
+
     /// The same, for a prompt that named files.
     fn turning(
         &mut self,
         prompt: &str,
         attachments: Box<[Attachment]>,
     ) -> Result<StopReason, TurnError> {
-        self.runner.turn(
-            prompt,
-            attachments,
-            &mut self.says,
-            &self.events,
-            &self.cancel,
-            &self.steer,
-            &self.aside,
-        )
+        let run = self
+            .runner
+            .starting(&self.events, &self.cancel, &self.steer, &self.aside);
+
+        self.runner.turn(prompt, attachments, &mut self.says, &run)
     }
 
     /// The files each request went out without, one entry per request that
@@ -458,15 +457,12 @@ impl Steering {
     }
 
     fn turn(&mut self, prompt: &str) -> Result<StopReason, TurnError> {
-        self.runner.turn(
-            prompt,
-            Box::new([]),
-            &mut self.says,
-            &self.events,
-            &Cancel::new(),
-            &self.steer,
-            &self.aside,
-        )
+        let cancel = Cancel::new();
+        let run = self
+            .runner
+            .starting(&self.events, &cancel, &self.steer, &self.aside);
+
+        self.runner.turn(prompt, Box::new([]), &mut self.says, &run)
     }
 
     fn said(&self) -> String {

@@ -37,8 +37,7 @@ use std::time::{Duration, Instant};
 
 use crucible_auth::Store;
 use crucible_core::{
-    Ancestry, Attachment, Cancel, Compacting, Event, Mode, Reporter, Revealed, Room, SessionId,
-    Spend, Workspace,
+    Attachment, Cancel, Compacting, Event, Mode, Revealed, Room, SessionId, Spend, Workspace,
 };
 use crucible_runner::Runner;
 use crucible_tools::{Background, Ledger, Plan};
@@ -1238,9 +1237,9 @@ fn take<T: Terminal>(
 /// what makes the transcript and the permission memory survive a turn without
 /// being shared between threads. Nothing on this side waits on the provider,
 /// which is what keeps the box under the turn live while it runs.
-// The cancel, the steer and the aside are all read off the worker the turn runs
-// on, and bundling them would drag the three through every signature the cancel
-// crosses. The lint counts to five; the worker needs seven.
+// Every one of these has to cross the thread boundary as a value the worker
+// owns or clones; the run that bundles four of them borrows, so it can only be
+// made on the far side. The lint counts to five; what has to travel is seven.
 #[allow(clippy::too_many_arguments)]
 fn sent(
     mut runner: Runner,
@@ -1254,27 +1253,18 @@ fn sent(
     thread::Builder::new()
         .name("turn".to_owned())
         .spawn(move || {
-            // The runner reports what happened and returns why it stopped;
-            // nothing else has posted the failure, so this is where it becomes
-            // visible.
-            // This worker's own way of reporting. A turn mints a run of its
-            // own inside the runner and reports through that; what is left for
-            // this to say is the failure below, which happens once the work is
-            // over. Making room has no turn around it, so this is the whole of
-            // its identity.
-            let reporting = Reporter::new(Ancestry::new(), &relay);
+            // One run for the whole of what this worker was sent to do, and
+            // the identity every event of it carries. Minted here rather than
+            // inside the runner because the failure below is this side's to
+            // post: a `TurnError` is handed back rather than reported, and a
+            // failure stamped with a run of its own would say the turn that
+            // failed was somebody else's.
+            let run = runner.starting(&relay, &running, &steer, &aside);
+            let reporting = run.reporting();
 
             let did = match work {
                 Work::Turn(prompt, attached) => {
-                    if let Err(problem) = runner.turn(
-                        &prompt,
-                        attached,
-                        &mut asking,
-                        &relay,
-                        &running,
-                        &steer,
-                        &aside,
-                    ) {
+                    if let Err(problem) = runner.turn(&prompt, attached, &mut asking, &run) {
                         reporting.post(Event::Failed { error: problem });
                     }
                     Did::Reported
@@ -1289,17 +1279,15 @@ fn sent(
                 // No turn is running, so the reading starts at nothing and
                 // what it comes to is the recap request's own cost — posted
                 // on the way, which is all the row above the box asks.
-                Work::Room(why) => {
-                    match runner.compact(why, &reporting, &running, &mut Spend::default()) {
-                        Ok(Room::Made(_)) => Did::Reported,
-                        Ok(Room::Nothing) => Did::Nothing,
-                        Ok(Room::Stopped) => Did::Stopped,
-                        Err(problem) => {
-                            reporting.post(Event::Failed { error: problem });
-                            Did::Reported
-                        }
+                Work::Room(why) => match runner.compact(why, &run, &mut Spend::default()) {
+                    Ok(Room::Made(_)) => Did::Reported,
+                    Ok(Room::Nothing) => Did::Nothing,
+                    Ok(Room::Stopped) => Did::Stopped,
+                    Err(problem) => {
+                        reporting.post(Event::Failed { error: problem });
+                        Did::Reported
                     }
-                }
+                },
             };
 
             (runner, did)

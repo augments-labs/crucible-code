@@ -326,18 +326,22 @@ impl Runner {
     /// compaction boundary, not the model's literal last token.
     #[must_use]
     pub fn left(&self) -> Option<u8> {
-        self.load
-            .left(self.spec.model.window, self.reserve(self.spec.model.window))
+        self.load.left(
+            self.spec.model.window,
+            self.reserve(self.policy.compaction, self.spec.model.window),
+        )
     }
 
     /// Room that automatic compaction keeps free for an exchange in progress.
-    fn reserve(&self, window: Option<u32>) -> u64 {
-        if self.policy.compaction.automatic {
-            load::reserve(
-                self.spec.model.max_tokens,
-                window,
-                self.policy.compaction.reserve,
-            )
+    ///
+    /// The settings are handed in rather than read off the session, because a
+    /// run may hold less than the session does and the loop already reads the
+    /// rest of the rail off the run. Two readers would measure one boundary
+    /// against two figures, and the half that fires would be deciding for the
+    /// half that never saw them.
+    fn reserve(&self, compaction: Compaction, window: Option<u32>) -> u64 {
+        if compaction.automatic {
+            load::reserve(self.spec.model.max_tokens, window, compaction.reserve)
         } else {
             0
         }
@@ -575,34 +579,56 @@ impl Runner {
         }
     }
 
+    /// A run against this session, under the policy the session was given.
+    ///
+    /// The one way in from outside: a root context is minted inside this
+    /// crate, so a caller reaches a root run through the session it belongs to
+    /// and a nested one through [`RunContext::child`]. Minting it out here
+    /// rather
+    /// than inside [`Runner::turn`] is what lets the caller report under the
+    /// same run the work ran as — a [`TurnError`] is handed back rather than
+    /// posted, and whoever asked for the work is the only one that can say it
+    /// failed.
+    ///
+    /// The services are borrowed for as long as the run lasts and the session
+    /// is not: the returned context does not hold this runner, so the same
+    /// caller can go on to ask it for the turn.
+    #[must_use]
+    pub fn starting<'a>(
+        &self,
+        events: &'a dyn Post,
+        cancel: &'a Cancel,
+        steer: &'a Steer,
+        aside: &'a Aside,
+    ) -> RunContext<'a> {
+        RunContext::new(self.policy, events, cancel, steer, aside)
+    }
+
     /// Takes one turn: the prompt, and the exchange until the model yields.
     ///
-    /// `cancel` arrives cleared: [`Cancel::reset`] is the caller's to call, on
-    /// the thread that reads the keyboard, before the thread this runs on
-    /// exists. Clearing it here would clear a key pressed in between, so a
-    /// flag found raised belongs to this turn and stops it — before the prompt
-    /// is recorded and before a request goes out, whatever a given provider
-    /// makes of being handed a cancel that is already up.
+    /// The run's cancel arrives cleared: [`Cancel::reset`] is the caller's to
+    /// call, on the thread that reads the keyboard, before the thread this
+    /// runs on exists. Clearing it here would clear a key pressed in between,
+    /// so a flag found raised belongs to this turn and stops it — before the
+    /// prompt is recorded and before a request goes out, whatever a given
+    /// provider makes of being handed a cancel that is already up.
+    ///
+    /// One run covers the whole turn, including a turn refused on the way in:
+    /// the pair of events that refusal posts is still something that happened,
+    /// and an event with nothing to attribute it to is the one shape this path
+    /// is not allowed to carry.
     ///
     /// # Errors
     ///
     /// [`TurnError`] when the provider failed or the user refused a tool. A
     /// tool that ran and did not like what it found is not an error — that
     /// goes back to the model as a result it can work around.
-    // The cancel, the steer and the aside are all read off the thread the turn
-    // runs on, and bundling them would drag the three through every signature
-    // the cancel already crosses. The lint counts to five; the turn needs
-    // eight.
-    #[allow(clippy::too_many_arguments)]
     pub fn turn(
         &mut self,
         prompt: &str,
         attachments: Box<[Attachment]>,
         ask: &mut dyn Ask,
-        events: &dyn Post,
-        cancel: &Cancel,
-        steer: &Steer,
-        aside: &Aside,
+        run: &RunContext<'_>,
     ) -> Result<StopReason, TurnError> {
         // The number this turn would have, worked out before it is known
         // whether the turn gets to take it. One expression rather than two, so
@@ -614,15 +640,9 @@ impl Runner {
             self.turn.next()
         };
 
-        // One run for the whole turn, minted before the stop check rather than
-        // after it: the pair of events below is still something that happened,
-        // and an event with nothing to attribute it to is the one shape the
-        // path is not allowed to carry. A refused turn costs an identity, which
-        // is a `Uuid` nobody will ever look up.
-        let run = RunContext::new(self.policy, events, cancel, steer, aside);
         let events = run.reporting();
 
-        if cancel.requested() {
+        if run.cancel().requested() {
             return Ok(Self::stopped(turn, &events));
         }
 
@@ -637,7 +657,7 @@ impl Runner {
         // that a turn cannot acquire a second way to finish without one. The
         // reason is what tells a truncated answer from a complete one, and it
         // has to reach the thread that draws — a return value never does.
-        let stop = self.exchange(ask, &run)?.stop();
+        let stop = self.exchange(ask, run)?.stop();
         events.post(Event::TurnFinished {
             turn: self.turn,
             stop,
@@ -696,7 +716,7 @@ impl Runner {
             spent: Spend::NONE,
             load: self.load,
             window: self.spec.model.window,
-            reserve: self.reserve(self.spec.model.window),
+            reserve: self.reserve(run.policy().compaction, self.spec.model.window),
         };
 
         let stop = AgentLoop::new(self, run, ask).drive(&mut counting)?;
@@ -715,19 +735,14 @@ impl Runner {
     /// # Errors
     ///
     /// [`TurnError`] where the request for the recap itself failed.
-    // The spend joins the cancel and the events on the way down, and bundling
-    // them would drag all three through every signature the cancel already
-    // crosses. The lint counts to five; making room needs six.
-    #[allow(clippy::too_many_arguments)]
     fn made_room(
         &mut self,
         why: Compacting,
-        events: &Reporter<'_>,
-        cancel: &Cancel,
+        run: &RunContext<'_>,
         fruitless: &mut u8,
         spent: &mut Spend,
     ) -> Result<After, TurnError> {
-        match self.compact(why, events, cancel, spent)? {
+        match self.compact(why, run, spent)? {
             // Not counted against the goes this loop is allowed, because it was
             // not a go: nothing was replaced and nobody is going to ask again.
             Room::Stopped => return Ok(After::Stopped),
@@ -780,7 +795,7 @@ impl Runner {
     /// have in common.
     ///
     /// A failure that reached none of that is asked again instead, up to
-    /// [`Retry::attempts`] times. The one it exists for is a connection the provider
+    /// [`crate::Retry::attempts`] times. The one it exists for is a connection the provider
     /// closed while the tools ran — the turn's own pauses are exactly where a
     /// pooled connection goes stale, so the request that fails is the one after
     /// a tool pass rather than the first, and the discussion stops part way

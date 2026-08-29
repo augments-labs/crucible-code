@@ -21,17 +21,13 @@ fn attributed(scripted: &mut Scripted, prompt: &str) -> Vec<EventEnvelope> {
     let (events, seen) = channel();
     let events = Attributed(events);
 
+    let run = scripted
+        .runner
+        .starting(&events, &scripted.cancel, &scripted.steer, &scripted.aside);
+
     scripted
         .runner
-        .turn(
-            prompt,
-            Box::new([]),
-            &mut scripted.says,
-            &events,
-            &scripted.cancel,
-            &scripted.steer,
-            &scripted.aside,
-        )
+        .turn(prompt, Box::new([]), &mut scripted.says, &run)
         .expect("a finished turn");
 
     drop(events);
@@ -117,4 +113,56 @@ fn a_turn_stopped_before_it_began_still_says_which_run_was_refused() {
     );
     assert_eq!(started.run(), finished.run());
     assert_eq!(started.ancestry().depth(), 0, "nothing started it");
+}
+
+/// Takes one turn the way the binary does, keeping every envelope.
+///
+/// A [`TurnError`] is not something the turn can both report and hand back, so
+/// whoever asked for the turn is what says it failed. Which run it says that
+/// under is this test's whole subject.
+fn refused(scripted: &mut Scripted, prompt: &str) -> Vec<EventEnvelope> {
+    let (events, seen) = channel();
+    let events = Attributed(events);
+
+    let run = scripted
+        .runner
+        .starting(&events, &scripted.cancel, &scripted.steer, &scripted.aside);
+
+    if let Err(problem) = scripted
+        .runner
+        .turn(prompt, Box::new([]), &mut scripted.says, &run)
+    {
+        run.reporting().post(Event::Failed { error: problem });
+    }
+
+    drop(events);
+    seen.into_iter().collect()
+}
+
+#[test]
+fn a_turn_that_failed_says_so_under_the_run_that_failed() {
+    // A provider that refuses with a status nothing recovers from, so the turn
+    // starts, reports, and then hands back an error rather than a stop.
+    let mut scripted = Scripted::new(Script::failing(), Tools::new(), Verdict::Allow);
+
+    let reported = refused(&mut scripted, "go");
+
+    let (started, rest) = reported.split_first().expect("a refused turn reports");
+    assert!(
+        matches!(started.event(), Event::TurnStarted { .. }),
+        "the turn did not start: {:?}",
+        started.event()
+    );
+
+    let failed = rest.last().expect("a refused turn says it failed");
+    assert!(
+        matches!(failed.event(), Event::Failed { .. }),
+        "the turn did not end in a failure: {:?}",
+        failed.event()
+    );
+    assert_eq!(
+        failed.run(),
+        started.run(),
+        "the failure was reported under a run that never took a turn"
+    );
 }

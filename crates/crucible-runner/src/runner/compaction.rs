@@ -28,9 +28,11 @@
 use std::fmt::Write as _;
 
 use crucible_core::{
-    Cancel, Compacted, Compacting, Delta, Message, Reporter, Request, Room, Spend, StopReason,
-    ToolId, ToolOutput, Transcript, TurnError,
+    Compacted, Compacting, Delta, Message, Request, Room, Spend, StopReason, ToolId, ToolOutput,
+    Transcript, TurnError,
 };
+
+use crate::context::RunContext;
 
 use super::{Load, Runner};
 
@@ -141,15 +143,16 @@ impl Runner {
     pub fn compact(
         &mut self,
         why: Compacting,
-        events: &Reporter<'_>,
-        cancel: &Cancel,
+        run: &RunContext<'_>,
         spent: &mut Spend,
     ) -> Result<Room, TurnError> {
+        let events = run.reporting();
+
         // Choose the recap boundary before pruning. Clearing output can make
         // old turns look cheap enough to keep, but where a recap was possible
         // before it remains useful afterwards; only the previously fruitless
         // no-middle case should turn into prune-only progress.
-        let replacing = self.replacing();
+        let replacing = self.replacing(run.policy().compaction.keep_tokens);
 
         // Measured before anything moves, because this is what the compaction
         // is judged against: pruning can be all the room a current turn needs,
@@ -208,7 +211,7 @@ impl Runner {
         let touched = self.tracked(replacing);
         events.post(crucible_core::Event::Compacting { why, part: 0 });
 
-        let recap = match self.recap(why, &touched, events, cancel, spent)? {
+        let recap = match self.recap(why, &touched, run, spent)? {
             Recap::Complete(recap) => recap,
             Recap::Incomplete => return Err(TurnError::RecapIncomplete),
             Recap::Stopped => return Ok(Room::Stopped),
@@ -287,8 +290,8 @@ impl Runner {
     /// load has one, and the pessimistic uncalibrated rate before any response
     /// has been seen — the same figure the load is measured by, so a full
     /// window is judged by the number that decided it was full.
-    fn replacing(&self) -> Option<usize> {
-        let budget = self.policy.compaction.keep_tokens.max(1);
+    fn replacing(&self, keep_tokens: u64) -> Option<usize> {
+        let budget = keep_tokens.max(1);
         let messages = self.transcript.messages();
 
         // The newest turn is kept whole. Starting one user prompt back from the
@@ -394,18 +397,15 @@ impl Runner {
         (files.read, files.modified)
     }
 
-    // The spend joins the cancel and the events on the way down, and bundling
-    // them would drag all three through every signature the cancel already
-    // crosses. The lint counts to five; the recap needs six.
-    #[allow(clippy::too_many_arguments)]
     fn recap(
         &mut self,
         why: Compacting,
         touched: &(Vec<String>, Vec<String>),
-        events: &Reporter<'_>,
-        cancel: &Cancel,
+        run: &RunContext<'_>,
         spent: &mut Spend,
     ) -> Result<Recap, TurnError> {
+        let events = run.reporting();
+        let cancel = run.cancel();
         let asking = RECAP.to_owned();
         let asking_bytes = asking.len() as u64;
         self.transcript.push(Message::said(asking));
@@ -423,8 +423,8 @@ impl Runner {
         let safe = self.spec.model.window.map_or(u32::MAX, |window| {
             u32::try_from(u64::from(window).saturating_sub(request_tokens)).unwrap_or(u32::MAX)
         });
-        let room = self
-            .policy
+        let room = run
+            .policy()
             .compaction
             .recap_tokens
             .min(self.spec.model.max_tokens)

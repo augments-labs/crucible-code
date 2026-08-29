@@ -296,7 +296,7 @@ mod tests {
             },
             retry: Retry {
                 attempts: u8::MAX,
-                first_pause: Duration::from_secs(3600),
+                first_pause: Duration::from_hours(1),
             },
             compaction: Compaction {
                 keep_tokens: u64::MAX,

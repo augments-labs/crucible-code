@@ -567,16 +567,10 @@ fn what_the_prompt_attached_reaches_the_transcript() {
     );
 
     let (mut runner, events) = answering();
+    let (cancel, steer, aside) = (Cancel::new(), Steer::new(), Aside::new());
+    let run = runner.starting(&events, &cancel, &steer, &aside);
     runner
-        .turn(
-            prompt,
-            attachments,
-            &mut Nobody,
-            &events,
-            &Cancel::new(),
-            &Steer::new(),
-            &Aside::new(),
-        )
+        .turn(prompt, attachments, &mut Nobody, &run)
         .expect("the turn to finish");
 
     let Some(Message::User { text, attachments }) = runner.transcript().messages().first() else {
@@ -609,16 +603,10 @@ fn a_prompt_naming_no_file_records_the_message_it_always_did() {
     );
 
     let (mut runner, events) = answering();
+    let (cancel, steer, aside) = (Cancel::new(), Steer::new(), Aside::new());
+    let run = runner.starting(&events, &cancel, &steer, &aside);
     runner
-        .turn(
-            prompt,
-            attachments,
-            &mut Nobody,
-            &events,
-            &Cancel::new(),
-            &Steer::new(),
-            &Aside::new(),
-        )
+        .turn(prompt, attachments, &mut Nobody, &run)
         .expect("the turn to finish");
 
     assert_eq!(
