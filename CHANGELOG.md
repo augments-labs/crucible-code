@@ -8,6 +8,13 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Text in an `ask_user` specimen stays inside its box.** Terminal control
+  characters were removed before drawing but not before sizing the box, so a
+  specimen row could cross the edge calculated for it. The box now measures the
+  same safe text that reaches the terminal.
+
 ## [0.28.0] - 2026-08-29
 
 ### Added

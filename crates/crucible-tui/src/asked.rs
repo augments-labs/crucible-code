@@ -42,10 +42,11 @@
 //! **Every word here is somebody else's.** The questions and answers are the
 //! model's, and a model reads files other people wrote — so a terminal
 //! instruction carried through in one of them would move the cursor into a band
-//! it was not aimed at, or leave an attribute set for every row after it. Nothing a caller handed over reaches a row without going through
-//! [`spoken`] first, and the one place that is easy to get wrong is a string
-//! that is folded rather than clipped: it is made safe before it is folded, so
-//! the widths are measured on what will actually be drawn.
+//! it was not aimed at, or leave an attribute set for every row after it. Nothing
+//! a caller handed over reaches a row, or the measurement that bounds one,
+//! without going through [`spoken`] first. The one place that is easy to get
+//! wrong is a string that is folded rather than clipped: it is made safe before
+//! it is folded, so the widths are measured on what will actually be drawn.
 //!
 //! Nothing paints a ground. The question in view is said by a mark and a weight
 //! rather than by a highlight, which is what keeps the ground behind every row
@@ -420,7 +421,10 @@ impl Asked<'_> {
                     answer.shows.iter().map(|line| (*line).to_owned()).collect()
                 }
             })
-            .map(|line| wide(clip(&line, room)))
+            .map(|line| {
+                let line = spoken(&line);
+                wide(clip(&line, room))
+            })
             .max()
             .unwrap_or_default();
 

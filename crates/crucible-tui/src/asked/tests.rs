@@ -633,6 +633,51 @@ fn a_specimen_is_clipped_rather_than_folded() {
 }
 
 #[test]
+fn text_a_terminal_cannot_draw_still_leaves_the_specimen_inside_its_box() {
+    // Newline is not drawable inside one specimen row and is removed before the
+    // row is drawn. Measuring the unsanitized source stops at that newline,
+    // though, so the box used to be sized for only the prefix while the joined
+    // text ran through its right edge.
+    let source = "inside\noutside";
+    let rows = [source];
+    let answers = [Choice {
+        answer: "A layout whose answer keeps the specimen underneath",
+        says: "",
+        chosen: None,
+        shows: &rows,
+    }];
+    let stops = stops();
+
+    let panel = asked(&answers, &stops);
+    let (laid, _) = panel.within(40, 40, Glyphs::Unicode);
+    assert!(
+        laid.iter().all(|row| row.columns() <= 40),
+        "the specimen crossed the ask panel edge: {laid:#?}"
+    );
+    let drawn: Vec<String> = laid.iter().map(Row::text).collect();
+    let top = drawn
+        .iter()
+        .find(|row| row.contains('┌'))
+        .expect("the top of the specimen box");
+    let content = drawn
+        .iter()
+        .find(|row| row.contains("insideoutside"))
+        .expect("the specimen row");
+
+    let box_top = top.chars().position(|character| character == '┐');
+    let box_right = content
+        .chars()
+        .enumerate()
+        .filter(|(_, character)| *character == '│')
+        .nth(2)
+        .map(|(column, _)| column);
+    assert_eq!(
+        box_right, box_top,
+        "the specimen crossed its right edge: {drawn:#?}"
+    );
+}
+
+#[test]
 fn the_whole_panel_with_a_specimen_under_the_marked_answer() {
     let answers = shapes();
     let stops = stops();
