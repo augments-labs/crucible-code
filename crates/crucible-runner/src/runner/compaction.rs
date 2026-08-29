@@ -146,6 +146,11 @@ impl Runner {
         run: &RunContext<'_>,
         spent: &mut Spend,
     ) -> Result<Room, TurnError> {
+        // Held to this session's policy for the reason [`Runner::turn`] is:
+        // the recap boundary below is read off the run, and a run asking for
+        // more than the session allows does not get it.
+        let run = &run.held_to(self.policy);
+
         let events = run.reporting();
 
         // Choose the recap boundary before pruning. Clearing output can make
@@ -178,7 +183,9 @@ impl Runner {
                     kept: self.transcript.turns(),
                 };
                 events.post(crucible_core::Event::Compacted { compacted });
-                events.post(crucible_core::Event::Carried { left: self.left() });
+                events.post(crucible_core::Event::Carried {
+                    left: self.left_under(run.policy().compaction),
+                });
                 return Ok(Room::Made(compacted));
             }
 
@@ -264,7 +271,9 @@ impl Runner {
             kept,
         };
         events.post(crucible_core::Event::Compacted { compacted });
-        events.post(crucible_core::Event::Carried { left: self.left() });
+        events.post(crucible_core::Event::Carried {
+            left: self.left_under(run.policy().compaction),
+        });
 
         Ok(Room::Made(compacted))
     }

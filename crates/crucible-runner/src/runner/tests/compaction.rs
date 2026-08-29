@@ -992,3 +992,78 @@ fn a_pass_is_measured_against_the_room_its_own_run_holds() {
         "the pass was measured against the session's room, not the run's"
     );
 }
+
+#[test]
+fn the_room_a_compaction_reports_is_read_off_the_run_that_asked() {
+    // One boundary with two readers: the recap boundary comes off the run, and
+    // the room reported afterwards came off the session. A run holding back
+    // less of the window than the session does makes the two disagree, and the
+    // figure the reader is then shown is the one that never saw the run.
+    //
+    // The recap is deliberately enormous, because that is what turns the
+    // disagreement into something a reader would notice rather than a rounding
+    // difference: against the session's reserve the window reads full, and
+    // against the run's there is still most of it left.
+    let script = Script::new(vec![
+        vec![
+            Delta::Carried(Carried::new(20_000)),
+            Delta::Text("first".into()),
+            Delta::Stopped(StopReason::Yielded),
+        ],
+        vec![
+            Delta::Carried(Carried::new(30_000)),
+            Delta::Text("second".into()),
+            Delta::Stopped(StopReason::Yielded),
+        ],
+        recap(&"notes to self ".repeat(8_000)),
+    ]);
+    let mut scripted = Scripted::within(script, 200_000, keeping_one());
+    scripted.turn("first").expect("a turn to compact from");
+    scripted.turn("second").expect("a middle to replace");
+
+    // Set after the turns, so they run under the shipped answer and the reserve
+    // is the only thing separating the two readings below.
+    scripted.runner.policy.compaction.reserve = Some(100_000);
+
+    // The same session, under a run that keeps nothing back for the next
+    // exchange. Every other figure is the session's.
+    let asking = RunContext::new(
+        RunPolicy {
+            compaction: Compaction {
+                reserve: Some(0),
+                ..scripted.runner.policy.compaction
+            },
+            ..scripted.runner.policy
+        },
+        &scripted.events,
+        &scripted.cancel,
+        &scripted.steer,
+        &scripted.aside,
+    );
+
+    scripted
+        .runner
+        .compact(Compacting::Asked, &asking, &mut Spend::default())
+        .expect("a structured recap");
+
+    let reported = scripted
+        .events()
+        .into_iter()
+        .filter_map(|event| match event {
+            Event::Carried { left } => Some(left),
+            _ => None,
+        })
+        .next_back()
+        .expect("a room reading after the compaction");
+
+    assert_eq!(
+        reported,
+        scripted.runner.load.left(Some(200_000), 0),
+        "the room reported was not measured against the run's own reserve"
+    );
+    assert_ne!(
+        reported,
+        scripted.runner.left(),
+        "the session's reserve made no difference here, so this proves nothing"
+    );
+}

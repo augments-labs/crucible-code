@@ -98,6 +98,32 @@ impl<'a> RunContext<'a> {
         }
     }
 
+    /// The same run, held to `ceiling` as well as to what it already holds.
+    ///
+    /// Not [`RunContext::child`]: no new run is started and the ancestry is
+    /// kept, so the events a turn posts and the result it returns still name
+    /// one run. What changes is only the policy, by the same rule a descendant
+    /// gets — [`RunPolicy::narrowed`], with the holder on the left.
+    ///
+    /// This is how the session's own policy becomes a ceiling rather than a
+    /// starting point. A context is minted from the session's policy at the
+    /// moment it is asked for, and a session narrowed after that would
+    /// otherwise run the turn under the figure it used to hold; a caller can
+    /// also hand in a context it built for a different session entirely.
+    /// Holding it here costs nothing when the two agree, which is every call
+    /// the binary makes.
+    #[must_use]
+    pub(crate) fn held_to(&self, ceiling: RunPolicy) -> Self {
+        Self {
+            ancestry: self.ancestry,
+            policy: ceiling.narrowed(self.policy),
+            to: self.to,
+            cancel: self.cancel,
+            steer: self.steer,
+            aside: self.aside,
+        }
+    }
+
     /// Where this run reports, saying it was this run that did.
     ///
     /// Returned by value rather than borrowed from the context, so the loop can
@@ -279,6 +305,52 @@ mod tests {
         assert_eq!(child.policy().retry.first_pause, Duration::from_millis(250));
         assert_eq!(child.policy().compaction.keep_tokens, 1_000);
         assert_eq!(child.policy().compaction.recap_tokens, 256);
+    }
+
+    #[test]
+    fn a_run_held_to_a_ceiling_is_the_same_run_under_less() {
+        // Not `child`: holding a run to a ceiling starts nothing. If it minted
+        // a run the events a turn posts would name one run and the result it
+        // returns another, which is the shape attribution exists to prevent.
+        let nowhere = Nowhere::new();
+        let asking = nowhere.context(RunPolicy::default());
+
+        let held = asking.held_to(RunPolicy {
+            bounds: Bounds {
+                spend: Some(50),
+                ..Bounds::default()
+            },
+            ..RunPolicy::default()
+        });
+
+        assert_eq!(held.run(), asking.run(), "a ceiling started a second run");
+        assert_eq!(held.ancestry().root(), asking.ancestry().root());
+        assert_eq!(held.ancestry().parent(), asking.ancestry().parent());
+        assert_eq!(held.ancestry().depth(), asking.ancestry().depth());
+        assert_eq!(held.policy().bounds.spend, Some(50));
+    }
+
+    #[test]
+    fn a_ceiling_wider_than_the_run_it_holds_leaves_it_where_it_was() {
+        // The direction that would make this a way round the rule rather than
+        // the rule itself: the loop calls it with the session's policy on every
+        // turn, and a run already narrower must stay where it is.
+        let nowhere = Nowhere::new();
+        let asking = nowhere.context(RunPolicy {
+            bounds: Bounds {
+                spend: Some(50),
+                ..Bounds::default()
+            },
+            ..RunPolicy::default()
+        });
+
+        let held = asking.held_to(RunPolicy::default());
+
+        assert_eq!(
+            held.policy().bounds.spend,
+            Some(50),
+            "a wider ceiling lifted the bound the run was already under"
+        );
     }
 
     #[test]

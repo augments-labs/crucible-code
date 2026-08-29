@@ -326,9 +326,20 @@ impl Runner {
     /// compaction boundary, not the model's literal last token.
     #[must_use]
     pub fn left(&self) -> Option<u8> {
+        self.left_under(self.policy.compaction)
+    }
+
+    /// The same reading, against the compaction answer given.
+    ///
+    /// One function so there is one reader: this session's own answer between
+    /// turns, and the answer of the run in progress while a turn is running.
+    /// Two of them, each doing its own arithmetic, is how a run that holds
+    /// back less of the window than its session does came to be told the
+    /// window was full.
+    fn left_under(&self, compaction: Compaction) -> Option<u8> {
         self.load.left(
             self.spec.model.window,
-            self.reserve(self.policy.compaction, self.spec.model.window),
+            self.reserve(compaction, self.spec.model.window),
         )
     }
 
@@ -338,7 +349,8 @@ impl Runner {
     /// run may hold less than the session does and the loop already reads the
     /// rest of the rail off the run. Two readers would measure one boundary
     /// against two figures, and the half that fires would be deciding for the
-    /// half that never saw them.
+    /// half that never saw them — which is why [`Runner::left_under`] is the
+    /// only caller of this that a run in progress reaches.
     fn reserve(&self, compaction: Compaction, window: Option<u32>) -> u64 {
         if compaction.automatic {
             load::reserve(self.spec.model.max_tokens, window, compaction.reserve)
@@ -620,6 +632,11 @@ impl Runner {
         ask: &mut dyn Ask,
         run: &RunContext<'_>,
     ) -> Result<StopReason, TurnError> {
+        // Whatever the caller handed in, held to what this session allows.
+        // See [`RunContext::held_to`]: the session's policy is the ceiling,
+        // and a context that asks for more than it gets the session's figure.
+        let run = &run.held_to(self.policy);
+
         // The number this turn would have, worked out before it is known
         // whether the turn gets to take it. One expression rather than two, so
         // that the turn which runs and the turn which is stopped on the way in

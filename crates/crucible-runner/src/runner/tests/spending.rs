@@ -98,3 +98,31 @@ fn a_turn_stopped_at_its_ceiling_still_answered_every_call_it_recorded() {
     assert_eq!(asked, 1, "the pass that ran did not record its call");
     assert_eq!(answered, asked, "a recorded call went unanswered");
 }
+
+#[test]
+fn a_run_asking_for_more_than_the_session_allows_is_still_held_to_it() {
+    // The session's policy is a ceiling rather than a starting point. A
+    // context minted before the session was narrowed still carries the wider
+    // figure, and a caller can write one by hand; neither may buy a turn more
+    // than the session it runs in allows.
+    let script = Script::new(vec![costing("a", 90), saying("never asked")]);
+    let mut scripted = held_to(50, script);
+
+    let asking = RunContext::new(
+        RunPolicy::default(),
+        &scripted.events,
+        &scripted.cancel,
+        &scripted.steer,
+        &scripted.aside,
+    );
+
+    let problem = scripted
+        .runner
+        .turn("go", Box::new([]), &mut scripted.says, &asking)
+        .expect_err("a turn over the session's ceiling");
+
+    assert!(
+        matches!(problem, TurnError::Spent { ceiling } if ceiling == 50),
+        "a run asking for no ceiling lifted the session's: {problem:?}"
+    );
+}
