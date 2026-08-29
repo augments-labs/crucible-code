@@ -120,6 +120,13 @@ fn a_turn_stopped_before_it_began_still_says_which_run_was_refused() {
 /// A [`TurnError`] is not something the turn can both report and hand back, so
 /// whoever asked for the turn is what says it failed. Which run it says that
 /// under is this test's whole subject.
+///
+/// The shape here is the caller's, not the binary's: this crate cannot reach
+/// `src/cli/converse.rs`, and the destination the binary hands over drops the
+/// envelope on purpose the moment it arrives, so no assertion made downstream
+/// of it could see a run at all. What this pins is that a failure reported
+/// beside a turn — through the turn's own [`RunContext`], which is the only
+/// shape available to a caller holding one — carries that turn's run.
 fn refused(scripted: &mut Scripted, prompt: &str) -> Vec<EventEnvelope> {
     let (events, seen) = channel();
     let events = Attributed(events);
@@ -140,7 +147,7 @@ fn refused(scripted: &mut Scripted, prompt: &str) -> Vec<EventEnvelope> {
 }
 
 #[test]
-fn a_turn_that_failed_says_so_under_the_run_that_failed() {
+fn a_failure_reported_beside_a_turn_carries_that_turns_run() {
     // A provider that refuses with a status nothing recovers from, so the turn
     // starts, reports, and then hands back an error rather than a stop.
     let mut scripted = Scripted::new(Script::failing(), Tools::new(), Verdict::Allow);

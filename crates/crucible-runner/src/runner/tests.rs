@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 
 use crucible_core::{
     AgentId, Approved, Aside, Attachment, Carried, Change, Diff, EventEnvelope, Line, Modalities,
-    Modality, Post, ProviderError, Sensitivity, SessionId, Spend, Summary, Target, Tool, ToolArgs,
-    ToolError, ToolId, ToolOutput, Verdict, Watch,
+    Modality, Post, ProviderError, ProviderLimit, Sensitivity, SessionId, Spend, Summary, Target,
+    Tool, ToolArgs, ToolError, ToolId, ToolOutput, Verdict, Watch,
 };
 
 use sha2::{Digest as _, Sha256};
@@ -17,7 +17,7 @@ use sha2::{Digest as _, Sha256};
 use super::*;
 use crate::fake::{Fixed, Says, Script, Sent, Typing, changing};
 use crate::outcome::RunStatus;
-use crate::policy::Bounds;
+use crate::policy::{Bounds, Retry};
 use crate::sample::Sample;
 
 /// A policy holding one turn's tool output to `maximum` bytes, so a test can
@@ -145,6 +145,19 @@ impl Scripted {
             .starting(&self.events, &self.cancel, &self.steer, &self.aside);
 
         self.runner.turn(prompt, attachments, &mut self.says, &run)
+    }
+
+    /// The same, under a run that asked for less than the session allows.
+    ///
+    /// [`Scripted::turning`] mints its run from the session, so the two
+    /// policies are equal and no assertion made through it can tell a loop
+    /// reading its own run apart from one reading the runner it was started
+    /// from. A descendant narrowing a figure is the case the inheritance rule
+    /// exists for, and this is the only way to write it here.
+    fn turning_under(&mut self, prompt: &str, asking: RunPolicy) -> Result<StopReason, TurnError> {
+        let run = RunContext::new(asking, &self.events, &self.cancel, &self.steer, &self.aside);
+
+        self.runner.turn(prompt, Box::new([]), &mut self.says, &run)
     }
 
     /// The files each request went out without, one entry per request that
@@ -429,6 +442,14 @@ struct Steering {
 
 impl Steering {
     fn new(script: Script, tools: Tools) -> Self {
+        Self::steered(Steer::new(), script, tools)
+    }
+
+    /// The same, over a queue the caller already holds.
+    ///
+    /// So a stand-in can put a line in it at a moment the test chooses, rather
+    /// than only before the turn starts.
+    fn steered(steer: Steer, script: Script, tools: Tools) -> Self {
         let (events, seen) = channel();
         let sent = script.sent();
         Self {
@@ -449,7 +470,7 @@ impl Steering {
             ),
             sent,
             says: Says::new(Verdict::Allow),
-            steer: Steer::new(),
+            steer,
             aside: Aside::new(),
             events: Watching(events),
             seen,
@@ -1173,6 +1194,72 @@ fn a_service_that_says_it_is_busy_is_asked_again_and_a_key_without_access_is_not
     let mut refused = Scripted::new(Script::refusing(403), Tools::new(), Verdict::Allow);
     refused.turn("go").unwrap_err();
     assert_eq!(refused.asked().len(), 1);
+}
+
+#[test]
+fn a_run_that_asked_to_be_asked_again_fewer_times_is() {
+    // The figure above comes off the run, not off the runner, and every other
+    // test here mints the two equal. The same busy service, under a run that
+    // gave up its retries: one request rather than three.
+    let mut busy = Scripted::new(Script::refusing(503), Tools::new(), Verdict::Allow);
+
+    busy.turning_under(
+        "go",
+        RunPolicy {
+            retry: Retry {
+                attempts: 0,
+                ..Retry::default()
+            },
+            ..RunPolicy::default()
+        },
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        busy.asked().len(),
+        1,
+        "the session's retry count was used in place of the run's"
+    );
+    assert_eq!(
+        RunPolicy::default().retry.attempts,
+        2,
+        "the session would have asked again, so one request proves the run was read"
+    );
+}
+
+#[test]
+fn a_run_that_asked_for_a_smaller_answer_is_held_to_its_own_ceiling() {
+    // The turn-wide response ceiling, likewise: read off the run each pass
+    // builds its answer under. Eight bytes is under any real answer and far
+    // under the shipped sixteen megabytes, so a loop reading the session's
+    // figure would let this whole response through.
+    let script = Script::new(vec![saying("more prose than eight bytes of room")]);
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
+
+    let problem = scripted
+        .turning_under(
+            "go",
+            RunPolicy {
+                bounds: Bounds {
+                    response_bytes: 8,
+                    ..Bounds::default()
+                },
+                ..RunPolicy::default()
+            },
+        )
+        .expect_err("an answer past the room the run asked for");
+
+    assert!(
+        matches!(
+            problem,
+            TurnError::Provider(ProviderError::Limit {
+                limit: ProviderLimit::TurnResponseBytes,
+                maximum: 8,
+                ..
+            })
+        ),
+        "stopped for the wrong reason: {problem:?}"
+    );
 }
 
 #[test]

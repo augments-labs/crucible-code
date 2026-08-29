@@ -100,6 +100,32 @@ fn a_line_typed_while_a_call_is_out_lands_after_the_answer_it_waited_for() {
 }
 
 #[test]
+fn a_line_typed_while_the_answer_arrives_still_waits_for_the_call_it_interrupted() {
+    // The same invariant against the other moment a line can appear inside a
+    // pass. Above, the tool types, so the queue is empty until after the call
+    // was recorded; here the line is already waiting at that point, which is
+    // what a reader typing while the model answers actually produces. A drain
+    // added between the recorded call and the pass that answers it changes
+    // nothing in the test above and puts the reader's words inside an exchange
+    // here.
+    let steer = Steer::new();
+    let script = Script::typing(
+        steer.clone(),
+        "actually do this",
+        vec![calling("a", "read", "{}"), saying("done")],
+    );
+    let mut steering = Steering::steered(steer, script, tools([Fixed::new("read")]));
+
+    steering.turn("first").expect("a turn");
+
+    assert_eq!(
+        shape(steering.runner.transcript()),
+        ["user", "agent", "results", "user", "agent"],
+    );
+    assert!(!steering.steer.any(), "the queue was not drained");
+}
+
+#[test]
 fn a_turn_stopped_in_a_tool_pass_still_records_what_its_calls_answered() {
     // A provider refuses a transcript holding a request with no answer, so the
     // results are written whatever ended the pass. A turn that returned the

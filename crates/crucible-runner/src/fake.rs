@@ -57,6 +57,8 @@ pub(crate) struct Script {
     breaks: bool,
     /// How many more requests go away before they have said anything.
     drops: Mutex<usize>,
+    /// A line typed into this queue as the first request goes out.
+    types: Mutex<Option<(Steer, Box<str>)>>,
 }
 
 impl Script {
@@ -69,6 +71,21 @@ impl Script {
             refuses: None,
             breaks: false,
             drops: Mutex::new(0),
+            types: Mutex::new(None),
+        }
+    }
+
+    /// A provider that types `line` into `steer` as its first request goes
+    /// out, and answers from the script.
+    ///
+    /// The moment a reader actually types: while an answer is arriving, which
+    /// is after the pass drained the queue and before the tools it asks for
+    /// run. [`Typing`] covers the other one — typed while a call is out — and
+    /// between them they are the two places a line can appear inside a pass.
+    pub(crate) fn typing(steer: Steer, line: &str, rounds: Vec<Vec<Delta>>) -> Self {
+        Self {
+            types: Mutex::new(Some((steer, line.into()))),
+            ..Self::new(rounds)
         }
     }
 
@@ -157,6 +174,12 @@ impl Provider for Script {
             effort: request.effort,
             had_system: request.system.is_some(),
         });
+
+        // Before anything is answered: the line is meant to arrive while the
+        // request is out, not once it has been read.
+        if let Some((steer, line)) = self.types.lock().unwrap().take() {
+            steer.say(line.into());
+        }
 
         if let Some(status) = self.refuses {
             return Err(ProviderError::Refused {

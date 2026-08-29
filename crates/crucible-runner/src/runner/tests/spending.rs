@@ -126,3 +126,61 @@ fn a_run_asking_for_more_than_the_session_allows_is_still_held_to_it() {
         "a run asking for no ceiling lifted the session's: {problem:?}"
     );
 }
+
+#[test]
+fn a_run_holding_itself_to_less_than_the_session_is_stopped_at_its_own_figure() {
+    // The other direction, and the one the inheritance rule exists for: the
+    // session allows ten times what this run asked to be held to, and the run's
+    // figure is where the loop stops. Every other test here mints the two
+    // equal, which cannot tell a loop reading its own run apart from one
+    // reading the runner it was started from.
+    let script = Script::new(vec![costing("a", 60), saying("never asked")]);
+    let mut scripted = held_to(500, script);
+
+    let problem = scripted
+        .turning_under(
+            "go",
+            RunPolicy {
+                bounds: Bounds {
+                    spend: Some(50),
+                    ..Bounds::default()
+                },
+                ..RunPolicy::default()
+            },
+        )
+        .expect_err("a turn over the ceiling its run asked for");
+
+    assert!(
+        matches!(problem, TurnError::Spent { ceiling } if ceiling == 50),
+        "the session's ceiling of 500 was used in place of the run's 50: {problem:?}"
+    );
+    assert_eq!(
+        scripted.asked().len(),
+        1,
+        "a request went out after the run's ceiling was reached"
+    );
+}
+
+#[test]
+fn a_turn_that_spent_its_ceiling_to_the_token_is_not_asked_again() {
+    // The boundary the name of the first test in this file claims: spent *its
+    // ceiling*, not more than it. Sixty against sixty is the one figure that
+    // tells `>=` from `>`, and the difference between them is one more request
+    // than the ceiling allows.
+    let script = Script::new(vec![costing("a", 60), saying("never asked")]);
+    let mut scripted = held_to(60, script);
+
+    let problem = scripted
+        .turn("go")
+        .expect_err("a turn that spent its ceiling");
+
+    assert!(
+        matches!(problem, TurnError::Spent { ceiling } if ceiling == 60),
+        "stopped for the wrong reason: {problem:?}"
+    );
+    assert_eq!(
+        scripted.asked().len(),
+        1,
+        "spending the ceiling exactly bought another request"
+    );
+}

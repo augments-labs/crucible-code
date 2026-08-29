@@ -201,7 +201,7 @@ mod tests {
 
     use std::sync::mpsc::channel;
 
-    use crucible_core::EventEnvelope;
+    use crucible_core::{Event, EventEnvelope};
 
     use std::time::Duration;
 
@@ -211,6 +211,7 @@ mod tests {
     /// about what the context says rather than what it carries.
     struct Nowhere {
         events: std::sync::mpsc::Sender<EventEnvelope>,
+        seen: std::sync::mpsc::Receiver<EventEnvelope>,
         cancel: Cancel,
         steer: Steer,
         aside: Aside,
@@ -218,9 +219,10 @@ mod tests {
 
     impl Nowhere {
         fn new() -> Self {
-            let (events, _seen) = channel();
+            let (events, seen) = channel();
             Self {
                 events,
+                seen,
                 cancel: Cancel::new(),
                 steer: Steer::new(),
                 aside: Aside::new(),
@@ -359,11 +361,37 @@ mod tests {
         let run = nowhere.context(RunPolicy::default());
         let child = run.child(RunPolicy::default());
 
+        // All four, not the one that is easiest to reach: the name claims the
+        // services, and a `child` that pointed any of them somewhere else —
+        // a fresh queue, a second flag — would go on working against a
+        // parent that had stopped, or swallow what the reader typed.
         nowhere.cancel.request();
+        nowhere.steer.say("a line".into());
+        nowhere.aside.say("a note".into());
+        child.reporting().post(Event::Delta {
+            text: "said".into(),
+        });
 
         assert!(
             child.cancel().requested(),
             "a descendant did not hear the stop its parent heard"
+        );
+        assert_eq!(
+            child.steer().take(),
+            ["a line"],
+            "a descendant read a different queue than the one typed into"
+        );
+        assert_eq!(
+            child.aside().take(),
+            ["a note"],
+            "a descendant read different notes than the ones left"
+        );
+        assert!(
+            matches!(
+                nowhere.seen.try_recv().map(EventEnvelope::into_event),
+                Ok(Event::Delta { text }) if &*text == "said"
+            ),
+            "a descendant reported somewhere its parent was not reading"
         );
     }
 }
