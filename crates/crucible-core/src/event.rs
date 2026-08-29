@@ -65,8 +65,13 @@ pub enum TurnError {
 ///
 /// A trait for the same reason [`crate::Ask`] is one: the runner drives it and
 /// must not name what is on the other end. The wiring decides that — a channel
-/// in the binary, a vector in a test — and a channel of something wider than
-/// [`Event`] is then a wrapper rather than a change to the runner.
+/// in the binary, a vector in a test — and what travels is an
+/// [`EventEnvelope`], so a destination that only draws can drop the attribution
+/// on the way in without the runner knowing it did.
+///
+/// Widening what is carried is not free: it is this method, its blanket
+/// implementation and every place that reports. The envelope is the answer to
+/// that, and adding to it is the cheap change; adding beside it is not.
 pub trait Post {
     /// Reports one event, and which execution produced it.
     ///

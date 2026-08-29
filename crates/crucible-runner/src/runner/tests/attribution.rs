@@ -46,7 +46,7 @@ fn every_event_of_one_turn_names_the_same_run() {
     let (first, rest) = reported.split_first().expect("a turn reports something");
     assert!(
         rest.len() > 3,
-        "a turn this shape reports more than {} events",
+        "a turn this shape reports more than 4 events, and reported {}",
         reported.len()
     );
     for one in rest {

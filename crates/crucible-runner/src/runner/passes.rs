@@ -54,7 +54,11 @@ impl<'a> AgentLoop<'a> {
     ///
     /// # Errors
     ///
-    /// [`TurnError`] where a request, a tool or the transcript itself failed.
+    /// [`TurnError`] where a request, a tool or the transcript itself failed,
+    /// and for the two ceilings a turn can reach rather than be stopped by:
+    /// [`TurnError::Spent`] and [`TurnError::ToolOutputBytes`]. Those two end a
+    /// turn the same way a failure does, which is why they leave through here
+    /// rather than through [`StopReason`].
     pub(super) fn drive(&mut self, counting: &mut Counting) -> Result<StopReason, TurnError> {
         let run = self.run;
         let events = run.reporting();

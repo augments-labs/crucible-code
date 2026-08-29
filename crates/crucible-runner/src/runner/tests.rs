@@ -48,8 +48,8 @@ mod spending;
 /// A destination that keeps the event and lets the attribution go.
 ///
 /// These assertions are about what a turn does rather than about whose turn it
-/// was, so they go on reading plain events; the one test that is about the
-/// attribution reads the envelopes itself.
+/// was, so they go on reading plain events; the attribution module reads the
+/// envelopes itself.
 struct Watching(Sender<Event>);
 
 impl Post for Watching {
@@ -958,7 +958,7 @@ fn a_turn_runs_as_long_as_there_is_work_in_it() {
 }
 
 #[test]
-fn tool_results_share_one_retained_boundary_across_a_turn() {
+fn tool_results_past_the_retained_boundary_end_the_turn() {
     let script = Script::new(vec![calling("a", "read", "{}")]);
     let mut scripted = Scripted::new(
         script,

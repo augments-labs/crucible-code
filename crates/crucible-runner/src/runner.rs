@@ -695,8 +695,8 @@ impl Runner {
     /// its own event, and a turn with two endings on screen has one too many.
     ///
     /// Everything the loop needs that is not the session arrives in `run`: who
-    /// it is, how to stop it, what the reader typed at it, where its progress
-    /// goes, and what it may spend. A test that wants a turn to cross the
+    /// it is, how to stop it, what the reader typed at it, what finished behind
+    /// it, where its progress goes, and what it may spend. A test that wants a turn to cross the
     /// tool-output ceiling lowers that figure in the run's policy rather than
     /// printing megabytes to get there.
     ///

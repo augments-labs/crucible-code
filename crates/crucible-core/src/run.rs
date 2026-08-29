@@ -3,9 +3,11 @@
 //! An execution is an agent driven from a prompt to an ending. Today there is
 //! exactly one of them per turn, and this module looks like an over-answer to
 //! that. It is written now because the shape it records is the one thing a
-//! later child execution cannot be given retroactively: an event already drawn,
-//! a result already returned and a log line already written would all have been
-//! recorded without saying whose they were.
+//! later child execution cannot be given retroactively: an event already drawn
+//! and a result already returned would both have been recorded without saying
+//! whose they were. The session log is the one that still is — it takes a
+//! [`crate::Message`] and nothing about who produced it — which is the reason
+//! to fix the shape now rather than after a second execution exists to need it.
 
 use crate::ids::RunId;
 

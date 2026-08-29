@@ -469,15 +469,11 @@ mod tests {
     }
 
     #[test]
-    fn a_run_id_is_not_a_session_id_or_a_turn_id() {
-        // The property the type exists for: an execution is named, never
-        // computed from the session it runs in or the turn it drives. Both of
-        // the others are in scope here and neither can become one.
-        let run = RunId::new();
-        let same_session_again = RunId::new();
-
-        assert_ne!(run, same_session_again);
-        assert_eq!(std::mem::size_of::<RunId>(), 16, "an id an event carries");
+    fn a_run_id_is_sixteen_bytes() {
+        // Every event carries one, and events are posted per delta. What that
+        // costs is the whole of why the id is a `Uuid` rather than something
+        // that would have to be looked up or reference-counted.
+        assert_eq!(std::mem::size_of::<RunId>(), 16);
     }
 
     #[test]

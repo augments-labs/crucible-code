@@ -110,11 +110,11 @@ impl Drop for Relay {
 impl Post for Relay {
     /// Where the attribution stops.
     ///
-    /// One run reports to this screen at a time, so the loop that draws has
-    /// nothing to tell apart: every `match` in it asks what happened rather
-    /// than whose it was. Dropped here, in one named place, so that the day a
-    /// second run reports to the same screen it is this line that has to
-    /// change rather than every pattern downstream of it.
+    /// Nothing on screen is drawn per run, so the loop that draws has nothing
+    /// to tell apart: every `match` in it asks what happened rather than whose
+    /// it was. Dropped here, in one named place, so that the day the screen has
+    /// to tell two runs apart it is this line that has to change rather than
+    /// every pattern downstream of it.
     fn post(&self, reported: EventEnvelope) {
         drop(self.to.send(Seen::Turn(reported.into_event())));
     }
