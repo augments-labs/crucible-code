@@ -25,6 +25,7 @@ const READS: Modalities = Modalities::empty()
 
 mod compaction;
 mod pick_up;
+mod preserved;
 
 /// A runner over a scripted provider, with somewhere for its events to go.
 struct Scripted {
