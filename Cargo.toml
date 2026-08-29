@@ -40,7 +40,7 @@ arboard = { version = "=3.6.1", features = ["wayland-data-control"] }
 # Encodes the clipboard's RGBA pixels as the PNG every provider accepts. The
 # same release is already in arboard's image-data graph, so this names the API
 # without compiling a second encoder.
-image = { version = "=0.25.9", default-features = false, features = ["png"] }
+image = { version = "=0.25.10", default-features = false, features = ["png"] }
 # This workspace's own crates. Path dependencies, released together, so there is
 # no version to pin and no third party whose publish could move them.
 crucible-auth = { path = "crates/crucible-auth" }
