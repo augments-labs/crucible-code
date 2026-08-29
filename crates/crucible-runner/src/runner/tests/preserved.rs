@@ -56,16 +56,16 @@ fn the_tool_output_boundary_is_one_budget_for_the_whole_turn() {
         Verdict::Allow,
     );
 
+    let run = RunContext::new(
+        holding(8),
+        &scripted.events,
+        &scripted.cancel,
+        &scripted.steer,
+        &scripted.aside,
+    );
     let problem = scripted
         .runner
-        .exchange(
-            &mut scripted.says,
-            &scripted.events,
-            &scripted.cancel,
-            &scripted.steer,
-            &scripted.aside,
-            8,
-        )
+        .exchange(&mut scripted.says, &run)
         .unwrap_err();
 
     assert!(

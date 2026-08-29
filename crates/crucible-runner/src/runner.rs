@@ -25,6 +25,7 @@ use crucible_core::{
 use crucible_session::{Pruned, Session};
 
 use crate::agent::AgentSpec;
+use crate::context::RunContext;
 use crate::policy::{Compaction, RunPolicy};
 use crate::tools::Tools;
 
@@ -76,8 +77,9 @@ struct TurnBounds {
 
 /// The state one provider request reads and updates together.
 struct Listening<'a> {
-    events: &'a dyn Post,
-    cancel: &'a Cancel,
+    /// The run the request is part of: where its progress goes, whether it has
+    /// been stopped, and how many goes it gets.
+    run: &'a RunContext<'a>,
     advertised: &'a [ToolSchema],
     counting: &'a mut Counting,
 }
@@ -607,6 +609,10 @@ impl Runner {
             return Ok(Self::stopped(turn, events));
         }
 
+        // One run for the whole turn, minted after the stop check so that a
+        // turn nobody got to take does not spend an identity on being refused.
+        let run = RunContext::new(self.policy, events, cancel, steer, aside);
+
         self.turn = turn;
         events.post(Event::TurnStarted { turn: self.turn });
         self.record(Message::User {
@@ -618,14 +624,7 @@ impl Runner {
         // that a turn cannot acquire a second way to finish without one. The
         // reason is what tells a truncated answer from a complete one, and it
         // has to reach the thread that draws — a return value never does.
-        let stop = self.exchange(
-            ask,
-            events,
-            cancel,
-            steer,
-            aside,
-            self.policy.bounds.tool_output_bytes,
-        )?;
+        let stop = self.exchange(ask, &run)?;
         events.post(Event::TurnFinished {
             turn: self.turn,
             stop,
@@ -657,29 +656,29 @@ impl Runner {
         stop
     }
 
-    /// Passes of asking and running, until something ends the turn, under an
-    /// explicit tool-result byte ceiling.
+    /// Passes of asking and running, until something ends the turn.
     ///
     /// A failure returns instead, and the caller posts nothing: the failure is
     /// its own event, and a turn with two endings on screen has one too many.
     ///
-    /// The ceiling is an argument rather than the constant so a test can put a
-    /// turn over it without printing megabytes to get there. Every caller that
-    /// is not a test passes the run policy's own figure.
-    // The cancel, the steer and the aside are all read off the thread the turn
-    // runs on, and bundling them would drag the three through every signature
-    // the cancel already crosses. The lint counts to five; the turn needs
-    // seven.
-    #[allow(clippy::too_many_arguments)]
+    /// Everything the loop needs that is not the session arrives in `run`: who
+    /// it is, how to stop it, what the reader typed at it, where its progress
+    /// goes, and what it may spend. A test that wants a turn to cross the
+    /// tool-output ceiling lowers that figure in the run's policy rather than
+    /// printing megabytes to get there.
+    ///
+    /// The permission prompt stays outside it, because asking is `&mut`.
     fn exchange(
         &mut self,
         ask: &mut dyn Ask,
-        events: &dyn Post,
-        cancel: &Cancel,
-        steer: &Steer,
-        aside: &Aside,
-        tool_output_maximum: usize,
+        run: &RunContext<'_>,
     ) -> Result<StopReason, TurnError> {
+        let events = run.events;
+        let cancel = run.cancel;
+        let steer = run.steer;
+        let aside = run.aside;
+        let tool_output_maximum = run.policy().bounds.tool_output_bytes;
+
         let mut bounds = TurnBounds::default();
 
         // The turn's own running totals. A bound only where somebody asked for
@@ -742,7 +741,7 @@ impl Runner {
             let reserve = self.reserve(counting.window);
             counting.reserve = reserve;
 
-            if let Some(ceiling) = self.policy.bounds.spend
+            if let Some(ceiling) = run.policy().bounds.spend
                 && counting.spent.tokens() >= ceiling
             {
                 return Err(TurnError::Spent { ceiling });
@@ -753,7 +752,7 @@ impl Runner {
             // of the last pass are already in it. Checked at the top of the
             // loop, so it cannot run while a tool call is out, and the turn
             // carries on afterwards rather than ending.
-            if self.policy.compaction.automatic && counting.load.full(counting.window, reserve) {
+            if run.policy().compaction.automatic && counting.load.full(counting.window, reserve) {
                 // The prompt may itself have crossed the boundary, in which
                 // case no preceding load event exists. State the zero the same
                 // arithmetic reached before replacing it with the compaction
@@ -791,14 +790,13 @@ impl Runner {
             let heard = match self.listen(
                 &bounds,
                 Listening {
-                    events,
-                    cancel,
+                    run,
                     advertised: &advertised,
                     counting: &mut counting,
                 },
             ) {
                 Err(TurnError::Provider(ProviderError::WindowExceeded { provider }))
-                    if self.policy.compaction.automatic =>
+                    if run.policy().compaction.automatic =>
                 {
                     match self.made_room(
                         Compacting::Refused,
@@ -845,7 +843,7 @@ impl Runner {
                         stop: Some(said),
                     });
                 }
-                if !self.policy.compaction.automatic {
+                if !run.policy().compaction.automatic {
                     return Ok(said);
                 }
                 match self.made_room(
@@ -1023,14 +1021,14 @@ impl Runner {
         bounds: &TurnBounds,
         mut listening: Listening<'_>,
     ) -> Result<(Answer, StopReason), TurnError> {
-        let mut left = self.policy.retry.attempts;
-        let mut pause = self.policy.retry.first_pause;
+        let mut left = listening.run.policy().retry.attempts;
+        let mut pause = listening.run.policy().retry.first_pause;
 
         loop {
             let mut answer = Answer::within(
                 self.provider.name(),
                 bounds.retained,
-                self.policy.bounds.response_bytes,
+                listening.run.policy().bounds.response_bytes,
             );
 
             let problem = match self.hearing(&mut answer, &mut listening) {
@@ -1040,11 +1038,11 @@ impl Runner {
 
             if left > 0 && Self::again(&problem, &answer) {
                 left -= 1;
-                listening.events.post(Event::Retrying);
+                listening.run.events.post(Event::Retrying);
 
                 // A pause the user sat through and then had to interrupt would
                 // be this program keeping them waiting rather than the provider.
-                if Self::pausing(pause, listening.cancel) {
+                if Self::pausing(pause, listening.run.cancel) {
                     pause = pause.saturating_mul(2);
                     continue;
                 }
@@ -1107,25 +1105,25 @@ impl Runner {
         // sentence about it.
         let aged = resolved.aged(&self.transcript);
         if !aged.is_empty() {
-            listening.events.post(Event::Aged { files: aged });
+            listening.run.events.post(Event::Aged { files: aged });
         }
         // Beside it rather than folded into it: a file the model does not read
         // stayed behind for a reason the reader answers differently, and a row
         // that said one thing about both would be wrong about one of them.
         let unread = resolved.unread(&self.transcript);
         if !unread.is_empty() {
-            listening.events.post(Event::Unread { files: unread });
+            listening.run.events.post(Event::Unread { files: unread });
         }
 
         let mut stream = self.provider.stream(
             self.request(listening.advertised, &attached),
-            listening.cancel,
+            listening.run.cancel,
         )?;
 
         Self::hear(
             stream.as_mut(),
             answer,
-            listening.events,
+            listening.run.events,
             listening.counting,
         )
         .and_then(|()| answer.reached().map_err(TurnError::from))

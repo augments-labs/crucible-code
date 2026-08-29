@@ -16,7 +16,20 @@ use sha2::{Digest as _, Sha256};
 
 use super::*;
 use crate::fake::{Fixed, Says, Script, Sent, changing};
+use crate::policy::Bounds;
 use crate::sample::Sample;
+
+/// A policy holding one turn's tool output to `maximum` bytes, so a test can
+/// put a turn over the boundary without printing megabytes to get there.
+fn holding(maximum: usize) -> RunPolicy {
+    RunPolicy {
+        bounds: Bounds {
+            tool_output_bytes: maximum,
+            ..Bounds::default()
+        },
+        ..RunPolicy::default()
+    }
+}
 
 /// What the model these tests ask reads: prose and the pictures they attach.
 const READS: Modalities = Modalities::empty()
@@ -930,16 +943,16 @@ fn tool_results_share_one_retained_boundary_across_a_turn() {
         Verdict::Allow,
     );
 
+    let run = RunContext::new(
+        holding(8),
+        &scripted.events,
+        &scripted.cancel,
+        &scripted.steer,
+        &scripted.aside,
+    );
     let problem = scripted
         .runner
-        .exchange(
-            &mut scripted.says,
-            &scripted.events,
-            &scripted.cancel,
-            &scripted.steer,
-            &scripted.aside,
-            8,
-        )
+        .exchange(&mut scripted.says, &run)
         .unwrap_err();
 
     assert!(matches!(problem, TurnError::ToolOutputBytes { maximum: 8 }));

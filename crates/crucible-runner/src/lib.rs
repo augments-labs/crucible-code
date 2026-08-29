@@ -17,6 +17,7 @@
 //! session goes on.
 
 mod agent;
+mod context;
 #[cfg(test)]
 mod fake;
 mod policy;
@@ -26,6 +27,7 @@ mod sample;
 mod tools;
 
 pub use agent::AgentSpec;
+pub use context::RunContext;
 pub use crucible_session::{
     Glimpse, PROMPTS, Pruned, Recorded, Session, SessionError, glimpse, prompts, recent, remember,
     retitle,
