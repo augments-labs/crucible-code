@@ -121,6 +121,19 @@ impl Tools {
             .collect()
     }
 
+    /// The same, by name and nothing else.
+    ///
+    /// For the sentence the model is asked under, which says which tools it has
+    /// and leaves what each does to the schema beside it. Off this registry so
+    /// that a prompt cannot advertise a tool the session does not offer.
+    #[must_use]
+    pub fn offering(&self) -> Vec<String> {
+        self.advertised()
+            .into_iter()
+            .map(|schema| schema.name.to_owned())
+            .collect()
+    }
+
     /// Every tool that is held back, with the name and description a search
     /// matches against.
     ///

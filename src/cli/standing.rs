@@ -1,95 +1,76 @@
-//! What every turn is asked under.
+//! What every turn is asked under, assembled from what this run knows.
 //!
-//! The instructions are written for this harness, and beside them go the two
-//! things the session knows and the model cannot: where it is standing, and
-//! what it is. Both are read off the runner rather than written down once,
-//! because `/model` and `/effort` change the second of them mid-session.
+//! The instructions themselves are [`crucible_core::SystemPrompt`], because
+//! what they say is a fact about crucible and not about this binary. What is
+//! here is the other half: the four things only the composition root can
+//! answer — which layers the reader wrote, where the workspace is, what is
+//! answering, and which tools were actually registered — put onto that value
+//! and rendered.
 //!
-//! It says how to work and how to answer, and leaves what the tools do to the
-//! tools' own schemas — a system prompt that also describes each tool is a
-//! second place for that description to go stale.
+//! It is built again for every turn rather than once at startup. Three of those
+//! four change while a session runs: `/model` and `/effort` move the identity,
+//! `tool_search` grows the roster, and a command left running ends between one
+//! turn and the next. A prompt written once would go on describing the session
+//! the first turn was taken in.
+//!
+//! The tools are named here and described nowhere. Their schemas travel with
+//! every request already, and the list comes off the registry rather than out
+//! of a constant, so a tool this build stops offering cannot go on being
+//! advertised by a sentence nobody thought to edit.
 
 use std::fmt::Write as _;
 
-use crucible_core::{Effort, Workspace};
+use crucible_config::Settings;
+use crucible_core::{Effort, SystemPrompt, Workspace};
 use crucible_tools::Ended;
 
 use crate::cli::draw::spelled;
 
-/// The standing instructions every turn carries.
-const SYSTEM: &str = "\
-You are crucible, a coding agent working in a terminal beside a developer.
-
-Work from what the code says rather than what it probably says: read a file \
-before changing it, and search before concluding something is not there. \
-Prefer the smallest change that finishes the job, and match the conventions of \
-the file you are editing rather than your own habits.
-
-Answer in plain prose, briefly. The developer is reading a terminal: put the \
-conclusion first, skip the preamble, and do not read a file's contents back \
-after editing it — say what changed and why.
-
-Ask when the answer would change what you build. Otherwise decide, say which \
-way you decided, and carry on.";
-
-/// How the identity reads where nobody named a rung.
+/// Everything about this run that the instructions themselves cannot hold.
 ///
-/// The field is left off the request entirely in that state, so what answers is
-/// whatever the vendor does by default for that model — which is a fact about
-/// the vendor, and not a rung this program picked.
-const UNSAID: &str = "the vendor's own default effort";
+/// A struct rather than six arguments: three of these are strings or slices
+/// that would read identically at a call site and mean entirely different
+/// things, which is the argument list nobody can check by eye.
+pub(crate) struct Standing<'a> {
+    /// The layers, for the tone and for anything the reader would rather crucible
+    /// said instead.
+    pub(crate) settings: &'a Settings,
+    /// The model, as the provider spells it. Empty where nothing has chosen one.
+    pub(crate) model: &'a str,
+    /// The rung, where one was named.
+    pub(crate) effort: Option<Effort>,
+    /// Where every tool path is taken from.
+    pub(crate) workspace: &'a Workspace,
+    /// The tools this session is advertising, off the registry that holds them.
+    pub(crate) tools: Vec<String>,
+}
 
-/// The whole of what a turn is asked under: the instructions, the root, and
-/// what is answering.
+/// The whole of what a turn is asked under.
 ///
-/// The root is here because every tool takes paths relative to it, and a model
-/// that has to guess spends its first tool call finding out.
-///
-/// The identity is here because a model has no way to look at either half of
-/// it. Its own name it would answer from training, which for a name is a guess
-/// that reads like a fact and is wrong the moment a session switches models.
-/// The rung it was asked to think at is a field on a request it never sees.
-/// Both are what somebody asking what they are talking to is asking about, so
-/// both are said rather than left to be invented.
-///
-/// An unnamed model is a session that cannot take a turn, and it gets no
-/// identity at all — there is nothing true to say yet, and a sentence about
-/// nothing is worse than silence.
-pub(crate) fn under(
-    model: &str,
-    effort: Option<Effort>,
-    workspace: &Workspace,
-    notes: &[String],
-) -> String {
-    let root = workspace.root().display();
-    let standing =
-        format!("{SYSTEM}\n\nThe workspace root is {root}. Every tool path is relative to it.");
+/// An unnamed model gets no identity at all — there is nothing true to say yet,
+/// and a sentence about nothing is worse than silence.
+pub(crate) fn under(standing: Standing<'_>) -> String {
+    let Standing {
+        settings,
+        model,
+        effort,
+        workspace,
+        tools,
+    } = standing;
 
-    // What is left to say at the top of a turn, which since a turn in flight
-    // gained somewhere to put a fact is less than it was: a note the running
-    // turn was handed has already been said, and only the ones nothing was
-    // running to take — or that arrived after the last pass — are still owed.
-    let standing = if notes.is_empty() {
-        standing
-    } else {
-        format!("{standing}\n\n{}", notes.join("\n\n"))
-    };
-
-    if model.is_empty() {
-        return standing;
+    SystemPrompt {
+        tone: settings.tone(),
+        custom: settings.custom_prompt().map(str::to_owned),
+        append: settings.appended_prompt().map(str::to_owned),
+        tools,
+        root: Some(workspace.root().to_path_buf()),
+        identity: (!model.is_empty()).then(|| crucible_core::Identity {
+            model: model.to_owned(),
+            effort,
+        }),
+        ..SystemPrompt::default()
     }
-
-    let rung = effort.map_or_else(
-        || UNSAID.to_owned(),
-        |effort| format!("{} effort", effort.as_str()),
-    );
-
-    format!(
-        "{standing}\n\nYou are {model}, asked at {rung}. That is what to say when \
-         somebody asks which model they are talking to or how hard you are \
-         thinking. Neither is something you can find out for yourself, and both \
-         can change partway through a session."
-    )
+    .text()
 }
 
 /// What has ended, in the words the model is told it in.

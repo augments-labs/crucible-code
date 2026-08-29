@@ -22,6 +22,7 @@ mod input;
 mod layers;
 mod output;
 mod permissions;
+mod prompt;
 mod updates;
 mod variables;
 

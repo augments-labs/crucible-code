@@ -261,6 +261,15 @@ const ENV: &[Field] = &[Field {
 /// schema accepts and the program drops.
 pub(crate) const EFFORT: &[&str] = &["low", "medium", "high", "xhigh", "max"];
 
+/// Every answer `systemPrompt.tone` accepts, in the order a picker offers them.
+///
+/// The tones [`crucible_core::Tone`] holds, spelled the way it spells them.
+/// The second `Choice` in this file whose meaning belongs to another crate, and
+/// tested the same way the first is: both directions, so a word here the
+/// program no longer parses is caught, and so is a tone the program grew that
+/// no document can reach.
+pub(crate) const TONE: &[&str] = &["concise", "explanatory", "learning"];
+
 /// Every answer `output.color` accepts, in the order the schema lists them.
 ///
 /// Named here rather than written inline because `settings` has to turn one of
@@ -292,6 +301,50 @@ pub const THEME: &[&str] = &[
 /// a hollow square has a font missing it, and a font is not something a program
 /// can interrogate over a pipe — so this is the answer, not a fallback for one.
 pub(crate) const GLYPHS: &[&str] = &["unicode", "ascii"];
+
+/// What the model is asked under, where the reader wants something else.
+///
+/// Two hooks that look alike and are not. `append` adds to what crucible says;
+/// `custom` says it instead — and what it says instead of includes the line
+/// about asking before building the wrong thing. So `custom` widens and
+/// `append` does not, which is the same split the `permissions` block above
+/// already makes: the key that can take a guard away is read only from the file
+/// whoever is sitting here owns, and the key that can only add to one is
+/// readable from a checkout.
+///
+/// Neither reaches the workspace root, the tool list or the model's own name.
+/// Those are what the session found out, not what crucible has an opinion
+/// about, and a reader replacing an opinion has not said the facts are wrong.
+const PROMPT: &[Field] = &[
+    Field {
+        name: "tone",
+        about: "How much of the reasoning comes back with the answer: concise for the conclusion, explanatory for why it is that one, learning for what to know before touching the code again",
+        shape: Shape::Choice(TONE),
+        // A `Choice` lists its own answers.
+        examples: &[],
+        usual: Some("concise"),
+        widens: false,
+    },
+    Field {
+        name: "custom",
+        about: "Instructions to ask every turn under in place of crucible's own, replacing them entirely. Read only from the configuration file in your home directory",
+        shape: Shape::Text,
+        examples: &["You are a reviewer. Read and explain; never edit a file."],
+        // It replaces the paragraph that says to ask before building the wrong
+        // thing, which is a guard a repository may not take away from whoever
+        // opened it.
+        usual: None,
+        widens: true,
+    },
+    Field {
+        name: "append",
+        about: "Instructions to add to crucible's own, said after them and every turn",
+        shape: Shape::Text,
+        examples: &["This repository is deployed on Fridays; never push to main."],
+        usual: None,
+        widens: false,
+    },
+];
 
 /// What the terminal is drawn with, and how much of a line it gets.
 const OUTPUT: &[Field] = &[
@@ -585,6 +638,14 @@ pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
         name: "output",
         about: "What the terminal shows",
         shape: Shape::Fields(OUTPUT),
+        examples: &[],
+        usual: None,
+        widens: false,
+    },
+    Field {
+        name: "systemPrompt",
+        about: "What the model is asked under: how much it explains, and anything you would rather it were told instead",
+        shape: Shape::Fields(PROMPT),
         examples: &[],
         usual: None,
         widens: false,
