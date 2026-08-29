@@ -197,24 +197,32 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<Runner, Fatal> {
         }
     };
 
+    // The registry before either, because what a turn is asked under names the
+    // tools this run actually registered — and which those are is the wiring's
+    // answer, arrived at a line above rather than written down a second time
+    // in a sentence.
+    let offering = tools(startup, settings, reaching);
+
+    // Nothing has ended yet: this is what the first turn of a run is asked
+    // under, and no command has been left running to end. It is written again
+    // before every turn after it, because three of the four things in it move
+    // while a session runs.
+    let name = startup.model.unwrap_or_default();
+    let asked = standing::under(standing::Standing {
+        settings,
+        model: name,
+        effort: startup.effort,
+        workspace,
+        tools: offering.offering(),
+    });
+
     // Read before the provider is handed over, because which vendor is being
     // written to is what says which model's limits are being asked about.
-    let asking = model(
-        provider.name(),
-        startup.model,
-        startup.effort,
-        workspace,
-        settings,
-    );
+    let asking = model(provider.name(), name, startup.effort, settings, asked);
 
-    let mut runner = Runner::new(
-        provider,
-        tools(startup, settings, reaching),
-        asking,
-        session,
-    )
-    .permitting(settings.permission(startup.mode))
-    .compacting(compacting(settings));
+    let mut runner = Runner::new(provider, offering, asking, session)
+        .permitting(settings.permission(startup.mode))
+        .compacting(compacting(settings));
     if let Some(transcript) = earlier {
         planned(startup.plan, &transcript);
         runner = runner.resuming(transcript);
@@ -819,17 +827,13 @@ fn about(schema: &str) -> Box<str> {
 /// default.
 fn model(
     provider: &str,
-    name: Option<&str>,
+    name: &str,
     effort: Option<Effort>,
-    workspace: &Workspace,
     settings: &Settings,
+    asked: String,
 ) -> Model {
-    let name = name.unwrap_or_default();
-
     Model {
-        // Nothing has ended yet: this is the note the first turn of a run is
-        // asked under, and no command has been left running to end.
-        system: Some(standing::under(name, effort, workspace, &[]).into()),
+        system: Some(asked.into()),
         name: name.into(),
         max_tokens: ceiling(provider, name),
         window: window(provider, name, settings),

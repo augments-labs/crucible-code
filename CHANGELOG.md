@@ -8,6 +8,33 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Added
+
+- **What the model is asked under is now yours to set.** A `systemPrompt` block
+  chooses the `tone` an answer comes back in — `concise` for the result,
+  `explanatory` for why it is that one, `learning` for what to know before
+  touching the code again — while `append` adds a paragraph of your own to
+  crucible's instructions every turn. `custom` replaces those instructions
+  outright and is read only from your home file, because a repository may not
+  take that guard away from whoever cloned it. See
+  [Configuration](docs/configuration/configuration.md#systemprompt).
+
+### Changed
+
+- **crucible's standing instructions were rewritten.** The prompt every turn
+  carries now says what a settings layer or a project file settles before
+  crucible reads anything, how to hold one task across a whole session, and how
+  to report where the work actually stands. It also names the tools this run
+  registered, off the registry that holds them, so a build that stops offering
+  one cannot go on advertising it in a sentence nobody edited.
+
+- **A command that ends between turns is remembered like one that ends
+  mid-turn.** Its ending used to reach the next turn through the prompt, which
+  is written again every turn, so the model was told once and had forgotten by
+  the turn after. It now goes where the same ending goes when it lands
+  mid-turn — into the transcript — so one fact has one lifetime whichever moment
+  it arrives in.
+
 ## [0.27.1] - 2026-08-28
 
 ### Changed
@@ -3019,7 +3046,7 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.27.0...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.27.1...HEAD
 [0.27.1]: https://github.com/augments-labs/crucible-code/compare/v0.27.0...v0.27.1
 [0.27.0]: https://github.com/augments-labs/crucible-code/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/augments-labs/crucible-code/compare/v0.25.2...v0.26.0

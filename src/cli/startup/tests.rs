@@ -483,15 +483,12 @@ fn a_session_with_nothing_chosen_starts_and_asks_for_no_model() {
 fn a_rung_the_run_resolved_is_on_the_model_every_turn_is_asked_of() {
     // The one thing this function does with it: a rung that stopped here would
     // be shown on the welcome and asked for nowhere.
-    let sample = Sample::new("effort-model");
-    let workspace = sample.workspace();
-
     let asking = model(
         "anthropic",
-        Some("claude-opus-5"),
+        "claude-opus-5",
         Some(Effort::Xhigh),
-        &workspace,
         &Settings::default(),
+        String::new(),
     );
 
     assert_eq!(asking.effort, Some(Effort::Xhigh));
@@ -501,10 +498,10 @@ fn a_rung_the_run_resolved_is_on_the_model_every_turn_is_asked_of() {
     assert_eq!(
         model(
             "anthropic",
-            Some("claude-opus-5"),
+            "claude-opus-5",
             None,
-            &workspace,
-            &Settings::default()
+            &Settings::default(),
+            String::new()
         )
         .effort,
         None
@@ -563,17 +560,14 @@ fn an_explicit_context_window_can_opt_back_into_a_larger_window() {
 
 #[test]
 fn how_long_an_answer_may_be_is_the_model_own_limit_held_under_the_ceiling() {
-    let sample = Sample::new("answer-ceiling");
-    let workspace = sample.workspace();
-
     // A model this build has the limits of: its own output limit is far above
     // the ceiling, so the ceiling is what is asked for.
     let known = model(
         "anthropic",
-        Some("claude-opus-5"),
+        "claude-opus-5",
         None,
-        &workspace,
         &Settings::default(),
+        String::new(),
     );
     assert_eq!(known.max_tokens, CEILING);
 
@@ -581,10 +575,10 @@ fn how_long_an_answer_may_be_is_the_model_own_limit_held_under_the_ceiling() {
     // figure is what keeps a request from being refused outright.
     let unknown = model(
         "anthropic",
-        Some("claude-from-the-future"),
+        "claude-from-the-future",
         None,
-        &workspace,
         &Settings::default(),
+        String::new(),
     );
     assert_eq!(unknown.max_tokens, UNKNOWN_CEILING);
 }

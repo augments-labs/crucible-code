@@ -26,6 +26,7 @@ mod event;
 mod ids;
 mod modality;
 mod permission;
+mod prompt;
 mod provider;
 mod revealed;
 mod source;
@@ -50,6 +51,7 @@ pub use permission::{
     Approved, Ask, Command, Disposition, Grant, Host, Minted, Mode, Permission, Remember,
     RuleError, Rules, Sensitivity, Settled, Target, Verdict, narrowest,
 };
+pub use prompt::{Identity, Skill, SystemPrompt, Tone, ToneError};
 pub use provider::{
     Attached, Calibration, Carried, Content, Delta, DeltaStream, Effort, EffortError, Provider,
     ProviderError, ProviderLimit, Request, Spend, ToolSchema,

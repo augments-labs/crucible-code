@@ -28,6 +28,12 @@ pub(crate) struct SentRequest {
     pub(crate) tools: Vec<ToolSchema>,
     pub(crate) max_tokens: u32,
     pub(crate) effort: Option<Effort>,
+    /// Whether this request carried a system prompt at all.
+    ///
+    /// The text is not kept because no test here reads it. What is worth
+    /// recording is the yes or no: one request a turn deliberately sends none,
+    /// and nothing else could tell that request apart from the ordinary ones.
+    pub(crate) had_system: bool,
 }
 
 impl SentRequest {
@@ -149,6 +155,7 @@ impl Provider for Script {
             tools: request.tools.to_vec(),
             max_tokens: request.max_tokens,
             effort: request.effort,
+            had_system: request.system.is_some(),
         });
 
         if let Some(status) = self.refuses {

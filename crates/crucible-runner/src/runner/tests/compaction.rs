@@ -941,3 +941,67 @@ fn a_turn_that_outweighs_the_budget_is_not_kept_whole_for_being_recent() {
         "what follows the recap does not open a turn"
     );
 }
+
+#[test]
+fn the_recap_request_carries_no_system_prompt_so_a_standing_note_cannot_become_a_permanent_one() {
+    // Two things are called notes. The standing prompt carries what happened
+    // between two turns, taken from a queue that empties as it is read; a recap
+    // carries what the pruned span of the transcript said, and stays in the
+    // transcript for the rest of the session. They must not become each other.
+    //
+    // Sending the ordinary prompt on this one request is what would join them:
+    // the model would be summarising a transcript with a note about a finished
+    // background command standing over it, and a one-turn note it read there
+    // could land in the recap and be carried on every turn afterwards. So this
+    // request sends none, and the fake records whether it did, because nothing
+    // else about it looks different from an ordinary turn.
+    let script = Script::new(vec![
+        vec![
+            Delta::Carried(Carried::new(20_000)),
+            Delta::Text("first".into()),
+            Delta::Stopped(StopReason::Yielded),
+        ],
+        vec![
+            Delta::Carried(Carried::new(30_000)),
+            Delta::Text("second".into()),
+            Delta::Stopped(StopReason::Yielded),
+        ],
+        recap("notes to self"),
+    ]);
+    let sent = script.sent();
+    let mut scripted = Scripted::within(script, 200_000, keeping_one());
+
+    // The session has one, standing note and all. Without this the runner sends
+    // no prompt on any request and the assertion below would hold over a
+    // session that never had one to leave off.
+    scripted
+        .runner
+        .telling("You are an expert in coding.\n\n## Since your last turn\n\ncrucible, not the developer: commands you left running have ended.");
+
+    scripted.turn("first").expect("a turn to compact from");
+    scripted.turn("second").expect("a middle to replace");
+    let _ = scripted.left();
+
+    scripted
+        .runner
+        .compact(
+            Compacting::Asked,
+            &scripted.events,
+            &scripted.cancel,
+            &mut Spend::default(),
+        )
+        .expect("a structured recap");
+
+    let sent = sent.lock().unwrap();
+    let (asked, turns) = sent.split_last().expect("the recap request");
+
+    assert!(!asked.had_system, "the recap request carried a prompt");
+
+    // And the ordinary turns did carry one, so the assertion above is about
+    // this request rather than about a runner that never sends a prompt at all.
+    assert!(!turns.is_empty(), "no ordinary turn to compare against");
+    assert!(
+        turns.iter().all(|one| one.had_system),
+        "an ordinary turn went without a prompt"
+    );
+}

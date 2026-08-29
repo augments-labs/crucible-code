@@ -1123,23 +1123,24 @@ fn take<T: Terminal>(
     // hard it was asked to think — and a model can find out neither for itself.
     // Written once at startup it would go on describing the session the first
     // turn was taken in, so it is written again for each.
-    // Drained here rather than when it happened: the reader was told at the
-    // moment, and this is the other audience being told at the one moment a
-    // turn that is not running can be told anything.
-    //
-    // The aside first, because what is in it is older: a note the last turn was
-    // handed but ended before it could take is still owed, and it is owed ahead
-    // of anything that has happened since. Both queues are take-once, so a fact
-    // that reached the running turn is not in either of them and is not said
-    // twice.
-    let mut notes = terms.aside.take();
-    notes.extend(standing::said(&terms.leaving.reported()));
-    runner.telling(&standing::under(
-        runner.model(),
-        runner.effort(),
-        &terms.workspace,
-        &notes,
-    ));
+    runner.telling(&standing::under(standing::Standing {
+        settings: &terms.settings,
+        model: runner.model(),
+        effort: runner.effort(),
+        workspace: &terms.workspace,
+        tools: runner.offering(),
+    }));
+
+    // And what ended while nothing was running goes into the aside rather than
+    // into what is above, which is the one place a fact like this can be put
+    // that does not decide how long it lasts. The prompt is written again every
+    // turn, so a note put there is said once and then gone; the aside is drained
+    // into the transcript by the turn itself, which is where the same note goes
+    // when a command ends while a turn is running. One fact, one lifetime,
+    // whichever of the two moments it arrives in.
+    if let Some(said) = standing::said(&terms.leaving.reported()) {
+        terms.aside.say(said);
+    }
 
     // Whatever stopped the last turn is spent, and this is the last moment at
     // which clearing it can be certain of that: from the next line on there are

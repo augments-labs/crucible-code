@@ -448,6 +448,18 @@ impl Runner {
         &self.model.name
     }
 
+    /// The tools this session is advertising, by name.
+    ///
+    /// For the sentence the model is asked under, which names what it has and
+    /// describes none of it. Off the registry rather than out of a list beside
+    /// it, so a tool this build stopped offering cannot go on being advertised
+    /// by a prompt nobody edited — and so a tool looked up mid-session is named
+    /// from the turn after it is found.
+    #[must_use]
+    pub fn offering(&self) -> Vec<String> {
+        self.tools.offering()
+    }
+
     /// The maximum output carried with the next provider request.
     #[must_use]
     pub fn maximum_output(&self) -> u32 {

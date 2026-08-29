@@ -129,6 +129,46 @@ compaction reserve is applied separately, so automatic compaction starts when
 `carried + reserve >= window`. Setting a window too large may let a request reach
 the provider's real limit and be refused; setting one too small compacts earlier.
 
+### `systemPrompt`
+
+What the model is asked under, before you have typed anything.
+
+| Key | Answers | Means |
+| --- | --- | --- |
+| `tone` | `concise`, `explanatory`, `learning` | How much of the reasoning comes back with the answer. |
+| `append` | a paragraph | Said after crucible's own instructions, every turn. |
+| `custom` | a whole prompt | Asked under in place of crucible's own instructions. |
+
+```json
+{
+  "systemPrompt": {
+    "tone": "explanatory",
+    "append": "This repository is deployed on Fridays; never push to main."
+  }
+}
+```
+
+All three tones ask for the same work done to the same standard; what changes
+is how much of the reasoning arrives with it, which is a fact about who is
+reading rather than about what was asked. `concise` is the default and gives
+the result and what it cost to reach it. `explanatory` adds why that answer and
+not the one next to it. `learning` hands part of the change back: past twenty
+lines or so it leaves a single `TODO(human)` where a decision belongs and asks
+you to make it.
+
+`append` and `custom` stay two keys rather than one key with a mode. Adding a
+paragraph should not mean restating the prompt you wanted to keep, and putting
+your own prompt in should not silently concatenate it with the one you were
+replacing. Neither reaches the workspace root, the tool list or the model's own
+name: those are what the session found out rather than something crucible has an
+opinion about.
+
+`custom` is one of the keys [workspace files](#the-workspace-files) may not set.
+What it replaces includes the lines about reading a file before changing it and
+saying where the work actually stands, and a repository is not allowed to take
+those away from whoever cloned it. `append` can only add, so a checkout may set
+it.
+
 ### `compaction`
 
 What happens when the model's window fills up. See
@@ -413,11 +453,12 @@ is still not a way to ship somebody's key.
 
 The same refusal covers every key that could loosen what crucible does unasked:
 `permissions.mode`, `permissions.allow`, `permissions.extraDirectories`,
-`providers.<name>.apiKeyEnv`, `providers.<name>.baseUrl`, and `provider`. The
-last three are not permissions, and they are here for the same reason — they
-choose which credential is read or who receives it, and nothing on that path
-stops to ask. Each is read only from your home file and refused in both files
-under the workspace.
+`systemPrompt.custom`, `providers.<name>.apiKeyEnv`, `providers.<name>.baseUrl`,
+and `provider`. The last four are not permissions, and they are here for the
+same reason — they replace the instructions that say to ask, or choose which
+credential is read and who receives it, and nothing on those paths stops to ask.
+Each is read only from your home file and refused in both files under the
+workspace.
 
 The refusal is structural rather than a warning, and there is no "trusted
 project" setting that switches it off. The guarantee holds only because there is
