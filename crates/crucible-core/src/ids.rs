@@ -177,7 +177,7 @@ fn legacy_shaped(text: &str) -> bool {
 /// does. `Copy` and pointer-free on purpose: every event a run posts carries
 /// one, and an identifier that allocated would put an allocation on the
 /// delta path.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RunId(Uuid);
 
 impl RunId {
@@ -218,7 +218,7 @@ impl fmt::Debug for RunId {
 /// name they gave it — in a configuration document, on a command line, and
 /// from another agent that may delegate to it. Stored as given: what makes a
 /// name acceptable belongs to whatever registers definitions, not here.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct AgentId(Box<str>);
 
 impl AgentId {

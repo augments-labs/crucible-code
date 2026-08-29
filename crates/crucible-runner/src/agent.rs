@@ -10,10 +10,11 @@
 //! Configuration is not the same as constant. A session answers under the
 //! instructions and the model it was started with until somebody changes them,
 //! and both can be changed mid-session — so a runner rewrites those two fields
-//! on the definition it holds, which is its own. What a definition may never
-//! acquire is one of the four things above; that is the line this type draws,
-//! and `Clone` is what keeps whoever handed the definition over on the other
-//! side of it.
+//! on the definition it holds. It holds its own because one is handed over by
+//! value: the wiring gives its definition up, rather than keeping a second one
+//! that would go stale the first time the session changed models. What a
+//! definition may never acquire is one of the four things above; that is the
+//! line this type draws.
 //!
 //! One of these is built during wiring today and there is exactly one agent to
 //! build it for. The split is worth making before there are two: a definition
@@ -28,7 +29,7 @@ use crate::runner::Model;
 ///
 /// Handed over whole by the wiring, the way [`crate::Compaction`] is, so this
 /// crate never learns that any of it has a spelling in a file.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct AgentSpec {
     /// What this agent is called where one is selected: a configuration
     /// document, a command line, or — later — another agent delegating to it.
