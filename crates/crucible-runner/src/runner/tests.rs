@@ -16,6 +16,7 @@ use sha2::{Digest as _, Sha256};
 
 use super::*;
 use crate::fake::{Fixed, Says, Script, Sent, changing};
+use crate::outcome::RunStatus;
 use crate::policy::Bounds;
 use crate::sample::Sample;
 
@@ -37,6 +38,7 @@ const READS: Modalities = Modalities::empty()
     .insert(Modality::Image);
 
 mod compaction;
+mod outcome;
 mod pick_up;
 mod preserved;
 mod spec;

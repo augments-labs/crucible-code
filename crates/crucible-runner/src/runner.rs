@@ -26,6 +26,7 @@ use crucible_session::{Pruned, Session};
 
 use crate::agent::AgentSpec;
 use crate::context::RunContext;
+use crate::outcome::RunResult;
 use crate::policy::{Compaction, RunPolicy};
 use crate::tools::Tools;
 
@@ -624,7 +625,7 @@ impl Runner {
         // that a turn cannot acquire a second way to finish without one. The
         // reason is what tells a truncated answer from a complete one, and it
         // has to reach the thread that draws — a return value never does.
-        let stop = self.exchange(ask, &run)?;
+        let stop = self.exchange(ask, &run)?.stop;
         events.post(Event::TurnFinished {
             turn: self.turn,
             stop,
@@ -672,6 +673,36 @@ impl Runner {
         &mut self,
         ask: &mut dyn Ask,
         run: &RunContext<'_>,
+    ) -> Result<RunResult, TurnError> {
+        // The turn's own running totals. A bound only where somebody asked for
+        // one: a turn that runs long because there is work in it is not a turn
+        // to stop, and what a runaway one actually consumes is this.
+        //
+        // Held out here rather than inside the passes so that what the run
+        // spent survives the loop ending, whichever of its ways out it took.
+        let mut counting = Counting {
+            spent: Spend::NONE,
+            load: self.load,
+            window: self.spec.model.window,
+            reserve: self.reserve(self.spec.model.window),
+        };
+
+        let stop = self.passes(ask, run, &mut counting)?;
+
+        Ok(RunResult::new(run.run(), stop, counting.spent))
+    }
+
+    /// The passes themselves: ask, run what was asked for, ask again.
+    ///
+    /// Split from [`Runner::exchange`] only so that the totals outlive it. Every
+    /// way out of this loop is a way a turn ends, and there are enough of them
+    /// that reaching the spend through a return value would mean writing it at
+    /// each one.
+    fn passes(
+        &mut self,
+        ask: &mut dyn Ask,
+        run: &RunContext<'_>,
+        counting: &mut Counting,
     ) -> Result<StopReason, TurnError> {
         let events = run.events;
         let cancel = run.cancel;
@@ -680,17 +711,6 @@ impl Runner {
         let tool_output_maximum = run.policy().bounds.tool_output_bytes;
 
         let mut bounds = TurnBounds::default();
-
-        // The turn's own running totals. A bound only where somebody asked for
-        // one: a turn that runs long because there is work in it is not a turn
-        // to stop, and what a runaway one actually consumes is this.
-        let mut counting = Counting {
-            spent: Spend::NONE,
-            load: self.load,
-            window: self.spec.model.window,
-            reserve: self.reserve(self.spec.model.window),
-        };
-
         let mut fruitless = 0;
 
         loop {
@@ -792,7 +812,7 @@ impl Runner {
                 Listening {
                     run,
                     advertised: &advertised,
-                    counting: &mut counting,
+                    counting,
                 },
             ) {
                 Err(TurnError::Provider(ProviderError::WindowExceeded { provider }))

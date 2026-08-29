@@ -20,6 +20,7 @@ mod agent;
 mod context;
 #[cfg(test)]
 mod fake;
+mod outcome;
 mod policy;
 mod runner;
 #[cfg(test)]
@@ -32,6 +33,7 @@ pub use crucible_session::{
     Glimpse, PROMPTS, Pruned, Recorded, Session, SessionError, glimpse, prompts, recent, remember,
     retitle,
 };
+pub use outcome::{RunResult, RunStatus};
 pub use policy::{Bounds, Compaction, Retry, RunPolicy};
 pub use runner::attachments;
 pub use runner::{Model, Runner};
