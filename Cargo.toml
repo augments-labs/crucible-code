@@ -160,7 +160,7 @@ getrandom = "=0.4.3"
 # one process. The version and variant bit layout, the monotonic tie-break
 # counter, and the timestamp recovery are format machinery this crate owns;
 # `std` cannot mint one and hand-rolling it would be a second partial codec.
-uuid = { version = "=1.24.1", features = ["v7"] }
+uuid = { version = "=1.25.0", features = ["v7"] }
 
 # Browser OAuth uses RFC 7636 S256. Keeping SHA-256 in the auth crate avoids a
 # partial handwritten digest at the boundary where a mismatch becomes a failed
