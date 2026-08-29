@@ -15,7 +15,7 @@ use crucible_core::{
 use sha2::{Digest as _, Sha256};
 
 use super::*;
-use crate::fake::{Fixed, Says, Script, Sent, changing};
+use crate::fake::{Fixed, Says, Script, Sent, Typing, changing};
 use crate::outcome::RunStatus;
 use crate::policy::Bounds;
 use crate::sample::Sample;

@@ -10,8 +10,8 @@ use std::sync::{Arc, Mutex};
 
 use crucible_core::{
     Approved, Ask, Cancel, Delta, DeltaStream, Diff, Effort, Message, Modalities, Modality,
-    Provider, ProviderError, Remember, Request, Sensitivity, Summary, Target, Tool, ToolArgs,
-    ToolCall, ToolError, ToolOutput, ToolSchema, Verdict, Watch, Wrote,
+    Provider, ProviderError, Remember, Request, Sensitivity, Steer, Summary, Target, Tool,
+    ToolArgs, ToolCall, ToolError, ToolOutput, ToolSchema, Verdict, Watch, Wrote,
 };
 
 /// The name a scripted provider answers to.
@@ -327,6 +327,54 @@ impl Tool for Fixed {
                 None => ToolOutput::ok(self.answer.clone()),
             }),
         }
+    }
+}
+
+/// A tool that types a line into the reader's queue while it runs.
+///
+/// The one moment a steered line can arrive between a call and its answer is
+/// while that call is out, and nothing else here can reach it: the queue is
+/// pushed to from the thread that reads the keyboard, and a test has only the
+/// thread the turn runs on.
+pub(crate) struct Typing {
+    name: &'static str,
+    steer: Steer,
+    line: Box<str>,
+}
+
+impl Typing {
+    /// A read-only tool that says `line` as the reader would, then answers.
+    pub(crate) fn new(name: &'static str, steer: Steer, line: &str) -> Self {
+        Self {
+            name,
+            steer,
+            line: line.into(),
+        }
+    }
+}
+
+impl Tool for Typing {
+    fn name(&self) -> &'static str {
+        self.name
+    }
+
+    fn schema(&self) -> &'static str {
+        r#"{"type":"object","properties":{}}"#
+    }
+
+    fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
+        Sensitivity::ReadOnly {
+            target: Target::unresolved(),
+        }
+    }
+
+    fn summary(&self, args: &ToolArgs) -> Summary {
+        Summary::new(args.as_str())
+    }
+
+    fn run(&self, _approved: Approved, _watch: &dyn Watch) -> Result<ToolOutput, ToolError> {
+        self.steer.say(self.line.to_string());
+        Ok(ToolOutput::ok("done"))
     }
 }
 
