@@ -32,8 +32,8 @@ use std::fmt::Write as _;
 use std::sync::{Arc, LazyLock};
 
 use crucible_core::{
-    Answer, Answered, Approved, Put, Question, Sensitivity, Summary, Target, Tool, ToolArgs,
-    ToolError, ToolOutput, Watch,
+    Answer, Answered, Approved, DescribeTool, Put, Question, Sensitivity, Summary, Target, Tool,
+    ToolArgs, ToolError, ToolOutput, Watch,
 };
 
 use crate::args::Args;
@@ -235,15 +235,17 @@ impl std::fmt::Debug for AskUser {
     }
 }
 
-impl Tool for AskUser {
-    fn name(&self) -> &'static str {
+impl DescribeTool for AskUser {
+    fn name(&self) -> &str {
         NAME
     }
 
-    fn schema(&self) -> &'static str {
+    fn schema(&self) -> &str {
         SCHEMA.as_str()
     }
+}
 
+impl Tool for AskUser {
     /// Reads nothing and reaches nothing. It puts words on the screen and waits
     /// for a key, so there is no target to name and nothing a rule could
     /// usefully be written about.

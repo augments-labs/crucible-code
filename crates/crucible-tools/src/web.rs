@@ -21,8 +21,8 @@
 use std::sync::{Arc, LazyLock};
 
 use crucible_core::{
-    Approved, Cancel, Fetch, Host, Search, Sensitivity, Summary, Tool, ToolArgs, ToolError,
-    ToolOutput, Watch,
+    Approved, Cancel, DescribeTool, Fetch, Host, Search, Sensitivity, Summary, Tool, ToolArgs,
+    ToolError, ToolOutput, Watch,
 };
 
 #[cfg(test)]
@@ -123,15 +123,17 @@ impl WebSearch {
     }
 }
 
-impl Tool for WebSearch {
-    fn name(&self) -> &'static str {
+impl DescribeTool for WebSearch {
+    fn name(&self) -> &str {
         SEARCH
     }
 
-    fn schema(&self) -> &'static str {
+    fn schema(&self) -> &str {
         SEARCH_SCHEMA.as_str()
     }
+}
 
+impl Tool for WebSearch {
     /// The query, and where it goes.
     ///
     /// The host is the source's — settled when the user chose a provider, and
@@ -208,15 +210,17 @@ impl WebFetch {
     }
 }
 
-impl Tool for WebFetch {
-    fn name(&self) -> &'static str {
+impl DescribeTool for WebFetch {
+    fn name(&self) -> &str {
         FETCH
     }
 
-    fn schema(&self) -> &'static str {
+    fn schema(&self) -> &str {
         FETCH_SCHEMA.as_str()
     }
+}
 
+impl Tool for WebFetch {
     /// Wherever the call is pointed, which is why this reads the arguments and
     /// a search's does not.
     ///
@@ -318,7 +322,7 @@ fn failed(
     problem: &crucible_core::SourceError,
 ) -> Result<ToolOutput, ToolError> {
     match problem {
-        crucible_core::SourceError::Cancelled(_) => Err(ToolError::Cancelled(tool)),
+        crucible_core::SourceError::Cancelled(_) => Err(ToolError::Cancelled(tool.into())),
 
         // Bounded like any other answer. A refusal carries the service's own
         // reply, which is somebody else's bytes and can be a whole error page —

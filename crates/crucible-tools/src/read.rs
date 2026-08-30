@@ -5,8 +5,8 @@ use std::io::{self, BufRead, BufReader, ErrorKind, Read as _};
 use std::sync::LazyLock;
 
 use crucible_core::{
-    Approved, Attachment, Cancel, Kind, Modality, Remembered, Sensitivity, Summary, Tool, ToolArgs,
-    ToolError, ToolOutput, Watch, Workspace, WorkspacePath, kind, written,
+    Approved, Attachment, Cancel, DescribeTool, Kind, Modality, Remembered, Sensitivity, Summary,
+    Tool, ToolArgs, ToolError, ToolOutput, Watch, Workspace, WorkspacePath, kind, written,
 };
 use sha2::{Digest as _, Sha256};
 
@@ -588,7 +588,7 @@ impl Read {
             let line = match bounded_line(&mut lines, &self.cancel) {
                 Ok(NextLine::Line(line)) => line,
                 Ok(NextLine::End) => break,
-                Ok(NextLine::Cancelled) => return Err(ToolError::Cancelled(NAME)),
+                Ok(NextLine::Cancelled) => return Err(ToolError::Cancelled(NAME.into())),
                 // Not text. That is an answer the model should have, not a
                 // breakdown of the mechanism — and where the name says what the
                 // file is, the answer carries the next move as well.
@@ -601,7 +601,7 @@ impl Read {
                 }
                 Err(source) => {
                     return Err(ToolError::Io {
-                        tool: NAME,
+                        tool: NAME.into(),
                         problem: format!("could not read {requested}").into(),
                         source,
                     });
@@ -703,15 +703,17 @@ impl Read {
     }
 }
 
-impl Tool for Read {
-    fn name(&self) -> &'static str {
+impl DescribeTool for Read {
+    fn name(&self) -> &str {
         NAME
     }
 
-    fn schema(&self) -> &'static str {
+    fn schema(&self) -> &str {
         SCHEMA.as_str()
     }
+}
 
+impl Tool for Read {
     fn sensitivity(&self, args: &ToolArgs) -> Sensitivity {
         target::reads(&self.workspace, NAME, args, PATH)
     }
@@ -1444,7 +1446,7 @@ mod tests {
             .numbered(input, "huge.txt", usize::MAX, CEILING)
             .unwrap_err();
 
-        assert!(matches!(problem, ToolError::Cancelled(NAME)));
+        assert!(matches!(problem, ToolError::Cancelled(ref tool) if &**tool == NAME));
     }
 
     #[cfg(unix)]

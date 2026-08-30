@@ -92,15 +92,16 @@ fn untouched(sample: &Sample, ledger: &Ledger) -> Tools {
 
     let workspace: Workspace = sample.workspace();
     let mut offered = Tools::new();
-    offered.add(Box::new(crucible_tools::Read::new(
-        workspace.clone(),
-        Cancel::new(),
-        ledger.clone(),
-    )));
-    offered.add(Box::new(crucible_tools::Write::new(
-        workspace,
-        ledger.clone(),
-    )));
+    offered
+        .add_builtin(crucible_tools::Read::new(
+            workspace.clone(),
+            Cancel::new(),
+            ledger.clone(),
+        ))
+        .unwrap();
+    offered
+        .add_builtin(crucible_tools::Write::new(workspace, ledger.clone()))
+        .unwrap();
     offered
 }
 

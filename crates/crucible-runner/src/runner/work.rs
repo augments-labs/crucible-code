@@ -8,10 +8,8 @@
 
 use crucible_core::{
     Approved, Ask, Cancel, Event, Permission, Reporter, Settled, StopReason, ToolCall, ToolError,
-    ToolId, ToolOutput, ToolResult, Watch, Wrote,
+    ToolId, ToolOutput, ToolResult, ToolSnapshot, Watch, Wrote,
 };
-
-use crate::tools::Tools;
 
 /// What a call is answered with when the turn ended before it could run.
 const NOT_RUN: &str = "not run: the turn ended first";
@@ -53,7 +51,7 @@ enum Ran {
 /// Everything a pass of calls needs, gathered so the runner reads as one thing.
 pub(crate) struct Work<'a> {
     /// What may be called.
-    pub(crate) tools: &'a Tools,
+    pub(crate) tools: &'a ToolSnapshot,
     /// The session's memory of what was already allowed.
     pub(crate) permission: &'a mut Permission,
     /// How to put a call to the user.
@@ -151,13 +149,13 @@ impl Work<'_> {
             return Ran::Stopped(StopReason::Cancelled);
         }
 
-        let Some(tool) = self.tools.find(&call.name) else {
+        let Some(entry) = self.tools.find(&call.name) else {
             // A name the model invented is something the model can correct, so
             // it goes back as a result rather than ending the turn.
             return Ran::Output(failure(&ToolError::Unknown(call.name.clone())));
         };
 
-        let sensitivity = tool.sensitivity(&call.args);
+        let sensitivity = entry.tool().sensitivity(&call.args);
         match self.permission.decide(call, &sensitivity, self.ask) {
             // The watcher is made here, where the call is, and handed down. The
             // tool is never told which call it is running, so output it reports
@@ -189,7 +187,7 @@ impl Work<'_> {
     /// arguments beside it — which is the guarantee the whole mechanism is for,
     /// and it should not rest on two lines staying next to each other.
     fn run(&self, approved: Approved, watch: &dyn Watch) -> Ran {
-        let Some(tool) = self.tools.find(approved.tool()) else {
+        let Some(entry) = self.tools.find(approved.tool()) else {
             // A name that reached a verdict is a name a lookup already
             // answered to, so this is the arm nothing takes. Answered rather
             // than asserted: the model can read a result, and a session is
@@ -197,7 +195,7 @@ impl Work<'_> {
             return Ran::Output(failure(&ToolError::Unknown(approved.tool().into())));
         };
 
-        match tool.run(approved, watch) {
+        match entry.tool().run(approved, watch) {
             Ok(output) => Ran::Output(output),
             // Cancelling is not a result the model should reason about. The
             // user stopped the turn, so the turn stops.
@@ -245,6 +243,7 @@ mod tests {
     use crucible_core::{Ancestry, EventEnvelope, Post, ToolArgs, ToolId, Verdict};
 
     use super::*;
+    use crate::Tools;
     use crate::fake::{Fixed, Says, changing};
 
     #[test]
@@ -332,7 +331,7 @@ mod tests {
         }
 
         fn offering(mut self, tool: Fixed) -> Self {
-            self.tools.add(Box::new(tool));
+            self.tools.add_builtin(tool).unwrap();
             self
         }
 
@@ -348,9 +347,10 @@ mod tests {
             maximum: usize,
         ) -> (Vec<ToolResult>, Went, usize) {
             let events = Reporter::new(Ancestry::new(), &self.events);
+            let tools = self.tools.snapshot().unwrap();
 
             Work {
-                tools: &self.tools,
+                tools: &tools,
                 permission: &mut self.permission,
                 ask: &mut self.says,
                 events,

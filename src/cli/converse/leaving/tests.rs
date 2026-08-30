@@ -5,8 +5,8 @@
 //! the decision actually lives.
 
 use crucible_core::{
-    Ask, Cancel, Mode, Permission, Remember, Rules, Sensitivity, Settled, Tool, ToolArgs, ToolCall,
-    ToolId, Unwatched, Verdict,
+    Ask, Cancel, DescribeTool, Mode, Permission, Remember, Rules, Sensitivity, Settled, Tool,
+    ToolArgs, ToolCall, ToolId, Unwatched, Verdict,
 };
 use crucible_tools::{Background, Bash};
 

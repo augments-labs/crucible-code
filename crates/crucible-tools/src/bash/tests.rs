@@ -5,7 +5,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    Ask, Command, Mode, Permission, Remember, Rules, ToolCall, ToolId, Unwatched, Verdict,
+    Ask, Command, DescribeTool, Mode, Permission, Remember, Rules, ToolCall, ToolId, Unwatched,
+    Verdict,
 };
 
 use super::background::{Background, MOST};
@@ -281,7 +282,7 @@ fn a_turn_the_user_stopped_ends_the_command_with_it() {
         .run(allowed(&tool, r#"{"command":"sleep 30"}"#), &Unwatched)
         .expect_err("the turn was stopped");
 
-    assert!(matches!(problem, ToolError::Cancelled("bash")));
+    assert!(matches!(problem, ToolError::Cancelled(ref tool) if &**tool == "bash"));
     assert!(
         started.elapsed() < Duration::from_secs(10),
         "it waited out the sleep"
@@ -302,7 +303,7 @@ fn a_turn_already_stopped_never_starts_the_command() {
         )
         .expect_err("the turn was stopped");
 
-    assert!(matches!(problem, ToolError::Cancelled("bash")));
+    assert!(matches!(problem, ToolError::Cancelled(ref tool) if &**tool == "bash"));
     assert!(!sample.root().join("should-not-exist").exists());
 }
 

@@ -676,6 +676,7 @@ fn offered(terminal: bool) -> crucible_runner::Tools {
             fetching: None,
         },
     )
+    .expect("the built-in tool roster is valid")
 }
 
 #[test]
@@ -705,7 +706,7 @@ fn a_session_with_nobody_there_does_not_carry_a_tool_for_asking_them() {
         tools
             .deferred()
             .iter()
-            .all(|schema| schema.name != "ask_user")
+            .all(|schema| schema.name() != "ask_user")
     );
 }
 

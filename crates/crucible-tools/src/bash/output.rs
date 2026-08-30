@@ -103,7 +103,7 @@ pub(super) fn collect(
 
         if cancel.requested() {
             let _ = running.stop()?;
-            return Err(ToolError::Cancelled(NAME));
+            return Err(ToolError::Cancelled(NAME.into()));
         }
 
         if Instant::now() >= deadline {

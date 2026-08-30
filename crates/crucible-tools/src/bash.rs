@@ -38,7 +38,8 @@ use std::time::Duration;
 
 pub use background::{Background, Ended, MOST, Standing};
 use crucible_core::{
-    Approved, Cancel, Sensitivity, Summary, Tool, ToolArgs, ToolError, ToolOutput, Watch, Workspace,
+    Approved, Cancel, DescribeTool, Sensitivity, Summary, Tool, ToolArgs, ToolError, ToolOutput,
+    Watch, Workspace,
 };
 
 use std::sync::LazyLock;
@@ -294,15 +295,17 @@ impl Bash {
     }
 }
 
-impl Tool for Bash {
-    fn name(&self) -> &'static str {
+impl DescribeTool for Bash {
+    fn name(&self) -> &str {
         NAME
     }
 
-    fn schema(&self) -> &'static str {
+    fn schema(&self) -> &str {
         SCHEMA.as_str()
     }
+}
 
+impl Tool for Bash {
     fn sensitivity(&self, args: &ToolArgs) -> Sensitivity {
         let command =
             match Args::parse(NAME, args).and_then(|args| args.text(COMMAND).map(str::to_owned)) {
@@ -369,7 +372,7 @@ impl Tool for Bash {
         };
 
         if self.cancel.requested() {
-            return Err(ToolError::Cancelled(NAME));
+            return Err(ToolError::Cancelled(NAME.into()));
         }
 
         let shell = self.shell.as_ref().ok_or_else(|| {
@@ -466,7 +469,7 @@ impl Tool for Bash {
 /// An operating-system failure, named for the model.
 fn io(problem: &'static str, source: std::io::Error) -> ToolError {
     ToolError::Io {
-        tool: NAME,
+        tool: NAME.into(),
         problem: problem.into(),
         source,
     }

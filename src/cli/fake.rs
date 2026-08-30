@@ -9,8 +9,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    Approved, Cancel, Command, Delta, DeltaStream, Modalities, Modality, Provider, ProviderError,
-    Request, Sensitivity, Summary, Target, Tool, ToolArgs, ToolError, ToolOutput, Watch,
+    Approved, Cancel, Command, Delta, DeltaStream, DescribeTool, Modalities, Modality, Provider,
+    ProviderError, Request, Sensitivity, Summary, Target, Tool, ToolArgs, ToolError, ToolOutput,
+    Watch,
 };
 
 /// How many requests a script has been given, readable after it has moved into
@@ -213,15 +214,17 @@ impl Fixed {
     }
 }
 
-impl Tool for Fixed {
-    fn name(&self) -> &'static str {
+impl DescribeTool for Fixed {
+    fn name(&self) -> &str {
         self.name
     }
 
-    fn schema(&self) -> &'static str {
+    fn schema(&self) -> &str {
         r#"{"type":"object","properties":{}}"#
     }
+}
 
+impl Tool for Fixed {
     fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
         self.sensitivity.clone()
     }

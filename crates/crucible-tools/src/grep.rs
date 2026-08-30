@@ -20,8 +20,8 @@ use std::str;
 use std::sync::{LazyLock, Mutex};
 
 use crucible_core::{
-    Approved, Cancel, Sensitivity, Summary, Tool, ToolArgs, ToolError, ToolOutput, Watch,
-    Workspace, WorkspacePath,
+    Approved, Cancel, DescribeTool, Sensitivity, Summary, Tool, ToolArgs, ToolError, ToolOutput,
+    Watch, Workspace, WorkspacePath,
 };
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
 use grep_searcher::{
@@ -686,15 +686,17 @@ impl Grep {
     }
 }
 
-impl Tool for Grep {
-    fn name(&self) -> &'static str {
+impl DescribeTool for Grep {
+    fn name(&self) -> &str {
         NAME
     }
 
-    fn schema(&self) -> &'static str {
+    fn schema(&self) -> &str {
         SCHEMA.as_str()
     }
+}
 
+impl Tool for Grep {
     fn sensitivity(&self, args: &ToolArgs) -> Sensitivity {
         target::searches(&self.workspace, NAME, args, PATH)
     }

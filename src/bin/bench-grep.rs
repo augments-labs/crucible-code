@@ -28,8 +28,8 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    Approved, Ask, Disposition, Mode, Permission, Remember, RuleError, Rules, Sensitivity, Settled,
-    Tool, ToolArgs, ToolCall, ToolId, Unwatched, Verdict, Workspace,
+    Approved, Ask, DescribeTool, Disposition, Mode, Permission, Remember, RuleError, Rules,
+    Sensitivity, Settled, Tool, ToolArgs, ToolCall, ToolId, Unwatched, Verdict, Workspace,
 };
 use crucible_tools::Grep;
 

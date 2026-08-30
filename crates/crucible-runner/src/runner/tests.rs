@@ -7,9 +7,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    AgentId, Approved, Aside, Attachment, Carried, Change, Diff, EventEnvelope, Line, Modalities,
-    Modality, Post, ProviderError, ProviderLimit, Sensitivity, SessionId, Spend, Summary, Target,
-    Tool, ToolArgs, ToolError, ToolId, ToolOutput, Verdict, Watch,
+    AgentId, Approved, Aside, Attachment, Carried, Change, DescribeTool, Diff, EventEnvelope, Line,
+    Modalities, Modality, Post, ProviderError, ProviderLimit, Sensitivity, SessionId, Spend,
+    Summary, Target, Tool, ToolArgs, ToolError, ToolId, ToolOutput, Verdict, Watch,
 };
 
 use sha2::{Digest as _, Sha256};
@@ -343,12 +343,18 @@ impl Scripted {
     }
 
     /// The tools the last request advertised.
-    fn advertised(&self) -> Vec<&'static str> {
+    fn advertised(&self) -> Vec<String> {
         self.sent
             .lock()
             .unwrap()
             .last()
-            .map(|request| request.tools.iter().map(|tool| tool.name).collect())
+            .map(|request| {
+                request
+                    .tools
+                    .iter()
+                    .map(|tool| tool.name.to_string())
+                    .collect()
+            })
             .unwrap_or_default()
     }
 }
@@ -356,7 +362,7 @@ impl Scripted {
 fn tools(tools: impl IntoIterator<Item = Fixed>) -> Tools {
     let mut offered = Tools::new();
     for tool in tools {
-        offered.add(Box::new(tool));
+        offered.add_builtin(tool).unwrap();
     }
     offered
 }
@@ -1248,7 +1254,7 @@ fn the_calls_of_a_pass_are_recorded_before_the_tools_run() {
     let log = session.path().to_owned();
 
     let mut offered = Tools::new();
-    offered.add(Box::new(Logged { log }));
+    offered.add_builtin(Logged { log }).unwrap();
 
     let script = Script::new(vec![calling("a", WATCH, "{}"), saying("done")]);
     let mut scripted = Scripted::recording(script, offered, Verdict::Allow, session);
@@ -1275,15 +1281,17 @@ struct Logged {
     log: PathBuf,
 }
 
-impl Tool for Logged {
-    fn name(&self) -> &'static str {
+impl DescribeTool for Logged {
+    fn name(&self) -> &str {
         WATCH
     }
 
-    fn schema(&self) -> &'static str {
+    fn schema(&self) -> &str {
         r#"{"type":"object","properties":{}}"#
     }
+}
 
+impl Tool for Logged {
     fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
         Sensitivity::ReadOnly {
             target: Target::unresolved(),

@@ -15,8 +15,8 @@
 use std::io::{self, Read as _};
 
 use crucible_core::{
-    Approved, Cancel, Remembered, Sensitivity, Summary, Tool, ToolArgs, ToolError, ToolOutput,
-    Watch, Workspace,
+    Approved, Cancel, DescribeTool, Remembered, Sensitivity, Summary, Tool, ToolArgs, ToolError,
+    ToolOutput, Watch, Workspace,
 };
 
 use std::sync::LazyLock;
@@ -150,15 +150,17 @@ impl Edit {
     }
 }
 
-impl Tool for Edit {
-    fn name(&self) -> &'static str {
+impl DescribeTool for Edit {
+    fn name(&self) -> &str {
         NAME
     }
 
-    fn schema(&self) -> &'static str {
+    fn schema(&self) -> &str {
         SCHEMA.as_str()
     }
+}
 
+impl Tool for Edit {
     fn sensitivity(&self, args: &ToolArgs) -> Sensitivity {
         Sensitivity::MutatesFile {
             target: target::existing(&self.workspace, NAME, args, PATH),
@@ -212,7 +214,7 @@ impl Tool for Edit {
         let before = match source(&mut file, &self.cancel) {
             Ok(Source::Text(before)) => before,
             Ok(Source::TooLarge) => return Ok(too_large(requested)),
-            Ok(Source::Cancelled) => return Err(ToolError::Cancelled(NAME)),
+            Ok(Source::Cancelled) => return Err(ToolError::Cancelled(NAME.into())),
             Ok(Source::Binary) => {
                 return Ok(ToolOutput::failed(format!(
                     "{requested} is not a text file"
@@ -220,7 +222,7 @@ impl Tool for Edit {
             }
             Err(source) => {
                 return Err(ToolError::Io {
-                    tool: NAME,
+                    tool: NAME.into(),
                     problem: format!("could not read {requested}").into(),
                     source,
                 });
@@ -239,7 +241,7 @@ impl Tool for Edit {
         let mut replaced = 0_usize;
         for (at, change) in wanted.iter().enumerate() {
             if self.cancel.requested() {
-                return Err(ToolError::Cancelled(NAME));
+                return Err(ToolError::Cancelled(NAME.into()));
             }
 
             let found = after.matches(change.find).count();
@@ -263,13 +265,13 @@ impl Tool for Edit {
         let permissions = file
             .metadata()
             .map_err(|source| ToolError::Io {
-                tool: NAME,
+                tool: NAME.into(),
                 problem: format!("could not inspect {requested}").into(),
                 source,
             })?
             .permissions();
         if self.cancel.requested() {
-            return Err(ToolError::Cancelled(NAME));
+            return Err(ToolError::Cancelled(NAME.into()));
         }
         // The replacement is prepared beside the old file, flushed, and
         // renamed only after it is whole. At no point can a reader observe the

@@ -75,45 +75,51 @@ mod tests {
         let cancel = Cancel::new();
         let seen = Ledger::new();
 
-        let tools: [(Box<dyn Tool>, &str, &str); 6] = [
+        let tools: [(Box<dyn Tool>, &str, &str, &str); 6] = [
             (
                 Box::new(Read::new(workspace.clone(), cancel.clone(), seen.clone())),
+                "read",
                 r#"{"path":"src/main.rs"}"#,
                 "src/main.rs",
             ),
             (
                 Box::new(Write::new(workspace.clone(), seen)),
+                "write",
                 r#"{"path":"notes.md","content":"hello"}"#,
                 "notes.md",
             ),
             (
                 Box::new(Edit::new(workspace.clone(), cancel.clone())),
+                "edit",
                 r#"{"path":"src/lib.rs","find":"a","replace":"b"}"#,
                 "src/lib.rs",
             ),
             (
                 Box::new(Grep::new(workspace.clone(), cancel.clone())),
+                "grep",
                 r#"{"pattern":"fn main","path":"src"}"#,
                 "fn main",
             ),
             (
                 Box::new(Glob::new(workspace.clone(), cancel.clone())),
+                "glob",
                 r#"{"pattern":"**/*.rs","path":"src"}"#,
                 "**/*.rs",
             ),
             (
                 Box::new(Bash::new(workspace, cancel)),
+                "bash",
                 r#"{"command":"cargo test"}"#,
                 "cargo test",
             ),
         ];
 
-        for (tool, args, expected) in tools {
+        for (tool, name, args, expected) in tools {
             assert_eq!(
                 tool.summary(&ToolArgs::new(args)).as_str(),
                 expected,
                 "{} summarised the wrong argument",
-                tool.name()
+                name
             );
         }
     }

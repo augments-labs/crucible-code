@@ -10,8 +10,8 @@ use std::fs;
 use std::io::Read as _;
 
 use crucible_core::{
-    Approved, PathError, Remembered, Sensitivity, Summary, Tool, ToolArgs, ToolError, ToolOutput,
-    Watch, Workspace,
+    Approved, DescribeTool, PathError, Remembered, Sensitivity, Summary, Tool, ToolArgs, ToolError,
+    ToolOutput, Watch, Workspace,
 };
 
 use std::sync::LazyLock;
@@ -88,15 +88,17 @@ impl Write {
     }
 }
 
-impl Tool for Write {
-    fn name(&self) -> &'static str {
+impl DescribeTool for Write {
+    fn name(&self) -> &str {
         NAME
     }
 
-    fn schema(&self) -> &'static str {
+    fn schema(&self) -> &str {
         SCHEMA.as_str()
     }
+}
 
+impl Tool for Write {
     fn sensitivity(&self, args: &ToolArgs) -> Sensitivity {
         Sensitivity::MutatesFile {
             target: target::creatable(&self.workspace, NAME, args, PATH),
@@ -167,7 +169,7 @@ impl Tool for Write {
             .map(|file| file.metadata().map(|metadata| metadata.permissions()))
             .transpose()
             .map_err(|source| ToolError::Io {
-                tool: NAME,
+                tool: NAME.into(),
                 problem: format!("could not inspect {requested}").into(),
                 source,
             })?;

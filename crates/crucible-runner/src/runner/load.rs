@@ -183,7 +183,7 @@ impl Load {
     /// A provider's carried-input report includes both of these. They are only
     /// estimated while no report covers the request being built; once one
     /// arrives, [`Self::carried`] supersedes this estimate whole.
-    pub(super) fn requesting(&mut self, system: Option<&str>, tools: &[ToolSchema]) {
+    pub(super) fn requesting(&mut self, system: Option<&str>, tools: &[ToolSchema<'_>]) {
         let system_bytes = system.map_or(0_u64, |text| text.len() as u64);
         let schemas = tools.iter().fold(0_u64, |bytes, tool| {
             bytes

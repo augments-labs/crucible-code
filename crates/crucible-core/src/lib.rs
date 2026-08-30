@@ -33,6 +33,7 @@ mod run;
 mod source;
 mod steer;
 mod tool;
+mod toolset;
 mod transcript;
 mod workspace;
 
@@ -64,6 +65,12 @@ pub use steer::Steer;
 pub use tool::{
     Account, Changed, Remembered, Summary, Tool, ToolArgs, ToolCall, ToolError, ToolOutput,
     Unwatched, Watch, Wrote,
+};
+pub use toolset::{
+    DescribeTool, TOOL_NAME_BYTES, TOOL_RESOURCE_KEY_BYTES, TOOL_SCHEMA_BYTES, TOOL_SNAPSHOT_BYTES,
+    TOOL_SNAPSHOT_ENTRIES, TOOL_SOURCE_ID_BYTES, TOOL_SOURCE_LABEL_BYTES, ToolDescriptor,
+    ToolDescriptorError, ToolEntry, ToolExecutionMode, ToolGeneration, ToolProvenance,
+    ToolResourceKey, ToolSnapshot, ToolSourceKind, ToolsetError,
 };
 pub use transcript::{Attachment, Message, StopReason, ToolResult, Transcript};
 pub use workspace::{PathError, WalkFiles, Workspace, WorkspacePath, written};

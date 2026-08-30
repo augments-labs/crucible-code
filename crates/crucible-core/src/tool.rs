@@ -30,7 +30,7 @@ pub enum ToolError {
     #[error("{tool}: {problem}")]
     Arguments {
         /// Which tool rejected them.
-        tool: &'static str,
+        tool: Box<str>,
         /// What was wrong, in words the model can act on.
         problem: Box<str>,
     },
@@ -39,7 +39,7 @@ pub enum ToolError {
     #[error("{tool}: {problem}")]
     Io {
         /// Which tool was running.
-        tool: &'static str,
+        tool: Box<str>,
         /// What failed, without the underlying path if it is sensitive.
         problem: Box<str>,
         /// What the operating system reported.
@@ -48,7 +48,7 @@ pub enum ToolError {
 
     /// The user cancelled while the tool was running.
     #[error("{0} cancelled")]
-    Cancelled(&'static str),
+    Cancelled(Box<str>),
 }
 
 /// The model asking to run a tool.
@@ -643,11 +643,16 @@ impl ToolOutput {
 
 /// One tool the agent can call.
 pub trait Tool: Send + Sync {
-    /// The name the model uses. Must match the `name` in [`Tool::schema`].
-    fn name(&self) -> &'static str;
-
-    /// The JSON Schema for this tool's arguments, as sent to the provider.
-    fn schema(&self) -> &'static str;
+    /// Checks that `args` are a call this executor understands, without
+    /// causing an effect.
+    ///
+    /// The invocation pipeline calls this before and after any argument
+    /// transformation. Existing executors may use the default while the
+    /// descriptor migration is in progress; the completed tool platform makes
+    /// every shipped executor state its parser here.
+    fn validate(&self, _args: &ToolArgs) -> Result<(), ToolError> {
+        Ok(())
+    }
 
     /// How dangerous this particular call is.
     ///
@@ -731,7 +736,7 @@ pub trait Tool: Send + Sync {
 
 impl fmt::Debug for dyn Tool {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Tool({})", self.name())
+        f.write_str("Tool([executor])")
     }
 }
 

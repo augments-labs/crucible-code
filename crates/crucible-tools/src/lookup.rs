@@ -27,7 +27,8 @@ use std::fmt::Write as _;
 use std::sync::LazyLock;
 
 use crucible_core::{
-    Approved, Revealed, Sensitivity, Summary, Target, Tool, ToolArgs, ToolError, ToolOutput, Watch,
+    Approved, DescribeTool, Revealed, Sensitivity, Summary, Target, Tool, ToolArgs, ToolError,
+    ToolOutput, Watch,
 };
 
 use crate::args::Args;
@@ -103,15 +104,17 @@ impl ToolSearch {
     }
 }
 
-impl Tool for ToolSearch {
-    fn name(&self) -> &'static str {
+impl DescribeTool for ToolSearch {
+    fn name(&self) -> &str {
         NAME
     }
 
-    fn schema(&self) -> &'static str {
+    fn schema(&self) -> &str {
         SCHEMA.as_str()
     }
+}
 
+impl Tool for ToolSearch {
     /// Reads nothing and reaches nothing. It changes what this session offers
     /// and touches no file, no process and no network, so there is no target to
     /// name and nothing a rule could usefully be written about.

@@ -289,7 +289,7 @@ fn write_result(item: &mut Object<'_>, result: &ToolResult, found: &[&Attached<'
 /// required and additional ones refused, which is not what these schemas say, so
 /// the answer is no and saying it is what keeps a later default from changing
 /// how a tool is validated.
-fn write_tool(tool: &mut Object<'_>, schema: &ToolSchema) {
+fn write_tool(tool: &mut Object<'_>, schema: &ToolSchema<'_>) {
     let (parameters, description) = described(schema.schema);
     tool.text("type", "function");
     tool.text("name", schema.name);

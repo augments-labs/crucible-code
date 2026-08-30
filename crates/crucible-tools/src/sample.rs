@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crucible_core::{
-    Approved, Ask, Disposition, Permission, Remember, Rules, Sensitivity, Settled, Tool, ToolArgs,
-    ToolCall, ToolId, Verdict, Workspace,
+    Approved, Ask, DescribeTool, Disposition, Permission, Remember, Rules, Sensitivity, Settled,
+    Tool, ToolArgs, ToolCall, ToolId, Verdict, Workspace,
 };
 
 /// A workspace with a directory beside it that is deliberately outside.
@@ -148,18 +148,27 @@ pub(crate) fn symlink(target: impl AsRef<Path>, link: impl AsRef<Path>) {
 /// means a test runs a tool on the arguments a verdict was reached about, by
 /// the same construction the runner uses, rather than on a pair that only
 /// happened to be assembled together.
-pub(crate) fn allowed(tool: &dyn Tool, args: &str) -> Approved {
+pub(crate) fn allowed<T>(tool: &T, args: &str) -> Approved
+where
+    T: DescribeTool + Tool + ?Sized,
+{
     permitted(tool, args, &[])
 }
 
 /// The same, with rules standing — for the tools that reach more files than
 /// the one they were decided about, and have to refuse the rest themselves.
-pub(crate) fn under(tool: &dyn Tool, args: &str, rules: &[(Disposition, &str)]) -> Approved {
+pub(crate) fn under<T>(tool: &T, args: &str, rules: &[(Disposition, &str)]) -> Approved
+where
+    T: DescribeTool + Tool + ?Sized,
+{
     permitted(tool, args, rules)
 }
 
 /// Decides one call the only way a call can be decided.
-fn permitted(tool: &dyn Tool, args: &str, written: &[(Disposition, &str)]) -> Approved {
+fn permitted<T>(tool: &T, args: &str, written: &[(Disposition, &str)]) -> Approved
+where
+    T: DescribeTool + Tool + ?Sized,
+{
     struct Yes;
 
     impl Ask for Yes {

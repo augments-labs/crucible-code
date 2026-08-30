@@ -321,11 +321,14 @@ mod tests {
     /// answered by the tool that owns the arguments rather than invented here.
     fn resumed(transcript: Transcript) -> Runner {
         let mut offered = Tools::new();
-        offered.add(Box::new(crucible_tools::Read::new(
-            Workspace::open(std::env::current_dir().expect("a directory")).expect("a workspace"),
-            Cancel::new(),
-            crucible_tools::Ledger::default(),
-        )));
+        offered
+            .add_builtin(crucible_tools::Read::new(
+                Workspace::open(std::env::current_dir().expect("a directory"))
+                    .expect("a workspace"),
+                Cancel::new(),
+                crucible_tools::Ledger::default(),
+            ))
+            .unwrap();
 
         Runner::new(
             Box::new(Script::new(Vec::new())),

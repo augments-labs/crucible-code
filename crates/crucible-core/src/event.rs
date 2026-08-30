@@ -12,6 +12,7 @@ use crate::ids::{RunId, ToolId, TurnId};
 use crate::provider::{ProviderError, Spend};
 use crate::run::Ancestry;
 use crate::tool::{Summary, ToolCall, ToolError, ToolOutput, Wrote};
+use crate::toolset::ToolsetError;
 use crate::transcript::{Attachment, StopReason};
 
 /// Why a turn ended badly.
@@ -27,6 +28,10 @@ pub enum TurnError {
     /// A tool could not be carried out.
     #[error(transparent)]
     Tool(#[from] ToolError),
+
+    /// The live tool roster could not be materialized.
+    #[error(transparent)]
+    Toolset(#[from] ToolsetError),
 
     /// The model asked for a tool the user refused.
     #[error("{0} was not allowed")]

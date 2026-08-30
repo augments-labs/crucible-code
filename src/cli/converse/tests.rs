@@ -891,7 +891,7 @@ fn answering(terms: &Terms, rounds: Vec<Vec<Delta>>, offered: Tools, typed: &str
 }
 fn tools(tool: Fixed) -> Tools {
     let mut offered = Tools::new();
-    offered.add(Box::new(tool));
+    offered.add_builtin(tool).unwrap();
     offered
 }
 fn calling(name: &str) -> Vec<Delta> {
@@ -920,9 +920,9 @@ fn a_turn_that_asks_a_loop_with_nobody_at_it_is_told_so_and_carries_on() {
     };
 
     let mut offered = Tools::new();
-    offered.add(Box::new(crucible_tools::AskUser::new(std::sync::Arc::new(
-        putting,
-    ))));
+    offered
+        .add_builtin(crucible_tools::AskUser::new(std::sync::Arc::new(putting)))
+        .unwrap();
 
     let asking = vec![
         Delta::ToolStarted {
@@ -1035,7 +1035,9 @@ fn full_access_draws_neither_question() {
     // Both in one round, which is the shape that would catch a mode read once
     // per turn rather than asked of every call.
     let mut offered = tools(Fixed::new("write", changing()));
-    offered.add(Box::new(Fixed::new("bash", running("cargo test"))));
+    offered
+        .add_builtin(Fixed::new("bash", running("cargo test")))
+        .unwrap();
 
     let round = vec![
         Delta::ToolStarted {

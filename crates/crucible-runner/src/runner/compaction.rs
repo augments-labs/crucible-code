@@ -394,8 +394,8 @@ impl Runner {
         for message in self.transcript.messages().iter().take(replacing) {
             if let Message::Agent { calls, .. } = message {
                 for call in calls {
-                    if let Some(tool) = self.tools.find(&call.name)
-                        && let Some(file) = tool.remember(&call.args)
+                    if let Some(entry) = self.tools.find(&call.name)
+                        && let Some(file) = entry.tool().remember(&call.args)
                     {
                         files.note(file.path(), file.is_modified());
                     }

@@ -344,7 +344,7 @@ fn a_stopped_turn_does_not_scan_or_change_the_file() {
 
     assert!(matches!(
         problem,
-        crucible_core::ToolError::Cancelled("edit")
+        crucible_core::ToolError::Cancelled(ref tool) if &**tool == "edit"
     ));
     assert_eq!(
         fs::metadata(sample.root().join("one.txt")).unwrap().len(),

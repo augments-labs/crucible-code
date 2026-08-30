@@ -84,11 +84,15 @@ fn a_line_typed_while_a_call_is_out_lands_after_the_answer_it_waited_for() {
     // replay would carry a prompt where an answer belongs.
     let script = Script::new(vec![calling("a", "type", "{}"), saying("done")]);
     let mut steering = Steering::new(script, Tools::new());
-    steering.runner.tools.add(Box::new(Typing::new(
-        "type",
-        steering.steer.clone(),
-        "actually do this",
-    )));
+    steering
+        .runner
+        .tools
+        .add_builtin(Typing::new(
+            "type",
+            steering.steer.clone(),
+            "actually do this",
+        ))
+        .unwrap();
 
     steering.turn("first").expect("a turn");
 

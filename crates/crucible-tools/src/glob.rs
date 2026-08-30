@@ -5,7 +5,8 @@ use std::collections::BinaryHeap;
 use std::time::SystemTime;
 
 use crucible_core::{
-    Approved, Cancel, Sensitivity, Summary, Tool, ToolArgs, ToolError, ToolOutput, Watch, Workspace,
+    Approved, Cancel, DescribeTool, Sensitivity, Summary, Tool, ToolArgs, ToolError, ToolOutput,
+    Watch, Workspace,
 };
 use globset::GlobBuilder;
 
@@ -246,15 +247,17 @@ impl Glob {
     }
 }
 
-impl Tool for Glob {
-    fn name(&self) -> &'static str {
+impl DescribeTool for Glob {
+    fn name(&self) -> &str {
         NAME
     }
 
-    fn schema(&self) -> &'static str {
+    fn schema(&self) -> &str {
         SCHEMA.as_str()
     }
+}
 
+impl Tool for Glob {
     fn sensitivity(&self, args: &ToolArgs) -> Sensitivity {
         target::searches(&self.workspace, NAME, args, PATH)
     }

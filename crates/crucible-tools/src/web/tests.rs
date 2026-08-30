@@ -292,7 +292,7 @@ fn a_cancelled_search_ends_the_call_rather_than_answering_it() {
         .run(sample::allowed(&tool, r#"{"query":"x"}"#), &Unwatched)
         .expect_err("cancellation not to come back as an answer");
 
-    assert!(matches!(problem, ToolError::Cancelled("web_search")));
+    assert!(matches!(problem, ToolError::Cancelled(ref tool) if &**tool == "web_search"));
 }
 
 #[test]

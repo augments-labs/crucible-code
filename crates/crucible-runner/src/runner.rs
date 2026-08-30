@@ -89,7 +89,7 @@ struct Listening<'a> {
     /// The run the request is part of: where its progress goes, whether it has
     /// been stopped, and how many goes it gets.
     run: &'a RunContext<'a>,
-    advertised: &'a [ToolSchema],
+    advertised: &'a [ToolSchema<'a>],
     counting: &'a mut Counting,
 }
 
@@ -290,9 +290,10 @@ impl Runner {
     /// refused looks like from here.
     #[must_use]
     pub fn about(&self, call: &ToolCall) -> Summary {
-        self.tools
-            .find(&call.name)
-            .map_or_else(|| Summary::new(""), |tool| tool.summary(&call.args))
+        self.tools.find(&call.name).map_or_else(
+            || Summary::new(""),
+            |entry| entry.tool().summary(&call.args),
+        )
     }
 
     /// Whether this call can be left running while the turn goes on.
@@ -303,7 +304,7 @@ impl Runner {
     fn backgroundable(&self, call: &ToolCall) -> bool {
         self.tools
             .find(&call.name)
-            .is_some_and(|tool| tool.backgroundable(&call.args))
+            .is_some_and(|entry| entry.tool().backgroundable(&call.args))
     }
 
     /// What the next request would carry, in tokens.
@@ -1142,7 +1143,7 @@ impl Runner {
     /// them.
     fn request<'a>(
         &'a self,
-        advertised: &'a [ToolSchema],
+        advertised: &'a [ToolSchema<'a>],
         attached: &'a [Attached<'a>],
     ) -> Request<'a> {
         Request {

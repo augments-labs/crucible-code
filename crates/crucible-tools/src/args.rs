@@ -41,7 +41,7 @@ impl Args {
         }
 
         let value: Value = serde_json::from_str(text).map_err(|problem| ToolError::Arguments {
-            tool,
+            tool: tool.into(),
             problem: format!("arguments are not valid JSON: {problem}").into(),
         })?;
 
@@ -49,7 +49,7 @@ impl Args {
             Ok(whole(value))
         } else {
             Err(ToolError::Arguments {
-                tool,
+                tool: tool.into(),
                 problem: "arguments must be a JSON object".into(),
             })
         }
@@ -295,7 +295,7 @@ impl Args {
     /// they sit is the other half of that, and it comes from the same place.
     pub(crate) fn wrong(&self, problem: impl std::fmt::Display) -> ToolError {
         ToolError::Arguments {
-            tool: self.tool,
+            tool: self.tool.into(),
             problem: match &self.within {
                 Some(within) => format!("{within} {problem}").into(),
                 None => problem.to_string().into(),

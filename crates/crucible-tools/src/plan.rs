@@ -33,7 +33,8 @@ use std::fmt;
 use std::sync::{Arc, LazyLock, Mutex};
 
 use crucible_core::{
-    Approved, Sensitivity, Summary, Target, Tool, ToolArgs, ToolError, ToolOutput, Watch,
+    Approved, DescribeTool, Sensitivity, Summary, Target, Tool, ToolArgs, ToolError, ToolOutput,
+    Watch,
 };
 
 use crate::args::Args;
@@ -291,15 +292,17 @@ impl TodoWrite {
     }
 }
 
-impl Tool for TodoWrite {
-    fn name(&self) -> &'static str {
+impl DescribeTool for TodoWrite {
+    fn name(&self) -> &str {
         NAME
     }
 
-    fn schema(&self) -> &'static str {
+    fn schema(&self) -> &str {
         SCHEMA.as_str()
     }
+}
 
+impl Tool for TodoWrite {
     fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
         // Not a file and not a process: what this changes is a value inside
         // this process, and the target that resolves to nothing is the honest

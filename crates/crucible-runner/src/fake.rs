@@ -9,9 +9,9 @@ use std::hash::{DefaultHasher, Hash as _, Hasher as _};
 use std::sync::{Arc, Mutex};
 
 use crucible_core::{
-    Approved, Ask, Cancel, Delta, DeltaStream, Diff, Effort, Message, Modalities, Modality,
-    Provider, ProviderError, Remember, Request, Sensitivity, Steer, Summary, Target, Tool,
-    ToolArgs, ToolCall, ToolError, ToolOutput, ToolSchema, Verdict, Watch, Wrote,
+    Approved, Ask, Cancel, Delta, DeltaStream, DescribeTool, Diff, Effort, Message, Modalities,
+    Modality, Provider, ProviderError, Remember, Request, Sensitivity, Steer, Summary, Target,
+    Tool, ToolArgs, ToolCall, ToolError, ToolOutput, Verdict, Watch, Wrote,
 };
 
 /// The name a scripted provider answers to.
@@ -25,7 +25,7 @@ pub(crate) type Sent = Arc<Mutex<Vec<SentRequest>>>;
 pub(crate) struct SentRequest {
     pub(crate) transcript_len: usize,
     agent_text: Vec<u64>,
-    pub(crate) tools: Vec<ToolSchema>,
+    pub(crate) tools: Vec<SentToolSchema>,
     pub(crate) max_tokens: u32,
     pub(crate) effort: Option<Effort>,
     /// Whether this request carried a system prompt at all.
@@ -34,6 +34,13 @@ pub(crate) struct SentRequest {
     /// recording is the yes or no: one request a turn deliberately sends none,
     /// and nothing else could tell that request apart from the ordinary ones.
     pub(crate) had_system: bool,
+}
+
+/// Owned evidence of one borrowed provider projection.
+#[derive(Debug)]
+pub(crate) struct SentToolSchema {
+    pub(crate) name: Box<str>,
+    pub(crate) schema: Box<str>,
 }
 
 impl SentRequest {
@@ -190,7 +197,14 @@ impl Provider for Script {
                     Message::User { .. } | Message::ToolResults(_) => None,
                 })
                 .collect(),
-            tools: request.tools.to_vec(),
+            tools: request
+                .tools
+                .iter()
+                .map(|tool| SentToolSchema {
+                    name: tool.name.into(),
+                    schema: tool.schema.into(),
+                })
+                .collect(),
             max_tokens: request.max_tokens,
             effort: request.effort,
             had_system: request.system.is_some(),
@@ -332,15 +346,17 @@ impl Fixed {
     }
 }
 
-impl Tool for Fixed {
-    fn name(&self) -> &'static str {
+impl DescribeTool for Fixed {
+    fn name(&self) -> &str {
         self.name
     }
 
-    fn schema(&self) -> &'static str {
+    fn schema(&self) -> &str {
         r#"{"type":"object","properties":{}}"#
     }
+}
 
+impl Tool for Fixed {
     fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
         self.sensitivity.clone()
     }
@@ -362,12 +378,12 @@ impl Tool for Fixed {
         }
 
         if self.cancels {
-            return Err(ToolError::Cancelled(self.name));
+            return Err(ToolError::Cancelled(self.name.into()));
         }
 
         match &self.problem {
             Some(problem) => Err(ToolError::Arguments {
-                tool: self.name,
+                tool: self.name.into(),
                 problem: problem.clone(),
             }),
             None => Ok(match &self.diff {
@@ -401,15 +417,17 @@ impl Typing {
     }
 }
 
-impl Tool for Typing {
-    fn name(&self) -> &'static str {
+impl DescribeTool for Typing {
+    fn name(&self) -> &str {
         self.name
     }
 
-    fn schema(&self) -> &'static str {
+    fn schema(&self) -> &str {
         r#"{"type":"object","properties":{}}"#
     }
+}
 
+impl Tool for Typing {
     fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
         Sensitivity::ReadOnly {
             target: Target::unresolved(),
