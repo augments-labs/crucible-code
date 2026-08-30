@@ -351,11 +351,13 @@ impl Runner {
     /// measure one boundary against a figure the turn never agreed to, and the
     /// half that fires would be deciding for the half that never saw it.
     ///
-    /// Three callers pass their own. [`Runner::left_under`] is the reading
-    /// between turns, where the session's answer is the only one there is.
-    /// While a turn runs, `exchange` passes the run's for the figure the turn
-    /// starts on, and the pass loop passes it again for the figure the turn is
-    /// re-measured against once a response has corrected the window.
+    /// Three callers pass their own, and none of them is fixed to one answer.
+    /// [`Runner::left_under`] takes whichever it is handed: [`Runner::left`]
+    /// gives it the session's between turns, and [`Runner::compact`] gives it
+    /// the run's while a turn is running. `exchange` passes the run's for the
+    /// figure a turn starts on, and the pass loop passes it again for the
+    /// figure the turn is re-measured against once a response has corrected
+    /// the window.
     fn reserve(&self, compaction: Compaction, window: Option<u32>) -> u64 {
         if compaction.automatic {
             load::reserve(self.spec.model.max_tokens, window, compaction.reserve)
@@ -364,18 +366,13 @@ impl Runner {
         }
     }
 
-    /// What this session was told to do when the window fills.
-    #[must_use]
-    pub const fn compaction(&self) -> Compaction {
-        self.policy.compaction
-    }
-
     /// Everything this session was told to hold a turn to.
     ///
-    /// The wider read behind [`Runner::compaction`], for a caller checking what
-    /// the wiring resolved rather than acting on one answer. Read-only and by
-    /// value: a session's ceiling is settled when it is assembled, and
-    /// [`Runner::turn`] is where a run is held to it.
+    /// One reader for the whole answer rather than one per figure: a caller
+    /// wanting a single field takes it off this, and the next field to be
+    /// wanted needs no second accessor. Read-only and by value, because a
+    /// session's ceiling is settled when it is assembled — [`Runner::turn`]
+    /// and [`Runner::compact`] are where a run is held to it.
     #[must_use]
     pub const fn policy(&self) -> RunPolicy {
         self.policy
@@ -384,8 +381,8 @@ impl Runner {
     /// What every turn of this session is asked under, where anything is.
     ///
     /// Absent until the wiring says, and rewritten by [`Runner::telling`]
-    /// before each turn after the first — so this is the answer in force now,
-    /// not a record of what the session was assembled with.
+    /// before every turn, the first included — so this is the answer in force
+    /// now, not a record of what the session was assembled with.
     #[must_use]
     pub fn instructions(&self) -> Option<&str> {
         self.spec.instructions.as_deref()
@@ -528,8 +525,14 @@ impl Runner {
     ///
     /// Reachable between turns, where [`Runner::ask`] is and for the same
     /// reason: a turn owns the runner while it runs.
+    ///
+    /// The empty string is nothing said, not a system field holding nothing —
+    /// the two are different requests, and [`AgentSpec::instructions`] says
+    /// which of them `None` means. It is the reading a prompt key written
+    /// empty already gets in the documents this text is built from, so the one
+    /// place the state can be written agrees with the field it writes.
     pub fn telling(&mut self, system: &str) {
-        self.spec.instructions = Some(system.into());
+        self.spec.instructions = (!system.is_empty()).then(|| system.into());
         self.load
             .requesting(self.spec.instructions.as_deref(), &self.tools.advertised());
     }
@@ -649,12 +652,13 @@ impl Runner {
     /// # Errors
     ///
     /// [`TurnError`] wherever the turn could not be finished: the provider
-    /// failed, a tool could not be carried out, the user refused one, the turn
-    /// produced more than a spend ceiling allowed, a compaction did not return
-    /// a complete recap, the window had no room left and compacting it freed
-    /// none, or tool results crossed the per-turn retained-output limit. A
-    /// tool that ran and did not like what it found is none of those — that
-    /// goes back to the model as a result it can work around.
+    /// failed, the user refused a call, the turn produced more than a spend
+    /// ceiling allowed, a compaction did not return a complete recap, the
+    /// window had no room left and compacting it freed none, or tool results
+    /// crossed the per-turn retained-output limit. Nothing a tool does is on
+    /// that list: a call that could not be run at all, and one that ran and
+    /// did not like what it found, both go back to the model as results it can
+    /// work around.
     pub fn turn(
         &mut self,
         prompt: &str,
@@ -840,9 +844,10 @@ impl Runner {
     /// the provider closed while the tools ran — the turn's own pauses are
     /// exactly where a pooled connection goes stale, so the request that fails
     /// is the one after a tool pass rather than the first, and the discussion
-    /// stops part way through. Both halves of the condition carry weight:
+    /// stops part way through. All three parts of the condition carry weight:
     /// only a failure [`ProviderError::transient`] calls a moment rather than
-    /// a request, and only a response that said nothing. Deltas are posted as
+    /// a request, and only a response that has neither kept a word of what it
+    /// said nor given a reason for stopping. Deltas are posted as
     /// they arrive, so re-asking after one would put an answer on screen twice
     /// and leave the transcript holding the half that was taken back.
     ///

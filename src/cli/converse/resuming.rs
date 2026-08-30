@@ -111,7 +111,7 @@ pub(super) fn asked<T: Terminal>(
     // offer a choice.
     if !keys
         || runner.transcript().is_empty()
-        || !worth_asking(carrying, runner.compaction().ask_on_resume)
+        || !worth_asking(carrying, runner.policy().compaction.ask_on_resume)
     {
         return Ok(None);
     }

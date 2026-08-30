@@ -109,10 +109,11 @@ fn a_retry_says_again_which_attachments_it_went_out_without() {
 }
 
 #[test]
-fn a_picture_a_model_does_not_read_is_named_where_its_answer_arrives() {
+fn a_picture_a_model_does_not_read_is_named_as_the_request_goes() {
     // Not the ceiling: this file would not have gone out at any size. The
     // reader is owed a different sentence for it, because asking again is the
-    // one move that cannot help.
+    // one move that cannot help. Named as the request goes rather than when
+    // the answer lands, so the row is up before the wait rather than after it.
     let sample = Sample::new("unread-kind");
     let under = sample.workspace().root().to_path_buf();
 
@@ -132,7 +133,10 @@ fn a_picture_a_model_does_not_read_is_named_where_its_answer_arrives() {
 
     // Only the one drain: reading the channel twice would leave the second
     // reader nothing, and which of the two rows this file belongs on is
-    // settled a layer down, where the request is resolved.
+    // settled a layer down, where the request is resolved. That it goes out
+    // once per request rather than once per turn is pinned by the aged case
+    // above; the two are posted three lines apart on one straight path, so a
+    // second copy here would pin the same line twice.
     let posted = scripted.unread();
     let [unread] = posted.as_slice() else {
         panic!("one request went out, and it went out without the picture");

@@ -759,9 +759,10 @@ fn recap_room_defaults_to_ten_k_and_accepts_a_configured_ceiling() {
 fn the_agent_is_named_coding_and_stands_under_what_the_wiring_asked() {
     // The two fields of the definition this wiring decides. Nothing outside a
     // test reads `id` yet — a later registry will select on it — and
-    // `instructions` is written here for the turn a session may take before
-    // anything changes, then again by `Runner::telling` before every turn
-    // after it.
+    // `instructions` is the definition's opening value: what the window
+    // reading and `Runner::instructions` answer with before a turn is taken.
+    // `Runner::telling` replaces it before every turn, the first included, so
+    // no turn goes out under this exact text.
     //
     // So this pins what `coding` puts in the definition, and not that a prompt
     // reaches the runner at all: it is handed `asked` and asserts it comes back
@@ -835,7 +836,7 @@ fn a_session_is_assembled_asking_under_the_prompt_the_wiring_built() {
 }
 
 #[test]
-fn a_configured_spend_ceiling_is_what_a_turn_is_held_to() {
+fn a_configured_spend_ceiling_is_resolved_off_the_document() {
     // The figure a document sets and the loop enforces, with the composition
     // root the only place the two meet. Nothing said means no ceiling, which is
     // the same absence a document that never mentions it leaves.

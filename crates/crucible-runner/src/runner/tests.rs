@@ -1201,7 +1201,9 @@ fn a_service_that_says_it_is_busy_is_asked_again_and_a_key_without_access_is_not
 fn a_run_that_asked_to_be_asked_again_fewer_times_is() {
     // The figure above comes off the run, not off the runner, and every other
     // test here mints the two equal. The same busy service, under a run that
-    // gave up its retries: one request rather than three.
+    // gave up its retries: one request, where the session would have made
+    // more. How many more is the shipped default's business, and the second
+    // assertion asks it rather than naming it here.
     let mut busy = Scripted::new(Script::refusing(503), Tools::new(), Verdict::Allow);
 
     busy.turning_under(

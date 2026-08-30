@@ -152,12 +152,13 @@ impl RunPolicy {
     /// so both callers are in `context.rs`, beside the two entries that exist
     /// precisely so nobody else writes the comparison.
     ///
-    /// Every field is the tighter of the two, so a descendant asking for more
-    /// than its parent holds is given the parent's figure rather than refused:
-    /// widening is not an error a caller has to handle, it is a request that
-    /// has no effect. Tighter does not point the same way for all of them,
-    /// so each direction is written down here rather than left to be inferred
-    /// from the `min` beside it.
+    /// Nine of the ten fields are the tighter of the two, so a descendant
+    /// asking for more than its parent holds is given the parent's figure
+    /// rather than refused: widening is not an error a caller has to handle,
+    /// it is a request that has no effect. Tighter does not point the same way
+    /// for all of them, so each direction is written down here rather than
+    /// left to be inferred from the `min` beside it. The tenth,
+    /// [`Compaction::ask_on_resume`], is not a comparison at all.
     ///
     /// Six point the obvious way, where less is less: the two byte ceilings,
     /// the spend, the retry count, and the two token figures inside the
@@ -178,9 +179,14 @@ impl RunPolicy {
     ///
     /// [`Compaction::reserve`] is tighter when it is *larger*. It is room held
     /// back rather than room granted, so the bigger figure is the one that
-    /// fills sooner and leaves less of the window to be spent.
+    /// fills sooner and leaves less of the window to be spent. It is also the
+    /// one figure whose absent case is not symmetric: a holder that named no
+    /// reserve keeps its silence, because what absence stands for is derived
+    /// from ceilings this crate cannot see and so cannot be compared against.
+    /// [`roomier`] carries the reasoning.
     ///
-    /// [`Compaction::ask_on_resume`] is the holder's outright, because it is
+    /// [`Compaction::ask_on_resume`] is the holder's whichever way the two
+    /// differ — narrower or wider, the descendant's is dropped — because it is
     /// the one figure here that no run ever reads: it is taken off the session
     /// between turns, which is the only place there is anybody left to ask.
     ///
@@ -241,14 +247,26 @@ fn tighter(held: Option<u64>, wanted: Option<u64>) -> Option<u64> {
 
 /// The larger of two reserves, where absent means nobody named one.
 ///
-/// The mirror of [`tighter`], for the one figure here that is room held back
-/// rather than room granted: the bigger of the two is the narrower answer.
-/// Absent is not zero — it is the wiring declining to name a figure — so a
-/// named figure is taken over it whichever side carries it.
+/// Not the mirror of [`tighter`], though the field it settles is the one here
+/// that is room held back rather than room granted. Where both sides named a
+/// figure the bigger one is the narrower answer, and that half does mirror.
+/// The absent side does not.
+///
+/// Absent is not zero, and it is not unbounded either: it is the wiring
+/// declining to name a figure, and the reserve is then derived from the
+/// model's own ceilings. That derivation reads a max-tokens figure and a
+/// window this crate is deliberately kept away from, so nothing here can tell
+/// whether a named figure is larger than the one absence stands for. A holder
+/// that named nothing therefore keeps its silence rather than take a
+/// descendant's figure on trust — a guess in that direction spends window the
+/// session was holding back. It costs the one case where the descendant's
+/// figure really was the larger; refusing a real tightening is the safe half
+/// of the trade, and granting a widening is not.
 fn roomier(held: Option<u64>, wanted: Option<u64>) -> Option<u64> {
     match (held, wanted) {
+        (None, _) => None,
+        (Some(held), None) => Some(held),
         (Some(held), Some(wanted)) => Some(held.max(wanted)),
-        (bound, None) | (None, bound) => bound,
     }
 }
 
@@ -321,6 +339,9 @@ mod tests {
 
     #[test]
     fn a_descendant_asking_for_less_gets_what_it_asked_for() {
+        // Every figure that resolves by comparison, asked for narrower. The
+        // widening direction has its own test; this is the half that says the
+        // rule is a comparison at all rather than the holder's answer twice.
         let parent = RunPolicy::default();
         let asked = RunPolicy {
             bounds: Bounds {
@@ -328,11 +349,15 @@ mod tests {
                 tool_output_bytes: 512,
                 spend: Some(50),
             },
+            compaction: Compaction {
+                keep_tokens: 512,
+                recap_tokens: 256,
+                ..parent.compaction
+            },
             retry: Retry {
                 attempts: 0,
-                ..Retry::default()
+                first_pause: Duration::from_millis(1),
             },
-            ..parent
         };
 
         let held = parent.narrowed(asked);
@@ -341,6 +366,19 @@ mod tests {
         assert_eq!(held.bounds.tool_output_bytes, 512);
         assert_eq!(held.bounds.spend, Some(50));
         assert_eq!(held.retry.attempts, 0);
+        assert_eq!(
+            held.compaction.keep_tokens, 512,
+            "a run asking to carry less forward was given its session's figure"
+        );
+        assert_eq!(
+            held.compaction.recap_tokens, 256,
+            "a run asking for a shorter recap was given its session's figure"
+        );
+        assert_eq!(
+            held.retry.first_pause,
+            Duration::from_millis(1),
+            "a run asking to be told sooner was made to wait the session's pause"
+        );
     }
 
     #[test]
@@ -476,6 +514,49 @@ mod tests {
     }
 
     #[test]
+    fn a_holder_that_named_no_reserve_is_not_given_one_by_its_descendant() {
+        // Absent is not zero and it is not unbounded: the wiring leaves it
+        // unset and the reserve is derived from the model's own ceilings,
+        // which are figures this crate never sees. So there is nothing here
+        // to compare a named figure against, and the holder's silence stands.
+        let holder = compacting(Compaction {
+            reserve: None,
+            ..Compaction::default()
+        });
+
+        for asked in [Some(0), Some(1_000), Some(u64::MAX)] {
+            let asked = compacting(Compaction {
+                reserve: asked,
+                ..Compaction::default()
+            });
+
+            assert_eq!(
+                holder.narrowed(asked).compaction.reserve,
+                None,
+                "a run replaced a derived reserve with a figure of its own"
+            );
+        }
+    }
+
+    #[test]
+    fn a_descendant_that_named_no_reserve_leaves_its_holders_standing() {
+        let holder = compacting(Compaction {
+            reserve: Some(9_000),
+            ..Compaction::default()
+        });
+        let asked = compacting(Compaction {
+            reserve: None,
+            ..Compaction::default()
+        });
+
+        assert_eq!(
+            holder.narrowed(asked).compaction.reserve,
+            Some(9_000),
+            "a run that named nothing dropped the room its session held back"
+        );
+    }
+
+    #[test]
     fn how_large_a_session_must_be_before_it_asks_is_the_holders_answer() {
         // No run reads this one — it is taken off the session between turns,
         // where there is still somebody to ask — so the holder's answer is the
@@ -493,6 +574,25 @@ mod tests {
             holder.narrowed(asked).compaction.ask_on_resume,
             Some(10),
             "a run answered a question that is only ever put to the session"
+        );
+        // Both orders, because `Some(10)` is also the tighter of the two: a
+        // rule that compared them would pass the assertion above and fail
+        // this one. It is the only figure here that is not a comparison at
+        // all, and one of two that can see an argument swap — `reserve` is
+        // the other, asymmetric in its absent case rather than in all of
+        // them, and it is the one a run reads every turn.
+        assert_eq!(
+            asked.narrowed(holder).compaction.ask_on_resume,
+            Some(999),
+            "the tighter figure was taken where the holder's was the answer"
+        );
+        assert_eq!(
+            holder
+                .narrowed(compacting(Compaction::default()))
+                .compaction
+                .ask_on_resume,
+            Some(10),
+            "a run that named nothing dropped the session's answer"
         );
     }
 

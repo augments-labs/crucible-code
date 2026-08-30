@@ -37,3 +37,27 @@ fn a_definition_given_only_an_id_answers_to_it_and_claims_nothing_else() {
         "instructions nobody wrote were invented"
     );
 }
+
+#[test]
+fn a_session_told_nothing_at_all_is_not_told_the_empty_string() {
+    // `None` is nobody said, and the empty string is a request that carries a
+    // system field holding nothing — two different requests, per the rule on
+    // the field itself. `telling` is the one place that state can be written,
+    // and the same reading `crucible-config` already applies to a prompt key
+    // written empty applies here: nothing said.
+    //
+    // Reachable only through this method — the wiring's prompt always names
+    // the workspace root, so it is never empty — which is why the read below
+    // is the one an outside caller branching on `is_none()` would get wrong.
+    let mut scripted = Scripted::new(Script::new(vec![]), Tools::new(), Verdict::Allow);
+    scripted.runner.telling("mind the workspace");
+    assert_eq!(scripted.runner.instructions(), Some("mind the workspace"));
+
+    scripted.runner.telling("");
+
+    assert_eq!(
+        scripted.runner.instructions(),
+        None,
+        "a session told nothing reports having been told the empty string"
+    );
+}

@@ -3,16 +3,25 @@
 //! One word — the reason the model stopped — is not enough to answer for a
 //! turn. Which run it was, whether it ended because it finished or because
 //! somebody stopped it, and what it spent getting there are all facts the run
-//! itself holds, so they are handed back together rather than left on the
-//! stack frame. A caller reading the spend off an event would be reading the
-//! screen's copy rather than the run's.
+//! itself holds, and holding them on one value is what stops a caller reading
+//! the spend off an event, where it is the screen's copy rather than the run's.
 //!
-//! What is *not* here: failures. A provider that would not answer, a log that
-//! would not write, a tool the user refused — those stay [`TurnError`], because
-//! a caller has to be made to tell them from an ending, and a status field is
-//! a thing you can forget to read.
+//! Nobody outside this crate is handed one yet, and the type is published
+//! ahead of that. [`Runner::turn`] answers with a [`StopReason`], which is all
+//! the wiring above it asks for; a run's own record of itself is kept on this
+//! shape meanwhile, so that the caller which does want the rest reads it off
+//! one value rather than reassembling it from events.
+//!
+//! What is *not* here: failures. A provider that would not answer, a tool the
+//! user refused, a turn that spent past its ceiling — those stay [`TurnError`],
+//! because a caller has to be made to tell them from an ending, and a status
+//! field is a thing you can forget to read. A session log that would not write
+//! is not one of them: it does not stop a turn, and it is reported on its own
+//! through [`Session::trouble`].
 //!
 //! [`TurnError`]: crucible_core::TurnError
+//! [`Runner::turn`]: crate::Runner::turn
+//! [`Session::trouble`]: crucible_session::Session::trouble
 
 use crucible_core::{RunId, Spend, StopReason};
 
@@ -112,10 +121,9 @@ impl RunResult {
     /// type: a literal or a later assignment would both be ways to build a run
     /// that says it completed and that a person cancelled it.
     ///
-    /// In-crate, because a run is something this crate ends. A caller outside
-    /// it reads a result it was handed and never states one.
+    /// A run is something this crate ends, so this crate is what states one.
     #[must_use]
-    pub(crate) const fn new(run: RunId, stop: StopReason, spent: Spend) -> Self {
+    pub const fn new(run: RunId, stop: StopReason, spent: Spend) -> Self {
         Self {
             run,
             status: RunStatus::of(stop),

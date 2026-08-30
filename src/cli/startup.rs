@@ -204,10 +204,12 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<Runner, Fatal> {
     // in a sentence.
     let offering = tools(startup, settings, reaching);
 
-    // Nothing has ended yet: this is what the first turn of a run is asked
-    // under, and no command has been left running to end. It is written again
-    // before every turn after it, because three of the four things in it move
-    // while a session runs.
+    // Nothing has ended yet, so there is no command left running to report.
+    // This is the definition's opening value rather than any turn's prompt:
+    // `Runner::telling` writes it again before every turn, the first included,
+    // because three of the four things in it move while a session runs. What
+    // this one is for is the window reading a session shows before it has
+    // taken a turn, which is measured against whatever the definition holds.
     let name = startup.model.unwrap_or_default();
     let asked = standing::under(standing::Standing {
         settings,
@@ -819,9 +821,9 @@ fn about(schema: &str) -> Box<str> {
 /// the window — is already configurable, and arrives here resolved.
 ///
 /// What a turn is asked under is [`standing::under`], read again before every
-/// turn because half of it is about the model in force — this is only the
-/// first of those reads, for the turn a session might take before anything
-/// changes.
+/// turn because half of it is about the model in force. This is the read that
+/// seeds the definition, not the one any turn goes out under: the first turn
+/// writes its own before it asks.
 ///
 /// An unnamed model is the empty name, which is what the loop reads to find out
 /// that there is nothing to ask yet. It is the same absence [`Startup::model`]

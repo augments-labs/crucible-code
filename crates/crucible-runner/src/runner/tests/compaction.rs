@@ -1003,8 +1003,11 @@ fn the_room_a_compaction_reports_is_read_off_the_run_that_asked() {
     //
     // The run keeps back *more* than the session, which is the direction the
     // narrowing rule permits — a run may hold itself to less of the window,
-    // never to more. Written the other way round this read the run's smaller
-    // reserve, which is a state `RunPolicy::narrowed` no longer produces.
+    // never to more. This builds its context directly, so nothing here proves
+    // that; the direction is chosen so the pair a real caller could hand in is
+    // the pair under test. What makes the other direction unreachable is
+    // `roomier` taking the max, and refusing to replace an absent reserve with
+    // a named one, both pinned in `policy.rs` rather than here.
     //
     // The recap is deliberately enormous, because that is what turns the
     // disagreement into something a reader would notice rather than a rounding
@@ -1120,5 +1123,91 @@ fn a_recap_is_held_to_the_output_ceiling_the_session_set() {
         scripted.sent.lock().unwrap().last().unwrap().max_tokens,
         256,
         "a run was given a recap ceiling wider than its session allows"
+    );
+}
+
+#[test]
+fn the_recap_boundary_is_chosen_by_the_keep_figure_the_run_asked_for() {
+    // The other reading `compact` takes off the run, and the one that decides
+    // whether there is a recap at all. A session keeping everything word for
+    // word leaves no older middle to replace; a run asking to keep one token
+    // does. Read off the session this would prune and stop.
+    let script = Script::new(vec![
+        saying("first"),
+        saying("second"),
+        recap("notes to self"),
+    ]);
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
+    scripted.runner.policy.compaction.keep_tokens = u64::MAX;
+    scripted.turn("first").expect("a turn to compact from");
+    scripted.turn("second").expect("a middle to replace");
+
+    let asking = RunContext::new(
+        RunPolicy {
+            compaction: keeping_one(),
+            ..scripted.runner.policy
+        },
+        &scripted.events,
+        &scripted.cancel,
+        &scripted.steer,
+        &scripted.aside,
+    );
+
+    let room = scripted
+        .runner
+        .compact(Compacting::Asked, &asking, &mut Spend::default())
+        .expect("a compaction");
+
+    let Room::Made(compacted) = room else {
+        panic!("the run's keep figure was not the one the boundary was chosen by");
+    };
+    assert!(
+        compacted.replaced > 0,
+        "a run asking to carry less forward was held to its session's figure"
+    );
+}
+
+#[test]
+fn a_recap_is_held_to_the_output_ceiling_the_run_asked_for() {
+    // The complementary direction, and the one that says whose figure is
+    // actually read. Its sibling above sets the session to the smaller number,
+    // so the clamp and the reading agree and either would pass it. Here the
+    // run is the narrower of the two: only a ceiling read off the run can
+    // produce this figure.
+    let script = Script::new(vec![
+        saying("first"),
+        saying("second"),
+        recap("notes to self"),
+    ]);
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
+    scripted.runner.policy.compaction = keeping_one();
+    scripted.runner.policy.compaction.recap_tokens = 10_240;
+    scripted.runner.spec.model.max_tokens = 12_000;
+    scripted.turn("first").expect("a turn to compact from");
+    scripted.turn("second").expect("a middle to replace");
+
+    let asking = RunContext::new(
+        RunPolicy {
+            compaction: Compaction {
+                recap_tokens: 256,
+                ..scripted.runner.policy.compaction
+            },
+            ..scripted.runner.policy
+        },
+        &scripted.events,
+        &scripted.cancel,
+        &scripted.steer,
+        &scripted.aside,
+    );
+
+    scripted
+        .runner
+        .compact(Compacting::Asked, &asking, &mut Spend::default())
+        .expect("a structured recap");
+
+    assert_eq!(
+        scripted.sent.lock().unwrap().last().unwrap().max_tokens,
+        256,
+        "a run asking for a shorter recap was given its session's ceiling"
     );
 }

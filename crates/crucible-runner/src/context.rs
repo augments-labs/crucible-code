@@ -78,9 +78,18 @@ impl<'a> RunContext<'a> {
     ///
     /// The narrowing happens here rather than at the caller so that starting a
     /// run is the only way to get a context for one, and the rule cannot be
-    /// skipped by a caller that writes the comparison itself. The rule itself
-    /// is in-crate, and every figure it settles is documented on the field it
-    /// settles in [`RunPolicy`].
+    /// skipped by a caller that writes the comparison itself.
+    ///
+    /// Most of `wanted` narrows the way it reads: ask for less and you get
+    /// less, ask for more and you get what this run holds. Three do not, and
+    /// they are the ones worth knowing before calling this.
+    /// [`Compaction::reserve`] is room held back, so the *larger* figure is
+    /// the narrower answer — and a run that named no reserve at all is not
+    /// given one by its descendant, because what absence stands for is derived
+    /// from model ceilings and cannot be compared against a number.
+    /// [`Compaction::automatic`] can only be switched off by a descendant,
+    /// never back on. [`Compaction::ask_on_resume`] is this run's outright and
+    /// a descendant's is dropped whichever way the two differ.
     ///
     /// The services are handed straight down: a descendant stops when its
     /// parent is stopped, and its progress reaches the same screen. They are
@@ -88,6 +97,10 @@ impl<'a> RunContext<'a> {
     /// type rather than of what its callers remember to do. Nothing calls this
     /// yet — it is here because the ancestry and the narrowing are the two
     /// things that have to be right before anything does.
+    ///
+    /// [`Compaction::reserve`]: crate::Compaction::reserve
+    /// [`Compaction::automatic`]: crate::Compaction::automatic
+    /// [`Compaction::ask_on_resume`]: crate::Compaction::ask_on_resume
     #[must_use]
     pub fn child(&self, wanted: RunPolicy) -> Self {
         Self {
@@ -384,6 +397,31 @@ mod tests {
             held.policy().compaction.ask_on_resume,
             Some(10),
             "the run was read as the ceiling and the session as the request"
+        );
+    }
+
+    #[test]
+    fn a_run_that_starts_one_is_read_as_the_holder_and_not_as_the_thing_asked_for() {
+        // The same argument-order question as `held_to`, on the public entry
+        // point rather than the crate-private one. `reserve` is what makes it
+        // visible: a holder that named none keeps its silence, so the two
+        // orders answer differently and an inverted `narrowed` shows up here
+        // rather than in whichever caller first starts a descendant.
+        let nowhere = Nowhere::new();
+        let run = nowhere.context(RunPolicy::default());
+
+        let child = run.child(RunPolicy {
+            compaction: Compaction {
+                reserve: Some(5_000),
+                ..Compaction::default()
+            },
+            ..RunPolicy::default()
+        });
+
+        assert_eq!(
+            child.policy().compaction.reserve,
+            None,
+            "the request was read as the holder and the run as the thing asked for"
         );
     }
 
