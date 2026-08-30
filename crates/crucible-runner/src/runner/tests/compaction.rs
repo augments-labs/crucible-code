@@ -996,9 +996,15 @@ fn a_pass_is_measured_against_the_room_its_own_run_holds() {
 #[test]
 fn the_room_a_compaction_reports_is_read_off_the_run_that_asked() {
     // One boundary with two readers: the recap boundary comes off the run, and
-    // the room reported afterwards came off the session. A run holding back
-    // less of the window than the session does makes the two disagree, and the
-    // figure the reader is then shown is the one that never saw the run.
+    // the room reported afterwards came off the session. A run holding back a
+    // different amount of the window than the session does makes the two
+    // disagree, and the figure the reader is then shown is the one that never
+    // saw the run.
+    //
+    // The run keeps back *more* than the session, which is the direction the
+    // narrowing rule permits — a run may hold itself to less of the window,
+    // never to more. Written the other way round this read the run's smaller
+    // reserve, which is a state `RunPolicy::narrowed` no longer produces.
     //
     // The recap is deliberately enormous, because that is what turns the
     // disagreement into something a reader would notice rather than a rounding
@@ -1023,14 +1029,14 @@ fn the_room_a_compaction_reports_is_read_off_the_run_that_asked() {
 
     // Set after the turns, so they run under the shipped answer and the reserve
     // is the only thing separating the two readings below.
-    scripted.runner.policy.compaction.reserve = Some(100_000);
+    scripted.runner.policy.compaction.reserve = Some(0);
 
-    // The same session, under a run that keeps nothing back for the next
-    // exchange. Every other figure is the session's.
+    // The same session, under a run that keeps half the window back for the
+    // next exchange. Every other figure is the session's.
     let asking = RunContext::new(
         RunPolicy {
             compaction: Compaction {
-                reserve: Some(0),
+                reserve: Some(100_000),
                 ..scripted.runner.policy.compaction
             },
             ..scripted.runner.policy
@@ -1058,7 +1064,7 @@ fn the_room_a_compaction_reports_is_read_off_the_run_that_asked() {
 
     assert_eq!(
         reported,
-        scripted.runner.load.left(Some(200_000), 0),
+        scripted.runner.load.left(Some(200_000), 100_000),
         "the room reported was not measured against the run's own reserve"
     );
     assert_ne!(

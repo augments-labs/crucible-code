@@ -152,27 +152,37 @@ impl RunPolicy {
     /// so both callers are in `context.rs`, beside the two entries that exist
     /// precisely so nobody else writes the comparison.
     ///
-    /// Every budget is the tighter of the two, so a descendant asking for more
+    /// Every field is the tighter of the two, so a descendant asking for more
     /// than its parent holds is given the parent's figure rather than refused:
     /// widening is not an error a caller has to handle, it is a request that
-    /// has no effect. Seven figures are budgets that way — the two byte
-    /// ceilings, the spend, the retry count and pause, and the two token
-    /// figures inside the compaction answer.
+    /// has no effect. Tighter does not point the same way for all of them,
+    /// so each direction is written down here rather than left to be inferred
+    /// from the `min` beside it.
     ///
-    /// [`Retry::first_pause`] is the one where the tighter figure points
-    /// outward. The resource it bounds is the user's patience, not the
-    /// provider's capacity: a descendant that shortened the wait is asking to
-    /// be told sooner, and the min gives it that. The count beside it is what
-    /// bounds how much a failing provider is asked, and it narrows the usual
-    /// way — so a descendant can be quicker to give up but never more
-    /// persistent, which is the pair that matters.
+    /// Six point the obvious way, where less is less: the two byte ceilings,
+    /// the spend, the retry count, and the two token figures inside the
+    /// compaction answer.
     ///
-    /// Three are not, and are the descendant's whichever way they differ:
-    /// whether to compact at all, how much room to leave, and how large a
-    /// session must be before picking it up asks about it. None of those is a
-    /// quantity a parent can be said to hold, so there is no tighter answer to
-    /// take — a descendant that declines to compact is not spending anything
-    /// its parent did not allow.
+    /// [`Retry::first_pause`] points outward. The resource it bounds is the
+    /// user's patience, not the provider's capacity: a descendant that
+    /// shortened the wait is asking to be told sooner, and the min gives it
+    /// that. The count beside it bounds how hard a failing provider is
+    /// pressed, and it narrows the usual way — so a descendant can be quicker
+    /// to give up but never more persistent, which is the pair that matters.
+    ///
+    /// [`Compaction::automatic`] is authority rather than a quantity, and the
+    /// tighter answer is the one that does less: a run may decline to compact,
+    /// never take it up. A session told to fail on a full window has promised
+    /// its user that the transcript is left alone, and a run that could switch
+    /// compaction back on would be replacing the thing that was promised.
+    ///
+    /// [`Compaction::reserve`] is tighter when it is *larger*. It is room held
+    /// back rather than room granted, so the bigger figure is the one that
+    /// fills sooner and leaves less of the window to be spent.
+    ///
+    /// [`Compaction::ask_on_resume`] is the holder's outright, because it is
+    /// the one figure here that no run ever reads: it is taken off the session
+    /// between turns, which is the only place there is anybody left to ask.
     ///
     /// Written out field by field rather than by carrying a struct across
     /// whole, so a figure added to [`Bounds`], [`Retry`] or [`Compaction`]
@@ -189,8 +199,8 @@ impl RunPolicy {
                 spend: tighter(self.bounds.spend, wanted.bounds.spend),
             },
             compaction: Compaction {
-                automatic: wanted.compaction.automatic,
-                reserve: wanted.compaction.reserve,
+                automatic: self.compaction.automatic && wanted.compaction.automatic,
+                reserve: roomier(self.compaction.reserve, wanted.compaction.reserve),
                 keep_tokens: self
                     .compaction
                     .keep_tokens
@@ -199,7 +209,7 @@ impl RunPolicy {
                     .compaction
                     .recap_tokens
                     .min(wanted.compaction.recap_tokens),
-                ask_on_resume: wanted.compaction.ask_on_resume,
+                ask_on_resume: self.compaction.ask_on_resume,
             },
             retry: Retry {
                 attempts: self.retry.attempts.min(wanted.retry.attempts),
@@ -216,6 +226,19 @@ impl RunPolicy {
 fn tighter(held: Option<u64>, wanted: Option<u64>) -> Option<u64> {
     match (held, wanted) {
         (Some(held), Some(wanted)) => Some(held.min(wanted)),
+        (bound, None) | (None, bound) => bound,
+    }
+}
+
+/// The larger of two reserves, where absent means nobody named one.
+///
+/// The mirror of [`tighter`], for the one figure here that is room held back
+/// rather than room granted: the bigger of the two is the narrower answer.
+/// Absent is not zero — it is the wiring declining to name a figure — so a
+/// named figure is taken over it whichever side carries it.
+fn roomier(held: Option<u64>, wanted: Option<u64>) -> Option<u64> {
+    match (held, wanted) {
+        (Some(held), Some(wanted)) => Some(held.max(wanted)),
         (bound, None) | (None, bound) => bound,
     }
 }
@@ -367,36 +390,101 @@ mod tests {
         );
     }
 
+    /// A policy whose compaction answer is `said` and whose everything else is
+    /// the shipped default, for the three tests that differ in one field.
+    fn compacting(said: Compaction) -> RunPolicy {
+        RunPolicy {
+            compaction: said,
+            ..RunPolicy::default()
+        }
+    }
+
     #[test]
-    fn a_descendant_keeps_the_window_answer_it_asked_for() {
-        // The three that are genuinely not budgets: whether to compact at all,
-        // how much room to leave, and how large a session has to be before
-        // picking it up asks. There is no tighter or looser answer to take, so
-        // these are the descendant's whichever way they differ.
-        let parent = RunPolicy {
-            compaction: Compaction {
-                automatic: true,
-                reserve: Some(1_000),
-                ask_on_resume: Some(10),
-                ..Compaction::default()
-            },
-            ..RunPolicy::default()
-        };
-        let asked = RunPolicy {
-            compaction: Compaction {
-                automatic: false,
-                reserve: Some(9_000),
-                ask_on_resume: None,
-                ..Compaction::default()
-            },
-            ..RunPolicy::default()
-        };
+    fn a_descendant_cannot_switch_on_the_compaction_its_holder_switched_off() {
+        // The direction the window answer was never asked about. The test that
+        // stood here had the descendant asking for *less* compaction than its
+        // parent allowed, which is the one arrangement where taking the
+        // descendant's answer and taking the narrower one agree — so it went
+        // green whether the rule held or not.
+        //
+        // It matters because a session set to fail on a full window has told
+        // its user the transcript is left alone. Compaction replaces it.
+        let holder = compacting(Compaction {
+            automatic: false,
+            ..Compaction::default()
+        });
+        let asked = compacting(Compaction {
+            automatic: true,
+            ..Compaction::default()
+        });
 
-        let held = parent.narrowed(asked);
+        assert!(
+            !holder.narrowed(asked).compaction.automatic,
+            "a run switched on the compaction its session switched off"
+        );
+    }
 
-        assert!(!held.compaction.automatic);
-        assert_eq!(held.compaction.reserve, Some(9_000));
-        assert_eq!(held.compaction.ask_on_resume, None);
+    #[test]
+    fn a_descendant_may_still_decline_to_compact() {
+        // The half that has to keep working: narrowing is a request that has
+        // no effect only when it widens, and this one does not.
+        let holder = compacting(Compaction::default());
+        let asked = compacting(Compaction {
+            automatic: false,
+            ..Compaction::default()
+        });
+
+        assert!(holder.compaction.automatic, "the shipped answer moved");
+        assert!(
+            !holder.narrowed(asked).compaction.automatic,
+            "a run was made to compact when it asked not to"
+        );
+    }
+
+    #[test]
+    fn a_descendant_cannot_hold_back_less_room_than_its_holder() {
+        // Larger is narrower here: the reserve is room kept free, so the
+        // bigger figure is the one that fills sooner and spends less window.
+        let holder = compacting(Compaction {
+            reserve: Some(9_000),
+            ..Compaction::default()
+        });
+        let asked = compacting(Compaction {
+            reserve: Some(1_000),
+            ..Compaction::default()
+        });
+
+        assert_eq!(
+            holder.narrowed(asked).compaction.reserve,
+            Some(9_000),
+            "a run kept less of the window free than its session set aside"
+        );
+        assert_eq!(
+            asked.narrowed(holder).compaction.reserve,
+            Some(9_000),
+            "a run asking to keep more free was not given it"
+        );
+    }
+
+    #[test]
+    fn how_large_a_session_must_be_before_it_asks_is_the_holders_answer() {
+        // No run reads this one — it is taken off the session between turns,
+        // where there is still somebody to ask — so the holder's answer is the
+        // only one that can be right.
+        let holder = compacting(Compaction {
+            ask_on_resume: Some(10),
+            ..Compaction::default()
+        });
+        let asked = compacting(Compaction {
+            ask_on_resume: Some(999),
+            ..Compaction::default()
+        });
+
+        assert_eq!(
+            holder.narrowed(asked).compaction.ask_on_resume,
+            Some(10),
+            "a run answered a question that is only ever put to the session"
+        );
     }
 
     #[test]

@@ -357,6 +357,36 @@ mod tests {
     }
 
     #[test]
+    fn a_ceiling_is_read_as_the_holder_and_not_as_the_thing_held() {
+        // Which side of `RunPolicy::narrowed` the ceiling goes on. Every other
+        // figure resolves by `min`, `max` or `&&` — all symmetric — so writing
+        // the two arguments the wrong way round changes nothing a test can see
+        // until it looks at the one field that is the holder's outright.
+        let nowhere = Nowhere::new();
+        let asking = nowhere.context(RunPolicy {
+            compaction: Compaction {
+                ask_on_resume: Some(999),
+                ..Compaction::default()
+            },
+            ..RunPolicy::default()
+        });
+
+        let held = asking.held_to(RunPolicy {
+            compaction: Compaction {
+                ask_on_resume: Some(10),
+                ..Compaction::default()
+            },
+            ..RunPolicy::default()
+        });
+
+        assert_eq!(
+            held.policy().compaction.ask_on_resume,
+            Some(10),
+            "the run was read as the ceiling and the session as the request"
+        );
+    }
+
+    #[test]
     fn the_services_a_run_was_given_are_the_ones_it_hands_down() {
         let nowhere = Nowhere::new();
         let run = nowhere.context(RunPolicy::default());
