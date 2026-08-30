@@ -918,7 +918,10 @@ mod tests {
         let shown = format!("{account:?}");
 
         for canary in ["description-canary", "explanation-canary"] {
-            assert!(!shown.contains(canary), "{shown}");
+            assert!(
+                !shown.contains(canary),
+                "Account Debug exposed model-written text"
+            );
         }
         assert!(shown.contains("redacted"));
     }
