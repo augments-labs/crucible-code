@@ -1073,3 +1073,52 @@ fn the_room_a_compaction_reports_is_read_off_the_run_that_asked() {
         "the session's reserve made no difference here, so this proves nothing"
     );
 }
+
+#[test]
+fn a_recap_is_held_to_the_output_ceiling_the_session_set() {
+    // The other half of what `Runner::turn` does on the way in. `compact` holds
+    // the run it is handed to this session's policy too, and until this test
+    // nothing said so: deleting that line left every other test in this crate
+    // green, because the binary only ever reaches `compact` through a run built
+    // from the session's own policy, where the clamp is a no-op.
+    //
+    // The recap request is where a wider run would show: its output ceiling is
+    // read off the run, so a run asking for forty times the session's figure
+    // would be granted it.
+    let script = Script::new(vec![
+        saying("first"),
+        saying("second"),
+        recap("notes to self"),
+    ]);
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
+    scripted.runner.policy.compaction = keeping_one();
+    scripted.runner.policy.compaction.recap_tokens = 256;
+    scripted.runner.spec.model.max_tokens = 12_000;
+    scripted.turn("first").expect("a turn to compact from");
+    scripted.turn("second").expect("a middle to replace");
+
+    let asking = RunContext::new(
+        RunPolicy {
+            compaction: Compaction {
+                recap_tokens: 10_240,
+                ..scripted.runner.policy.compaction
+            },
+            ..scripted.runner.policy
+        },
+        &scripted.events,
+        &scripted.cancel,
+        &scripted.steer,
+        &scripted.aside,
+    );
+
+    scripted
+        .runner
+        .compact(Compacting::Asked, &asking, &mut Spend::default())
+        .expect("a structured recap");
+
+    assert_eq!(
+        scripted.sent.lock().unwrap().last().unwrap().max_tokens,
+        256,
+        "a run was given a recap ceiling wider than its session allows"
+    );
+}
