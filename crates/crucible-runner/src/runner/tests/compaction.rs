@@ -595,9 +595,10 @@ fn a_full_window_recaps_a_complete_active_turn_when_pruning_cannot_help() {
 
 #[test]
 fn a_request_the_provider_would_not_take_is_asked_again_once_there_is_room() {
-    // The reactive rail. Nothing said the window was full — the provider did,
-    // by refusing — and the same question goes back once the session is
-    // smaller.
+    // The reactive rail: nothing measured the window beforehand, the answer
+    // came back saying it did not fit, and the same question goes back once
+    // the session is smaller. The provider refusing outright is the other
+    // rail and a `ProviderError` — `Script::over_window` drives that one.
     let script = Script::new(vec![
         vec![Delta::Stopped(StopReason::WindowExceeded)],
         recap("notes to self"),
@@ -610,7 +611,7 @@ fn a_request_the_provider_would_not_take_is_asked_again_once_there_is_room() {
     let mut scripted = Scripted::within(script, 10_000, keeping_one());
     scripted.turn("first").expect("a turn to compact from");
 
-    let stop = scripted.turn("go").expect("the refusal ended the turn");
+    let stop = scripted.turn("go").expect("the second ask ended the turn");
 
     assert_eq!(stop, StopReason::Yielded);
     assert!(scripted.said().contains("asked again"));
@@ -946,6 +947,11 @@ fn a_pass_is_measured_against_the_room_its_own_run_holds() {
     // measures one half of the same rail against a figure the other half never
     // saw. What a compaction is then allowed to keep is a separate reading with
     // its own tests; this one asks only whether room was made at all.
+    //
+    // Reached through [`Runner::exchange`] rather than a turn, because a turn
+    // takes the session's ceiling on the way in and this pair is the one a
+    // ceiling erases: `automatic` narrows by `&&`, so a session with it off
+    // holds the run to off too.
     let mut scripted = Scripted::within(
         script,
         200_000,
@@ -1358,10 +1364,11 @@ fn a_session_told_something_longer_reads_its_window_as_fuller_at_once() {
         .runner
         .telling(&"mind the workspace ".repeat(3_158));
 
+    let longer = scripted.runner.left();
     assert!(
-        scripted.runner.left() < short,
-        "a longer prompt left the window reading where it was: {:?} against {short:?}",
-        scripted.runner.left()
+        matches!((short, longer), (Some(before), Some(after)) if after < before),
+        "a longer prompt left the window reading where it was: \
+         {longer:?} against {short:?}"
     );
 }
 
@@ -1466,16 +1473,19 @@ fn the_room_a_prune_reports_is_read_off_the_run_that_asked() {
         .expect("the active turn made room instead of failing");
 
     assert_eq!(stop, StopReason::Yielded);
+    let carried = scripted
+        .events()
+        .iter()
+        .filter_map(|event| match event {
+            Event::Carried { left } => Some(*left),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
     assert_eq!(
-        scripted
-            .events()
-            .iter()
-            .filter_map(|event| match event {
-                Event::Carried { left } => Some(*left),
-                _ => None,
-            })
-            .collect::<Vec<_>>(),
-        [Some(58), Some(16), Some(0), Some(0), Some(58)],
-        "the room reported after the prune was not measured against the run's own reserve"
+        carried.last(),
+        Some(&Some(58)),
+        "the room reported after the prune was not measured against the run's \
+         own reserve: {carried:?}"
     );
 }

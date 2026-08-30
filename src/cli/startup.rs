@@ -849,8 +849,8 @@ fn coding(
             effort,
         },
     );
-    spec.name = "Coding".into();
-    spec.description = "Reads, changes and checks the code in this workspace.".into();
+    spec.named("Coding");
+    spec.describing("Reads, changes and checks the code in this workspace.");
     spec.told(asked);
     spec
 }

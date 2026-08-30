@@ -27,7 +27,7 @@ use crate::ids::RunId;
 /// what the callers do, not something this type can check: [`Ancestry::new`]
 /// is public and takes nothing, so a caller minting a second one mid-turn gets
 /// a second root rather than an error.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ancestry {
     run: RunId,
     parent: Option<RunId>,

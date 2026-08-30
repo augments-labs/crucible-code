@@ -50,7 +50,7 @@ fn attachments_a_request_went_out_without_are_named_as_it_goes() {
         panic!("one request went out, and it went out short");
     };
     let [first, second, ..] = named.as_slice() else {
-        panic!("four files were attached");
+        panic!("the request went out naming fewer than two files: {named:?}");
     };
     assert_eq!(aged, &[first.clone(), second.clone()]);
 }
@@ -106,7 +106,7 @@ fn a_retry_says_again_which_attachments_it_went_out_without() {
     // named none, agree as well. The sentence the retry owes is the same
     // sentence, so the same files are what it has to be checked against.
     let [first, second, ..] = named.as_slice() else {
-        panic!("four files were attached");
+        panic!("the request went out naming fewer than two files: {named:?}");
     };
     let went_short = vec![first.clone(), second.clone()];
 
@@ -146,8 +146,7 @@ fn a_picture_a_model_does_not_read_is_named_as_the_request_goes() {
     // settled a layer down, where the request is resolved. That it goes out
     // once per request rather than once per turn is pinned by the aged case
     // above; the two are posted from one straight path with no branch between
-    // them, so a
-    // second copy here would pin the same line twice.
+    // them, so a second copy here would pin the same line twice.
     let posted = scripted.unread();
     let [unread] = posted.as_slice() else {
         panic!("one request went out, and it went out without the picture");

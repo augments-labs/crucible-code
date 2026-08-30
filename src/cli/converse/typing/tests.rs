@@ -5,8 +5,7 @@
 //! being run in — so [`super::ask`] is exercised only where it declines to, and
 //! everything after that point is called directly.
 
-use crucible_core::AgentId;
-use crucible_core::{Aside, Mode, Permission, Rules, ToolArgs};
+use crucible_core::{AgentId, Aside, Mode, Permission, Rules, ToolArgs};
 use crucible_runner::{AgentSpec, Model, Session, Tools};
 use crucible_tui::{Aimed, Key, Recording};
 

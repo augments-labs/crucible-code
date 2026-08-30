@@ -173,11 +173,13 @@ fn legacy_shaped(text: &str) -> bool {
 /// further ones; an identifier computed from either of the others could not
 /// tell two runs of the same turn apart.
 ///
-/// A UUID v7, so the text form sorts by start time the way a session name
-/// does. `Copy` and pointer-free on purpose: every event a run posts carries
-/// one, and an identifier that allocated would put an allocation on the
-/// delta path.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+/// A UUID v7, so these sort by start time the way a session name does —
+/// ordered here rather than only after `to_string`, because this is what every
+/// event is filed under and a reader grouping a transcript by run should not
+/// have to render one to key it. `Copy` and pointer-free on purpose: every
+/// event a run posts carries one, and an identifier that allocated would put
+/// an allocation on the delta path.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RunId(Uuid);
 
 impl RunId {
@@ -229,7 +231,10 @@ impl fmt::Debug for RunId {
 /// Looked up by, like every other name in this module: the thing a definition
 /// is filed under is the thing something has to be able to find it by, and a
 /// name that cannot be a key would make whatever registers definitions invent
-/// a second one.
+/// a second one. Being a key is not being a *valid* key: two definitions
+/// written down under the same word — `""` included — are one entry, and the
+/// second silently replaces the first. Whatever registers definitions is where
+/// that stops being allowed, at the parse boundary this module describes.
 ///
 /// ```
 /// use std::collections::{BTreeMap, HashMap};

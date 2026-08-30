@@ -28,11 +28,15 @@ use crate::policy::RunPolicy;
 /// root. Descending is this crate's, because a context minted outside it would
 /// file a turn's events under runs that never ran:
 ///
+/// The error code is what this fails with today and not a gate: `compile_fail`
+/// accepts any compile error, so the snippet is kept to the one call that must
+/// not compile.
+///
 /// ```compile_fail,E0624
-/// use crucible_runner::{RunContext, RunPolicy};
+/// use crucible_runner::RunContext;
 ///
 /// fn nested<'a>(run: &'a RunContext<'a>) -> RunContext<'a> {
-///     run.child(RunPolicy::default())
+///     run.child(unimplemented!())
 /// }
 /// ```
 ///
@@ -64,11 +68,13 @@ pub struct RunContext<'a> {
 impl<'a> RunContext<'a> {
     /// A run nothing started: its own root, under the policy it was given.
     ///
-    /// Crate-visible, because a root is what a descendant is not: everything
-    /// outside reaches a context through the runner that started it, and a
-    /// nested run is spelled [`RunContext::child`] or it is not spelled at
-    /// all. Public, this is the two-line way to give a descendant a fresh
-    /// ancestry and a policy nobody narrowed.
+    /// Crate-visible, because the policy argument is the whole of what this
+    /// run may spend and nothing here checks it against a session. That check
+    /// is [`Runner::starting`]'s, which is why it is the only way in from
+    /// outside; reaching this directly would be the way to a run holding more
+    /// than the session it belongs to.
+    ///
+    /// [`Runner::starting`]: crate::Runner::starting
     #[must_use]
     pub(crate) fn new(
         policy: RunPolicy,
@@ -431,11 +437,12 @@ mod tests {
 
     #[test]
     fn a_run_that_starts_one_is_read_as_the_holder_and_not_as_the_thing_asked_for() {
-        // The same argument-order question as `held_to`, on the public entry
-        // point rather than the crate-private one. `reserve` is what makes it
-        // visible: a holder that named none keeps its silence, so the two
-        // orders answer differently and an inverted `narrowed` shows up here
-        // rather than in whichever caller first starts a descendant.
+        // The same argument-order question as `held_to`, on the entry that
+        // starts a descendant rather than the one that re-narrows a run that
+        // already exists. `reserve` is what makes it visible: a holder that
+        // named none keeps its silence, so the two orders answer differently
+        // and an inverted `narrowed` shows up here rather than in whichever
+        // caller first starts a descendant.
         let nowhere = Nowhere::new();
         let run = nowhere.context(RunPolicy::default());
 

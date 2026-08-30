@@ -371,7 +371,8 @@ impl Runner {
     /// wanting a single field takes it off this, and the next field to be
     /// wanted needs no second accessor. Read-only and by value, because a
     /// session's ceiling is settled when it is assembled — [`Runner::turn`]
-    /// and [`Runner::compact`] are where a run is held to it.
+    /// and [`Runner::compact`] are the two entries a run is admitted through,
+    /// and each holds it to this.
     #[must_use]
     pub const fn policy(&self) -> RunPolicy {
         self.policy
@@ -610,15 +611,29 @@ impl Runner {
 
     /// A run against this session, under the policy the session was given.
     ///
-    /// The one way in from outside, and the only one: a context is minted
-    /// inside this crate, so the run a caller is handed is a root run against
-    /// the session it belongs to. A nested run is this crate's to start, which
-    /// is what keeps a turn's events from being filed under runs that never
-    /// ran. Minting it out here rather
-    /// than inside [`Runner::turn`] is what lets the caller report under the
-    /// same run the work ran as — a [`TurnError`] is handed back rather than
-    /// posted, and whoever asked for the work is the only one that can say it
-    /// failed.
+    /// The only way in from outside: [`RunContext`] is minted in this crate,
+    /// so the run a caller is handed is a root, and descending from it is this
+    /// crate's. What that closes is the *context* — it does not close event
+    /// attribution, because [`Ancestry`] and [`Reporter`] are public in
+    /// `crucible-core` and three calls there will stamp an event with a run
+    /// nothing started. Nothing shipped does: the one [`Post`] is the binary's
+    /// relay, and the only [`Reporter`] outside tests comes from
+    /// [`RunContext::reporting`]. So this is a run the caller cannot forge by
+    /// accident, not one the types forbid forging.
+    ///
+    /// [`Ancestry`]: crucible_core::Ancestry
+    ///
+    /// A context carries no session either, so "against this session" is what
+    /// the caller does and not something checked here: one context per unit of
+    /// work, matching the run to the runner it was minted from. What *is*
+    /// checked is the policy — [`Runner::turn`] and [`Runner::compact`] hold
+    /// whatever they are handed to this session's ceiling before spending
+    /// against it.
+    ///
+    /// Minting it out here rather than inside [`Runner::turn`] is what lets the
+    /// caller report under the same run the work ran as — a [`TurnError`] is
+    /// handed back rather than posted, and whoever asked for the work is the
+    /// only one that can say it failed.
     ///
     /// The services are borrowed for as long as the run lasts and the session
     /// is not: the returned context does not hold this runner, so the same
@@ -667,7 +682,16 @@ impl Runner {
     ) -> Result<StopReason, TurnError> {
         // Whatever the caller handed in, held to what this session allows.
         // See [`RunContext::held_to`]: the session's policy is the ceiling,
-        // and a context that asks for more than it gets the session's figure.
+        // and a context that asks for more gets the session's figure.
+        //
+        // Here rather than in [`Runner::exchange`], which this is the only
+        // shipped caller of. Putting it there would make a run whose
+        // compaction rail differs from its session's unreachable through
+        // `exchange`, and that difference is what
+        // `a_pass_is_measured_against_the_room_its_own_run_holds` opposes to
+        // tell a rail read off the run from one read off the session. The
+        // ceiling belongs where a run is admitted, and the two admitting
+        // entries are this and [`Runner::compact`].
         let run = &run.held_to(self.policy);
 
         // The number this turn would have, worked out before it is known
@@ -746,6 +770,12 @@ impl Runner {
         ask: &mut dyn Ask,
         run: &RunContext<'_>,
     ) -> Result<RunResult, TurnError> {
+        // Not held to the session here. [`Runner::turn`] does it, and is the
+        // only caller that ships; a test reaching this directly is asking for
+        // the run exactly as it wrote it. A second entry that reaches a
+        // provider without passing through `turn` has to take the ceiling
+        // itself, the way [`Runner::compact`] does.
+
         // The turn's own running totals. A bound only where somebody asked for
         // one: a turn that runs long because there is work in it is not a turn
         // to stop, and what a runaway one actually consumes is this.

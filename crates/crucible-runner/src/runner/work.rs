@@ -295,9 +295,9 @@ mod tests {
 
     /// A destination that keeps the event and lets the attribution go: these
     /// assertions are about what a pass does, not about whose pass it was.
-    struct Watching(Sender<Event>);
+    struct Keeping(Sender<Event>);
 
-    impl Post for Watching {
+    impl Post for Keeping {
         fn post(&self, reported: EventEnvelope) {
             drop(self.0.send(reported.into_event()));
         }
@@ -309,7 +309,7 @@ mod tests {
         permission: Permission,
         says: Says,
         cancel: Cancel,
-        events: Watching,
+        events: Keeping,
         seen: Receiver<Event>,
     }
 
@@ -326,7 +326,7 @@ mod tests {
                 permission: Permission::new(),
                 says,
                 cancel: Cancel::new(),
-                events: Watching(events),
+                events: Keeping(events),
                 seen,
             }
         }

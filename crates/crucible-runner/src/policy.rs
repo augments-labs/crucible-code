@@ -149,8 +149,19 @@ impl RunPolicy {
     /// The holder is on the left and what is being asked for is on the right.
     /// A call written the other way round compiles and quietly inverts the
     /// rule — `wanted.narrowed(held)` reads the descendant as the ceiling —
-    /// so both callers are in `context.rs`, beside the two entries that exist
-    /// precisely so nobody else writes the comparison.
+    /// and the signature cannot say which is which, because both sides are
+    /// this type.
+    ///
+    /// Co-location is not what stops that: both callers are in `context.rs`,
+    /// and they put the holder on opposite sides, because
+    /// [`RunContext::child`] holds a descendant to the run starting it while
+    /// [`RunContext::held_to`] holds a run to a ceiling handed in. What stops
+    /// it is a test per call site, each on a figure that is not symmetric —
+    /// `a_ceiling_is_read_as_the_holder_and_not_as_the_thing_held` on
+    /// `ask_on_resume`, and
+    /// `a_run_that_starts_one_is_read_as_the_holder_and_not_as_the_thing_asked_for`
+    /// on `reserve`. A third caller needs its own, because the eight symmetric
+    /// figures will not show a swap.
     ///
     /// Nine of the ten fields are the tighter of the two, so a descendant
     /// asking for more than its parent holds is given the parent's figure
@@ -167,9 +178,10 @@ impl RunPolicy {
     /// [`Retry::first_pause`] narrows by the same `min` for a different
     /// reason. The resource it bounds is the user's patience, not the
     /// provider's capacity: a descendant that shortened the wait is asking to
-    /// be told sooner, and the min gives it that. The count beside it bounds how hard a failing provider is
-    /// pressed, and it narrows the usual way — so a descendant can be quicker
-    /// to give up but never more persistent, which is the pair that matters.
+    /// be told sooner, and the min gives it that. The count beside it bounds
+    /// how hard a failing provider is pressed, and it narrows the usual way —
+    /// so a descendant can be quicker to give up but never more persistent,
+    /// which is the pair that matters.
     ///
     /// [`Compaction::automatic`] is authority rather than a quantity, and the
     /// tighter answer is the one that does less: a run may decline to compact,
@@ -326,6 +338,15 @@ impl Default for Compaction {
 
 #[cfg(test)]
 mod tests {
+    //! Which assertions here carry a message is not arbitrary. A figure whose
+    //! narrowing direction is the obvious one — the byte ceilings, the spend,
+    //! the retry count — is left bare, because the comparison says what it
+    //! means. A message is what marks the figures where tighter does not point
+    //! the way a reader expects: the pause that narrows by getting shorter,
+    //! the reserve that narrows by getting larger, and the authority that
+    //! narrows to whichever side does less. Adding a message to the obvious
+    //! ones would take that signal away.
+
     use super::*;
 
     #[test]

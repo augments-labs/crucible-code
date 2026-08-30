@@ -102,11 +102,15 @@ impl RunStatus {
 /// there is no way in from outside, because a run that nobody ran has no
 /// ending to report.
 ///
+/// The error code is what this fails with today, not something the harness
+/// checks — `compile_fail` accepts any compile error — so the snippet names
+/// nothing it does not need, and the private call is the only thing in it that
+/// can fail.
+///
 /// ```compile_fail,E0624
 /// use crucible_runner::RunResult;
-/// use crucible_core::{RunId, StopReason};
 ///
-/// let invented = RunResult::new(RunId::new(), StopReason::Yielded, Default::default());
+/// let invented = RunResult::new(unimplemented!(), unimplemented!(), unimplemented!());
 /// ```
 #[derive(Debug, Clone, Copy)]
 pub struct RunResult {

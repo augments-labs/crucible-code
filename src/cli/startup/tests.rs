@@ -746,8 +746,9 @@ fn recap_room_defaults_to_ten_k_and_accepts_a_configured_ceiling() {
 #[test]
 fn the_agent_is_named_coding_and_stands_under_what_the_wiring_asked() {
     // Two of the five fields the wiring decides, and the two a later reader
-    // arrives needing. Nothing outside a test reads `id` yet — a later registry will select on it — and
-    // `instructions` is the definition's opening value: what the window
+    // arrives needing. Nothing outside a test reads `id` yet — a later
+    // registry will select on it — and `instructions` is the definition's
+    // opening value: what the window
     // reading and `Runner::instructions` answer with before a turn is taken.
     // `Runner::telling` replaces it before every turn, the first included, so
     // no turn goes out under this exact text.
@@ -771,9 +772,9 @@ fn the_agent_is_named_coding_and_stands_under_what_the_wiring_asked() {
 
 #[test]
 fn a_definition_the_wiring_had_nothing_to_say_under_is_told_nothing() {
-    // The rule `AgentSpec::instructions` states, at the one site outside the
-    // runner that writes the field: no instructions and empty instructions are
-    // two different requests, and a prompt nobody wrote is the first.
+    // The rule `AgentSpec::told` enforces, at the one site outside the runner
+    // that writes the field: no instructions and empty instructions are two
+    // different requests, and a prompt nobody wrote is the first.
     //
     // Unreachable through the shipped wiring, because `standing::under` always
     // names where the work is and so never returns an empty prompt. What this

@@ -39,14 +39,26 @@ pub struct AgentSpec {
     ///
     /// Apart from the id because an id is an address and a name is for people:
     /// renaming an agent must not silently repoint everything that selected it.
-    pub name: Box<str>,
+    ///
+    /// Private for the reason `instructions` is, read from the other end:
+    /// [`new`] gives this the id's own word, and a field a caller can assign is
+    /// a field that assignment can blank. [`named`] is where it is written.
+    ///
+    /// [`new`]: AgentSpec::new
+    /// [`named`]: AgentSpec::named
+    name: Box<str>,
 
     /// What this agent is for, in one sentence.
     ///
     /// Not decoration. Where an agent becomes something another agent can hand
     /// work to, this is what that decision is made on — so it says what the
     /// agent is good for rather than restating its name.
-    pub description: Box<str>,
+    ///
+    /// [`describing`] is where it is written, so that one value has one way in
+    /// rather than one way per field.
+    ///
+    /// [`describing`]: AgentSpec::describing
+    description: Box<str>,
 
     /// The sentence the model is asked under, where the session has one.
     ///
@@ -109,10 +121,18 @@ impl AgentSpec {
     /// Says what this agent is asked under, reading nothing said as nothing
     /// said.
     ///
-    /// The only way the field is written, so the difference between no
-    /// instructions and empty ones cannot be lost by a caller that had no
-    /// reason to know there was one. A struct literal would be the second way,
-    /// and the field is private so that there is no second way:
+    /// The only way a caller's text reaches the field — [`new`] also writes
+    /// it, to `None`, and takes no text that could be lost — so the difference
+    /// between no instructions and empty ones cannot be lost by a caller that
+    /// had no reason to know there was one. A struct literal would be the
+    /// second way, and the field is private so that there is no second way.
+    ///
+    /// The error code below is what this fails with today, not something the
+    /// harness checks: `compile_fail` accepts any compile error, so a rename
+    /// anywhere in the snippet would keep it green for the wrong reason. Both
+    /// snippets in this crate are kept to the one call that must not compile.
+    ///
+    /// [`new`]: AgentSpec::new
     ///
     /// ```compile_fail,E0451
     /// use crucible_runner::AgentSpec;
@@ -125,5 +145,35 @@ impl AgentSpec {
     /// ```
     pub fn told(&mut self, said: &str) {
         self.instructions = (!said.is_empty()).then(|| said.into());
+    }
+
+    /// The name a reader sees, which is the id where nobody chose another.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Calls this agent something other than the word it is selected under.
+    ///
+    /// Blank is not a name: a definition called nothing is the case [`new`]
+    /// already answers by standing the id in, and letting a caller take that
+    /// back would leave a reader an empty line where the agent's word belongs.
+    ///
+    /// [`new`]: AgentSpec::new
+    pub fn named(&mut self, called: &str) {
+        if !called.is_empty() {
+            self.name = called.into();
+        }
+    }
+
+    /// What this agent is for, or empty where nobody said.
+    #[must_use]
+    pub fn description(&self) -> &str {
+        &self.description
+    }
+
+    /// Says what this agent is for.
+    pub fn describing(&mut self, what: &str) {
+        self.description = what.into();
     }
 }
