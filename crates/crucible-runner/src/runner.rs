@@ -365,6 +365,27 @@ impl Runner {
         self.policy.compaction
     }
 
+    /// Everything this session was told to hold a turn to.
+    ///
+    /// The wider read behind [`Runner::compaction`], for a caller checking what
+    /// the wiring resolved rather than acting on one answer. Read-only and by
+    /// value: a session's ceiling is settled when it is assembled, and
+    /// [`Runner::turn`] is where a run is held to it.
+    #[must_use]
+    pub const fn policy(&self) -> RunPolicy {
+        self.policy
+    }
+
+    /// What every turn of this session is asked under, where anything is.
+    ///
+    /// Absent until the wiring says, and rewritten by [`Runner::telling`]
+    /// before each turn after the first — so this is the answer in force now,
+    /// not a record of what the session was assembled with.
+    #[must_use]
+    pub fn instructions(&self) -> Option<&str> {
+        self.spec.instructions.as_deref()
+    }
+
     /// Where the session is being recorded.
     #[must_use]
     pub fn session(&self) -> &Session {

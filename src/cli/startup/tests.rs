@@ -757,11 +757,16 @@ fn recap_room_defaults_to_ten_k_and_accepts_a_configured_ceiling() {
 
 #[test]
 fn the_agent_is_named_coding_and_stands_under_what_the_wiring_asked() {
-    // The two fields of the definition this wiring alone decides. Nothing
-    // outside a test reads `id` yet — a later registry will select on it — and
-    // while the loop reads `instructions` in several places, this is the only
-    // place that fills it in. Drop either here and every other test still
-    // passes, which is what a whole missing system prompt would look like.
+    // The two fields of the definition this wiring decides. Nothing outside a
+    // test reads `id` yet — a later registry will select on it — and
+    // `instructions` is written here for the turn a session may take before
+    // anything changes, then again by `Runner::telling` before every turn
+    // after it.
+    //
+    // So this pins what `coding` puts in the definition, and not that a prompt
+    // reaches the runner at all: it is handed `asked` and asserts it comes back
+    // out. `a_session_is_assembled_asking_under_the_prompt_the_wiring_built`
+    // is the one that follows it through `assemble`.
     let asked = "read the workspace before changing it";
     let built = coding(
         "anthropic",
@@ -773,6 +778,60 @@ fn the_agent_is_named_coding_and_stands_under_what_the_wiring_asked() {
 
     assert_eq!(built.id.as_str(), "coding");
     assert_eq!(built.instructions.as_deref(), Some(asked));
+}
+
+#[test]
+fn a_session_is_assembled_asking_under_the_prompt_the_wiring_built() {
+    // What `coding` is handed, rather than what it does with it. Everything
+    // above tests the two ends — `standing::under` builds a prompt, `coding`
+    // keeps the one it is given, `policy` resolves a document — and nothing
+    // tested that either arrives, so `assemble` could pass an empty string or
+    // drop the resolved ceiling on the way through and leave the whole package
+    // green.
+    let sample = Sample::new("startup-assembled-under");
+    let (logs, workspace) = (sample.logs(), sample.workspace());
+    let configured = sample.settings(r#"{"compaction":{"spendCeiling":500000}}"#);
+
+    let runner = assemble(&Startup {
+        provider: None,
+        unasked: NOTHING_TO_ASK,
+        model: None,
+        effort: None,
+        resuming: Resuming::No,
+        mode: Mode::Ask,
+        leaving: &crucible_tools::Background::new(),
+        settings: &configured,
+        sessions: &logs,
+        workspace: &workspace,
+        cancel: &Cancel::new(),
+        ledger: &Ledger::new(),
+        revealed: &Revealed::new(),
+        plan: &Plan::new(),
+        putting: &Putting::new(),
+        terminal: true,
+        from: &|_| None,
+        stored: &StoredCredentials::default(),
+        subscriptions: &Subscriptions::production(),
+    })
+    .expect("a session to assemble");
+
+    // The workspace root, because `standing::under` is the only thing that puts
+    // it there. A substring rather than the whole prompt: this is about the
+    // prompt having been built and handed over, and the wording of it belongs
+    // to the tests that own the wording.
+    let asked = runner
+        .instructions()
+        .expect("a turn is asked under something");
+    assert!(
+        asked.contains(&workspace.root().display().to_string()),
+        "the session was assembled without the prompt the wiring built"
+    );
+
+    assert_eq!(
+        runner.policy().bounds.spend,
+        Some(500_000),
+        "the ceiling the document set did not reach the runner"
+    );
 }
 
 #[test]
