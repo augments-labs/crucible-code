@@ -318,7 +318,7 @@ fn a_window_too_short_returns_no_rows_at_all() {
 }
 
 #[test]
-fn the_footer_is_the_first_thing_given_up_and_the_blanks_are_the_last() {
+fn the_footer_and_then_the_blanks_give_way_before_descriptions() {
     let answers = languages();
     let stops = stops();
     let panel = asked(&answers, &stops);
@@ -340,6 +340,64 @@ fn the_footer_is_the_first_thing_given_up_and_the_blanks_are_the_last() {
             .iter()
             .any(|row| row.contains("crucible's own implementation language")),
         "the descriptions outlive the footer: {shorter:#?}"
+    );
+
+    // The next rung removes the blank rows rather than the descriptions. A
+    // description may be the only words saying what choosing an answer means,
+    // while the answers still identify themselves without the air around them.
+    let compact = art(&panel, 80, shorter.len() - 1);
+    assert!(!compact.is_empty());
+    assert!(
+        compact
+            .iter()
+            .any(|row| row.contains("crucible's own implementation language")),
+        "the descriptions gave way before the blanks: {compact:#?}"
+    );
+}
+
+#[test]
+fn an_answer_description_folds_instead_of_stopping_at_the_right_edge() {
+    let long = concat!(
+        "Choose this if it is readable yet exhibits undesirable indentation, ",
+        "excessive whitespace, inconsistent row wrapping, or a scrollbar that ",
+        "does not fit naturally within the card."
+    );
+    let answers = [
+        Choice {
+            answer: "The preview appears contained but has minor visual defects",
+            says: long,
+            chosen: None,
+            shows: &[],
+        },
+        Choice {
+            answer: "The preview visibly escapes its container",
+            says: "",
+            chosen: None,
+            shows: &[],
+        },
+    ];
+    let stops = stops();
+
+    let drawn = art(&asked(&answers, &stops), 80, 40);
+    let description: Vec<&str> = drawn
+        .iter()
+        .filter(|row| {
+            row.contains("Choose this if it is readable")
+                || row.contains("excessive whitespace")
+                || row.contains("does not fit naturally")
+        })
+        .map(|row| row.trim().trim_matches('│').trim())
+        .collect();
+
+    assert_eq!(description.len(), 3, "the description was cut: {drawn:#?}");
+    assert_eq!(
+        description.join(" "),
+        long,
+        "the folded description did not preserve its words: {drawn:#?}"
+    );
+    assert!(
+        drawn.iter().all(|row| wide(row) <= 80),
+        "the folded description crossed the panel edge: {drawn:#?}"
     );
 }
 

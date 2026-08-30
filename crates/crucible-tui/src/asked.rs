@@ -117,7 +117,7 @@ pub struct Stop<'a> {
 pub struct Choice<'a> {
     /// What the answer is called.
     pub answer: &'a str,
-    /// The quiet row under it saying what it means, or empty.
+    /// The quiet rows under it saying what it means, or empty.
     pub says: &'a str,
     /// Whether it is chosen, on a question taking several answers. `None` is a
     /// question taking one, where the mark alone says which — a box drawn
@@ -782,8 +782,11 @@ impl Asked<'_> {
 
         if spacing.says && !answer.says.is_empty() {
             let says = spoken(answer.says);
-            let line = clip(&says, across.saturating_sub(front));
-            rows.push(said(front, Slot::Quiet, line));
+            rows.extend(
+                fold(&says, across.saturating_sub(front))
+                    .into_iter()
+                    .map(|line| said(front, Slot::Quiet, line)),
+            );
         }
 
         rows
@@ -828,9 +831,10 @@ struct Laid {
 
 /// Which blanks a rung of the ladder still draws.
 ///
-/// The order is the argument: the footer names keys documented elsewhere, a
-/// description says what the answer above it already implies, and the blanks
-/// that make the panel readable are the last to go.
+/// The order is the argument: the footer names keys documented elsewhere, the
+/// blanks part blocks whose own words still identify them, and a description is
+/// the only place an answer may explain what choosing it means. Descriptions go
+/// only after the air around them has gone.
 #[derive(Debug, Clone, Copy)]
 struct Spacing {
     /// The quiet row of keys under the frame.
@@ -856,8 +860,8 @@ impl Spacing {
         },
         Self {
             footer: false,
-            says: false,
-            opening: true,
+            says: true,
+            opening: false,
         },
         Self {
             footer: false,

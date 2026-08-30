@@ -8,6 +8,12 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Long `ask_user` answer descriptions wrap instead of stopping at the right
+  edge.** Supporting text beneath an answer now continues on aligned rows, and
+  the panel gives up decorative spacing before it gives up those words.
+
 ## [0.28.2] - 2026-08-30
 
 Nothing here changes how crucible behaves; there is no reason to upgrade for
