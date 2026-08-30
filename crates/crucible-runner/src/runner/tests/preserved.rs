@@ -3,10 +3,10 @@
 //! Deliberately about the parts the inherited suite left to inference: where a
 //! steered line lands in the transcript, whether the tool-output boundary is
 //! one budget for a whole turn or one per pass, and that a pass writes an
-//! answer for every call it recorded however it ended. Each was falsified
-//! against the loop it guards — the divergence made it red and the rest of the
-//! suite did not notice — which is why they are here rather than left to the
-//! tests that happen to cross the same lines.
+//! answer for every call it recorded however it ended. Each names one
+//! divergence the loop could take and asserts the observable that divergence
+//! would change, which is why they are here rather than left to the tests that
+//! happen to cross the same lines.
 
 use super::*;
 

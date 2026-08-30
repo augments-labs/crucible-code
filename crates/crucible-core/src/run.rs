@@ -22,6 +22,11 @@ use crate::ids::RunId;
 /// different root than the parent it was derived from, which is the structural
 /// half of the rule that a descendant may narrow what it was given and never
 /// widen it.
+///
+/// What it does not enforce is how many of these a turn holds. One per turn is
+/// what the callers do, not something this type can check: [`Ancestry::new`]
+/// is public and takes nothing, so a caller minting a second one mid-turn gets
+/// a second root rather than an error.
 #[derive(Debug, Clone, Copy)]
 pub struct Ancestry {
     run: RunId,

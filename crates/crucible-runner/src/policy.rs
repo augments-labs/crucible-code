@@ -15,13 +15,33 @@
 //! actually gets, so a caller cannot get the answer wrong by writing the
 //! comparison itself.
 //!
-//! The rule is about budgets, which is everything here except the three window
-//! answers [`RunPolicy::narrowed`] names. Permission is not one of them and is
-//! not modelled here at all: what a run may do lives behind [`Ask`] and the
-//! runner's own permission state, so nothing in this file either grants or
-//! withholds authority.
+//! Every figure here is a ceiling on one run, not a share of a pool. A
+//! descendant narrowing its spend to a thousand tokens is not taking a
+//! thousand out of its parent's remaining budget; it is saying that this run
+//! stops at a thousand. Two descendants under one parent may each spend the
+//! parent's whole ceiling, and what stops the tree as a whole from outspending
+//! the root is the root's own ceiling being read on the root's own run — a
+//! cumulative budget across a run tree is a different figure, held somewhere
+//! that can see every run, and nothing here is it.
+//!
+//! # Authority
+//!
+//! The same rule governs what a descendant may *do*: it may narrow what it is
+//! allowed to do and never widen it. That half is not implemented here, and
+//! cannot be, because neither carrier of authority is a figure. Permission
+//! memory is the runner's — a session remembers what it was allowed, and
+//! [`Runner::pick_up`] is where it is forgotten — and the question itself goes
+//! out through [`Ask`], which is `&mut` and so is a parameter to a turn rather
+//! than something a [`RunContext`] can hold. When descendants exist, the
+//! narrowing point for authority is whatever hands a descendant its [`Ask`]
+//! and its permission memory; it is not [`RunPolicy::narrowed`], and a
+//! descendant that inherited a parent's remembered "allow for this session"
+//! unrestricted would be widening the rule above by the only route this file
+//! does not close.
 //!
 //! [`Ask`]: crucible_core::Ask
+//! [`Runner::pick_up`]: crate::Runner::pick_up
+//! [`RunContext`]: crate::RunContext
 //!
 //! There is one run today and nothing calls this with a second policy. It is
 //! defined now because the alternative is defining it later, once descendants
@@ -126,12 +146,26 @@ pub struct RunPolicy {
 impl RunPolicy {
     /// What a run asking for `wanted` under this policy actually gets.
     ///
+    /// The holder is on the left and what is being asked for is on the right.
+    /// A call written the other way round compiles and quietly inverts the
+    /// rule — `wanted.narrowed(held)` reads the descendant as the ceiling —
+    /// so both callers are in `context.rs`, beside the two entries that exist
+    /// precisely so nobody else writes the comparison.
+    ///
     /// Every budget is the tighter of the two, so a descendant asking for more
     /// than its parent holds is given the parent's figure rather than refused:
     /// widening is not an error a caller has to handle, it is a request that
-    /// has no effect. Six figures are budgets that way — the two byte
+    /// has no effect. Seven figures are budgets that way — the two byte
     /// ceilings, the spend, the retry count and pause, and the two token
     /// figures inside the compaction answer.
+    ///
+    /// [`Retry::first_pause`] is the one where the tighter figure points
+    /// outward. The resource it bounds is the user's patience, not the
+    /// provider's capacity: a descendant that shortened the wait is asking to
+    /// be told sooner, and the min gives it that. The count beside it is what
+    /// bounds how much a failing provider is asked, and it narrows the usual
+    /// way — so a descendant can be quicker to give up but never more
+    /// persistent, which is the pair that matters.
     ///
     /// Three are not, and are the descendant's whichever way they differ:
     /// whether to compact at all, how much room to leave, and how large a

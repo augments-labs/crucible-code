@@ -703,9 +703,9 @@ impl Runner {
     ///
     /// Everything the loop needs that is not the session arrives in `run`: who
     /// it is, how to stop it, what the reader typed at it, what finished behind
-    /// it, where its progress goes, and what it may spend. A test that wants a turn to cross the
-    /// tool-output ceiling lowers that figure in the run's policy rather than
-    /// printing megabytes to get there.
+    /// it, where its progress goes, and what it may spend. A test that wants
+    /// a turn to cross the tool-output ceiling lowers that figure in the run's
+    /// policy rather than printing megabytes to get there.
     ///
     /// The permission prompt stays outside it, because asking is `&mut`.
     fn exchange(
@@ -717,8 +717,12 @@ impl Runner {
         // one: a turn that runs long because there is work in it is not a turn
         // to stop, and what a runaway one actually consumes is this.
         //
-        // Held out here rather than inside the passes so that what the run
-        // spent survives the loop ending, whichever of its ways out it took.
+        // Held out here rather than inside the passes because the loop has
+        // enough ways out that carrying the total back through each return
+        // value would mean writing it at every one. What that buys is the
+        // bookkeeping, not the reporting: the `?` below leaves on the failure
+        // exits without a result, and a `TurnError` has nowhere to put a
+        // figure, so only a turn that ended says what it spent.
         let mut counting = Counting {
             spent: Spend::NONE,
             load: self.load,
@@ -802,11 +806,11 @@ impl Runner {
     /// have in common.
     ///
     /// A failure that reached none of that is asked again instead, up to
-    /// [`crate::Retry::attempts`] times. The one it exists for is a connection the provider
-    /// closed while the tools ran — the turn's own pauses are exactly where a
-    /// pooled connection goes stale, so the request that fails is the one after
-    /// a tool pass rather than the first, and the discussion stops part way
-    /// through. Both halves of the condition carry weight: only a failure
+    /// [`crate::Retry::attempts`] times. The one it exists for is a connection
+    /// the provider closed while the tools ran — the turn's own pauses are
+    /// exactly where a pooled connection goes stale, so the request that fails
+    /// is the one after a tool pass rather than the first, and the discussion
+    /// stops part way through. Both halves of the condition carry weight: only a failure
     /// [`ProviderError::transient`] calls a moment rather than a request, and
     /// only a response that said nothing. Deltas are posted as they arrive, so
     /// re-asking after one would put an answer on screen twice and leave the

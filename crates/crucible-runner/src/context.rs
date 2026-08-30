@@ -3,9 +3,10 @@
 //! The turn loop needs six things that are not the session: who this run is,
 //! how to stop it, what the reader typed at it, what finished behind it, where
 //! its progress goes, and what it may spend. They travelled as loose arguments
-//! through every signature the cancel already crossed, and three functions in
-//! the loop carried a note apologising for their length; bundling them is what
-//! took those notes away.
+//! through every signature the cancel already crossed, and four functions in
+//! the loop carried a note apologising for their length — `turn`, `exchange`
+//! and `made_room` here, `recap` in the compaction module. Bundling them is
+//! what took all four notes away.
 //!
 //! Bundled here, borrowed rather than cloned: the run does not own the channel
 //! it posts to or the flag the keyboard raises, and a bundle that owned them

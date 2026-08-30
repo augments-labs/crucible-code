@@ -192,8 +192,13 @@ impl RunId {
 ///
 /// Not the usual `Default`, which answers with one agreed value. Here there is
 /// no such value — a run that has not been named is not a run — so this exists
-/// only because [`RunId::new`] takes nothing, and a struct deriving `Default`
-/// around one would be minting rather than defaulting.
+/// only because [`RunId::new`] takes nothing, which the lint set reads as an
+/// obligation.
+///
+/// It leaves a trap for a later type. `#[derive(Default)]` around a field of
+/// this one mints a fresh execution rather than leaving a blank, and nothing
+/// at the deriving site says so. A struct holding one writes its own `Default`
+/// or does without.
 impl Default for RunId {
     fn default() -> Self {
         Self::new()
@@ -217,7 +222,9 @@ impl fmt::Debug for RunId {
 /// Text, because an agent is written down by somebody and referred to by the
 /// name they gave it — in a configuration document, on a command line, and
 /// from another agent that may delegate to it. Stored as given: what makes a
-/// name acceptable belongs to whatever registers definitions, not here.
+/// name acceptable belongs to whatever registers definitions, not here. The
+/// empty string included — `AgentId::new("")` builds, and there is no registry
+/// yet to turn it away.
 #[derive(Clone, PartialEq, Eq)]
 pub struct AgentId(Box<str>);
 

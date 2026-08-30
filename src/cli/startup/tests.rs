@@ -757,10 +757,11 @@ fn recap_room_defaults_to_ten_k_and_accepts_a_configured_ceiling() {
 
 #[test]
 fn the_agent_is_named_coding_and_stands_under_what_the_wiring_asked() {
-    // The two fields of the definition that nothing else in the tree looks at:
-    // the id a later registry would select on, and the prose the model works
-    // under. Both could be dropped here and every other test would still pass,
-    // which is what a whole missing system prompt would look like.
+    // The two fields of the definition this wiring alone decides. Nothing
+    // outside a test reads `id` yet — a later registry will select on it — and
+    // while the loop reads `instructions` in several places, this is the only
+    // place that fills it in. Drop either here and every other test still
+    // passes, which is what a whole missing system prompt would look like.
     let asked = "read the workspace before changing it";
     let built = coding(
         "anthropic",
