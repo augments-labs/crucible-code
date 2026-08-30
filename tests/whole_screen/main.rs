@@ -363,7 +363,13 @@ fn a_theme_panel_opens_while_a_turn_is_still_running() {
     // still be arriving, which would put the pace of the stream in the
     // snapshot. `/theme` moves nothing but the screen, so its picker opens
     // over the box with the turn going on behind it.
-    let answer = taller_than_the_window();
+    //
+    // Every sentence of the fixture is the same sentence, and the window holds
+    // fewer of them than the answer has, so no phrase from the transcript can
+    // tell an answer that is all here from one that is nearly here. This one
+    // ends in a word nothing else draws, and waiting for that word is what
+    // makes the row above the panel the same row every run.
+    let answer = format!("{}done.", taller_than_the_window());
     let vendor = Vendor::calling_then_holding(
         "bash",
         r#"{"command":"sleep 30","background":true}"#,
@@ -371,18 +377,12 @@ fn a_theme_panel_opens_while_a_turn_is_still_running() {
     );
     let mut window = Watched::allowing("theme-mid-turn", 60, 24, &vendor, "bash(*)");
 
-    // The final word of this long answer proves it is whole before the panel
-    // opens. Catching the first left the snapshot dependent on how many later
-    // deltas happened to arrive before the next key was read.
-    window.types_and_catches("start it\r", "lazy dog.");
+    window.types_and_catches("start it\r", "done.");
 
-    // The picker stands over the box: its title row is the stable mark, and
-    // the theme list under it is what choosing moves through.
+    // The picker stands over the box, covering every transcript row but the
+    // first: its title row is the stable mark, and the theme list under it is
+    // what choosing moves through.
     window.types_and_catches("/theme\r", "Theme");
-    // `catches` stops at the first frame with the title. Drain the remainder of
-    // that one redraw so a chunk boundary cannot leave the old transcript row
-    // above an otherwise complete panel in the snapshot.
-    window.catches("the theme panel was opened", "fox");
 
     insta::assert_snapshot!(window.picture());
 }
