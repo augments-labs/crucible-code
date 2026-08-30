@@ -95,17 +95,27 @@ fn a_retry_says_again_which_attachments_it_went_out_without() {
         .iter()
         .map(|name| file(&under, name, &vec![7; third]))
         .collect();
+    let named: Vec<Box<str>> = files.iter().map(|one| one.path.clone()).collect();
 
     scripted
         .turning("what is in these", files.into())
         .expect("the turn to have run");
 
-    // One reading of the channel, because each of these drains it.
-    let posted = scripted.aged();
-    let [first, second] = posted.as_slice() else {
-        panic!("the request that was dropped, and the one that replaced it");
+    // Both sentences, and what each of them says. Two readings that agree is
+    // the weaker claim: two requests that both named the wrong files, or both
+    // named none, agree as well. The sentence the retry owes is the same
+    // sentence, so the same files are what it has to be checked against.
+    let [first, second, ..] = named.as_slice() else {
+        panic!("four files were attached");
     };
-    assert_eq!(first, second);
+    let went_short = vec![first.clone(), second.clone()];
+
+    // One reading of the channel, because it drains.
+    assert_eq!(
+        scripted.aged(),
+        [went_short.clone(), went_short],
+        "the retry did not say again which files its request went out without"
+    );
 }
 
 #[test]
@@ -135,7 +145,8 @@ fn a_picture_a_model_does_not_read_is_named_as_the_request_goes() {
     // reader nothing, and which of the two rows this file belongs on is
     // settled a layer down, where the request is resolved. That it goes out
     // once per request rather than once per turn is pinned by the aged case
-    // above; the two are posted three lines apart on one straight path, so a
+    // above; the two are posted from one straight path with no branch between
+    // them, so a
     // second copy here would pin the same line twice.
     let posted = scripted.unread();
     let [unread] = posted.as_slice() else {

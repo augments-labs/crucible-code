@@ -164,10 +164,10 @@ impl RunPolicy {
     /// the spend, the retry count, and the two token figures inside the
     /// compaction answer.
     ///
-    /// [`Retry::first_pause`] points outward. The resource it bounds is the
-    /// user's patience, not the provider's capacity: a descendant that
-    /// shortened the wait is asking to be told sooner, and the min gives it
-    /// that. The count beside it bounds how hard a failing provider is
+    /// [`Retry::first_pause`] narrows by the same `min` for a different
+    /// reason. The resource it bounds is the user's patience, not the
+    /// provider's capacity: a descendant that shortened the wait is asking to
+    /// be told sooner, and the min gives it that. The count beside it bounds how hard a failing provider is
     /// pressed, and it narrows the usual way — so a descendant can be quicker
     /// to give up but never more persistent, which is the pair that matters.
     ///
@@ -262,6 +262,14 @@ fn tighter(held: Option<u64>, wanted: Option<u64>) -> Option<u64> {
 /// session was holding back. It costs the one case where the descendant's
 /// figure really was the larger; refusing a real tightening is the safe half
 /// of the trade, and granting a widening is not.
+///
+/// The silent case is the common one, not an edge. [`Compaction::default`]
+/// names no reserve and the wiring passes on whatever the document says, which
+/// is nothing until somebody writes the key — so on a stock installation the
+/// first arm is the arm every descendant meets, and a run that asks to hold
+/// more of the window back is answered with the session's silence. That is the
+/// rule working rather than failing, and it is worth knowing before the phase
+/// that first starts descendants reads a dropped request as a bug.
 fn roomier(held: Option<u64>, wanted: Option<u64>) -> Option<u64> {
     match (held, wanted) {
         (None, _) => None,
@@ -335,13 +343,24 @@ mod tests {
         assert!(policy.compaction.automatic);
         assert_eq!(policy.compaction.keep_tokens, 20_000);
         assert_eq!(policy.compaction.recap_tokens, 10_240);
+        assert_eq!(
+            policy.compaction.reserve, None,
+            "a reserve nobody named is derived rather than fixed here"
+        );
+        assert_eq!(
+            policy.compaction.ask_on_resume, None,
+            "a question nobody answered is asked, not assumed either way"
+        );
     }
 
     #[test]
     fn a_descendant_asking_for_less_gets_what_it_asked_for() {
-        // Every figure that resolves by comparison, asked for narrower. The
-        // widening direction has its own test; this is the half that says the
-        // rule is a comparison at all rather than the holder's answer twice.
+        // Seven of the nine figures that resolve by comparison, asked for
+        // narrower. The two left at the parent's — `automatic` and `reserve`,
+        // whose directions are the unobvious ones — have their own tests
+        // below. The widening direction has its own test too; this is the half
+        // that says the rule is a comparison at all rather than the holder's
+        // answer twice.
         let parent = RunPolicy::default();
         let asked = RunPolicy {
             bounds: Bounds {

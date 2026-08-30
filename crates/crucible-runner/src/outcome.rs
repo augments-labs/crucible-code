@@ -97,6 +97,17 @@ impl RunStatus {
 }
 
 /// What one run ended as.
+///
+/// Published ahead of the callers that will read one, and stated only here:
+/// there is no way in from outside, because a run that nobody ran has no
+/// ending to report.
+///
+/// ```compile_fail,E0624
+/// use crucible_runner::RunResult;
+/// use crucible_core::{RunId, StopReason};
+///
+/// let invented = RunResult::new(RunId::new(), StopReason::Yielded, Default::default());
+/// ```
 #[derive(Debug, Clone, Copy)]
 pub struct RunResult {
     /// Which run this was — the same identity its events carried.
@@ -121,9 +132,11 @@ impl RunResult {
     /// type: a literal or a later assignment would both be ways to build a run
     /// that says it completed and that a person cancelled it.
     ///
-    /// A run is something this crate ends, so this crate is what states one.
+    /// A run is something this crate ends, so this crate is what states one —
+    /// which is the visibility rather than only the sentence. [`RunResult`]
+    /// carries what happens to a caller that tries to state one anyway.
     #[must_use]
-    pub const fn new(run: RunId, stop: StopReason, spent: Spend) -> Self {
+    pub(crate) const fn new(run: RunId, stop: StopReason, spent: Spend) -> Self {
         Self {
             run,
             status: RunStatus::of(stop),

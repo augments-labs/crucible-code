@@ -1,11 +1,10 @@
 use std::fs;
 use std::sync::mpsc;
 
-use crucible_core::AgentId;
 use crucible_core::{
-    Aside, Ask, Cancel, Delta, DeltaStream, EventEnvelope, Message, Modalities, Modality, Provider,
-    ProviderError, Remember, Request, Sensitivity, Steer, StopReason, ToolCall, Transcript,
-    Verdict, Workspace, written,
+    AgentId, Aside, Ask, Cancel, Delta, DeltaStream, EventEnvelope, Message, Modalities, Modality,
+    Provider, ProviderError, Remember, Request, Sensitivity, Steer, StopReason, ToolCall,
+    Transcript, Verdict, Workspace, written,
 };
 use crucible_runner::{AgentSpec, Model, Pruned, Runner, Session, Tools};
 

@@ -59,6 +59,14 @@ pub(crate) struct Script {
     drops: Mutex<usize>,
     /// A line typed into this queue as the first request goes out.
     types: Mutex<Option<(Steer, Box<str>)>>,
+
+    /// Whether every request is refused for not fitting the window.
+    ///
+    /// Separate from `refuses`, which carries a status: this refusal has none
+    /// to carry. It is the one a provider gives before it has read anything,
+    /// and the only refusal the loop answers by making room rather than by
+    /// handing back.
+    over_window: bool,
 }
 
 impl Script {
@@ -72,6 +80,19 @@ impl Script {
             breaks: false,
             drops: Mutex::new(0),
             types: Mutex::new(None),
+            over_window: false,
+        }
+    }
+
+    /// A provider that refuses every request for not fitting the window.
+    ///
+    /// The refusal that arrives instead of an answer, rather than the stop
+    /// reason that arrives inside one. They are two different rails through
+    /// the loop and only this one is a [`ProviderError`].
+    pub(crate) fn over_window() -> Self {
+        Self {
+            over_window: true,
+            ..Self::new(Vec::new())
         }
     }
 
@@ -179,6 +200,10 @@ impl Provider for Script {
         // request is out, not once it has been read.
         if let Some((steer, line)) = self.types.lock().unwrap().take() {
             steer.say(line.into());
+        }
+
+        if self.over_window {
+            return Err(ProviderError::WindowExceeded { provider: SCRIPT });
         }
 
         if let Some(status) = self.refuses {

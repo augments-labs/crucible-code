@@ -131,9 +131,9 @@ fn a_run_asking_for_more_than_the_session_allows_is_still_held_to_it() {
 fn a_run_holding_itself_to_less_than_the_session_is_stopped_at_its_own_figure() {
     // The other direction, and the one the inheritance rule exists for: the
     // session allows ten times what this run asked to be held to, and the run's
-    // figure is where the loop stops. Every other test here mints the two
-    // equal, which cannot tell a loop reading its own run apart from one
-    // reading the runner it was started from.
+    // figure is where the loop stops. Every test here that goes through
+    // `Scripted::turn` mints the two equal, which cannot tell a loop reading
+    // its own run apart from one reading the runner it was started from.
     let script = Script::new(vec![costing("a", 60), saying("never asked")]);
     let mut scripted = held_to(500, script);
 

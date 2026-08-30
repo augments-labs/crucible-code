@@ -23,6 +23,20 @@ use crucible_core::{Ancestry, Aside, Cancel, Post, Reporter, RunId, Steer};
 use crate::policy::RunPolicy;
 
 /// One run, and the services it runs against.
+///
+/// A caller reaches one through [`Runner::starting`], and what it reaches is a
+/// root. Descending is this crate's, because a context minted outside it would
+/// file a turn's events under runs that never ran:
+///
+/// ```compile_fail,E0624
+/// use crucible_runner::{RunContext, RunPolicy};
+///
+/// fn nested<'a>(run: &'a RunContext<'a>) -> RunContext<'a> {
+///     run.child(RunPolicy::default())
+/// }
+/// ```
+///
+/// [`Runner::starting`]: crate::Runner::starting
 pub struct RunContext<'a> {
     /// Which run this is, and which run started it.
     ancestry: Ancestry,
@@ -98,11 +112,23 @@ impl<'a> RunContext<'a> {
     /// yet — it is here because the ancestry and the narrowing are the two
     /// things that have to be right before anything does.
     ///
+    /// Not published while that is true. A descendant is a run this crate
+    /// starts, and one minted from outside would deepen the ancestry of every
+    /// event a turn posts without a run ever having been there.
+    ///
     /// [`Compaction::reserve`]: crate::Compaction::reserve
     /// [`Compaction::automatic`]: crate::Compaction::automatic
     /// [`Compaction::ask_on_resume`]: crate::Compaction::ask_on_resume
     #[must_use]
-    pub fn child(&self, wanted: RunPolicy) -> Self {
+    // Defined before the first nested run, so outside the tests that prove the
+    // narrowing there is no caller yet. `expect` rather than `allow`, and only
+    // where it is true: the attribute goes away by itself the day a phase adds
+    // one, rather than sitting here silencing the question forever.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the first caller is a later phase's")
+    )]
+    pub(crate) fn child(&self, wanted: RunPolicy) -> Self {
         Self {
             ancestry: self.ancestry.child(),
             policy: self.policy.narrowed(wanted),
@@ -165,7 +191,7 @@ impl<'a> RunContext<'a> {
     /// What this run may spend.
     ///
     /// Read-only, because a run that could rewrite its own policy could widen
-    /// it, and the whole point of [`RunContext::child`] is that it cannot.
+    /// it, and the whole point of descending is that it cannot.
     #[must_use]
     pub const fn policy(&self) -> &RunPolicy {
         &self.policy
@@ -175,8 +201,8 @@ impl<'a> RunContext<'a> {
     ///
     /// Read-only for the same reason the policy is: a descendant that could
     /// be pointed at a different flag would go on working after the run that
-    /// started it was stopped, which is the one thing [`RunContext::child`]
-    /// hands down specifically so it cannot happen.
+    /// started it was stopped, and a descendant is handed this one down
+    /// specifically so that cannot happen.
     #[must_use]
     pub const fn cancel(&self) -> &'a Cancel {
         self.cancel
@@ -372,10 +398,13 @@ mod tests {
 
     #[test]
     fn a_ceiling_is_read_as_the_holder_and_not_as_the_thing_held() {
-        // Which side of `RunPolicy::narrowed` the ceiling goes on. Every other
-        // figure resolves by `min`, `max` or `&&` — all symmetric — so writing
-        // the two arguments the wrong way round changes nothing a test can see
-        // until it looks at the one field that is the holder's outright.
+        // Which side of `RunPolicy::narrowed` the ceiling goes on. Seven of
+        // the other nine figures resolve by `min` or `&&`, and `spend` by
+        // `tighter`; all of those are symmetric, so writing the two arguments
+        // the wrong way round is invisible in every one of them. `reserve` is
+        // the second field that can see a swap, and only where one side is
+        // absent. This is the field that sees it whenever the two differ at
+        // all, which is why the order is pinned here.
         let nowhere = Nowhere::new();
         let asking = nowhere.context(RunPolicy {
             compaction: Compaction {
@@ -462,6 +491,39 @@ mod tests {
                 Ok(Event::Delta { text }) if &*text == "said"
             ),
             "a descendant reported somewhere its parent was not reading"
+        );
+    }
+
+    #[test]
+    fn an_event_a_descendant_posts_names_the_descendant_rather_than_the_root() {
+        // The test above drops the attribution before it looks, which is right
+        // for what it asks and is exactly what leaves this unasked: every
+        // envelope carries the whole ancestry, and the question is which of the
+        // two ids the reader is handed as the one that produced the event.
+        //
+        // A reader telling two runs apart is the only thing that can see the
+        // difference, and there is no such reader yet — so this is the
+        // assertion that has to exist before there is one, because an event
+        // already drawn was drawn without saying whose it was.
+        let nowhere = Nowhere::new();
+        let run = nowhere.context(RunPolicy::default());
+        let child = run.child(RunPolicy::default());
+
+        child.reporting().post(Event::Delta {
+            text: "said".into(),
+        });
+
+        let reported = nowhere.seen.try_recv().expect("what the descendant posted");
+
+        assert_eq!(
+            reported.run(),
+            child.run(),
+            "a descendant's event was filed under the run it descends from"
+        );
+        assert_ne!(
+            reported.run(),
+            reported.ancestry().root(),
+            "the two ids this distinguishes are the same, so it distinguishes nothing"
         );
     }
 }

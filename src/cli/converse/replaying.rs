@@ -287,10 +287,9 @@ fn said<T: Terminal>(
 
 #[cfg(test)]
 mod tests {
-    use crucible_core::AgentId;
     use crucible_core::{
-        Cancel, Effort, StopReason, ToolArgs, ToolCall, ToolId, ToolOutput, ToolResult, Transcript,
-        Workspace,
+        AgentId, Cancel, Effort, StopReason, ToolArgs, ToolCall, ToolId, ToolOutput, ToolResult,
+        Transcript, Workspace,
     };
     use crucible_runner::{AgentSpec, Model, Session, Tools};
     use crucible_tui::Picture;

@@ -256,7 +256,7 @@ impl Runner {
             self.load.recounted(message);
         }
         self.load
-            .requesting(self.spec.instructions.as_deref(), &self.tools.advertised());
+            .requesting(self.spec.instructions(), &self.tools.advertised());
 
         // Turns kept whole rather than messages, because that is the shape a
         // reader thinks in: the recap stands in for the front, and what is left
@@ -609,7 +609,7 @@ impl Runner {
             self.load.recounted(message);
         }
         self.load
-            .requesting(self.spec.instructions.as_deref(), &self.tools.advertised());
+            .requesting(self.spec.instructions(), &self.tools.advertised());
     }
 }
 

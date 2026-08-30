@@ -241,7 +241,7 @@ fn a_reading_taken_against_other_instructions_is_reestimated_for_this_run() {
 
     let fresh = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
     drop(scripted.runner.pick_up(fresh, Transcript::new()));
-    scripted.runner.spec.instructions = Some("answer only in French".into());
+    scripted.runner.spec.told("answer only in French");
 
     drop(picking(&mut scripted, &sample, &id));
 

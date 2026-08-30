@@ -630,8 +630,7 @@ mod tests {
     use std::cell::Cell;
 
     use crucible_auth::Store;
-    use crucible_core::AgentId;
-    use crucible_core::{Cancel, Revealed};
+    use crucible_core::{AgentId, Cancel, Revealed};
     use crucible_runner::{AgentSpec, Model, Tools};
     use crucible_tools::{Ledger, Plan};
     use crucible_tui::Recording;

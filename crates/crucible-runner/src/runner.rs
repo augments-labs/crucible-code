@@ -170,10 +170,9 @@ impl Runner {
             policy: RunPolicy::default(),
             load: Load::default(),
         };
-        runner.load.requesting(
-            runner.spec.instructions.as_deref(),
-            &runner.tools.advertised(),
-        );
+        runner
+            .load
+            .requesting(runner.spec.instructions(), &runner.tools.advertised());
         runner
     }
 
@@ -234,7 +233,7 @@ impl Runner {
             self.load.recounted(message);
         }
         self.load
-            .requesting(self.spec.instructions.as_deref(), &self.tools.advertised());
+            .requesting(self.spec.instructions(), &self.tools.advertised());
 
         // After the fixed content of this run's request is known, and never
         // before: what the log remembers is taken only where it still covers
@@ -385,7 +384,7 @@ impl Runner {
     /// now, not a record of what the session was assembled with.
     #[must_use]
     pub fn instructions(&self) -> Option<&str> {
-        self.spec.instructions.as_deref()
+        self.spec.instructions()
     }
 
     /// Where the session is being recorded.
@@ -526,15 +525,14 @@ impl Runner {
     /// Reachable between turns, where [`Runner::ask`] is and for the same
     /// reason: a turn owns the runner while it runs.
     ///
-    /// The empty string is nothing said, not a system field holding nothing —
-    /// the two are different requests, and [`AgentSpec::instructions`] says
-    /// which of them `None` means. It is the reading a prompt key written
-    /// empty already gets in the documents this text is built from, so the one
-    /// place the state can be written agrees with the field it writes.
+    /// The empty string is nothing said, not a system field holding nothing.
+    /// That reading belongs to the field rather than to this method — it is
+    /// [`AgentSpec::told`] that applies it — and it is the reading a prompt key
+    /// written empty already gets in the documents this text is built from.
     pub fn telling(&mut self, system: &str) {
-        self.spec.instructions = (!system.is_empty()).then(|| system.into());
+        self.spec.told(system);
         self.load
-            .requesting(self.spec.instructions.as_deref(), &self.tools.advertised());
+            .requesting(self.spec.instructions(), &self.tools.advertised());
     }
 
     /// Writes to a different vendor from the next turn on.
@@ -612,10 +610,11 @@ impl Runner {
 
     /// A run against this session, under the policy the session was given.
     ///
-    /// The one way in from outside: a root context is minted inside this
-    /// crate, so a caller reaches a root run through the session it belongs to
-    /// and a nested one through [`RunContext::child`]. Minting it out here
-    /// rather
+    /// The one way in from outside, and the only one: a context is minted
+    /// inside this crate, so the run a caller is handed is a root run against
+    /// the session it belongs to. A nested run is this crate's to start, which
+    /// is what keeps a turn's events from being filed under runs that never
+    /// ran. Minting it out here rather
     /// than inside [`Runner::turn`] is what lets the caller report under the
     /// same run the work ran as — a [`TurnError`] is handed back rather than
     /// posted, and whoever asked for the work is the only one that can say it
@@ -1121,7 +1120,7 @@ impl Runner {
             transcript: &self.transcript,
             tools: advertised,
             max_tokens: self.spec.model.max_tokens,
-            system: self.spec.instructions.as_deref(),
+            system: self.spec.instructions(),
             effort: self.spec.model.effort,
             attached,
         }

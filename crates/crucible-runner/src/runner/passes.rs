@@ -112,7 +112,7 @@ impl<'a> AgentLoop<'a> {
             counting.load = self.runner.load;
             counting
                 .load
-                .requesting(self.runner.spec.instructions.as_deref(), &advertised);
+                .requesting(self.runner.spec.instructions(), &advertised);
 
             // Worked out per pass rather than once, because what it is measured
             // against can be corrected mid-turn: a window learned from a
@@ -166,7 +166,7 @@ impl<'a> AgentLoop<'a> {
             counting.load = self.runner.load;
             counting
                 .load
-                .requesting(self.runner.spec.instructions.as_deref(), &advertised);
+                .requesting(self.runner.spec.instructions(), &advertised);
 
             let heard = match self.runner.listen(
                 &bounds,

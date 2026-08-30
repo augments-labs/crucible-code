@@ -9,9 +9,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crucible_auth::Store;
-use crucible_core::AgentId;
 use crucible_core::{
-    Compacting, Delta, Event, Mode, Permission, Revealed, Rules, StopReason, ToolId,
+    AgentId, Compacting, Delta, Event, Mode, Permission, Revealed, Rules, StopReason, ToolId,
 };
 use crucible_runner::{AgentSpec, Model, Session, Tools};
 use crucible_tui::{Picture, Recording, Size, Terminal, TerminalError};

@@ -225,7 +225,30 @@ impl fmt::Debug for RunId {
 /// name acceptable belongs to whatever registers definitions, not here. The
 /// empty string included — `AgentId::new("")` builds, and there is no registry
 /// yet to turn it away.
-#[derive(Clone, PartialEq, Eq)]
+///
+/// Looked up by, like every other name in this module: the thing a definition
+/// is filed under is the thing something has to be able to find it by, and a
+/// name that cannot be a key would make whatever registers definitions invent
+/// a second one.
+///
+/// ```
+/// use std::collections::{BTreeMap, HashMap};
+/// use crucible_core::AgentId;
+///
+/// let mut written = BTreeMap::new();
+/// written.insert(AgentId::new("reviewing"), "reads");
+/// written.insert(AgentId::new("coding"), "writes");
+///
+/// assert_eq!(written.get(&AgentId::new("coding")), Some(&"writes"));
+/// assert_eq!(
+///     written.keys().map(AgentId::as_str).collect::<Vec<_>>(),
+///     ["coding", "reviewing"]
+/// );
+///
+/// let unordered: HashMap<AgentId, &str> = written.into_iter().collect();
+/// assert_eq!(unordered[&AgentId::new("reviewing")], "reads");
+/// ```
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AgentId(Box<str>);
 
 impl AgentId {

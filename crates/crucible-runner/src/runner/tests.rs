@@ -1199,8 +1199,9 @@ fn a_service_that_says_it_is_busy_is_asked_again_and_a_key_without_access_is_not
 
 #[test]
 fn a_run_that_asked_to_be_asked_again_fewer_times_is() {
-    // The figure above comes off the run, not off the runner, and every other
-    // test here mints the two equal. The same busy service, under a run that
+    // The figure above comes off the run, not off the runner, and every test
+    // here that goes through `Scripted::turn` mints the two equal. The same
+    // busy service, under a run that
     // gave up its retries: one request, where the session would have made
     // more. How many more is the shipped default's business, and the second
     // assertion asks it rather than naming it here.
@@ -1233,8 +1234,9 @@ fn a_run_that_asked_to_be_asked_again_fewer_times_is() {
 fn a_run_that_asked_for_a_smaller_answer_is_held_to_its_own_ceiling() {
     // The turn-wide response ceiling, likewise: read off the run each pass
     // builds its answer under. Eight bytes is under any real answer and far
-    // under the shipped sixteen megabytes, so a loop reading the session's
-    // figure would let this whole response through.
+    // under the shipped default — which is the constant's business rather than
+    // a number written out here — so a loop reading the session's figure would
+    // let this whole response through.
     let script = Script::new(vec![saying("more prose than eight bytes of room")]);
     let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
 

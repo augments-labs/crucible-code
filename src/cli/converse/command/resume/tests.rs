@@ -14,10 +14,9 @@ use std::cell::Cell;
 use std::time::Duration;
 
 use crucible_auth::Store;
-use crucible_core::AgentId;
 use crucible_core::{
-    Cancel, Message, Revealed, SessionId, StopReason, ToolArgs, ToolCall, ToolId, ToolOutput,
-    ToolResult,
+    AgentId, Cancel, Message, Revealed, SessionId, StopReason, ToolArgs, ToolCall, ToolId,
+    ToolOutput, ToolResult,
 };
 use crucible_runner::{AgentSpec, Model, Runner, Tools};
 use crucible_tools::{Ledger, Plan};

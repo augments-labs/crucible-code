@@ -127,8 +127,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use crucible_auth::Store;
-    use crucible_core::AgentId;
-    use crucible_core::{Cancel, Message, Revealed, StopReason, ToolArgs, Transcript};
+    use crucible_core::{AgentId, Cancel, Message, Revealed, StopReason, ToolArgs, Transcript};
     use crucible_runner::{AgentSpec, Model, Runner, Session, Tools, recent};
     use crucible_tools::{Ledger, Plan};
     use crucible_tui::{Recording, Renderer};

@@ -488,7 +488,7 @@ fn a_rung_the_run_resolved_is_on_the_model_every_turn_is_asked_of() {
         "claude-opus-5",
         Some(Effort::Xhigh),
         &Settings::default(),
-        String::new(),
+        "",
     );
 
     assert_eq!(asking.model.effort, Some(Effort::Xhigh));
@@ -496,15 +496,9 @@ fn a_rung_the_run_resolved_is_on_the_model_every_turn_is_asked_of() {
     // And nothing where nothing said, which is the field left off rather than
     // a rung this program chose on the vendor's behalf.
     assert_eq!(
-        coding(
-            "anthropic",
-            "claude-opus-5",
-            None,
-            &Settings::default(),
-            String::new()
-        )
-        .model
-        .effort,
+        coding("anthropic", "claude-opus-5", None, &Settings::default(), "")
+            .model
+            .effort,
         None
     );
 }
@@ -563,13 +557,7 @@ fn an_explicit_context_window_can_opt_back_into_a_larger_window() {
 fn how_long_an_answer_may_be_is_the_model_own_limit_held_under_the_ceiling() {
     // A model this build has the limits of: its own output limit is far above
     // the ceiling, so the ceiling is what is asked for.
-    let known = coding(
-        "anthropic",
-        "claude-opus-5",
-        None,
-        &Settings::default(),
-        String::new(),
-    );
+    let known = coding("anthropic", "claude-opus-5", None, &Settings::default(), "");
     assert_eq!(known.model.max_tokens, CEILING);
 
     // And one it has never heard of, where nothing is known and the lower
@@ -579,7 +567,7 @@ fn how_long_an_answer_may_be_is_the_model_own_limit_held_under_the_ceiling() {
         "claude-from-the-future",
         None,
         &Settings::default(),
-        String::new(),
+        "",
     );
     assert_eq!(unknown.model.max_tokens, UNKNOWN_CEILING);
 }
@@ -757,8 +745,8 @@ fn recap_room_defaults_to_ten_k_and_accepts_a_configured_ceiling() {
 
 #[test]
 fn the_agent_is_named_coding_and_stands_under_what_the_wiring_asked() {
-    // The two fields of the definition this wiring decides. Nothing outside a
-    // test reads `id` yet — a later registry will select on it — and
+    // Two of the five fields the wiring decides, and the two a later reader
+    // arrives needing. Nothing outside a test reads `id` yet — a later registry will select on it — and
     // `instructions` is the definition's opening value: what the window
     // reading and `Runner::instructions` answer with before a turn is taken.
     // `Runner::telling` replaces it before every turn, the first included, so
@@ -774,11 +762,32 @@ fn the_agent_is_named_coding_and_stands_under_what_the_wiring_asked() {
         "claude-opus-5",
         None,
         &Settings::default(),
-        asked.into(),
+        asked,
     );
 
     assert_eq!(built.id.as_str(), "coding");
-    assert_eq!(built.instructions.as_deref(), Some(asked));
+    assert_eq!(built.instructions(), Some(asked));
+}
+
+#[test]
+fn a_definition_the_wiring_had_nothing_to_say_under_is_told_nothing() {
+    // The rule `AgentSpec::instructions` states, at the one site outside the
+    // runner that writes the field: no instructions and empty instructions are
+    // two different requests, and a prompt nobody wrote is the first.
+    //
+    // Unreachable through the shipped wiring, because `standing::under` always
+    // names where the work is and so never returns an empty prompt. What this
+    // pins is that the composition root reaches the field through the write
+    // path that enforces the rule rather than around it — which is what a
+    // definition read from a file, where an empty body is an ordinary case,
+    // will arrive needing.
+    let built = coding("anthropic", "claude-opus-5", None, &Settings::default(), "");
+
+    assert_eq!(
+        built.instructions(),
+        None,
+        "a definition nobody wrote a prompt for carries the empty string"
+    );
 }
 
 #[test]
@@ -849,7 +858,7 @@ fn a_configured_spend_ceiling_is_resolved_off_the_document() {
 
 #[test]
 fn the_figures_no_document_reaches_are_the_ones_this_program_ships() {
-    // The other half of the resolution above: four compaction figures and the
+    // The other half of the resolution above: five compaction figures and the
     // spend ceiling come out of a document, and the two byte ceilings and the
     // retry policy deliberately do not. Nothing else in the tree reads them
     // back, so without this a composition root that zeroed either one would

@@ -54,10 +54,19 @@ pub struct AgentSpec {
     /// no system field and one that carries an empty string are two different
     /// requests, and only the first is what "nobody said" means.
     ///
+    /// The one field here that is not simply whatever the caller set, which is
+    /// why it is the one that is not written directly. A rule stated in prose
+    /// beside a public field holds wherever somebody remembered it; [`told`] is
+    /// where it holds because there is nowhere else to write. The definitions a
+    /// later phase reads out of files are where an empty body stops being a
+    /// mistake and becomes an ordinary case.
+    ///
     /// Rewritten by [`crate::Runner::telling`] on the runner's own definition:
     /// part of what these say is about the session — which model is answering,
     /// how hard it was asked to think — and both of those move while it runs.
-    pub instructions: Option<Box<str>>,
+    ///
+    /// [`told`]: AgentSpec::told
+    instructions: Option<Box<str>>,
 
     /// Which model answers for this agent, and how.
     ///
@@ -88,5 +97,33 @@ impl AgentSpec {
             id,
             model,
         }
+    }
+
+    /// The sentence this agent is asked under, or `None` where nobody wrote
+    /// one.
+    #[must_use]
+    pub fn instructions(&self) -> Option<&str> {
+        self.instructions.as_deref()
+    }
+
+    /// Says what this agent is asked under, reading nothing said as nothing
+    /// said.
+    ///
+    /// The only way the field is written, so the difference between no
+    /// instructions and empty ones cannot be lost by a caller that had no
+    /// reason to know there was one. A struct literal would be the second way,
+    /// and the field is private so that there is no second way:
+    ///
+    /// ```compile_fail,E0451
+    /// use crucible_runner::AgentSpec;
+    /// use crucible_core::AgentId;
+    ///
+    /// let spec = AgentSpec {
+    ///     instructions: Some("".into()),
+    ///     ..AgentSpec::new(AgentId::new("x"), unimplemented!())
+    /// };
+    /// ```
+    pub fn told(&mut self, said: &str) {
+        self.instructions = (!said.is_empty()).then(|| said.into());
     }
 }

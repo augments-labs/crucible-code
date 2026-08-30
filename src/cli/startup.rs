@@ -14,10 +14,9 @@ use std::sync::Arc;
 
 use crucible_auth::StoredCredentials;
 use crucible_config::Settings;
-use crucible_core::AgentId;
 use crucible_core::{
-    ApiKey, Cancel, Credential, Effort, Fetch, Header, HeaderKey, Message, Modalities, Mode,
-    Provider, Revealed, Search, SessionId, Tool, Transcript, Workspace,
+    AgentId, ApiKey, Cancel, Credential, Effort, Fetch, Header, HeaderKey, Message, Modalities,
+    Mode, Provider, Revealed, Search, SessionId, Tool, Transcript, Workspace,
 };
 use crucible_provider::{
     Anthropic, AnthropicWeb, Endpoint, Https, Moonshot, MoonshotWeb, OpenAi, OpenAiWeb, Unavailable,
@@ -221,7 +220,7 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<Runner, Fatal> {
 
     // Read before the provider is handed over, because which vendor is being
     // written to is what says which model's limits are being asked about.
-    let asking = coding(provider.name(), name, startup.effort, settings, asked);
+    let asking = coding(provider.name(), name, startup.effort, settings, &asked);
 
     let mut runner = Runner::new(provider, offering, asking, session)
         .permitting(settings.permission(startup.mode))
@@ -838,21 +837,22 @@ fn coding(
     name: &str,
     effort: Option<Effort>,
     settings: &Settings,
-    asked: String,
+    asked: &str,
 ) -> AgentSpec {
-    AgentSpec {
-        id: AgentId::new("coding"),
-        name: "Coding".into(),
-        description: "Reads, changes and checks the code in this workspace.".into(),
-        instructions: Some(asked.into()),
-        model: Model {
+    let mut spec = AgentSpec::new(
+        AgentId::new("coding"),
+        Model {
             name: name.into(),
             max_tokens: ceiling(provider, name),
             window: window(provider, name, settings),
             accepts: accepts(provider, name),
             effort,
         },
-    }
+    );
+    spec.name = "Coding".into();
+    spec.description = "Reads, changes and checks the code in this workspace.".into();
+    spec.told(asked);
+    spec
 }
 
 /// What the documents together say one run may spend, and what it does when
