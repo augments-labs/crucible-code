@@ -345,12 +345,17 @@ impl Runner {
 
     /// Room that automatic compaction keeps free for an exchange in progress.
     ///
-    /// The settings are handed in rather than read off the session, because a
-    /// run may hold less than the session does and the loop already reads the
-    /// rest of the rail off the run. Two readers would measure one boundary
-    /// against two figures, and the half that fires would be deciding for the
-    /// half that never saw them — which is why [`Runner::left_under`] is the
-    /// only caller of this that a run in progress reaches.
+    /// The settings are handed in rather than read off the session, because
+    /// the answer a turn runs under is the run's own: a run may keep back more
+    /// of the window than its session does. Reading them here instead would
+    /// measure one boundary against a figure the turn never agreed to, and the
+    /// half that fires would be deciding for the half that never saw it.
+    ///
+    /// Three callers pass their own. [`Runner::left_under`] is the reading
+    /// between turns, where the session's answer is the only one there is.
+    /// While a turn runs, `exchange` passes the run's for the figure the turn
+    /// starts on, and the pass loop passes it again for the figure the turn is
+    /// re-measured against once a response has corrected the window.
     fn reserve(&self, compaction: Compaction, window: Option<u32>) -> u64 {
         if compaction.automatic {
             load::reserve(self.spec.model.max_tokens, window, compaction.reserve)
@@ -643,8 +648,12 @@ impl Runner {
     ///
     /// # Errors
     ///
-    /// [`TurnError`] when the provider failed or the user refused a tool. A
-    /// tool that ran and did not like what it found is not an error — that
+    /// [`TurnError`] wherever the turn could not be finished: the provider
+    /// failed, a tool could not be carried out, the user refused one, the turn
+    /// produced more than a spend ceiling allowed, a compaction did not return
+    /// a complete recap, the window had no room left and compacting it freed
+    /// none, or tool results crossed the per-turn retained-output limit. A
+    /// tool that ran and did not like what it found is none of those — that
     /// goes back to the model as a result it can work around.
     pub fn turn(
         &mut self,
@@ -831,11 +840,13 @@ impl Runner {
     /// the provider closed while the tools ran — the turn's own pauses are
     /// exactly where a pooled connection goes stale, so the request that fails
     /// is the one after a tool pass rather than the first, and the discussion
-    /// stops part way through. Both halves of the condition carry weight: only a failure
-    /// [`ProviderError::transient`] calls a moment rather than a request, and
-    /// only a response that said nothing. Deltas are posted as they arrive, so
-    /// re-asking after one would put an answer on screen twice and leave the
-    /// transcript holding the half that was taken back.
+    /// stops part way through. Both halves of the condition carry weight:
+    /// only a failure [`ProviderError::transient`] calls a moment rather than
+    /// a request, and only a response that said nothing. Deltas are posted as
+    /// they arrive, so re-asking after one would put an answer on screen twice
+    /// and leave the transcript holding the half that was taken back.
+    ///
+    /// [`ProviderError::transient`]: crucible_core::ProviderError::transient
     fn listen(
         &mut self,
         bounds: &TurnBounds,

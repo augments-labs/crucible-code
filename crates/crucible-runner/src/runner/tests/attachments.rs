@@ -2,9 +2,10 @@
 //!
 //! An attachment can be left out for two different reasons — it did not fit
 //! the request, or the model being asked does not read that modality — and
-//! each is said at the moment it becomes true: the first as the request goes,
-//! the second where the answer arrives. Silence is the third answer, and it
-//! belongs to the request that carried everything it was given.
+//! both are said as the request goes, apart rather than folded together,
+//! because a file that would not fit is answered differently from one the
+//! model cannot read. Silence is the third answer, and it belongs to the
+//! request that carried everything it was given.
 
 use super::*;
 

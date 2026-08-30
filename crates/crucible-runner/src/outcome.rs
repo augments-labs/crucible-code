@@ -1,10 +1,11 @@
 //! How a run ended, and what it cost.
 //!
-//! A turn used to hand back one word — the reason the model stopped — and
-//! everything else it knew about itself died with the stack frame: which run it
-//! was, whether it ended because it finished or because somebody stopped it,
-//! and what it spent getting there. A caller that wanted the spend read it off
-//! an event, which is the screen's copy rather than the run's.
+//! One word — the reason the model stopped — is not enough to answer for a
+//! turn. Which run it was, whether it ended because it finished or because
+//! somebody stopped it, and what it spent getting there are all facts the run
+//! itself holds, so they are handed back together rather than left on the
+//! stack frame. A caller reading the spend off an event would be reading the
+//! screen's copy rather than the run's.
 //!
 //! What is *not* here: failures. A provider that would not answer, a log that
 //! would not write, a tool the user refused — those stay [`TurnError`], because
