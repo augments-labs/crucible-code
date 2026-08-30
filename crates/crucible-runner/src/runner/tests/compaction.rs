@@ -45,15 +45,7 @@ fn a_compaction_posts_the_rebuilt_window_reading_immediately() {
     scripted.turn("second").expect("a middle to replace");
     let _ = scripted.left();
 
-    scripted
-        .runner
-        .compact(
-            Compacting::Asked,
-            &scripted.events,
-            &scripted.cancel,
-            &mut Spend::default(),
-        )
-        .expect("a structured recap");
+    scripted.compacting().expect("a structured recap");
 
     let events = scripted.events();
     let finished = events
@@ -86,21 +78,13 @@ fn the_structured_recap_uses_its_configured_ceiling_capped_by_the_model() {
         recap("notes to self"),
     ]);
     let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
-    scripted.runner.compacting = keeping_one();
-    scripted.runner.compacting.recap_tokens = 10_240;
-    scripted.runner.model.max_tokens = 12_000;
+    scripted.runner.policy.compaction = keeping_one();
+    scripted.runner.policy.compaction.recap_tokens = 10_240;
+    scripted.runner.spec.model.max_tokens = 12_000;
     scripted.turn("first").expect("a turn to compact from");
     scripted.turn("second").expect("a middle to replace");
 
-    scripted
-        .runner
-        .compact(
-            Compacting::Asked,
-            &scripted.events,
-            &scripted.cancel,
-            &mut Spend::default(),
-        )
-        .expect("a structured recap");
+    scripted.compacting().expect("a structured recap");
 
     assert_eq!(
         scripted.sent.lock().unwrap().last().unwrap().max_tokens,
@@ -113,20 +97,12 @@ fn the_structured_recap_uses_its_configured_ceiling_capped_by_the_model() {
         recap("notes to self"),
     ]);
     let mut capped = Scripted::new(script, Tools::new(), Verdict::Allow);
-    capped.runner.compacting = keeping_one();
-    capped.runner.compacting.recap_tokens = 10_240;
-    capped.runner.model.max_tokens = 8_000;
+    capped.runner.policy.compaction = keeping_one();
+    capped.runner.policy.compaction.recap_tokens = 10_240;
+    capped.runner.spec.model.max_tokens = 8_000;
     capped.turn("first").expect("a turn to compact from");
     capped.turn("second").expect("a middle to replace");
-    capped
-        .runner
-        .compact(
-            Compacting::Asked,
-            &capped.events,
-            &capped.cancel,
-            &mut Spend::default(),
-        )
-        .expect("a model-capped recap");
+    capped.compacting().expect("a model-capped recap");
 
     assert_eq!(
         capped.sent.lock().unwrap().last().unwrap().max_tokens,
@@ -145,19 +121,13 @@ fn a_recap_cut_off_at_its_token_ceiling_replaces_nothing() {
         ],
     ]);
     let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
-    scripted.runner.compacting = keeping_one();
+    scripted.runner.policy.compaction = keeping_one();
     scripted.turn("first").expect("a turn to compact from");
     scripted.turn("second").expect("a middle to replace");
     let before = scripted.runner.transcript().messages().to_vec();
 
     let problem = scripted
-        .runner
-        .compact(
-            Compacting::Asked,
-            &scripted.events,
-            &scripted.cancel,
-            &mut Spend::default(),
-        )
+        .compacting()
         .expect_err("a truncated recap must not replace context");
 
     assert!(matches!(problem, TurnError::RecapIncomplete));
@@ -172,19 +142,13 @@ fn a_cleanly_stopped_but_malformed_recap_replaces_nothing() {
         saying("notes without sections"),
     ]);
     let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
-    scripted.runner.compacting = keeping_one();
+    scripted.runner.policy.compaction = keeping_one();
     scripted.turn("first").expect("a turn to compact from");
     scripted.turn("second").expect("a middle to replace");
     let before = scripted.runner.transcript().messages().to_vec();
 
     let problem = scripted
-        .runner
-        .compact(
-            Compacting::Asked,
-            &scripted.events,
-            &scripted.cancel,
-            &mut Spend::default(),
-        )
+        .compacting()
         .expect_err("a malformed recap must not replace context");
 
     assert!(matches!(problem, TurnError::RecapIncomplete));
@@ -200,19 +164,13 @@ fn a_recap_past_the_response_ceiling_replaces_nothing() {
     let note = "x".repeat(3 * 1024 * 1024);
     let script = Script::new(vec![saying("first"), saying("second"), recap(&note)]);
     let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
-    scripted.runner.compacting = keeping_one();
+    scripted.runner.policy.compaction = keeping_one();
     scripted.turn("first").expect("a turn to compact from");
     scripted.turn("second").expect("a middle to replace");
     let before = scripted.runner.transcript().messages().to_vec();
 
     let problem = scripted
-        .runner
-        .compact(
-            Compacting::Asked,
-            &scripted.events,
-            &scripted.cancel,
-            &mut Spend::default(),
-        )
+        .compacting()
         .expect_err("an unbounded recap must not replace context");
 
     assert!(matches!(problem, TurnError::RecapIncomplete), "{problem:?}");
@@ -249,13 +207,7 @@ fn a_recap_stopped_part_way_replaces_nothing() {
     let before = scripted.runner.transcript().messages().to_vec();
 
     let made = scripted
-        .runner
-        .compact(
-            Compacting::Asked,
-            &scripted.events,
-            &scripted.cancel,
-            &mut Spend::default(),
-        )
+        .compacting()
         .expect("a recap somebody stopped is not a failure");
 
     assert_eq!(made, Room::Stopped, "a stopped recap made room");
@@ -274,7 +226,7 @@ fn a_recap_whose_connection_broke_says_so_and_replaces_nothing() {
     // was the wire. The transcript stands exactly as it was either way.
     let script = Script::breaking(vec![vec![Delta::Text("## Goal\nhalf the".into())]]);
     let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
-    scripted.runner.compacting = keeping_one();
+    scripted.runner.policy.compaction = keeping_one();
 
     let mut earlier = Transcript::new();
     earlier.push(Message::said("first"));
@@ -293,13 +245,7 @@ fn a_recap_whose_connection_broke_says_so_and_replaces_nothing() {
     let before = scripted.runner.transcript().messages().to_vec();
 
     let problem = scripted
-        .runner
-        .compact(
-            Compacting::Asked,
-            &scripted.events,
-            &scripted.cancel,
-            &mut Spend::default(),
-        )
+        .compacting()
         .expect_err("a broken connection is a failure, not a recap");
 
     assert!(
@@ -438,7 +384,7 @@ fn an_answer_cut_off_by_the_window_is_recorded_when_room_is_not_made() {
         Delta::Stopped(StopReason::WindowExceeded),
     ]]);
     let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
-    scripted.runner.compacting = Compaction {
+    scripted.runner.policy.compaction = Compaction {
         automatic: false,
         ..Compaction::default()
     };
@@ -520,8 +466,8 @@ fn a_full_window_prunes_tool_output_from_the_active_turn_and_carries_on() {
         Verdict::Allow,
         session,
     );
-    scripted.runner.model.window = Some(80_000);
-    scripted.runner.compacting = Compaction {
+    scripted.runner.spec.model.window = Some(80_000);
+    scripted.runner.policy.compaction = Compaction {
         reserve: Some(1),
         ..Compaction::default()
     };
@@ -612,8 +558,8 @@ fn a_full_window_recaps_a_complete_active_turn_when_pruning_cannot_help() {
     let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
     let mut scripted =
         Scripted::recording(script, tools([Fixed::new("read")]), Verdict::Allow, session);
-    scripted.runner.model.window = Some(30_000);
-    scripted.runner.compacting = Compaction {
+    scripted.runner.spec.model.window = Some(30_000);
+    scripted.runner.policy.compaction = Compaction {
         reserve: Some(14_000),
         ..Compaction::default()
     };
@@ -649,9 +595,10 @@ fn a_full_window_recaps_a_complete_active_turn_when_pruning_cannot_help() {
 
 #[test]
 fn a_request_the_provider_would_not_take_is_asked_again_once_there_is_room() {
-    // The reactive rail. Nothing said the window was full — the provider did,
-    // by refusing — and the same question goes back once the session is
-    // smaller.
+    // The reactive rail: nothing measured the window beforehand, the answer
+    // came back saying it did not fit, and the same question goes back once
+    // the session is smaller. The provider refusing outright is the other
+    // rail and a `ProviderError` — `Script::over_window` drives that one.
     let script = Script::new(vec![
         vec![Delta::Stopped(StopReason::WindowExceeded)],
         recap("notes to self"),
@@ -664,7 +611,7 @@ fn a_request_the_provider_would_not_take_is_asked_again_once_there_is_room() {
     let mut scripted = Scripted::within(script, 10_000, keeping_one());
     scripted.turn("first").expect("a turn to compact from");
 
-    let stop = scripted.turn("go").expect("the refusal ended the turn");
+    let stop = scripted.turn("go").expect("the second ask ended the turn");
 
     assert_eq!(stop, StopReason::Yielded);
     assert!(scripted.said().contains("asked again"));
@@ -736,7 +683,7 @@ fn a_window_the_provider_disproves_stops_being_claimed_at_all() {
     // exactly the size of the thing that just fitted would pin the reading at
     // nothing all over again.
     assert_eq!(
-        scripted.runner.model.window, None,
+        scripted.runner.spec.model.window, None,
         "a figure the provider disproved is still being claimed"
     );
     assert_eq!(
@@ -760,7 +707,7 @@ fn a_request_smaller_than_the_window_says_nothing_about_how_much_larger_it_is() 
     let mut scripted = Scripted::within(script, 200_000, Compaction::default());
     scripted.turn("go").expect("a turn");
 
-    assert_eq!(scripted.runner.model.window, Some(200_000));
+    assert_eq!(scripted.runner.spec.model.window, Some(200_000));
 }
 
 #[test]
@@ -801,7 +748,7 @@ fn a_compaction_clears_the_bulk_of_old_tool_output_before_the_recap() {
     // the uncalibrated three bytes to the token — so their results survive the
     // recap and the clearing is what the test reads. The first turn is the
     // middle that gets replaced.
-    scripted.runner.compacting = Compaction {
+    scripted.runner.policy.compaction = Compaction {
         keep_tokens: 70_000,
         ..Compaction::default()
     };
@@ -811,15 +758,7 @@ fn a_compaction_clears_the_bulk_of_old_tool_output_before_the_recap() {
     scripted.turn("third").expect("a turn");
     scripted.turn("fourth").expect("a turn");
 
-    let room = scripted
-        .runner
-        .compact(
-            Compacting::Asked,
-            &scripted.events,
-            &scripted.cancel,
-            &mut Spend::default(),
-        )
-        .expect("a recap");
+    let room = scripted.compacting().expect("a recap");
 
     // The clearing freed real room, so the compaction has to say so: `before`
     // is measured before the pruning, and a `before` taken after it would read
@@ -900,21 +839,13 @@ fn a_turn_that_outweighs_the_budget_is_not_kept_whole_for_being_recent() {
         tools([Fixed::new("read").answering(&big)]),
         Verdict::Allow,
     );
-    scripted.runner.compacting = budget;
+    scripted.runner.policy.compaction = budget;
 
     scripted.turn("first").expect("a turn");
     scripted.turn("read the file").expect("a turn");
     scripted.turn("third").expect("a turn");
 
-    scripted
-        .runner
-        .compact(
-            Compacting::Asked,
-            &scripted.events,
-            &scripted.cancel,
-            &mut Spend::default(),
-        )
-        .expect("a recap");
+    scripted.compacting().expect("a recap");
 
     let standing = scripted.runner.transcript().messages();
 
@@ -982,15 +913,7 @@ fn the_recap_request_carries_no_system_prompt_so_a_standing_note_cannot_become_a
     scripted.turn("second").expect("a middle to replace");
     let _ = scripted.left();
 
-    scripted
-        .runner
-        .compact(
-            Compacting::Asked,
-            &scripted.events,
-            &scripted.cancel,
-            &mut Spend::default(),
-        )
-        .expect("a structured recap");
+    scripted.compacting().expect("a structured recap");
 
     let sent = sent.lock().unwrap();
     let (asked, turns) = sent.split_last().expect("the recap request");
@@ -1003,5 +926,566 @@ fn the_recap_request_carries_no_system_prompt_so_a_standing_note_cannot_become_a
     assert!(
         turns.iter().all(|one| one.had_system),
         "an ordinary turn went without a prompt"
+    );
+}
+
+#[test]
+fn a_pass_is_measured_against_the_room_its_own_run_holds() {
+    let script = Script::new(vec![
+        vec![
+            Delta::Carried(Carried::new(40_000)),
+            Delta::Text("first".into()),
+            Delta::Stopped(StopReason::Yielded),
+        ],
+        recap("notes to self"),
+        saying("second"),
+    ]);
+
+    // The session is told never to make room and to hold nothing back. The run
+    // it starts is told the opposite, and holds back half the window. The loop
+    // already reads `automatic` off the run, so a reserve read off the session
+    // measures one half of the same rail against a figure the other half never
+    // saw. What a compaction is then allowed to keep is a separate reading with
+    // its own tests; this one asks only whether room was made at all.
+    //
+    // Reached through [`Runner::exchange`] rather than a turn, because a turn
+    // takes the session's ceiling on the way in and this pair is the one a
+    // ceiling erases: `automatic` narrows by `&&`, so a session with it off
+    // holds the run to off too.
+    let mut scripted = Scripted::within(
+        script,
+        200_000,
+        Compaction {
+            automatic: false,
+            reserve: Some(0),
+            ..Compaction::default()
+        },
+    );
+    let run = RunContext::new(
+        RunPolicy {
+            compaction: Compaction {
+                automatic: true,
+                reserve: Some(100_000),
+                keep_tokens: 1,
+                ..Compaction::default()
+            },
+            ..RunPolicy::default()
+        },
+        &scripted.events,
+        &scripted.cancel,
+        &scripted.steer,
+        &scripted.aside,
+    );
+
+    // Two exchanges under that one run: the first fills the window, the second
+    // is the pass that has to notice.
+    for prompt in ["first", "second"] {
+        scripted.runner.record(Message::User {
+            text: prompt.into(),
+            attachments: Box::new([]),
+        });
+        scripted
+            .runner
+            .exchange(&mut scripted.says, &run)
+            .expect("a turn");
+    }
+
+    assert!(
+        scripted
+            .events()
+            .iter()
+            .any(|event| matches!(event, Event::Compacted { .. })),
+        "the pass was measured against the session's room, not the run's"
+    );
+}
+
+#[test]
+fn the_room_a_compaction_reports_is_read_off_the_run_that_asked() {
+    // One boundary with two readers: the recap boundary comes off the run, and
+    // the room reported afterwards came off the session. A run holding back a
+    // different amount of the window than the session does makes the two
+    // disagree, and the figure the reader is then shown is the one that never
+    // saw the run.
+    //
+    // The run keeps back *more* than the session, which is the direction the
+    // narrowing rule permits — a run may hold itself to less of the window,
+    // never to more. This builds its context directly, so nothing here proves
+    // that; the direction is chosen so the pair a real caller could hand in is
+    // the pair under test. What makes the other direction unreachable is
+    // `roomier` taking the max, and refusing to replace an absent reserve with
+    // a named one, both pinned in `policy.rs` rather than here.
+    //
+    // The recap is deliberately enormous, because that is what turns the
+    // disagreement into something a reader would notice rather than a rounding
+    // difference: against the session's reserve the window reads full, and
+    // against the run's there is still most of it left.
+    let script = Script::new(vec![
+        vec![
+            Delta::Carried(Carried::new(20_000)),
+            Delta::Text("first".into()),
+            Delta::Stopped(StopReason::Yielded),
+        ],
+        vec![
+            Delta::Carried(Carried::new(30_000)),
+            Delta::Text("second".into()),
+            Delta::Stopped(StopReason::Yielded),
+        ],
+        recap(&"notes to self ".repeat(8_000)),
+    ]);
+    let mut scripted = Scripted::within(script, 200_000, keeping_one());
+    scripted.turn("first").expect("a turn to compact from");
+    scripted.turn("second").expect("a middle to replace");
+
+    // Set after the turns, so they run under the shipped answer and the reserve
+    // is the only thing separating the two readings below.
+    scripted.runner.policy.compaction.reserve = Some(0);
+
+    // The same session, under a run that keeps half the window back for the
+    // next exchange. Every other figure is the session's.
+    let asking = RunContext::new(
+        RunPolicy {
+            compaction: Compaction {
+                reserve: Some(100_000),
+                ..scripted.runner.policy.compaction
+            },
+            ..scripted.runner.policy
+        },
+        &scripted.events,
+        &scripted.cancel,
+        &scripted.steer,
+        &scripted.aside,
+    );
+
+    scripted
+        .runner
+        .compact(Compacting::Asked, &asking, &mut Spend::default())
+        .expect("a structured recap");
+
+    let reported = scripted
+        .events()
+        .into_iter()
+        .filter_map(|event| match event {
+            Event::Carried { left } => Some(left),
+            _ => None,
+        })
+        .next_back()
+        .expect("a room reading after the compaction");
+
+    assert_eq!(
+        reported,
+        scripted.runner.load.left(Some(200_000), 100_000),
+        "the room reported was not measured against the run's own reserve"
+    );
+    assert_ne!(
+        reported,
+        scripted.runner.left(),
+        "the session's reserve made no difference here, so this proves nothing"
+    );
+}
+
+#[test]
+fn a_recap_is_held_to_the_output_ceiling_the_session_set() {
+    // The other half of what `Runner::turn` does on the way in. `compact` holds
+    // the run it is handed to this session's policy too, and until this test
+    // nothing said so: deleting that line left every other test in this crate
+    // green, because the binary only ever reaches `compact` through a run built
+    // from the session's own policy, where the clamp is a no-op.
+    //
+    // The recap request is where a wider run would show: its output ceiling is
+    // read off the run, so a run asking for forty times the session's figure
+    // would be granted it.
+    let script = Script::new(vec![
+        saying("first"),
+        saying("second"),
+        recap("notes to self"),
+    ]);
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
+    scripted.runner.policy.compaction = keeping_one();
+    scripted.runner.policy.compaction.recap_tokens = 256;
+    scripted.runner.spec.model.max_tokens = 12_000;
+    scripted.turn("first").expect("a turn to compact from");
+    scripted.turn("second").expect("a middle to replace");
+
+    let asking = RunContext::new(
+        RunPolicy {
+            compaction: Compaction {
+                recap_tokens: 10_240,
+                ..scripted.runner.policy.compaction
+            },
+            ..scripted.runner.policy
+        },
+        &scripted.events,
+        &scripted.cancel,
+        &scripted.steer,
+        &scripted.aside,
+    );
+
+    scripted
+        .runner
+        .compact(Compacting::Asked, &asking, &mut Spend::default())
+        .expect("a structured recap");
+
+    assert_eq!(
+        scripted.sent.lock().unwrap().last().unwrap().max_tokens,
+        256,
+        "a run was given a recap ceiling wider than its session allows"
+    );
+}
+
+#[test]
+fn the_recap_boundary_is_chosen_by_the_keep_figure_the_run_asked_for() {
+    // The other reading `compact` takes off the run, and the one that decides
+    // whether there is a recap at all. A session keeping everything word for
+    // word leaves no older middle to replace; a run asking to keep one token
+    // does. Read off the session this would prune and stop.
+    let script = Script::new(vec![
+        saying("first"),
+        saying("second"),
+        recap("notes to self"),
+    ]);
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
+    scripted.runner.policy.compaction.keep_tokens = u64::MAX;
+    scripted.turn("first").expect("a turn to compact from");
+    scripted.turn("second").expect("a middle to replace");
+
+    let asking = RunContext::new(
+        RunPolicy {
+            compaction: keeping_one(),
+            ..scripted.runner.policy
+        },
+        &scripted.events,
+        &scripted.cancel,
+        &scripted.steer,
+        &scripted.aside,
+    );
+
+    let room = scripted
+        .runner
+        .compact(Compacting::Asked, &asking, &mut Spend::default())
+        .expect("a compaction");
+
+    let Room::Made(compacted) = room else {
+        panic!("the run's keep figure was not the one the boundary was chosen by");
+    };
+    assert!(
+        compacted.replaced > 0,
+        "a run asking to carry less forward was held to its session's figure"
+    );
+}
+
+#[test]
+fn a_recap_is_held_to_the_output_ceiling_the_run_asked_for() {
+    // The complementary direction, and the one that says whose figure is
+    // actually read. Its sibling above sets the session to the smaller number,
+    // so the clamp and the reading agree and either would pass it. Here the
+    // run is the narrower of the two: only a ceiling read off the run can
+    // produce this figure.
+    let script = Script::new(vec![
+        saying("first"),
+        saying("second"),
+        recap("notes to self"),
+    ]);
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
+    scripted.runner.policy.compaction = keeping_one();
+    scripted.runner.policy.compaction.recap_tokens = 10_240;
+    scripted.runner.spec.model.max_tokens = 12_000;
+    scripted.turn("first").expect("a turn to compact from");
+    scripted.turn("second").expect("a middle to replace");
+
+    let asking = RunContext::new(
+        RunPolicy {
+            compaction: Compaction {
+                recap_tokens: 256,
+                ..scripted.runner.policy.compaction
+            },
+            ..scripted.runner.policy
+        },
+        &scripted.events,
+        &scripted.cancel,
+        &scripted.steer,
+        &scripted.aside,
+    );
+
+    scripted
+        .runner
+        .compact(Compacting::Asked, &asking, &mut Spend::default())
+        .expect("a structured recap");
+
+    assert_eq!(
+        scripted.sent.lock().unwrap().last().unwrap().max_tokens,
+        256,
+        "a run asking for a shorter recap was given its session's ceiling"
+    );
+}
+
+#[test]
+fn a_run_that_declined_to_make_room_is_refused_rather_than_compacted() {
+    // The reactive rail a provider opens by refusing the request outright,
+    // before it has read anything — the other one arrives inside an answer.
+    // The session allows compaction and the run does not, which is the one
+    // arrangement that tells the two apart: a loop reading the run hands the
+    // refusal back, and a loop reading the session makes room the run said not
+    // to and asks the same question again. The second request is what that
+    // costs, so it is what this counts.
+    let mut scripted = Scripted::new(Script::over_window(), Tools::new(), Verdict::Allow);
+    let declined = RunPolicy {
+        compaction: Compaction {
+            automatic: false,
+            ..Compaction::default()
+        },
+        ..RunPolicy::default()
+    };
+
+    let failed = scripted
+        .turning_under("go", declined)
+        .expect_err("a provider that refuses everything ended the turn");
+
+    assert!(
+        matches!(
+            failed,
+            TurnError::Provider(ProviderError::WindowExceeded { .. })
+        ),
+        "{failed:?}"
+    );
+    assert_eq!(
+        scripted.asked().len(),
+        1,
+        "the refusal was answered by making room and asking again"
+    );
+    assert!(
+        !scripted
+            .events()
+            .iter()
+            .any(|event| matches!(event, Event::Compacted { .. })),
+        "a run that declined to make room had room made for it"
+    );
+}
+
+#[test]
+fn a_run_that_declined_to_make_room_keeps_the_answer_the_window_cut() {
+    // The other reactive rail: the request fitted, the answer did not, and the
+    // ceiling arrives as a stop reason inside it. Same disagreement as above
+    // and same reason it is the only one that discriminates — the sibling test
+    // for this rail turns the *session* off, which `held_to` then makes the run
+    // agree with, so it cannot see which of the two the loop read.
+    let script = Script::new(vec![
+        vec![
+            Delta::Text("half".into()),
+            Delta::Stopped(StopReason::WindowExceeded),
+        ],
+        saying("carried on"),
+    ]);
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
+    let declined = RunPolicy {
+        compaction: Compaction {
+            automatic: false,
+            ..Compaction::default()
+        },
+        ..RunPolicy::default()
+    };
+
+    let stop = scripted
+        .turning_under("go", declined)
+        .expect("a cut-off answer is not a failure");
+
+    assert_eq!(stop, StopReason::WindowExceeded);
+    assert_eq!(
+        scripted.asked().len(),
+        1,
+        "the cut answer was answered by making room and asking again"
+    );
+    assert_eq!(
+        scripted.runner.transcript().messages(),
+        [
+            Message::said("go"),
+            Message::Agent {
+                text: "half".into(),
+                calls: Vec::new(),
+                stop: Some(StopReason::WindowExceeded),
+            },
+        ]
+    );
+}
+
+#[test]
+fn a_session_that_never_compacts_holds_nothing_back_from_its_window_reading() {
+    // Room kept free is room kept free *for* a compaction. Where there is not
+    // going to be one, nothing is coming to use it, and withholding it anyway
+    // reports a window fuller than it is — which for a session told never to
+    // make room is the one reading it has left to act on.
+    //
+    // Read before any turn, so the reading is the uncalibrated three bytes to
+    // the token and the two below differ by the reserve alone.
+    let mut scripted = Scripted::within(
+        Script::new(vec![]),
+        100_000,
+        Compaction {
+            automatic: false,
+            reserve: Some(50_000),
+            ..Compaction::default()
+        },
+    );
+    scripted.runner.record(Message::said("x".repeat(150_000)));
+
+    let never = scripted.runner.left();
+
+    // The same session and the same reserve, differing only in whether a
+    // compaction is coming.
+    scripted.runner.policy.compaction.automatic = true;
+
+    assert_eq!(
+        (never, scripted.runner.left()),
+        (Some(50), Some(0)),
+        "a session that never compacts held room back for one anyway"
+    );
+}
+
+#[test]
+fn a_session_told_something_longer_reads_its_window_as_fuller_at_once() {
+    // The prompt is part of every request, so changing it changes what the
+    // next one would carry. Left until the pass that re-estimates, the reading
+    // between turns describes a request the session will now never send: the
+    // panel, and anything that branches on how full the window is before the
+    // next turn starts, are shown the prompt that was replaced.
+    let mut scripted = Scripted::within(
+        Script::new(vec![]),
+        100_000,
+        Compaction {
+            reserve: Some(0),
+            ..Compaction::default()
+        },
+    );
+    scripted.runner.record(Message::said("x".repeat(150_000)));
+    scripted.runner.telling("mind the workspace");
+
+    let short = scripted.runner.left();
+
+    scripted
+        .runner
+        .telling(&"mind the workspace ".repeat(3_158));
+
+    let longer = scripted.runner.left();
+    assert!(
+        matches!((short, longer), (Some(before), Some(after)) if after < before),
+        "a longer prompt left the window reading where it was: \
+         {longer:?} against {short:?}"
+    );
+}
+
+#[test]
+fn the_room_a_line_typed_in_the_first_pass_reports_is_the_run_s_own() {
+    // `exchange` seeds the figure a turn is measured against, and the pass
+    // loop recomputes it — but not before the queues are drained at the top of
+    // the pass. So a line already typed when the turn starts is reported
+    // against the seed, and the seed is the only reading of the reserve that
+    // no later pass corrects.
+    //
+    // The run keeps back half the window and the session keeps back none,
+    // which is the direction narrowing permits. Nothing is full either way, so
+    // the two differ in what they report and not in what the turn does.
+    let script = Script::new(vec![saying("done")]);
+    let mut scripted = Scripted::within(
+        script,
+        100_000,
+        Compaction {
+            reserve: Some(0),
+            ..Compaction::default()
+        },
+    );
+    scripted.steer.say("a line".into());
+    let asking = RunPolicy {
+        compaction: Compaction {
+            reserve: Some(50_000),
+            ..Compaction::default()
+        },
+        ..RunPolicy::default()
+    };
+
+    scripted
+        .turning_under(&"x".repeat(60_000), asking)
+        .expect("a turn");
+
+    let events = scripted.events();
+    let reported = events
+        .iter()
+        .skip_while(|event| !matches!(event, Event::Steered { .. }))
+        .find_map(|event| match event {
+            Event::Carried { left } => Some(*left),
+            _ => None,
+        })
+        .expect("no room reading followed the line the reader typed");
+
+    // Against the run's half-window: twenty thousand tokens of prompt inside
+    // the fifty thousand it left itself. Against the session's whole window it
+    // would read close to eighty, which is the reading of a reserve this turn
+    // never agreed to.
+    assert_eq!(
+        reported,
+        Some(59),
+        "the line was measured against the session's reserve, not the run's"
+    );
+}
+
+#[test]
+fn the_room_a_prune_reports_is_read_off_the_run_that_asked() {
+    // The twin of `the_room_a_compaction_reports_is_read_off_the_run_that_asked`
+    // on the other way out of `compact`: one turn asks for enough tool output
+    // to fill its window, so there is no older middle for a recap to replace
+    // and pruning is the whole of the room made. That return posts its own
+    // room reading, and it is the one no test reached with a run and a session
+    // that disagree.
+    //
+    // The run keeps back eight thousand tokens and the session one, which is
+    // the direction narrowing permits. Both readings are of the same
+    // transcript at the same moment, so the only thing that can separate them
+    // is which reserve they were measured against — and the last one below is
+    // what the reader is shown after the room was made.
+    let script = Script::new(vec![
+        calling("a", "read", "{}"),
+        calling("b", "read", "{}"),
+        calling("c", "read", "{}"),
+        saying("carried on"),
+    ]);
+    let output = "x".repeat(90_000);
+    let sample = Sample::new("runner-active-prune-run-room");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
+    let mut scripted = Scripted::recording(
+        script,
+        tools([Fixed::new("read").answering(&output)]),
+        Verdict::Allow,
+        session,
+    );
+    scripted.runner.spec.model.window = Some(80_000);
+    scripted.runner.policy.compaction = Compaction {
+        reserve: Some(1),
+        ..Compaction::default()
+    };
+    let asking = RunPolicy {
+        compaction: Compaction {
+            reserve: Some(8_000),
+            ..Compaction::default()
+        },
+        ..RunPolicy::default()
+    };
+
+    let stop = scripted
+        .turning_under("go", asking)
+        .expect("the active turn made room instead of failing");
+
+    assert_eq!(stop, StopReason::Yielded);
+    let carried = scripted
+        .events()
+        .iter()
+        .filter_map(|event| match event {
+            Event::Carried { left } => Some(*left),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        carried.last(),
+        Some(&Some(58)),
+        "the room reported after the prune was not measured against the run's \
+         own reserve: {carried:?}"
     );
 }

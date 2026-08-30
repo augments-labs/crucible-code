@@ -12,42 +12,41 @@
 //! Progress leaves through events, because the thread that draws is not this
 //! one. The outcome leaves through the return value, because the caller is
 //! what decides whether the session continues.
+//!
+//! The loop's own body lives in [`passes`], because it lasts one turn and this
+//! does not. What stays here is the session it is taken against — the provider,
+//! the transcript, what the user has already allowed, the log — together with
+//! the one request, the recap and the retry that a pass reaches for. A caller
+//! never sees the split: [`Runner::turn`] is still the whole of the way in.
 
 use std::thread;
 use std::time::Duration;
 
 use crucible_core::{
     Aside, Ask, Attached, Attachment, Cancel, Compacting, Content, Delta, DeltaStream, Effort,
-    Event, Message, Modalities, Mode, Permission, Post, Provider, ProviderError, Request, Room,
-    Spend, Steer, StopReason, Summary, ToolCall, ToolSchema, Transcript, TurnError, TurnId,
+    Event, Message, Modalities, Mode, Permission, Post, Provider, Reporter, Request, Room, Spend,
+    Steer, StopReason, Summary, ToolCall, ToolSchema, Transcript, TurnError, TurnId,
 };
 
 use crucible_session::{Pruned, Session};
 
+use crate::agent::AgentSpec;
+use crate::context::RunContext;
+use crate::outcome::RunResult;
+use crate::policy::{Compaction, RunPolicy};
 use crate::tools::Tools;
 
 mod answer;
 pub mod attachments;
 mod compaction;
 mod load;
+mod passes;
 mod work;
 
 use answer::Answer;
 use load::{Counting, Load};
+use passes::AgentLoop;
 use work::{Went, Work};
-
-/// The most provider-controlled response data one turn retains, in bytes.
-///
-/// A bound on memory rather than on how long a turn may run: it exists against
-/// a provider that will not stop talking, and it is what keeps the peak-memory
-/// budget true. The counts that used to sit beside it — responses, tool calls —
-/// bounded the wrong thing. A turn is long because there is work in it, and
-/// what actually runs out is the model's window, which is now measured and
-/// answered by making room rather than by ending the turn.
-const MAX_TURN_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
-
-/// And the most tool-result text, for the same reason.
-const MAX_TOOL_OUTPUT_BYTES_PER_TURN: usize = 4 * 1024 * 1024;
 
 /// How many compactions one turn may run without getting anywhere.
 ///
@@ -56,21 +55,6 @@ const MAX_TOOL_OUTPUT_BYTES_PER_TURN: usize = 4 * 1024 * 1024;
 /// counted. Two, because the first may legitimately free little on a session
 /// that is mostly one enormous turn, and a third has proved the point.
 const COMPACTIONS_WITHOUT_PROGRESS: u8 = 2;
-
-/// How many more times one response may be asked for after it failed.
-///
-/// Small on purpose. What this recovers is the moment rather than the request —
-/// a connection the provider closed while the tools ran, a service busy for a
-/// second — and a failure that outlives two goes is one the user is better off
-/// being told about than waited through.
-const RETRIES: u8 = 2;
-
-/// How long to wait before the first of them, doubling for the next.
-///
-/// Short, because the failure this recovers is usually a socket that was
-/// already gone rather than a service asking to be left alone — and because a
-/// user watching a row that says `retrying` is watching this number.
-const FIRST_PAUSE: Duration = Duration::from_millis(250);
 
 /// How long a pause holds before it looks at the cancel again.
 const CANCEL_SLICE: Duration = Duration::from_millis(25);
@@ -102,8 +86,9 @@ struct TurnBounds {
 
 /// The state one provider request reads and updates together.
 struct Listening<'a> {
-    events: &'a dyn Post,
-    cancel: &'a Cancel,
+    /// The run the request is part of: where its progress goes, whether it has
+    /// been stopped, and how many goes it gets.
+    run: &'a RunContext<'a>,
     advertised: &'a [ToolSchema],
     counting: &'a mut Counting,
 }
@@ -115,6 +100,11 @@ impl TurnBounds {
 }
 
 /// Which model to ask, and how.
+///
+/// Model selection only. What the model is *told* is the agent's, and lives on
+/// [`crate::AgentSpec::instructions`]: one session asks two models under the
+/// same instructions when a key arrives mid-run, and one agent is asked under
+/// different instructions every turn as what they describe moves.
 #[derive(Debug, Clone)]
 pub struct Model {
     /// The model's name, as the provider spells it.
@@ -139,59 +129,8 @@ pub struct Model {
     /// the alternative is bytes labelled with a shape the request has no word
     /// for, which is a wrong request rather than a refused one.
     pub accepts: Option<Modalities>,
-    /// The system prompt, if the session has one.
-    pub system: Option<Box<str>>,
     /// How hard to think, where somebody said. `None` leaves it to the vendor.
     pub effort: Option<Effort>,
-}
-
-/// What a session does when the window fills.
-///
-/// Handed over whole by the wiring, so this crate never learns that any of it
-/// has a spelling in a file. The default is a session that compacts when it has
-/// to and is bounded by nothing else, which is the answer for somebody who has
-/// never heard of any of this.
-#[derive(Debug, Clone, Copy)]
-pub struct Compaction {
-    /// Whether a full window is answered by making room rather than by failing.
-    pub automatic: bool,
-    /// Room to leave for the next exchange, in tokens, where somebody said.
-    pub reserve: Option<u64>,
-    /// How many tokens of recent turns are kept word for word after the recap.
-    ///
-    /// Bounded in tokens rather than counted in turns because a turn can be
-    /// enormous: the kept tail is what has to fit beside the recap, and only a
-    /// figure in the window's own unit can promise that.
-    pub keep_tokens: u64,
-    /// Maximum output tokens given to the structured recap request.
-    pub recap_tokens: u32,
-    /// The most one turn may produce before it is stopped, in tokens.
-    pub spend_ceiling: Option<u64>,
-    /// How large a session must be before picking it up asks about it.
-    ///
-    /// Carried here rather than read where it is used, so the wiring resolves
-    /// every compaction answer in one place. This loop never asks anybody
-    /// anything about it — a turn already running has nobody to ask.
-    pub ask_on_resume: Option<u64>,
-}
-
-impl Default for Compaction {
-    fn default() -> Self {
-        Self {
-            automatic: true,
-            reserve: None,
-            // Enough of the recent turns to hold what the model is doing and
-            // the exchange that led to it, which is what "carry on from here"
-            // needs. In tokens, so a turn that is mostly tool output cannot
-            // blow straight past it.
-            keep_tokens: 20_000,
-            // A ceiling rather than a target. Ordinary checkpoints finish far
-            // below it; long technical sessions are not forced through 4k.
-            recap_tokens: 10_240,
-            spend_ceiling: None,
-            ask_on_resume: None,
-        }
-    }
 }
 
 /// Drives turns to completion.
@@ -202,33 +141,38 @@ impl Default for Compaction {
 pub struct Runner {
     provider: Box<dyn Provider>,
     tools: Tools,
-    model: Model,
+    spec: AgentSpec,
     permission: Permission,
     transcript: Transcript,
     session: Session,
     turn: TurnId,
-    compacting: Compaction,
+    policy: RunPolicy,
     load: Load,
 }
 
 impl Runner {
     /// A session that has not said anything yet.
     #[must_use]
-    pub fn new(provider: Box<dyn Provider>, tools: Tools, model: Model, session: Session) -> Self {
+    pub fn new(
+        provider: Box<dyn Provider>,
+        tools: Tools,
+        spec: AgentSpec,
+        session: Session,
+    ) -> Self {
         let mut runner = Self {
             provider,
             tools,
-            model,
+            spec,
             permission: Permission::new(),
             transcript: Transcript::new(),
             session,
             turn: TurnId::FIRST,
-            compacting: Compaction::default(),
+            policy: RunPolicy::default(),
             load: Load::default(),
         };
         runner
             .load
-            .requesting(runner.model.system.as_deref(), &runner.tools.advertised());
+            .requesting(runner.spec.instructions(), &runner.tools.advertised());
         runner
     }
 
@@ -244,13 +188,16 @@ impl Runner {
         self
     }
 
-    /// Takes the compaction settings described, rather than the default ones.
+    /// Runs under the policy described, rather than the default one.
     ///
     /// Handed over whole for the reason [`Runner::permitting`] is: this crate
-    /// never learns that any of it has a spelling in a file.
+    /// never learns that any of it has a spelling in a file. Whole rather than
+    /// one family at a time because a run is under one policy — a builder per
+    /// family would let a caller set half of one and leave the rest at figures
+    /// nobody chose.
     #[must_use]
-    pub fn compacting(mut self, compacting: Compaction) -> Self {
-        self.compacting = compacting;
+    pub const fn under(mut self, policy: RunPolicy) -> Self {
+        self.policy = policy;
         self
     }
 
@@ -286,7 +233,7 @@ impl Runner {
             self.load.recounted(message);
         }
         self.load
-            .requesting(self.model.system.as_deref(), &self.tools.advertised());
+            .requesting(self.spec.instructions(), &self.tools.advertised());
 
         // After the fixed content of this run's request is known, and never
         // before: what the log remembers is taken only where it still covers
@@ -378,23 +325,67 @@ impl Runner {
     /// compaction boundary, not the model's literal last token.
     #[must_use]
     pub fn left(&self) -> Option<u8> {
-        self.load
-            .left(self.model.window, self.reserve(self.model.window))
+        self.left_under(self.policy.compaction)
+    }
+
+    /// The same reading, against the compaction answer given.
+    ///
+    /// One function so there is one reader: this session's own answer between
+    /// turns, and the answer of the run in progress while a turn is running.
+    /// Two of them, each doing its own arithmetic, is how a run that holds
+    /// back less of the window than its session does came to be told the
+    /// window was full.
+    fn left_under(&self, compaction: Compaction) -> Option<u8> {
+        self.load.left(
+            self.spec.model.window,
+            self.reserve(compaction, self.spec.model.window),
+        )
     }
 
     /// Room that automatic compaction keeps free for an exchange in progress.
-    fn reserve(&self, window: Option<u32>) -> u64 {
-        if self.compacting.automatic {
-            load::reserve(self.model.max_tokens, window, self.compacting.reserve)
+    ///
+    /// The settings are handed in rather than read off the session, because
+    /// the answer a turn runs under is the run's own: a run may keep back more
+    /// of the window than its session does. Reading them here instead would
+    /// measure one boundary against a figure the turn never agreed to, and the
+    /// half that fires would be deciding for the half that never saw it.
+    ///
+    /// Three callers pass their own, and none of them is fixed to one answer.
+    /// [`Runner::left_under`] takes whichever it is handed: [`Runner::left`]
+    /// gives it the session's between turns, and [`Runner::compact`] gives it
+    /// the run's while a turn is running. `exchange` passes the run's for the
+    /// figure a turn starts on, and the pass loop passes it again for the
+    /// figure the turn is re-measured against once a response has corrected
+    /// the window.
+    fn reserve(&self, compaction: Compaction, window: Option<u32>) -> u64 {
+        if compaction.automatic {
+            load::reserve(self.spec.model.max_tokens, window, compaction.reserve)
         } else {
             0
         }
     }
 
-    /// What this session was told to do when the window fills.
+    /// Everything this session was told to hold a turn to.
+    ///
+    /// One reader for the whole answer rather than one per figure: a caller
+    /// wanting a single field takes it off this, and the next field to be
+    /// wanted needs no second accessor. Read-only and by value, because a
+    /// session's ceiling is settled when it is assembled — [`Runner::turn`]
+    /// and [`Runner::compact`] are the two entries a run is admitted through,
+    /// and each holds it to this.
     #[must_use]
-    pub const fn compaction(&self) -> Compaction {
-        self.compacting
+    pub const fn policy(&self) -> RunPolicy {
+        self.policy
+    }
+
+    /// What every turn of this session is asked under, where anything is.
+    ///
+    /// Absent until the wiring says, and rewritten by [`Runner::telling`]
+    /// before every turn, the first included — so this is the answer in force
+    /// now, not a record of what the session was assembled with.
+    #[must_use]
+    pub fn instructions(&self) -> Option<&str> {
+        self.spec.instructions()
     }
 
     /// Where the session is being recorded.
@@ -445,7 +436,7 @@ impl Runner {
     /// this crate is handed a name and does not decide which names are real.
     #[must_use]
     pub fn model(&self) -> &str {
-        &self.model.name
+        &self.spec.model.name
     }
 
     /// The tools this session is advertising, by name.
@@ -463,13 +454,13 @@ impl Runner {
     /// The maximum output carried with the next provider request.
     #[must_use]
     pub fn maximum_output(&self) -> u32 {
-        self.model.max_tokens
+        self.spec.model.max_tokens
     }
 
     /// The context window used for proactive compaction, where known.
     #[must_use]
     pub fn context_window(&self) -> Option<u32> {
-        self.model.window
+        self.spec.model.window
     }
 
     /// The provider this runner is asking, for the questions only it can answer.
@@ -516,10 +507,10 @@ impl Runner {
         window: Option<u32>,
         accepts: Option<Modalities>,
     ) {
-        self.model.name = model.into();
-        self.model.max_tokens = max_tokens;
-        self.model.window = window;
-        self.model.accepts = accepts;
+        self.spec.model.name = model.into();
+        self.spec.model.max_tokens = max_tokens;
+        self.spec.model.window = window;
+        self.spec.model.accepts = accepts;
         self.load.reestimated();
     }
 
@@ -534,10 +525,15 @@ impl Runner {
     ///
     /// Reachable between turns, where [`Runner::ask`] is and for the same
     /// reason: a turn owns the runner while it runs.
+    ///
+    /// The empty string is nothing said, not a system field holding nothing.
+    /// That reading belongs to the field rather than to this method — it is
+    /// [`AgentSpec::told`] that applies it — and it is the reading a prompt key
+    /// written empty already gets in the documents this text is built from.
     pub fn telling(&mut self, system: &str) {
-        self.model.system = Some(system.into());
+        self.spec.told(system);
         self.load
-            .requesting(self.model.system.as_deref(), &self.tools.advertised());
+            .requesting(self.spec.instructions(), &self.tools.advertised());
     }
 
     /// Writes to a different vendor from the next turn on.
@@ -570,7 +566,7 @@ impl Runner {
     /// request that does not carry one is the vendor's own default per model.
     #[must_use]
     pub const fn effort(&self) -> Option<Effort> {
-        self.model.effort
+        self.spec.model.effort
     }
 
     /// Asks for a different rung from the next turn on.
@@ -583,7 +579,7 @@ impl Runner {
     /// Reachable between turns, where [`Runner::ask`] is and for the same
     /// reason: a turn owns the runner while it runs.
     pub const fn think(&mut self, effort: Effort) {
-        self.model.effort = Some(effort);
+        self.spec.model.effort = Some(effort);
     }
 
     /// Hands the session out, for the caller that is finished driving turns.
@@ -613,35 +609,91 @@ impl Runner {
         }
     }
 
+    /// A run against this session, under the policy the session was given.
+    ///
+    /// The only way in from outside: [`RunContext`] is minted in this crate,
+    /// so the run a caller is handed is a root, and descending from it is this
+    /// crate's. What that closes is the *context* — it does not close event
+    /// attribution, because [`Ancestry`] and [`Reporter`] are public in
+    /// `crucible-core` and three calls there will stamp an event with a run
+    /// nothing started. Nothing shipped does: the one [`Post`] is the binary's
+    /// relay, and the only [`Reporter`] outside tests comes from
+    /// [`RunContext::reporting`]. So this is a run the caller cannot forge by
+    /// accident, not one the types forbid forging.
+    ///
+    /// [`Ancestry`]: crucible_core::Ancestry
+    ///
+    /// A context carries no session either, so "against this session" is what
+    /// the caller does and not something checked here: one context per unit of
+    /// work, matching the run to the runner it was minted from. What *is*
+    /// checked is the policy — [`Runner::turn`] and [`Runner::compact`] hold
+    /// whatever they are handed to this session's ceiling before spending
+    /// against it.
+    ///
+    /// Minting it out here rather than inside [`Runner::turn`] is what lets the
+    /// caller report under the same run the work ran as — a [`TurnError`] is
+    /// handed back rather than posted, and whoever asked for the work is the
+    /// only one that can say it failed.
+    ///
+    /// The services are borrowed for as long as the run lasts and the session
+    /// is not: the returned context does not hold this runner, so the same
+    /// caller can go on to ask it for the turn.
+    #[must_use]
+    pub fn starting<'a>(
+        &self,
+        events: &'a dyn Post,
+        cancel: &'a Cancel,
+        steer: &'a Steer,
+        aside: &'a Aside,
+    ) -> RunContext<'a> {
+        RunContext::new(self.policy, events, cancel, steer, aside)
+    }
+
     /// Takes one turn: the prompt, and the exchange until the model yields.
     ///
-    /// `cancel` arrives cleared: [`Cancel::reset`] is the caller's to call, on
-    /// the thread that reads the keyboard, before the thread this runs on
-    /// exists. Clearing it here would clear a key pressed in between, so a
-    /// flag found raised belongs to this turn and stops it — before the prompt
-    /// is recorded and before a request goes out, whatever a given provider
-    /// makes of being handed a cancel that is already up.
+    /// The run's cancel arrives cleared: [`Cancel::reset`] is the caller's to
+    /// call, on the thread that reads the keyboard, before the thread this
+    /// runs on exists. Clearing it here would clear a key pressed in between,
+    /// so a flag found raised belongs to this turn and stops it — before the
+    /// prompt is recorded and before a request goes out, whatever a given
+    /// provider makes of being handed a cancel that is already up.
+    ///
+    /// One run covers the whole turn, including a turn refused on the way in:
+    /// the pair of events that refusal posts is still something that happened,
+    /// and an event with nothing to attribute it to is the one shape this path
+    /// is not allowed to carry.
     ///
     /// # Errors
     ///
-    /// [`TurnError`] when the provider failed or the user refused a tool. A
-    /// tool that ran and did not like what it found is not an error — that
-    /// goes back to the model as a result it can work around.
-    // The cancel, the steer and the aside are all read off the thread the turn
-    // runs on, and bundling them would drag the three through every signature
-    // the cancel already crosses. The lint counts to five; the turn needs
-    // eight.
-    #[allow(clippy::too_many_arguments)]
+    /// [`TurnError`] wherever the turn could not be finished: the provider
+    /// failed, the user refused a call, the turn produced more than a spend
+    /// ceiling allowed, a compaction did not return a complete recap, the
+    /// window had no room left and compacting it freed none, or tool results
+    /// crossed the per-turn retained-output limit. Nothing a tool does is on
+    /// that list: a call that could not be run at all, and one that ran and
+    /// did not like what it found, both go back to the model as results it can
+    /// work around.
     pub fn turn(
         &mut self,
         prompt: &str,
         attachments: Box<[Attachment]>,
         ask: &mut dyn Ask,
-        events: &dyn Post,
-        cancel: &Cancel,
-        steer: &Steer,
-        aside: &Aside,
+        run: &RunContext<'_>,
     ) -> Result<StopReason, TurnError> {
+        // Whatever the caller handed in, held to what this session allows.
+        // See [`RunContext::held_to`]: the session's policy is the ceiling,
+        // and a context that asks for more gets the session's figure.
+        //
+        // Here rather than in [`Runner::exchange`], which this is the only
+        // shipped caller of. Putting it there would make a run whose
+        // compaction rail differs from its session's unreachable through
+        // `exchange`, and that difference is what
+        // `a_pass_is_measured_against_the_room_its_own_run_holds` opposes to
+        // tell a rail read off the run from one read off the session. The
+        // ceiling belongs where a run is admitted, and the two admitting
+        // entries are this and [`Runner::compact`].
+        let run = &run.held_to(self.policy);
+
         // The number this turn would have, worked out before it is known
         // whether the turn gets to take it. One expression rather than two, so
         // that the turn which runs and the turn which is stopped on the way in
@@ -652,8 +704,10 @@ impl Runner {
             self.turn.next()
         };
 
-        if cancel.requested() {
-            return Ok(Self::stopped(turn, events));
+        let events = run.reporting();
+
+        if run.cancel().requested() {
+            return Ok(Self::stopped(turn, &events));
         }
 
         self.turn = turn;
@@ -667,14 +721,7 @@ impl Runner {
         // that a turn cannot acquire a second way to finish without one. The
         // reason is what tells a truncated answer from a complete one, and it
         // has to reach the thread that draws — a return value never does.
-        let stop = self.exchange(
-            ask,
-            events,
-            cancel,
-            steer,
-            aside,
-            MAX_TOOL_OUTPUT_BYTES_PER_TURN,
-        )?;
+        let stop = self.exchange(ask, run)?.stop();
         events.post(Event::TurnFinished {
             turn: self.turn,
             stop,
@@ -697,7 +744,7 @@ impl Runner {
     /// a start with no finish leaves the turn looking as though it is still
     /// running, and a finish with no start is a shape nothing else here
     /// produces.
-    fn stopped(turn: TurnId, events: &dyn Post) -> StopReason {
+    fn stopped(turn: TurnId, events: &Reporter<'_>) -> StopReason {
         let stop = StopReason::Cancelled;
 
         events.post(Event::TurnStarted { turn });
@@ -706,280 +753,49 @@ impl Runner {
         stop
     }
 
-    /// Passes of asking and running, until something ends the turn, under an
-    /// explicit tool-result byte ceiling.
+    /// Passes of asking and running, until something ends the turn.
     ///
     /// A failure returns instead, and the caller posts nothing: the failure is
     /// its own event, and a turn with two endings on screen has one too many.
     ///
-    /// The ceiling is an argument rather than the constant so a test can put a
-    /// turn over it without printing megabytes to get there. Every caller that
-    /// is not a test passes [`MAX_TOOL_OUTPUT_BYTES_PER_TURN`].
-    // The cancel, the steer and the aside are all read off the thread the turn
-    // runs on, and bundling them would drag the three through every signature
-    // the cancel already crosses. The lint counts to five; the turn needs
-    // seven.
-    #[allow(clippy::too_many_arguments)]
+    /// Everything the loop needs that is not the session arrives in `run`: who
+    /// it is, how to stop it, what the reader typed at it, what finished behind
+    /// it, where its progress goes, and what it may spend. A test that wants
+    /// a turn to cross the tool-output ceiling lowers that figure in the run's
+    /// policy rather than printing megabytes to get there.
+    ///
+    /// The permission prompt stays outside it, because asking is `&mut`.
     fn exchange(
         &mut self,
         ask: &mut dyn Ask,
-        events: &dyn Post,
-        cancel: &Cancel,
-        steer: &Steer,
-        aside: &Aside,
-        tool_output_maximum: usize,
-    ) -> Result<StopReason, TurnError> {
-        let mut bounds = TurnBounds::default();
+        run: &RunContext<'_>,
+    ) -> Result<RunResult, TurnError> {
+        // Not held to the session here. [`Runner::turn`] does it, and is the
+        // only caller that ships; a test reaching this directly is asking for
+        // the run exactly as it wrote it. A second entry that reaches a
+        // provider without passing through `turn` has to take the ceiling
+        // itself, the way [`Runner::compact`] does.
 
         // The turn's own running totals. A bound only where somebody asked for
         // one: a turn that runs long because there is work in it is not a turn
         // to stop, and what a runaway one actually consumes is this.
+        //
+        // Held out here rather than inside the passes because the loop has
+        // enough ways out that carrying the total back through each return
+        // value would mean writing it at every one. What that buys is the
+        // bookkeeping, not the reporting: the `?` below leaves on the failure
+        // exits without a result, and a `TurnError` has nowhere to put a
+        // figure, so only a turn that ended says what it spent.
         let mut counting = Counting {
             spent: Spend::NONE,
             load: self.load,
-            window: self.model.window,
-            reserve: self.reserve(self.model.window),
+            window: self.spec.model.window,
+            reserve: self.reserve(run.policy().compaction, self.spec.model.window),
         };
 
-        let mut fruitless = 0;
+        let stop = AgentLoop::new(self, run, ask).drive(&mut counting)?;
 
-        loop {
-            // A line typed while the turn ran is worked in here, between one
-            // pass and the next: recorded as a prompt the same way the turn's
-            // own first one was, so the request below carries it and the agent
-            // adjusts course rather than finishing a plan the reader moved past.
-            // Checked at the top so a burst typed in a pass arrives together,
-            // and so it cannot land while a tool call is out.
-            for line in steer.take() {
-                events.post(Event::Steered { line: line.clone() });
-                self.record(Message::said(line));
-                events.post(Event::Carried {
-                    left: self.load.left(counting.window, counting.reserve),
-                });
-            }
-
-            // And what happened while it ran, in the same place for the same
-            // reason: a command the agent was told not to poll for has exited,
-            // and the pass that follows is the first one that can do anything
-            // about it. No `Steered` goes with it — the reader did not type it,
-            // and an event saying they did would put a sentence in the panel
-            // that nobody wrote. The line above it is already on their screen.
-            for note in aside.take() {
-                self.record(Message::said(note));
-                events.post(Event::Carried {
-                    left: self.load.left(counting.window, counting.reserve),
-                });
-            }
-
-            // Read once per pass: `tool_search` can reveal a schema mid-turn.
-            // The exact set measured here is handed to the request below, so an
-            // estimate cannot count one set and send another.
-            let advertised = self.tools.advertised();
-
-            // Recording is what measures the transcript, and it happens on the
-            // runner rather than here; reading it back at the top of each pass
-            // is what makes the check below see the results of the last one.
-            counting.load = self.load;
-            counting
-                .load
-                .requesting(self.model.system.as_deref(), &advertised);
-
-            // Worked out per pass rather than once, because what it is measured
-            // against can be corrected mid-turn: a window learned from a
-            // response is a different window, and a reserve left behind would
-            // be held against the figure that was just disproved.
-            let reserve = self.reserve(counting.window);
-            counting.reserve = reserve;
-
-            if let Some(ceiling) = self.compacting.spend_ceiling
-                && counting.spent.tokens() >= ceiling
-            {
-                return Err(TurnError::Spent { ceiling });
-            }
-
-            // Before the request rather than after the answer, because here the
-            // transcript *is* what the next request would carry — the results
-            // of the last pass are already in it. Checked at the top of the
-            // loop, so it cannot run while a tool call is out, and the turn
-            // carries on afterwards rather than ending.
-            if self.compacting.automatic && counting.load.full(counting.window, reserve) {
-                // The prompt may itself have crossed the boundary, in which
-                // case no preceding load event exists. State the zero the same
-                // arithmetic reached before replacing it with the compaction
-                // activity, so the two cannot appear to disagree.
-                events.post(Event::Carried {
-                    left: counting.left(),
-                });
-                match self.made_room(
-                    Compacting::Full,
-                    events,
-                    cancel,
-                    &mut fruitless,
-                    &mut counting.spent,
-                )? {
-                    // Re-enter the boundary check against the reduced load.
-                    // A prune that helped but did not help enough may still need
-                    // the complete-active-pass recap before any request is safe.
-                    After::Carry => continue,
-                    After::Stuck => return Err(TurnError::NoRoom),
-                    After::Stopped => return Ok(StopReason::Cancelled),
-                }
-            }
-
-            // The other half of the reactive rail. One vendor says the request
-            // did not fit inside a response it went on to stream; the others
-            // refuse it outright, and the remedy is the same either way.
-            // Compaction replaced `self.load`; refresh the request estimate
-            // before sending rather than carrying the pre-compaction count into
-            // the response that calibrates it.
-            counting.load = self.load;
-            counting
-                .load
-                .requesting(self.model.system.as_deref(), &advertised);
-
-            let heard = match self.listen(
-                &bounds,
-                Listening {
-                    events,
-                    cancel,
-                    advertised: &advertised,
-                    counting: &mut counting,
-                },
-            ) {
-                Err(TurnError::Provider(ProviderError::WindowExceeded { provider }))
-                    if self.compacting.automatic =>
-                {
-                    match self.made_room(
-                        Compacting::Refused,
-                        events,
-                        cancel,
-                        &mut fruitless,
-                        &mut counting.spent,
-                    )? {
-                        After::Carry => continue,
-                        After::Stopped => return Ok(StopReason::Cancelled),
-                        After::Stuck => {
-                            return Err(TurnError::Provider(ProviderError::WindowExceeded {
-                                provider,
-                            }));
-                        }
-                    }
-                }
-                heard => heard?,
-            };
-            let (answer, said) = heard;
-
-            // And what the response reported goes the other way: the counts a
-            // provider sends are read here and belong to the session, as does a
-            // window it proved larger than anybody had written down.
-            self.load = counting.load;
-            self.model.window = counting.window;
-
-            // The provider read the request and could not fit it. Making room
-            // and asking the same question again is the whole remedy, and it is
-            // the reason this reason is not folded in with the ceiling that
-            // cuts an answer short.
-            if said == StopReason::WindowExceeded {
-                // What streamed before the cut was produced and delivered, so
-                // it is written down with the reason it stopped — whether the
-                // loop goes on to make room or hands the stop back. A record
-                // that dropped it would end the stream mid-sentence with no
-                // explanation, which a turn is promised never to do.
-                bounds.heard(&answer);
-                let (text, _calls) = answer.finish();
-                if !text.is_empty() {
-                    self.record(Message::Agent {
-                        text,
-                        calls: Vec::new(),
-                        stop: Some(said),
-                    });
-                }
-                if !self.compacting.automatic {
-                    return Ok(said);
-                }
-                match self.made_room(
-                    Compacting::Refused,
-                    events,
-                    cancel,
-                    &mut fruitless,
-                    &mut counting.spent,
-                )? {
-                    After::Carry => continue,
-                    After::Stuck => return Err(TurnError::NoRoom),
-                    After::Stopped => return Ok(StopReason::Cancelled),
-                }
-            }
-            bounds.heard(&answer);
-            let (text, calls) = answer.finish();
-
-            if let Some(stop) = Self::over(said, &calls) {
-                // Calls the model did not finish asking for go no further. A
-                // call is written to the transcript only once it has a result,
-                // and these will never get one.
-                //
-                // The reason is written down with them. It is what the session
-                // log carries into a replay and what the providers send back to
-                // the model, and both of those outlive the notice the user read
-                // while it happened.
-                self.record(Message::Agent {
-                    text,
-                    calls: Vec::new(),
-                    stop: Some(stop),
-                });
-                return Ok(stop);
-            }
-
-            for call in &calls {
-                // A name no tool answers to is a call `Work` refuses a moment
-                // later, and it has nothing to say about itself first.
-                events.post(Event::ToolRequested {
-                    summary: self.about(call),
-                    backgroundable: self.backgroundable(call),
-                    call: call.clone(),
-                });
-            }
-
-            // Recorded before they run, because running them is what changes
-            // the tree: a turn that ends part way through a tool pass would
-            // otherwise leave a log whose last word is the prompt, and a
-            // continued session that reads files it has already edited. A log
-            // ending on a call nothing answered is the shape the replay already
-            // drops on the way back in. The calls are cloned because the pass
-            // needs them too — one pass's worth, which is what the turn holds
-            // either way and does not grow with the transcript.
-            self.record(Message::Agent {
-                text,
-                calls: calls.clone(),
-                stop: Some(said),
-            });
-
-            let (results, went, output_bytes) = Work {
-                tools: &self.tools,
-                permission: &mut self.permission,
-                ask,
-                events,
-                cancel,
-            }
-            .pass(&calls, bounds.tool_output, tool_output_maximum);
-
-            bounds.tool_output = bounds.tool_output.saturating_add(output_bytes);
-
-            self.record(Message::ToolResults(results));
-            events.post(Event::Carried {
-                left: self.load.left(counting.window, counting.reserve),
-            });
-
-            match went {
-                Went::On => {}
-                Went::Stopped(stop) => return Ok(stop),
-                Went::Refused(name) => return Err(TurnError::Refused(name)),
-                Went::OutputLimit => {
-                    return Err(TurnError::ToolOutputBytes {
-                        maximum: tool_output_maximum,
-                    });
-                }
-            }
-        }
+        Ok(RunResult::new(run.run(), stop, counting.spent))
     }
 
     /// Makes room, and says what the turn may do next.
@@ -993,19 +809,14 @@ impl Runner {
     /// # Errors
     ///
     /// [`TurnError`] where the request for the recap itself failed.
-    // The spend joins the cancel and the events on the way down, and bundling
-    // them would drag all three through every signature the cancel already
-    // crosses. The lint counts to five; making room needs six.
-    #[allow(clippy::too_many_arguments)]
     fn made_room(
         &mut self,
         why: Compacting,
-        events: &dyn Post,
-        cancel: &Cancel,
+        run: &RunContext<'_>,
         fruitless: &mut u8,
         spent: &mut Spend,
     ) -> Result<After, TurnError> {
-        match self.compact(why, events, cancel, spent)? {
+        match self.compact(why, run, spent)? {
             // Not counted against the goes this loop is allowed, because it was
             // not a go: nothing was replaced and nobody is going to ask again.
             Room::Stopped => return Ok(After::Stopped),
@@ -1058,28 +869,31 @@ impl Runner {
     /// have in common.
     ///
     /// A failure that reached none of that is asked again instead, up to
-    /// [`RETRIES`] times. The one it exists for is a connection the provider
-    /// closed while the tools ran — the turn's own pauses are exactly where a
-    /// pooled connection goes stale, so the request that fails is the one after
-    /// a tool pass rather than the first, and the discussion stops part way
-    /// through. Both halves of the condition carry weight: only a failure
-    /// [`ProviderError::transient`] calls a moment rather than a request, and
-    /// only a response that said nothing. Deltas are posted as they arrive, so
-    /// re-asking after one would put an answer on screen twice and leave the
-    /// transcript holding the half that was taken back.
+    /// [`crate::Retry::attempts`] times. The one it exists for is a connection
+    /// the provider closed while the tools ran — the turn's own pauses are
+    /// exactly where a pooled connection goes stale, so the request that fails
+    /// is the one after a tool pass rather than the first, and the discussion
+    /// stops part way through. All three parts of the condition carry weight:
+    /// only a failure [`ProviderError::transient`] calls a moment rather than
+    /// a request, and only a response that has neither kept a word of what it
+    /// said nor given a reason for stopping. Deltas are posted as
+    /// they arrive, so re-asking after one would put an answer on screen twice
+    /// and leave the transcript holding the half that was taken back.
+    ///
+    /// [`ProviderError::transient`]: crucible_core::ProviderError::transient
     fn listen(
         &mut self,
         bounds: &TurnBounds,
         mut listening: Listening<'_>,
     ) -> Result<(Answer, StopReason), TurnError> {
-        let mut left = RETRIES;
-        let mut pause = FIRST_PAUSE;
+        let mut left = listening.run.policy().retry.attempts;
+        let mut pause = listening.run.policy().retry.first_pause;
 
         loop {
             let mut answer = Answer::within(
                 self.provider.name(),
                 bounds.retained,
-                MAX_TURN_RESPONSE_BYTES,
+                listening.run.policy().bounds.response_bytes,
             );
 
             let problem = match self.hearing(&mut answer, &mut listening) {
@@ -1089,11 +903,11 @@ impl Runner {
 
             if left > 0 && Self::again(&problem, &answer) {
                 left -= 1;
-                listening.events.post(Event::Retrying);
+                listening.run.reporting().post(Event::Retrying);
 
                 // A pause the user sat through and then had to interrupt would
                 // be this program keeping them waiting rather than the provider.
-                if Self::pausing(pause, listening.cancel) {
+                if Self::pausing(pause, listening.run.cancel()) {
                     pause = pause.saturating_mul(2);
                     continue;
                 }
@@ -1119,7 +933,8 @@ impl Runner {
     /// and a protocol module with no word for one leave nothing between them,
     /// and a set with nothing in it is the honest answer to that.
     fn carries(&self) -> Modalities {
-        self.model
+        self.spec
+            .model
             .accepts
             .unwrap_or_else(Modalities::empty)
             .intersection(self.provider.spells())
@@ -1155,25 +970,28 @@ impl Runner {
         // sentence about it.
         let aged = resolved.aged(&self.transcript);
         if !aged.is_empty() {
-            listening.events.post(Event::Aged { files: aged });
+            listening.run.reporting().post(Event::Aged { files: aged });
         }
         // Beside it rather than folded into it: a file the model does not read
         // stayed behind for a reason the reader answers differently, and a row
         // that said one thing about both would be wrong about one of them.
         let unread = resolved.unread(&self.transcript);
         if !unread.is_empty() {
-            listening.events.post(Event::Unread { files: unread });
+            listening
+                .run
+                .reporting()
+                .post(Event::Unread { files: unread });
         }
 
         let mut stream = self.provider.stream(
             self.request(listening.advertised, &attached),
-            listening.cancel,
+            listening.run.cancel(),
         )?;
 
         Self::hear(
             stream.as_mut(),
             answer,
-            listening.events,
+            &listening.run.reporting(),
             listening.counting,
         )
         .and_then(|()| answer.reached().map_err(TurnError::from))
@@ -1215,7 +1033,7 @@ impl Runner {
     fn hear(
         stream: &mut dyn DeltaStream,
         answer: &mut Answer,
-        events: &dyn Post,
+        events: &Reporter<'_>,
         counting: &mut Counting,
     ) -> Result<(), TurnError> {
         // What the turn had spent before this response opened. Each reading a
@@ -1297,7 +1115,7 @@ impl Runner {
     }
 
     /// Updates the reading when unreported response bytes cross a percentage.
-    fn output_grew(events: &dyn Post, counting: &mut Counting, bytes: usize) {
+    fn output_grew(events: &Reporter<'_>, counting: &mut Counting, bytes: usize) {
         let before = counting.left();
         counting.load.produced(bytes);
         let left = counting.left();
@@ -1328,12 +1146,12 @@ impl Runner {
         attached: &'a [Attached<'a>],
     ) -> Request<'a> {
         Request {
-            model: &self.model.name,
+            model: &self.spec.model.name,
             transcript: &self.transcript,
             tools: advertised,
-            max_tokens: self.model.max_tokens,
-            system: self.model.system.as_deref(),
-            effort: self.model.effort,
+            max_tokens: self.spec.model.max_tokens,
+            system: self.spec.instructions(),
+            effort: self.spec.model.effort,
             attached,
         }
     }

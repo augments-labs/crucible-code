@@ -1,9 +1,15 @@
-//! Identifiers for the three things that need naming: a session, a turn within
-//! it, and a tool call within a turn.
+//! Identifiers for the things that need naming: a session, a turn within it, a
+//! tool call within a turn, one execution, and the agent an execution runs.
 //!
 //! Each is a newtype, so a session identifier cannot be passed where a turn
 //! ordinal belongs. Text arriving from a file name or a command-line flag is
 //! parsed into one of these at the boundary and never re-validated inside.
+//!
+//! A session, a turn and an execution name three different things and none is
+//! derived from another. One session holds many turns; one turn is driven by an
+//! execution; and an execution will later be able to start further executions
+//! that are no turn of anybody's session. Deriving one from another would make
+//! the tree of executions unrepresentable the moment there is more than one.
 
 use std::fmt;
 use std::str::FromStr;
@@ -158,6 +164,122 @@ fn legacy_shaped(text: &str) -> bool {
                 .bytes()
                 .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
     })
+}
+
+/// Names one execution: an agent driven from a prompt to an ending.
+///
+/// Minted per execution and never read off a [`SessionId`] or a [`TurnId`].
+/// A session holds many executions, and an execution will be able to hold
+/// further ones; an identifier computed from either of the others could not
+/// tell two runs of the same turn apart.
+///
+/// A UUID v7, so these sort by start time the way a session name does —
+/// ordered here rather than only after `to_string`, because this is what every
+/// event is filed under and a reader grouping a transcript by run should not
+/// have to render one to key it. `Copy` and pointer-free on purpose: every
+/// event a run posts carries one, and an identifier that allocated would put
+/// an allocation on the delta path.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct RunId(Uuid);
+
+impl RunId {
+    /// Mints an identifier for an execution starting now.
+    #[must_use]
+    pub fn new() -> Self {
+        Self(Uuid::now_v7())
+    }
+}
+
+/// Every call is a different id.
+///
+/// Not the usual `Default`, which answers with one agreed value. Here there is
+/// no such value — a run that has not been named is not a run — so this exists
+/// only because [`RunId::new`] takes nothing, which the lint set reads as an
+/// obligation.
+///
+/// It leaves a trap for a later type. `#[derive(Default)]` around a field of
+/// this one mints a fresh execution rather than leaving a blank, and nothing
+/// at the deriving site says so. A struct holding one writes its own `Default`
+/// or does without.
+impl Default for RunId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl fmt::Display for RunId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0.as_hyphenated())
+    }
+}
+
+impl fmt::Debug for RunId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "RunId({})", self.0.as_hyphenated())
+    }
+}
+
+/// Names one reusable agent definition.
+///
+/// Text, because an agent is written down by somebody and referred to by the
+/// name they gave it — in a configuration document, on a command line, and
+/// from another agent that may delegate to it. Stored as given: what makes a
+/// name acceptable belongs to whatever registers definitions, not here. The
+/// empty string included — `AgentId::new("")` builds, and there is no registry
+/// yet to turn it away.
+///
+/// Looked up by, like every other name in this module: the thing a definition
+/// is filed under is the thing something has to be able to find it by, and a
+/// name that cannot be a key would make whatever registers definitions invent
+/// a second one. Being a key is not being a *valid* key: two definitions
+/// written down under the same word — `""` included — are one entry, and the
+/// second silently replaces the first. Whatever registers definitions is where
+/// that stops being allowed, at the parse boundary this module describes.
+///
+/// ```
+/// use std::collections::{BTreeMap, HashMap};
+/// use crucible_core::AgentId;
+///
+/// let mut written = BTreeMap::new();
+/// written.insert(AgentId::new("reviewing"), "reads");
+/// written.insert(AgentId::new("coding"), "writes");
+///
+/// assert_eq!(written.get(&AgentId::new("coding")), Some(&"writes"));
+/// assert_eq!(
+///     written.keys().map(AgentId::as_str).collect::<Vec<_>>(),
+///     ["coding", "reviewing"]
+/// );
+///
+/// let unordered: HashMap<AgentId, &str> = written.into_iter().collect();
+/// assert_eq!(unordered[&AgentId::new("reviewing")], "reads");
+/// ```
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AgentId(Box<str>);
+
+impl AgentId {
+    /// Takes the name an agent definition was written down under.
+    #[must_use]
+    pub fn new(id: impl Into<Box<str>>) -> Self {
+        Self(id.into())
+    }
+
+    /// The name as it was written.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for AgentId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl fmt::Debug for AgentId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "AgentId({})", self.0)
+    }
 }
 
 /// Position of a turn within a session, counting from one.
@@ -362,6 +484,46 @@ mod tests {
         assert_eq!(TurnId::FIRST.get(), 1);
         assert_eq!(TurnId::FIRST.next().get(), 2);
         assert!(TurnId::FIRST < TurnId::FIRST.next());
+    }
+
+    #[test]
+    fn run_ids_minted_together_differ() {
+        let minted: Vec<RunId> = (0..64).map(|_| RunId::new()).collect();
+
+        let mut seen = std::collections::HashSet::new();
+        for id in &minted {
+            assert!(seen.insert(*id), "minted twice: {id}");
+        }
+    }
+
+    #[test]
+    fn a_run_id_reads_as_a_hyphenated_uuid() {
+        let shown = RunId::new().to_string();
+
+        let hyphens_where_a_uuid_puts_them = shown.len() == 36
+            && shown.char_indices().all(|(i, c)| match i {
+                8 | 13 | 18 | 23 => c == '-',
+                _ => c.is_ascii_hexdigit() && !c.is_ascii_uppercase(),
+            });
+        assert!(hyphens_where_a_uuid_puts_them, "not uuid-shaped: {shown:?}");
+        assert_eq!(format!("{:?}", RunId::new()).len(), "RunId()".len() + 36);
+    }
+
+    #[test]
+    fn a_run_id_is_sixteen_bytes() {
+        // Every event carries one, and events are posted per delta. What that
+        // costs is the whole of why the id is a `Uuid` rather than something
+        // that would have to be looked up or reference-counted.
+        assert_eq!(std::mem::size_of::<RunId>(), 16);
+    }
+
+    #[test]
+    fn an_agent_id_keeps_the_name_it_was_written_down_under() {
+        let id = AgentId::new("coding");
+
+        assert_eq!(id.as_str(), "coding");
+        assert_eq!(id.to_string(), "coding");
+        assert_eq!(format!("{id:?}"), "AgentId(coding)");
     }
 
     #[test]

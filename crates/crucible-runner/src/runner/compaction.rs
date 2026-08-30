@@ -28,9 +28,11 @@
 use std::fmt::Write as _;
 
 use crucible_core::{
-    Cancel, Compacted, Compacting, Delta, Message, Post, Request, Room, Spend, StopReason, ToolId,
-    ToolOutput, Transcript, TurnError,
+    Compacted, Compacting, Delta, Message, Request, Room, Spend, StopReason, ToolId, ToolOutput,
+    Transcript, TurnError,
 };
+
+use crate::context::RunContext;
 
 use super::{Load, Runner};
 
@@ -141,15 +143,21 @@ impl Runner {
     pub fn compact(
         &mut self,
         why: Compacting,
-        events: &dyn Post,
-        cancel: &Cancel,
+        run: &RunContext<'_>,
         spent: &mut Spend,
     ) -> Result<Room, TurnError> {
+        // Held to this session's policy for the reason [`Runner::turn`] is:
+        // the recap boundary below is read off the run, and a run asking for
+        // more than the session allows does not get it.
+        let run = &run.held_to(self.policy);
+
+        let events = run.reporting();
+
         // Choose the recap boundary before pruning. Clearing output can make
         // old turns look cheap enough to keep, but where a recap was possible
         // before it remains useful afterwards; only the previously fruitless
         // no-middle case should turn into prune-only progress.
-        let replacing = self.replacing();
+        let replacing = self.replacing(run.policy().compaction.keep_tokens);
 
         // Measured before anything moves, because this is what the compaction
         // is judged against: pruning can be all the room a current turn needs,
@@ -175,7 +183,9 @@ impl Runner {
                     kept: self.transcript.turns(),
                 };
                 events.post(crucible_core::Event::Compacted { compacted });
-                events.post(crucible_core::Event::Carried { left: self.left() });
+                events.post(crucible_core::Event::Carried {
+                    left: self.left_under(run.policy().compaction),
+                });
                 return Ok(Room::Made(compacted));
             }
 
@@ -208,7 +218,7 @@ impl Runner {
         let touched = self.tracked(replacing);
         events.post(crucible_core::Event::Compacting { why, part: 0 });
 
-        let recap = match self.recap(why, &touched, events, cancel, spent)? {
+        let recap = match self.recap(why, &touched, run, spent)? {
             Recap::Complete(recap) => recap,
             Recap::Incomplete => return Err(TurnError::RecapIncomplete),
             Recap::Stopped => return Ok(Room::Stopped),
@@ -246,7 +256,7 @@ impl Runner {
             self.load.recounted(message);
         }
         self.load
-            .requesting(self.model.system.as_deref(), &self.tools.advertised());
+            .requesting(self.spec.instructions(), &self.tools.advertised());
 
         // Turns kept whole rather than messages, because that is the shape a
         // reader thinks in: the recap stands in for the front, and what is left
@@ -261,7 +271,9 @@ impl Runner {
             kept,
         };
         events.post(crucible_core::Event::Compacted { compacted });
-        events.post(crucible_core::Event::Carried { left: self.left() });
+        events.post(crucible_core::Event::Carried {
+            left: self.left_under(run.policy().compaction),
+        });
 
         Ok(Room::Made(compacted))
     }
@@ -287,8 +299,8 @@ impl Runner {
     /// load has one, and the pessimistic uncalibrated rate before any response
     /// has been seen — the same figure the load is measured by, so a full
     /// window is judged by the number that decided it was full.
-    fn replacing(&self) -> Option<usize> {
-        let budget = self.compacting.keep_tokens.max(1);
+    fn replacing(&self, keep_tokens: u64) -> Option<usize> {
+        let budget = keep_tokens.max(1);
         let messages = self.transcript.messages();
 
         // The newest turn is kept whole. Starting one user prompt back from the
@@ -394,18 +406,15 @@ impl Runner {
         (files.read, files.modified)
     }
 
-    // The spend joins the cancel and the events on the way down, and bundling
-    // them would drag all three through every signature the cancel already
-    // crosses. The lint counts to five; the recap needs six.
-    #[allow(clippy::too_many_arguments)]
     fn recap(
         &mut self,
         why: Compacting,
         touched: &(Vec<String>, Vec<String>),
-        events: &dyn Post,
-        cancel: &Cancel,
+        run: &RunContext<'_>,
         spent: &mut Spend,
     ) -> Result<Recap, TurnError> {
+        let events = run.reporting();
+        let cancel = run.cancel();
         let asking = RECAP.to_owned();
         let asking_bytes = asking.len() as u64;
         self.transcript.push(Message::said(asking));
@@ -420,13 +429,14 @@ impl Runner {
             .load
             .tokens()
             .saturating_add(Load::cautious(asking_bytes));
-        let safe = self.model.window.map_or(u32::MAX, |window| {
+        let safe = self.spec.model.window.map_or(u32::MAX, |window| {
             u32::try_from(u64::from(window).saturating_sub(request_tokens)).unwrap_or(u32::MAX)
         });
-        let room = self
-            .compacting
+        let room = run
+            .policy()
+            .compaction
             .recap_tokens
-            .min(self.model.max_tokens)
+            .min(self.spec.model.max_tokens)
             .min(safe);
         if room == 0 {
             self.transcript.pop();
@@ -435,12 +445,12 @@ impl Runner {
 
         let asked = self.provider.stream(
             Request {
-                model: &self.model.name,
+                model: &self.spec.model.name,
                 transcript: &self.transcript,
                 tools: &[],
                 max_tokens: room,
                 system: None,
-                effort: self.model.effort,
+                effort: self.spec.model.effort,
                 // Nothing, deliberately. This request exists to turn a
                 // transcript into a recap, and a recap is text; re-sending
                 // megabytes of pictures to write one would spend the whole
@@ -599,7 +609,7 @@ impl Runner {
             self.load.recounted(message);
         }
         self.load
-            .requesting(self.model.system.as_deref(), &self.tools.advertised());
+            .requesting(self.spec.instructions(), &self.tools.advertised());
     }
 }
 

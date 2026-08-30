@@ -483,27 +483,22 @@ fn a_session_with_nothing_chosen_starts_and_asks_for_no_model() {
 fn a_rung_the_run_resolved_is_on_the_model_every_turn_is_asked_of() {
     // The one thing this function does with it: a rung that stopped here would
     // be shown on the welcome and asked for nowhere.
-    let asking = model(
+    let asking = coding(
         "anthropic",
         "claude-opus-5",
         Some(Effort::Xhigh),
         &Settings::default(),
-        String::new(),
+        "",
     );
 
-    assert_eq!(asking.effort, Some(Effort::Xhigh));
+    assert_eq!(asking.model.effort, Some(Effort::Xhigh));
 
     // And nothing where nothing said, which is the field left off rather than
     // a rung this program chose on the vendor's behalf.
     assert_eq!(
-        model(
-            "anthropic",
-            "claude-opus-5",
-            None,
-            &Settings::default(),
-            String::new()
-        )
-        .effort,
+        coding("anthropic", "claude-opus-5", None, &Settings::default(), "")
+            .model
+            .effort,
         None
     );
 }
@@ -562,25 +557,19 @@ fn an_explicit_context_window_can_opt_back_into_a_larger_window() {
 fn how_long_an_answer_may_be_is_the_model_own_limit_held_under_the_ceiling() {
     // A model this build has the limits of: its own output limit is far above
     // the ceiling, so the ceiling is what is asked for.
-    let known = model(
-        "anthropic",
-        "claude-opus-5",
-        None,
-        &Settings::default(),
-        String::new(),
-    );
-    assert_eq!(known.max_tokens, CEILING);
+    let known = coding("anthropic", "claude-opus-5", None, &Settings::default(), "");
+    assert_eq!(known.model.max_tokens, CEILING);
 
     // And one it has never heard of, where nothing is known and the lower
     // figure is what keeps a request from being refused outright.
-    let unknown = model(
+    let unknown = coding(
         "anthropic",
         "claude-from-the-future",
         None,
         &Settings::default(),
-        String::new(),
+        "",
     );
-    assert_eq!(unknown.max_tokens, UNKNOWN_CEILING);
+    assert_eq!(unknown.model.max_tokens, UNKNOWN_CEILING);
 }
 
 /// What `named` gets to reach the web with, given a key and maybe a model.
@@ -746,10 +735,172 @@ fn the_tools_a_session_already_had_are_unchanged_in_name_and_order() {
 
 #[test]
 fn recap_room_defaults_to_ten_k_and_accepts_a_configured_ceiling() {
-    let defaults = compacting(&Settings::default());
+    let defaults = policy(&Settings::default()).compaction;
     assert_eq!(defaults.recap_tokens, 10_240);
 
     let sample = Sample::new("compaction-recap-ceiling");
     let configured = sample.settings(r#"{"compaction":{"recap":12000}}"#);
-    assert_eq!(compacting(&configured).recap_tokens, 12_000);
+    assert_eq!(policy(&configured).compaction.recap_tokens, 12_000);
+}
+
+#[test]
+fn the_agent_is_named_coding_and_stands_under_what_the_wiring_asked() {
+    // Two of the five fields the wiring decides, and the two a later reader
+    // arrives needing. Nothing outside a test reads `id` yet — a later
+    // registry will select on it — and `instructions` is the definition's
+    // opening value: what the window
+    // reading and `Runner::instructions` answer with before a turn is taken.
+    // `Runner::telling` replaces it before every turn, the first included, so
+    // no turn goes out under this exact text.
+    //
+    // So this pins what `coding` puts in the definition, and not that a prompt
+    // reaches the runner at all: it is handed `asked` and asserts it comes back
+    // out. `a_session_is_assembled_asking_under_the_prompt_the_wiring_built`
+    // is the one that follows it through `assemble`.
+    let asked = "read the workspace before changing it";
+    let built = coding(
+        "anthropic",
+        "claude-opus-5",
+        None,
+        &Settings::default(),
+        asked,
+    );
+
+    assert_eq!(built.id.as_str(), "coding");
+    assert_eq!(built.instructions(), Some(asked));
+}
+
+#[test]
+fn a_definition_the_wiring_had_nothing_to_say_under_is_told_nothing() {
+    // The rule `AgentSpec::told` enforces, at the one site outside the runner
+    // that writes the field: no instructions and empty instructions are two
+    // different requests, and a prompt nobody wrote is the first.
+    //
+    // Unreachable through the shipped wiring, because `standing::under` always
+    // names where the work is and so never returns an empty prompt. What this
+    // pins is that the composition root reaches the field through the write
+    // path that enforces the rule rather than around it — which is what a
+    // definition read from a file, where an empty body is an ordinary case,
+    // will arrive needing.
+    let built = coding("anthropic", "claude-opus-5", None, &Settings::default(), "");
+
+    assert_eq!(
+        built.instructions(),
+        None,
+        "a definition nobody wrote a prompt for carries the empty string"
+    );
+}
+
+#[test]
+fn a_session_is_assembled_asking_under_the_prompt_the_wiring_built() {
+    // What `coding` is handed, rather than what it does with it. Everything
+    // above tests the two ends — `standing::under` builds a prompt, `coding`
+    // keeps the one it is given, `policy` resolves a document — and nothing
+    // tested that either arrives, so `assemble` could pass an empty string or
+    // drop the resolved ceiling on the way through and leave the whole package
+    // green.
+    let sample = Sample::new("startup-assembled-under");
+    let (logs, workspace) = (sample.logs(), sample.workspace());
+    let configured = sample.settings(r#"{"compaction":{"spendCeiling":500000}}"#);
+
+    let runner = assemble(&Startup {
+        provider: None,
+        unasked: NOTHING_TO_ASK,
+        model: None,
+        effort: None,
+        resuming: Resuming::No,
+        mode: Mode::Ask,
+        leaving: &crucible_tools::Background::new(),
+        settings: &configured,
+        sessions: &logs,
+        workspace: &workspace,
+        cancel: &Cancel::new(),
+        ledger: &Ledger::new(),
+        revealed: &Revealed::new(),
+        plan: &Plan::new(),
+        putting: &Putting::new(),
+        terminal: true,
+        from: &|_| None,
+        stored: &StoredCredentials::default(),
+        subscriptions: &Subscriptions::production(),
+    })
+    .expect("a session to assemble");
+
+    // The workspace root, because `standing::under` is the only thing that puts
+    // it there. A substring rather than the whole prompt: this is about the
+    // prompt having been built and handed over, and the wording of it belongs
+    // to the tests that own the wording.
+    let asked = runner
+        .instructions()
+        .expect("a turn is asked under something");
+    assert!(
+        asked.contains(&workspace.root().display().to_string()),
+        "the session was assembled without the prompt the wiring built"
+    );
+
+    assert_eq!(
+        runner.policy().bounds.spend,
+        Some(500_000),
+        "the ceiling the document set did not reach the runner"
+    );
+}
+
+#[test]
+fn a_configured_spend_ceiling_is_resolved_off_the_document() {
+    // The figure a document sets and the loop enforces, with the composition
+    // root the only place the two meet. Nothing said means no ceiling, which is
+    // the same absence a document that never mentions it leaves.
+    assert_eq!(policy(&Settings::default()).bounds.spend, None);
+
+    let sample = Sample::new("startup-spend-ceiling");
+    let configured = sample.settings(r#"{"compaction":{"spendCeiling":500000}}"#);
+    assert_eq!(policy(&configured).bounds.spend, Some(500_000));
+}
+
+#[test]
+fn the_figures_no_document_reaches_are_the_ones_this_program_ships() {
+    // The other half of the resolution above: five compaction figures and the
+    // spend ceiling come out of a document, and the two byte ceilings and the
+    // retry policy deliberately do not. Nothing else in the tree reads them
+    // back, so without this a composition root that zeroed either one would
+    // leave every test green while the loop lost its memory bound and its
+    // patience with a provider.
+    let shipped = RunPolicy::default();
+
+    let sample = Sample::new("startup-unreached-figures");
+    let configured = sample.settings(
+        r#"{"compaction":{"spendCeiling":500000,"keep":1000,"recap":12000,"askOnResume":10}}"#,
+    );
+
+    for (named, built) in [
+        ("a machine with no document", policy(&Settings::default())),
+        (
+            "a document that set every figure it can",
+            policy(&configured),
+        ),
+    ] {
+        assert_eq!(
+            built.bounds.response_bytes, shipped.bounds.response_bytes,
+            "{named} moved the response ceiling"
+        );
+        assert_eq!(
+            built.bounds.tool_output_bytes, shipped.bounds.tool_output_bytes,
+            "{named} moved the tool-output ceiling"
+        );
+        assert_eq!(
+            built.retry.attempts, shipped.retry.attempts,
+            "{named} moved how many times a failed response is asked for again"
+        );
+        assert_eq!(
+            built.retry.first_pause, shipped.retry.first_pause,
+            "{named} moved the wait before the first retry"
+        );
+    }
+
+    assert_eq!(
+        policy(&configured).bounds.spend,
+        Some(500_000),
+        "the document above was not read, so the figures it left alone prove nothing"
+    );
+    assert_eq!(policy(&configured).compaction.keep_tokens, 1_000);
 }

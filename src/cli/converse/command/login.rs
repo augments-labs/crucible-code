@@ -630,8 +630,8 @@ mod tests {
     use std::cell::Cell;
 
     use crucible_auth::Store;
-    use crucible_core::{Cancel, Revealed};
-    use crucible_runner::{Model, Tools};
+    use crucible_core::{AgentId, Cancel, Revealed};
+    use crucible_runner::{AgentSpec, Model, Tools};
     use crucible_tools::{Ledger, Plan};
     use crucible_tui::Recording;
 
@@ -682,14 +682,16 @@ mod tests {
         Runner::new(
             Box::new(Script::new(Vec::new())),
             Tools::new(),
-            Model {
-                name: model.into(),
-                max_tokens: 64,
-                window: None,
-                accepts: None,
-                system: None,
-                effort: None,
-            },
+            AgentSpec::new(
+                AgentId::new("test"),
+                Model {
+                    name: model.into(),
+                    max_tokens: 64,
+                    window: None,
+                    accepts: None,
+                    effort: None,
+                },
+            ),
             crucible_runner::Session::nowhere(),
         )
     }

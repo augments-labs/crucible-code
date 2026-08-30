@@ -29,6 +29,7 @@ mod permission;
 mod prompt;
 mod provider;
 mod revealed;
+mod run;
 mod source;
 mod steer;
 mod tool;
@@ -44,8 +45,8 @@ pub use credential::{
     ApiKey, Credential, CredentialError, Header, HeaderKey, Outgoing, Redactions,
 };
 pub use diff::{Change, Diff, Line};
-pub use event::{Event, Post, TurnError};
-pub use ids::{IdError, SessionId, ToolId, TurnId};
+pub use event::{Event, EventEnvelope, Post, Reporter, TurnError};
+pub use ids::{AgentId, IdError, RunId, SessionId, ToolId, TurnId};
 pub use modality::{Modalities, Modality, ModalityError};
 pub use permission::{
     Approved, Ask, Command, Disposition, Grant, Host, Minted, Mode, Permission, Remember,
@@ -57,6 +58,7 @@ pub use provider::{
     ProviderError, ProviderLimit, Request, Spend, ToolSchema,
 };
 pub use revealed::Revealed;
+pub use run::Ancestry;
 pub use source::{Fetch, Page, Search, SearchResult, SourceError};
 pub use steer::Steer;
 pub use tool::{

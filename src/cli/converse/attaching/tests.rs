@@ -2,11 +2,11 @@ use std::fs;
 use std::sync::mpsc;
 
 use crucible_core::{
-    Aside, Ask, Cancel, Delta, DeltaStream, Event, Message, Modalities, Modality, Provider,
-    ProviderError, Remember, Request, Sensitivity, Steer, StopReason, ToolCall, Transcript,
-    Verdict, Workspace, written,
+    AgentId, Aside, Ask, Cancel, Delta, DeltaStream, EventEnvelope, Message, Modalities, Modality,
+    Provider, ProviderError, Remember, Request, Sensitivity, Steer, StopReason, ToolCall,
+    Transcript, Verdict, Workspace, written,
 };
-use crucible_runner::{Model, Pruned, Runner, Session, Tools};
+use crucible_runner::{AgentSpec, Model, Pruned, Runner, Session, Tools};
 
 use crucible_tui::{Glyphs, Recording, Renderer};
 
@@ -513,7 +513,7 @@ fn a_png_that_is_not_a_png_is_refused_before_any_request() {
 /// runner's to decide and is proved where the ageing rule is. What is proved
 /// here is the step before it — that what the prompt attached is what the
 /// transcript ends up holding, for this turn and every one after it.
-fn answering() -> (Runner, mpsc::Sender<Event>) {
+fn answering() -> (Runner, mpsc::Sender<EventEnvelope>) {
     let (events, _seen) = mpsc::channel();
 
     (
@@ -523,14 +523,16 @@ fn answering() -> (Runner, mpsc::Sender<Event>) {
                 Delta::Stopped(StopReason::Yielded),
             ]])),
             Tools::new(),
-            Model {
-                name: "script".into(),
-                max_tokens: 64,
-                window: None,
-                accepts: None,
-                system: None,
-                effort: None,
-            },
+            AgentSpec::new(
+                AgentId::new("test"),
+                Model {
+                    name: "script".into(),
+                    max_tokens: 64,
+                    window: None,
+                    accepts: None,
+                    effort: None,
+                },
+            ),
             Session::nowhere(),
         ),
         events,
@@ -564,16 +566,10 @@ fn what_the_prompt_attached_reaches_the_transcript() {
     );
 
     let (mut runner, events) = answering();
+    let (cancel, steer, aside) = (Cancel::new(), Steer::new(), Aside::new());
+    let run = runner.starting(&events, &cancel, &steer, &aside);
     runner
-        .turn(
-            prompt,
-            attachments,
-            &mut Nobody,
-            &events,
-            &Cancel::new(),
-            &Steer::new(),
-            &Aside::new(),
-        )
+        .turn(prompt, attachments, &mut Nobody, &run)
         .expect("the turn to finish");
 
     let Some(Message::User { text, attachments }) = runner.transcript().messages().first() else {
@@ -606,16 +602,10 @@ fn a_prompt_naming_no_file_records_the_message_it_always_did() {
     );
 
     let (mut runner, events) = answering();
+    let (cancel, steer, aside) = (Cancel::new(), Steer::new(), Aside::new());
+    let run = runner.starting(&events, &cancel, &steer, &aside);
     runner
-        .turn(
-            prompt,
-            attachments,
-            &mut Nobody,
-            &events,
-            &Cancel::new(),
-            &Steer::new(),
-            &Aside::new(),
-        )
+        .turn(prompt, attachments, &mut Nobody, &run)
         .expect("the turn to finish");
 
     assert_eq!(
@@ -631,14 +621,16 @@ fn sending() -> Runner {
     Runner::new(
         Box::new(spelling("anthropic")),
         Tools::new(),
-        Model {
-            name: "claude-opus-5".into(),
-            max_tokens: 64,
-            window: None,
-            accepts: None,
-            system: None,
-            effort: None,
-        },
+        AgentSpec::new(
+            AgentId::new("test"),
+            Model {
+                name: "claude-opus-5".into(),
+                max_tokens: 64,
+                window: None,
+                accepts: None,
+                effort: None,
+            },
+        ),
         Session::nowhere(),
     )
 }

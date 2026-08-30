@@ -127,8 +127,8 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use crucible_auth::Store;
-    use crucible_core::{Cancel, Message, Revealed, StopReason, ToolArgs, Transcript};
-    use crucible_runner::{Model, Runner, Session, Tools, recent};
+    use crucible_core::{AgentId, Cancel, Message, Revealed, StopReason, ToolArgs, Transcript};
+    use crucible_runner::{AgentSpec, Model, Runner, Session, Tools, recent};
     use crucible_tools::{Ledger, Plan};
     use crucible_tui::{Recording, Renderer};
 
@@ -233,14 +233,16 @@ mod tests {
         Runner::new(
             Box::new(Script::new(Vec::new())),
             Tools::new(),
-            Model {
-                name: "script".into(),
-                max_tokens: 64,
-                window: None,
-                accepts: None,
-                system: None,
-                effort: None,
-            },
+            AgentSpec::new(
+                AgentId::new("test"),
+                Model {
+                    name: "script".into(),
+                    max_tokens: 64,
+                    window: None,
+                    accepts: None,
+                    effort: None,
+                },
+            ),
             session,
         )
         .resuming(transcript)
@@ -441,14 +443,16 @@ mod tests {
         let mut runner = Runner::new(
             Box::new(Script::new(Vec::new())),
             Tools::new(),
-            Model {
-                name: "script".into(),
-                max_tokens: 64,
-                window: None,
-                accepts: None,
-                system: None,
-                effort: None,
-            },
+            AgentSpec::new(
+                AgentId::new("test"),
+                Model {
+                    name: "script".into(),
+                    max_tokens: 64,
+                    window: None,
+                    accepts: None,
+                    effort: None,
+                },
+            ),
             session,
         );
 

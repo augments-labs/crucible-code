@@ -661,7 +661,8 @@ fn listed<T: Terminal>(
 
 #[cfg(test)]
 mod tests {
-    use crucible_runner::{Model as RunnerModel, Session, Tools};
+    use crucible_core::AgentId;
+    use crucible_runner::{AgentSpec, Model as RunnerModel, Session, Tools};
     use crucible_tui::{Glyphs, Recording, Renderer};
 
     use crate::cli::converse::tests::plain;
@@ -698,14 +699,16 @@ mod tests {
         crucible_runner::Runner::new(
             Box::new(Script::new(Vec::new())),
             Tools::new(),
-            RunnerModel {
-                name: "old".into(),
-                max_tokens: 17,
-                window: Some(99),
-                accepts: None,
-                system: None,
-                effort: None,
-            },
+            AgentSpec::new(
+                AgentId::new("test"),
+                RunnerModel {
+                    name: "old".into(),
+                    max_tokens: 17,
+                    window: Some(99),
+                    accepts: None,
+                    effort: None,
+                },
+            ),
             Session::nowhere(),
         )
     }
@@ -715,14 +718,16 @@ mod tests {
         crucible_runner::Runner::new(
             Box::new(Script::new(Vec::new())),
             Tools::new(),
-            RunnerModel {
-                name: "".into(),
-                max_tokens: 17,
-                window: None,
-                accepts: None,
-                system: None,
-                effort: None,
-            },
+            AgentSpec::new(
+                AgentId::new("test"),
+                RunnerModel {
+                    name: "".into(),
+                    max_tokens: 17,
+                    window: None,
+                    accepts: None,
+                    effort: None,
+                },
+            ),
             Session::nowhere(),
         )
     }
@@ -824,14 +829,16 @@ mod tests {
         let mut runner = crucible_runner::Runner::new(
             Box::new(Script::new(Vec::new())),
             Tools::new(),
-            RunnerModel {
-                name: "old".into(),
-                max_tokens: 17,
-                window: Some(99),
-                accepts: None,
-                system: None,
-                effort: None,
-            },
+            AgentSpec::new(
+                AgentId::new("test"),
+                RunnerModel {
+                    name: "old".into(),
+                    max_tokens: 17,
+                    window: Some(99),
+                    accepts: None,
+                    effort: None,
+                },
+            ),
             Session::nowhere(),
         );
         let mut renderer = Renderer::new(Recording::new(80, 24));

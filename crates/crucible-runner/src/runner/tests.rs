@@ -7,24 +7,58 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    Approved, Aside, Attachment, Carried, Change, Diff, Line, Modalities, Modality, ProviderError,
-    Sensitivity, SessionId, Spend, Summary, Target, Tool, ToolArgs, ToolError, ToolId, ToolOutput,
-    Verdict, Watch,
+    AgentId, Approved, Aside, Attachment, Carried, Change, Diff, EventEnvelope, Line, Modalities,
+    Modality, Post, ProviderError, ProviderLimit, Sensitivity, SessionId, Spend, Summary, Target,
+    Tool, ToolArgs, ToolError, ToolId, ToolOutput, Verdict, Watch,
 };
 
 use sha2::{Digest as _, Sha256};
 
 use super::*;
-use crate::fake::{Fixed, Says, Script, Sent, changing};
+use crate::fake::{Fixed, Says, Script, Sent, Typing, changing};
+use crate::outcome::RunStatus;
+use crate::policy::{Bounds, Retry};
 use crate::sample::Sample;
+
+/// A policy holding one turn's tool output to `maximum` bytes, so a test can
+/// put a turn over the boundary without printing megabytes to get there.
+fn holding(maximum: usize) -> RunPolicy {
+    RunPolicy {
+        bounds: Bounds {
+            tool_output_bytes: maximum,
+            ..Bounds::default()
+        },
+        ..RunPolicy::default()
+    }
+}
 
 /// What the model these tests ask reads: prose and the pictures they attach.
 const READS: Modalities = Modalities::empty()
     .insert(Modality::Text)
     .insert(Modality::Image);
 
+mod aiming;
+mod attachments;
+mod attribution;
 mod compaction;
+mod outcome;
 mod pick_up;
+mod preserved;
+mod spec;
+mod spending;
+
+/// A destination that keeps the event and lets the attribution go.
+///
+/// These assertions are about what a turn does rather than about whose turn it
+/// was, so they go on reading plain events; the attribution module reads the
+/// envelopes itself.
+struct Watching(Sender<Event>);
+
+impl Post for Watching {
+    fn post(&self, reported: EventEnvelope) {
+        drop(self.0.send(reported.into_event()));
+    }
+}
 
 /// A runner over a scripted provider, with somewhere for its events to go.
 struct Scripted {
@@ -34,7 +68,7 @@ struct Scripted {
     cancel: Cancel,
     steer: Steer,
     aside: Aside,
-    events: Sender<Event>,
+    events: Watching,
     seen: Receiver<Event>,
 }
 
@@ -51,14 +85,16 @@ impl Scripted {
             runner: Runner::new(
                 Box::new(script),
                 tools,
-                Model {
-                    name: "claude-test".into(),
-                    max_tokens: 1024,
-                    window: None,
-                    accepts: Some(READS),
-                    system: None,
-                    effort: None,
-                },
+                AgentSpec::new(
+                    AgentId::new("test"),
+                    Model {
+                        name: "claude-test".into(),
+                        max_tokens: 1024,
+                        window: None,
+                        accepts: Some(READS),
+                        effort: None,
+                    },
+                ),
                 session,
             ),
             sent,
@@ -66,7 +102,7 @@ impl Scripted {
             cancel: Cancel::new(),
             steer: Steer::new(),
             aside: Aside::new(),
-            events,
+            events: Watching(events),
             seen,
         }
     }
@@ -78,13 +114,26 @@ impl Scripted {
     /// here and the thing this one has to undo.
     fn within(script: Script, window: u32, compacting: Compaction) -> Self {
         let mut scripted = Self::new(script, Tools::new(), Verdict::Allow);
-        scripted.runner.model.window = Some(window);
-        scripted.runner.compacting = compacting;
+        scripted.runner.spec.model.window = Some(window);
+        scripted.runner.policy.compaction = compacting;
         scripted
     }
 
     fn turn(&mut self, prompt: &str) -> Result<StopReason, TurnError> {
         self.turning(prompt, Box::new([]))
+    }
+
+    /// Makes room the way `/compact` does.
+    ///
+    /// Its own piece of work with no turn around it, so it gets a run of its
+    /// own — which is what the caller in the binary does too.
+    fn compacting(&mut self) -> Result<Room, TurnError> {
+        let run = self
+            .runner
+            .starting(&self.events, &self.cancel, &self.steer, &self.aside);
+
+        self.runner
+            .compact(Compacting::Asked, &run, &mut Spend::default())
     }
 
     /// The same, for a prompt that named files.
@@ -93,15 +142,24 @@ impl Scripted {
         prompt: &str,
         attachments: Box<[Attachment]>,
     ) -> Result<StopReason, TurnError> {
-        self.runner.turn(
-            prompt,
-            attachments,
-            &mut self.says,
-            &self.events,
-            &self.cancel,
-            &self.steer,
-            &self.aside,
-        )
+        let run = self
+            .runner
+            .starting(&self.events, &self.cancel, &self.steer, &self.aside);
+
+        self.runner.turn(prompt, attachments, &mut self.says, &run)
+    }
+
+    /// The same, under a run that asked for less than the session allows.
+    ///
+    /// [`Scripted::turning`] mints its run from the session, so the two
+    /// policies are equal and no assertion made through it can tell a loop
+    /// reading its own run apart from one reading the runner it was started
+    /// from. A descendant narrowing a figure is the case the inheritance rule
+    /// exists for, and this is the only way to write it here.
+    fn turning_under(&mut self, prompt: &str, asking: RunPolicy) -> Result<StopReason, TurnError> {
+        let run = RunContext::new(asking, &self.events, &self.cancel, &self.steer, &self.aside);
+
+        self.runner.turn(prompt, Box::new([]), &mut self.says, &run)
     }
 
     /// The files each request went out without, one entry per request that
@@ -333,7 +391,7 @@ fn a_tool_result_keeps_a_known_window_reading_present() {
         tools([Fixed::new("read").answering(&output)]),
         Verdict::Allow,
     );
-    scripted.runner.model.window = Some(200_000);
+    scripted.runner.spec.model.window = Some(200_000);
 
     scripted.turn(&"x".repeat(200_000)).expect("a turn");
 
@@ -363,7 +421,7 @@ fn exact_usage_cannot_make_streamed_tool_content_appear_to_free_room() {
         saying("done"),
     ]);
     let mut scripted = Scripted::new(script, tools([Fixed::new("read")]), Verdict::Allow);
-    scripted.runner.model.window = Some(200_000);
+    scripted.runner.spec.model.window = Some(200_000);
 
     scripted.turn(&"x".repeat(200_000)).expect("a tool turn");
 
@@ -380,47 +438,54 @@ struct Steering {
     says: Says,
     steer: Steer,
     aside: Aside,
-    events: Sender<Event>,
+    events: Watching,
     seen: Receiver<Event>,
 }
 
 impl Steering {
     fn new(script: Script, tools: Tools) -> Self {
+        Self::steered(Steer::new(), script, tools)
+    }
+
+    /// The same, over a queue the caller already holds.
+    ///
+    /// So a stand-in can put a line in it at a moment the test chooses, rather
+    /// than only before the turn starts.
+    fn steered(steer: Steer, script: Script, tools: Tools) -> Self {
         let (events, seen) = channel();
         let sent = script.sent();
         Self {
             runner: Runner::new(
                 Box::new(script),
                 tools,
-                Model {
-                    name: "claude-test".into(),
-                    max_tokens: 1024,
-                    window: None,
-                    accepts: Some(READS),
-                    system: None,
-                    effort: None,
-                },
+                AgentSpec::new(
+                    AgentId::new("test"),
+                    Model {
+                        name: "claude-test".into(),
+                        max_tokens: 1024,
+                        window: None,
+                        accepts: Some(READS),
+                        effort: None,
+                    },
+                ),
                 Session::nowhere(),
             ),
             sent,
             says: Says::new(Verdict::Allow),
-            steer: Steer::new(),
+            steer,
             aside: Aside::new(),
-            events,
+            events: Watching(events),
             seen,
         }
     }
 
     fn turn(&mut self, prompt: &str) -> Result<StopReason, TurnError> {
-        self.runner.turn(
-            prompt,
-            Box::new([]),
-            &mut self.says,
-            &self.events,
-            &Cancel::new(),
-            &self.steer,
-            &self.aside,
-        )
+        let cancel = Cancel::new();
+        let run = self
+            .runner
+            .starting(&self.events, &cancel, &self.steer, &self.aside);
+
+        self.runner.turn(prompt, Box::new([]), &mut self.says, &run)
     }
 
     fn said(&self) -> String {
@@ -485,7 +550,7 @@ fn a_steered_line_keeps_a_known_window_reading_present() {
         Delta::Stopped(StopReason::Yielded),
     ]]);
     let mut steering = Steering::new(script, Tools::new());
-    steering.runner.model.window = Some(200_000);
+    steering.runner.spec.model.window = Some(200_000);
     steering.steer.say("take this route".into());
 
     steering.turn("first").expect("a turn");
@@ -618,217 +683,6 @@ fn a_turn_that_is_never_told_what_it_spent_says_nothing_about_it() {
 }
 
 #[test]
-fn how_hard_the_session_was_told_to_think_is_on_every_request() {
-    // Every turn, not the first one. The loop asks again after each tool call,
-    // and a rung that reached only the opening request would leave the thinking
-    // the user paid for on the turn that did the least work.
-    let script = Script::new(vec![calling("a", "read", "{}"), saying("done")]);
-    let mut scripted = Scripted::new(script, tools([Fixed::new("read")]), Verdict::Allow);
-    scripted.runner.model.effort = Some(Effort::Max);
-
-    scripted.turn("go").expect("the turn to finish");
-
-    let sent = scripted.sent.lock().unwrap();
-    assert_eq!(sent.len(), 2, "one request, then one after the tool ran");
-    assert!(
-        sent.iter()
-            .all(|request| request.effort == Some(Effort::Max)),
-        "a request went out without it: {sent:?}"
-    );
-}
-
-#[test]
-fn a_provider_handed_over_mid_session_is_the_one_the_next_turn_is_sent_to() {
-    // The half a key given to `/login` needs: a run with no credential resolves
-    // the provider that answers nothing, and until it can be replaced that run
-    // refuses every turn no matter what it is handed afterwards.
-    let first = Script::new(vec![saying("from the first")]);
-    let mut scripted = Scripted::new(first, tools([]), Verdict::Allow);
-
-    scripted.turn("go").expect("the turn to finish");
-
-    let second = Script::new(vec![saying("from the second")]);
-    let after = second.sent();
-    scripted.runner.serve(Box::new(second));
-    scripted.turn("again").expect("the turn to finish");
-
-    assert_eq!(
-        scripted.sent.lock().unwrap().len(),
-        1,
-        "the one it started on"
-    );
-    assert_eq!(after.lock().unwrap().len(), 1, "the one it was handed");
-
-    // And what was said before the swap goes with it. A vendor is who a
-    // transcript is sent to, not something a transcript belongs to.
-    let sent = after.lock().unwrap();
-    let carried = sent.first().expect("the request it was just handed");
-    assert!(
-        carried.carried("from the first"),
-        "the first provider's answer was not carried"
-    );
-}
-
-#[test]
-fn changing_model_replaces_its_limits_and_reestimates_the_load() {
-    let script = Script::new(vec![vec![
-        Delta::Carried(Carried::new(40_000)),
-        Delta::Text("done".into()),
-        Delta::Spent(Spend::new(10_000)),
-        Delta::Stopped(StopReason::Yielded),
-    ]]);
-    let mut scripted = Scripted::new(script, tools([]), Verdict::Allow);
-    scripted.runner.model.window = Some(200_000);
-    scripted.turn("go").expect("a measured turn");
-    assert_eq!(
-        scripted.runner.left(),
-        Some(32),
-        "the exact output correction visibly freed uncompacted context"
-    );
-
-    scripted
-        .runner
-        .ask("other", 4096, Some(1_000_000), Some(READS));
-
-    assert_eq!(scripted.runner.model(), "other");
-    assert_eq!(scripted.runner.model.max_tokens, 4096);
-    assert_eq!(scripted.runner.model.window, Some(1_000_000));
-    assert_eq!(
-        scripted.runner.left(),
-        Some(99),
-        "the transcript was not re-estimated against the new window"
-    );
-    assert_eq!(
-        scripted.runner.load.calibrated(),
-        None,
-        "the old model's exact reading survived the model change"
-    );
-    assert!(
-        scripted.runner.load.tokens() > 0,
-        "the transcript stopped counting"
-    );
-}
-
-#[test]
-fn changing_to_a_model_with_no_known_window_clears_the_numeric_reading() {
-    let script = Script::new(vec![vec![
-        Delta::Carried(Carried::new(40_000)),
-        Delta::Stopped(StopReason::Yielded),
-    ]]);
-    let mut scripted = Scripted::new(script, tools([]), Verdict::Allow);
-    scripted.runner.model.window = Some(200_000);
-    scripted.turn("go").expect("a measured turn");
-    assert_eq!(scripted.runner.left(), Some(77));
-
-    scripted.runner.ask("unbounded", 4_096, None, Some(READS));
-
-    assert_eq!(scripted.runner.left(), None);
-    assert_eq!(scripted.runner.load.calibrated(), None);
-}
-
-#[test]
-fn changing_provider_reestimates_usage_reported_by_the_old_one() {
-    let script = Script::new(vec![vec![
-        Delta::Carried(Carried::new(40_000)),
-        Delta::Text("done".into()),
-        Delta::Spent(Spend::new(10_000)),
-        Delta::Stopped(StopReason::Yielded),
-    ]]);
-    let mut scripted = Scripted::new(script, tools([]), Verdict::Allow);
-    scripted.runner.model.window = Some(200_000);
-    scripted.turn("go").expect("a measured turn");
-    assert_eq!(
-        scripted.runner.left(),
-        Some(32),
-        "the exact output correction visibly freed uncompacted context"
-    );
-
-    scripted.runner.serve(Box::new(Elsewhere));
-
-    assert_eq!(scripted.runner.left(), Some(99));
-    assert_eq!(
-        scripted.runner.load.calibrated(),
-        None,
-        "the old provider's exact reading survived the provider change"
-    );
-    assert!(
-        scripted.runner.load.tokens() > 0,
-        "the transcript stopped counting"
-    );
-}
-
-#[test]
-fn the_vendor_a_session_names_is_the_one_it_would_write_to_now() {
-    // What a status row is drawn from. `/login` hands over a provider mid
-    // session, so a name remembered beside the provider rather than read off
-    // it would go on naming the vendor the session opened with — and the row
-    // saying that is the row somebody checks before sending anything.
-    let script = Script::new(vec![saying("answered")]);
-    let mut scripted = Scripted::new(script, tools([]), Verdict::Allow);
-
-    assert_eq!(scripted.runner.serving(), "script");
-
-    scripted.runner.serve(Box::new(Elsewhere));
-
-    assert_eq!(scripted.runner.serving(), ELSEWHERE);
-}
-
-/// A provider that answers nothing, under a name of its own.
-///
-/// Every other provider here is called the same thing, and one assertion needs
-/// two that can be told apart.
-struct Elsewhere;
-
-/// What it calls itself.
-const ELSEWHERE: &str = "elsewhere";
-
-impl Provider for Elsewhere {
-    fn name(&self) -> &'static str {
-        ELSEWHERE
-    }
-
-    /// A stand-in spells what every real provider here spells today.
-    ///
-    /// It is not a wire protocol, so it has nothing of its own to declare; what
-    /// it must not do is differ, or a test would be exercising a capability no
-    /// provider has.
-    fn spells(&self) -> Modalities {
-        Modalities::empty().insert(Modality::Text)
-    }
-
-    fn stream(
-        &self,
-        _request: Request<'_>,
-        _cancel: &Cancel,
-    ) -> Result<Box<dyn DeltaStream>, ProviderError> {
-        Err(ProviderError::Transport {
-            provider: ELSEWHERE,
-            problem: "nothing is there".into(),
-        })
-    }
-}
-
-#[test]
-fn a_rung_asked_for_mid_session_is_on_the_next_request_and_not_the_last_one() {
-    // The half `/effort` needs: a session opens on whatever the command line
-    // and the files settled, and what is chosen afterwards has to reach the
-    // wire without ending the session to do it.
-    let script = Script::new(vec![saying("first"), saying("second")]);
-    let mut scripted = Scripted::new(script, tools([]), Verdict::Allow);
-
-    assert_eq!(scripted.runner.effort(), None, "nothing has said yet");
-    scripted.turn("go").expect("the turn to finish");
-
-    scripted.runner.think(Effort::Low);
-    assert_eq!(scripted.runner.effort(), Some(Effort::Low));
-    scripted.turn("again").expect("the turn to finish");
-
-    let sent = scripted.sent.lock().unwrap();
-    let asked: Vec<Option<Effort>> = sent.iter().map(|request| request.effort).collect();
-    assert_eq!(asked, [None, Some(Effort::Low)]);
-}
-
-#[test]
 fn a_turn_that_yields_records_what_the_model_said() {
     let script = Script::new(vec![vec![
         Delta::Text("Hello".into()),
@@ -916,7 +770,7 @@ fn a_turn_runs_as_long_as_there_is_work_in_it() {
 }
 
 #[test]
-fn tool_results_share_one_retained_boundary_across_a_turn() {
+fn tool_results_past_the_retained_boundary_end_the_turn() {
     let script = Script::new(vec![calling("a", "read", "{}")]);
     let mut scripted = Scripted::new(
         script,
@@ -924,16 +778,16 @@ fn tool_results_share_one_retained_boundary_across_a_turn() {
         Verdict::Allow,
     );
 
+    let run = RunContext::new(
+        holding(8),
+        &scripted.events,
+        &scripted.cancel,
+        &scripted.steer,
+        &scripted.aside,
+    );
     let problem = scripted
         .runner
-        .exchange(
-            &mut scripted.says,
-            &scripted.events,
-            &scripted.cancel,
-            &scripted.steer,
-            &scripted.aside,
-            8,
-        )
+        .exchange(&mut scripted.says, &run)
         .unwrap_err();
 
     assert!(matches!(problem, TurnError::ToolOutputBytes { maximum: 8 }));
@@ -1107,8 +961,14 @@ fn a_response_that_keeps_going_away_ends_the_turn() {
 
     // Bounded, and the bound is the constant rather than a number written out
     // here: what this pins is that the loop stops rather than how soon.
-    assert_eq!(scripted.retried(), usize::from(RETRIES));
-    assert_eq!(scripted.asked().len(), 1 + usize::from(RETRIES));
+    assert_eq!(
+        scripted.retried(),
+        usize::from(RunPolicy::default().retry.attempts)
+    );
+    assert_eq!(
+        scripted.asked().len(),
+        1 + usize::from(RunPolicy::default().retry.attempts)
+    );
 }
 
 #[test]
@@ -1117,11 +977,83 @@ fn a_service_that_says_it_is_busy_is_asked_again_and_a_key_without_access_is_not
     // of what `transient` decides: 503 is about the moment, 401 about the key.
     let mut busy = Scripted::new(Script::refusing(503), Tools::new(), Verdict::Allow);
     busy.turn("go").unwrap_err();
-    assert_eq!(busy.asked().len(), 1 + usize::from(RETRIES));
+    assert_eq!(
+        busy.asked().len(),
+        1 + usize::from(RunPolicy::default().retry.attempts)
+    );
 
     let mut refused = Scripted::new(Script::refusing(403), Tools::new(), Verdict::Allow);
     refused.turn("go").unwrap_err();
     assert_eq!(refused.asked().len(), 1);
+}
+
+#[test]
+fn a_run_that_asked_to_be_asked_again_fewer_times_is() {
+    // The figure above comes off the run, not off the runner, and every test
+    // here that goes through `Scripted::turn` mints the two equal. The same
+    // busy service, under a run that
+    // gave up its retries: one request, where the session would have made
+    // more. How many more is the shipped default's business, and the second
+    // assertion asks it rather than naming it here.
+    let mut busy = Scripted::new(Script::refusing(503), Tools::new(), Verdict::Allow);
+
+    busy.turning_under(
+        "go",
+        RunPolicy {
+            retry: Retry {
+                attempts: 0,
+                ..Retry::default()
+            },
+            ..RunPolicy::default()
+        },
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        busy.asked().len(),
+        1,
+        "the session's retry count was used in place of the run's"
+    );
+    assert!(
+        RunPolicy::default().retry.attempts > 1,
+        "the session would have asked again, so one request proves the run was read"
+    );
+}
+
+#[test]
+fn a_run_that_asked_for_a_smaller_answer_is_held_to_its_own_ceiling() {
+    // The turn-wide response ceiling, likewise: read off the run each pass
+    // builds its answer under. Eight bytes is under any real answer and far
+    // under the shipped default — which is the constant's business rather than
+    // a number written out here — so a loop reading the session's figure would
+    // let this whole response through.
+    let script = Script::new(vec![saying("more prose than eight bytes of room")]);
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
+
+    let problem = scripted
+        .turning_under(
+            "go",
+            RunPolicy {
+                bounds: Bounds {
+                    response_bytes: 8,
+                    ..Bounds::default()
+                },
+                ..RunPolicy::default()
+            },
+        )
+        .expect_err("an answer past the room the run asked for");
+
+    assert!(
+        matches!(
+            problem,
+            TurnError::Provider(ProviderError::Limit {
+                limit: ProviderLimit::TurnResponseBytes,
+                maximum: 8,
+                ..
+            })
+        ),
+        "stopped for the wrong reason: {problem:?}"
+    );
 }
 
 #[test]
@@ -1172,7 +1104,7 @@ fn asking_to_stop_during_the_pause_stops_the_retry() {
     esc.join().unwrap();
 
     assert!(
-        scripted.asked().len() < 1 + usize::from(RETRIES),
+        scripted.asked().len() < 1 + usize::from(RunPolicy::default().retry.attempts),
         "every attempt went out anyway"
     );
 }
@@ -1659,137 +1591,6 @@ fn a_diff_reaches_the_reader_and_stops_before_the_transcript() {
         .collect();
 
     assert_eq!(kept, [None]);
-}
-
-/// Writes a file and returns the attachment naming it.
-fn file(under: &Path, name: &str, bytes: &[u8]) -> Attachment {
-    let path = under.join(name);
-    std::fs::write(&path, bytes).expect("a temporary file");
-    Attachment {
-        path: path.to_string_lossy().into_owned().into(),
-        modality: Modality::Image,
-        media_type: "image/png".into(),
-        hash: Sha256::digest(bytes).into(),
-    }
-}
-
-#[test]
-fn attachments_a_request_went_out_without_are_named_as_it_goes() {
-    // The design working is invisible from the answer: the model is handed a
-    // sentence where a picture was and says something a little vaguer. Without
-    // this the reader has no way to know which file it did not get to look at.
-    let sample = Sample::new("aged-over");
-    let under = sample.workspace().root().to_path_buf();
-    let third = crucible_core::CEILING / 3 + 1;
-
-    let mut scripted = Scripted::new(
-        Script::new(vec![saying("looking")]),
-        Tools::new(),
-        Verdict::Allow,
-    );
-    let files: Vec<Attachment> = ["first.png", "second.png", "third.png", "fourth.png"]
-        .iter()
-        .map(|name| file(&under, name, &vec![7; third]))
-        .collect();
-    let named: Vec<Box<str>> = files.iter().map(|one| one.path.clone()).collect();
-
-    scripted
-        .turning("what is in these", files.into())
-        .expect("the turn to have run");
-
-    let posted = scripted.aged();
-    let [aged] = posted.as_slice() else {
-        panic!("one request went out, and it went out short");
-    };
-    let [first, second, ..] = named.as_slice() else {
-        panic!("four files were attached");
-    };
-    assert_eq!(aged, &[first.clone(), second.clone()]);
-}
-
-#[test]
-fn attachments_that_all_fit_leave_nothing_to_say() {
-    // Nothing happened to them, so nothing is said. A row per turn reporting
-    // that everything was carried is a row that is always there and never read.
-    let sample = Sample::new("aged-under");
-    let under = sample.workspace().root().to_path_buf();
-
-    let mut scripted = Scripted::new(
-        Script::new(vec![saying("looking")]),
-        Tools::new(),
-        Verdict::Allow,
-    );
-    scripted
-        .turning(
-            "what is in this",
-            vec![file(&under, "one.png", &[1; 16])].into(),
-        )
-        .expect("the turn to have run");
-
-    assert!(scripted.aged().is_empty());
-}
-
-#[test]
-fn a_retry_says_again_which_attachments_it_went_out_without() {
-    // Once per request rather than once per turn: a retry is a second answer
-    // built from a second short request, and a reader watching it arrive is
-    // owed the same sentence about it.
-    let sample = Sample::new("aged-retry");
-    let under = sample.workspace().root().to_path_buf();
-    let third = crucible_core::CEILING / 3 + 1;
-
-    let mut scripted = Scripted::new(
-        Script::dropping(1, vec![saying("done")]),
-        Tools::new(),
-        Verdict::Allow,
-    );
-    let files: Vec<Attachment> = ["first.png", "second.png", "third.png", "fourth.png"]
-        .iter()
-        .map(|name| file(&under, name, &vec![7; third]))
-        .collect();
-
-    scripted
-        .turning("what is in these", files.into())
-        .expect("the turn to have run");
-
-    // One reading of the channel, because each of these drains it.
-    let posted = scripted.aged();
-    let [first, second] = posted.as_slice() else {
-        panic!("the request that was dropped, and the one that replaced it");
-    };
-    assert_eq!(first, second);
-}
-
-#[test]
-fn a_picture_a_model_does_not_read_is_named_where_its_answer_arrives() {
-    // Not the ceiling: this file would not have gone out at any size. The
-    // reader is owed a different sentence for it, because asking again is the
-    // one move that cannot help.
-    let sample = Sample::new("unread-kind");
-    let under = sample.workspace().root().to_path_buf();
-
-    let mut scripted = Scripted::new(
-        Script::new(vec![saying("looking")]),
-        Tools::new(),
-        Verdict::Allow,
-    );
-    scripted.runner.model.accepts = Some(Modalities::empty().insert(Modality::Text));
-
-    let one = file(&under, "chart.png", &[3; 64]);
-    let named = one.path.clone();
-
-    scripted
-        .turning("what is in this", vec![one].into())
-        .expect("the turn to have run");
-
-    // Only the one drain: reading the channel twice would leave the second
-    // reader nothing, and which of the two rows this file belongs on is
-    // settled a layer down, where the request is resolved.
-    let posted = scripted.unread();
-    let [unread] = posted.as_slice() else {
-        panic!("one request went out, and it went out without the picture");
-    };
-    assert_eq!(unread, &[named]);
 }
 
 #[test]

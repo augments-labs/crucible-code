@@ -16,17 +16,25 @@
 //! a turn is the return value, because the caller is what decides whether the
 //! session goes on.
 
+mod agent;
+mod context;
 #[cfg(test)]
 mod fake;
+mod outcome;
+mod policy;
 mod runner;
 #[cfg(test)]
 mod sample;
 mod tools;
 
+pub use agent::AgentSpec;
+pub use context::RunContext;
 pub use crucible_session::{
     Glimpse, PROMPTS, Pruned, Recorded, Session, SessionError, glimpse, prompts, recent, remember,
     retitle,
 };
+pub use outcome::{RunResult, RunStatus};
+pub use policy::{Bounds, Compaction, Retry, RunPolicy};
 pub use runner::attachments;
-pub use runner::{Compaction, Model, Runner};
+pub use runner::{Model, Runner};
 pub use tools::Tools;
