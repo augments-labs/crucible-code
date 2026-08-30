@@ -111,8 +111,11 @@ impl RunResult {
     /// is the only constructor, which is what makes that a property of the
     /// type: a literal or a later assignment would both be ways to build a run
     /// that says it completed and that a person cancelled it.
+    ///
+    /// In-crate, because a run is something this crate ends. A caller outside
+    /// it reads a result it was handed and never states one.
     #[must_use]
-    pub const fn new(run: RunId, stop: StopReason, spent: Spend) -> Self {
+    pub(crate) const fn new(run: RunId, stop: StopReason, spent: Spend) -> Self {
         Self {
             run,
             status: RunStatus::of(stop),

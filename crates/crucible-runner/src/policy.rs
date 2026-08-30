@@ -187,8 +187,17 @@ impl RunPolicy {
     /// Written out field by field rather than by carrying a struct across
     /// whole, so a figure added to [`Bounds`], [`Retry`] or [`Compaction`]
     /// later fails to compile here until somebody says which of the two it is.
+    ///
+    /// In-crate, because the two places a policy is narrowed are both here:
+    /// [`RunContext::child`] and [`RunContext::held_to`]. Handing the rule out
+    /// as public surface would let a caller apply it somewhere neither of
+    /// those covers, and the direction of the arguments is not something the
+    /// signature says.
+    ///
+    /// [`RunContext::child`]: crate::RunContext::child
+    /// [`RunContext::held_to`]: crate::RunContext::held_to
     #[must_use]
-    pub fn narrowed(&self, wanted: Self) -> Self {
+    pub(crate) fn narrowed(&self, wanted: Self) -> Self {
         Self {
             bounds: Bounds {
                 response_bytes: self.bounds.response_bytes.min(wanted.bounds.response_bytes),

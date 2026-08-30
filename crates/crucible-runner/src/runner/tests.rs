@@ -1221,9 +1221,8 @@ fn a_run_that_asked_to_be_asked_again_fewer_times_is() {
         1,
         "the session's retry count was used in place of the run's"
     );
-    assert_eq!(
-        RunPolicy::default().retry.attempts,
-        2,
+    assert!(
+        RunPolicy::default().retry.attempts > 1,
         "the session would have asked again, so one request proves the run was read"
     );
 }

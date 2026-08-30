@@ -78,8 +78,9 @@ impl<'a> RunContext<'a> {
     ///
     /// The narrowing happens here rather than at the caller so that starting a
     /// run is the only way to get a context for one, and the rule cannot be
-    /// skipped by a caller that writes the comparison itself. What it does is
-    /// [`RunPolicy::narrowed`].
+    /// skipped by a caller that writes the comparison itself. The rule itself
+    /// is in-crate, and every figure it settles is documented on the field it
+    /// settles in [`RunPolicy`].
     ///
     /// The services are handed straight down: a descendant stops when its
     /// parent is stopped, and its progress reaches the same screen. They are
