@@ -48,7 +48,49 @@
 //! exist and something already depends on the ceiling it was handed being the
 //! ceiling it asked for.
 
+use std::num::NonZeroUsize;
 use std::time::Duration;
+
+/// The hard upper bound on tool workers one run may admit at once.
+pub const MAXIMUM_TOOL_CONCURRENCY: usize = 64;
+
+/// The bounded scheduler allowance for one run.
+///
+/// One preserves the historical fully sequential behavior. A caller may opt
+/// into overlap by asking for more, but no run can create an unbounded worker
+/// set and a descendant can only narrow this figure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ToolScheduling {
+    maximum_concurrency: NonZeroUsize,
+}
+
+impl ToolScheduling {
+    /// Builds a scheduler ceiling between one and
+    /// [`MAXIMUM_TOOL_CONCURRENCY`], inclusive.
+    #[must_use]
+    pub fn bounded(maximum: usize) -> Option<Self> {
+        (maximum <= MAXIMUM_TOOL_CONCURRENCY)
+            .then(|| NonZeroUsize::new(maximum))
+            .flatten()
+            .map(|maximum_concurrency| Self {
+                maximum_concurrency,
+            })
+    }
+
+    /// The most tool calls this run may execute at once.
+    #[must_use]
+    pub const fn maximum_concurrency(self) -> usize {
+        self.maximum_concurrency.get()
+    }
+}
+
+impl Default for ToolScheduling {
+    fn default() -> Self {
+        Self {
+            maximum_concurrency: NonZeroUsize::MIN,
+        }
+    }
+}
 
 /// Everything one run may spend.
 ///
@@ -129,10 +171,10 @@ impl Default for Retry {
 
 /// What one run may spend, and what it does when the window fills.
 ///
-/// Three nested answers rather than one flat list of knobs, because they are
-/// answered by different people: the bounds are this program's, the compaction
-/// policy is the user's documents, and the retry policy is about one provider.
-/// A fourth family later is a fourth field, not eight more loose ones.
+/// Four nested answers rather than one flat list of knobs, because they are
+/// answered by different owners: the bounds are this program's, the compaction
+/// policy is the user's documents, the retry policy is about one provider, and
+/// tool scheduling bounds one run's opt-in workers.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RunPolicy {
     /// Everything this run may spend.
@@ -141,6 +183,8 @@ pub struct RunPolicy {
     pub compaction: Compaction,
     /// What it does when a response fails before it starts.
     pub retry: Retry,
+    /// How much opt-in tool work may overlap.
+    pub tools: ToolScheduling,
 }
 
 impl RunPolicy {
@@ -163,7 +207,7 @@ impl RunPolicy {
     /// on `reserve`. A third caller needs its own, because the eight symmetric
     /// figures will not show a swap.
     ///
-    /// Nine of the ten fields are the tighter of the two, so a descendant
+    /// Ten of the eleven fields are the tighter of the two, so a descendant
     /// asking for more than its parent holds is given the parent's figure
     /// rather than refused: widening is not an error a caller has to handle,
     /// it is a request that has no effect. Tighter does not point the same way
@@ -242,6 +286,12 @@ impl RunPolicy {
                 attempts: self.retry.attempts.min(wanted.retry.attempts),
                 first_pause: self.retry.first_pause.min(wanted.retry.first_pause),
             },
+            tools: ToolScheduling::bounded(
+                self.tools
+                    .maximum_concurrency()
+                    .min(wanted.tools.maximum_concurrency()),
+            )
+            .expect("the minimum of two valid scheduler ceilings is valid"),
         }
     }
 }
@@ -361,6 +411,7 @@ mod tests {
         );
         assert_eq!(policy.retry.attempts, 2);
         assert_eq!(policy.retry.first_pause, Duration::from_millis(250));
+        assert_eq!(policy.tools.maximum_concurrency(), 1);
         assert!(policy.compaction.automatic);
         assert_eq!(policy.compaction.keep_tokens, 20_000);
         assert_eq!(policy.compaction.recap_tokens, 10_240);
@@ -375,8 +426,29 @@ mod tests {
     }
 
     #[test]
+    fn tool_concurrency_is_bounded_and_descendants_can_only_narrow_it() {
+        assert!(ToolScheduling::bounded(0).is_none());
+        assert!(ToolScheduling::bounded(MAXIMUM_TOOL_CONCURRENCY + 1).is_none());
+        let parent = RunPolicy {
+            tools: ToolScheduling::bounded(4).unwrap(),
+            ..RunPolicy::default()
+        };
+        let narrower = RunPolicy {
+            tools: ToolScheduling::bounded(2).unwrap(),
+            ..RunPolicy::default()
+        };
+        let wider = RunPolicy {
+            tools: ToolScheduling::bounded(8).unwrap(),
+            ..RunPolicy::default()
+        };
+
+        assert_eq!(parent.narrowed(narrower).tools.maximum_concurrency(), 2);
+        assert_eq!(parent.narrowed(wider).tools.maximum_concurrency(), 4);
+    }
+
+    #[test]
     fn a_descendant_asking_for_less_gets_what_it_asked_for() {
-        // Seven of the nine figures that resolve by comparison, asked for
+        // Eight of the ten figures that resolve by comparison, asked for
         // narrower. The two left at the parent's — `automatic` and `reserve`,
         // whose directions are the unobvious ones — have their own tests
         // below. The widening direction has its own test too; this is the half
@@ -398,6 +470,7 @@ mod tests {
                 attempts: 0,
                 first_pause: Duration::from_millis(1),
             },
+            tools: ToolScheduling::default(),
         };
 
         let held = parent.narrowed(asked);
@@ -438,6 +511,7 @@ mod tests {
                 recap_tokens: 256,
                 ..Compaction::default()
             },
+            tools: ToolScheduling::default(),
         };
         let asked = RunPolicy {
             bounds: Bounds {
@@ -454,6 +528,7 @@ mod tests {
                 recap_tokens: u32::MAX,
                 ..Compaction::default()
             },
+            tools: ToolScheduling::default(),
         };
 
         let held = parent.narrowed(asked);

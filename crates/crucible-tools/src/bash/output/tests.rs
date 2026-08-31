@@ -1,6 +1,6 @@
 //! What is kept of a command's output, and what is said about the rest.
 
-use super::{FRESH, Finished, Kept, OUTPUT, cut};
+use super::{CAPTURE_HEAD, FRESH, Finished, Kept, OUTPUT, cut};
 
 #[test]
 fn a_command_stopped_for_running_too_long_says_so_once() {
@@ -16,6 +16,8 @@ fn a_command_stopped_for_running_too_long_says_so_once() {
     let report = Finished {
         code: None,
         out: "half a build".to_owned(),
+        original: "half a build".len(),
+        omitted: 0,
         arriving: true,
         expired: true,
     }
@@ -44,7 +46,11 @@ fn more_output_than_anything_can_use_keeps_both_ends() {
     assert!(short.starts_with("start"), "the beginning went");
     assert!(short.ends_with('x'));
     assert!(short.len() < text.len());
-    assert!(short.contains("cut from the middle"), "{short}");
+    assert!(short.contains("omitted from the middle"), "{short}");
+    assert!(
+        short.contains(&format!("process output was {} bytes", text.len())),
+        "{short}"
+    );
 }
 
 #[test]
@@ -74,10 +80,11 @@ fn what_the_reader_let_go_is_counted_in_the_same_gap() {
     let short = cut(&text, 1_000_000);
 
     assert!(
-        short.contains(&format!(
-            "[{} bytes of output cut from the middle]",
-            1_030_000
-        )),
+        short.contains("process output was 1060000 bytes"),
+        "{short}"
+    );
+    assert!(
+        short.contains("bytes omitted from the middle during capture"),
         "{short}"
     );
 }
@@ -94,7 +101,7 @@ fn a_stream_that_never_stops_is_bounded_where_it_is_read() {
         kept.push(&batch);
     }
 
-    assert!(kept.bytes().len() <= OUTPUT * 2, "{}", kept.bytes().len());
+    assert!(kept.bytes().len() <= OUTPUT, "{}", kept.bytes().len());
     assert_eq!(kept.dropped + kept.bytes().len(), 8192 * 1_000);
 }
 
@@ -123,8 +130,8 @@ fn a_batch_larger_than_the_ring_is_cut_down_in_one_step() {
     kept.push(&vec![b'a'; OUTPUT]);
     kept.push(&vec![b'b'; OUTPUT * 10]);
 
-    assert_eq!(kept.dropped, OUTPUT * 9);
-    assert_eq!(kept.bytes().len(), OUTPUT * 2);
+    assert_eq!(kept.dropped, OUTPUT * 10);
+    assert_eq!(kept.bytes().len(), OUTPUT);
 }
 
 #[test]
@@ -138,10 +145,7 @@ fn byte_counts_saturate_instead_of_wrapping() {
 
     assert_eq!(kept.dropped, usize::MAX);
     let shown = cut(&"x".repeat(OUTPUT * 2), usize::MAX);
-    assert!(
-        shown.contains(&format!("[{0} bytes", usize::MAX)),
-        "{shown}"
-    );
+    assert!(shown.contains(&usize::MAX.to_string()), "{shown}");
 }
 
 #[cfg(unix)]
@@ -220,7 +224,7 @@ fn what_one_handover_carries_is_bounded_however_much_arrived() {
 
     assert_eq!(kept.hand_over().len(), FRESH);
     assert!(kept.fresh.is_empty());
-    assert_eq!(kept.head.len(), OUTPUT);
+    assert_eq!(kept.head.len(), CAPTURE_HEAD);
 }
 
 #[test]

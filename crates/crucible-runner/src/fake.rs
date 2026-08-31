@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use crucible_core::{
     Approved, Ask, Cancel, Delta, DeltaStream, DescribeTool, Diff, Effort, Message, Modalities,
     Modality, Provider, ProviderError, Remember, Request, Sensitivity, Steer, Summary, Target,
-    Tool, ToolArgs, ToolCall, ToolError, ToolOutput, Verdict, Watch, Wrote,
+    Tool, ToolArgs, ToolCall, ToolContext, ToolError, ToolOutput, Verdict, Wrote,
 };
 
 /// The name a scripted provider answers to.
@@ -355,6 +355,10 @@ impl DescribeTool for Fixed {
 }
 
 impl Tool for Fixed {
+    fn validate(&self, _args: &ToolArgs) -> Result<(), ToolError> {
+        Ok(())
+    }
+
     fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
         self.sensitivity.clone()
     }
@@ -370,9 +374,9 @@ impl Tool for Fixed {
         self.backgroundable
     }
 
-    fn run(&self, _approved: Approved, watch: &dyn Watch) -> Result<ToolOutput, ToolError> {
+    fn run(&self, _approved: Approved, context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
         for piece in &self.writes {
-            watch.wrote(Wrote::new(piece.clone()));
+            context.wrote(Wrote::new(piece.clone()));
         }
 
         if self.cancels {
@@ -426,6 +430,10 @@ impl DescribeTool for Typing {
 }
 
 impl Tool for Typing {
+    fn validate(&self, _args: &ToolArgs) -> Result<(), ToolError> {
+        Ok(())
+    }
+
     fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
         Sensitivity::ReadOnly {
             target: Target::unresolved(),
@@ -436,7 +444,11 @@ impl Tool for Typing {
         Summary::new(args.as_str())
     }
 
-    fn run(&self, _approved: Approved, _watch: &dyn Watch) -> Result<ToolOutput, ToolError> {
+    fn run(
+        &self,
+        _approved: Approved,
+        _context: &ToolContext<'_>,
+    ) -> Result<ToolOutput, ToolError> {
         self.steer.say(self.line.to_string());
         Ok(ToolOutput::ok("done"))
     }

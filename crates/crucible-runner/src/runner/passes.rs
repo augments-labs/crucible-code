@@ -312,6 +312,8 @@ impl<'a> AgentLoop<'a> {
                 ask: &mut *self.ask,
                 events,
                 cancel,
+                ancestry: run.ancestry(),
+                concurrency: run.policy().tools.maximum_concurrency(),
             }
             .pass(&calls, bounds.tool_output, tool_output_maximum);
 

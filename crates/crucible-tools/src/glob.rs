@@ -5,8 +5,8 @@ use std::collections::BinaryHeap;
 use std::time::SystemTime;
 
 use crucible_core::{
-    Approved, Cancel, DescribeTool, Sensitivity, Summary, Tool, ToolArgs, ToolError, ToolOutput,
-    Watch, Workspace,
+    Approved, DescribeTool, Sensitivity, Summary, Tool, ToolArgs, ToolContext, ToolError,
+    ToolOutput, Workspace,
 };
 use globset::GlobBuilder;
 
@@ -111,7 +111,6 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
 #[derive(Debug)]
 pub struct Glob {
     workspace: Workspace,
-    cancel: Cancel,
 }
 
 /// What order an answer is in, and therefore which paths a limit keeps.
@@ -239,11 +238,10 @@ impl Found {
 }
 
 impl Glob {
-    /// Searches inside `workspace` and nowhere else, and stops when `cancel`
-    /// says to.
+    /// Searches inside `workspace` and nowhere else.
     #[must_use]
-    pub fn new(workspace: Workspace, cancel: Cancel) -> Self {
-        Self { workspace, cancel }
+    pub fn new(workspace: Workspace) -> Self {
+        Self { workspace }
     }
 }
 
@@ -258,6 +256,14 @@ impl DescribeTool for Glob {
 }
 
 impl Tool for Glob {
+    fn validate(&self, args: &ToolArgs) -> Result<(), ToolError> {
+        let args = Args::parse(NAME, args)?;
+        args.text(PATTERN)?;
+        args.count(LIMIT, PATHS)?;
+        args.choice(SORT, PATH, &[PATH, MODIFIED])?;
+        args.optional_text(PATH).map(drop)
+    }
+
     fn sensitivity(&self, args: &ToolArgs) -> Sensitivity {
         target::searches(&self.workspace, NAME, args, PATH)
     }
@@ -266,7 +272,7 @@ impl Tool for Glob {
         summary::field(NAME, args, PATTERN)
     }
 
-    fn run(&self, approved: Approved, _watch: &dyn Watch) -> Result<ToolOutput, ToolError> {
+    fn run(&self, approved: Approved, context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
         let args = Args::parse(NAME, approved.args())?;
         let pattern = args.text(PATTERN)?;
         let limit = args.count(LIMIT, PATHS)?.min(CEILING);
@@ -316,7 +322,7 @@ impl Tool for Glob {
             // about what is in the workspace.
             .filter(|entry| !approved.denies(&self.workspace, &from, entry.path()))
         {
-            if self.cancel.requested() {
+            if context.cancel().requested() {
                 found.stopped = true;
                 break;
             }
@@ -396,16 +402,15 @@ fn halted(stopped: bool, sort: Sort) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crucible_core::Unwatched;
-
     use super::*;
-    use crucible_core::Disposition;
+    use crucible_core::{Cancel, Disposition};
 
     use crate::sample::{Sample, allowed, under};
 
     fn glob(sample: &Sample, args: &str) -> ToolOutput {
-        let tool = Glob::new(sample.workspace(), Cancel::new());
-        tool.run(allowed(&tool, args), &Unwatched).unwrap()
+        let tool = Glob::new(sample.workspace());
+        tool.run(allowed(&tool, args), &crate::sample::context())
+            .unwrap()
     }
 
     /// One entry the way `Sort::Path` makes them: every age the same, so the
@@ -628,12 +633,12 @@ mod tests {
     #[test]
     fn a_sort_nobody_offers_is_refused_and_the_words_that_are_offered_are_named() {
         let sample = tree("glob-sort-unknown");
-        let tool = Glob::new(sample.workspace(), Cancel::new());
+        let tool = Glob::new(sample.workspace());
 
         let problem = tool
             .run(
                 allowed(&tool, r#"{"pattern":"**/*","sort":"size"}"#),
-                &Unwatched,
+                &crate::sample::context(),
             )
             .unwrap_err();
 
@@ -733,9 +738,12 @@ mod tests {
         let cancel = Cancel::new();
         cancel.request();
 
-        let tool = Glob::new(sample.workspace(), cancel);
+        let tool = Glob::new(sample.workspace());
         let output = tool
-            .run(allowed(&tool, r#"{"pattern":"**/*.rs"}"#), &Unwatched)
+            .run(
+                allowed(&tool, r#"{"pattern":"**/*.rs"}"#),
+                &crate::sample::cancelled_by(&cancel),
+            )
             .unwrap();
 
         assert!(output.is_failed());
@@ -817,7 +825,7 @@ mod tests {
         let sample = tree("glob-denied");
         sample.write("private/key.rs", "");
 
-        let tool = Glob::new(sample.workspace(), Cancel::new());
+        let tool = Glob::new(sample.workspace());
         let output = tool
             .run(
                 under(
@@ -825,7 +833,7 @@ mod tests {
                     r#"{"pattern":"**/*.rs"}"#,
                     &[(Disposition::Deny, "glob(private/**)")],
                 ),
-                &Unwatched,
+                &crate::sample::context(),
             )
             .unwrap();
 
@@ -845,25 +853,25 @@ mod tests {
             .expect("a writable temporary directory");
 
         let workspace = sample.reaching(&beside);
-        let listing = Glob::new(workspace.clone(), Cancel::new());
+        let listing = Glob::new(workspace.clone());
         let listed = listing
             .run(
                 allowed(
                     &listing,
                     &format!(r#"{{"pattern":"**/*.md","path":"{beside}"}}"#),
                 ),
-                &Unwatched,
+                &crate::sample::context(),
             )
             .unwrap();
 
-        let search = crate::Grep::new(workspace, Cancel::new());
+        let search = crate::Grep::new(workspace);
         let searched = search
             .run(
                 allowed(
                     &search,
                     &format!(r#"{{"pattern":"needle","path":"{beside}"}}"#),
                 ),
-                &Unwatched,
+                &crate::sample::context(),
             )
             .unwrap();
 
@@ -877,7 +885,7 @@ mod tests {
     fn listing_names_the_directory_it_would_walk() {
         let sample = Sample::new("glob-sensitivity");
         sample.write("src/main.rs", "");
-        let tool = Glob::new(sample.workspace(), Cancel::new());
+        let tool = Glob::new(sample.workspace());
 
         let sensitivity = tool.sensitivity(&ToolArgs::new(r#"{"path":"src"}"#));
 

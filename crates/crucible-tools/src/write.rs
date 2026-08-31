@@ -10,8 +10,8 @@ use std::fs;
 use std::io::Read as _;
 
 use crucible_core::{
-    Approved, DescribeTool, PathError, Remembered, Sensitivity, Summary, Tool, ToolArgs, ToolError,
-    ToolOutput, Watch, Workspace,
+    Approved, DescribeTool, PathError, Remembered, Sensitivity, Summary, Tool, ToolArgs,
+    ToolContext, ToolError, ToolOutput, Workspace,
 };
 
 use std::sync::LazyLock;
@@ -99,6 +99,12 @@ impl DescribeTool for Write {
 }
 
 impl Tool for Write {
+    fn validate(&self, args: &ToolArgs) -> Result<(), ToolError> {
+        let args = Args::parse(NAME, args)?;
+        args.text(PATH)?;
+        args.exact(CONTENT).map(drop)
+    }
+
     fn sensitivity(&self, args: &ToolArgs) -> Sensitivity {
         Sensitivity::MutatesFile {
             target: target::creatable(&self.workspace, NAME, args, PATH),
@@ -113,7 +119,7 @@ impl Tool for Write {
         summary::remembered(NAME, args, true)
     }
 
-    fn run(&self, approved: Approved, _watch: &dyn Watch) -> Result<ToolOutput, ToolError> {
+    fn run(&self, approved: Approved, _context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
         let args = Args::parse(NAME, approved.args())?;
         let requested = args.text(PATH)?;
         let content = args.exact(CONTENT)?;

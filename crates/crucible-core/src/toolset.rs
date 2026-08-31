@@ -17,7 +17,10 @@ use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::{Ancestry, Approved, Cancel, RunId, Tool, ToolCall, ToolError, ToolSchema};
+use crate::{
+    Ancestry, Approved, Cancel, RunId, Sensitivity, TOOL_RESULT_MIN_BYTES, Tool, ToolArgs,
+    ToolCall, ToolError, ToolOutput, ToolOutputRetention, ToolSchema,
+};
 
 /// The most bytes a provider-visible tool name may retain.
 ///
@@ -182,6 +185,27 @@ pub enum ToolSourceKind {
     Other,
 }
 
+/// The receipt-safe projection of a registration source.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolSourceReceipt {
+    kind: ToolSourceKind,
+    id: Box<str>,
+}
+
+impl ToolSourceReceipt {
+    /// The coarse source family.
+    #[must_use]
+    pub const fn kind(&self) -> ToolSourceKind {
+        self.kind
+    }
+
+    /// The bounded, non-sensitive source identifier.
+    #[must_use]
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+}
+
 impl ToolSourceKind {
     const fn as_str(self) -> &'static str {
         match self {
@@ -258,6 +282,15 @@ impl ToolProvenance {
     #[must_use]
     pub fn label(&self) -> &str {
         &self.label
+    }
+
+    /// The part of this source safe to retain with an invocation event.
+    #[must_use]
+    pub fn receipt(&self) -> ToolSourceReceipt {
+        ToolSourceReceipt {
+            kind: self.kind,
+            id: self.id.clone(),
+        }
     }
 
     fn retained_bytes(&self) -> usize {
@@ -386,13 +419,16 @@ impl ToolDescriptor {
     ///
     /// # Errors
     ///
-    /// [`ToolDescriptorError::ZeroResultBytes`] for zero, because every
-    /// recorded call still needs a result and an explicitly empty allowance
-    /// cannot even carry the bounded stand-in explaining why.
+    /// [`ToolDescriptorError::ResultBytesTooSmall`] when the allowance cannot
+    /// retain the model-visible elision note every bounded result promises.
     pub fn limiting_result_to(mut self, bytes: usize) -> Result<Self, ToolDescriptorError> {
-        self.result_bytes = NonZeroUsize::new(bytes)
-            .ok_or(ToolDescriptorError::ZeroResultBytes)
-            .map(Some)?;
+        if bytes < TOOL_RESULT_MIN_BYTES {
+            return Err(ToolDescriptorError::ResultBytesTooSmall {
+                minimum: TOOL_RESULT_MIN_BYTES,
+                actual: bytes,
+            });
+        }
+        self.result_bytes = NonZeroUsize::new(bytes);
         Ok(self)
     }
 
@@ -495,20 +531,123 @@ pub trait DescribeTool {
     }
 }
 
+/// The only pre-validation middleware: it may replace call arguments.
+pub trait ArgumentTransform: Send + Sync {
+    /// Produces the arguments that must be revalidated and authorized.
+    ///
+    /// # Errors
+    ///
+    /// [`ToolError`] when no safe transformed call can be produced.
+    fn transform(&self, call: &ToolCall) -> Result<ToolArgs, ToolError>;
+}
+
+/// A guardrail over the final validated input and recomputed sensitivity.
+pub trait InputGuard: Send + Sync {
+    /// Refuses input before human approval or execution.
+    ///
+    /// # Errors
+    ///
+    /// [`ToolError`] with the model-facing reason for refusal.
+    fn guard(&self, call: &ToolCall, sensitivity: &Sensitivity) -> Result<(), ToolError>;
+}
+
+/// A guardrail over executor output before any result is retained.
+pub trait OutputGuard: Send + Sync {
+    /// Returns the output safe to retain, or refuses it.
+    ///
+    /// # Errors
+    ///
+    /// [`ToolError`] with the model-facing reason for refusal.
+    fn guard(&self, call: &ToolCall, output: ToolOutput) -> Result<ToolOutput, ToolError>;
+}
+
+/// The three supported invocation hook points for one registration.
+#[derive(Clone, Default)]
+pub struct ToolHooks {
+    argument: Option<Arc<dyn ArgumentTransform>>,
+    input: Option<Arc<dyn InputGuard>>,
+    output: Option<Arc<dyn OutputGuard>>,
+}
+
+impl ToolHooks {
+    /// No middleware or guardrails.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Installs the one argument-transform hook.
+    #[must_use]
+    pub fn transforming(mut self, transform: Arc<dyn ArgumentTransform>) -> Self {
+        self.argument = Some(transform);
+        self
+    }
+
+    /// Installs the one final-input guard.
+    #[must_use]
+    pub fn guarding_input(mut self, guard: Arc<dyn InputGuard>) -> Self {
+        self.input = Some(guard);
+        self
+    }
+
+    /// Installs the one pre-retention output guard.
+    #[must_use]
+    pub fn guarding_output(mut self, guard: Arc<dyn OutputGuard>) -> Self {
+        self.output = Some(guard);
+        self
+    }
+
+    /// The argument transform, where this registration has one.
+    #[must_use]
+    pub fn argument(&self) -> Option<&dyn ArgumentTransform> {
+        self.argument.as_deref()
+    }
+
+    /// The input guard, where this registration has one.
+    #[must_use]
+    pub fn input(&self) -> Option<&dyn InputGuard> {
+        self.input.as_deref()
+    }
+
+    /// The output guard, where this registration has one.
+    #[must_use]
+    pub fn output(&self) -> Option<&dyn OutputGuard> {
+        self.output.as_deref()
+    }
+}
+
+impl fmt::Debug for ToolHooks {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ToolHooks")
+            .field("argument", &self.argument.is_some())
+            .field("input", &self.input.is_some())
+            .field("output", &self.output.is_some())
+            .finish()
+    }
+}
+
 /// One descriptor bound to the executor it configures.
 #[derive(Clone)]
 pub struct ToolEntry {
     descriptor: Arc<ToolDescriptor>,
     tool: Arc<dyn Tool>,
+    hooks: ToolHooks,
 }
 
 impl ToolEntry {
     /// Binds one owned descriptor to one shareable executor.
     #[must_use]
     pub fn new(descriptor: ToolDescriptor, tool: Arc<dyn Tool>) -> Self {
+        Self::with_hooks(descriptor, tool, ToolHooks::new())
+    }
+
+    /// Binds configuration, executor, and the three invocation hook points.
+    #[must_use]
+    pub fn with_hooks(descriptor: ToolDescriptor, tool: Arc<dyn Tool>, hooks: ToolHooks) -> Self {
         Self {
             descriptor: Arc::new(descriptor),
             tool,
+            hooks,
         }
     }
 
@@ -528,6 +667,12 @@ impl ToolEntry {
     #[must_use]
     pub fn shared_tool(&self) -> Arc<dyn Tool> {
         Arc::clone(&self.tool)
+    }
+
+    /// Middleware and guardrails bound to this exact registration.
+    #[must_use]
+    pub const fn hooks(&self) -> &ToolHooks {
+        &self.hooks
     }
 }
 
@@ -590,6 +735,103 @@ impl Eq for ToolGeneration {}
 impl fmt::Debug for ToolGeneration {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("ToolGeneration([opaque])")
+    }
+}
+
+/// The closed final state recorded for one tool invocation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolOutcome {
+    /// The executor returned a successful result.
+    Succeeded,
+    /// The executor or one of its pipeline stages failed.
+    Failed,
+    /// Standing permission policy forbade the call.
+    Forbidden,
+    /// The user refused the call.
+    Refused,
+    /// The run was cancelled before the call could finish.
+    Cancelled,
+    /// The descriptor's cooperative deadline elapsed.
+    TimedOut,
+    /// The call was invalid, unknown, or stale before effects.
+    Rejected,
+    /// An earlier call ended the turn before this call could run.
+    NotRun,
+    /// The per-turn retained-output allowance was exhausted.
+    OutputLimit,
+    /// The executor panicked and was contained by the scheduler.
+    Panicked,
+}
+
+/// Bounded audit and usage evidence emitted with one final result.
+#[derive(Clone)]
+pub struct ToolReceipt {
+    generation: ToolGeneration,
+    source: Option<ToolSourceReceipt>,
+    input_bytes: usize,
+    output: ToolOutputRetention,
+    outcome: ToolOutcome,
+}
+
+impl ToolReceipt {
+    /// Records the exact generation, safe source, retained sizes, and outcome.
+    #[must_use]
+    pub fn new(
+        generation: ToolGeneration,
+        source: Option<ToolSourceReceipt>,
+        input_bytes: usize,
+        output: ToolOutputRetention,
+        outcome: ToolOutcome,
+    ) -> Self {
+        Self {
+            generation,
+            source,
+            input_bytes,
+            output,
+            outcome,
+        }
+    }
+
+    /// The immutable roster this call was answered against.
+    #[must_use]
+    pub const fn generation(&self) -> &ToolGeneration {
+        &self.generation
+    }
+
+    /// The non-sensitive registration source, where the name resolved.
+    #[must_use]
+    pub const fn source(&self) -> Option<&ToolSourceReceipt> {
+        self.source.as_ref()
+    }
+
+    /// Bytes in the final arguments authorized for execution.
+    #[must_use]
+    pub const fn input_bytes(&self) -> usize {
+        self.input_bytes
+    }
+
+    /// Encoded output sizes before and after the per-result limiter.
+    #[must_use]
+    pub const fn output(&self) -> ToolOutputRetention {
+        self.output
+    }
+
+    /// The one closed final state.
+    #[must_use]
+    pub const fn outcome(&self) -> ToolOutcome {
+        self.outcome
+    }
+}
+
+impl fmt::Debug for ToolReceipt {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ToolReceipt")
+            .field("generation", &self.generation)
+            .field("source", &self.source)
+            .field("input_bytes", &self.input_bytes)
+            .field("output", &self.output)
+            .field("outcome", &self.outcome)
+            .finish()
     }
 }
 
@@ -778,9 +1020,14 @@ pub enum ToolDescriptorError {
     /// A timeout of no time at all.
     #[error("a tool timeout must be greater than zero")]
     ZeroTimeout,
-    /// An explicit result allowance that cannot retain any answer.
-    #[error("a tool result limit must be greater than zero")]
-    ZeroResultBytes,
+    /// An explicit result allowance too small to state an elision.
+    #[error("a tool result limit is {actual} bytes; the minimum is {minimum}")]
+    ResultBytesTooSmall {
+        /// The smallest usable encoded allowance.
+        minimum: usize,
+        /// What was supplied.
+        actual: usize,
+    },
 }
 
 /// Why a roster could not be registered or materialized.

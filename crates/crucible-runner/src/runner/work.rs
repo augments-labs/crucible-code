@@ -6,9 +6,15 @@
 //! user cancelled, or said no — still writes a result for each remaining call
 //! saying why there is nothing in it.
 
+use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::thread;
+use std::time::Instant;
+
 use crucible_core::{
-    Approved, Ask, Cancel, Event, Permission, Reporter, Settled, StopReason, ToolCall, ToolError,
-    ToolId, ToolOutput, ToolResult, ToolSnapshot, Watch, Wrote,
+    Ancestry, Approved, Ask, Cancel, Event, Permission, Reporter, Settled, StopReason,
+    TOOL_RESULT_BYTES, ToolCall, ToolContext, ToolEntry, ToolError, ToolExecutionMode, ToolId,
+    ToolOutcome, ToolOutput, ToolOutputRetention, ToolReceipt, ToolResult, ToolSnapshot,
+    ToolSourceReceipt, Watch, Wrote,
 };
 
 /// What a call is answered with when the turn ended before it could run.
@@ -38,16 +44,6 @@ pub(crate) enum Went {
     OutputLimit,
 }
 
-/// What one call produced.
-enum Ran {
-    /// Something to send back, whether or not the tool succeeded.
-    Output(ToolOutput),
-    /// The user cancelled.
-    Stopped(StopReason),
-    /// The user said no.
-    Refused,
-}
-
 /// Everything a pass of calls needs, gathered so the runner reads as one thing.
 pub(crate) struct Work<'a> {
     /// What may be called.
@@ -60,10 +56,14 @@ pub(crate) struct Work<'a> {
     pub(crate) events: Reporter<'a>,
     /// Whether the user has asked everything to stop.
     pub(crate) cancel: &'a Cancel,
+    /// The run identity placed in each per-call context.
+    pub(crate) ancestry: Ancestry,
+    /// The most opt-in calls that may execute at once.
+    pub(crate) concurrency: usize,
 }
 
 impl Work<'_> {
-    /// Runs `calls` in order, and answers every one of them.
+    /// Runs `calls`, and answers every one of them in provider order.
     pub(crate) fn pass(
         &mut self,
         calls: &[ToolCall],
@@ -74,135 +74,685 @@ impl Work<'_> {
         let mut went = Went::On;
         let mut produced = 0_usize;
 
-        for (index, call) in calls.iter().enumerate() {
-            let mut output = match went {
-                Went::On => match self.one(call) {
-                    Ran::Output(output) => output,
-                    Ran::Stopped(stop) => {
-                        went = Went::Stopped(stop);
-                        ToolOutput::failed(NOT_RUN)
+        let mut at = 0;
+        while at < calls.len() {
+            if !matches!(went, Went::On) {
+                let invocation = self.after_turn(&calls[at], &went);
+                self.finish(
+                    invocation,
+                    at,
+                    calls.len(),
+                    held,
+                    maximum,
+                    &mut produced,
+                    &mut went,
+                    &mut results,
+                );
+                at += 1;
+                continue;
+            }
+
+            // Cancellation is the reason the turn ended even when there is
+            // too little room left for its stand-in. It is also known before
+            // admission, so budget reservation must not relabel it.
+            if self.cancel.requested() {
+                went = Went::Stopped(StopReason::Cancelled);
+                continue;
+            }
+
+            let end = self.wave_end(calls, at);
+
+            // Reserve the model-readable stand-ins for every recorded call
+            // before this wave is admitted. This is the budget that cannot be
+            // recovered later: even a refusal or cancellation must answer all
+            // of those calls. Resource keys and worker slots were reserved by
+            // `wave_end` before any permission or executor code runs.
+            let required = calls.len().saturating_sub(at).saturating_mul(NOT_RUN.len());
+            if held.saturating_add(produced).saturating_add(required) > maximum {
+                went = Went::OutputLimit;
+                continue;
+            }
+
+            let mut decisions = Vec::with_capacity(end - at);
+            let mut ended = None;
+            for call in &calls[at..end] {
+                if ended.is_some() {
+                    decisions.push(Decision::NotRun(self.stand_in(
+                        call,
+                        NOT_RUN,
+                        ToolOutcome::NotRun,
+                    )));
+                    continue;
+                }
+
+                let decision = self.prepare(call);
+                match &decision {
+                    Decision::Refused(_) => {
+                        ended = Some(WaveEnd::Refused);
                     }
-                    Ran::Refused => {
-                        went = Went::Refused(call.name.clone());
-                        ToolOutput::failed(DENIED)
-                    }
-                },
-                // The turn is already over. The call is still answered, so the
-                // transcript stays one a provider will accept.
-                Went::Stopped(_) | Went::Refused(_) => ToolOutput::failed(NOT_RUN),
-                Went::OutputLimit => ToolOutput::failed(""),
+                    Decision::Stopped(_) => ended = Some(WaveEnd::Stopped),
+                    Decision::Ready(_) | Decision::Done(_) | Decision::NotRun(_) => {}
+                }
+                decisions.push(decision);
+            }
+
+            let invocations = if ended.is_some() {
+                decisions
+                    .into_iter()
+                    .map(|decision| match decision {
+                        Decision::Ready(prepared) => prepared.not_run(),
+                        Decision::Done(invocation)
+                        | Decision::Refused(invocation)
+                        | Decision::Stopped(invocation)
+                        | Decision::NotRun(invocation) => invocation,
+                    })
+                    .collect()
+            } else {
+                self.execute_wave(decisions)
             };
 
-            // Leave enough room to answer every later call even when this one
-            // fills the budget. The provider requires a result for every call
-            // already recorded, so dropping the tail is not a valid bound.
-            let later = calls.len().saturating_sub(index + 1);
-            let reserved = later.saturating_mul(NOT_RUN.len());
-            let room = maximum
-                .saturating_sub(held)
-                .saturating_sub(produced)
-                .saturating_sub(reserved);
-            if output.text().len() > room {
-                output = ToolOutput::failed(if OUTPUT_LIMIT.len() <= room {
-                    OUTPUT_LIMIT
-                } else {
-                    ""
-                });
-                // The boundary is why the turn ends only where nothing already
-                // ended it: a cancellation or a refusal whose stand-in answer
-                // crossed the room is still a cancellation or a refusal, and
-                // relabelling it would hand the model a limit to work around.
-                went = match went {
-                    Went::On | Went::OutputLimit => Went::OutputLimit,
-                    Went::Stopped(_) | Went::Refused(_) => went,
-                };
+            for (offset, invocation) in invocations.into_iter().enumerate() {
+                match invocation.outcome {
+                    ToolOutcome::Refused => {
+                        went = Went::Refused(invocation.call.name.clone());
+                    }
+                    ToolOutcome::Cancelled => {
+                        went = Went::Stopped(StopReason::Cancelled);
+                    }
+                    ToolOutcome::Succeeded
+                    | ToolOutcome::Failed
+                    | ToolOutcome::Forbidden
+                    | ToolOutcome::TimedOut
+                    | ToolOutcome::Rejected
+                    | ToolOutcome::NotRun
+                    | ToolOutcome::OutputLimit
+                    | ToolOutcome::Panicked => {}
+                }
+                self.finish(
+                    invocation,
+                    at + offset,
+                    calls.len(),
+                    held,
+                    maximum,
+                    &mut produced,
+                    &mut went,
+                    &mut results,
+                );
             }
-            produced = produced.saturating_add(output.text().len());
-
-            // Cloned because both halves need it: the renderer shows what the
-            // tool produced, and the transcript sends it to the model. It is
-            // one tool's output, so it does not grow with the transcript.
-            self.events.post(Event::ToolFinished {
-                call: call.id.clone(),
-                output: output.clone(),
-            });
-
-            // And this is where the two copies part company. A diff is for the
-            // reader, it is drawn once, and the transcript is replayed every
-            // turn for the rest of the session — one that kept a diff per edit
-            // would grow with what had been shown, where the bound above counts
-            // what was said.
-            output.forget_diff();
-
-            results.push(ToolResult {
-                id: call.id.clone(),
-                output,
-            });
+            at = end;
         }
 
         (results, went, produced)
     }
 
-    /// Runs one call, if it is allowed to run.
-    fn one(&mut self, call: &ToolCall) -> Ran {
+    /// Captures, validates, transforms, revalidates, classifies, guards, and
+    /// approves one call without causing its tool effect.
+    fn prepare(&mut self, call: &ToolCall) -> Decision {
         if self.cancel.requested() {
-            return Ran::Stopped(StopReason::Cancelled);
+            return Decision::Stopped(self.stand_in(call, NOT_RUN, ToolOutcome::Cancelled));
         }
 
-        let Some(entry) = self.tools.find(&call.name) else {
-            // A name the model invented is something the model can correct, so
-            // it goes back as a result rather than ending the turn.
-            return Ran::Output(failure(&ToolError::Unknown(call.name.clone())));
+        let admission = match self.tools.admit(call) {
+            Ok(admission) => admission,
+            Err(problem) => return Decision::Done(self.rejected(call, None, problem)),
+        };
+        let entry = match self.tools.resolve(&admission) {
+            Ok(entry) => entry,
+            Err(problem) => return Decision::Done(self.rejected(call, None, problem)),
+        };
+        let source = Some(entry.descriptor().provenance().receipt());
+        let result_limit = result_limit(entry);
+
+        if let Err(problem) = entry.tool().validate(&call.args) {
+            return Decision::Done(Invocation::failed(
+                call.clone(),
+                problem,
+                ToolOutcome::Rejected,
+                source,
+                call.args.as_str().len(),
+                result_limit,
+            ));
+        }
+
+        let args = match entry.hooks().argument() {
+            Some(transform) => match transform.transform(call) {
+                Ok(args) => args,
+                Err(problem) => {
+                    return Decision::Done(Invocation::failed(
+                        call.clone(),
+                        problem,
+                        ToolOutcome::Rejected,
+                        source,
+                        call.args.as_str().len(),
+                        result_limit,
+                    ));
+                }
+            },
+            None => call.args.clone(),
+        };
+        let transformed = ToolCall {
+            id: call.id.clone(),
+            name: call.name.clone(),
+            args,
+        };
+        let admission = match self.tools.admit(&transformed) {
+            Ok(admission) => admission,
+            Err(problem) => {
+                return Decision::Done(Invocation::failed(
+                    transformed.clone(),
+                    problem,
+                    ToolOutcome::Rejected,
+                    source,
+                    transformed.args.as_str().len(),
+                    result_limit,
+                ));
+            }
+        };
+        let entry = match self.tools.resolve(&admission) {
+            Ok(entry) => entry,
+            Err(problem) => {
+                return Decision::Done(Invocation::failed(
+                    transformed.clone(),
+                    problem,
+                    ToolOutcome::Rejected,
+                    source,
+                    transformed.args.as_str().len(),
+                    result_limit,
+                ));
+            }
+        };
+        if let Err(problem) = entry.tool().validate(&transformed.args) {
+            return Decision::Done(Invocation::failed(
+                transformed.clone(),
+                problem,
+                ToolOutcome::Rejected,
+                source,
+                transformed.args.as_str().len(),
+                result_limit,
+            ));
+        }
+
+        let sensitivity = entry.tool().sensitivity(&transformed.args);
+        let guarded = self.permission.decide_admitted_guarded(
+            &admission,
+            &sensitivity,
+            |final_call, final_sensitivity| match entry.hooks().input() {
+                Some(guard) => guard.guard(final_call, final_sensitivity),
+                None => Ok(()),
+            },
+            self.ask,
+        );
+        let settled = match guarded {
+            Ok(settled) => settled,
+            Err(problem) => {
+                return Decision::Done(Invocation::failed(
+                    transformed.clone(),
+                    problem,
+                    ToolOutcome::Rejected,
+                    source,
+                    transformed.args.as_str().len(),
+                    result_limit,
+                ));
+            }
         };
 
-        let sensitivity = entry.tool().sensitivity(&call.args);
-        match self.permission.decide(call, &sensitivity, self.ask) {
-            // The watcher is made here, where the call is, and handed down. The
-            // tool is never told which call it is running, so output it reports
-            // cannot arrive under another call's name — the same shape as the
-            // approval it is passed beside, for the same reason.
-            Settled::Approved(approved) => self.run(
-                approved,
-                &Watching {
-                    call: call.id.clone(),
-                    events: self.events,
-                },
-            ),
-            // Standing policy, which the model can read and work around. It
-            // costs nothing to hit twice, so the turn carries on.
-            Settled::Forbidden => Ran::Output(ToolOutput::failed(FORBIDDEN)),
-            // A person, about this moment. The turn ends, because a model that
-            // is told no and left running will ask the same thing in a shape
-            // the rules happen not to cover.
-            Settled::Refused => Ran::Refused,
+        match settled {
+            Settled::Approved(approved) => match self.tools.resolve_approved(&approved) {
+                Ok(approved_entry) => {
+                    let input_bytes = transformed.args.as_str().len();
+                    Decision::Ready(Prepared {
+                        call: transformed,
+                        entry: approved_entry.clone(),
+                        approved,
+                        source,
+                        input_bytes,
+                        result_limit,
+                    })
+                }
+                Err(problem) => Decision::Done(Invocation::failed(
+                    transformed.clone(),
+                    problem,
+                    ToolOutcome::Rejected,
+                    source,
+                    transformed.args.as_str().len(),
+                    result_limit,
+                )),
+            },
+            Settled::Forbidden => Decision::Done(Invocation::new(
+                transformed.clone(),
+                ToolOutput::failed(FORBIDDEN),
+                ToolOutcome::Forbidden,
+                source,
+                transformed.args.as_str().len(),
+                result_limit,
+            )),
+            Settled::Refused => Decision::Refused(Invocation::new(
+                transformed.clone(),
+                ToolOutput::failed(DENIED),
+                ToolOutcome::Refused,
+                source,
+                transformed.args.as_str().len(),
+                result_limit,
+            )),
         }
     }
 
-    /// Runs the tool the approval names.
-    ///
-    /// Looked up from the approval rather than kept from before the verdict.
-    /// The handle above answered how dangerous the call was; the one that runs
-    /// comes out of the same value as the arguments and the proof, so a verdict
-    /// reached about one tool cannot arrive at another with that tool's
-    /// arguments beside it — which is the guarantee the whole mechanism is for,
-    /// and it should not rest on two lines staying next to each other.
-    fn run(&self, approved: Approved, watch: &dyn Watch) -> Ran {
-        let Some(entry) = self.tools.find(approved.tool()) else {
-            // A name that reached a verdict is a name a lookup already
-            // answered to, so this is the arm nothing takes. Answered rather
-            // than asserted: the model can read a result, and a session is
-            // worth more than a proof about a branch.
-            return Ran::Output(failure(&ToolError::Unknown(approved.tool().into())));
-        };
+    /// Executes every approved call in one conflict-free scheduler wave.
+    fn execute_wave(&self, decisions: Vec<Decision>) -> Vec<Invocation> {
+        let ready = decisions
+            .iter()
+            .filter(|decision| matches!(decision, Decision::Ready(_)))
+            .count();
+        if ready <= 1 {
+            return decisions
+                .into_iter()
+                .map(|decision| match decision {
+                    Decision::Ready(prepared) => {
+                        execute_contained(prepared, self.ancestry, self.cancel, self.events)
+                    }
+                    Decision::Done(invocation)
+                    | Decision::Refused(invocation)
+                    | Decision::Stopped(invocation)
+                    | Decision::NotRun(invocation) => invocation,
+                })
+                .collect();
+        }
 
-        match entry.tool().run(approved, watch) {
-            Ok(output) => Ran::Output(output),
-            // Cancelling is not a result the model should reason about. The
-            // user stopped the turn, so the turn stops.
-            Err(ToolError::Cancelled(_)) => Ran::Stopped(StopReason::Cancelled),
-            Err(problem) => Ran::Output(failure(&problem)),
+        let mut results: Vec<Option<Invocation>> = (0..decisions.len()).map(|_| None).collect();
+        thread::scope(|scope| {
+            let mut running = Vec::with_capacity(ready);
+            for (index, decision) in decisions.into_iter().enumerate() {
+                match decision {
+                    Decision::Ready(prepared) => {
+                        let ancestry = self.ancestry;
+                        let cancel = self.cancel;
+                        let events = self.events;
+                        running.push((
+                            index,
+                            scope.spawn(move || {
+                                execute_contained(prepared, ancestry, cancel, events)
+                            }),
+                        ));
+                    }
+                    Decision::Done(invocation)
+                    | Decision::Refused(invocation)
+                    | Decision::Stopped(invocation)
+                    | Decision::NotRun(invocation) => results[index] = Some(invocation),
+                }
+            }
+            for (index, worker) in running {
+                results[index] = Some(
+                    worker
+                        .join()
+                        .expect("the invocation boundary contains executor panics"),
+                );
+            }
+        });
+        results
+            .into_iter()
+            .map(|result| result.expect("every scheduler slot is finalized exactly once"))
+            .collect()
+    }
+
+    /// Ends the next conflict-free, bounded wave before any call is admitted.
+    fn wave_end(&self, calls: &[ToolCall], start: usize) -> usize {
+        let ceiling = self.concurrency.max(1);
+        let Some(first) = calls.get(start) else {
+            return start;
+        };
+        if ceiling == 1 || matches!(self.mode(first), ToolExecutionMode::Sequential) {
+            return start + 1;
+        }
+
+        let mut end = start;
+        let mut exclusive = Vec::<Box<str>>::new();
+        while end < calls.len() && end - start < ceiling {
+            match self.mode(&calls[end]) {
+                ToolExecutionMode::Sequential => break,
+                ToolExecutionMode::Parallel => end += 1,
+                ToolExecutionMode::Exclusive(key) => {
+                    if exclusive.iter().any(|held| &**held == key.as_str()) {
+                        break;
+                    }
+                    exclusive.push(key.as_str().into());
+                    end += 1;
+                }
+            }
+        }
+        end.max(start + 1)
+    }
+
+    fn mode(&self, call: &ToolCall) -> ToolExecutionMode {
+        self.tools
+            .find(&call.name)
+            .map_or(ToolExecutionMode::Sequential, |entry| {
+                entry.descriptor().execution().clone()
+            })
+    }
+
+    fn rejected(
+        &self,
+        call: &ToolCall,
+        entry: Option<&ToolEntry>,
+        problem: ToolError,
+    ) -> Invocation {
+        Invocation::failed(
+            call.clone(),
+            problem,
+            ToolOutcome::Rejected,
+            entry.map(|entry| entry.descriptor().provenance().receipt()),
+            call.args.as_str().len(),
+            entry.map_or(TOOL_RESULT_BYTES, result_limit),
+        )
+    }
+
+    fn stand_in(&self, call: &ToolCall, text: &str, outcome: ToolOutcome) -> Invocation {
+        let entry = self.tools.find(&call.name);
+        Invocation::new(
+            call.clone(),
+            ToolOutput::failed(text),
+            outcome,
+            entry.map(|entry| entry.descriptor().provenance().receipt()),
+            call.args.as_str().len(),
+            entry.map_or(TOOL_RESULT_BYTES, result_limit),
+        )
+    }
+
+    fn after_turn(&self, call: &ToolCall, went: &Went) -> Invocation {
+        match went {
+            Went::Stopped(_) | Went::Refused(_) => {
+                self.stand_in(call, NOT_RUN, ToolOutcome::NotRun)
+            }
+            Went::OutputLimit => self.stand_in(call, "", ToolOutcome::OutputLimit),
+            Went::On => unreachable!("a live turn is admitted in waves"),
         }
     }
+
+    #[allow(clippy::too_many_arguments)]
+    fn finish(
+        &self,
+        mut invocation: Invocation,
+        index: usize,
+        total: usize,
+        held: usize,
+        maximum: usize,
+        produced: &mut usize,
+        went: &mut Went,
+        results: &mut Vec<ToolResult>,
+    ) {
+        // Leave enough room to answer every later call even when this one
+        // fills the budget. The provider requires a result for every call
+        // already recorded, so dropping the tail is not a valid bound.
+        let later = total.saturating_sub(index + 1);
+        let reserved = later.saturating_mul(NOT_RUN.len());
+        let room = maximum
+            .saturating_sub(held)
+            .saturating_sub(*produced)
+            .saturating_sub(reserved);
+        if invocation.output.text().len() > room {
+            invocation.output = ToolOutput::failed(if OUTPUT_LIMIT.len() <= room {
+                OUTPUT_LIMIT
+            } else {
+                ""
+            });
+            invocation.retention = invocation.output.limit_encoded(invocation.result_limit);
+            if matches!(went, Went::On | Went::OutputLimit) {
+                *went = Went::OutputLimit;
+                invocation.outcome = ToolOutcome::OutputLimit;
+            }
+        }
+        *produced = produced.saturating_add(invocation.output.text().len());
+
+        let receipt = ToolReceipt::new(
+            self.tools.generation().clone(),
+            invocation.source,
+            invocation.input_bytes,
+            invocation.retention,
+            invocation.outcome,
+        );
+        self.events.post(Event::ToolFinished {
+            call: invocation.call.id.clone(),
+            output: invocation.output.clone(),
+            receipt: Some(receipt),
+        });
+
+        invocation.output.forget_diff();
+        results.push(ToolResult {
+            id: invocation.call.id,
+            output: invocation.output,
+        });
+    }
+}
+
+enum WaveEnd {
+    Refused,
+    Stopped,
+}
+
+enum Decision {
+    Ready(Prepared),
+    Done(Invocation),
+    Refused(Invocation),
+    Stopped(Invocation),
+    NotRun(Invocation),
+}
+
+struct Prepared {
+    call: ToolCall,
+    entry: ToolEntry,
+    approved: Approved,
+    source: Option<ToolSourceReceipt>,
+    input_bytes: usize,
+    result_limit: usize,
+}
+
+impl Prepared {
+    fn not_run(self) -> Invocation {
+        Invocation::new(
+            self.call,
+            ToolOutput::failed(NOT_RUN),
+            ToolOutcome::NotRun,
+            self.source,
+            self.input_bytes,
+            self.result_limit,
+        )
+    }
+}
+
+struct Invocation {
+    call: ToolCall,
+    output: ToolOutput,
+    outcome: ToolOutcome,
+    source: Option<ToolSourceReceipt>,
+    input_bytes: usize,
+    result_limit: usize,
+    retention: ToolOutputRetention,
+}
+
+impl Invocation {
+    fn new(
+        call: ToolCall,
+        mut output: ToolOutput,
+        outcome: ToolOutcome,
+        source: Option<ToolSourceReceipt>,
+        input_bytes: usize,
+        result_limit: usize,
+    ) -> Self {
+        let retention = output.limit_encoded(result_limit);
+        Self {
+            call,
+            output,
+            outcome,
+            source,
+            input_bytes,
+            result_limit,
+            retention,
+        }
+    }
+
+    fn failed(
+        call: ToolCall,
+        problem: ToolError,
+        outcome: ToolOutcome,
+        source: Option<ToolSourceReceipt>,
+        input_bytes: usize,
+        result_limit: usize,
+    ) -> Self {
+        Self::new(
+            call,
+            failure(&problem),
+            outcome,
+            source,
+            input_bytes,
+            result_limit,
+        )
+    }
+}
+
+fn execute_contained(
+    prepared: Prepared,
+    ancestry: Ancestry,
+    cancel: &Cancel,
+    events: Reporter<'_>,
+) -> Invocation {
+    let fallback = PanicFallback::from(&prepared);
+    match catch_unwind(AssertUnwindSafe(|| {
+        execute(prepared, ancestry, cancel, events)
+    })) {
+        Ok(invocation) => invocation,
+        Err(_) => fallback.panicked(),
+    }
+}
+
+fn execute(
+    prepared: Prepared,
+    ancestry: Ancestry,
+    cancel: &Cancel,
+    events: Reporter<'_>,
+) -> Invocation {
+    let Prepared {
+        call,
+        entry,
+        approved,
+        source,
+        input_bytes,
+        result_limit,
+    } = prepared;
+    let deadline = entry
+        .descriptor()
+        .timeout()
+        .and_then(|timeout| Instant::now().checked_add(timeout));
+    let watching = Watching {
+        call: call.id.clone(),
+        events,
+    };
+    let context = ToolContext::new(ancestry, call.id.clone(), cancel, deadline, &watching);
+    let ran = entry.tool().run(approved, &context);
+
+    if cancel.requested() {
+        return Invocation::new(
+            call,
+            ToolOutput::failed(NOT_RUN),
+            ToolOutcome::Cancelled,
+            source,
+            input_bytes,
+            result_limit,
+        );
+    }
+    if context.timed_out() {
+        return Invocation::new(
+            call,
+            ToolOutput::failed("tool timed out"),
+            ToolOutcome::TimedOut,
+            source,
+            input_bytes,
+            result_limit,
+        );
+    }
+
+    let output = match ran {
+        Ok(output) => match entry.hooks().output() {
+            Some(guard) => match guard.guard(&call, output) {
+                Ok(output) => output,
+                Err(problem) => {
+                    return Invocation::failed(
+                        call,
+                        problem,
+                        ToolOutcome::Failed,
+                        source,
+                        input_bytes,
+                        result_limit,
+                    );
+                }
+            },
+            None => output,
+        },
+        Err(ToolError::Cancelled(_)) => {
+            return Invocation::new(
+                call,
+                ToolOutput::failed(NOT_RUN),
+                ToolOutcome::Cancelled,
+                source,
+                input_bytes,
+                result_limit,
+            );
+        }
+        Err(problem) => {
+            return Invocation::failed(
+                call,
+                problem,
+                ToolOutcome::Failed,
+                source,
+                input_bytes,
+                result_limit,
+            );
+        }
+    };
+    let outcome = if output.is_failed() {
+        ToolOutcome::Failed
+    } else {
+        ToolOutcome::Succeeded
+    };
+    Invocation::new(call, output, outcome, source, input_bytes, result_limit)
+}
+
+struct PanicFallback {
+    call: ToolCall,
+    source: Option<ToolSourceReceipt>,
+    input_bytes: usize,
+    result_limit: usize,
+}
+
+impl From<&Prepared> for PanicFallback {
+    fn from(prepared: &Prepared) -> Self {
+        Self {
+            call: prepared.call.clone(),
+            source: prepared.source.clone(),
+            input_bytes: prepared.input_bytes,
+            result_limit: prepared.result_limit,
+        }
+    }
+}
+
+impl PanicFallback {
+    fn panicked(self) -> Invocation {
+        Invocation::new(
+            self.call,
+            ToolOutput::failed("tool panicked; the failure was contained"),
+            ToolOutcome::Panicked,
+            self.source,
+            self.input_bytes,
+            self.result_limit,
+        )
+    }
+}
+
+fn result_limit(entry: &ToolEntry) -> usize {
+    entry
+        .descriptor()
+        .result_bytes()
+        .unwrap_or(TOOL_RESULT_BYTES)
+        .min(TOOL_RESULT_BYTES)
 }
 
 /// Where one call's output goes while its tool is still running.
@@ -238,9 +788,17 @@ fn failure(problem: &ToolError) -> ToolOutput {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::mpsc::{Receiver, Sender, channel};
+    use std::sync::{Arc, Barrier, Mutex};
+    use std::time::Duration;
 
-    use crucible_core::{Ancestry, EventEnvelope, Post, ToolArgs, ToolId, Verdict};
+    use crucible_core::{
+        Ancestry, ArgumentTransform, Disposition, EventEnvelope, InputGuard, Mode, OutputGuard,
+        Post, Remember, Rules, Sensitivity, Summary, Target, Tool, ToolArgs, ToolDescriptor,
+        ToolExecutionMode, ToolHooks, ToolId, ToolProvenance, ToolResourceKey, ToolSourceKind,
+        Verdict,
+    };
 
     use super::*;
     use crate::Tools;
@@ -302,6 +860,629 @@ mod tests {
         }
     }
 
+    type Trace = Arc<Mutex<Vec<&'static str>>>;
+
+    fn marked(trace: &Trace, stage: &'static str) {
+        trace.lock().unwrap().push(stage);
+    }
+
+    struct PipelineTool {
+        trace: Trace,
+        invalid_final: bool,
+        answer: Box<str>,
+    }
+
+    impl Tool for PipelineTool {
+        fn validate(&self, args: &ToolArgs) -> Result<(), ToolError> {
+            let stage = if args.as_str() == "raw" {
+                "validate raw"
+            } else {
+                "validate transformed"
+            };
+            marked(&self.trace, stage);
+            if self.invalid_final && args.as_str() == "transformed" {
+                return Err(ToolError::Arguments {
+                    tool: "pipeline".into(),
+                    problem: "transformed arguments were invalid".into(),
+                });
+            }
+            Ok(())
+        }
+
+        fn sensitivity(&self, args: &ToolArgs) -> Sensitivity {
+            assert_eq!(args.as_str(), "transformed");
+            marked(&self.trace, "sensitivity");
+            changing()
+        }
+
+        fn summary(&self, _args: &ToolArgs) -> Summary {
+            Summary::new("pipeline")
+        }
+
+        fn run(
+            &self,
+            approved: Approved,
+            _context: &ToolContext<'_>,
+        ) -> Result<ToolOutput, ToolError> {
+            assert_eq!(approved.args().as_str(), "transformed");
+            marked(&self.trace, "execute");
+            Ok(ToolOutput::ok(self.answer.clone()))
+        }
+    }
+
+    struct Transform(Trace);
+
+    impl ArgumentTransform for Transform {
+        fn transform(&self, _call: &ToolCall) -> Result<ToolArgs, ToolError> {
+            marked(&self.0, "transform");
+            Ok(ToolArgs::new("transformed"))
+        }
+    }
+
+    struct GuardInput(Trace);
+
+    impl InputGuard for GuardInput {
+        fn guard(&self, call: &ToolCall, _sensitivity: &Sensitivity) -> Result<(), ToolError> {
+            assert_eq!(call.args.as_str(), "transformed");
+            marked(&self.0, "input guard");
+            Ok(())
+        }
+    }
+
+    struct GuardOutput(Trace);
+
+    impl OutputGuard for GuardOutput {
+        fn guard(&self, _call: &ToolCall, output: ToolOutput) -> Result<ToolOutput, ToolError> {
+            marked(&self.0, "output guard");
+            Ok(output)
+        }
+    }
+
+    struct TracedAsk(Trace);
+
+    impl Ask for TracedAsk {
+        fn ask(&mut self, call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
+            assert_eq!(call.args.as_str(), "transformed");
+            marked(&self.0, "approval");
+            (Verdict::Allow, Remember::Never)
+        }
+    }
+
+    fn pipeline_tools(
+        trace: &Trace,
+        invalid_final: bool,
+        answer: impl Into<Box<str>>,
+        result_bytes: Option<usize>,
+    ) -> Tools {
+        let provenance =
+            ToolProvenance::new(ToolSourceKind::User, "test:pipeline", "pipeline test").unwrap();
+        let mut descriptor = ToolDescriptor::new("pipeline", "{}", provenance).unwrap();
+        if let Some(bytes) = result_bytes {
+            descriptor = descriptor.limiting_result_to(bytes).unwrap();
+        }
+        let hooks = ToolHooks::new()
+            .transforming(Arc::new(Transform(Arc::clone(trace))))
+            .guarding_input(Arc::new(GuardInput(Arc::clone(trace))))
+            .guarding_output(Arc::new(GuardOutput(Arc::clone(trace))));
+        let mut tools = Tools::new();
+        tools
+            .add_with_hooks(
+                descriptor,
+                Arc::new(PipelineTool {
+                    trace: Arc::clone(trace),
+                    invalid_final,
+                    answer: answer.into(),
+                }),
+                hooks,
+            )
+            .unwrap();
+        tools
+    }
+
+    fn invoke(
+        tools: &Tools,
+        permission: &mut Permission,
+        ask: &mut dyn Ask,
+        call: ToolCall,
+    ) -> (Vec<ToolResult>, Went, Vec<Event>) {
+        invoke_many(tools, permission, ask, &[call], 1, usize::MAX)
+    }
+
+    fn invoke_many(
+        tools: &Tools,
+        permission: &mut Permission,
+        ask: &mut dyn Ask,
+        calls: &[ToolCall],
+        concurrency: usize,
+        maximum: usize,
+    ) -> (Vec<ToolResult>, Went, Vec<Event>) {
+        let (events, seen) = channel();
+        let keeping = Keeping(events);
+        let ancestry = Ancestry::new();
+        let snapshot = tools.snapshot().unwrap();
+        let cancel = Cancel::new();
+        let (results, went, _) = Work {
+            tools: &snapshot,
+            permission,
+            ask,
+            events: Reporter::new(ancestry, &keeping),
+            cancel: &cancel,
+            ancestry,
+            concurrency,
+        }
+        .pass(calls, 0, maximum);
+        drop(keeping);
+        (results, went, seen.try_iter().collect())
+    }
+
+    fn pipeline_call() -> ToolCall {
+        ToolCall {
+            id: ToolId::new("pipeline-call"),
+            name: "pipeline".into(),
+            args: ToolArgs::new("raw"),
+        }
+    }
+
+    #[test]
+    fn the_invocation_pipeline_runs_every_stage_in_its_declared_order() {
+        let trace = Trace::default();
+        let tools = pipeline_tools(&trace, false, "done", None);
+        let mut permission = Permission::new();
+        let mut ask = TracedAsk(Arc::clone(&trace));
+
+        let (results, went, events) = invoke(&tools, &mut permission, &mut ask, pipeline_call());
+
+        assert_eq!(results[0].output.text(), "done");
+        assert!(matches!(went, Went::On));
+        assert_eq!(
+            *trace.lock().unwrap(),
+            [
+                "validate raw",
+                "transform",
+                "validate transformed",
+                "sensitivity",
+                "input guard",
+                "approval",
+                "execute",
+                "output guard",
+            ]
+        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::ToolFinished {
+                receipt: Some(receipt),
+                ..
+            } if receipt.outcome() == ToolOutcome::Succeeded
+                && receipt.input_bytes() == "transformed".len()
+        )));
+    }
+
+    #[test]
+    fn transformed_arguments_are_revalidated_before_sensitivity_or_authority() {
+        let trace = Trace::default();
+        let tools = pipeline_tools(&trace, true, "never", None);
+        let mut permission = Permission::new();
+        let mut ask = TracedAsk(Arc::clone(&trace));
+
+        let (results, went, _) = invoke(&tools, &mut permission, &mut ask, pipeline_call());
+
+        assert!(results[0].output.is_failed());
+        assert!(matches!(went, Went::On));
+        assert_eq!(
+            *trace.lock().unwrap(),
+            ["validate raw", "transform", "validate transformed"]
+        );
+    }
+
+    #[test]
+    fn standing_denial_runs_before_the_input_guard_and_never_executes() {
+        let trace = Trace::default();
+        let tools = pipeline_tools(&trace, false, "never", None);
+        let mut rules = Rules::new();
+        rules.add(Disposition::Deny, "pipeline").unwrap();
+        let mut permission = Permission::with(Mode::FullAccess, rules);
+        let mut ask = TracedAsk(Arc::clone(&trace));
+
+        let (results, went, _) = invoke(&tools, &mut permission, &mut ask, pipeline_call());
+
+        assert_eq!(results[0].output.text(), FORBIDDEN);
+        assert!(matches!(went, Went::On));
+        assert_eq!(
+            *trace.lock().unwrap(),
+            [
+                "validate raw",
+                "transform",
+                "validate transformed",
+                "sensitivity",
+            ]
+        );
+    }
+
+    #[test]
+    fn encoded_output_is_bounded_after_the_output_guard_and_before_the_event() {
+        let trace = Trace::default();
+        let raw = "\"".repeat(300);
+        let tools = pipeline_tools(&trace, false, raw, Some(512));
+        let mut permission = Permission::new();
+        let mut ask = TracedAsk(Arc::clone(&trace));
+
+        let (results, _, events) = invoke(&tools, &mut permission, &mut ask, pipeline_call());
+        let (event_output, receipt) = events
+            .iter()
+            .find_map(|event| match event {
+                Event::ToolFinished {
+                    output,
+                    receipt: Some(receipt),
+                    ..
+                } => Some((output, receipt)),
+                _ => None,
+            })
+            .unwrap();
+
+        assert_eq!(event_output.text(), results[0].output.text());
+        assert!(event_output.text().contains("encoded bytes"));
+        assert!(receipt.output().omitted() > 0);
+        assert!(receipt.output().retained() <= 512);
+        assert_eq!(trace.lock().unwrap().last(), Some(&"output guard"));
+    }
+
+    struct TimesOut(Arc<AtomicUsize>);
+
+    impl Tool for TimesOut {
+        fn validate(&self, _args: &ToolArgs) -> Result<(), ToolError> {
+            Ok(())
+        }
+
+        fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
+            Sensitivity::ReadOnly {
+                target: Target::unresolved(),
+            }
+        }
+
+        fn summary(&self, _args: &ToolArgs) -> Summary {
+            Summary::new("timeout")
+        }
+
+        fn run(
+            &self,
+            _approved: Approved,
+            context: &ToolContext<'_>,
+        ) -> Result<ToolOutput, ToolError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            while !context.cancel().requested() {
+                thread::yield_now();
+            }
+            Err(ToolError::Cancelled("timeout".into()))
+        }
+    }
+
+    #[test]
+    fn a_descriptor_timeout_finalizes_once_without_stopping_the_run() {
+        let ran = Arc::new(AtomicUsize::new(0));
+        let descriptor = ToolDescriptor::new(
+            "timeout",
+            "{}",
+            ToolProvenance::new(ToolSourceKind::User, "test:timeout", "timeout test").unwrap(),
+        )
+        .unwrap()
+        .timing_out_after(Duration::from_millis(5))
+        .unwrap();
+        let mut tools = Tools::new();
+        tools
+            .add(descriptor, Arc::new(TimesOut(Arc::clone(&ran))))
+            .unwrap();
+        let mut permission = Permission::new();
+        let mut ask = Says::new(Verdict::Allow);
+
+        let (results, went, events) = invoke(
+            &tools,
+            &mut permission,
+            &mut ask,
+            call("timeout-call", "timeout"),
+        );
+
+        assert_eq!(ran.load(Ordering::SeqCst), 1);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].output.text(), "tool timed out");
+        assert!(matches!(went, Went::On));
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, Event::ToolFinished { .. }))
+                .count(),
+            1
+        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::ToolFinished {
+                receipt: Some(receipt),
+                ..
+            } if receipt.outcome() == ToolOutcome::TimedOut
+        )));
+    }
+
+    #[derive(Default)]
+    struct ScheduleState {
+        active: AtomicUsize,
+        peak: AtomicUsize,
+        ran: AtomicUsize,
+        approvals: AtomicUsize,
+        completed: Mutex<Vec<String>>,
+    }
+
+    struct Scheduled {
+        state: Arc<ScheduleState>,
+        barrier: Option<Arc<Barrier>>,
+        approvals_before_effects: usize,
+    }
+
+    impl Tool for Scheduled {
+        fn validate(&self, _args: &ToolArgs) -> Result<(), ToolError> {
+            Ok(())
+        }
+
+        fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
+            changing()
+        }
+
+        fn summary(&self, args: &ToolArgs) -> Summary {
+            Summary::new(args.as_str())
+        }
+
+        fn run(
+            &self,
+            approved: Approved,
+            _context: &ToolContext<'_>,
+        ) -> Result<ToolOutput, ToolError> {
+            assert!(
+                self.state.approvals.load(Ordering::SeqCst) >= self.approvals_before_effects,
+                "an effect began before its scheduler wave finished approval"
+            );
+            self.state.ran.fetch_add(1, Ordering::SeqCst);
+            let active = self.state.active.fetch_add(1, Ordering::SeqCst) + 1;
+            self.state.peak.fetch_max(active, Ordering::SeqCst);
+            if let Some(barrier) = &self.barrier {
+                barrier.wait();
+            }
+            if approved.args().as_str().contains("slow") {
+                thread::sleep(Duration::from_millis(20));
+            }
+            self.state
+                .completed
+                .lock()
+                .unwrap()
+                .push(approved.args().as_str().to_owned());
+            self.state.active.fetch_sub(1, Ordering::SeqCst);
+            Ok(ToolOutput::ok(approved.args().as_str()))
+        }
+    }
+
+    struct CountedAsk {
+        state: Arc<ScheduleState>,
+        answers: Vec<Verdict>,
+        at: usize,
+    }
+
+    impl CountedAsk {
+        fn allowing(state: Arc<ScheduleState>) -> Self {
+            Self {
+                state,
+                answers: vec![Verdict::Allow],
+                at: 0,
+            }
+        }
+    }
+
+    impl Ask for CountedAsk {
+        fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
+            self.state.approvals.fetch_add(1, Ordering::SeqCst);
+            let answer = self
+                .answers
+                .get(self.at)
+                .copied()
+                .or_else(|| self.answers.last().copied())
+                .unwrap_or(Verdict::Deny);
+            self.at += 1;
+            (answer, Remember::Never)
+        }
+    }
+
+    fn scheduled_tools(
+        registrations: &[(&str, ToolExecutionMode)],
+        state: &Arc<ScheduleState>,
+        barrier: Option<Arc<Barrier>>,
+        approvals_before_effects: usize,
+    ) -> Tools {
+        let executor: Arc<dyn Tool> = Arc::new(Scheduled {
+            state: Arc::clone(state),
+            barrier,
+            approvals_before_effects,
+        });
+        let mut tools = Tools::new();
+        for (name, mode) in registrations {
+            let descriptor = ToolDescriptor::new(
+                *name,
+                "{}",
+                ToolProvenance::new(
+                    ToolSourceKind::User,
+                    format!("test:{name}"),
+                    format!("{name} scheduler test"),
+                )
+                .unwrap(),
+            )
+            .unwrap()
+            .executing(mode.clone());
+            tools.add(descriptor, Arc::clone(&executor)).unwrap();
+        }
+        tools
+    }
+
+    fn scheduled_call(id: &str, name: &str, args: &str) -> ToolCall {
+        ToolCall {
+            id: ToolId::new(id),
+            name: name.into(),
+            args: ToolArgs::new(args),
+        }
+    }
+
+    #[test]
+    fn parallel_calls_obey_the_run_ceiling_and_finish_in_provider_order() {
+        let state = Arc::new(ScheduleState::default());
+        let tools = scheduled_tools(
+            &[("parallel", ToolExecutionMode::Parallel)],
+            &state,
+            Some(Arc::new(Barrier::new(2))),
+            2,
+        );
+        let calls = [
+            scheduled_call("a", "parallel", "slow-a"),
+            scheduled_call("b", "parallel", "fast-b"),
+            scheduled_call("c", "parallel", "slow-c"),
+            scheduled_call("d", "parallel", "fast-d"),
+        ];
+        let mut permission = Permission::new();
+        let mut ask = CountedAsk::allowing(Arc::clone(&state));
+
+        let (results, went, events) =
+            invoke_many(&tools, &mut permission, &mut ask, &calls, 2, usize::MAX);
+
+        assert!(matches!(went, Went::On));
+        assert_eq!(state.peak.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            results
+                .iter()
+                .map(|result| result.output.text())
+                .collect::<Vec<_>>(),
+            ["slow-a", "fast-b", "slow-c", "fast-d"]
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter_map(|event| match event {
+                    Event::ToolFinished { call, .. } => Some(call.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            ["a", "b", "c", "d"]
+        );
+        assert_eq!(
+            *state.completed.lock().unwrap(),
+            ["fast-b", "slow-a", "fast-d", "slow-c"],
+            "the fixture did not actually complete out of provider order"
+        );
+    }
+
+    #[test]
+    fn one_exclusive_resource_key_never_overlaps_itself() {
+        let state = Arc::new(ScheduleState::default());
+        let key = ToolResourceKey::new("workspace:index").unwrap();
+        let tools = scheduled_tools(
+            &[
+                ("exclusive_a", ToolExecutionMode::Exclusive(key.clone())),
+                ("exclusive_b", ToolExecutionMode::Exclusive(key)),
+            ],
+            &state,
+            None,
+            1,
+        );
+        let calls = [
+            scheduled_call("a", "exclusive_a", "slow-a"),
+            scheduled_call("b", "exclusive_b", "slow-b"),
+        ];
+        let mut permission = Permission::new();
+        let mut ask = CountedAsk::allowing(Arc::clone(&state));
+
+        let (results, went, _) =
+            invoke_many(&tools, &mut permission, &mut ask, &calls, 2, usize::MAX);
+
+        assert!(matches!(went, Went::On));
+        assert_eq!(results.len(), 2);
+        assert_eq!(state.peak.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn sequential_mode_remains_a_barrier_even_under_a_wider_run() {
+        let state = Arc::new(ScheduleState::default());
+        let tools = scheduled_tools(
+            &[("sequential", ToolExecutionMode::Sequential)],
+            &state,
+            None,
+            1,
+        );
+        let calls = [
+            scheduled_call("a", "sequential", "slow-a"),
+            scheduled_call("b", "sequential", "slow-b"),
+        ];
+        let mut permission = Permission::new();
+        let mut ask = CountedAsk::allowing(Arc::clone(&state));
+
+        let (_, went, _) = invoke_many(&tools, &mut permission, &mut ask, &calls, 8, usize::MAX);
+
+        assert!(matches!(went, Went::On));
+        assert_eq!(state.peak.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_refusal_in_a_parallel_wave_happens_before_any_effect() {
+        let state = Arc::new(ScheduleState::default());
+        let tools = scheduled_tools(
+            &[("parallel", ToolExecutionMode::Parallel)],
+            &state,
+            None,
+            0,
+        );
+        let calls = [
+            scheduled_call("a", "parallel", "a"),
+            scheduled_call("b", "parallel", "b"),
+        ];
+        let mut permission = Permission::new();
+        let mut ask = CountedAsk {
+            state: Arc::clone(&state),
+            answers: vec![Verdict::Allow, Verdict::Deny],
+            at: 0,
+        };
+
+        let (results, went, _) =
+            invoke_many(&tools, &mut permission, &mut ask, &calls, 2, usize::MAX);
+
+        assert_eq!(state.ran.load(Ordering::SeqCst), 0);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].output.text(), NOT_RUN);
+        assert_eq!(results[1].output.text(), DENIED);
+        assert!(matches!(went, Went::Refused(ref name) if &**name == "parallel"));
+    }
+
+    #[test]
+    fn result_budget_is_reserved_before_a_parallel_wave_is_admitted() {
+        let state = Arc::new(ScheduleState::default());
+        let tools = scheduled_tools(
+            &[("parallel", ToolExecutionMode::Parallel)],
+            &state,
+            None,
+            0,
+        );
+        let calls = [
+            scheduled_call("a", "parallel", "a"),
+            scheduled_call("b", "parallel", "b"),
+        ];
+        let mut permission = Permission::new();
+        let mut ask = CountedAsk::allowing(Arc::clone(&state));
+
+        let (results, went, _) = invoke_many(
+            &tools,
+            &mut permission,
+            &mut ask,
+            &calls,
+            2,
+            NOT_RUN.len().saturating_mul(2).saturating_sub(1),
+        );
+
+        assert_eq!(state.ran.load(Ordering::SeqCst), 0);
+        assert_eq!(state.approvals.load(Ordering::SeqCst), 0);
+        assert_eq!(results.len(), 2);
+        assert!(matches!(went, Went::OutputLimit));
+    }
+
     /// One pass, with everything it needed set up around it.
     struct Proof {
         tools: Tools,
@@ -355,6 +1536,8 @@ mod tests {
                 ask: &mut self.says,
                 events,
                 cancel: &self.cancel,
+                ancestry: Ancestry::new(),
+                concurrency: 1,
             }
             .pass(calls, held, maximum)
         }
@@ -370,6 +1553,20 @@ mod tests {
 
     fn texts(results: &[ToolResult]) -> Vec<&str> {
         results.iter().map(|result| result.output.text()).collect()
+    }
+
+    fn outcomes(proof: &Proof) -> Vec<ToolOutcome> {
+        proof
+            .seen
+            .try_iter()
+            .filter_map(|event| match event {
+                Event::ToolFinished {
+                    receipt: Some(receipt),
+                    ..
+                } => Some(receipt.outcome()),
+                _ => None,
+            })
+            .collect()
     }
 
     #[test]
@@ -419,6 +1616,7 @@ mod tests {
 
         assert_eq!(texts(&results), ["read: unreadable"]);
         assert!(matches!(went, Went::On));
+        assert_eq!(outcomes(&proof), [ToolOutcome::Failed]);
     }
 
     #[test]
@@ -432,6 +1630,7 @@ mod tests {
             matches!(went, Went::Refused(ref name) if &**name == "write"),
             "the turn should name the tool that was refused"
         );
+        assert_eq!(outcomes(&proof), [ToolOutcome::Refused]);
     }
 
     #[test]
@@ -477,6 +1676,7 @@ mod tests {
 
         assert_eq!(texts(&results), [NOT_RUN]);
         assert!(matches!(went, Went::Stopped(StopReason::Cancelled)));
+        assert_eq!(outcomes(&proof), [ToolOutcome::NotRun]);
     }
 
     #[test]
@@ -503,6 +1703,7 @@ mod tests {
         let (_, went) = proof.pass(&[call("a", "bash")]);
 
         assert!(matches!(went, Went::Stopped(StopReason::Cancelled)));
+        assert_eq!(outcomes(&proof), [ToolOutcome::Cancelled]);
     }
 
     #[test]
@@ -513,11 +1714,15 @@ mod tests {
 
         proof.pass(&[call("a", "read"), call("b", "read")]);
 
-        let finished: Vec<String> = proof
+        let finished: Vec<(String, ToolOutcome)> = proof
             .seen
             .try_iter()
             .filter_map(|event| match event {
-                Event::ToolFinished { call, .. } => Some(call.to_string()),
+                Event::ToolFinished {
+                    call,
+                    receipt: Some(receipt),
+                    ..
+                } => Some((call.to_string(), receipt.outcome())),
                 Event::TurnStarted { .. }
                 | Event::Delta { .. }
                 | Event::ToolRequested { .. }
@@ -531,11 +1736,18 @@ mod tests {
                 | Event::Steered { .. }
                 | Event::TurnFinished { .. }
                 | Event::Spent { .. }
-                | Event::Failed { .. } => None,
+                | Event::Failed { .. }
+                | Event::ToolFinished { receipt: None, .. } => None,
             })
             .collect();
 
-        assert_eq!(finished, ["a", "b"]);
+        assert_eq!(
+            finished,
+            [
+                ("a".to_owned(), ToolOutcome::Succeeded),
+                ("b".to_owned(), ToolOutcome::Succeeded),
+            ]
+        );
     }
 
     #[test]

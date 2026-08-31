@@ -11,13 +11,12 @@
 //! limit on top of them — with a ceiling of its own, because a number a model
 //! writes is an argument like any other and the rest of them are checked.
 
-/// The most one tool may say, in bytes.
+/// The most one tool may say, in encoded bytes.
 ///
-/// Where it came from is what a command's output was already held to, and one
-/// answer to "how much may a tool say" is worth more than a figure fitted to
-/// each tool: a turn spends its context on whichever tool it called, and a
-/// budget that moves with that is not a budget.
-pub(crate) const OUTPUT: usize = 30_000;
+/// Core owns the figure because invocation enforces it and load accounting
+/// reserves against it. This private spelling keeps the existing tool-local
+/// call sites readable without declaring a second value.
+pub(crate) use crucible_core::TOOL_RESULT_BYTES as OUTPUT;
 
 /// As much of `lines` as fits inside [`OUTPUT`], and how many were left out.
 ///

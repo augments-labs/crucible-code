@@ -20,8 +20,8 @@ use std::str;
 use std::sync::{LazyLock, Mutex};
 
 use crucible_core::{
-    Approved, Cancel, DescribeTool, Sensitivity, Summary, Tool, ToolArgs, ToolError, ToolOutput,
-    Watch, Workspace, WorkspacePath,
+    Approved, Cancel, DescribeTool, Sensitivity, Summary, Tool, ToolArgs, ToolContext, ToolError,
+    ToolOutput, Workspace, WorkspacePath,
 };
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
 use grep_searcher::{
@@ -222,7 +222,6 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
 #[derive(Debug)]
 pub struct Grep {
     workspace: Workspace,
-    cancel: Cancel,
 }
 
 /// What one call is looking for: the pattern, the files it restricts itself
@@ -500,11 +499,10 @@ impl io::Read for Stopping<'_> {
 }
 
 impl Grep {
-    /// Searches inside `workspace` and nowhere else, and stops when `cancel`
-    /// says to.
+    /// Searches inside `workspace` and nowhere else.
     #[must_use]
-    pub fn new(workspace: Workspace, cancel: Cancel) -> Self {
-        Self { workspace, cancel }
+    pub fn new(workspace: Workspace) -> Self {
+        Self { workspace }
     }
 
     /// Walks `from` and, until cancellation, searches every file the ignore
@@ -513,7 +511,13 @@ impl Grep {
     /// The walk is parallel because the budget is measured against a tool that
     /// walks in parallel. Workers retain the globally lowest ordered hits, so
     /// scheduling does not choose which matches a full answer contains.
-    fn hunt(&self, from: &WorkspacePath, query: Query, approved: &Approved) -> Found {
+    fn hunt(
+        &self,
+        from: &WorkspacePath,
+        query: Query,
+        approved: &Approved,
+        cancel: &Cancel,
+    ) -> Found {
         let mut walk = crate::tree::walk(from.as_path());
         if let Some(only) = query.only {
             walk.overrides(only);
@@ -565,7 +569,7 @@ impl Grep {
                 // where Esc has to arrive. What was found before this point
                 // is real and is reported, so stopping costs the turn nothing
                 // it had already paid for.
-                if self.cancel.requested() {
+                if cancel.requested() {
                     return WalkState::Quit;
                 }
 
@@ -586,7 +590,7 @@ impl Grep {
                 let Ok(Some((path, file))) = files.open_regular(entry.path()) else {
                     return WalkState::Continue;
                 };
-                let mine = self.lines(&mut searcher, matcher, (&path, &file), (mode, hits));
+                let mine = self.lines(&mut searcher, matcher, (&path, &file), (mode, hits), cancel);
                 if let Some(name) = mine.partly
                     && let Ok(mut partly) = partly.lock()
                 {
@@ -610,7 +614,7 @@ impl Grep {
             // Read after the walk rather than recorded inside it: a request that
             // arrived is what makes this answer a prefix, whether the walk was
             // still running when it landed or had just finished.
-            stopped: self.cancel.requested(),
+            stopped: cancel.requested(),
         }
     }
 
@@ -642,6 +646,7 @@ impl Grep {
         matcher: &RegexMatcher,
         opened: (&WorkspacePath, &std::fs::File),
         wanted: (Mode, &Mutex<Top>),
+        cancel: &Cancel,
     ) -> Searched {
         let (path, file) = opened;
         let (mode, hits) = wanted;
@@ -652,7 +657,7 @@ impl Grep {
         let halted = Cell::new(false);
         let reader = Stopping {
             file,
-            cancel: &self.cancel,
+            cancel,
             stopped: &halted,
         };
         let found = searcher.search_reader(
@@ -662,7 +667,7 @@ impl Grep {
                 shown: &shown,
                 mode,
                 hits,
-                cancel: &self.cancel,
+                cancel,
                 halted: &halted,
             },
         );
@@ -697,6 +702,18 @@ impl DescribeTool for Grep {
 }
 
 impl Tool for Grep {
+    fn validate(&self, args: &ToolArgs) -> Result<(), ToolError> {
+        let args = crate::args::Args::parse(NAME, args)?;
+        args.text(PATTERN)?;
+        args.count(LIMIT, MATCHES)?;
+        args.flag(IGNORE_CASE, false)?;
+        args.flag(FIXED, false)?;
+        args.optional_text(PATH)?;
+        args.optional_text(GLOB)?;
+        args.choice(MODE, CONTENT, &[CONTENT, FILES])?;
+        args.whole(CONTEXT, 0).map(drop)
+    }
+
     fn sensitivity(&self, args: &ToolArgs) -> Sensitivity {
         target::searches(&self.workspace, NAME, args, PATH)
     }
@@ -705,7 +722,7 @@ impl Tool for Grep {
         summary::field(NAME, args, PATTERN)
     }
 
-    fn run(&self, approved: Approved, _watch: &dyn Watch) -> Result<ToolOutput, ToolError> {
+    fn run(&self, approved: Approved, context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
         let args = crate::args::Args::parse(NAME, approved.args())?;
         let pattern = args.text(PATTERN)?;
         let limit = args.count(LIMIT, MATCHES)?.min(CEILING);
@@ -747,7 +764,7 @@ impl Tool for Grep {
             context: args.whole(CONTEXT, 0)?.min(REACH),
             limit,
         };
-        let found = self.hunt(&from, query, &approved);
+        let found = self.hunt(&from, query, &approved, context.cancel());
         Ok(report(&found, pattern, (mode, limit)))
     }
 }

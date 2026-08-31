@@ -33,7 +33,7 @@ use std::sync::{Arc, LazyLock};
 
 use crucible_core::{
     Answer, Answered, Approved, DescribeTool, Put, Question, Sensitivity, Summary, Target, Tool,
-    ToolArgs, ToolError, ToolOutput, Watch,
+    ToolArgs, ToolContext, ToolError, ToolOutput,
 };
 
 use crate::args::Args;
@@ -246,6 +246,11 @@ impl DescribeTool for AskUser {
 }
 
 impl Tool for AskUser {
+    fn validate(&self, args: &ToolArgs) -> Result<(), ToolError> {
+        let args = Args::parse(NAME, args)?;
+        questions(&args).map(drop)
+    }
+
     /// Reads nothing and reaches nothing. It puts words on the screen and waits
     /// for a key, so there is no target to name and nothing a rule could
     /// usefully be written about.
@@ -273,7 +278,7 @@ impl Tool for AskUser {
         }
     }
 
-    fn run(&self, approved: Approved, _watch: &dyn Watch) -> Result<ToolOutput, ToolError> {
+    fn run(&self, approved: Approved, _context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
         let args = Args::parse(NAME, approved.args())?;
         let asked = questions(&args)?;
 

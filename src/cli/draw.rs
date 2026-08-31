@@ -189,7 +189,7 @@ pub(crate) fn event<T: Terminal>(
         Event::Aged { files } => without(renderer, &files, AGAIN, workspace, style),
         Event::Unread { files } => without(renderer, &files, UNREAD, workspace, style),
 
-        Event::ToolFinished { call, output } => came_back(renderer, kept, &call, output, style),
+        Event::ToolFinished { call, output, .. } => came_back(renderer, kept, &call, output, style),
 
         // The tail is settled either way; an answer that stopped early is
         // finished text as much as one that ran out of things to say.

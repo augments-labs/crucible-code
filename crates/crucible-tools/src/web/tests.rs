@@ -1,8 +1,6 @@
 //! What the two web tools answer with, over sources that answer from memory.
 
-use crucible_core::{
-    Cancel, Fetch, Host, Page, Search, SearchResult, SourceError, Tool, ToolArgs, Unwatched,
-};
+use crucible_core::{Cancel, Fetch, Host, Page, Search, SearchResult, SourceError, Tool, ToolArgs};
 
 use super::*;
 use crate::sample;
@@ -92,25 +90,25 @@ fn result(title: &str, url: &str, extract: &str) -> SearchResult {
 }
 
 fn searching(results: Vec<SearchResult>) -> WebSearch {
-    WebSearch::new(Arc::new(Answers(results)), Cancel::new())
+    WebSearch::new(Arc::new(Answers(results)))
 }
 
 fn fetching(url: &str, title: Option<&str>, text: &str) -> WebFetch {
-    WebFetch::new(
-        Arc::new(Pages(Page {
-            url: url.into(),
-            title: title.map(Into::into),
-            text: text.into(),
-        })),
-        Cancel::new(),
-    )
+    WebFetch::new(Arc::new(Pages(Page {
+        url: url.into(),
+        title: title.map(Into::into),
+        text: text.into(),
+    })))
 }
 
 #[test]
 fn a_result_carries_its_title_its_address_and_its_extract() {
     let tool = searching(vec![result("Serde", "https://serde.rs", "A framework.")]);
     let output = tool
-        .run(sample::allowed(&tool, r#"{"query":"serde"}"#), &Unwatched)
+        .run(
+            sample::allowed(&tool, r#"{"query":"serde"}"#),
+            &crate::sample::context(),
+        )
         .expect("a source that answers");
 
     let said = output.text();
@@ -126,7 +124,10 @@ fn a_search_that_found_nothing_says_so_rather_than_answering_with_nothing() {
     // cannot tell them apart searches again for something that is not there.
     let tool = searching(Vec::new());
     let output = tool
-        .run(sample::allowed(&tool, r#"{"query":"nothing"}"#), &Unwatched)
+        .run(
+            sample::allowed(&tool, r#"{"query":"nothing"}"#),
+            &crate::sample::context(),
+        )
         .expect("a source that answers");
 
     assert!(!output.is_failed());
@@ -142,7 +143,7 @@ fn a_limit_keeps_that_many_and_counts_what_it_left() {
     let output = tool
         .run(
             sample::allowed(&tool, r#"{"query":"x","limit":2}"#),
-            &Unwatched,
+            &crate::sample::context(),
         )
         .expect("a source that answers");
 
@@ -226,7 +227,7 @@ fn a_redirect_to_another_host_does_not_come_back_under_the_first_one_s_verdict()
     let output = tool
         .run(
             sample::allowed(&tool, r#"{"url":"https://docs.rs/serde"}"#),
-            &Unwatched,
+            &crate::sample::context(),
         )
         .expect("a source that answers");
 
@@ -246,7 +247,7 @@ fn a_redirect_inside_one_host_is_still_that_host_and_comes_back() {
     let output = tool
         .run(
             sample::allowed(&tool, r#"{"url":"https://docs.rs/serde"}"#),
-            &Unwatched,
+            &crate::sample::context(),
         )
         .expect("a source that answers");
 
@@ -263,7 +264,7 @@ fn a_page_says_where_it_actually_came_from() {
     let output = tool
         .run(
             sample::allowed(&tool, r#"{"url":"https://example.com/asked-for"}"#),
-            &Unwatched,
+            &crate::sample::context(),
         )
         .expect("a source that answers");
 
@@ -276,9 +277,12 @@ fn a_page_says_where_it_actually_came_from() {
 fn a_source_that_could_not_answer_is_a_failed_result_and_not_a_broken_tool() {
     // The turn carries on and the model is told, the same as a file that is not
     // there. A source being down is not a breakdown of the mechanism.
-    let tool = WebSearch::new(Arc::new(Breaks(false)), Cancel::new());
+    let tool = WebSearch::new(Arc::new(Breaks(false)));
     let output = tool
-        .run(sample::allowed(&tool, r#"{"query":"x"}"#), &Unwatched)
+        .run(
+            sample::allowed(&tool, r#"{"query":"x"}"#),
+            &crate::sample::context(),
+        )
         .expect("a source failure to reach the model rather than the runner");
 
     assert!(output.is_failed());
@@ -287,9 +291,12 @@ fn a_source_that_could_not_answer_is_a_failed_result_and_not_a_broken_tool() {
 
 #[test]
 fn a_cancelled_search_ends_the_call_rather_than_answering_it() {
-    let tool = WebSearch::new(Arc::new(Breaks(true)), Cancel::new());
+    let tool = WebSearch::new(Arc::new(Breaks(true)));
     let problem = tool
-        .run(sample::allowed(&tool, r#"{"query":"x"}"#), &Unwatched)
+        .run(
+            sample::allowed(&tool, r#"{"query":"x"}"#),
+            &crate::sample::context(),
+        )
         .expect_err("cancellation not to come back as an answer");
 
     assert!(matches!(problem, ToolError::Cancelled(ref tool) if &**tool == "web_search"));
@@ -307,7 +314,7 @@ fn a_page_over_the_bound_comes_back_cut_rather_than_empty() {
     let output = tool
         .run(
             sample::allowed(&tool, r#"{"url":"https://example.com/long"}"#),
-            &Unwatched,
+            &crate::sample::context(),
         )
         .expect("a source that answers");
 

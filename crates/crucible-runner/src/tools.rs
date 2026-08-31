@@ -9,7 +9,7 @@
 use std::sync::{Arc, Mutex};
 
 use crucible_core::{
-    DescribeTool, Revealed, Tool, ToolDescriptor, ToolEntry, ToolProvenance, ToolSchema,
+    DescribeTool, Revealed, Tool, ToolDescriptor, ToolEntry, ToolHooks, ToolProvenance, ToolSchema,
     ToolSnapshot, Toolset, ToolsetContext, ToolsetError,
 };
 
@@ -93,7 +93,21 @@ impl Tools {
         descriptor: ToolDescriptor,
         tool: Arc<dyn Tool>,
     ) -> Result<(), ToolsetError> {
-        self.offer(ToolEntry::new(descriptor, tool), false)
+        self.add_with_hooks(descriptor, tool, ToolHooks::new())
+    }
+
+    /// Offers one more tool with its exact invocation middleware.
+    ///
+    /// # Errors
+    ///
+    /// [`ToolsetError::Duplicate`] when an entry already answers to the name.
+    pub fn add_with_hooks(
+        &mut self,
+        descriptor: ToolDescriptor,
+        tool: Arc<dyn Tool>,
+        hooks: ToolHooks,
+    ) -> Result<(), ToolsetError> {
+        self.offer(ToolEntry::with_hooks(descriptor, tool, hooks), false)
     }
 
     /// Offers one more tool, held back until the model asks for it by name.
@@ -107,7 +121,21 @@ impl Tools {
         descriptor: ToolDescriptor,
         tool: Arc<dyn Tool>,
     ) -> Result<(), ToolsetError> {
-        self.offer(ToolEntry::new(descriptor, tool), true)
+        self.defer_with_hooks(descriptor, tool, ToolHooks::new())
+    }
+
+    /// Defers one tool with its exact invocation middleware.
+    ///
+    /// # Errors
+    ///
+    /// [`ToolsetError::Duplicate`] when an entry already answers to the name.
+    pub fn defer_with_hooks(
+        &mut self,
+        descriptor: ToolDescriptor,
+        tool: Arc<dyn Tool>,
+        hooks: ToolHooks,
+    ) -> Result<(), ToolsetError> {
+        self.offer(ToolEntry::with_hooks(descriptor, tool, hooks), true)
     }
 
     /// Registers one compiled tool with built-in provenance.
@@ -278,8 +306,8 @@ mod tests {
     use std::sync::Arc;
 
     use crucible_core::{
-        Ancestry, Cancel, Permission, Settled, ToolArgs, ToolCall, ToolDescriptor, ToolId,
-        ToolProvenance, ToolSourceKind, Toolset, ToolsetContext, Unwatched, Verdict,
+        Ancestry, Cancel, Permission, Settled, ToolArgs, ToolCall, ToolContext, ToolDescriptor,
+        ToolId, ToolProvenance, ToolSourceKind, Toolset, ToolsetContext, Unwatched, Verdict,
     };
 
     use super::*;
@@ -289,6 +317,12 @@ mod tests {
     fn the_static_roster_adapts_to_the_live_toolset_lifecycle() {
         let mut tools = Tools::new();
         tools.add_builtin(Fixed::new("read")).unwrap();
+        tools.add_builtin(Fixed::new("grep")).unwrap();
+        let expected: Vec<(String, String)> = tools
+            .advertised()
+            .iter()
+            .map(|tool| (tool.name.to_owned(), tool.schema.to_owned()))
+            .collect();
         let context = ToolsetContext::new(Ancestry::new(), Cancel::new(), None);
 
         Toolset::prepare(&tools, &context).unwrap();
@@ -297,8 +331,15 @@ mod tests {
         Toolset::dispose(&tools, &context).unwrap();
         Toolset::dispose(&tools, &context).unwrap();
 
-        assert_eq!(before.advertised()[0].name, "read");
-        assert_eq!(refreshed.advertised()[0].name, "read");
+        let advertised = |snapshot: &ToolSnapshot| {
+            snapshot
+                .advertised()
+                .iter()
+                .map(|tool| (tool.name.to_owned(), tool.schema.to_owned()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(advertised(&before), expected);
+        assert_eq!(advertised(&refreshed), expected);
     }
 
     #[test]
@@ -344,7 +385,9 @@ mod tests {
             panic!("the read-only fixture was not approved");
         };
 
-        let output = entry.tool().run(approved, &Unwatched).unwrap();
+        let cancel = Cancel::new();
+        let context = ToolContext::new(Ancestry::new(), call.id.clone(), &cancel, None, &Unwatched);
+        let output = entry.tool().run(approved, &context).unwrap();
         assert_eq!(output.text(), "done");
     }
 

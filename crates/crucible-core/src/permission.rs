@@ -28,7 +28,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use crate::tool::ToolCall;
+use crate::tool::{ToolCall, ToolError};
 use crate::toolset::{ToolAdmission, ToolGeneration};
 
 mod grant;
@@ -192,6 +192,39 @@ impl Permission {
             Some(admission.generation()),
             ask,
         )
+    }
+
+    /// Decides an admitted call with an input guard between standing policy
+    /// and any human approval.
+    ///
+    /// A standing denial returns before `guard` runs. Every other disposition
+    /// is guarded before an allow is minted or a question is put to the user,
+    /// so guard code never executes with authority and cannot be bypassed by a
+    /// remembered or automatic approval.
+    ///
+    /// # Errors
+    ///
+    /// The error returned by `guard`; no [`Approved`] is minted in that case.
+    pub fn decide_admitted_guarded(
+        &mut self,
+        admission: &ToolAdmission,
+        sensitivity: &Sensitivity,
+        guard: impl FnOnce(&ToolCall, &Sensitivity) -> Result<(), ToolError>,
+        ask: &mut dyn Ask,
+    ) -> Result<Settled, ToolError> {
+        let call = admission.call();
+        let generation = Some(admission.generation());
+        match self.disposition(call, sensitivity) {
+            Disposition::Deny => Ok(Settled::Forbidden),
+            Disposition::Allow => {
+                guard(call, sensitivity)?;
+                Ok(self.approve(call, sensitivity, generation, Verdict::Allow))
+            }
+            Disposition::Ask => {
+                guard(call, sensitivity)?;
+                Ok(self.put(call, sensitivity, generation, ask))
+            }
+        }
     }
 
     fn decide_for(

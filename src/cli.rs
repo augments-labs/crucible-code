@@ -856,7 +856,6 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         settings: &settings,
         sessions: home.sessions(),
         workspace: &workspace,
-        cancel: &cancel,
         ledger: &ledger,
         revealed: &revealed,
         plan: &plan,

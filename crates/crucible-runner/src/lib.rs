@@ -34,7 +34,7 @@ pub use crucible_session::{
     retitle,
 };
 pub use outcome::{RunResult, RunStatus};
-pub use policy::{Bounds, Compaction, Retry, RunPolicy};
+pub use policy::{Bounds, Compaction, MAXIMUM_TOOL_CONCURRENCY, Retry, RunPolicy, ToolScheduling};
 pub use runner::attachments;
 pub use runner::{Model, Runner};
 pub use tools::Tools;

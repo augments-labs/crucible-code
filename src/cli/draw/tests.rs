@@ -95,6 +95,7 @@ fn returning<T: Terminal>(renderer: &mut Renderer<T>, kept: &mut Kept, text: &st
         Event::ToolFinished {
             call: ToolId::new("a"),
             output: ToolOutput::ok(text),
+            receipt: None,
         },
         &here(),
         Style::plain(),
@@ -249,6 +250,7 @@ fn the_line_hanging_under_a_call_is_quiet() {
         Event::ToolFinished {
             call: ToolId::new("a"),
             output: ToolOutput::ok("128 lines"),
+            receipt: None,
         },
         &here(),
         style,
@@ -905,6 +907,7 @@ fn answered(said: &'static str, text: &str) -> [Beat; 2] {
         Beat::Draw(Event::ToolFinished {
             call: ToolId::new("a"),
             output: ToolOutput::ok(text),
+            receipt: None,
         }),
     ]
 }
@@ -1143,6 +1146,7 @@ fn a_change_reaches_the_terminal_on_the_ground_that_says_which_way_it_went() {
         Event::ToolFinished {
             call: ToolId::new("a"),
             output: ToolOutput::ok("changed one.rs, 1 replacements").showing(changed()),
+            receipt: None,
         },
         &here(),
         style,

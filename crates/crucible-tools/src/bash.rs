@@ -38,8 +38,8 @@ use std::time::Duration;
 
 pub use background::{Background, Ended, MOST, Standing};
 use crucible_core::{
-    Approved, Cancel, DescribeTool, Sensitivity, Summary, Tool, ToolArgs, ToolError, ToolOutput,
-    Watch, Workspace,
+    Approved, DescribeTool, Sensitivity, Summary, Tool, ToolArgs, ToolContext, ToolError,
+    ToolOutput, Workspace,
 };
 
 use std::sync::LazyLock;
@@ -159,7 +159,6 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
 /// Runs shell commands in the workspace root.
 pub struct Bash {
     workspace: Workspace,
-    cancel: Cancel,
     /// Where a command that is left running goes. Empty in a run with nothing
     /// holding the other end — a test, and a probe — and then a call asking to be
     /// left running is refused rather than silently waited for.
@@ -185,7 +184,6 @@ impl std::fmt::Debug for Bash {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Bash")
             .field("workspace", &self.workspace)
-            .field("cancel", &self.cancel)
             .field("leaving", &self.leaving)
             .field("shell", &self.shell)
             .field("env", &Exported(&self.env))
@@ -208,10 +206,10 @@ impl std::fmt::Debug for Exported<'_> {
 }
 
 impl Bash {
-    /// Runs in `workspace`, and stops when `cancel` says to.
+    /// Runs in `workspace`.
     #[must_use]
-    pub fn new(workspace: Workspace, cancel: Cancel) -> Self {
-        Self::inheriting(workspace, cancel, |name| std::env::var_os(name))
+    pub fn new(workspace: Workspace) -> Self {
+        Self::inheriting(workspace, |name| std::env::var_os(name))
     }
 
     /// The same, reading crucible's own environment through `lookup`.
@@ -224,14 +222,9 @@ impl Bash {
     /// The shell is found the same way and for a second reason: a bare name is
     /// resolved wherever it is spawned, and a command here is spawned in the
     /// workspace. [`shell`] says what that costs.
-    fn inheriting(
-        workspace: Workspace,
-        cancel: Cancel,
-        lookup: impl Fn(&str) -> Option<OsString>,
-    ) -> Self {
+    fn inheriting(workspace: Workspace, lookup: impl Fn(&str) -> Option<OsString>) -> Self {
         Self {
             workspace,
-            cancel,
             leaving: None,
             shell: shell::find(&lookup),
             env: environment::inherited(lookup),
@@ -306,6 +299,21 @@ impl DescribeTool for Bash {
 }
 
 impl Tool for Bash {
+    fn validate(&self, args: &ToolArgs) -> Result<(), ToolError> {
+        let args = Args::parse(NAME, args)?;
+        args.text(COMMAND)?;
+        let seconds = args.count(TIMEOUT, SECONDS)?;
+        let background = args.flag(crate::account::LEFT, false)?;
+        if seconds > CEILING {
+            return Err(args.wrong(format!("timeout must be {CEILING} seconds or less")));
+        }
+        if background && args.holds(TIMEOUT) {
+            return Err(args
+                .wrong("timeout does not apply to a command left running: send one or the other"));
+        }
+        Ok(())
+    }
+
     fn sensitivity(&self, args: &ToolArgs) -> Sensitivity {
         let command =
             match Args::parse(NAME, args).and_then(|args| args.text(COMMAND).map(str::to_owned)) {
@@ -328,7 +336,7 @@ impl Tool for Bash {
         self.leaving.is_some()
     }
 
-    fn run(&self, approved: Approved, watch: &dyn Watch) -> Result<ToolOutput, ToolError> {
+    fn run(&self, approved: Approved, context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
         let args = Args::parse(NAME, approved.args())?;
         let command = args.text(COMMAND)?;
         let seconds = args.count(TIMEOUT, SECONDS)?;
@@ -371,7 +379,7 @@ impl Tool for Bash {
             (false, None) => None,
         };
 
-        if self.cancel.requested() {
+        if context.cancel().requested() {
             return Err(ToolError::Cancelled(NAME.into()));
         }
 
@@ -429,8 +437,8 @@ impl Tool for Bash {
 
         let waiting = output::Waiting {
             allowed,
-            cancel: &self.cancel,
-            watch,
+            cancel: context.cancel(),
+            watch: context,
             leaving,
         };
 

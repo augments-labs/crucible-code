@@ -9,9 +9,37 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crucible_core::{
-    Approved, Ask, DescribeTool, Disposition, Permission, Remember, Rules, Sensitivity, Settled,
-    Tool, ToolArgs, ToolCall, ToolId, Verdict, Workspace,
+    Ancestry, Approved, Ask, Cancel, DescribeTool, Disposition, Permission, Remember, Rules,
+    Sensitivity, Settled, Tool, ToolArgs, ToolCall, ToolContext, ToolId, Unwatched, Verdict, Watch,
+    Workspace,
 };
+
+/// A fresh run context for a direct tool test that watches nothing.
+pub(crate) fn context() -> ToolContext<'static> {
+    cancelled_by(&Cancel::new())
+}
+
+/// A direct-test context stopped by `cancel` and otherwise unwatched.
+pub(crate) fn cancelled_by(cancel: &Cancel) -> ToolContext<'static> {
+    ToolContext::new(
+        Ancestry::new(),
+        ToolId::new("sample"),
+        cancel,
+        None,
+        &Unwatched,
+    )
+}
+
+/// A direct-test context that forwards incremental output to `watch`.
+pub(crate) fn watching(watch: &dyn Watch) -> ToolContext<'_> {
+    ToolContext::new(
+        Ancestry::new(),
+        ToolId::new("sample"),
+        &Cancel::new(),
+        None,
+        watch,
+    )
+}
 
 /// A workspace with a directory beside it that is deliberately outside.
 pub(crate) struct Sample {

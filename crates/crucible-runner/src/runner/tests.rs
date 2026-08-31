@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use crucible_core::{
     AgentId, Approved, Aside, Attachment, Carried, Change, DescribeTool, Diff, EventEnvelope, Line,
     Modalities, Modality, Post, ProviderError, ProviderLimit, Sensitivity, SessionId, Spend,
-    Summary, Target, Tool, ToolArgs, ToolError, ToolId, ToolOutput, Verdict, Watch,
+    Summary, Target, Tool, ToolArgs, ToolContext, ToolError, ToolId, ToolOutput, Verdict,
 };
 
 use sha2::{Digest as _, Sha256};
@@ -1293,6 +1293,10 @@ impl DescribeTool for Logged {
 }
 
 impl Tool for Logged {
+    fn validate(&self, _args: &ToolArgs) -> Result<(), ToolError> {
+        Ok(())
+    }
+
     fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
         Sensitivity::ReadOnly {
             target: Target::unresolved(),
@@ -1303,7 +1307,11 @@ impl Tool for Logged {
         Summary::new("")
     }
 
-    fn run(&self, _approved: Approved, _watch: &dyn Watch) -> Result<ToolOutput, ToolError> {
+    fn run(
+        &self,
+        _approved: Approved,
+        _context: &ToolContext<'_>,
+    ) -> Result<ToolOutput, ToolError> {
         let deadline = Instant::now() + SETTLE;
 
         loop {

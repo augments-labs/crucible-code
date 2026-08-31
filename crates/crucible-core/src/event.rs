@@ -12,7 +12,7 @@ use crate::ids::{RunId, ToolId, TurnId};
 use crate::provider::{ProviderError, Spend};
 use crate::run::Ancestry;
 use crate::tool::{Summary, ToolCall, ToolError, ToolOutput, Wrote};
-use crate::toolset::ToolsetError;
+use crate::toolset::{ToolReceipt, ToolsetError};
 use crate::transcript::{Attachment, StopReason};
 
 /// Why a turn ended badly.
@@ -86,7 +86,7 @@ pub enum TurnError {
 /// Widening what is carried is not free: it is this method, every destination
 /// that implements it and every place that reports. The envelope is the answer
 /// to that, and adding to it is the cheap change; adding beside it is not.
-pub trait Post {
+pub trait Post: Send + Sync {
     /// Reports one event, and which execution produced it.
     ///
     /// Cannot fail. Nothing a worker does depends on anyone still listening,
@@ -233,6 +233,11 @@ pub enum Event {
         call: ToolId,
         /// What it produced.
         output: ToolOutput,
+        /// Bounded audit and usage evidence from the invocation pipeline.
+        ///
+        /// `None` is reserved for synthetic renderer events. The runner emits
+        /// `Some` for every recorded call.
+        receipt: Option<ToolReceipt>,
     },
 
     /// The response the turn was waiting on failed before it said anything, and
@@ -372,10 +377,15 @@ impl std::fmt::Debug for Event {
                 .field("call", call)
                 .field("text", text)
                 .finish(),
-            Self::ToolFinished { call, output } => f
+            Self::ToolFinished {
+                call,
+                output,
+                receipt,
+            } => f
                 .debug_struct("ToolFinished")
                 .field("call", call)
                 .field("output", output)
+                .field("receipt", receipt)
                 .finish(),
             Self::Retrying => f.write_str("Retrying"),
             Self::Carried { left } => f.debug_struct("Carried").field("left", left).finish(),

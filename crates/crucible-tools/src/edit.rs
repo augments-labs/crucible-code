@@ -15,8 +15,8 @@
 use std::io::{self, Read as _};
 
 use crucible_core::{
-    Approved, Cancel, DescribeTool, Remembered, Sensitivity, Summary, Tool, ToolArgs, ToolError,
-    ToolOutput, Watch, Workspace,
+    Approved, Cancel, DescribeTool, Remembered, Sensitivity, Summary, Tool, ToolArgs, ToolContext,
+    ToolError, ToolOutput, Workspace,
 };
 
 use std::sync::LazyLock;
@@ -139,14 +139,13 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
 #[derive(Debug)]
 pub struct Edit {
     workspace: Workspace,
-    cancel: Cancel,
 }
 
 impl Edit {
     /// Edits inside `workspace`, and nowhere else.
     #[must_use]
-    pub fn new(workspace: Workspace, cancel: Cancel) -> Self {
-        Self { workspace, cancel }
+    pub fn new(workspace: Workspace) -> Self {
+        Self { workspace }
     }
 }
 
@@ -161,6 +160,13 @@ impl DescribeTool for Edit {
 }
 
 impl Tool for Edit {
+    fn validate(&self, args: &ToolArgs) -> Result<(), ToolError> {
+        let args = Args::parse(NAME, args)?;
+        args.text(PATH)?;
+        let listed = args.list(EDITS)?;
+        changes(&args, listed.as_deref()).map(drop)
+    }
+
     fn sensitivity(&self, args: &ToolArgs) -> Sensitivity {
         Sensitivity::MutatesFile {
             target: target::existing(&self.workspace, NAME, args, PATH),
@@ -175,7 +181,7 @@ impl Tool for Edit {
         summary::remembered(NAME, args, true)
     }
 
-    fn run(&self, approved: Approved, _watch: &dyn Watch) -> Result<ToolOutput, ToolError> {
+    fn run(&self, approved: Approved, context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
         let args = Args::parse(NAME, approved.args())?;
         let requested = args.text(PATH)?;
         let listed = args.list(EDITS)?;
@@ -211,7 +217,7 @@ impl Tool for Edit {
         // retained source bytes below the declared whole-file ceiling. A large
         // sparse or minified input is therefore bounded both in memory and in
         // how long a stopped turn keeps reading it.
-        let before = match source(&mut file, &self.cancel) {
+        let before = match source(&mut file, context.cancel()) {
             Ok(Source::Text(before)) => before,
             Ok(Source::TooLarge) => return Ok(too_large(requested)),
             Ok(Source::Cancelled) => return Err(ToolError::Cancelled(NAME.into())),
@@ -240,7 +246,7 @@ impl Tool for Edit {
         let mut after = before.clone();
         let mut replaced = 0_usize;
         for (at, change) in wanted.iter().enumerate() {
-            if self.cancel.requested() {
+            if context.cancel().requested() {
                 return Err(ToolError::Cancelled(NAME.into()));
             }
 
@@ -270,7 +276,7 @@ impl Tool for Edit {
                 source,
             })?
             .permissions();
-        if self.cancel.requested() {
+        if context.cancel().requested() {
             return Err(ToolError::Cancelled(NAME.into()));
         }
         // The replacement is prepared beside the old file, flushed, and

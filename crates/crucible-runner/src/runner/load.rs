@@ -28,7 +28,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use crucible_core::{Calibration, Carried, Message, Spend, ToolSchema};
+use crucible_core::{Calibration, Carried, Message, Spend, TOOL_RESULT_BYTES, ToolSchema};
 
 /// Bytes per token before any response has been seen.
 ///
@@ -37,13 +37,6 @@ use crucible_core::{Calibration, Carried, Message, Spend, ToolSchema};
 /// than under-stating it, and the direction matters: compacting a little early
 /// costs some context, while noticing too late costs the turn.
 const UNCALIBRATED: u64 = 3;
-
-/// The most one tool is allowed to say, in bytes.
-///
-/// Stated here rather than read from the crate that enforces it, because this
-/// loop reaches no tool crate by design and must not start. It is a figure the
-/// two have to agree on, and the reserve is only as good as that agreement.
-const TOOL_RESULT_BYTES: u64 = 30_000;
 
 /// What one attached file is charged against the window, in tokens.
 ///
@@ -621,10 +614,12 @@ impl Load {
 /// is little to work in; none of it is nothing.
 #[must_use]
 pub(super) fn reserve(max_tokens: u32, window: Option<u32>, configured: Option<u64>) -> u64 {
-    let asked = configured.unwrap_or_else(|| {
-        u64::from(max_tokens)
-            .saturating_add(RESULTS_PER_PASS.saturating_mul(TOOL_RESULT_BYTES / UNCALIBRATED))
-    });
+    let asked =
+        configured.unwrap_or_else(|| {
+            u64::from(max_tokens).saturating_add(RESULTS_PER_PASS.saturating_mul(
+                u64::try_from(TOOL_RESULT_BYTES).unwrap_or(u64::MAX) / UNCALIBRATED,
+            ))
+        });
 
     window.map_or(asked, |window| asked.min(u64::from(window) / 2))
 }

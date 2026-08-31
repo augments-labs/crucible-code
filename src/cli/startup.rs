@@ -15,7 +15,7 @@ use std::sync::Arc;
 use crucible_auth::StoredCredentials;
 use crucible_config::Settings;
 use crucible_core::{
-    AgentId, ApiKey, Cancel, Credential, DescribeTool, Effort, Fetch, Header, HeaderKey, Message,
+    AgentId, ApiKey, Credential, DescribeTool, Effort, Fetch, Header, HeaderKey, Message,
     Modalities, Mode, Provider, Revealed, Search, SessionId, Tool, ToolsetError, Transcript,
     Workspace,
 };
@@ -108,11 +108,8 @@ pub(super) struct Startup<'a> {
     pub(super) sessions: &'a Path,
     /// The directory being worked in.
     pub(super) workspace: &'a Workspace,
-    /// What stops a turn.
-    pub(super) cancel: &'a Cancel,
-    /// Which files have been read. Made by the caller for the same reason the
-    /// cancel is: the loop holds one too, and the commands that leave a
-    /// session empty it.
+    /// Which files have been read. Made by the caller because the loop holds
+    /// one too, and the commands that leave a session empty it.
     pub(super) ledger: &'a Ledger,
     /// Which deferred tools this session has looked up. Held by the caller for
     /// the same reason the ledger is: `/clear` empties it, and a session that
@@ -685,7 +682,6 @@ fn tools(
     // describes how this run was set up.
     let Startup {
         workspace,
-        cancel,
         ledger: seen,
         plan,
         leaving,
@@ -702,13 +698,13 @@ fn tools(
 
     // Which files have been read is learned by one tool and asked by another,
     // and this is the only place that may know they share it. The record itself
-    // comes from the caller, the same as the cancel: `/clear` and `/resume`
-    // empty it when they leave the session those files were read in, and
-    // neither tool can reach the other to be told.
-    tools.add_builtin(Read::new(workspace.clone(), cancel.clone(), seen.clone()))?;
-    tools.add_builtin(Grep::new(workspace.clone(), cancel.clone()))?;
-    tools.add_builtin(Glob::new(workspace.clone(), cancel.clone()))?;
-    tools.add_builtin(Edit::new(workspace.clone(), cancel.clone()))?;
+    // comes from the caller: `/clear` and `/resume` empty it when they leave
+    // the session those files were read in, and neither tool can reach the
+    // other to be told.
+    tools.add_builtin(Read::new(workspace.clone(), seen.clone()))?;
+    tools.add_builtin(Grep::new(workspace.clone()))?;
+    tools.add_builtin(Glob::new(workspace.clone()))?;
+    tools.add_builtin(Edit::new(workspace.clone()))?;
     tools.add_builtin(Write::new(workspace.clone(), seen.clone()))?;
 
     // The `env` block goes to the commands crucible runs and nowhere else.
@@ -719,7 +715,7 @@ fn tools(
     // rather than copying it, which is what lets the loop draw what is running and
     // stop one — and what makes the caller's copy the thing that ends them all.
     tools.add_builtin(
-        Bash::new(workspace.clone(), cancel.clone())
+        Bash::new(workspace.clone())
             .exporting(settings.env())
             .leaving(leaving.clone()),
     )?;
@@ -737,18 +733,10 @@ fn tools(
     // answers only one of them registers only that one the day such a source
     // exists.
     if let Some(searching) = reaching.searching {
-        defer(
-            &mut tools,
-            &mut held,
-            WebSearch::new(searching, cancel.clone()),
-        )?;
+        defer(&mut tools, &mut held, WebSearch::new(searching))?;
     }
     if let Some(fetching) = reaching.fetching {
-        defer(
-            &mut tools,
-            &mut held,
-            WebFetch::new(fetching, cancel.clone()),
-        )?;
+        defer(&mut tools, &mut held, WebFetch::new(fetching))?;
     }
 
     // Advertised rather than deferred, and that is the one place this tool
@@ -885,6 +873,7 @@ fn policy(settings: &Settings) -> RunPolicy {
             ask_on_resume: said.ask_on_resume,
         },
         retry: asked.retry,
+        tools: asked.tools,
     }
 }
 

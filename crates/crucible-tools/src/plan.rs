@@ -33,8 +33,8 @@ use std::fmt;
 use std::sync::{Arc, LazyLock, Mutex};
 
 use crucible_core::{
-    Approved, DescribeTool, Sensitivity, Summary, Target, Tool, ToolArgs, ToolError, ToolOutput,
-    Watch,
+    Approved, DescribeTool, Sensitivity, Summary, Target, Tool, ToolArgs, ToolContext, ToolError,
+    ToolOutput,
 };
 
 use crate::args::Args;
@@ -303,6 +303,11 @@ impl DescribeTool for TodoWrite {
 }
 
 impl Tool for TodoWrite {
+    fn validate(&self, args: &ToolArgs) -> Result<(), ToolError> {
+        let args = Args::parse(NAME, args)?;
+        sent(&args).map(drop)
+    }
+
     fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
         // Not a file and not a process: what this changes is a value inside
         // this process, and the target that resolves to nothing is the honest
@@ -316,7 +321,7 @@ impl Tool for TodoWrite {
         tally(args)
     }
 
-    fn run(&self, approved: Approved, _watch: &dyn Watch) -> Result<ToolOutput, ToolError> {
+    fn run(&self, approved: Approved, _context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
         let args = Args::parse(NAME, approved.args())?;
 
         match sent(&args)? {
@@ -476,15 +481,14 @@ fn tally(args: &ToolArgs) -> Summary {
 
 #[cfg(test)]
 mod tests {
-    use crucible_core::Unwatched;
-
     use super::*;
     use crate::sample::allowed;
 
     /// Runs one call the only way a call can be run.
     fn write(plan: &Plan, args: &str) -> ToolOutput {
         let tool = TodoWrite::new(plan.clone());
-        tool.run(allowed(&tool, args), &Unwatched).unwrap()
+        tool.run(allowed(&tool, args), &crate::sample::context())
+            .unwrap()
     }
 
     /// The arguments a call with these tasks would carry.
@@ -686,7 +690,7 @@ mod tests {
                     &tool,
                     r#"{"tasks":[{"task":"Build it","state":"blocked"}]}"#,
                 ),
-                &Unwatched,
+                &crate::sample::context(),
             )
             .unwrap_err();
 
@@ -700,7 +704,9 @@ mod tests {
     fn a_call_with_no_tasks_at_all_ends_the_turn() {
         let tool = TodoWrite::new(Plan::new());
 
-        let problem = tool.run(allowed(&tool, "{}"), &Unwatched).unwrap_err();
+        let problem = tool
+            .run(allowed(&tool, "{}"), &crate::sample::context())
+            .unwrap_err();
 
         assert_eq!(problem.to_string(), "todo_write: tasks is required");
     }
