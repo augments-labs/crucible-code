@@ -3,13 +3,19 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    AgentId, Approved, Aside, Attachment, Carried, Change, DescribeTool, Diff, EventEnvelope, Line,
-    Modalities, Modality, Post, ProviderError, ProviderLimit, Sensitivity, SessionId, Spend,
-    Summary, Target, Tool, ToolArgs, ToolContext, ToolError, ToolId, ToolOutput, Verdict,
+    AgentId, Approved, Aside, Attachment, Carried, Change, DescribeTool, Diff, EventEnvelope,
+    InputTokenUsage, Line, Modalities, Modality, Post, PromptCacheFact, PromptCacheFingerprint,
+    PromptCacheIsolation, PromptCachePersistentMode, PromptCachePolicy, PromptCachePolicyDigest,
+    PromptCacheResourceBinding, PromptCacheResourceError, PromptCacheResourceHandle,
+    PromptCacheResourceId, PromptCacheResourceOperation, PromptCacheResourceOwner,
+    PromptCacheResourceRecord, PromptCacheResourceState, PromptCacheResourceStore,
+    PromptCacheScopeDigest, ProviderError, ProviderLimit, ProviderUsage, Sensitivity, SessionId,
+    Spend, Summary, Target, Tool, ToolArgs, ToolContext, ToolError, ToolId, ToolOutput, Verdict,
 };
 
 use sha2::{Digest as _, Sha256};
@@ -57,6 +63,7 @@ mod lifecycle;
 mod outcome;
 mod pick_up;
 mod preserved;
+mod reporting;
 mod spec;
 mod spending;
 
@@ -70,6 +77,54 @@ struct Watching(Sender<Event>);
 impl Post for Watching {
     fn post(&self, reported: EventEnvelope) {
         drop(self.0.send(reported.into_event()));
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct SharedStore(Arc<Mutex<Vec<PromptCacheResourceRecord>>>);
+
+impl PromptCacheResourceStore for SharedStore {
+    fn matching(
+        &mut self,
+        binding: &PromptCacheResourceBinding,
+    ) -> Result<Option<PromptCacheResourceRecord>, PromptCacheResourceError> {
+        Ok(self
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .rev()
+            .find(|record| record.binding() == binding)
+            .cloned())
+    }
+
+    fn put(&mut self, record: &PromptCacheResourceRecord) -> Result<(), PromptCacheResourceError> {
+        let mut records = self.0.lock().unwrap();
+        if let Some(found) = records.iter_mut().find(|found| found.id() == record.id()) {
+            *found = record.clone();
+        } else {
+            records.push(record.clone());
+        }
+        Ok(())
+    }
+
+    fn remove(&mut self, id: &PromptCacheResourceId) -> Result<(), PromptCacheResourceError> {
+        self.0.lock().unwrap().retain(|record| record.id() != id);
+        Ok(())
+    }
+
+    fn inspect(
+        &mut self,
+        maximum: usize,
+    ) -> Result<Vec<PromptCacheResourceRecord>, PromptCacheResourceError> {
+        Ok(self
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .take(maximum)
+            .cloned()
+            .collect())
     }
 }
 
@@ -119,6 +174,11 @@ impl Scripted {
             events: Watching(events),
             seen,
         }
+    }
+
+    fn storing(mut self, store: SharedStore) -> Self {
+        self.runner.prompt_cache_store = Some(Box::new(store));
+        self
     }
 
     /// The same, on a model whose window is known and small.
@@ -185,6 +245,7 @@ impl Scripted {
                 Event::Aged { files } => Some(files.iter().map(|one| one.path.clone()).collect()),
                 Event::Unread { .. }
                 | Event::TurnStarted { .. }
+                | Event::PromptCache { .. }
                 | Event::Delta { .. }
                 | Event::ToolRequested { .. }
                 | Event::ToolFinished { .. }
@@ -210,6 +271,7 @@ impl Scripted {
                 Event::Unread { files } => Some(files.iter().map(|one| one.path.clone()).collect()),
                 Event::Aged { .. }
                 | Event::TurnStarted { .. }
+                | Event::PromptCache { .. }
                 | Event::Delta { .. }
                 | Event::ToolRequested { .. }
                 | Event::ToolFinished { .. }
@@ -232,6 +294,7 @@ impl Scripted {
             .filter_map(|event| match event {
                 Event::Delta { text } => Some(text.to_string()),
                 Event::TurnStarted { .. }
+                | Event::PromptCache { .. }
                 | Event::ToolRequested { .. }
                 | Event::ToolFinished { .. }
                 | Event::Wrote { .. }
@@ -266,7 +329,8 @@ impl Scripted {
             .try_iter()
             .filter_map(|event| match event {
                 Event::TurnStarted { turn } => Some(turn.get()),
-                Event::Delta { .. }
+                Event::PromptCache { .. }
+                | Event::Delta { .. }
                 | Event::ToolRequested { .. }
                 | Event::ToolFinished { .. }
                 | Event::Wrote { .. }
@@ -291,6 +355,7 @@ impl Scripted {
             .filter_map(|event| match event {
                 Event::TurnFinished { stop, .. } => Some(stop),
                 Event::TurnStarted { .. }
+                | Event::PromptCache { .. }
                 | Event::Delta { .. }
                 | Event::ToolRequested { .. }
                 | Event::ToolFinished { .. }
@@ -315,6 +380,7 @@ impl Scripted {
             .filter_map(|event| match event {
                 Event::Spent { spend } => Some(spend.tokens()),
                 Event::TurnStarted { .. }
+                | Event::PromptCache { .. }
                 | Event::Delta { .. }
                 | Event::ToolRequested { .. }
                 | Event::ToolFinished { .. }
@@ -691,6 +757,497 @@ fn what_a_turn_has_spent_is_every_response_of_it_added_up() {
 }
 
 #[test]
+fn normalized_usage_is_costed_on_its_attempt_without_double_counting_input() {
+    let usage = ProviderUsage::new(
+        InputTokenUsage::inclusive_read(Some(100), Some(20)).unwrap(),
+        Some(10),
+        None,
+        None,
+        &[],
+    )
+    .unwrap();
+    let script = Script::new(vec![vec![
+        Delta::Usage(usage),
+        Delta::Stopped(StopReason::Yielded),
+    ]])
+    .priced();
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Deny);
+
+    scripted.turn("go").expect("the turn to finish");
+
+    let sent = scripted.sent.lock().unwrap();
+    let sent_attempt = sent
+        .first()
+        .expect("one request was sent")
+        .cache_attempt
+        .expect("every provider request has an attempt");
+    drop(sent);
+    let events = scripted.events();
+    let facts: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            Event::PromptCache {
+                fact: PromptCacheFact::UsageReported(fact),
+            } => Some(fact),
+            _ => None,
+        })
+        .collect();
+    let [fact] = facts.as_slice() else {
+        panic!("expected one usage fact, got {facts:?}");
+    };
+    assert_eq!(fact.attempt, sent_attempt);
+    assert_eq!(fact.usage.input.total, Some(100));
+    assert_eq!(fact.usage.input.uncached, Some(80));
+    assert_eq!(
+        fact.cost
+            .total
+            .expect("all rates are known")
+            .femtocurrency(),
+        132_000_000_000
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter_map(|event| match event {
+                Event::Spent { spend } => Some(spend.tokens()),
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+        [10]
+    );
+}
+
+#[test]
+fn partial_usage_readings_merge_on_one_attempt_instead_of_erasing_input() {
+    let input = ProviderUsage::new(
+        InputTokenUsage::disjoint(Some(70), Some(20), Some(10)).unwrap(),
+        None,
+        None,
+        None,
+        &[],
+    )
+    .unwrap();
+    let output = ProviderUsage::new(InputTokenUsage::UNKNOWN, Some(12), None, None, &[]).unwrap();
+    let script = Script::new(vec![vec![
+        Delta::Usage(input),
+        Delta::Usage(output),
+        Delta::Stopped(StopReason::Yielded),
+    ]])
+    .priced();
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Deny);
+
+    scripted.turn("go").expect("the turn to finish");
+
+    let facts: Vec<_> = scripted
+        .events()
+        .into_iter()
+        .filter_map(|event| match event {
+            Event::PromptCache {
+                fact: PromptCacheFact::UsageReported(fact),
+            } => Some(fact),
+            _ => None,
+        })
+        .collect();
+    let [_, complete] = facts.as_slice() else {
+        panic!("each provider reading must be recorded once: {facts:?}");
+    };
+    assert_eq!(complete.usage.input.total, Some(100));
+    assert_eq!(complete.usage.output, Some(12));
+    assert_eq!(complete.usage.total, Some(112));
+    assert_eq!(
+        complete.outcome,
+        crucible_core::PromptCacheOutcome::ReadAndWrite
+    );
+    assert!(complete.cost.total.is_some());
+}
+
+#[test]
+fn cancellation_after_usage_keeps_the_provider_fact_on_its_attempt() {
+    let usage = ProviderUsage::new(
+        InputTokenUsage::inclusive_read(Some(100), Some(25)).unwrap(),
+        Some(7),
+        None,
+        None,
+        &[],
+    )
+    .unwrap();
+    let script = Script::new(vec![vec![
+        Delta::Usage(usage.clone()),
+        Delta::Stopped(StopReason::Cancelled),
+    ]]);
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Deny);
+
+    assert_eq!(scripted.turn("go").unwrap(), StopReason::Cancelled);
+
+    let attempt = scripted.runner.prompt_cache_attempt().expect("an attempt");
+    assert_eq!(attempt.usage.as_ref(), Some(&usage));
+    assert_eq!(attempt.outcome, crucible_core::PromptCacheOutcome::Read);
+    assert_eq!(
+        scripted
+            .events()
+            .into_iter()
+            .filter(|event| matches!(
+                event,
+                Event::PromptCache {
+                    fact: PromptCacheFact::UsageReported(_),
+                }
+            ))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn prefer_records_an_adapter_encoding_failure_then_sends_the_unchanged_request() {
+    let script = Script::new(vec![saying("done")]).failing_cache_encoding();
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Deny);
+    scripted.runner.spec.told("stable fixture instructions");
+
+    scripted
+        .turn("go")
+        .expect("prefer to fall back before send");
+
+    let sent_guard = scripted.sent.lock().unwrap();
+    let [sent] = sent_guard.as_slice() else {
+        panic!("prefer fallback must send exactly one request");
+    };
+    assert!(
+        sent.cache_selection
+            .is_some_and(|selection| selection.selected().is_none())
+    );
+    drop(sent_guard);
+    let encodings: Vec<_> = scripted
+        .events()
+        .into_iter()
+        .filter_map(|event| match event {
+            Event::PromptCache {
+                fact: PromptCacheFact::RequestEncoded(fact),
+            } => Some(fact.encoding),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        encodings,
+        [
+            PromptCacheEncoding::Failed(
+                crucible_core::PromptCacheIneligibleReason::UnsupportedBoundary,
+            ),
+            PromptCacheEncoding::NoControlIntended,
+        ]
+    );
+}
+
+#[test]
+fn require_fails_before_send_when_the_adapter_cannot_lower_the_selected_control() {
+    let script = Script::new(vec![saying("must not be sent")]).failing_cache_encoding();
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Deny);
+    scripted.runner.spec.told("stable fixture instructions");
+    scripted.runner.policy.prompt_cache =
+        PromptCachePolicy::default().with_mode(crucible_core::PromptCacheMode::Require);
+
+    let problem = scripted.turn("go").unwrap_err();
+
+    assert!(matches!(
+        problem,
+        TurnError::PromptCachePreparation(PromptCachePreparationError::Encoding(
+            crucible_core::PromptCacheIneligibleReason::UnsupportedBoundary
+        ))
+    ));
+    assert!(scripted.sent.lock().unwrap().is_empty());
+}
+
+#[test]
+fn persistent_resources_are_ready_before_wire_reference_and_explicit_cleanup_deletes_them() {
+    let script = Script::new(vec![saying("done")]).persistent();
+    let store = SharedStore::default();
+    let records = Arc::clone(&store.0);
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Deny).storing(store);
+    scripted.runner.spec.told("stable fixture instructions");
+    scripted.runner.policy.prompt_cache = scripted
+        .runner
+        .policy
+        .prompt_cache
+        .with_persistent_resources(PromptCachePersistentMode::Create);
+
+    scripted.turn("go").expect("the turn to finish");
+
+    let sent_guard = scripted.sent.lock().unwrap();
+    let [sent] = sent_guard.as_slice() else {
+        panic!("persistent fixture must send exactly one request");
+    };
+    assert!(sent.cache_resource, "{:?}", sent.cache_selection);
+    drop(sent_guard);
+    let held = records.lock().unwrap();
+    let [record] = held.as_slice() else {
+        panic!("persistent fixture must retain one resource");
+    };
+    assert_eq!(record.state(), PromptCacheResourceState::Ready);
+    drop(held);
+    assert_eq!(
+        scripted
+            .runner
+            .prompt_cache_attempt()
+            .expect("an attempt")
+            .encoding,
+        PromptCacheEncoding::PersistentResourceReferenced
+    );
+    let lifecycle_states: Vec<_> = scripted
+        .events()
+        .into_iter()
+        .filter_map(|event| match event {
+            Event::PromptCache {
+                fact: PromptCacheFact::ResourceChanged(fact),
+            } => Some((fact.operation, fact.state)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        lifecycle_states,
+        [
+            (
+                Some(PromptCacheResourceOperation::Create),
+                PromptCacheResourceState::Creating,
+            ),
+            (
+                Some(PromptCacheResourceOperation::Create),
+                PromptCacheResourceState::Ready,
+            ),
+        ]
+    );
+
+    let cleaned = scripted
+        .runner
+        .clean_prompt_cache(&Cancel::new())
+        .expect("bounded cleanup");
+    assert_eq!(cleaned.deleted, 1);
+    assert!(records.lock().unwrap().is_empty());
+}
+
+#[test]
+fn retirement_deletes_only_the_current_exclusive_owner_scope() {
+    let script = Script::new(vec![saying("done")]).persistent();
+    let store = SharedStore::default();
+    let records = Arc::clone(&store.0);
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Deny).storing(store);
+    scripted.runner.spec.told("stable fixture instructions");
+    scripted.runner.policy.prompt_cache = scripted
+        .runner
+        .policy
+        .prompt_cache
+        .with_persistent_resources(PromptCachePersistentMode::Create);
+
+    scripted.turn("go").expect("the turn to finish");
+
+    let current = records
+        .lock()
+        .unwrap()
+        .first()
+        .cloned()
+        .expect("the current owner resource");
+    let binding = PromptCacheResourceBinding::new(
+        PromptCacheScopeDigest::new([91; 32]),
+        current.binding().provider_scope(),
+        PromptCacheScopeDigest::new([92; 32]),
+        PromptCacheFingerprint::new([93; 32]),
+        PromptCachePolicyDigest::new([94; 32]),
+        PromptCacheResourceOwner::new(PromptCacheIsolation::Session, true),
+        current.binding().protocol(),
+        "other-session-model",
+        Some("script-revision-v1"),
+    )
+    .unwrap();
+    let mut other_owner =
+        PromptCacheResourceRecord::creating(PromptCacheResourceId::new(), binding, 100);
+    other_owner.ready(
+        PromptCacheResourceHandle::new("other-owner-handle").unwrap(),
+        u64::MAX,
+        110,
+    );
+    records.lock().unwrap().push(other_owner.clone());
+
+    let retired = scripted
+        .runner
+        .retire_prompt_cache(&Cancel::new())
+        .expect("bounded retirement");
+
+    assert_eq!(retired.inspected, 1);
+    assert_eq!(retired.deleted, 1);
+    let remaining = records.lock().unwrap();
+    let [record] = remaining.as_slice() else {
+        panic!("another owner scope must remain untouched");
+    };
+    assert_eq!(record.id(), other_owner.id());
+}
+
+fn ready_resource(
+    protocol: &str,
+    provider_scope: PromptCacheScopeDigest,
+    seed: u8,
+) -> PromptCacheResourceRecord {
+    let binding = PromptCacheResourceBinding::new(
+        PromptCacheScopeDigest::new([seed; 32]),
+        provider_scope,
+        PromptCacheScopeDigest::new([seed.saturating_add(3); 32]),
+        PromptCacheFingerprint::new([seed.saturating_add(1); 32]),
+        PromptCachePolicyDigest::new([seed.saturating_add(2); 32]),
+        PromptCacheResourceOwner::new(PromptCacheIsolation::Session, true),
+        protocol,
+        "claude-test",
+        Some("script-revision-v1"),
+    )
+    .unwrap();
+    let mut record =
+        PromptCacheResourceRecord::creating(PromptCacheResourceId::new(), binding, 100);
+    record.ready(
+        PromptCacheResourceHandle::new(format!("provider-handle-{seed}")).unwrap(),
+        u64::MAX,
+        110,
+    );
+    record
+}
+
+#[test]
+fn cleanup_without_the_current_provider_lifecycle_fails_without_relabelling_records() {
+    let store = SharedStore::default();
+    let records = Arc::clone(&store.0);
+    let mut scripted =
+        Scripted::new(Script::new(Vec::new()), Tools::new(), Verdict::Deny).storing(store);
+    let provider_scope =
+        prompt_cache::provider_scope(scripted.runner.provider.prompt_cache_route());
+    records
+        .lock()
+        .unwrap()
+        .push(ready_resource("script", provider_scope, 1));
+
+    let problem = scripted
+        .runner
+        .clean_prompt_cache(&Cancel::new())
+        .unwrap_err();
+
+    assert!(matches!(problem, PromptCacheResourceError::Unsupported));
+    let held = records.lock().unwrap();
+    let [record] = held.as_slice() else {
+        panic!("unsupported cleanup must retain one resource");
+    };
+    assert_eq!(record.state(), PromptCacheResourceState::Ready);
+}
+
+#[test]
+fn cleanup_is_provider_scoped_and_marks_a_conclusive_survivor_orphaned() {
+    let store = SharedStore::default();
+    let records = Arc::clone(&store.0);
+    let mut scripted = Scripted::new(
+        Script::new(Vec::new()).surviving_delete(),
+        Tools::new(),
+        Verdict::Deny,
+    )
+    .storing(store);
+    let provider_scope =
+        prompt_cache::provider_scope(scripted.runner.provider.prompt_cache_route());
+    records.lock().unwrap().extend([
+        ready_resource("script", provider_scope, 1),
+        ready_resource(
+            "another-protocol",
+            PromptCacheScopeDigest::new([90; 32]),
+            10,
+        ),
+    ]);
+
+    let cleaned = scripted.runner.clean_prompt_cache(&Cancel::new()).unwrap();
+
+    assert_eq!(cleaned.inspected, 1);
+    assert_eq!(cleaned.orphaned, 1);
+    let records = records.lock().unwrap();
+    let [owned, other] = records.as_slice() else {
+        panic!("protocol-scoped cleanup must retain both fixture records");
+    };
+    assert_eq!(owned.state(), PromptCacheResourceState::Orphaned);
+    assert_eq!(other.state(), PromptCacheResourceState::Ready);
+}
+
+#[test]
+fn ambiguous_delete_is_retained_for_reconciliation_and_pre_cancel_changes_nothing() {
+    let store = SharedStore::default();
+    let resumed_store = store.clone();
+    let records = Arc::clone(&store.0);
+    let mut scripted = Scripted::new(
+        Script::new(Vec::new()).ambiguous_delete(),
+        Tools::new(),
+        Verdict::Deny,
+    )
+    .storing(store);
+    let provider_scope =
+        prompt_cache::provider_scope(scripted.runner.provider.prompt_cache_route());
+    records
+        .lock()
+        .unwrap()
+        .push(ready_resource("script", provider_scope, 1));
+    let cancelled = Cancel::new();
+    cancelled.request();
+
+    assert!(matches!(
+        scripted.runner.clean_prompt_cache(&cancelled),
+        Err(PromptCacheResourceError::Cancelled)
+    ));
+    let held = records.lock().unwrap();
+    let [record] = held.as_slice() else {
+        panic!("pre-cancelled cleanup must retain one resource");
+    };
+    assert_eq!(record.state(), PromptCacheResourceState::Ready);
+    drop(held);
+
+    let cleaned = scripted.runner.clean_prompt_cache(&Cancel::new()).unwrap();
+    assert_eq!(cleaned.ambiguous, 1);
+    assert_eq!(
+        cleaned
+            .changes()
+            .iter()
+            .map(|change| change.state)
+            .collect::<Vec<_>>(),
+        [
+            PromptCacheResourceState::Deleting,
+            PromptCacheResourceState::Ambiguous,
+        ]
+    );
+    let held = records.lock().unwrap();
+    let [record] = held.as_slice() else {
+        panic!("ambiguous cleanup must retain one resource");
+    };
+    assert_eq!(record.state(), PromptCacheResourceState::Ambiguous);
+    assert_eq!(record.pending(), Some(PromptCacheResourceOperation::Delete));
+    drop(held);
+
+    let credential_scope = scripted
+        .runner
+        .provider
+        .prompt_cache_route()
+        .credential_scope;
+    let mut resumed = Scripted::new(
+        Script::new(Vec::new())
+            .with_credential_scope(credential_scope)
+            .persistent(),
+        Tools::new(),
+        Verdict::Deny,
+    )
+    .storing(resumed_store);
+    let reconciled = resumed.runner.clean_prompt_cache(&Cancel::new()).unwrap();
+
+    assert_eq!(reconciled.deleted, 1);
+    assert_eq!(
+        reconciled
+            .changes()
+            .iter()
+            .map(|change| (change.operation, change.state))
+            .collect::<Vec<_>>(),
+        [(
+            Some(PromptCacheResourceOperation::Delete),
+            PromptCacheResourceState::Deleted,
+        )]
+    );
+    assert!(records.lock().unwrap().is_empty());
+}
+
+#[test]
 fn a_turn_that_is_never_told_what_it_spent_says_nothing_about_it() {
     // Every provider reports this differently and one of them may not report it
     // at all. Nothing here invents a number for that case: no reading, no
@@ -950,6 +1507,22 @@ fn a_response_that_went_away_before_it_said_anything_is_asked_for_again() {
     assert_eq!(scripted.retried(), 1);
     assert_eq!(scripted.asked().len(), 2, "the request went out once");
 
+    let sent = scripted.sent.lock().unwrap();
+    let [first, second] = sent.as_slice() else {
+        panic!("the original request and retry were retained")
+    };
+    assert_ne!(
+        first.cache_attempt, second.cache_attempt,
+        "a retry reused its provider-attempt identity"
+    );
+    assert_eq!(
+        first.cache_identity, second.cache_identity,
+        "an unchanged logical retry forked its scoped cache identity"
+    );
+    assert!(first.cache_attempt.is_some());
+    assert!(first.cache_selection.is_some());
+    drop(sent);
+
     // Nothing of the attempt that went away is left behind: an empty agent
     // message here is one the next request carries, and every request after it.
     assert_eq!(
@@ -963,6 +1536,60 @@ fn a_response_that_went_away_before_it_said_anything_is_asked_for_again() {
             },
         ]
     );
+}
+
+#[test]
+fn usage_reported_before_an_ambiguous_retry_is_attributed_once_to_each_attempt() {
+    let first_usage = ProviderUsage::new(
+        InputTokenUsage::inclusive_read_write(Some(100), Some(10), Some(5)).unwrap(),
+        None,
+        None,
+        Some(100),
+        &[],
+    )
+    .unwrap();
+    let second_usage = ProviderUsage::new(
+        InputTokenUsage::inclusive_read_write(Some(120), Some(20), Some(0)).unwrap(),
+        Some(4),
+        None,
+        Some(124),
+        &[],
+    )
+    .unwrap();
+    let script = Script::dropping_with_usage(
+        first_usage.clone(),
+        vec![vec![
+            Delta::Usage(second_usage.clone()),
+            Delta::Stopped(StopReason::Yielded),
+        ]],
+    )
+    .persistent();
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
+
+    scripted.turn("go").unwrap();
+
+    let facts: Vec<_> = scripted
+        .events()
+        .into_iter()
+        .filter_map(|event| match event {
+            Event::PromptCache {
+                fact: PromptCacheFact::UsageReported(fact),
+            } => Some(fact),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        facts.len(),
+        2,
+        "a reported attempt was duplicated or discarded"
+    );
+    let [first, second] = facts.as_slice() else {
+        panic!("retry fixture must report exactly two attempt facts");
+    };
+    assert_ne!(first.attempt, second.attempt);
+    assert_eq!(first.usage, first_usage);
+    assert_eq!(second.usage, second_usage);
+    assert_eq!(scripted.sent.lock().unwrap().len(), 2);
 }
 
 #[test]
@@ -1163,561 +1790,5 @@ fn a_turn_that_finds_the_flag_raised_stops_without_sending_anything() {
     assert!(
         scripted.runner.transcript().is_empty(),
         "a turn that never ran recorded a prompt the model was never told"
-    );
-}
-
-#[test]
-fn the_number_a_stopped_turn_announced_is_the_one_the_next_turn_takes() {
-    // The count follows the transcript, and a turn stopped before it began adds
-    // nothing to it. So the number it announced is still free, and the prompt
-    // after it is that turn — taken for real this time. Numbering the next one
-    // higher would leave a gap nothing in the log or on screen accounts for.
-    let script = Script::new(vec![saying("first"), saying("second")]);
-    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
-
-    scripted.turn("one").unwrap();
-
-    scripted.cancel.request();
-    scripted.turn("stopped on the way in").unwrap();
-
-    // What the loop does before it hands the next turn over, and the reason the
-    // runner does not do it for itself.
-    scripted.cancel.reset();
-    scripted.turn("two").unwrap();
-
-    assert_eq!(scripted.started(), [1, 2, 2]);
-}
-
-#[test]
-fn a_turn_leaves_the_flag_to_the_thread_that_raises_it() {
-    // Clearing it is the caller's, on the thread reading the keyboard, before
-    // this turn's thread exists. A turn that cleared it as well would be
-    // clearing whatever arrived in between, which is the one press nothing else
-    // can see.
-    let script = Script::new(vec![saying("done")]);
-    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
-    scripted.cancel.request();
-
-    scripted.turn("go").unwrap();
-
-    assert!(
-        scripted.cancel.requested(),
-        "the turn cleared a request that was not made of it"
-    );
-}
-
-#[test]
-fn everything_a_turn_adds_to_the_transcript_is_also_recorded() {
-    // The two are written in one place so they cannot drift apart. A turn that
-    // pushed a message without recording it would leave a session that
-    // continues from somewhere other than where it stopped.
-    let sample = Sample::new("runner-recording");
-    let script = Script::new(vec![
-        calling("a", "read", r#"{"path":"x"}"#),
-        saying("done"),
-    ]);
-    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
-    let mut scripted = Scripted::recording(
-        script,
-        tools([Fixed::new("read").answering("fn main() {}")]),
-        Verdict::Allow,
-        session,
-    );
-
-    scripted.turn("read x").unwrap();
-    let held = scripted.runner.transcript().messages().to_vec();
-
-    // Dropping the runner drops the session, which is what waits for the queue.
-    drop(scripted);
-    let (_session, replayed) =
-        Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
-
-    assert_eq!(replayed.messages(), held.as_slice());
-}
-
-// When a pass reaches the log, measured against when its tools run.
-//
-// Recording is queued rather than written, so what a test can see from inside
-// a running tool is the log as the disk has it — which is the only place the
-// ordering shows. A tool that reads the log while the pass is still going is
-// how that becomes an observation rather than a claim about the source.
-
-/// The tool whose call the log is watched for.
-///
-/// A word that appears nowhere else in the turn, so finding it in the log can
-/// only mean the call was recorded.
-const WATCH: &str = "watch";
-
-/// How long the tool waits for what was queued to reach the disk.
-///
-/// The write happens on the session's own thread, so a log that has not caught
-/// up yet is slow rather than wrong. Long enough that a loaded machine does not
-/// report the delay as a record that was never made, and bounded so that a
-/// record which is never made fails instead of hanging.
-const SETTLE: Duration = Duration::from_secs(5);
-
-#[test]
-fn the_calls_of_a_pass_are_recorded_before_the_tools_run() {
-    // Running a tool is what changes the tree. A turn that ends part way
-    // through a pass — killed, or out of power — leaves a log whose last word
-    // is the prompt, and the next `--continue` hands the model a transcript in
-    // which files it has already edited have never been touched. Recording the
-    // calls first costs a line the replay knows how to drop; recording them
-    // last costs the work.
-    let sample = Sample::new("runner-recorded");
-    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
-    let log = session.path().to_owned();
-
-    let mut offered = Tools::new();
-    offered.add_builtin(Logged { log }).unwrap();
-
-    let script = Script::new(vec![calling("a", WATCH, "{}"), saying("done")]);
-    let mut scripted = Scripted::recording(script, offered, Verdict::Allow, session);
-
-    scripted.turn("go").expect("the turn");
-
-    let messages = conversation(scripted.runner.transcript());
-    let seen = match messages.get(2) {
-        Some(Message::ToolResults(results)) => results
-            .first()
-            .map(|result| result.output.text().to_owned()),
-        Some(Message::Context(_) | Message::User { .. } | Message::Agent { .. }) | None => None,
-    }
-    .expect("the tool ran and its result was recorded");
-
-    assert!(
-        seen.contains(WATCH),
-        "the pass was still unrecorded while its tool ran: {seen}"
-    );
-}
-
-/// A tool that hands back the session log as it stood while the tool ran.
-struct Logged {
-    log: PathBuf,
-}
-
-impl DescribeTool for Logged {
-    fn name(&self) -> &str {
-        WATCH
-    }
-
-    fn schema(&self) -> &'static str {
-        r#"{"type":"object","properties":{}}"#
-    }
-}
-
-impl Tool for Logged {
-    fn validate(&self, _args: &ToolArgs) -> Result<(), ToolError> {
-        Ok(())
-    }
-
-    fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
-        Sensitivity::ReadOnly {
-            target: Target::unresolved(),
-        }
-    }
-
-    fn summary(&self, _args: &ToolArgs) -> Summary {
-        Summary::new("")
-    }
-
-    fn run(
-        &self,
-        _approved: Approved,
-        _context: &ToolContext<'_>,
-    ) -> Result<ToolOutput, ToolError> {
-        let deadline = Instant::now() + SETTLE;
-
-        loop {
-            let held = std::fs::read_to_string(&self.log).unwrap_or_default();
-
-            if held.contains(WATCH) || Instant::now() >= deadline {
-                return Ok(ToolOutput::ok(held));
-            }
-
-            thread::sleep(Duration::from_millis(1));
-        }
-    }
-}
-
-// What a turn tells the thread that draws.
-//
-// Separate from the transcript tests next door because the two can disagree:
-// a turn that recorded everything correctly and reported none of it leaves a
-// session that is right in the log and wrong on the screen.
-
-#[test]
-fn turns_are_numbered_from_one() {
-    let script = Script::new(vec![saying("first"), saying("second")]);
-    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
-
-    scripted.turn("one").unwrap();
-    scripted.turn("two").unwrap();
-
-    assert_eq!(scripted.started(), [1, 2]);
-}
-
-#[test]
-fn a_continued_session_goes_on_counting_where_it_stopped() {
-    // Numbering the first continued turn 1 would tell the user this is a new
-    // session, which is exactly what they asked it not to be.
-    let script = Script::new(vec![saying("still here")]);
-    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
-
-    let mut earlier = Transcript::new();
-    earlier.push(Message::said("one"));
-    earlier.push(Message::Agent {
-        text: "first".into(),
-        calls: Vec::new(),
-        stop: Some(StopReason::Yielded),
-    });
-    earlier.push(Message::said("two"));
-    earlier.push(Message::Agent {
-        text: "second".into(),
-        calls: Vec::new(),
-        stop: Some(StopReason::Yielded),
-    });
-    scripted.runner = scripted.runner.resuming(earlier);
-
-    scripted.turn("three").unwrap();
-
-    assert_eq!(scripted.started(), [3]);
-}
-
-#[test]
-fn a_call_is_announced_before_it_runs_with_what_it_is_about() {
-    // The renderer draws the line for a running tool from this, and the words
-    // beside the name come from the tool rather than from the renderer: only
-    // the tool knows which of its arguments the call is about. `Fixed` answers
-    // with the whole of them, which is a value nothing else here produces.
-    let asked = r#"{"path":"src/main.rs"}"#;
-    let script = Script::new(vec![calling("a", "read", asked), saying("done")]);
-    let mut scripted = Scripted::new(script, tools([Fixed::new("read")]), Verdict::Allow);
-
-    scripted.turn("go").unwrap();
-
-    let requested: Vec<(ToolCall, Summary)> = scripted
-        .seen
-        .try_iter()
-        .filter_map(|event| match event {
-            Event::ToolRequested { call, summary, .. } => Some((call, summary)),
-            Event::TurnStarted { .. }
-            | Event::Delta { .. }
-            | Event::ToolFinished { .. }
-            | Event::Wrote { .. }
-            | Event::Carried { .. }
-            | Event::Compacting { .. }
-            | Event::Compacted { .. }
-            | Event::Retrying
-            | Event::Aged { .. }
-            | Event::Unread { .. }
-            | Event::Steered { .. }
-            | Event::TurnFinished { .. }
-            | Event::Spent { .. }
-            | Event::Failed { .. } => None,
-        })
-        .collect();
-
-    assert_eq!(requested.len(), 1);
-    let (call, summary) = requested.first().expect("the call to have been announced");
-    assert_eq!(&*call.name, "read");
-    assert_eq!(summary.as_str(), asked);
-}
-
-#[test]
-fn a_call_is_announced_with_its_execution_capabilities() {
-    let script = Script::new(vec![calling("a", "detachable", "{}"), saying("done")]);
-    let mut scripted = Scripted::new(
-        script,
-        tools([Fixed::new("detachable").detachable()]),
-        Verdict::Allow,
-    );
-
-    scripted.turn("go").unwrap();
-
-    let backgroundable = scripted.seen.try_iter().find_map(|event| match event {
-        Event::ToolRequested { backgroundable, .. } => Some(backgroundable),
-        Event::TurnStarted { .. }
-        | Event::Delta { .. }
-        | Event::ToolFinished { .. }
-        | Event::Wrote { .. }
-        | Event::Carried { .. }
-        | Event::Compacting { .. }
-        | Event::Compacted { .. }
-        | Event::Retrying
-        | Event::Aged { .. }
-        | Event::Unread { .. }
-        | Event::Steered { .. }
-        | Event::TurnFinished { .. }
-        | Event::Spent { .. }
-        | Event::Failed { .. } => None,
-    });
-
-    assert_eq!(backgroundable, Some(true));
-}
-
-#[test]
-fn a_turn_reports_why_it_stopped() {
-    // The reason is the only thing that separates a finished answer from one
-    // that was cut off: both leave prose in the transcript and hand the prompt
-    // back. Returning it to the caller is not enough on its own — the thread
-    // that draws never sees a return value.
-    let script = Script::new(vec![vec![
-        Delta::Text("as I was say".into()),
-        Delta::Stopped(StopReason::OutOfTokens),
-    ]]);
-    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
-
-    assert_eq!(scripted.turn("go").unwrap(), StopReason::OutOfTokens);
-
-    assert_eq!(scripted.finished(), [StopReason::OutOfTokens]);
-}
-
-#[test]
-fn a_turn_that_was_cut_off_comes_back_from_a_replay_still_cut_off() {
-    // The live notice covers the session; the log is what covers the restart.
-    // Without the reason on the line, the user hits the ceiling mid-sentence,
-    // quits, continues, and replay hands the half-sentence back as a finished
-    // turn — so the model is shown its own truncation as an answer it chose to
-    // end.
-    let sample = Sample::new("runner-cut-off");
-    let script = Script::new(vec![vec![
-        Delta::Text("as I was say".into()),
-        Delta::Stopped(StopReason::OutOfTokens),
-    ]]);
-    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
-    let mut scripted = Scripted::recording(script, Tools::new(), Verdict::Allow, session);
-
-    scripted.turn("write it all out").unwrap();
-
-    // Dropping the runner drops the session, which is what waits for the queue.
-    drop(scripted);
-    let (_session, replayed) =
-        Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
-
-    assert_eq!(
-        conversation(&replayed),
-        [
-            Message::said("write it all out"),
-            Message::Agent {
-                text: "as I was say".into(),
-                calls: Vec::new(),
-                stop: Some(StopReason::OutOfTokens),
-            },
-        ]
-    );
-}
-
-#[test]
-fn a_stream_that_never_said_why_it_stopped_fails_the_turn_rather_than_finishing_it() {
-    // Silence is what a finished response and one that stopped arriving have in
-    // common. Read as a finish, half an answer reaches the user looking whole —
-    // and reaches the model that way on every turn afterwards. Both providers
-    // here prevent it; this is what a third one that forgot would meet.
-    let script = Script::new(vec![vec![Delta::Text("as I was say".into())]]);
-    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
-
-    let problem = scripted.turn("go").unwrap_err();
-
-    assert!(
-        matches!(problem, TurnError::Provider(ProviderError::Protocol { .. })),
-        "{problem:?}"
-    );
-
-    // What the user already read is still recorded, and it is recorded as an
-    // answer that never reached an ending.
-    assert_eq!(
-        conversation(scripted.runner.transcript()),
-        [
-            Message::said("go"),
-            Message::Agent {
-                text: "as I was say".into(),
-                calls: Vec::new(),
-                stop: None,
-            },
-        ]
-    );
-    assert_eq!(scripted.finished(), [], "a failed turn has no ending");
-}
-
-#[test]
-fn a_turn_a_tool_round_ended_reports_why_as_well() {
-    // Two returns end a turn. A reason posted from only one of them leaves the
-    // other looking finished, which is the whole failure this guards.
-    let script = Script::new(vec![calling("a", "bash", "{}")]);
-    let mut scripted = Scripted::new(
-        script,
-        tools([Fixed::new("bash").cancelling()]),
-        Verdict::Allow,
-    );
-
-    assert_eq!(scripted.turn("go").unwrap(), StopReason::Cancelled);
-
-    assert_eq!(scripted.finished(), [StopReason::Cancelled]);
-}
-
-#[test]
-fn a_turn_that_failed_reports_no_reason_because_it_reached_none() {
-    // The failure is its own event. Posting a stop as well would put two
-    // endings on the screen for one turn.
-    let mut scripted = Scripted::new(Script::failing(), Tools::new(), Verdict::Allow);
-
-    scripted.turn("go").unwrap_err();
-
-    assert_eq!(scripted.finished(), []);
-}
-
-#[test]
-fn a_diff_reaches_the_reader_and_stops_before_the_transcript() {
-    // The one thing here that goes to one of the two and not the other. A diff
-    // is drawn once; the transcript is replayed to the model every turn for the
-    // rest of the session, so a copy kept there would be paid for again on
-    // every turn after the edit it describes -- and paid for in the one value
-    // that is allowed to grow, against a bound that counts what was said.
-    let diff = Diff::new([Line::new(315, Change::Added, "budgets:")]);
-    let script = Script::new(vec![calling("a", "edit", "{}"), saying("done")]);
-    let mut scripted = Scripted::new(
-        script,
-        tools([Fixed::new("edit").showing(diff)]),
-        Verdict::Allow,
-    );
-
-    scripted.turn("go").unwrap();
-
-    let shown: Vec<Option<usize>> = scripted
-        .seen
-        .try_iter()
-        .filter_map(|event| match event {
-            Event::ToolFinished { output, .. } => Some(output.diff().map(Diff::added)),
-            Event::TurnStarted { .. }
-            | Event::Delta { .. }
-            | Event::ToolRequested { .. }
-            | Event::Wrote { .. }
-            | Event::Carried { .. }
-            | Event::Compacting { .. }
-            | Event::Compacted { .. }
-            | Event::Retrying
-            | Event::Aged { .. }
-            | Event::Unread { .. }
-            | Event::Steered { .. }
-            | Event::TurnFinished { .. }
-            | Event::Spent { .. }
-            | Event::Failed { .. } => None,
-        })
-        .collect();
-
-    assert_eq!(shown, [Some(1)]);
-
-    let kept: Vec<Option<&Diff>> = scripted
-        .runner
-        .transcript()
-        .messages()
-        .iter()
-        .filter_map(|message| match message {
-            Message::ToolResults(results) => Some(results),
-            Message::Context(_) | Message::User { .. } | Message::Agent { .. } => None,
-        })
-        .flatten()
-        .map(|result| result.output.diff())
-        .collect();
-
-    assert_eq!(kept, [None]);
-}
-
-#[test]
-fn a_command_that_ended_while_the_turn_ran_reaches_it_at_the_next_pass() {
-    // The case the whole type is for. A command left running exits mid-turn;
-    // the agent was told not to poll for it, so the fact has to be pushed at
-    // the turn, and the pass after it is pushed has to carry it. Without this
-    // the model is told at the top of the *next* turn — which is no use to an
-    // agent that is waiting inside this one.
-    let script = Script::new(vec![calling("a", "read", "{}"), saying("done")]);
-    let mut steering = Steering::new(script, tools([Fixed::new("read")]));
-    steering
-        .aside
-        .say("#1 `sleep 5` finished after printing 0 lines.".into());
-
-    steering.turn("start the build").expect("a turn");
-
-    let asked = steering.asked();
-    let [first, second] = asked.as_slice() else {
-        panic!("two passes: {asked:?}");
-    };
-    assert!(
-        second > first,
-        "the pass after the note carries it: {asked:?}"
-    );
-    assert!(
-        !steering.aside.any(),
-        "a note the turn took is a note nothing still owes"
-    );
-}
-
-#[test]
-fn a_note_handed_to_a_turn_is_not_recorded_as_something_the_reader_typed() {
-    // An aside is the harness speaking, not the reader. It joins the transcript
-    // because that is the only channel a running turn has, but it must not be
-    // drawn back as the reader's own words — `Steered` is what the panel and
-    // the transcript read to decide somebody typed something.
-    let script = Script::new(vec![calling("a", "read", "{}"), saying("done")]);
-    let mut steering = Steering::new(script, tools([Fixed::new("read")]));
-    steering
-        .aside
-        .say("#1 `sleep 5` finished after printing 0 lines.".into());
-
-    steering.turn("start the build").expect("a turn");
-
-    let steered: Vec<String> = steering
-        .seen
-        .try_iter()
-        .filter_map(|event| match event {
-            Event::Steered { line } => Some(line.clone()),
-            _ => None,
-        })
-        .collect();
-    assert!(
-        steered.is_empty(),
-        "a machine note was drawn as the reader's typing: {steered:?}"
-    );
-}
-
-#[test]
-fn a_note_and_a_typed_line_both_land_on_the_pass_that_follows_them() {
-    // The two queues are drained at the same boundary and neither swallows the
-    // other: a command that ended while the reader was typing is one turn that
-    // knows both.
-    let script = Script::new(vec![calling("a", "read", "{}"), saying("done")]);
-    let mut steering = Steering::new(script, tools([Fixed::new("read")]));
-    steering.steer.say("check the log too".into());
-    steering
-        .aside
-        .say("#1 `sleep 5` finished after printing 0 lines.".into());
-
-    steering.turn("start the build").expect("a turn");
-
-    assert!(!steering.steer.any());
-    assert!(!steering.aside.any());
-
-    // Both are in the transcript, and as two messages rather than one run
-    // together: what the reader asked for and what the machine reported are
-    // different kinds of fact, and a model reading them spliced would read the
-    // note as part of the request.
-    let said: Vec<&str> = steering
-        .runner
-        .transcript()
-        .messages()
-        .iter()
-        .filter_map(|message| match message {
-            Message::User { text, .. } => Some(text.as_ref()),
-            _ => None,
-        })
-        .collect();
-    assert!(
-        said.contains(&"check the log too"),
-        "the typed line is missing: {said:?}"
-    );
-    assert!(
-        said.contains(&"#1 `sleep 5` finished after printing 0 lines."),
-        "the note is missing: {said:?}"
     );
 }

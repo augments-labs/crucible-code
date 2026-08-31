@@ -199,6 +199,7 @@ impl<'a> AgentLoop<'a> {
                 Listening {
                     run,
                     advertised: &advertised,
+                    generation: tools.generation(),
                     counting,
                 },
             ) {

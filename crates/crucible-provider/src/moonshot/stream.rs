@@ -13,11 +13,10 @@ pub(super) type Stream = Response<Completions>;
 
 #[cfg(test)]
 pub(super) mod tests {
-    use crucible_core::{
-        Cancel, Carried, Delta, DeltaStream, ProviderError, Spend, StopReason, ToolId,
-    };
+    use crucible_core::{Cancel, Delta, DeltaStream, ProviderError, StopReason, ToolId};
 
     use super::*;
+    use crate::fake::inclusive_usage;
 
     /// A complete answer, as the API streams one.
     ///
@@ -77,8 +76,7 @@ pub(super) mod tests {
                 Delta::Text("Hello".into()),
                 Delta::Text(", world".into()),
                 Delta::Stopped(StopReason::Yielded),
-                Delta::Carried(Carried::new(9)),
-                Delta::Spent(Spend::new(4)),
+                inclusive_usage(Some(9), None, Some(4)),
             ]
         );
     }
@@ -90,7 +88,7 @@ pub(super) mod tests {
         let mut stream = reading(ANSWER, &Cancel::new());
 
         assert!(
-            deltas(&mut stream).contains(&Delta::Carried(Carried::new(9))),
+            deltas(&mut stream).contains(&inclusive_usage(Some(9), None, Some(4))),
             "the usage chunk carries prompt_tokens and it is not reported"
         );
     }
@@ -106,8 +104,8 @@ pub(super) mod tests {
         let mut stream = reading(&body, &Cancel::new());
 
         let deltas = deltas(&mut stream);
-        assert!(deltas.contains(&Delta::Carried(Carried::new(900))));
-        assert!(!deltas.contains(&Delta::Carried(Carried::new(1600))));
+        assert!(deltas.contains(&inclusive_usage(Some(900), Some(700), Some(4))));
+        assert!(!deltas.contains(&inclusive_usage(Some(1_600), Some(700), Some(4))));
     }
 
     #[test]

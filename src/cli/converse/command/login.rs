@@ -595,6 +595,9 @@ fn taken<T: Terminal>(
     }
 
     let changed = terms.provider.get() != Some(named.name);
+    if !super::cache::retire(renderer, runner)? {
+        return Ok(());
+    }
     runner.serve(set.provider);
     terms.provider.set(Some(named.name));
 

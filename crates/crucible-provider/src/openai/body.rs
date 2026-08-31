@@ -14,7 +14,9 @@
 //! is nested under `reasoning` rather than named at the top of the body.
 
 use crucible_core::{
-    Attached, Content, Message, Modality, Request, StopReason, ToolCall, ToolResult, ToolSchema,
+    Attached, Content, Message, Modality, PromptCacheBoundary, PromptCacheEncoding,
+    PromptCacheIneligibleReason, PromptCacheMechanism, PromptCacheRetentionClass, Request,
+    StopReason, ToolCall, ToolResult, ToolSchema,
 };
 #[cfg(test)]
 use serde_json::Value;
@@ -24,6 +26,7 @@ use crate::json::{Array, Json, Object, described};
 
 /// The whole request body, as `serving` accepts it.
 pub(super) fn serialize(request: &Request<'_>, serving: Serving) -> String {
+    let explicit_message = explicit_message(request);
     let mut json = Json::new();
     json.object(|body| {
         body.text("model", request.model);
@@ -46,6 +49,49 @@ pub(super) fn serialize(request: &Request<'_>, serving: Serving) -> String {
         // otherwise, and what a coding agent sends is somebody's source.
         body.boolean("store", false);
 
+        if let Some(cache) = request.prompt_cache
+            && let Some(selected) = cache.selection.selected()
+        {
+            match selected.mechanism() {
+                PromptCacheMechanism::AutomaticPrefix => {
+                    if let Some(key) = cache.routing_key {
+                        body.text("prompt_cache_key", key.as_str());
+                    }
+                    match (
+                        request.model.starts_with("gpt-5.6-"),
+                        cache.policy.retention().class(),
+                    ) {
+                        (true, PromptCacheRetentionClass::Ephemeral) => {
+                            body.object("prompt_cache_options", |options| {
+                                options.text("mode", "implicit");
+                                options.text("ttl", "30m");
+                            });
+                        }
+                        (false, PromptCacheRetentionClass::Extended) => {
+                            body.text("prompt_cache_retention", "24h");
+                        }
+                        (_, PromptCacheRetentionClass::ProviderDefault)
+                        | (true, PromptCacheRetentionClass::Extended)
+                        | (false, PromptCacheRetentionClass::Ephemeral) => {}
+                    }
+                }
+                PromptCacheMechanism::ExplicitBreakpoints
+                    if explicit_message.is_some() && serving == Serving::Api =>
+                {
+                    body.object("prompt_cache_options", |options| {
+                        options.text("mode", "explicit");
+                        if cache.policy.retention().class() == PromptCacheRetentionClass::Ephemeral
+                        {
+                            options.text("ttl", "30m");
+                        }
+                    });
+                }
+                PromptCacheMechanism::ProviderManagedUsageOnly
+                | PromptCacheMechanism::ExplicitBreakpoints
+                | PromptCacheMechanism::PersistentContent => {}
+            }
+        }
+
         // A field rather than a message, which is the whole difference from the
         // older endpoint.
         if let Some(system) = request.system {
@@ -58,7 +104,13 @@ pub(super) fn serialize(request: &Request<'_>, serving: Serving) -> String {
             });
         }
 
-        body.array("input", |input| write_input(input, request));
+        body.array("input", |input| {
+            write_input(
+                input,
+                request,
+                explicit_message.filter(|_| serving == Serving::Api),
+            );
+        });
 
         // Absent rather than empty: an empty array is refused rather than read
         // as a session with no tools.
@@ -71,6 +123,47 @@ pub(super) fn serialize(request: &Request<'_>, serving: Serving) -> String {
         }
     });
     json.finish()
+}
+
+/// The cache metadata [`serialize`] adds for this exact request.
+pub(super) fn prompt_cache_encoding(
+    request: &Request<'_>,
+    serving: Serving,
+) -> PromptCacheEncoding {
+    let Some(cache) = request.prompt_cache else {
+        return PromptCacheEncoding::NoControlIntended;
+    };
+    let Some(selected) = cache.selection.selected() else {
+        return PromptCacheEncoding::NoControlIntended;
+    };
+    match selected.mechanism() {
+        PromptCacheMechanism::ProviderManagedUsageOnly => {
+            PromptCacheEncoding::NoExtraControlEncoded
+        }
+        PromptCacheMechanism::AutomaticPrefix => {
+            let hinted = cache.routing_key.is_some()
+                || matches!(
+                    (request.model.starts_with("gpt-5.6-"), selected.retention()),
+                    (true, PromptCacheRetentionClass::Ephemeral)
+                        | (false, PromptCacheRetentionClass::Extended)
+                );
+            if hinted {
+                PromptCacheEncoding::AutomaticHintEncoded
+            } else {
+                PromptCacheEncoding::NoExtraControlEncoded
+            }
+        }
+        PromptCacheMechanism::ExplicitBreakpoints if serving == Serving::Api => {
+            if explicit_message(request).is_some() {
+                PromptCacheEncoding::BreakpointsEncoded(1)
+            } else {
+                PromptCacheEncoding::Failed(PromptCacheIneligibleReason::UnsupportedBoundary)
+            }
+        }
+        PromptCacheMechanism::ExplicitBreakpoints | PromptCacheMechanism::PersistentContent => {
+            PromptCacheEncoding::Failed(PromptCacheIneligibleReason::Unsupported)
+        }
+    }
 }
 
 /// The body the published API receives, which is the whole of it.
@@ -86,9 +179,15 @@ fn served(request: &Request<'_>, serving: Serving) -> Value {
 }
 
 /// The transcript, as the flat list of items this endpoint reads.
-fn write_input(items: &mut Array<'_>, request: &Request<'_>) {
+fn write_input(items: &mut Array<'_>, request: &Request<'_>, explicit_message: Option<usize>) {
     for (nth, message) in request.transcript.messages().iter().enumerate() {
-        append(items, message, nth, request.attached);
+        append(
+            items,
+            message,
+            nth,
+            request.attached,
+            explicit_message == Some(nth),
+        );
     }
 }
 
@@ -97,18 +196,36 @@ fn write_input(items: &mut Array<'_>, request: &Request<'_>) {
 /// Appends rather than maps because the counts differ both ways: a turn that
 /// said something and then called three tools is four items, and a turn that
 /// called none is one.
-fn append(items: &mut Array<'_>, message: &Message, nth: usize, attached: &[Attached<'_>]) {
+fn append(
+    items: &mut Array<'_>,
+    message: &Message,
+    nth: usize,
+    attached: &[Attached<'_>],
+    breakpoint: bool,
+) {
     match message {
         Message::Context(fragment) => items.object(|item| {
             item.text("role", "user");
-            item.text("content", fragment.text());
+            if breakpoint {
+                item.array("content", |content| {
+                    content.object(|part| write_input_text(part, fragment.text(), true));
+                });
+            } else {
+                item.text("content", fragment.text());
+            }
         }),
         Message::User { text, .. } => items.object(|item| {
             item.text("role", "user");
 
             let mut files = attached.iter().filter(|one| one.message == nth).peekable();
             if files.peek().is_none() {
-                item.text("content", text);
+                if breakpoint {
+                    item.array("content", |content| {
+                        content.object(|part| write_input_text(part, text, true));
+                    });
+                } else {
+                    item.text("content", text);
+                }
                 return;
             }
 
@@ -122,21 +239,27 @@ fn append(items: &mut Array<'_>, message: &Message, nth: usize, attached: &[Atta
                 // A prompt that named a file and said nothing else is the
                 // picture alone, rather than a part carrying no words.
                 if !text.is_empty() {
-                    content.object(|part| {
-                        part.text("type", "input_text");
-                        part.text("text", text);
-                    });
+                    content.object(|part| write_input_text(part, text, breakpoint));
                 }
             });
         }),
         Message::Agent { text, calls, stop } => {
+            let answered = !text.is_empty() || !calls.is_empty();
+            let cut = StopReason::cut(*stop).filter(|_| answered);
+
             // A model that goes straight to a tool says nothing first, and an
             // empty message is an item with no content for the model to read
             // back. The calls beside it carry the turn instead.
             if !text.is_empty() {
                 items.object(|item| {
                     item.text("role", "assistant");
-                    item.text("content", text);
+                    if breakpoint && cut.is_none() && calls.is_empty() {
+                        item.array("content", |content| {
+                            content.object(|part| write_input_text(part, text, true));
+                        });
+                    } else {
+                        item.text("content", text);
+                    }
                 });
             }
 
@@ -148,12 +271,16 @@ fn append(items: &mut Array<'_>, message: &Message, nth: usize, attached: &[Atta
             // put an answer in front of it. Left off, the model reads its own
             // half-sentence as a turn it chose to end — on the next turn of
             // this session and on every turn of a continued one.
-            let answered = !text.is_empty() || !calls.is_empty();
-
-            if let Some(said) = StopReason::cut(*stop).filter(|_| answered) {
+            if let Some(said) = cut {
                 items.object(|item| {
                     item.text("role", "assistant");
-                    item.text("content", said);
+                    if breakpoint {
+                        item.array("content", |content| {
+                            content.object(|part| write_input_text(part, said, true));
+                        });
+                    } else {
+                        item.text("content", said);
+                    }
                 });
             }
         }
@@ -171,6 +298,66 @@ fn append(items: &mut Array<'_>, message: &Message, nth: usize, attached: &[Atta
                 items.object(|item| write_result(item, result, &found));
             }
         }
+    }
+}
+
+/// The latest stable message whose last wire item can carry an explicit marker.
+fn explicit_message(request: &Request<'_>) -> Option<usize> {
+    let cache = request.prompt_cache?;
+    let selected = cache.selection.selected()?;
+    if selected.mechanism() != PromptCacheMechanism::ExplicitBreakpoints {
+        return None;
+    }
+    let capability = cache
+        .capabilities
+        .mechanisms()
+        .iter()
+        .find(|candidate| candidate.mechanism() == PromptCacheMechanism::ExplicitBreakpoints)?;
+    if capability.maximum_breakpoints() == 0 {
+        return None;
+    }
+
+    let point = cache.plan.boundaries().iter().rev().find(|point| {
+        matches!(
+            point.kind(),
+            PromptCacheBoundary::AfterMessage | PromptCacheBoundary::AfterContent
+        ) && capability.boundaries().contains(&point.kind())
+    })?;
+    let message = usize::try_from(point.message()?).ok()?;
+    request
+        .transcript
+        .messages()
+        .get(message)
+        .is_some_and(explicitly_markable)
+        .then_some(message)
+}
+
+/// Whether the complete provider-visible message ends in a text content block.
+fn explicitly_markable(message: &Message) -> bool {
+    match message {
+        Message::Context(fragment) => !fragment.text().is_empty(),
+        Message::User { text, .. } => !text.is_empty(),
+        Message::Agent { text, calls, stop } => {
+            let answered = !text.is_empty() || !calls.is_empty();
+            StopReason::cut(*stop).is_some_and(|_| answered)
+                || (!text.is_empty() && calls.is_empty())
+        }
+        // Function-call outputs can end in attachment content. Until a neutral
+        // content-block boundary records the exact last emitted part, refusing
+        // that placement is safer than marking an earlier item as the message
+        // boundary.
+        Message::ToolResults(_) => false,
+    }
+}
+
+/// One OpenAI input-text part, optionally carrying an explicit cache boundary.
+fn write_input_text(part: &mut Object<'_>, text: &str, breakpoint: bool) {
+    part.text("type", "input_text");
+    part.text("text", text);
+    if breakpoint {
+        part.object("prompt_cache_breakpoint", |marker| {
+            marker.text("mode", "explicit");
+        });
     }
 }
 

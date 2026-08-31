@@ -10,7 +10,7 @@ use crucible_core::{
 use serde_json::json;
 
 use super::*;
-use crate::fake::{failed, found, picture};
+use crate::fake::{cached, failed, found, observed, picture};
 
 /// What a pointer finds when there is nothing there.
 const NOTHING: Value = Value::Null;
@@ -24,6 +24,7 @@ fn request(transcript: Transcript) -> Request<'static> {
         max_tokens: 1024,
         system: None,
         effort: None,
+        prompt_cache: None,
     }
 }
 
@@ -84,6 +85,152 @@ fn a_request_streams_and_names_its_model() {
 
     assert_eq!(at(&body, "/model"), "gpt-test");
     assert_eq!(at(&body, "/stream"), true);
+}
+
+#[test]
+fn provider_default_automatic_caching_preserves_the_request_bytes() {
+    let plain = request(said("hello"));
+    let cached = cached(
+        request(said("hello")),
+        PromptCacheMechanism::AutomaticPrefix,
+        PromptCacheRetentionClass::ProviderDefault,
+        false,
+    );
+
+    assert_eq!(
+        serialize(&cached, Serving::Api),
+        serialize(&plain, Serving::Api)
+    );
+}
+
+#[test]
+fn observe_only_preserves_the_request_bytes() {
+    let plain = request(said("hello"));
+    let observed = observed(request(said("hello")));
+
+    assert_eq!(
+        serialize(&observed, Serving::Api),
+        serialize(&plain, Serving::Api)
+    );
+}
+
+#[test]
+fn a_routing_key_is_encoded_only_when_the_prepared_request_supplies_one() {
+    let without = cached(
+        request(said("hello")),
+        PromptCacheMechanism::AutomaticPrefix,
+        PromptCacheRetentionClass::ProviderDefault,
+        false,
+    );
+    let with = cached(
+        request(said("hello")),
+        PromptCacheMechanism::AutomaticPrefix,
+        PromptCacheRetentionClass::ProviderDefault,
+        true,
+    );
+
+    assert_eq!(at(&build(&without), "/prompt_cache_key"), &NOTHING);
+    assert_eq!(
+        at(&build(&with), "/prompt_cache_key"),
+        &json!("44".repeat(32))
+    );
+}
+
+#[test]
+fn reviewed_retention_hints_use_the_model_specific_wire_shape() {
+    let mut current = request(said("hello"));
+    current.model = "gpt-5.6-sol";
+    let current = cached(
+        current,
+        PromptCacheMechanism::AutomaticPrefix,
+        PromptCacheRetentionClass::Ephemeral,
+        false,
+    );
+    let mut older = request(said("hello"));
+    older.model = "gpt-5.5";
+    let older = cached(
+        older,
+        PromptCacheMechanism::AutomaticPrefix,
+        PromptCacheRetentionClass::Extended,
+        false,
+    );
+
+    assert_eq!(
+        at(&build(&current), "/prompt_cache_options"),
+        &json!({"mode": "implicit", "ttl": "30m"})
+    );
+    assert_eq!(at(&build(&older), "/prompt_cache_retention"), &json!("24h"));
+}
+
+#[test]
+fn explicit_caching_marks_one_legal_text_boundary_and_disables_implicit_writes() {
+    let mut transcript = Transcript::new();
+    transcript.push(Message::Context(Fragment::new(
+        "reference",
+        "stable prefix",
+    )));
+    transcript.push(Message::said("changing question"));
+    let mut explicit = request(transcript);
+    explicit.model = "gpt-5.6-sol";
+    let explicit = cached(
+        explicit,
+        PromptCacheMechanism::ExplicitBreakpoints,
+        PromptCacheRetentionClass::ProviderDefault,
+        false,
+    );
+    let body = build(&explicit);
+
+    assert_eq!(
+        at(&body, "/prompt_cache_options"),
+        &json!({"mode": "explicit"})
+    );
+    assert_eq!(
+        at(&body, "/input/0/content/0/prompt_cache_breakpoint"),
+        &json!({"mode": "explicit"})
+    );
+    assert_eq!(
+        prompt_cache_encoding(&explicit, Serving::Api),
+        crucible_core::PromptCacheEncoding::BreakpointsEncoded(1)
+    );
+}
+
+#[test]
+fn explicit_caching_does_not_claim_a_later_unmarkable_tool_result_was_cached() {
+    let mut transcript = Transcript::new();
+    transcript.push(Message::Context(Fragment::new("reference", "earlier text")));
+    transcript.push(Message::Agent {
+        text: Box::default(),
+        calls: vec![ToolCall {
+            id: ToolId::new("call_1"),
+            name: "read".into(),
+            args: ToolArgs::new("{}"),
+        }],
+        stop: Some(StopReason::WantsTools),
+    });
+    transcript.push(Message::ToolResults(vec![ToolResult {
+        id: ToolId::new("call_1"),
+        output: found("result", Vec::new()),
+    }]));
+    transcript.push(Message::said("changing question"));
+    let mut explicit = request(transcript);
+    explicit.model = "gpt-5.6-sol";
+    let explicit = cached(
+        explicit,
+        PromptCacheMechanism::ExplicitBreakpoints,
+        PromptCacheRetentionClass::ProviderDefault,
+        false,
+    );
+
+    assert_eq!(
+        prompt_cache_encoding(&explicit, Serving::Api),
+        PromptCacheEncoding::Failed(PromptCacheIneligibleReason::UnsupportedBoundary)
+    );
+    assert_eq!(
+        serialize(&explicit, Serving::Api)
+            .matches("prompt_cache_breakpoint")
+            .count(),
+        0
+    );
 }
 
 #[test]

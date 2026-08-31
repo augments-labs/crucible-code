@@ -5,3 +5,4 @@ for it is read from.
 
 - [`--model`, and which key is read](providers.md)
 - [What a model can read](reading.md)
+- [Prompt caching](prompt-caching.md)

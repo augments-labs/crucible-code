@@ -73,7 +73,7 @@ impl Settings {
             documents.push(Document::parse(&text, &file, origin)?);
         }
 
-        Ok(Self::resolve(documents))
+        Self::resolve_checked(documents)
     }
 }
 

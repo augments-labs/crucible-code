@@ -789,6 +789,7 @@ mod tests {
                 }
                 Event::ToolFinished { .. } => finished = true,
                 Event::TurnStarted { .. }
+                | Event::PromptCache { .. }
                 | Event::Delta { .. }
                 | Event::ToolRequested { .. }
                 | Event::Carried { .. }
@@ -1696,6 +1697,7 @@ mod tests {
                     ..
                 } => Some((call.to_string(), receipt.outcome())),
                 Event::TurnStarted { .. }
+                | Event::PromptCache { .. }
                 | Event::Delta { .. }
                 | Event::ToolRequested { .. }
                 | Event::Wrote { .. }

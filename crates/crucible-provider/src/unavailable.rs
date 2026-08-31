@@ -12,7 +12,10 @@
 //! knows which commands exist — and saying it in two places is how the two come
 //! to disagree.
 
-use crucible_core::{Cancel, DeltaStream, Modalities, Modality, Provider, ProviderError, Request};
+use crucible_core::{
+    Cancel, CredentialScopeId, DeltaStream, Modalities, Modality, PromptCacheCapabilities,
+    PromptCacheRoute, Provider, ProviderError, Request,
+};
 
 /// What this provider is called, in the session log and in the status line.
 ///
@@ -24,13 +27,17 @@ const NAME: &str = "none";
 #[derive(Debug)]
 pub struct Unavailable {
     said: Box<str>,
+    credential_scope: CredentialScopeId,
 }
 
 impl Unavailable {
     /// A provider that refuses every turn with `said`.
     #[must_use]
     pub fn new(said: &str) -> Self {
-        Self { said: said.into() }
+        Self {
+            said: said.into(),
+            credential_scope: CredentialScopeId::new(),
+        }
     }
 }
 
@@ -43,6 +50,34 @@ impl Provider for Unavailable {
         // No protocol at all, so nothing beyond the text of a turn it will
         // refuse anyway.
         Modalities::empty().insert(Modality::Text)
+    }
+
+    fn prompt_cache_capabilities(&self, _model: &str) -> PromptCacheCapabilities {
+        PromptCacheCapabilities::unsupported(
+            "unavailable-v1",
+            crucible_core::PromptCacheProvenance::new(
+                "https://github.com/augments-labs/crucible-code",
+                "2026-08-31",
+                "unavailable-v1",
+            ),
+            crucible_core::StatefulTransportCapability::Unsupported,
+        )
+    }
+
+    fn prompt_cache_route(&self) -> PromptCacheRoute<'_> {
+        PromptCacheRoute {
+            protocol: "none",
+            endpoint: "none",
+            custom_endpoint: false,
+            credential_scope: self.credential_scope,
+            account: None,
+            project: None,
+            request_shape_version: "unavailable-v1",
+        }
+    }
+
+    fn prompt_cache_encoding(&self, _request: &Request<'_>) -> crucible_core::PromptCacheEncoding {
+        crucible_core::PromptCacheEncoding::NoControlIntended
     }
 
     fn stream(
@@ -72,6 +107,7 @@ mod tests {
             max_tokens: 1024,
             system: None,
             effort: None,
+            prompt_cache: None,
         }
     }
 

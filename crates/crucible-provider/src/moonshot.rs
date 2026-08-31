@@ -24,8 +24,10 @@ mod stream;
 mod wire;
 
 use crucible_core::{
-    Cancel, Credential, DeltaStream, Modalities, Modality, Outgoing, Provider, ProviderError,
-    Request,
+    Cancel, Credential, CredentialScopeId, DeltaStream, Modalities, Modality, Outgoing,
+    PromptCacheCapabilities, PromptCacheContent, PromptCacheMechanismCapability,
+    PromptCacheProvenance, PromptCacheRetentionClass, PromptCacheRoute, PromptCacheUsageReporting,
+    Provider, ProviderError, Request, StatefulTransportCapability,
 };
 
 use crate::endpoint::Endpoint;
@@ -42,6 +44,13 @@ const CODING: Endpoint = Endpoint::fixed("https://api.kimi.com/coding/v1/chat/co
 /// Where an Open Platform key is served.
 const PLATFORM: Endpoint = Endpoint::fixed("https://api.moonshot.ai/v1/chat/completions");
 
+const MOONSHOT_CACHE_CONTENT: &[PromptCacheContent] = &[
+    PromptCacheContent::Text,
+    PromptCacheContent::Tools,
+    PromptCacheContent::Images,
+    PromptCacheContent::Video,
+];
+
 /// What this harness is called, to a vendor that asks to be told.
 ///
 /// `MoonshotAI`'s terms require a client to identify itself truthfully and treat
@@ -56,6 +65,7 @@ pub struct Moonshot {
     credential: Box<dyn Credential>,
     transport: Box<dyn Transport>,
     endpoint: Endpoint,
+    credential_scope: CredentialScopeId,
 }
 
 impl Moonshot {
@@ -85,10 +95,12 @@ impl Moonshot {
         credential: Box<dyn Credential>,
         transport: Box<dyn Transport>,
     ) -> Self {
+        let credential_scope = credential.scope();
         Self {
             credential,
             transport,
             endpoint,
+            credential_scope,
         }
     }
 
@@ -123,6 +135,54 @@ impl Provider for Moonshot {
             .insert(Modality::Text)
             .insert(Modality::Image)
             .insert(Modality::Video)
+    }
+
+    fn prompt_cache_capabilities(&self, model: &str) -> PromptCacheCapabilities {
+        if self.endpoint != CODING && self.endpoint != PLATFORM {
+            return PromptCacheCapabilities::unknown("custom endpoint");
+        }
+        let revision = match model {
+            "k3" => "k3",
+            "k3-256k" => "k3-256k",
+            "kimi-for-coding" => "kimi-for-coding",
+            "kimi-for-coding-highspeed" => "kimi-for-coding-highspeed",
+            _ => return PromptCacheCapabilities::unknown("unreviewed model"),
+        };
+        let automatic = PromptCacheMechanismCapability::automatic_prefix(
+            257,
+            true,
+            false,
+            MOONSHOT_CACHE_CONTENT,
+        )
+        .with_retentions(&[PromptCacheRetentionClass::ProviderDefault]);
+        PromptCacheCapabilities::supported(
+            "kimi-prompt-cache-2026-08-31",
+            Some(revision),
+            PromptCacheProvenance::new(
+                "https://platform.kimi.ai/docs/guide/use-context-caching-feature-of-kimi-api",
+                "2026-08-31",
+                "kimi-prompt-cache-2026-08-31",
+            ),
+            StatefulTransportCapability::Unsupported,
+            &[automatic],
+            PromptCacheUsageReporting::ReadTokens,
+        )
+    }
+
+    fn prompt_cache_route(&self) -> PromptCacheRoute<'_> {
+        PromptCacheRoute {
+            protocol: "openai-chat-completions",
+            endpoint: self.endpoint.as_str(),
+            custom_endpoint: self.endpoint != CODING && self.endpoint != PLATFORM,
+            credential_scope: self.credential_scope,
+            account: None,
+            project: None,
+            request_shape_version: "moonshot-chat-completions-v1",
+        }
+    }
+
+    fn prompt_cache_encoding(&self, request: &Request<'_>) -> crucible_core::PromptCacheEncoding {
+        body::prompt_cache_encoding(request)
     }
 
     fn stream(

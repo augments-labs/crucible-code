@@ -1,9 +1,11 @@
 use crucible_core::{
-    ApiKey, Carried, Delta, Header, HeaderKey, Message, Spend, StopReason, Transcript,
+    ApiKey, Delta, Header, HeaderKey, Message, PricingDate, PromptCacheMechanism,
+    PromptCacheRetentionClass, PromptCacheSupport, StopReason, Transcript,
 };
 
 use super::stream::tests::{ANSWER, deltas};
 use super::*;
+use crate::fake::inclusive_usage;
 use crate::transport::{Replay, Sent};
 
 /// The exact key that must never appear anywhere but a header value.
@@ -35,6 +37,7 @@ fn asking(text: &str) -> Request<'static> {
         max_tokens: 1024,
         system: None,
         effort: None,
+        prompt_cache: None,
     }
 }
 
@@ -116,8 +119,7 @@ fn an_accepted_request_is_handed_back_as_the_answer_it_returned() {
             Delta::Text("Hello".into()),
             Delta::Text(", world".into()),
             Delta::Stopped(StopReason::Yielded),
-            Delta::Carried(Carried::new(9)),
-            Delta::Spent(Spend::new(4)),
+            inclusive_usage(Some(9), None, Some(4)),
         ]
     );
 }
@@ -201,5 +203,53 @@ fn moonshot_spells_no_more_than_its_body_can_write_today() {
             .insert(Modality::Text)
             .insert(Modality::Image)
             .insert(Modality::Video),
+    );
+}
+
+#[test]
+fn reviewed_models_declare_automatic_caching_with_a_routing_key() {
+    let (provider, _replay) = provider(Moonshot::CODING, ANSWER, 200);
+
+    let capabilities = provider.prompt_cache_capabilities("kimi-for-coding");
+
+    assert_eq!(capabilities.support(), PromptCacheSupport::Supported);
+    let Some(mechanism) = capabilities.mechanisms().first() else {
+        panic!("reviewed Moonshot model needs its provider-managed mechanism");
+    };
+    assert_eq!(mechanism.mechanism(), PromptCacheMechanism::AutomaticPrefix);
+    assert!(mechanism.supports_routing_key());
+}
+
+#[test]
+fn a_custom_chat_completions_route_has_unknown_cache_semantics() {
+    let (provider, _replay) = provider(
+        Endpoint::parse("https://proxy.invalid/v1/chat/completions").unwrap(),
+        ANSWER,
+        200,
+    );
+
+    assert_eq!(
+        provider
+            .prompt_cache_capabilities("kimi-for-coding")
+            .support(),
+        PromptCacheSupport::Unknown
+    );
+}
+
+#[test]
+fn membership_billing_is_not_invented_as_a_pay_as_you_go_token_price() {
+    let (provider, _replay) = provider(Moonshot::CODING, ANSWER, 200);
+
+    assert!(
+        provider
+            .prompt_cache_pricing(
+                "kimi-for-coding",
+                Some("kimi-for-coding"),
+                Some(1_000),
+                PromptCacheRetentionClass::ProviderDefault,
+                PricingDate::new(2026, 8, 31),
+            )
+            .unwrap()
+            .is_none()
     );
 }

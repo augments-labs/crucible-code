@@ -162,9 +162,11 @@ getrandom = "=0.4.3"
 # `std` cannot mint one and hand-rolling it would be a second partial codec.
 uuid = { version = "=1.25.0", features = ["v7"] }
 
-# Browser OAuth uses RFC 7636 S256. Keeping SHA-256 in the auth crate avoids a
-# partial handwritten digest at the boundary where a mismatch becomes a failed
-# login, and the crate has no runtime or platform dependencies.
+# Browser OAuth uses RFC 7636 S256. Prompt-cache scope identity also needs a
+# one-way digest of credential-owned material so an API key can keep the same
+# fail-closed identity after restart without ever persisting the key. Keeping
+# SHA-256 at those two credential boundaries avoids partial handwritten digest
+# implementations, and the crate has no runtime or platform dependencies.
 sha2 = { version = "=0.11.0", default-features = false }
 
 # Search, and the directory walk that feeds it. These are ripgrep's own crates.

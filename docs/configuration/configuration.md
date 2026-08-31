@@ -218,6 +218,46 @@ the *stop asking* answer writes down. See
 consumes rather than counting the calls it makes, because a turn that is long
 because there is work in it is not a turn to stop.
 
+### `promptCaching`
+
+Provider-side reuse of an identical logical prompt prefix. It is enabled by
+default using each shipped provider's own verified native mechanism; it never
+reuses a model answer or skips a provider request.
+
+```json
+{
+  "promptCaching": {
+    "mode": "prefer",
+    "isolationScope": "session",
+    "requestedRetention": { "class": "ephemeral", "maxSeconds": 1800 },
+    "persistentResources": { "mode": "forbid" }
+  }
+}
+```
+
+| Key | Means |
+| --- | --- |
+| `mode` | `observeOnly`, `prefer`, `require`, or `prohibit`. The default is `prefer`. |
+| `allowedMechanisms` | Optional intersection of `providerManagedUsageOnly`, `automaticPrefix`, `explicitBreakpoints`, and `persistentContent`. |
+| `isolationScope` | Broadest identity scope allowed to share a prefix: `run`, `session`, `workspace`, or `user`. The default is `session`. |
+| `requestedRetention` | Optional provider-neutral `class` and hard `maxSeconds` ceiling. |
+| `persistentResources.mode` | Separately managed remote resources are `forbid`, `reuse`, `create`, or `require`. The default is `forbid`. |
+| `namespace` | A bounded user-owned identity label; it is never copied directly into a provider cache key. |
+
+`observeOnly` adds no Crucible cache controls, although a provider may still
+cache automatically and report that usage. `require` fails before sending if no
+reviewed eligible mechanism can be selected. `prohibit` also fails before
+sending unless the provider exposes a documented opt-out.
+
+`providerDefault` requests no retention override. `ephemeral` and `extended`
+require a positive bounded `maxSeconds`; the figure is a ceiling rather than an
+exact TTL promise. Extended retention, resource creation, broad isolation and a
+namespace must come from your home configuration. Workspace layers can only
+narrow the inherited policy. Persistent resources are never created by the
+default, and their private metadata contains no prompt, response or credential.
+See [Prompt caching](../providers/prompt-caching.md) for exact provider behavior,
+inspection, privacy and source provenance.
+
 ### `permissions`
 
 What runs without asking, what is refused outright, and what happens to

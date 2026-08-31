@@ -4,6 +4,7 @@
 //! per-file cap.
 
 use super::*;
+use crate::fake::inclusive_usage;
 
 /// One event, as the framing above hands it over.
 ///
@@ -342,8 +343,7 @@ fn what_a_response_cost_arrives_under_the_response_that_finished() {
     assert_eq!(
         out(done),
         vec![
-            Delta::Carried(Carried::new(900)),
-            Delta::Spent(Spend::new(58)),
+            inclusive_usage(Some(900), None, Some(58)),
             Delta::Stopped(StopReason::Yielded),
         ]
     );
@@ -358,11 +358,41 @@ fn cached_openai_input_is_not_added_to_the_total_a_second_time() {
     assert_eq!(
         out(done),
         vec![
-            Delta::Carried(Carried::new(900)),
-            Delta::Spent(Spend::new(58)),
+            inclusive_usage(Some(900), Some(700), Some(58)),
             Delta::Stopped(StopReason::Yielded),
         ]
     );
+}
+
+#[test]
+fn a_missing_write_bucket_stays_unknown_for_models_that_report_writes() {
+    let done = r#"{"type":"response.completed","response":{"output":[],"usage":{"input_tokens":900,"input_tokens_details":{"cached_tokens":700},"output_tokens":58}}}"#;
+    let mut response = Responses::reporting_cache_writes();
+
+    let deltas = deltas(&event(done), &mut response).unwrap();
+    let Some(Delta::Usage(usage)) = deltas.first() else {
+        panic!("usage must precede the stop: {deltas:?}");
+    };
+
+    assert_eq!(usage.input.total, Some(900));
+    assert_eq!(usage.input.cache_read, Some(700));
+    assert_eq!(usage.input.cache_write_or_creation, None);
+    assert_eq!(usage.input.uncached, None);
+}
+
+#[test]
+fn cache_write_and_read_details_are_disjoint_subsets_of_openai_input() {
+    let done = r#"{"type":"response.completed","response":{"output":[],"usage":{"input_tokens":1200,"input_tokens_details":{"cached_tokens":700,"cache_write_tokens":300},"output_tokens":58,"total_tokens":1258}}}"#;
+
+    let deltas = out(done);
+    let Some(Delta::Usage(usage)) = deltas.first() else {
+        panic!("usage must precede the stop: {deltas:?}");
+    };
+    assert_eq!(usage.input.total, Some(1_200));
+    assert_eq!(usage.input.uncached, Some(200));
+    assert_eq!(usage.input.cache_read, Some(700));
+    assert_eq!(usage.input.cache_write_or_creation, Some(300));
+    assert_eq!(usage.total, Some(1_258));
 }
 
 #[test]
@@ -376,7 +406,7 @@ fn a_response_cut_short_still_says_what_it_cost() {
     assert_eq!(
         out(cut),
         vec![
-            Delta::Spent(Spend::new(4096)),
+            inclusive_usage(None, None, Some(4096)),
             Delta::Stopped(StopReason::OutOfTokens),
         ]
     );
@@ -485,8 +515,7 @@ fn a_finished_response_says_what_the_request_carried() {
     assert_eq!(
         out(done),
         vec![
-            Delta::Carried(Carried::new(900)),
-            Delta::Spent(Spend::new(58)),
+            inclusive_usage(Some(900), None, Some(58)),
             Delta::Stopped(StopReason::Yielded),
         ]
     );

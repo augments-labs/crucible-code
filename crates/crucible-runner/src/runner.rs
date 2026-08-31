@@ -21,13 +21,19 @@
 
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crucible_core::{
-    Aside, Ask, Attached, Attachment, Cancel, Compacting, Content, Delta, DeltaStream, Effort,
-    Event, Message, Modalities, Mode, Permission, Post, Provider, Reporter, Request, Room, Spend,
-    Steer, StopReason, Summary, ToolCall, ToolSchema, ToolSnapshot, Toolset, ToolsetContext,
-    Transcript, TurnError, TurnId,
+    Aside, Ask, Attachment, Cancel, Compacting, Content, ContextSection, Delta, DeltaStream,
+    Effort, Event, Message, Modalities, Mode, Permission, PermissionsSection, Post,
+    PromptCacheAttempt, PromptCacheEncoding, PromptCacheFact, PromptCacheOutcome,
+    PromptCachePlanned, PromptCachePreparationError, PromptCacheRequestDisposition,
+    PromptCacheRequestFact, PromptCacheResourceDeadline, PromptCacheResourceError,
+    PromptCacheResourceOperation, PromptCacheResourceRecord, PromptCacheResourceState,
+    PromptCacheRetentionClass, PromptCacheScopeDigest, PromptCacheUsageFact,
+    PromptCacheUsageReporting, Provider, ProviderError, ProviderUsage, Reporter, Request, Room,
+    Spend, Steer, StopReason, Summary, ToolCall, ToolGeneration, ToolSchema, ToolSnapshot, Toolset,
+    ToolsetContext, Transcript, TurnError, TurnId, UsageCost,
 };
 
 use crucible_session::{Pruned, Session};
@@ -36,6 +42,7 @@ use crate::agent::AgentSpec;
 use crate::context::RunContext;
 use crate::outcome::RunResult;
 use crate::policy::{Compaction, RunPolicy};
+use crate::prompt_cache::{self, ScopeInputs};
 use crate::tools::Tools;
 
 mod answer;
@@ -63,6 +70,9 @@ const COMPACTIONS_WITHOUT_PROGRESS: u8 = 2;
 /// How long a pause holds before it looks at the cancel again.
 const CANCEL_SLICE: Duration = Duration::from_millis(25);
 
+/// Maximum wall-clock time for one explicit persistent-resource operation.
+const PROMPT_CACHE_RESOURCE_DEADLINE: Duration = Duration::from_secs(15);
+
 /// What making room left the turn able to do.
 ///
 /// Three answers because the loop does three different things with them, and
@@ -88,12 +98,23 @@ struct TurnBounds {
     tool_output: usize,
 }
 
+/// Immutable cache-reporting dimensions bound to one provider attempt.
+#[derive(Clone, Copy)]
+struct CacheObservation {
+    attempt: crucible_core::ProviderAttemptId,
+    reporting: PromptCacheUsageReporting,
+    model_revision: Option<&'static str>,
+    retention: PromptCacheRetentionClass,
+    pricing_date: crucible_core::PricingDate,
+}
+
 /// The state one provider request reads and updates together.
 struct Listening<'a> {
     /// The run the request is part of: where its progress goes, whether it has
     /// been stopped, and how many goes it gets.
     run: &'a RunContext<'a>,
     advertised: &'a [ToolSchema<'a>],
+    generation: &'a ToolGeneration,
     counting: &'a mut Counting,
 }
 
@@ -136,6 +157,45 @@ pub struct Model {
     pub effort: Option<Effort>,
 }
 
+/// Result of one explicit bounded persistent-resource cleanup pass.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct PromptCacheCleanup {
+    /// Records owned by the current provider lifecycle that were considered.
+    pub inspected: usize,
+    /// Remote deletions confirmed and removed locally.
+    pub deleted: usize,
+    /// Operations whose provider result remains ambiguous.
+    pub ambiguous: usize,
+    /// Records retained because remote deletion could not be confirmed.
+    pub orphaned: usize,
+    changes: Vec<crucible_core::PromptCacheResourceFact>,
+}
+
+#[derive(Clone, Copy)]
+enum ResourceCleanupScope {
+    Provider(PromptCacheScopeDigest),
+    ExclusiveOwner(PromptCacheScopeDigest),
+}
+
+impl ResourceCleanupScope {
+    fn includes(self, record: &PromptCacheResourceRecord) -> bool {
+        match self {
+            Self::Provider(scope) => record.binding().provider_scope() == scope,
+            Self::ExclusiveOwner(scope) => {
+                record.binding().owner_scope() == scope && record.binding().owner().exclusive()
+            }
+        }
+    }
+}
+
+impl PromptCacheCleanup {
+    /// Bounded immutable lifecycle changes from this explicit cleanup pass.
+    #[must_use]
+    pub fn changes(&self) -> &[crucible_core::PromptCacheResourceFact] {
+        &self.changes
+    }
+}
+
 /// Drives turns to completion.
 ///
 /// Holds what outlives a turn: the provider, the tools, the session's
@@ -153,6 +213,9 @@ pub struct Runner {
     turn: TurnId,
     policy: RunPolicy,
     load: Load,
+    prompt_cache_store: Option<Box<dyn crucible_core::PromptCacheResourceStore>>,
+    prompt_cache_attempt: Option<PromptCacheAttempt>,
+    prompt_cache_owner_scope: Option<PromptCacheScopeDigest>,
 }
 
 struct Tooling {
@@ -234,6 +297,9 @@ impl Runner {
             turn: TurnId::FIRST,
             policy: RunPolicy::default(),
             load: Load::default(),
+            prompt_cache_store: None,
+            prompt_cache_attempt: None,
+            prompt_cache_owner_scope: None,
         };
         runner
             .load
@@ -264,6 +330,252 @@ impl Runner {
     pub const fn under(mut self, policy: RunPolicy) -> Self {
         self.policy = policy;
         self
+    }
+
+    /// Supplies the lazy private metadata store for explicitly authorized
+    /// persistent prompt-cache resources.
+    ///
+    /// Constructing a store must not touch disk. The runner reaches it only
+    /// after policy and exact adapter/model capabilities select a persistent
+    /// mechanism.
+    #[must_use]
+    pub fn with_prompt_cache_store(
+        mut self,
+        store: impl crucible_core::PromptCacheResourceStore + 'static,
+    ) -> Self {
+        self.prompt_cache_store = Some(Box::new(store));
+        self
+    }
+
+    /// Latest complete prompt-cache state known for one provider send.
+    #[must_use]
+    pub const fn prompt_cache_attempt(&self) -> Option<&PromptCacheAttempt> {
+        self.prompt_cache_attempt.as_ref()
+    }
+
+    /// Effective cache policy applied to the next provider attempt.
+    #[must_use]
+    pub const fn prompt_cache_policy(&self) -> crucible_core::PromptCachePolicy {
+        self.policy.prompt_cache
+    }
+
+    /// Exact declared cache capability for the current provider/model route.
+    #[must_use]
+    pub fn prompt_cache_capabilities(&self) -> crucible_core::PromptCacheCapabilities {
+        self.provider
+            .prompt_cache_capabilities(&self.spec.model.name)
+    }
+
+    /// Bounded private resource metadata for user-facing redacted inspection.
+    ///
+    /// # Errors
+    ///
+    /// [`PromptCacheResourceError`] when the private store cannot be read.
+    pub fn prompt_cache_resources(
+        &mut self,
+    ) -> Result<Vec<PromptCacheResourceRecord>, PromptCacheResourceError> {
+        self.prompt_cache_store.as_deref_mut().map_or_else(
+            || Ok(Vec::new()),
+            |store| store.inspect(crucible_core::MAX_PROMPT_CACHE_RESOURCES),
+        )
+    }
+
+    /// Explicitly deletes every resource owned by the current provider
+    /// lifecycle, retaining ambiguous or orphaned records for later recovery.
+    ///
+    /// # Errors
+    ///
+    /// [`PromptCacheResourceError`] when local metadata cannot be read or
+    /// durably updated. Individual provider cleanup failures are represented in
+    /// the returned counts and retained states.
+    pub fn clean_prompt_cache(
+        &mut self,
+        cancel: &Cancel,
+    ) -> Result<PromptCacheCleanup, PromptCacheResourceError> {
+        let scope = ResourceCleanupScope::Provider(prompt_cache::provider_scope(
+            self.provider.prompt_cache_route(),
+        ));
+        self.clean_prompt_cache_in(scope, cancel)
+    }
+
+    /// Retires exclusive persistent resources owned by this active run/session.
+    ///
+    /// This is the bounded transition used before changing model, provider, or
+    /// credential. Workspace- and user-shared resources are deliberately left
+    /// for explicit cleanup or expiry.
+    ///
+    /// # Errors
+    ///
+    /// [`PromptCacheResourceError`] when local metadata cannot be read or
+    /// durably updated.
+    pub fn retire_prompt_cache(
+        &mut self,
+        cancel: &Cancel,
+    ) -> Result<PromptCacheCleanup, PromptCacheResourceError> {
+        let Some(owner) = self.prompt_cache_owner_scope else {
+            return Ok(PromptCacheCleanup::default());
+        };
+        let result =
+            self.clean_prompt_cache_in(ResourceCleanupScope::ExclusiveOwner(owner), cancel);
+        if result.is_ok() {
+            self.prompt_cache_owner_scope = None;
+        }
+        result
+    }
+
+    fn clean_prompt_cache_in(
+        &mut self,
+        scope: ResourceCleanupScope,
+        cancel: &Cancel,
+    ) -> Result<PromptCacheCleanup, PromptCacheResourceError> {
+        let Some(store) = self.prompt_cache_store.as_deref_mut() else {
+            return Ok(PromptCacheCleanup::default());
+        };
+        let records = store.inspect(crucible_core::MAX_PROMPT_CACHE_RESOURCES)?;
+        let Some(lifecycle) = self.provider.prompt_cache_resources() else {
+            return if records.iter().any(|record| scope.includes(record)) {
+                Err(PromptCacheResourceError::Unsupported)
+            } else {
+                Ok(PromptCacheCleanup::default())
+            };
+        };
+        let mut result = PromptCacheCleanup::default();
+        for mut record in records {
+            if !scope.includes(&record) {
+                continue;
+            }
+            result.inspected += 1;
+            if cancel.requested() {
+                return Err(PromptCacheResourceError::Cancelled);
+            }
+            let now = unix_now();
+
+            if matches!(
+                record.state(),
+                PromptCacheResourceState::Creating
+                    | PromptCacheResourceState::Expiring
+                    | PromptCacheResourceState::Deleting
+                    | PromptCacheResourceState::Ambiguous
+            ) {
+                let operation = record.pending();
+                let deadline = PromptCacheResourceDeadline::new(
+                    std::time::Instant::now() + PROMPT_CACHE_RESOURCE_DEADLINE,
+                );
+                match lifecycle.reconcile(&record, deadline, cancel) {
+                    Ok(remote) => {
+                        let _ = prompt_cache::apply_remote(
+                            &mut record,
+                            remote,
+                            self.policy.prompt_cache,
+                            now,
+                        );
+                        cleanup_change(&mut result, &record, operation);
+                        if record.state() == PromptCacheResourceState::Deleted {
+                            store.remove(record.id())?;
+                            result.deleted += 1;
+                            continue;
+                        }
+                        if !matches!(
+                            record.state(),
+                            PromptCacheResourceState::Ready
+                                | PromptCacheResourceState::Expired
+                                | PromptCacheResourceState::Orphaned
+                        ) {
+                            record.set_state(PromptCacheResourceState::Orphaned, now);
+                            cleanup_change(&mut result, &record, operation);
+                        }
+                        store.put(&record)?;
+                    }
+                    Err(
+                        PromptCacheResourceError::Ambiguous(_)
+                        | PromptCacheResourceError::Cancelled
+                        | PromptCacheResourceError::Deadline,
+                    ) => {
+                        if let Some(operation) = operation {
+                            record.ambiguous(operation, now);
+                        }
+                        store.put(&record)?;
+                        cleanup_change(&mut result, &record, operation);
+                        result.ambiguous += 1;
+                        continue;
+                    }
+                    Err(_) => {
+                        record.set_state(PromptCacheResourceState::Orphaned, now);
+                        store.put(&record)?;
+                        cleanup_change(&mut result, &record, operation);
+                        result.orphaned += 1;
+                        continue;
+                    }
+                }
+            }
+
+            if record.state() == PromptCacheResourceState::Deleted {
+                store.remove(record.id())?;
+                result.deleted += 1;
+                continue;
+            }
+            record.set_state(PromptCacheResourceState::Deleting, now);
+            store.put(&record)?;
+            cleanup_change(
+                &mut result,
+                &record,
+                Some(PromptCacheResourceOperation::Delete),
+            );
+            let deadline = PromptCacheResourceDeadline::new(
+                std::time::Instant::now() + PROMPT_CACHE_RESOURCE_DEADLINE,
+            );
+            match lifecycle.delete(&record, deadline, cancel) {
+                Ok(remote) if remote.state == PromptCacheResourceState::Deleted => {
+                    record.set_state(PromptCacheResourceState::Deleted, now);
+                    cleanup_change(
+                        &mut result,
+                        &record,
+                        Some(PromptCacheResourceOperation::Delete),
+                    );
+                    store.remove(record.id())?;
+                    result.deleted += 1;
+                }
+                Ok(_remote) => {
+                    // A bounded delete pass that conclusively leaves the
+                    // resource present has exhausted its one attempt. Keep the
+                    // handle privately for later recovery, but report the
+                    // durable state honestly as orphaned.
+                    record.set_state(PromptCacheResourceState::Orphaned, now);
+                    store.put(&record)?;
+                    cleanup_change(
+                        &mut result,
+                        &record,
+                        Some(PromptCacheResourceOperation::Delete),
+                    );
+                    result.orphaned += 1;
+                }
+                Err(
+                    PromptCacheResourceError::Ambiguous(_)
+                    | PromptCacheResourceError::Cancelled
+                    | PromptCacheResourceError::Deadline,
+                ) => {
+                    record.ambiguous(PromptCacheResourceOperation::Delete, now);
+                    store.put(&record)?;
+                    cleanup_change(
+                        &mut result,
+                        &record,
+                        Some(PromptCacheResourceOperation::Delete),
+                    );
+                    result.ambiguous += 1;
+                }
+                Err(_) => {
+                    record.set_state(PromptCacheResourceState::Orphaned, now);
+                    store.put(&record)?;
+                    cleanup_change(
+                        &mut result,
+                        &record,
+                        Some(PromptCacheResourceOperation::Delete),
+                    );
+                    result.orphaned += 1;
+                }
+            }
+        }
+        Ok(result)
     }
 
     /// Picks up a transcript that already happened — what `--continue`
@@ -1016,7 +1328,7 @@ impl Runner {
     /// the transcript depends on whether it is going to be asked again, and that
     /// question is asked once rather than at each place the reading can fail.
     fn hearing(
-        &self,
+        &mut self,
         answer: &mut Answer,
         listening: &mut Listening<'_>,
     ) -> Result<StopReason, TurnError> {
@@ -1053,18 +1365,178 @@ impl Runner {
                 .post(Event::Unread { files: unread });
         }
 
-        let mut stream = self.provider.stream(
-            self.request(listening.advertised, &attached),
-            listening.run.cancel(),
-        )?;
+        let pricing_date = pricing_today();
+        let (mut stream, cache_observation) = {
+            // Built from disjoint fields here because persistent-resource
+            // preparation may mutably update its dedicated store while the
+            // provider request borrows transcript/spec data. A helper borrowing
+            // the whole runner would falsely make those owners overlap.
+            let request = Request {
+                model: &self.spec.model.name,
+                transcript: &self.transcript,
+                tools: listening.advertised,
+                max_tokens: self.spec.model.max_tokens,
+                system: self.spec.instructions(),
+                effort: self.spec.model.effort,
+                attached: &attached,
+                prompt_cache: None,
+            };
+            let capabilities = self
+                .provider
+                .prompt_cache_capabilities(&self.spec.model.name);
+            let model_revision = capabilities.model_revision();
+            let route = self.provider.prompt_cache_route();
+            let authority = PermissionsSection::new(&self.permission)
+                .snapshot()
+                .to_string();
+            let workspace = self.context.workspace().to_string_lossy();
+            let user = self
+                .session
+                .path()
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new(""))
+                .to_string_lossy();
+            let scope = ScopeInputs {
+                route,
+                policy: listening.run.policy().prompt_cache,
+                model: &self.spec.model.name,
+                model_revision,
+                max_tokens: self.spec.model.max_tokens,
+                effort: self.spec.model.effort,
+                run: listening.run.run(),
+                session: self.session.id().map(crucible_core::SessionId::as_str),
+                workspace: workspace.as_bytes(),
+                user: user.as_bytes(),
+                trust: b"local-workspace-authority-v1",
+                authority: authority.as_bytes(),
+                instructions: self.spec.instructions().unwrap_or_default().as_bytes(),
+                tool_generation: listening.generation.context_id(),
+            };
+            self.prompt_cache_owner_scope = Some(prompt_cache::owner_scope(&scope));
+            let mut resource_facts = Vec::new();
+            let prepared = match (
+                self.provider.prompt_cache_resources(),
+                self.prompt_cache_store.as_deref_mut(),
+            ) {
+                (Some(lifecycle), Some(store)) => prompt_cache::prepare_with_resource_facts(
+                    &request,
+                    capabilities,
+                    &scope,
+                    prompt_cache::ResourceInputs {
+                        store,
+                        lifecycle,
+                        cancel: listening.run.cancel(),
+                        now: unix_now(),
+                        deadline: std::time::Instant::now() + PROMPT_CACHE_RESOURCE_DEADLINE,
+                    },
+                    &mut resource_facts,
+                ),
+                _ => prompt_cache::prepare(&request, capabilities, &scope),
+            };
+            for fact in resource_facts {
+                listening.run.reporting().post(Event::PromptCache {
+                    fact: PromptCacheFact::ResourceChanged(fact),
+                });
+            }
+            let prepared = prepared?;
+            let mut cache = prepared.request();
+            self.prompt_cache_attempt = Some(PromptCacheAttempt {
+                id: cache.attempt,
+                capabilities: cache.capabilities.clone(),
+                policy: cache.policy,
+                selection: cache.selection,
+                encoding: PromptCacheEncoding::NoControlIntended,
+                disposition: PromptCacheRequestDisposition::NotSent,
+                outcome: PromptCacheOutcome::Unreported,
+                usage: None,
+                cost: UsageCost::UNKNOWN,
+            });
+            listening.run.reporting().post(Event::PromptCache {
+                fact: PromptCacheFact::Planned(Box::new(PromptCachePlanned::from_request(&cache))),
+            });
+            let mut encoding = self.provider.prompt_cache_encoding(&Request {
+                prompt_cache: Some(&cache),
+                ..request
+            });
+            if let Some(attempt) = self
+                .prompt_cache_attempt
+                .as_mut()
+                .filter(|attempt| attempt.id == cache.attempt)
+            {
+                attempt.encoding = encoding;
+            }
+            if let PromptCacheEncoding::Failed(reason) = encoding {
+                listening.run.reporting().post(Event::PromptCache {
+                    fact: PromptCacheFact::RequestEncoded(PromptCacheRequestFact {
+                        attempt: cache.attempt,
+                        encoding,
+                        disposition: PromptCacheRequestDisposition::NotSent,
+                    }),
+                });
+                cache = prepared
+                    .fallback_request(reason)
+                    .ok_or(PromptCachePreparationError::Encoding(reason))?;
+                listening.run.reporting().post(Event::PromptCache {
+                    fact: PromptCacheFact::Planned(Box::new(PromptCachePlanned::from_request(
+                        &cache,
+                    ))),
+                });
+                encoding = self.provider.prompt_cache_encoding(&Request {
+                    prompt_cache: Some(&cache),
+                    ..request
+                });
+                if let Some(attempt) = self
+                    .prompt_cache_attempt
+                    .as_mut()
+                    .filter(|attempt| attempt.id == cache.attempt)
+                {
+                    attempt.selection = cache.selection;
+                    attempt.encoding = encoding;
+                }
+                if let PromptCacheEncoding::Failed(reason) = encoding {
+                    return Err(PromptCachePreparationError::Encoding(reason).into());
+                }
+            }
 
-        Self::hear(
-            stream.as_mut(),
-            answer,
-            &listening.run.reporting(),
-            listening.counting,
-        )
-        .and_then(|()| answer.reached().map_err(TurnError::from))
+            let request = Request {
+                prompt_cache: Some(&cache),
+                ..request
+            };
+            let streamed = self.provider.stream(request, listening.run.cancel());
+            let disposition = request_disposition(&streamed);
+            if let Some(attempt) = self
+                .prompt_cache_attempt
+                .as_mut()
+                .filter(|attempt| attempt.id == cache.attempt)
+            {
+                attempt.disposition = disposition;
+            }
+            listening.run.reporting().post(Event::PromptCache {
+                fact: PromptCacheFact::RequestEncoded(PromptCacheRequestFact {
+                    attempt: cache.attempt,
+                    encoding,
+                    disposition,
+                }),
+            });
+            (
+                streamed?,
+                CacheObservation {
+                    attempt: cache.attempt,
+                    reporting: cache.capabilities.usage(),
+                    model_revision: cache.capabilities.model_revision(),
+                    retention: cache
+                        .selection
+                        .selected()
+                        .map_or(cache.policy.retention().class(), |selected| {
+                            selected.retention()
+                        }),
+                    pricing_date,
+                },
+            )
+        };
+
+        self.hear(stream.as_mut(), answer, listening, cache_observation)
+            .and_then(|()| answer.reached().map_err(TurnError::from))
     }
 
     /// Whether this failure, on this much of an answer, is worth asking again.
@@ -1101,11 +1573,14 @@ impl Runner {
 
     /// Reads deltas into `answer` until the stream ends.
     fn hear(
+        &mut self,
         stream: &mut dyn DeltaStream,
         answer: &mut Answer,
-        events: &Reporter<'_>,
-        counting: &mut Counting,
+        listening: &mut Listening<'_>,
+        cache_observation: CacheObservation,
     ) -> Result<(), TurnError> {
+        let events = listening.run.reporting();
+        let counting = &mut *listening.counting;
         // What the turn had spent before this response opened. Each reading a
         // provider sends is this response's total rather than an increment, so
         // it is added to that fixed number and not to the last reading — which
@@ -1119,17 +1594,79 @@ impl Runner {
                     let bytes = text.len();
                     answer.say(&text)?;
                     events.post(Event::Delta { text });
-                    Self::output_grew(events, counting, bytes);
+                    Self::output_grew(&events, counting, bytes);
                 }
                 Delta::ToolStarted { id, name } => {
                     let bytes = id.as_str().len().saturating_add(name.len());
                     answer.calling(id, name)?;
-                    Self::output_grew(events, counting, bytes);
+                    Self::output_grew(&events, counting, bytes);
                 }
                 Delta::ToolArgs(fragment) => {
                     let bytes = fragment.len();
                     answer.arguments(&fragment)?;
-                    Self::output_grew(events, counting, bytes);
+                    Self::output_grew(&events, counting, bytes);
+                }
+                Delta::Usage(usage) => {
+                    let usage = merge_usage(
+                        self.prompt_cache_attempt
+                            .as_ref()
+                            .filter(|cache| cache.id == cache_observation.attempt)
+                            .and_then(|cache| cache.usage.as_ref()),
+                        usage,
+                        self.provider.name(),
+                    )?;
+                    if let Some(tokens) = usage.output {
+                        let said = Spend::new(tokens);
+                        counting.spent = before.and(said);
+                        counting.load.spent(said);
+                        events.post(Event::Spent {
+                            spend: counting.spent,
+                        });
+                    }
+                    if let Some(tokens) = usage.input.total {
+                        let carried = crucible_core::Carried::new(tokens);
+                        counting.load.carried(carried);
+                        if counting
+                            .window
+                            .is_some_and(|window| carried.tokens() > u64::from(window))
+                        {
+                            counting.window = None;
+                        }
+                    }
+                    let cost = self
+                        .provider
+                        .prompt_cache_pricing(
+                            &self.spec.model.name,
+                            cache_observation.model_revision,
+                            usage.input.total,
+                            cache_observation.retention,
+                            cache_observation.pricing_date,
+                        )
+                        .ok()
+                        .flatten()
+                        .and_then(|pricing| pricing.cost(&usage).ok())
+                        .unwrap_or(UsageCost::UNKNOWN);
+                    let outcome = usage.input.outcome(cache_observation.reporting);
+                    if let Some(cache) = self
+                        .prompt_cache_attempt
+                        .as_mut()
+                        .filter(|cache| cache.id == cache_observation.attempt)
+                    {
+                        cache.outcome = outcome;
+                        cache.usage = Some(usage.clone());
+                        cache.cost = cost;
+                    }
+                    events.post(Event::PromptCache {
+                        fact: PromptCacheFact::UsageReported(Box::new(PromptCacheUsageFact {
+                            attempt: cache_observation.attempt,
+                            outcome,
+                            usage,
+                            cost,
+                        })),
+                    });
+                    events.post(Event::Carried {
+                        left: counting.left(),
+                    });
                 }
                 Delta::Spent(said) => {
                     counting.spent = before.and(said);
@@ -1203,28 +1740,70 @@ impl Runner {
     fn counting(transcript: &Transcript) -> TurnId {
         (1..transcript.turns()).fold(TurnId::FIRST, |turn, _| turn.next())
     }
+}
 
-    /// What to send this pass.
-    ///
-    /// The advertised schemas are handed in rather than read here, because they
-    /// are built per pass — a tool the model looked up mid-turn belongs in the
-    /// next request — and a `Request` borrows for as long as the caller holds
-    /// them.
-    fn request<'a>(
-        &'a self,
-        advertised: &'a [ToolSchema<'a>],
-        attached: &'a [Attached<'a>],
-    ) -> Request<'a> {
-        Request {
-            model: &self.spec.model.name,
-            transcript: &self.transcript,
-            tools: advertised,
-            max_tokens: self.spec.model.max_tokens,
-            system: self.spec.instructions(),
-            effort: self.spec.model.effort,
-            attached,
+fn cleanup_change(
+    cleanup: &mut PromptCacheCleanup,
+    record: &PromptCacheResourceRecord,
+    operation: Option<PromptCacheResourceOperation>,
+) {
+    cleanup
+        .changes
+        .push(crucible_core::PromptCacheResourceFact {
+            attempt: None,
+            resource: record.id().clone(),
+            operation,
+            state: record.state(),
+            expires_at: record.expires_at(),
+            owner: record.binding().owner(),
+        });
+}
+
+fn request_disposition<T>(result: &Result<T, ProviderError>) -> PromptCacheRequestDisposition {
+    match result {
+        Ok(_) => PromptCacheRequestDisposition::Accepted,
+        Err(
+            ProviderError::Cancelled(_)
+            | ProviderError::Credential { .. }
+            | ProviderError::Unconfigured(_),
+        ) => PromptCacheRequestDisposition::NotSent,
+        Err(ProviderError::Refused { .. } | ProviderError::WindowExceeded { .. }) => {
+            PromptCacheRequestDisposition::Rejected
         }
+        Err(
+            ProviderError::Limit { .. }
+            | ProviderError::Transport { .. }
+            | ProviderError::Upstream { .. }
+            | ProviderError::Protocol { .. },
+        ) => PromptCacheRequestDisposition::Unknown,
     }
+}
+
+fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn pricing_today() -> crucible_core::PricingDate {
+    crucible_core::PricingDate::from_unix_seconds(unix_now())
+}
+
+/// Joins cumulative/partial usage fields belonging to one provider attempt.
+fn merge_usage(
+    previous: Option<&ProviderUsage>,
+    newer: ProviderUsage,
+    provider: &'static str,
+) -> Result<ProviderUsage, ProviderError> {
+    let merged = match previous {
+        Some(previous) => previous.merged(&newer),
+        None => Ok(newer),
+    };
+    merged.map_err(|problem| ProviderError::Protocol {
+        provider,
+        problem: format!("invalid cumulative usage accounting: {problem}").into(),
+    })
 }
 
 #[cfg(test)]

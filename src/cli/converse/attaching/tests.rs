@@ -2,9 +2,10 @@ use std::fs;
 use std::sync::mpsc;
 
 use crucible_core::{
-    AgentId, Aside, Ask, Cancel, Delta, DeltaStream, EventEnvelope, Message, Modalities, Modality,
-    Provider, ProviderError, Remember, Request, Sensitivity, Steer, StopReason, ToolCall,
-    Transcript, Verdict, Workspace, written,
+    AgentId, Aside, Ask, Cancel, CredentialScopeId, Delta, DeltaStream, EventEnvelope, Message,
+    Modalities, Modality, PromptCacheCapabilities, PromptCacheEncoding, PromptCacheRoute, Provider,
+    ProviderError, Remember, Request, Sensitivity, Steer, StopReason, ToolCall, Transcript,
+    Verdict, Workspace, written,
 };
 use crucible_runner::{AgentSpec, Model, Pruned, Runner, Session, Tools};
 
@@ -33,6 +34,7 @@ const PDF: &[u8] = b"%PDF-";
 struct Spelling {
     named: &'static str,
     spells: Modalities,
+    credential_scope: CredentialScopeId,
 }
 
 impl Provider for Spelling {
@@ -42,6 +44,26 @@ impl Provider for Spelling {
 
     fn spells(&self) -> Modalities {
         self.spells
+    }
+
+    fn prompt_cache_capabilities(&self, _model: &str) -> PromptCacheCapabilities {
+        PromptCacheCapabilities::unknown("spelling-fixture-v1")
+    }
+
+    fn prompt_cache_route(&self) -> PromptCacheRoute<'_> {
+        PromptCacheRoute {
+            protocol: self.named,
+            endpoint: self.named,
+            custom_endpoint: true,
+            credential_scope: self.credential_scope,
+            account: None,
+            project: None,
+            request_shape_version: "spelling-fixture-v1",
+        }
+    }
+
+    fn prompt_cache_encoding(&self, _request: &Request<'_>) -> PromptCacheEncoding {
+        PromptCacheEncoding::NoControlIntended
     }
 
     fn stream(
@@ -57,6 +79,7 @@ impl Provider for Spelling {
 fn spelling(named: &'static str) -> Spelling {
     Spelling {
         named,
+        credential_scope: CredentialScopeId::new(),
         spells: Modalities::empty()
             .insert(Modality::Text)
             .insert(Modality::Image),
@@ -67,6 +90,7 @@ fn spelling(named: &'static str) -> Spelling {
 fn videos() -> Spelling {
     Spelling {
         named: "moonshot",
+        credential_scope: CredentialScopeId::new(),
         spells: Modalities::empty()
             .insert(Modality::Text)
             .insert(Modality::Image)
@@ -384,6 +408,7 @@ fn the_model_half_of_the_intersection_names_the_model() {
     // This protocol has the shape; the model does not read one.
     let spelling = Spelling {
         named: "moonshot",
+        credential_scope: CredentialScopeId::new(),
         spells: Modalities::empty()
             .insert(Modality::Text)
             .insert(Modality::Image)

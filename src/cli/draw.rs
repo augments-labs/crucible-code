@@ -125,6 +125,7 @@ pub(crate) fn event<T: Terminal>(
         // until its next event, so committing every reading would leave a
         // column of stale state in front of the answer.
         Event::Spent { .. }
+        | Event::PromptCache { .. }
         | Event::Retrying
         | Event::Carried { .. }
         | Event::Compacting { .. } => Ok(()),

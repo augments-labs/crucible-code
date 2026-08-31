@@ -30,6 +30,7 @@ use super::region::{self, Moved};
 use super::{Held, Terms, mode, picking};
 use crate::cli::Served;
 
+mod cache;
 mod clear;
 mod effort;
 mod login;
@@ -62,6 +63,8 @@ pub(super) enum Command {
     Resume,
     /// Make room in the model's window now, rather than when it fills.
     Compact,
+    /// Inspect or clean provider prompt-cache state.
+    Cache,
     /// A new session with nothing said in it, this one left on `/resume`.
     Clear,
     /// End the session.
@@ -73,7 +76,7 @@ pub(super) enum Command {
 /// The ones that only say something first and the one that ends the session
 /// last. A list is read to find what you did not know to look for, and nobody
 /// is looking up how to leave.
-const EVERY: [Command; 11] = [
+const EVERY: [Command; 12] = [
     Command::Help,
     Command::Model,
     Command::Effort,
@@ -82,6 +85,7 @@ const EVERY: [Command; 11] = [
     Command::Mode,
     Command::Theme,
     Command::Resume,
+    Command::Cache,
     Command::Compact,
     Command::Clear,
     Command::Exit,
@@ -172,6 +176,7 @@ impl Command {
             Self::Mode => "/mode",
             Self::Theme => "/theme",
             Self::Resume => "/resume",
+            Self::Cache => "/cache",
             Self::Compact => "/compact",
             Self::Clear => "/clear",
             Self::Exit => "/exit",
@@ -195,6 +200,7 @@ impl Command {
             Self::Mode => mode::ring(glyphs),
             Self::Theme => "pick the colours crucible draws with",
             Self::Resume => "pick up an earlier session here",
+            Self::Cache => "inspect or clean prompt-cache state",
             // What it does to the session rather than what it is for: somebody
             // reading this row is deciding whether to spend a request on it,
             // and what they lose is the part they cannot get back.
@@ -240,6 +246,7 @@ impl Command {
                 MidTurn::Refused("removes the key the request now in flight is signed with")
             }
             Self::Resume => MidTurn::Refused("leaves this session for an earlier one, mid-answer"),
+            Self::Cache => MidTurn::Refused("inspects provider state held by the running request"),
             Self::Compact => {
                 MidTurn::Refused("cuts the window the turn now running is answering in")
             }
@@ -590,6 +597,11 @@ fn answer<T: Terminal>(
             command: Command::Resume,
             rest,
         } => return resume::run(rest, renderer, runner, held, terms),
+
+        Wanted::Known {
+            command: Command::Cache,
+            rest,
+        } => cache::run(rest, renderer, runner)?,
 
         Wanted::Known {
             command: Command::Clear,

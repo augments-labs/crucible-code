@@ -51,6 +51,8 @@
 use std::num::NonZeroUsize;
 use std::time::Duration;
 
+use crucible_core::PromptCachePolicy;
+
 /// The hard upper bound on tool workers one run may admit at once.
 pub const MAXIMUM_TOOL_CONCURRENCY: usize = 64;
 
@@ -185,6 +187,8 @@ pub struct RunPolicy {
     pub retry: Retry,
     /// How much opt-in tool work may overlap.
     pub tools: ToolScheduling,
+    /// Prompt-cache authority after configuration and descendant narrowing.
+    pub prompt_cache: PromptCachePolicy,
 }
 
 impl RunPolicy {
@@ -292,6 +296,7 @@ impl RunPolicy {
                     .maximum_concurrency
                     .min(wanted.tools.maximum_concurrency),
             },
+            prompt_cache: self.prompt_cache.narrowed(wanted.prompt_cache),
         }
     }
 }
@@ -412,6 +417,7 @@ mod tests {
         assert_eq!(policy.retry.attempts, 2);
         assert_eq!(policy.retry.first_pause, Duration::from_millis(250));
         assert_eq!(policy.tools.maximum_concurrency(), 1);
+        assert_eq!(policy.prompt_cache, PromptCachePolicy::default());
         assert!(policy.compaction.automatic);
         assert_eq!(policy.compaction.keep_tokens, 20_000);
         assert_eq!(policy.compaction.recap_tokens, 10_240);
@@ -471,6 +477,7 @@ mod tests {
                 first_pause: Duration::from_millis(1),
             },
             tools: ToolScheduling::default(),
+            prompt_cache: PromptCachePolicy::default(),
         };
 
         let held = parent.narrowed(asked);
@@ -512,6 +519,7 @@ mod tests {
                 ..Compaction::default()
             },
             tools: ToolScheduling::default(),
+            prompt_cache: PromptCachePolicy::default(),
         };
         let asked = RunPolicy {
             bounds: Bounds {
@@ -529,6 +537,7 @@ mod tests {
                 ..Compaction::default()
             },
             tools: ToolScheduling::default(),
+            prompt_cache: PromptCachePolicy::default(),
         };
 
         let held = parent.narrowed(asked);

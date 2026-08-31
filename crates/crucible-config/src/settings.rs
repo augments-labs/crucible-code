@@ -10,7 +10,7 @@
 
 use std::fmt;
 
-use crucible_core::{Effort, Rules};
+use crucible_core::{Effort, PromptCachePolicy, Rules};
 use serde_json::{Map, Value};
 
 use crate::document::Document;
@@ -23,6 +23,7 @@ mod layers;
 mod output;
 mod permissions;
 mod prompt;
+pub(crate) mod prompt_cache;
 mod updates;
 mod variables;
 
@@ -43,6 +44,11 @@ pub(crate) use variables::refused;
 pub struct Settings {
     value: Value,
 
+    /// Prompt-cache policy retains per-field authority provenance outside the
+    /// generic JSON merge, whose list rule is concatenation rather than the
+    /// intersection this security boundary requires.
+    prompt_cache: PromptCachePolicy,
+
     /// Every layer's rules together. Held apart from the value because a rule
     /// is read where it is written — see [`Document::parse`] — and what survives
     /// the layering is the rule rather than its text.
@@ -58,6 +64,7 @@ impl fmt::Debug for Settings {
         f.debug_struct("Settings")
             .field("value", &env::Redacted(&self.value))
             .field("rules", &self.rules)
+            .field("prompt_cache", &self.prompt_cache)
             .finish()
     }
 }
@@ -71,8 +78,19 @@ impl Settings {
     ///
     /// Not public: [`Settings::read`] is the one way in, so there is no second
     /// path that could find a different set of files than the first one does.
-    pub(crate) fn resolve(mut documents: Vec<Document>) -> Self {
+    #[cfg(test)]
+    pub(crate) fn resolve(documents: Vec<Document>) -> Self {
+        Self::resolve_checked(documents).expect("sample documents form a compatible policy")
+    }
+
+    /// Resolves documents while retaining the configuration error for a
+    /// cross-layer prompt-cache authority conflict.
+    pub(crate) fn resolve_checked(
+        mut documents: Vec<Document>,
+    ) -> Result<Self, crate::ConfigError> {
         documents.sort_by_key(|document| document.origin().nearness());
+
+        let prompt_cache = prompt_cache::resolve(&documents)?;
 
         let mut value = Value::Object(Map::new());
         for document in &documents {
@@ -87,7 +105,11 @@ impl Settings {
             rules.absorb(document.rules());
         }
 
-        Self { value, rules }
+        Ok(Self {
+            value,
+            prompt_cache,
+            rules,
+        })
     }
 
     /// Which provider to ask, when the command line names none.

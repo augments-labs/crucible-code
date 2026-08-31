@@ -257,8 +257,10 @@ fn renewal_keeps_the_installation_identity() {
         .unwrap();
 
     let credential = oauth.credential(&store.read()).unwrap();
+    let scope = credential.scope();
     let mut outgoing = Outgoing::new();
     credential.authorize(&mut outgoing).unwrap();
+    assert_eq!(credential.scope(), scope);
 
     let sent = requests.recv_timeout(PATIENCE).unwrap();
     server.join().unwrap();
@@ -271,6 +273,9 @@ fn renewal_keeps_the_installation_identity() {
         .collect();
     assert_eq!(headers.get("authorization"), Some(&"Bearer access-new"));
     assert_eq!(headers.get("x-msh-device-id"), Some(&STABLE));
+
+    let reconstructed = oauth.credential(&store.read()).unwrap();
+    assert_eq!(reconstructed.scope(), scope);
 }
 
 #[test]

@@ -72,6 +72,11 @@ impl Sample {
         self.base.join("home/config.json")
     }
 
+    /// The disposable user-home root handed to state stores.
+    pub(super) fn home(&self) -> PathBuf {
+        self.base.join("home")
+    }
+
     /// The store this tree holds, having been told `provider`'s key.
     ///
     /// Written through [`Store::keep`] and read back through [`Store::read`],

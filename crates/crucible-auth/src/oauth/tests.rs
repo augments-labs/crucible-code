@@ -187,6 +187,32 @@ fn tokens_are_redacted_in_debug_output() {
 }
 
 #[test]
+fn an_openai_account_scope_survives_store_reconstruction_without_token_identity() {
+    let scratch = Scratch::new("stable-scope");
+    let store = Store::in_home(scratch.path());
+    store
+        .keep_subscription(
+            "openai",
+            Tokens::new("access-one".into(), "refresh-one".into(), u64::MAX, 1)
+                .with_detail("account_id", "account-stable"),
+        )
+        .unwrap();
+    let oauth = OpenAiOAuth::testing(Flow::testing("http://127.0.0.1:9"));
+
+    let first = oauth.credential(&store.read()).unwrap().scope();
+    store
+        .keep_subscription(
+            "openai",
+            Tokens::new("access-two".into(), "refresh-two".into(), u64::MAX, 2)
+                .with_detail("account_id", "account-stable"),
+        )
+        .unwrap();
+    let reconstructed = oauth.credential(&store.read()).unwrap().scope();
+
+    assert_eq!(first, reconstructed);
+}
+
+#[test]
 fn an_attempt_delivers_bounded_updates_without_busy_waiting() {
     let (attempt, updates, _) = attempt();
     updates.send(Ok(LoginUpdate::Complete)).unwrap();
@@ -411,7 +437,7 @@ fn an_expired_rotation_is_refreshed_and_rewritten_before_use() {
     let (base, requests, server) = server(vec![tokens(
         "unused-canary",
         "refresh-new",
-        "account-new",
+        "account-old",
         expires,
     )]);
     let flow = Flow::testing(&base);
@@ -432,8 +458,10 @@ fn an_expired_rotation_is_refreshed_and_rewritten_before_use() {
         .unwrap();
 
     let credential = oauth.credential(&store.read()).unwrap();
+    let scope = credential.scope();
     let mut outgoing = Outgoing::new();
     credential.authorize(&mut outgoing).unwrap();
+    assert_eq!(credential.scope(), scope);
 
     let sent = requests.recv_timeout(PATIENCE).unwrap();
     server.join().unwrap();
@@ -445,10 +473,50 @@ fn an_expired_rotation_is_refreshed_and_rewritten_before_use() {
             .iter()
             .find(|(name, _)| name.as_ref() == "chatgpt-account-id")
             .map(|(_, value)| value.as_ref()),
-        Some("account-new")
+        Some("account-old")
     );
 
     let text = std::fs::read_to_string(scratch.path().join("auth.json")).unwrap();
     assert!(text.contains("refresh-new"));
     assert!(!text.contains("refresh-old"));
+}
+
+#[test]
+fn a_refresh_cannot_move_a_live_credential_scope_to_another_account() {
+    let expires = now() + 3600;
+    let (base, requests, server) = server(vec![tokens(
+        "unused-canary",
+        "refresh-other",
+        "account-other",
+        expires,
+    )]);
+    let oauth = OpenAiOAuth::testing(Flow::testing(&base));
+    let scratch = Scratch::new("refresh-scope-change");
+    let store = Store::in_home(scratch.path());
+    store
+        .keep_subscription(
+            "openai",
+            Tokens::new(
+                jwt(&serde_json::json!({ "exp": 1 })).into(),
+                "refresh-original".into(),
+                1,
+                1,
+            )
+            .with_detail("account_id", "account-original"),
+        )
+        .unwrap();
+
+    let credential = oauth.credential(&store.read()).unwrap();
+    let mut outgoing = Outgoing::new();
+    let problem = credential.authorize(&mut outgoing).unwrap_err();
+
+    let sent = requests.recv_timeout(PATIENCE).unwrap();
+    server.join().unwrap();
+    assert!(sent.body.contains("refresh-original"));
+    assert!(problem.to_string().contains("refreshed account identity"));
+    assert!(outgoing.headers().is_empty());
+
+    let text = std::fs::read_to_string(scratch.path().join("auth.json")).unwrap();
+    assert!(text.contains("refresh-original"));
+    assert!(!text.contains("refresh-other"));
 }

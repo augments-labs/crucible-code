@@ -384,6 +384,7 @@ dependencies = [
  "globset",
  "rustix",
  "serde_json",
+ "sha2",
  "thiserror",
  "uuid",
  "windows-sys 0.61.2",

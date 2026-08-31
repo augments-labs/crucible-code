@@ -709,7 +709,7 @@ impl ToolGeneration {
     /// This is descriptive evidence only. Invocation still requires an
     /// admission and [`Approved`] proof bound to this value's pointer identity.
     #[must_use]
-    pub(crate) fn context_id(&self) -> &str {
+    pub fn context_id(&self) -> &str {
         &self.0.context
     }
 }

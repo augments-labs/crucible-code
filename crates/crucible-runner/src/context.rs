@@ -326,6 +326,7 @@ mod tests {
                 ..Compaction::default()
             },
             tools: crate::ToolScheduling::default(),
+            prompt_cache: crucible_core::PromptCachePolicy::default(),
         });
 
         let child = run.child(RunPolicy {
@@ -344,6 +345,7 @@ mod tests {
                 ..Compaction::default()
             },
             tools: crate::ToolScheduling::default(),
+            prompt_cache: crucible_core::PromptCachePolicy::default(),
         });
 
         // Every budget, not only the three in `Bounds`: the name says what a

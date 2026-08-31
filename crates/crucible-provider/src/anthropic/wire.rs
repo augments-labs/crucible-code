@@ -10,7 +10,10 @@
 //! the same thing while still needing a fallback for the types this does not
 //! know.
 
-use crucible_core::{Carried, Delta, ProviderError, Spend, StopReason, ToolId};
+use crucible_core::{
+    Delta, InputTokenUsage, ProviderError, ProviderNumericDetail, ProviderUsage, StopReason,
+    ToolId, UsageError,
+};
 use serde_json::Value;
 
 use crate::anthropic::NAME;
@@ -52,8 +55,8 @@ fn deltas(event: &SseEvent) -> Result<Vec<Delta>, ProviderError> {
     match event.name.as_str() {
         "content_block_start" => Ok(started(&parse(&event.data)?)?.into_iter().collect()),
         "content_block_delta" => Ok(content(&parse(&event.data)?).into_iter().collect()),
-        "message_delta" => Ok(ended(&parse(&event.data)?)),
-        "message_start" => Ok(opened(&parse(&event.data)?).into_iter().collect()),
+        "message_delta" => ended(&parse(&event.data)?),
+        "message_start" => Ok(opened(&parse(&event.data)?)?.into_iter().collect()),
         "error" => Err(upstream(&parse(&event.data)?)),
 
         // Everything else, and none of it parsed. `ping` is the keep-alive and
@@ -115,26 +118,32 @@ fn content(payload: &Value) -> Option<Delta> {
 /// the counts alone while the answer is still arriving, and sends the last one
 /// with the reason beside them. The cost goes first, because the stop is the
 /// thing a reader is entitled to treat as the last word.
-fn ended(payload: &Value) -> Vec<Delta> {
-    spent(payload).into_iter().chain(stopped(payload)).collect()
+fn ended(payload: &Value) -> Result<Vec<Delta>, ProviderError> {
+    Ok(output_usage(payload)?
+        .into_iter()
+        .chain(stopped(payload))
+        .collect())
 }
 
-/// What the response has cost so far.
-///
-/// Output tokens, which is this endpoint's `output_tokens`. Every reading is the
-/// whole of what the response has produced rather than what it produced since
-/// the last one, so a reading that arrives twice says the same thing twice.
-///
-/// Absent rather than zero where the counts are missing. A model that has
-/// produced nothing yet and a provider that never says are different facts, and
-/// only one of them is worth putting a number on the screen for.
-fn spent(payload: &Value) -> Option<Delta> {
-    let tokens = payload
+/// A partial output reading; the input report arrived at message start.
+fn output_usage(payload: &Value) -> Result<Option<Delta>, ProviderError> {
+    let Some(tokens) = payload
         .get("usage")
         .and_then(|usage| usage.get("output_tokens"))
-        .and_then(Value::as_u64)?;
-
-    Some(Delta::Spent(Spend::new(tokens)))
+        .and_then(Value::as_u64)
+    else {
+        return Ok(None);
+    };
+    let detail = ProviderNumericDetail::new("output_tokens", tokens).map_err(usage_problem)?;
+    let usage = ProviderUsage::new(
+        InputTokenUsage::UNKNOWN,
+        Some(tokens),
+        None,
+        None,
+        &[detail],
+    )
+    .map_err(usage_problem)?;
+    Ok(Some(Delta::Usage(usage)))
 }
 
 /// What the request this response answers carried.
@@ -152,25 +161,43 @@ fn spent(payload: &Value) -> Option<Delta> {
 /// Absent rather than zero only where none of the three counts is present, for
 /// the reason [`spent`] gives about its own: a request whose size nobody
 /// reported and one that carried nothing are different facts.
-fn opened(payload: &Value) -> Option<Delta> {
-    let usage = payload
+fn opened(payload: &Value) -> Result<Option<Delta>, ProviderError> {
+    let Some(usage) = payload
         .get("message")
-        .and_then(|message| message.get("usage"))?;
-    let fields = [
-        "input_tokens",
-        "cache_creation_input_tokens",
-        "cache_read_input_tokens",
-    ];
-    let mut reported = false;
-    let mut tokens = 0_u64;
-    for field in fields {
-        if let Some(count) = usage.get(field).and_then(Value::as_u64) {
-            reported = true;
-            tokens = tokens.saturating_add(count);
+        .and_then(|message| message.get("usage"))
+    else {
+        return Ok(None);
+    };
+    let uncached = number(usage, "input_tokens");
+    let write = number(usage, "cache_creation_input_tokens");
+    let read = number(usage, "cache_read_input_tokens");
+    if uncached.is_none() && write.is_none() && read.is_none() {
+        return Ok(None);
+    }
+    let mut details = Vec::new();
+    for (label, value) in [
+        ("input_tokens", uncached),
+        ("cache_creation_input_tokens", write),
+        ("cache_read_input_tokens", read),
+    ] {
+        if let Some(value) = value {
+            details.push(ProviderNumericDetail::new(label, value).map_err(usage_problem)?);
         }
     }
+    let input = InputTokenUsage::disjoint(uncached, read, write).map_err(usage_problem)?;
+    let usage = ProviderUsage::new(input, None, None, None, &details).map_err(usage_problem)?;
+    Ok(Some(Delta::Usage(usage)))
+}
 
-    reported.then(|| Delta::Carried(Carried::new(tokens)))
+fn number(value: &Value, field: &str) -> Option<u64> {
+    value.get(field).and_then(Value::as_u64)
+}
+
+fn usage_problem(problem: UsageError) -> ProviderError {
+    ProviderError::Protocol {
+        provider: NAME,
+        problem: format!("invalid usage accounting: {problem}").into(),
+    }
 }
 
 /// The model saying it has stopped, and why.
@@ -248,6 +275,7 @@ fn parse(data: &str) -> Result<Value, ProviderError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fake::{disjoint_input_usage, output_usage};
 
     fn event(name: &str, data: &str) -> SseEvent {
         SseEvent {
@@ -421,7 +449,7 @@ mod tests {
                 r#"{"message":{"id":"msg_1","usage":{"input_tokens":1200}}}"#,
             ))
             .unwrap(),
-            vec![Delta::Carried(Carried::new(1200))]
+            vec![disjoint_input_usage(Some(1200), None, None)]
         );
     }
 
@@ -436,7 +464,7 @@ mod tests {
                 r#"{"message":{"id":"msg_1","usage":{"input_tokens":200,"cache_creation_input_tokens":300,"cache_read_input_tokens":700}}}"#,
             ))
             .unwrap(),
-            vec![Delta::Carried(Carried::new(1200))]
+            vec![disjoint_input_usage(Some(200), Some(300), Some(700))]
         );
     }
 
@@ -459,7 +487,7 @@ mod tests {
         // long turn by only arrives once the turn is over.
         assert_eq!(
             deltas(&event("message_delta", r#"{"usage":{"output_tokens":12}}"#)).unwrap(),
-            vec![Delta::Spent(Spend::new(12))]
+            vec![output_usage(12)]
         );
     }
 
@@ -473,10 +501,7 @@ mod tests {
                 r#"{"delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":40}}"#,
             ))
             .unwrap(),
-            vec![
-                Delta::Spent(Spend::new(40)),
-                Delta::Stopped(StopReason::Yielded),
-            ]
+            vec![output_usage(40), Delta::Stopped(StopReason::Yielded),]
         );
     }
 

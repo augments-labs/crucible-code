@@ -259,6 +259,20 @@ pub enum ConfigError {
         at: At,
     },
 
+    /// A prompt-cache policy was internally contradictory or exceeded a
+    /// retention/authority boundary that its JSON shape cannot express.
+    #[error("{file}: {path}{at} — {problem}")]
+    PromptCaching {
+        /// The configuration file, as the user would name it.
+        file: Box<str>,
+        /// Exact dotted setting path.
+        path: Box<str>,
+        /// Where the relevant key was found, when unambiguous.
+        at: At,
+        /// Bounded explanation that quotes no namespace or provider key.
+        problem: &'static str,
+    },
+
     /// An `env` variable that crucible has already read by the time it opens a
     /// file, so a value written in one could never apply.
     ///

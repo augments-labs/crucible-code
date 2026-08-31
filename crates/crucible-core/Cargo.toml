@@ -20,9 +20,15 @@ authors.workspace = true
 # `src/**` could come to mean one thing in a rule and another in a search, and
 # the two would disagree exactly where it costs most — a rule that looks like it
 # covers a file the tool does not think it covers.
+#
+# `sha2` earns the same bottom-of-graph cost at the credential boundary. An API
+# key's prompt-cache scope must survive restart without the key entering cache
+# metadata; a domain-separated one-way digest supplies that opaque identity.
+# The exact-pinned crate is already used by auth, runner, tools and the binary.
 [dependencies]
 globset.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 

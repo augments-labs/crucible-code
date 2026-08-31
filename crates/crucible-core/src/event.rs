@@ -26,6 +26,18 @@ pub enum TurnError {
     #[error(transparent)]
     Context(#[from] ContextError),
 
+    /// The exact provider-facing stable prefix could not be described safely.
+    #[error(transparent)]
+    PromptCacheProjection(#[from] crate::PromptCacheProjectionError),
+
+    /// Prompt-cache policy required a control that could not be prepared.
+    #[error(transparent)]
+    PromptCachePreparation(#[from] crate::PromptCachePreparationError),
+
+    /// An explicitly authorized persistent cache resource could not be prepared.
+    #[error(transparent)]
+    PromptCacheResource(#[from] crate::PromptCacheResourceError),
+
     /// The provider failed.
     #[error(transparent)]
     Provider(#[from] ProviderError),
@@ -193,6 +205,12 @@ pub enum Event {
     TurnStarted {
         /// Which turn.
         turn: TurnId,
+    },
+
+    /// One bounded immutable prompt-cache preparation or provider fact.
+    PromptCache {
+        /// The typed fact; ancestry is supplied by the surrounding envelope.
+        fact: crate::PromptCacheFact,
     },
 
     /// Prose arrived from the model.
@@ -365,6 +383,9 @@ impl std::fmt::Debug for Event {
         match self {
             Self::TurnStarted { turn } => {
                 f.debug_struct("TurnStarted").field("turn", turn).finish()
+            }
+            Self::PromptCache { fact } => {
+                f.debug_struct("PromptCache").field("fact", fact).finish()
             }
             Self::Delta { text } => f.debug_struct("Delta").field("text", text).finish(),
             Self::ToolRequested {

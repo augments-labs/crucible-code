@@ -13,7 +13,8 @@
 //! `model` rather than an object of its own.
 
 use crucible_core::{
-    Attached, Content, Message, Modality, Request, StopReason, ToolCall, ToolResult, ToolSchema,
+    Attached, Content, Message, Modality, PromptCacheEncoding, PromptCacheIneligibleReason,
+    PromptCacheMechanism, Request, StopReason, ToolCall, ToolResult, ToolSchema,
 };
 #[cfg(test)]
 use serde_json::{Value, json};
@@ -35,6 +36,15 @@ pub(super) fn serialize(request: &Request<'_>) -> String {
             options.boolean("include_usage", true);
         });
 
+        if let Some(key) = request
+            .prompt_cache
+            .and_then(|cache| cache.selection.selected().map(|selected| (cache, selected)))
+            .filter(|(_, selected)| selected.mechanism() == PromptCacheMechanism::AutomaticPrefix)
+            .and_then(|(cache, _)| cache.routing_key)
+        {
+            body.text("prompt_cache_key", key.as_str());
+        }
+
         body.array("messages", |messages| write_messages(messages, request));
 
         // Beside `model` rather than nested, which is where this older wire
@@ -55,6 +65,35 @@ pub(super) fn serialize(request: &Request<'_>) -> String {
         }
     });
     json.finish()
+}
+
+/// The cache metadata [`serialize`] adds for this exact request.
+pub(super) fn prompt_cache_encoding(request: &Request<'_>) -> PromptCacheEncoding {
+    let Some(selected) = request
+        .prompt_cache
+        .and_then(|cache| cache.selection.selected())
+    else {
+        return PromptCacheEncoding::NoControlIntended;
+    };
+    match selected.mechanism() {
+        PromptCacheMechanism::ProviderManagedUsageOnly => {
+            PromptCacheEncoding::NoExtraControlEncoded
+        }
+        PromptCacheMechanism::AutomaticPrefix => {
+            if request
+                .prompt_cache
+                .and_then(|cache| cache.routing_key)
+                .is_some()
+            {
+                PromptCacheEncoding::AutomaticHintEncoded
+            } else {
+                PromptCacheEncoding::NoExtraControlEncoded
+            }
+        }
+        PromptCacheMechanism::ExplicitBreakpoints | PromptCacheMechanism::PersistentContent => {
+            PromptCacheEncoding::Failed(PromptCacheIneligibleReason::Unsupported)
+        }
+    }
 }
 
 #[cfg(test)]

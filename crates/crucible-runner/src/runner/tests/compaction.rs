@@ -937,6 +937,15 @@ fn the_recap_request_carries_no_system_prompt_so_a_standing_note_cannot_become_a
     let (asked, turns) = sent.split_last().expect("the recap request");
 
     assert!(!asked.had_system, "the recap request carried a prompt");
+    assert!(
+        asked.cache_attempt.is_some(),
+        "the standalone recap bypassed prompt-cache preparation"
+    );
+    assert_ne!(
+        asked.cache_identity,
+        turns.last().and_then(|turn| turn.cache_identity),
+        "the recap's no-system/no-tools projection reused an ordinary-turn identity"
+    );
 
     // And the ordinary turns did carry one, so the assertion above is about
     // this request rather than about a runner that never sends a prompt at all.
