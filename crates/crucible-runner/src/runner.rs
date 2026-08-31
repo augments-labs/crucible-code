@@ -155,6 +155,11 @@ pub struct Runner {
     load: Load,
 }
 
+struct Tooling {
+    source: Arc<dyn Toolset>,
+    snapshot: ToolSnapshot,
+}
+
 impl Runner {
     /// A session that has not said anything yet.
     #[must_use]
@@ -166,7 +171,16 @@ impl Runner {
         session: Session,
     ) -> Self {
         let snapshot = tools.snapshot().unwrap_or_default();
-        Self::from_parts(provider, Arc::new(tools), snapshot, spec, context, session)
+        Self::from_parts(
+            provider,
+            Tooling {
+                source: Arc::new(tools),
+                snapshot,
+            },
+            spec,
+            context,
+            session,
+        )
     }
 
     /// A session backed by an arbitrary live toolset.
@@ -187,8 +201,10 @@ impl Runner {
     {
         Self::from_parts(
             provider,
-            Arc::new(toolset),
-            ToolSnapshot::empty(),
+            Tooling {
+                source: Arc::new(toolset),
+                snapshot: ToolSnapshot::empty(),
+            },
             spec,
             context,
             session,
@@ -197,12 +213,15 @@ impl Runner {
 
     fn from_parts(
         provider: Box<dyn Provider>,
-        toolset: Arc<dyn Toolset>,
-        tools: ToolSnapshot,
+        tooling: Tooling,
         spec: AgentSpec,
         context: ContextInputs,
         session: Session,
     ) -> Self {
+        let Tooling {
+            source: toolset,
+            snapshot: tools,
+        } = tooling;
         let mut runner = Self {
             provider,
             toolset,

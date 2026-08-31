@@ -137,7 +137,6 @@ pub fn glimpse(
             // Harness context is sent to the model and never attributed to the
             // developer, so it does not become a line in their transcript
             // preview either.
-            Some(Message::Context(_)) => {}
             Some(Message::User { text, attachments }) => messages.push(Message::User {
                 text: cleaned(&text),
                 attachments,
@@ -152,7 +151,7 @@ pub fn glimpse(
                     results.into_iter().map(safely).collect(),
                 ));
             }
-            None => {}
+            Some(Message::Context(_)) | None => {}
         }
     }
 

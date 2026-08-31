@@ -257,19 +257,20 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
         }
 
         if let Some(patch) = whole.and_then(wire::context_patch) {
-            let patch = patch.map_err(|source| SessionError::Context {
+            let context_patch = patch.map_err(|source| SessionError::Context {
                 at: path.display().to_string().into(),
                 source,
             })?;
-            let prior = context.as_ref().cloned().unwrap_or_default();
-            context = Some(
-                patch
-                    .apply(&prior)
-                    .map_err(|source| SessionError::Context {
-                        at: path.display().to_string().into(),
-                        source,
-                    })?,
-            );
+            let prior = context.clone().unwrap_or_default();
+            context =
+                Some(
+                    context_patch
+                        .apply(&prior)
+                        .map_err(|source| SessionError::Context {
+                            at: path.display().to_string().into(),
+                            source,
+                        })?,
+                );
             calibration = None;
             through += read as u64;
             continue;

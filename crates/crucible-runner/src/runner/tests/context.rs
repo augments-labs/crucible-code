@@ -181,7 +181,7 @@ fn a_pre_context_session_supersedes_every_unknown_section_on_its_first_pass() {
     scripted.turn("continue").expect("the first upgraded turn");
 
     let sent = scripted.sent.lock().unwrap();
-    let first = &sent[0].context;
+    let first = &sent.first().expect("the first upgraded request").context;
     assert_eq!(first.len(), 6);
     assert!(
         first
@@ -267,8 +267,11 @@ fn tool_reveal_and_disposal_are_reported_from_the_exact_generation_used_next() {
 
     let sent = scripted.sent.lock().unwrap();
     assert_eq!(sent.len(), 3);
+    let first_request = sent.first().expect("the initial request");
+    let revealed_request = sent.get(1).expect("the request after reveal");
+    let disposed_request = sent.get(2).expect("the request after disposal");
     assert_eq!(
-        sent[0]
+        first_request
             .tools
             .iter()
             .map(|tool| tool.name.as_ref())
@@ -276,7 +279,7 @@ fn tool_reveal_and_disposal_are_reported_from_the_exact_generation_used_next() {
         ["reveal", "dispose"]
     );
     assert_eq!(
-        sent[1]
+        revealed_request
             .tools
             .iter()
             .map(|tool| tool.name.as_ref())
@@ -284,7 +287,7 @@ fn tool_reveal_and_disposal_are_reported_from_the_exact_generation_used_next() {
         ["reveal", "dispose", "web_search"]
     );
     assert_eq!(
-        sent[2]
+        disposed_request
             .tools
             .iter()
             .map(|tool| tool.name.as_ref())
@@ -293,13 +296,15 @@ fn tool_reveal_and_disposal_are_reported_from_the_exact_generation_used_next() {
     );
 
     let latest_tools = |at: usize| {
-        sent[at]
+        sent.get(at)
+            .unwrap_or_else(|| panic!("request {at}"))
             .context
             .iter()
             .rev()
             .find(|fragment| fragment.section() == "tools")
             .expect("a tools fragment")
             .text()
+            .to_owned()
     };
     let initial = latest_tools(0);
     let added = latest_tools(1);
@@ -334,19 +339,21 @@ fn a_permission_remembered_mid_turn_is_reported_on_the_immediately_following_pas
 
     let sent = scripted.sent.lock().unwrap();
     assert_eq!(sent.len(), 2);
+    let first_request = sent.first().expect("the first permission request");
+    let next_request = sent.get(1).expect("the request after permission");
     assert_eq!(
-        sent[0]
+        first_request
             .context
             .iter()
             .filter(|fragment| fragment.section() == "permissions")
             .count(),
         1
     );
-    let changed = sent[1]
+    let changed = next_request
         .context
         .iter()
-        .filter(|fragment| fragment.section() == "permissions")
-        .last()
+        .rev()
+        .find(|fragment| fragment.section() == "permissions")
         .expect("the next pass permission delta");
     assert!(
         changed.text().contains("New session-scoped approvals"),

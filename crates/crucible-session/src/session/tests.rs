@@ -94,7 +94,13 @@ fn context_is_recorded_as_ordered_patches_and_reconstructed_on_resume() {
         .filter(|line| line.contains("context_patch"))
         .collect();
     assert_eq!(patch_lines.len(), 2);
-    assert!(!patch_lines[1].contains("workspace"), "{log}");
+    assert!(
+        !patch_lines
+            .get(1)
+            .expect("the second context patch")
+            .contains("workspace"),
+        "{log}"
+    );
 
     let (resumed, _) = Session::resume(&sample.logs(), &sample.workspace()).unwrap();
     assert_eq!(

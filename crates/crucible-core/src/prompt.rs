@@ -1047,8 +1047,7 @@ fn changed_fields(label: &str, old: &Value, current: &Value) -> String {
 fn scalar(value: &Value) -> String {
     value
         .as_str()
-        .map(str::to_owned)
-        .unwrap_or_else(|| value.to_string())
+        .map_or_else(|| value.to_string(), str::to_owned)
 }
 
 /// The paragraph two tones end on, written once.

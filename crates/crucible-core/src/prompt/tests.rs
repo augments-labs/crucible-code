@@ -2,6 +2,8 @@
 
 use std::path::PathBuf;
 
+use serde_json::Value;
+
 use super::{
     EnvironmentSection, Identity, ModelSection, PermissionsSection, SAID, SKILLS, Skill,
     SkillsSection, SystemPrompt, Tone, ToolsSection, WorkspaceSection,
@@ -66,17 +68,30 @@ fn operator_instructions_can_be_rendered_without_session_facts() {
 #[test]
 fn every_shipped_section_has_non_null_state_and_a_full_first_render() {
     fn assert_section(section: &impl ContextSection) {
-        let state = section.checked_snapshot().expect(section.id());
+        let state = section
+            .checked_snapshot()
+            .unwrap_or_else(|problem| panic!("{}: {problem}", section.id()));
         assert!(!state.is_null(), "{}", section.id());
-        let fragment = section.render(Seen::Fresh).expect(section.id());
+        let fragment = section
+            .render(Seen::Fresh)
+            .unwrap_or_else(|| panic!("{} did not render", section.id()));
         assert_eq!(fragment.section(), section.id());
         assert!(!fragment.text().is_empty(), "{}", section.id());
 
         let before = ContextSnapshot::new();
         let mut current = ContextSnapshot::new();
-        current.capture(section).expect(section.id());
-        let patch = current.patch_from(&before).expect(section.id());
-        assert_eq!(patch.apply(&before).expect(section.id()), current);
+        current
+            .capture(section)
+            .unwrap_or_else(|problem| panic!("{}: {problem}", section.id()));
+        let patch = current
+            .patch_from(&before)
+            .unwrap_or_else(|| panic!("{} produced no initial patch", section.id()));
+        assert_eq!(
+            patch
+                .apply(&before)
+                .unwrap_or_else(|problem| panic!("{}: {problem}", section.id())),
+            current
+        );
     }
 
     let root = PathBuf::from("/src/thing");
@@ -128,8 +143,14 @@ fn the_tools_section_reports_the_exact_generation_it_snapshotted() {
     let state = section.snapshot();
     let rendered = section.render(Seen::Fresh).unwrap();
 
-    let generation = state["generation"].as_str().expect("a generation");
-    assert!(state["tools"].is_object(), "tools must be keyed: {state}");
+    let generation = state
+        .get("generation")
+        .and_then(|generation| generation.as_str())
+        .expect("a generation");
+    assert!(
+        state.get("tools").is_some_and(Value::is_object),
+        "tools must be keyed: {state}"
+    );
     assert!(rendered.text().contains(generation), "{rendered:?}");
 }
 

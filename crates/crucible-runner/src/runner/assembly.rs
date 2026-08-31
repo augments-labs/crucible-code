@@ -26,7 +26,6 @@ use super::Runner;
 pub struct ContextInputs {
     workspace: PathBuf,
     skills: Vec<Skill>,
-    #[cfg(test)]
     date: Option<Box<str>>,
 }
 
@@ -37,7 +36,6 @@ impl ContextInputs {
         Self {
             workspace: workspace.into(),
             skills: Vec::new(),
-            #[cfg(test)]
             date: None,
         }
     }
@@ -59,7 +57,6 @@ impl ContextInputs {
     }
 
     fn date(&self) -> String {
-        #[cfg(test)]
         if let Some(date) = &self.date {
             return date.to_string();
         }
@@ -75,6 +72,7 @@ impl fmt::Debug for ContextInputs {
                 "skills",
                 &format_args!("{} entries redacted", self.skills.len()),
             )
+            .field("date", &self.date.as_ref().map(|_| "[fixed date redacted]"))
             .finish()
     }
 }
@@ -88,64 +86,34 @@ impl Runner {
             let prior = persisted.unwrap_or(&empty);
             let unknown = persisted.is_none();
             let transcript = &self.transcript;
-            let mut current = ContextSnapshot::new();
-            let mut fragments = Vec::new();
             let date = self.context.date();
+            let mut assembly = Assembly {
+                unknown,
+                prior,
+                transcript,
+                current: ContextSnapshot::new(),
+                fragments: Vec::new(),
+            };
 
             // Stable sections first. The three live/mid-turn sections follow,
             // with permissions last because an approval can change inside the
             // tool pass immediately preceding this request.
-            resolve(
-                &WorkspaceSection::new(&self.context.workspace),
-                unknown,
-                prior,
-                transcript,
-                &mut current,
-                &mut fragments,
-            )?;
-            resolve(
-                &SkillsSection::new(&self.context.skills),
-                unknown,
-                prior,
-                transcript,
-                &mut current,
-                &mut fragments,
-            )?;
-            resolve(
-                &EnvironmentSection::new(&date, std::env::consts::OS, std::env::consts::ARCH),
-                unknown,
-                prior,
-                transcript,
-                &mut current,
-                &mut fragments,
-            )?;
-            resolve(
-                &ModelSection::new(&self.spec.model.name, self.spec.model.effort),
-                unknown,
-                prior,
-                transcript,
-                &mut current,
-                &mut fragments,
-            )?;
-            resolve(
-                &ToolsSection::new(&self.tools),
-                unknown,
-                prior,
-                transcript,
-                &mut current,
-                &mut fragments,
-            )?;
-            resolve(
-                &PermissionsSection::new(&self.permission),
-                unknown,
-                prior,
-                transcript,
-                &mut current,
-                &mut fragments,
-            )?;
+            assembly.resolve(&WorkspaceSection::new(&self.context.workspace))?;
+            assembly.resolve(&SkillsSection::new(&self.context.skills))?;
+            assembly.resolve(&EnvironmentSection::new(
+                &date,
+                std::env::consts::OS,
+                std::env::consts::ARCH,
+            ))?;
+            assembly.resolve(&ModelSection::new(
+                &self.spec.model.name,
+                self.spec.model.effort,
+            ))?;
+            assembly.resolve(&ToolsSection::new(&self.tools))?;
+            assembly.resolve(&PermissionsSection::new(&self.permission))?;
 
-            let patch = current.patch_from(prior);
-            (fragments, patch)
+            let patch = assembly.current.patch_from(prior);
+            (assembly.fragments, patch)
         };
 
         // Words first, state second. A crash between them replays as Unknown;
@@ -161,23 +129,29 @@ impl Runner {
     }
 }
 
-fn resolve(
-    section: &impl ContextSection,
+struct Assembly<'a> {
     unknown: bool,
-    prior: &ContextSnapshot,
-    transcript: &Transcript,
-    current: &mut ContextSnapshot,
-    fragments: &mut Vec<Fragment>,
-) -> Result<(), crucible_core::ContextError> {
-    let seen = if unknown {
-        Seen::Unknown
-    } else {
-        prior.seen(section, transcript)
-    };
-    if let Some(fragment) = section.render(seen) {
-        fragments.push(fragment);
+    prior: &'a ContextSnapshot,
+    transcript: &'a Transcript,
+    current: ContextSnapshot,
+    fragments: Vec<Fragment>,
+}
+
+impl Assembly<'_> {
+    fn resolve(
+        &mut self,
+        section: &impl ContextSection,
+    ) -> Result<(), crucible_core::ContextError> {
+        let seen = if self.unknown {
+            Seen::Unknown
+        } else {
+            self.prior.seen(section, self.transcript)
+        };
+        if let Some(fragment) = section.render(seen) {
+            self.fragments.push(fragment);
+        }
+        self.current.capture(section)
     }
-    current.capture(section)
 }
 
 /// The Gregorian UTC date containing `at`, without a runtime dependency.
@@ -217,7 +191,7 @@ mod tests {
     fn utc_calendar_conversion_covers_epoch_and_leap_day() {
         assert_eq!(utc_date(UNIX_EPOCH), "1970-01-01");
         assert_eq!(
-            utc_date(UNIX_EPOCH + Duration::from_secs(19_782 * 86_400)),
+            utc_date(UNIX_EPOCH + Duration::from_hours(474_768)),
             "2024-02-29"
         );
     }

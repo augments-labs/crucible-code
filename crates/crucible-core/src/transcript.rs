@@ -130,9 +130,8 @@ impl Message {
     #[must_use]
     pub fn attachments(&self) -> Vec<&Attachment> {
         match self {
-            Self::Context(_) => Vec::new(),
             Self::User { attachments, .. } => attachments.iter().collect(),
-            Self::Agent { .. } => Vec::new(),
+            Self::Context(_) | Self::Agent { .. } => Vec::new(),
             Self::ToolResults(results) => results
                 .iter()
                 .flat_map(|result| result.output.attachments())
@@ -446,7 +445,14 @@ mod tests {
 
         assert_eq!(transcript.turns(), 0);
         assert_eq!(transcript.len(), 1);
-        assert!(transcript.messages()[0].attachments().is_empty());
+        assert!(
+            transcript
+                .messages()
+                .first()
+                .expect("the context fragment")
+                .attachments()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -527,8 +533,14 @@ mod tests {
         transcript.forget_context();
 
         assert_eq!(transcript.len(), 2);
-        assert!(matches!(transcript.messages()[0], Message::User { .. }));
-        assert!(matches!(transcript.messages()[1], Message::Agent { .. }));
+        assert!(matches!(
+            transcript.messages().first(),
+            Some(Message::User { .. })
+        ));
+        assert!(matches!(
+            transcript.messages().get(1),
+            Some(Message::Agent { .. })
+        ));
     }
 
     #[test]

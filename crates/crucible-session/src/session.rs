@@ -480,7 +480,7 @@ impl Session {
     /// [`ContextError`] if a caller supplied a persisted-style patch that
     /// cannot produce a valid snapshot.
     pub fn contextual(&mut self, patch: &ContextPatch) -> Result<(), ContextError> {
-        let prior = self.context.as_ref().cloned().unwrap_or_default();
+        let prior = self.context.clone().unwrap_or_default();
         let current = patch.apply(&prior)?;
         if let Some(to) = &self.to {
             drop(to.send(wire::contextual(patch).into()));

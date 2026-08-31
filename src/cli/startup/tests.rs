@@ -12,6 +12,14 @@ use super::*;
 use crate::cli::sample::{Sample, WRITTEN};
 use crate::cli::{NO_MODEL_CHOSEN, NOTHING_TO_ASK};
 
+struct Nobody;
+
+impl Ask for Nobody {
+    fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
+        (Verdict::Deny, Remember::Never)
+    }
+}
+
 /// The entry the wiring resolves before it builds anything.
 fn serving(named: &str) -> Served {
     served(named).expect("a provider this build has")
@@ -819,13 +827,6 @@ fn a_session_is_assembled_with_stable_instructions_and_workspace_context() {
         .expect("a turn is asked under something");
     assert_eq!(asked, standing::under(&configured));
     assert!(!asked.contains(&workspace.root().display().to_string()));
-
-    struct Nobody;
-    impl Ask for Nobody {
-        fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
-            (Verdict::Deny, Remember::Never)
-        }
-    }
 
     let (events, _seen) = std::sync::mpsc::channel();
     let (cancel, steer, aside) = (Cancel::new(), Steer::new(), Aside::new());
