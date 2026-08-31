@@ -8,6 +8,15 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-08-31
+
+### Added
+
+- **Each model pass now receives a typed, bounded context assembled from current
+  runtime facts.** Stable instructions, tool and skill rosters, configuration,
+  permissions and session facts are sent once and then only when they change;
+  compaction and resumed sessions preserve or safely rebuild that context.
+
 ## [0.29.0] - 2026-08-31
 
 ### Added
@@ -3092,7 +3101,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.29.0...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.30.0...HEAD
+[0.30.0]: https://github.com/augments-labs/crucible-code/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/augments-labs/crucible-code/compare/v0.28.2...v0.29.0
 [0.28.2]: https://github.com/augments-labs/crucible-code/compare/v0.28.1...v0.28.2
 [0.28.1]: https://github.com/augments-labs/crucible-code/compare/v0.28.0...v0.28.1
