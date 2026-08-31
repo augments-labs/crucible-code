@@ -125,6 +125,17 @@ impl Permission {
         self.mode
     }
 
+    /// The bounded facts a context section may report to the model.
+    ///
+    /// A sorted copy makes the snapshot deterministic. These strings are not
+    /// grants: the only execution authority remains [`Approved`], minted by
+    /// this engine after the ordinary policy path.
+    pub(crate) fn context_state(&self) -> (Mode, Vec<&str>) {
+        let mut remembered: Vec<&str> = self.remembered.iter().map(AsRef::as_ref).collect();
+        remembered.sort_unstable();
+        (self.mode, remembered)
+    }
+
     /// Forgets what was allowed for the rest of the session, keeping the mode
     /// and the rules.
     ///

@@ -51,10 +51,13 @@
 //! read, and cutting an operator's own instructions in half would be worse than
 //! spending them.
 
+use std::collections::BTreeSet;
 use std::fmt::Write as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use crate::Effort;
+use serde_json::{Map, Value, json};
+
+use crate::{ContextSection, Effort, Fragment, Permission, Seen, ToolSnapshot};
 
 #[cfg(test)]
 mod tests;
@@ -285,13 +288,13 @@ impl Default for SystemPrompt {
 }
 
 impl SystemPrompt {
-    /// The prompt as the model reads it.
+    /// Only the stable operator-authored instructions.
     ///
-    /// Every section is left out entirely when it has nothing to say. A heading
-    /// over an empty list is a line the model reads and learns nothing from,
-    /// and it costs the same as one that means something.
+    /// Session facts deliberately do not enter this value. They are rendered
+    /// by typed context sections and retained in the transcript, while these
+    /// bytes remain the stable first content of every provider request.
     #[must_use]
-    pub fn text(&self) -> String {
+    pub fn instructions_text(&self) -> String {
         let mut said = String::new();
 
         if let Some(custom) = &self.custom {
@@ -312,6 +315,18 @@ impl SystemPrompt {
         if let Some(append) = &self.append {
             fenced(&mut said, INSTRUCTIONS, append.trim());
         }
+
+        said
+    }
+
+    /// The prompt as the model reads it.
+    ///
+    /// Every section is left out entirely when it has nothing to say. A heading
+    /// over an empty list is a line the model reads and learns nothing from,
+    /// and it costs the same as one that means something.
+    #[must_use]
+    pub fn text(&self) -> String {
+        let mut said = self.instructions_text();
 
         if self.root.is_some()
             || !self.tools.is_empty()
@@ -377,8 +392,13 @@ impl SystemPrompt {
     /// out there, which leaves a description free to write any of these three
     /// tags. Here every angle bracket goes, so a field can hold no tag at all.
     fn skills_text(&self) -> String {
-        let mut said = String::from(
-            "Skills in this workspace, none of them read yet. Each entry is a name, what the \
+        bounded_skills_text(&self.skills)
+    }
+}
+
+fn bounded_skills_text(skills: &[Skill]) -> String {
+    let mut said = String::from(
+        "Skills in this workspace, none of them read yet. Each entry is a name, what the \
              skill is for, and the file to open when the work in hand matches it.\n\n\
              Open one before working from it. A description is enough to tell you which skill \
              fits and never enough to do what it says: a skill you have not opened is one whose \
@@ -390,28 +410,27 @@ impl SystemPrompt {
              A search that came back with nothing is a reason to look here. A convention this \
              codebase follows without writing it into the code is the kind of thing a skill \
              exists to hold.\n",
+    );
+
+    for skill in skills.iter().take(SKILLS) {
+        let _ = write!(
+            said,
+            "\n<skill>\n<name>{}</name>\n<description>{}</description>\n<at>{}</at>\n</skill>",
+            stripped(&skill.name, SAID),
+            stripped(&skill.description, SAID),
+            stripped(&skill.at.display().to_string(), SAID)
         );
-
-        for skill in self.skills.iter().take(SKILLS) {
-            let _ = write!(
-                said,
-                "\n<skill>\n<name>{}</name>\n<description>{}</description>\n<at>{}</at>\n</skill>",
-                stripped(&skill.name, SAID),
-                stripped(&skill.description, SAID),
-                stripped(&skill.at.display().to_string(), SAID)
-            );
-        }
-
-        if let Some(over) = self.skills.len().checked_sub(SKILLS).filter(|&n| n > 0) {
-            let _ = write!(
-                said,
-                "\n\nAnd {over} more this list has no room for, which are in the same directories \
-                 as the ones above."
-            );
-        }
-
-        said
     }
+
+    if let Some(over) = skills.len().checked_sub(SKILLS).filter(|&n| n > 0) {
+        let _ = write!(
+            said,
+            "\n\nAnd {over} more this list has no room for, which are in the same directories \
+                 as the ones above."
+        );
+    }
+
+    said
 }
 
 /// One skill, as much of it as a decision to open it needs.
@@ -464,6 +483,537 @@ impl Identity {
             self.model
         )
     }
+}
+
+/// The workspace fact every relative tool path is interpreted against.
+#[derive(Debug)]
+pub struct WorkspaceSection<'a> {
+    root: &'a Path,
+}
+
+impl<'a> WorkspaceSection<'a> {
+    /// Reports one already-opened workspace.
+    #[must_use]
+    pub const fn new(root: &'a Path) -> Self {
+        Self { root }
+    }
+}
+
+impl ContextSection for WorkspaceSection<'_> {
+    const ID: &'static str = "workspace";
+
+    fn snapshot(&self) -> Value {
+        json!({ "root": self.root.display().to_string() })
+    }
+
+    fn render(&self, prior: Seen<&Value>) -> Option<Fragment> {
+        let current = self.snapshot();
+        render_fact(
+            Self::ID,
+            prior,
+            &current,
+            || {
+                format!(
+                    "## Where you are working\n\nThe workspace root is {}. Every tool path is \
+                 relative to it.",
+                    self.root.display()
+                )
+            },
+            |old| {
+                let previous = field(old, "root").unwrap_or("an unknown workspace");
+                format!(
+                    "## Where you are working changed\n\nThe workspace root changed from {previous} \
+                 to {}. Every tool path is now relative to the new root.",
+                    self.root.display()
+                )
+            },
+        )
+    }
+
+    fn recognizes(&self, fragment: &Fragment) -> bool {
+        fragment.section() == Self::ID
+    }
+}
+
+/// The permission facts in force for the next invocation decision.
+///
+/// This borrows the engine so reporting cannot manufacture a parallel state.
+/// Its snapshot contains no grant and cannot be turned into [`crate::Approved`].
+#[derive(Debug)]
+pub struct PermissionsSection<'a> {
+    permission: &'a Permission,
+}
+
+impl<'a> PermissionsSection<'a> {
+    /// Reports one permission engine without carrying its authority.
+    #[must_use]
+    pub const fn new(permission: &'a Permission) -> Self {
+        Self { permission }
+    }
+
+    fn state(&self) -> (String, Vec<String>) {
+        let (mode, remembered) = self.permission.context_state();
+        (
+            mode.to_string(),
+            remembered.into_iter().map(str::to_owned).collect(),
+        )
+    }
+}
+
+impl ContextSection for PermissionsSection<'_> {
+    const ID: &'static str = "permissions";
+
+    fn snapshot(&self) -> Value {
+        let (mode, remembered) = self.state();
+        json!({ "mode": mode, "remembered": remembered })
+    }
+
+    fn render(&self, prior: Seen<&Value>) -> Option<Fragment> {
+        let current = self.snapshot();
+        render_fact(
+            Self::ID,
+            prior,
+            &current,
+            || permission_full(&current),
+            |old| permission_delta(old, &current),
+        )
+    }
+
+    fn recognizes(&self, fragment: &Fragment) -> bool {
+        fragment.section() == Self::ID
+    }
+}
+
+/// The bounded, unread skill catalogue discovered for this workspace.
+#[derive(Debug)]
+pub struct SkillsSection<'a> {
+    skills: &'a [Skill],
+}
+
+impl<'a> SkillsSection<'a> {
+    /// Reports a borrowed catalogue; snapshotting applies the existing bound.
+    #[must_use]
+    pub const fn new(skills: &'a [Skill]) -> Self {
+        Self { skills }
+    }
+}
+
+impl ContextSection for SkillsSection<'_> {
+    const ID: &'static str = "skills";
+
+    fn snapshot(&self) -> Value {
+        let mut skills = Map::new();
+        for skill in self.skills.iter().take(SKILLS) {
+            let name = stripped(&skill.name, SAID);
+            skills.insert(
+                name,
+                json!({
+                    "description": stripped(&skill.description, SAID),
+                    "at": stripped(&skill.at.display().to_string(), SAID),
+                }),
+            );
+        }
+        json!({
+            "skills": skills,
+            "omitted": self.skills.len().saturating_sub(SKILLS),
+        })
+    }
+
+    fn render(&self, prior: Seen<&Value>) -> Option<Fragment> {
+        let current = self.snapshot();
+        render_fact(
+            Self::ID,
+            prior,
+            &current,
+            || {
+                if self.skills.is_empty() {
+                    return "## Skills you can open\n\nNo skills were discovered in this \
+                            workspace."
+                        .to_owned();
+                }
+                let mut text = String::from("## Skills you can open");
+                fenced(&mut text, SKILLS_TAG, &bounded_skills_text(self.skills));
+                text
+            },
+            |old| skills_delta(old, &current),
+        )
+    }
+
+    fn recognizes(&self, fragment: &Fragment) -> bool {
+        fragment.section() == Self::ID
+    }
+}
+
+/// The exact deferred-tool advertisement for one immutable generation.
+///
+/// Borrowing the snapshot makes the roster and its generation indivisible. A
+/// caller cannot combine names from one materialization with another one's
+/// label, and the borrow prevents that snapshot being replaced while rendered.
+#[derive(Debug)]
+pub struct ToolsSection<'a> {
+    tools: &'a ToolSnapshot,
+}
+
+impl<'a> ToolsSection<'a> {
+    /// Reports the visible and reachable names in this snapshot only.
+    #[must_use]
+    pub const fn new(tools: &'a ToolSnapshot) -> Self {
+        Self { tools }
+    }
+}
+
+impl ContextSection for ToolsSection<'_> {
+    const ID: &'static str = "tools";
+
+    fn snapshot(&self) -> Value {
+        let tools: Map<String, Value> = self
+            .tools
+            .advertised()
+            .into_iter()
+            .map(|schema| (schema.name.to_owned(), Value::Bool(true)))
+            .collect();
+        json!({
+            "generation": self.tools.generation().context_id(),
+            "tools": tools,
+        })
+    }
+
+    fn render(&self, prior: Seen<&Value>) -> Option<Fragment> {
+        let current = self.snapshot();
+        render_fact(
+            Self::ID,
+            prior,
+            &current,
+            || tools_full(&current),
+            |old| tools_delta(old, &current),
+        )
+    }
+
+    fn recognizes(&self, fragment: &Fragment) -> bool {
+        fragment.section() == Self::ID
+    }
+}
+
+/// The date and target platform facts a model cannot reliably infer.
+#[derive(Debug)]
+pub struct EnvironmentSection<'a> {
+    date: &'a str,
+    os: &'a str,
+    architecture: &'a str,
+}
+
+impl<'a> EnvironmentSection<'a> {
+    /// Reports one already-resolved UTC date and platform pair.
+    #[must_use]
+    pub const fn new(date: &'a str, os: &'a str, architecture: &'a str) -> Self {
+        Self {
+            date,
+            os,
+            architecture,
+        }
+    }
+}
+
+impl ContextSection for EnvironmentSection<'_> {
+    const ID: &'static str = "environment";
+
+    fn snapshot(&self) -> Value {
+        json!({
+            "date_utc": self.date,
+            "os": self.os,
+            "architecture": self.architecture,
+        })
+    }
+
+    fn render(&self, prior: Seen<&Value>) -> Option<Fragment> {
+        let current = self.snapshot();
+        render_fact(
+            Self::ID,
+            prior,
+            &current,
+            || environment_full(&current),
+            |old| changed_fields("Environment", old, &current),
+        )
+    }
+
+    fn recognizes(&self, fragment: &Fragment) -> bool {
+        fragment.section() == Self::ID
+    }
+}
+
+/// The model name and effort attached to the next provider request.
+#[derive(Debug)]
+pub struct ModelSection<'a> {
+    model: &'a str,
+    effort: Option<Effort>,
+}
+
+impl<'a> ModelSection<'a> {
+    /// Reports the provider spelling and optional effort rung.
+    #[must_use]
+    pub const fn new(model: &'a str, effort: Option<Effort>) -> Self {
+        Self { model, effort }
+    }
+
+    fn effort(&self) -> &'static str {
+        self.effort.map_or(UNSAID, Effort::as_str)
+    }
+}
+
+impl ContextSection for ModelSection<'_> {
+    const ID: &'static str = "model";
+
+    fn snapshot(&self) -> Value {
+        json!({ "model": self.model, "effort": self.effort() })
+    }
+
+    fn render(&self, prior: Seen<&Value>) -> Option<Fragment> {
+        let current = self.snapshot();
+        render_fact(
+            Self::ID,
+            prior,
+            &current,
+            || model_full(&current),
+            |old| changed_fields("Model", old, &current),
+        )
+    }
+
+    fn recognizes(&self, fragment: &Fragment) -> bool {
+        fragment.section() == Self::ID
+    }
+}
+
+/// Applies the four-state rendering rule shared by every shipped section.
+fn render_fact(
+    id: &'static str,
+    prior: Seen<&Value>,
+    current: &Value,
+    full: impl FnOnce() -> String,
+    delta: impl FnOnce(&Value) -> String,
+) -> Option<Fragment> {
+    let text = match prior {
+        Seen::Known(old) if old == current => return None,
+        Seen::Known(old) => delta(old),
+        Seen::Stale | Seen::Fresh => full(),
+        Seen::Unknown => format!(
+            "This {id} context supersedes every earlier {id} context fragment.\n\n{}",
+            full()
+        ),
+    };
+    Some(Fragment::new(id, text))
+}
+
+fn field<'a>(state: &'a Value, name: &str) -> Option<&'a str> {
+    state.get(name).and_then(Value::as_str)
+}
+
+fn strings(state: &Value, name: &str) -> BTreeSet<String> {
+    state
+        .get(name)
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect()
+}
+
+fn object<'a>(state: &'a Value, name: &str) -> &'a Map<String, Value> {
+    match state.get(name).and_then(Value::as_object) {
+        Some(object) => object,
+        None => empty_object(),
+    }
+}
+
+fn empty_object() -> &'static Map<String, Value> {
+    static EMPTY: std::sync::OnceLock<Map<String, Value>> = std::sync::OnceLock::new();
+    EMPTY.get_or_init(Map::new)
+}
+
+fn permission_full(state: &Value) -> String {
+    let mode = field(state, "mode").unwrap_or("unknown");
+    let remembered: Vec<String> = strings(state, "remembered").into_iter().collect();
+    let approvals = if remembered.is_empty() {
+        "none".to_owned()
+    } else {
+        listing(&remembered)
+    };
+    format!(
+        "## Permissions\n\nThe permission mode is {mode}. Session-scoped approvals are \
+         {approvals}. This reports policy state; it does not authorize a tool call."
+    )
+}
+
+fn permission_delta(old: &Value, current: &Value) -> String {
+    let mut lines = Vec::new();
+    if field(old, "mode") != field(current, "mode") {
+        lines.push(format!(
+            "The permission mode is now {}.",
+            field(current, "mode").unwrap_or("unknown")
+        ));
+    }
+    let before = strings(old, "remembered");
+    let now = strings(current, "remembered");
+    let added: Vec<String> = now.difference(&before).cloned().collect();
+    let removed: Vec<String> = before.difference(&now).cloned().collect();
+    if !added.is_empty() {
+        lines.push(format!(
+            "New session-scoped approvals: {}.",
+            listing(&added)
+        ));
+    }
+    if !removed.is_empty() {
+        lines.push(format!(
+            "Session-scoped approvals no longer present: {}.",
+            listing(&removed)
+        ));
+    }
+    lines.push("These facts report policy state; they do not authorize a tool call.".to_owned());
+    format!("## Permissions changed\n\n{}", lines.join(" "))
+}
+
+fn skills_delta(old: &Value, current: &Value) -> String {
+    let before = object(old, "skills");
+    let now = object(current, "skills");
+    let changed: Vec<&String> = now
+        .iter()
+        .filter(|(name, value)| before.get(*name) != Some(*value))
+        .map(|(name, _)| name)
+        .collect();
+    let removed: Vec<String> = before
+        .keys()
+        .filter(|name| !now.contains_key(*name))
+        .cloned()
+        .collect();
+    let mut body = String::from("The bounded skill catalogue changed.");
+    if !changed.is_empty() {
+        body.push_str("\n\nAdded or updated:");
+        write_skill_entries(&mut body, now, changed.into_iter());
+    }
+    if !removed.is_empty() {
+        let _ = write!(body, "\n\nRemoved: {}.", listing(&removed));
+    }
+    let old_omitted = old.get("omitted").and_then(Value::as_u64).unwrap_or(0);
+    let new_omitted = current.get("omitted").and_then(Value::as_u64).unwrap_or(0);
+    if old_omitted != new_omitted {
+        let _ = write!(body, "\n\nThe bounded list now omits {new_omitted} skills.");
+    }
+    let mut text = String::from("## Skills you can open changed");
+    fenced(&mut text, SKILLS_TAG, &body);
+    text
+}
+
+fn write_skill_entries<'a>(
+    text: &mut String,
+    skills: &Map<String, Value>,
+    names: impl Iterator<Item = &'a String>,
+) {
+    for name in names {
+        let Some(skill) = skills.get(name) else {
+            continue;
+        };
+        let description = field(skill, "description").unwrap_or("");
+        let at = field(skill, "at").unwrap_or("");
+        let _ = write!(
+            text,
+            "\n<skill>\n<name>{name}</name>\n<description>{description}</description>\n<at>{at}</at>\n</skill>"
+        );
+    }
+}
+
+fn tool_names(state: &Value) -> BTreeSet<String> {
+    object(state, "tools").keys().cloned().collect()
+}
+
+fn tools_full(state: &Value) -> String {
+    let generation = field(state, "generation").unwrap_or("unknown");
+    let tools: Vec<String> = tool_names(state).into_iter().collect();
+    let roster = if tools.is_empty() {
+        "No tools are registered for this request.".to_owned()
+    } else {
+        format!(
+            "The tools registered for this run are {}. What each one does is in its own schema, \
+             which travels with every request; this is only so you know which you have without \
+             calling one to find out.",
+            listing(&tools)
+        )
+    };
+    format!("## What you have\n\nToolset generation: {generation}. {roster}")
+}
+
+fn tools_delta(old: &Value, current: &Value) -> String {
+    let before = tool_names(old);
+    let now = tool_names(current);
+    let added: Vec<String> = now.difference(&before).cloned().collect();
+    let removed: Vec<String> = before.difference(&now).cloned().collect();
+    let generation = field(current, "generation").unwrap_or("unknown");
+    let mut lines = vec![format!("Toolset generation is now {generation}.")];
+    if !added.is_empty() {
+        lines.push(format!("Tools now advertised: {}.", listing(&added)));
+    }
+    if !removed.is_empty() {
+        lines.push(format!(
+            "Tools no longer advertised: {}.",
+            listing(&removed)
+        ));
+    }
+    format!("## What you have changed\n\n{}", lines.join(" "))
+}
+
+fn environment_full(state: &Value) -> String {
+    format!(
+        "## Environment\n\nThe current UTC date is {}. The platform is {} {}.",
+        field(state, "date_utc").unwrap_or("unknown"),
+        field(state, "os").unwrap_or("unknown"),
+        field(state, "architecture").unwrap_or("unknown")
+    )
+}
+
+fn model_full(state: &Value) -> String {
+    let model = field(state, "model").unwrap_or("");
+    if model.is_empty() {
+        return "## What is answering\n\nNo model has been selected yet.".to_owned();
+    }
+    let effort = field(state, "effort").unwrap_or(UNSAID);
+    let rung = if effort == UNSAID {
+        effort.to_owned()
+    } else {
+        format!("{effort} effort")
+    };
+    format!(
+        "## What is answering\n\nThe model answering here is {model}, asked at {rung}. That is \
+         what to say when somebody asks which model they are talking to or how hard you are \
+         thinking. Neither is something you can find out for yourself, and both can change \
+         partway through a session."
+    )
+}
+
+fn changed_fields(label: &str, old: &Value, current: &Value) -> String {
+    let before = match old.as_object() {
+        Some(object) => object,
+        None => empty_object(),
+    };
+    let now = match current.as_object() {
+        Some(object) => object,
+        None => empty_object(),
+    };
+    let mut changes = Vec::new();
+    for (name, value) in now {
+        if before.get(name) != Some(value) {
+            changes.push(format!("{name} is now {}", scalar(value)));
+        }
+    }
+    for name in before.keys().filter(|name| !now.contains_key(*name)) {
+        changes.push(format!("{name} is no longer set"));
+    }
+    format!("## {label} changed\n\n{}.", changes.join("; "))
+}
+
+fn scalar(value: &Value) -> String {
+    value
+        .as_str()
+        .map(str::to_owned)
+        .unwrap_or_else(|| value.to_string())
 }
 
 /// The paragraph two tones end on, written once.
