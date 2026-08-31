@@ -1287,7 +1287,7 @@ impl DescribeTool for Logged {
         WATCH
     }
 
-    fn schema(&self) -> &str {
+    fn schema(&self) -> &'static str {
         r#"{"type":"object","properties":{}}"#
     }
 }

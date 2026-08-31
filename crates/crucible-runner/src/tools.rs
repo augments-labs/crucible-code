@@ -116,6 +116,10 @@ impl Tools {
     /// property of a tool: the same `bash` is indispensable to one session and
     /// untouched by the next, and only the thing assembling a session knows
     /// which it is looking at.
+    ///
+    /// # Errors
+    ///
+    /// [`ToolsetError::Duplicate`] when an entry already answers to the name.
     pub fn defer(
         &mut self,
         descriptor: ToolDescriptor,
@@ -181,7 +185,10 @@ impl Tools {
 
         self.offered.push(Offered { entry, deferred });
         self.revision = self.revision.wrapping_add(1);
-        *self.cached.lock().unwrap() = None;
+        *self
+            .cached
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
         Ok(())
     }
 
@@ -230,7 +237,10 @@ impl Tools {
     /// [`ToolsetError`] if the visible roster crosses its aggregate bounds.
     pub fn snapshot(&self) -> Result<ToolSnapshot, ToolsetError> {
         let revealed = self.revealed.revision();
-        let mut cached = self.cached.lock().unwrap();
+        let mut cached = self
+            .cached
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(present) = cached.as_ref()
             && present.roster == self.revision
             && present.revealed == revealed
@@ -364,10 +374,12 @@ mod tests {
         let advertised = snapshot.advertised();
 
         assert_eq!(advertised.len(), 1);
-        assert_eq!(advertised[0].name, "runtime_owned");
         assert_eq!(
-            advertised[0].schema,
-            r#"{"description":"Runtime owned.","type":"object","properties":{}}"#
+            advertised.first().map(|tool| (tool.name, tool.schema)),
+            Some((
+                "runtime_owned",
+                r#"{"description":"Runtime owned.","type":"object","properties":{}}"#
+            ))
         );
 
         let call = ToolCall {

@@ -117,8 +117,7 @@ mod tests {
             assert_eq!(
                 tool.summary(&ToolArgs::new(args)).as_str(),
                 expected,
-                "{} summarised the wrong argument",
-                name
+                "{name} summarised the wrong argument"
             );
         }
     }

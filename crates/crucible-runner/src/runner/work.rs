@@ -76,8 +76,10 @@ impl Work<'_> {
 
         let mut at = 0;
         while at < calls.len() {
-            if !matches!(went, Went::On) {
-                let invocation = self.after_turn(&calls[at], &went);
+            let Some(call) = calls.get(at) else {
+                break;
+            };
+            if let Some(invocation) = self.after_turn(call, &went) {
                 self.finish(
                     invocation,
                     at,
@@ -115,7 +117,10 @@ impl Work<'_> {
 
             let mut decisions = Vec::with_capacity(end - at);
             let mut ended = None;
-            for call in &calls[at..end] {
+            let Some(wave) = calls.get(at..end) else {
+                break;
+            };
+            for call in wave {
                 if ended.is_some() {
                     decisions.push(Decision::NotRun(self.stand_in(
                         call,
@@ -194,23 +199,23 @@ impl Work<'_> {
 
         let admission = match self.tools.admit(call) {
             Ok(admission) => admission,
-            Err(problem) => return Decision::Done(self.rejected(call, None, problem)),
+            Err(problem) => return Decision::Done(Self::rejected(call, None, &problem)),
         };
         let entry = match self.tools.resolve(&admission) {
             Ok(entry) => entry,
-            Err(problem) => return Decision::Done(self.rejected(call, None, problem)),
+            Err(problem) => return Decision::Done(Self::rejected(call, None, &problem)),
         };
         let source = Some(entry.descriptor().provenance().receipt());
         let result_limit = result_limit(entry);
+        let raw_evidence =
+            InvocationEvidence::new(source.clone(), call.args.as_str().len(), result_limit);
 
         if let Err(problem) = entry.tool().validate(&call.args) {
             return Decision::Done(Invocation::failed(
                 call.clone(),
-                problem,
+                &problem,
                 ToolOutcome::Rejected,
-                source,
-                call.args.as_str().len(),
-                result_limit,
+                raw_evidence,
             ));
         }
 
@@ -220,11 +225,9 @@ impl Work<'_> {
                 Err(problem) => {
                     return Decision::Done(Invocation::failed(
                         call.clone(),
-                        problem,
+                        &problem,
                         ToolOutcome::Rejected,
-                        source,
-                        call.args.as_str().len(),
-                        result_limit,
+                        raw_evidence,
                     ));
                 }
             },
@@ -235,16 +238,16 @@ impl Work<'_> {
             name: call.name.clone(),
             args,
         };
+        let evidence =
+            InvocationEvidence::new(source, transformed.args.as_str().len(), result_limit);
         let admission = match self.tools.admit(&transformed) {
             Ok(admission) => admission,
             Err(problem) => {
                 return Decision::Done(Invocation::failed(
                     transformed.clone(),
-                    problem,
+                    &problem,
                     ToolOutcome::Rejected,
-                    source,
-                    transformed.args.as_str().len(),
-                    result_limit,
+                    evidence,
                 ));
             }
         };
@@ -253,22 +256,18 @@ impl Work<'_> {
             Err(problem) => {
                 return Decision::Done(Invocation::failed(
                     transformed.clone(),
-                    problem,
+                    &problem,
                     ToolOutcome::Rejected,
-                    source,
-                    transformed.args.as_str().len(),
-                    result_limit,
+                    evidence,
                 ));
             }
         };
         if let Err(problem) = entry.tool().validate(&transformed.args) {
             return Decision::Done(Invocation::failed(
                 transformed.clone(),
-                problem,
+                &problem,
                 ToolOutcome::Rejected,
-                source,
-                transformed.args.as_str().len(),
-                result_limit,
+                evidence,
             ));
         }
 
@@ -287,52 +286,39 @@ impl Work<'_> {
             Err(problem) => {
                 return Decision::Done(Invocation::failed(
                     transformed.clone(),
-                    problem,
+                    &problem,
                     ToolOutcome::Rejected,
-                    source,
-                    transformed.args.as_str().len(),
-                    result_limit,
+                    evidence,
                 ));
             }
         };
 
         match settled {
             Settled::Approved(approved) => match self.tools.resolve_approved(&approved) {
-                Ok(approved_entry) => {
-                    let input_bytes = transformed.args.as_str().len();
-                    Decision::Ready(Prepared {
-                        call: transformed,
-                        entry: approved_entry.clone(),
-                        approved,
-                        source,
-                        input_bytes,
-                        result_limit,
-                    })
-                }
+                Ok(approved_entry) => Decision::Ready(Prepared {
+                    call: transformed,
+                    entry: approved_entry.clone(),
+                    approved,
+                    evidence,
+                }),
                 Err(problem) => Decision::Done(Invocation::failed(
                     transformed.clone(),
-                    problem,
+                    &problem,
                     ToolOutcome::Rejected,
-                    source,
-                    transformed.args.as_str().len(),
-                    result_limit,
+                    evidence,
                 )),
             },
             Settled::Forbidden => Decision::Done(Invocation::new(
                 transformed.clone(),
                 ToolOutput::failed(FORBIDDEN),
                 ToolOutcome::Forbidden,
-                source,
-                transformed.args.as_str().len(),
-                result_limit,
+                evidence,
             )),
             Settled::Refused => Decision::Refused(Invocation::new(
                 transformed.clone(),
                 ToolOutput::failed(DENIED),
                 ToolOutcome::Refused,
-                source,
-                transformed.args.as_str().len(),
-                result_limit,
+                evidence,
             )),
         }
     }
@@ -358,7 +344,7 @@ impl Work<'_> {
                 .collect();
         }
 
-        let mut results: Vec<Option<Invocation>> = (0..decisions.len()).map(|_| None).collect();
+        let mut completed = Vec::with_capacity(decisions.len());
         thread::scope(|scope| {
             let mut running = Vec::with_capacity(ready);
             for (index, decision) in decisions.into_iter().enumerate() {
@@ -367,8 +353,10 @@ impl Work<'_> {
                         let ancestry = self.ancestry;
                         let cancel = self.cancel;
                         let events = self.events;
+                        let fallback = PanicFallback::from(&prepared);
                         running.push((
                             index,
+                            fallback,
                             scope.spawn(move || {
                                 execute_contained(prepared, ancestry, cancel, events)
                             }),
@@ -377,20 +365,21 @@ impl Work<'_> {
                     Decision::Done(invocation)
                     | Decision::Refused(invocation)
                     | Decision::Stopped(invocation)
-                    | Decision::NotRun(invocation) => results[index] = Some(invocation),
+                    | Decision::NotRun(invocation) => completed.push((index, invocation)),
                 }
             }
-            for (index, worker) in running {
-                results[index] = Some(
-                    worker
-                        .join()
-                        .expect("the invocation boundary contains executor panics"),
-                );
+            for (index, fallback, worker) in running {
+                let invocation = match worker.join() {
+                    Ok(invocation) => invocation,
+                    Err(_) => fallback.panicked(),
+                };
+                completed.push((index, invocation));
             }
         });
-        results
+        completed.sort_by_key(|(index, _)| *index);
+        completed
             .into_iter()
-            .map(|result| result.expect("every scheduler slot is finalized exactly once"))
+            .map(|(_, invocation)| invocation)
             .collect()
     }
 
@@ -407,7 +396,10 @@ impl Work<'_> {
         let mut end = start;
         let mut exclusive = Vec::<Box<str>>::new();
         while end < calls.len() && end - start < ceiling {
-            match self.mode(&calls[end]) {
+            let Some(call) = calls.get(end) else {
+                break;
+            };
+            match self.mode(call) {
                 ToolExecutionMode::Sequential => break,
                 ToolExecutionMode::Parallel => end += 1,
                 ToolExecutionMode::Exclusive(key) => {
@@ -430,44 +422,38 @@ impl Work<'_> {
             })
     }
 
-    fn rejected(
-        &self,
-        call: &ToolCall,
-        entry: Option<&ToolEntry>,
-        problem: ToolError,
-    ) -> Invocation {
-        Invocation::failed(
-            call.clone(),
-            problem,
-            ToolOutcome::Rejected,
+    fn rejected(call: &ToolCall, entry: Option<&ToolEntry>, problem: &ToolError) -> Invocation {
+        let evidence = InvocationEvidence::new(
             entry.map(|entry| entry.descriptor().provenance().receipt()),
             call.args.as_str().len(),
             entry.map_or(TOOL_RESULT_BYTES, result_limit),
-        )
+        );
+        Invocation::failed(call.clone(), problem, ToolOutcome::Rejected, evidence)
     }
 
     fn stand_in(&self, call: &ToolCall, text: &str, outcome: ToolOutcome) -> Invocation {
         let entry = self.tools.find(&call.name);
-        Invocation::new(
-            call.clone(),
-            ToolOutput::failed(text),
-            outcome,
+        let evidence = InvocationEvidence::new(
             entry.map(|entry| entry.descriptor().provenance().receipt()),
             call.args.as_str().len(),
             entry.map_or(TOOL_RESULT_BYTES, result_limit),
-        )
+        );
+        Invocation::new(call.clone(), ToolOutput::failed(text), outcome, evidence)
     }
 
-    fn after_turn(&self, call: &ToolCall, went: &Went) -> Invocation {
+    fn after_turn(&self, call: &ToolCall, went: &Went) -> Option<Invocation> {
         match went {
             Went::Stopped(_) | Went::Refused(_) => {
-                self.stand_in(call, NOT_RUN, ToolOutcome::NotRun)
+                Some(self.stand_in(call, NOT_RUN, ToolOutcome::NotRun))
             }
-            Went::OutputLimit => self.stand_in(call, "", ToolOutcome::OutputLimit),
-            Went::On => unreachable!("a live turn is admitted in waves"),
+            Went::OutputLimit => Some(self.stand_in(call, "", ToolOutcome::OutputLimit)),
+            Went::On => None,
         }
     }
 
+    // These are the two sides of one atomic finalization: the shared turn
+    // budget/state and both ordered sinks. Wrapping references in a carrier
+    // would shorten the signature without reducing the operation's inputs.
     #[allow(clippy::too_many_arguments)]
     fn finish(
         &self,
@@ -495,7 +481,9 @@ impl Work<'_> {
             } else {
                 ""
             });
-            invocation.retention = invocation.output.limit_encoded(invocation.result_limit);
+            invocation.retention = invocation
+                .output
+                .limit_encoded(invocation.evidence.result_limit);
             if matches!(went, Went::On | Went::OutputLimit) {
                 *went = Went::OutputLimit;
                 invocation.outcome = ToolOutcome::OutputLimit;
@@ -505,8 +493,8 @@ impl Work<'_> {
 
         let receipt = ToolReceipt::new(
             self.tools.generation().clone(),
-            invocation.source,
-            invocation.input_bytes,
+            invocation.evidence.source,
+            invocation.evidence.input_bytes,
             invocation.retention,
             invocation.outcome,
         );
@@ -541,9 +529,7 @@ struct Prepared {
     call: ToolCall,
     entry: ToolEntry,
     approved: Approved,
-    source: Option<ToolSourceReceipt>,
-    input_bytes: usize,
-    result_limit: usize,
+    evidence: InvocationEvidence,
 }
 
 impl Prepared {
@@ -552,10 +538,25 @@ impl Prepared {
             self.call,
             ToolOutput::failed(NOT_RUN),
             ToolOutcome::NotRun,
-            self.source,
-            self.input_bytes,
-            self.result_limit,
+            self.evidence,
         )
+    }
+}
+
+#[derive(Clone)]
+struct InvocationEvidence {
+    source: Option<ToolSourceReceipt>,
+    input_bytes: usize,
+    result_limit: usize,
+}
+
+impl InvocationEvidence {
+    fn new(source: Option<ToolSourceReceipt>, input_bytes: usize, result_limit: usize) -> Self {
+        Self {
+            source,
+            input_bytes,
+            result_limit,
+        }
     }
 }
 
@@ -563,9 +564,7 @@ struct Invocation {
     call: ToolCall,
     output: ToolOutput,
     outcome: ToolOutcome,
-    source: Option<ToolSourceReceipt>,
-    input_bytes: usize,
-    result_limit: usize,
+    evidence: InvocationEvidence,
     retention: ToolOutputRetention,
 }
 
@@ -574,38 +573,25 @@ impl Invocation {
         call: ToolCall,
         mut output: ToolOutput,
         outcome: ToolOutcome,
-        source: Option<ToolSourceReceipt>,
-        input_bytes: usize,
-        result_limit: usize,
+        evidence: InvocationEvidence,
     ) -> Self {
-        let retention = output.limit_encoded(result_limit);
+        let retention = output.limit_encoded(evidence.result_limit);
         Self {
             call,
             output,
             outcome,
-            source,
-            input_bytes,
-            result_limit,
+            evidence,
             retention,
         }
     }
 
     fn failed(
         call: ToolCall,
-        problem: ToolError,
+        problem: &ToolError,
         outcome: ToolOutcome,
-        source: Option<ToolSourceReceipt>,
-        input_bytes: usize,
-        result_limit: usize,
+        evidence: InvocationEvidence,
     ) -> Self {
-        Self::new(
-            call,
-            failure(&problem),
-            outcome,
-            source,
-            input_bytes,
-            result_limit,
-        )
+        Self::new(call, failure(problem), outcome, evidence)
     }
 }
 
@@ -634,9 +620,7 @@ fn execute(
         call,
         entry,
         approved,
-        source,
-        input_bytes,
-        result_limit,
+        evidence,
     } = prepared;
     let deadline = entry
         .descriptor()
@@ -654,9 +638,7 @@ fn execute(
             call,
             ToolOutput::failed(NOT_RUN),
             ToolOutcome::Cancelled,
-            source,
-            input_bytes,
-            result_limit,
+            evidence,
         );
     }
     if context.timed_out() {
@@ -664,9 +646,7 @@ fn execute(
             call,
             ToolOutput::failed("tool timed out"),
             ToolOutcome::TimedOut,
-            source,
-            input_bytes,
-            result_limit,
+            evidence,
         );
     }
 
@@ -675,14 +655,7 @@ fn execute(
             Some(guard) => match guard.guard(&call, output) {
                 Ok(output) => output,
                 Err(problem) => {
-                    return Invocation::failed(
-                        call,
-                        problem,
-                        ToolOutcome::Failed,
-                        source,
-                        input_bytes,
-                        result_limit,
-                    );
+                    return Invocation::failed(call, &problem, ToolOutcome::Failed, evidence);
                 }
             },
             None => output,
@@ -692,20 +665,11 @@ fn execute(
                 call,
                 ToolOutput::failed(NOT_RUN),
                 ToolOutcome::Cancelled,
-                source,
-                input_bytes,
-                result_limit,
+                evidence,
             );
         }
         Err(problem) => {
-            return Invocation::failed(
-                call,
-                problem,
-                ToolOutcome::Failed,
-                source,
-                input_bytes,
-                result_limit,
-            );
+            return Invocation::failed(call, &problem, ToolOutcome::Failed, evidence);
         }
     };
     let outcome = if output.is_failed() {
@@ -713,23 +677,19 @@ fn execute(
     } else {
         ToolOutcome::Succeeded
     };
-    Invocation::new(call, output, outcome, source, input_bytes, result_limit)
+    Invocation::new(call, output, outcome, evidence)
 }
 
 struct PanicFallback {
     call: ToolCall,
-    source: Option<ToolSourceReceipt>,
-    input_bytes: usize,
-    result_limit: usize,
+    evidence: InvocationEvidence,
 }
 
 impl From<&Prepared> for PanicFallback {
     fn from(prepared: &Prepared) -> Self {
         Self {
             call: prepared.call.clone(),
-            source: prepared.source.clone(),
-            input_bytes: prepared.input_bytes,
-            result_limit: prepared.result_limit,
+            evidence: prepared.evidence.clone(),
         }
     }
 }
@@ -740,9 +700,7 @@ impl PanicFallback {
             self.call,
             ToolOutput::failed("tool panicked; the failure was contained"),
             ToolOutcome::Panicked,
-            self.source,
-            self.input_bytes,
-            self.result_limit,
+            self.evidence,
         )
     }
 }
@@ -985,7 +943,7 @@ mod tests {
         ask: &mut dyn Ask,
         call: ToolCall,
     ) -> (Vec<ToolResult>, Went, Vec<Event>) {
-        invoke_many(tools, permission, ask, &[call], 1, usize::MAX)
+        invoke_many(tools, permission, ask, &[call], (1, usize::MAX))
     }
 
     fn invoke_many(
@@ -993,9 +951,9 @@ mod tests {
         permission: &mut Permission,
         ask: &mut dyn Ask,
         calls: &[ToolCall],
-        concurrency: usize,
-        maximum: usize,
+        limits: (usize, usize),
     ) -> (Vec<ToolResult>, Went, Vec<Event>) {
+        let (concurrency, maximum) = limits;
         let (events, seen) = channel();
         let keeping = Keeping(events);
         let ancestry = Ancestry::new();
@@ -1032,7 +990,10 @@ mod tests {
 
         let (results, went, events) = invoke(&tools, &mut permission, &mut ask, pipeline_call());
 
-        assert_eq!(results[0].output.text(), "done");
+        assert_eq!(
+            results.first().map(|result| result.output.text()),
+            Some("done")
+        );
         assert!(matches!(went, Went::On));
         assert_eq!(
             *trace.lock().unwrap(),
@@ -1066,7 +1027,11 @@ mod tests {
 
         let (results, went, _) = invoke(&tools, &mut permission, &mut ask, pipeline_call());
 
-        assert!(results[0].output.is_failed());
+        assert!(
+            results
+                .first()
+                .is_some_and(|result| result.output.is_failed())
+        );
         assert!(matches!(went, Went::On));
         assert_eq!(
             *trace.lock().unwrap(),
@@ -1085,7 +1050,10 @@ mod tests {
 
         let (results, went, _) = invoke(&tools, &mut permission, &mut ask, pipeline_call());
 
-        assert_eq!(results[0].output.text(), FORBIDDEN);
+        assert_eq!(
+            results.first().map(|result| result.output.text()),
+            Some(FORBIDDEN)
+        );
         assert!(matches!(went, Went::On));
         assert_eq!(
             *trace.lock().unwrap(),
@@ -1119,7 +1087,10 @@ mod tests {
             })
             .unwrap();
 
-        assert_eq!(event_output.text(), results[0].output.text());
+        assert_eq!(
+            Some(event_output.text()),
+            results.first().map(|result| result.output.text())
+        );
         assert!(event_output.text().contains("encoded bytes"));
         assert!(receipt.output().omitted() > 0);
         assert!(receipt.output().retained() <= 512);
@@ -1183,7 +1154,10 @@ mod tests {
 
         assert_eq!(ran.load(Ordering::SeqCst), 1);
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].output.text(), "tool timed out");
+        assert_eq!(
+            results.first().map(|result| result.output.text()),
+            Some("tool timed out")
+        );
         assert!(matches!(went, Went::On));
         assert_eq!(
             events
@@ -1344,7 +1318,7 @@ mod tests {
         let mut ask = CountedAsk::allowing(Arc::clone(&state));
 
         let (results, went, events) =
-            invoke_many(&tools, &mut permission, &mut ask, &calls, 2, usize::MAX);
+            invoke_many(&tools, &mut permission, &mut ask, &calls, (2, usize::MAX));
 
         assert!(matches!(went, Went::On));
         assert_eq!(state.peak.load(Ordering::SeqCst), 2);
@@ -1393,7 +1367,7 @@ mod tests {
         let mut ask = CountedAsk::allowing(Arc::clone(&state));
 
         let (results, went, _) =
-            invoke_many(&tools, &mut permission, &mut ask, &calls, 2, usize::MAX);
+            invoke_many(&tools, &mut permission, &mut ask, &calls, (2, usize::MAX));
 
         assert!(matches!(went, Went::On));
         assert_eq!(results.len(), 2);
@@ -1416,7 +1390,7 @@ mod tests {
         let mut permission = Permission::new();
         let mut ask = CountedAsk::allowing(Arc::clone(&state));
 
-        let (_, went, _) = invoke_many(&tools, &mut permission, &mut ask, &calls, 8, usize::MAX);
+        let (_, went, _) = invoke_many(&tools, &mut permission, &mut ask, &calls, (8, usize::MAX));
 
         assert!(matches!(went, Went::On));
         assert_eq!(state.peak.load(Ordering::SeqCst), 1);
@@ -1443,12 +1417,11 @@ mod tests {
         };
 
         let (results, went, _) =
-            invoke_many(&tools, &mut permission, &mut ask, &calls, 2, usize::MAX);
+            invoke_many(&tools, &mut permission, &mut ask, &calls, (2, usize::MAX));
 
         assert_eq!(state.ran.load(Ordering::SeqCst), 0);
         assert_eq!(results.len(), 2);
-        assert_eq!(results[0].output.text(), NOT_RUN);
-        assert_eq!(results[1].output.text(), DENIED);
+        assert_eq!(texts(&results), [NOT_RUN, DENIED]);
         assert!(matches!(went, Went::Refused(ref name) if &**name == "parallel"));
     }
 
@@ -1473,8 +1446,7 @@ mod tests {
             &mut permission,
             &mut ask,
             &calls,
-            2,
-            NOT_RUN.len().saturating_mul(2).saturating_sub(1),
+            (2, NOT_RUN.len().saturating_mul(2).saturating_sub(1)),
         );
 
         assert_eq!(state.ran.load(Ordering::SeqCst), 0);

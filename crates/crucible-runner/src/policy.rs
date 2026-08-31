@@ -286,12 +286,12 @@ impl RunPolicy {
                 attempts: self.retry.attempts.min(wanted.retry.attempts),
                 first_pause: self.retry.first_pause.min(wanted.retry.first_pause),
             },
-            tools: ToolScheduling::bounded(
-                self.tools
-                    .maximum_concurrency()
-                    .min(wanted.tools.maximum_concurrency()),
-            )
-            .expect("the minimum of two valid scheduler ceilings is valid"),
+            tools: ToolScheduling {
+                maximum_concurrency: self
+                    .tools
+                    .maximum_concurrency
+                    .min(wanted.tools.maximum_concurrency),
+            },
         }
     }
 }

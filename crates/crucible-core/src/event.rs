@@ -452,15 +452,16 @@ mod tests {
         // that matters about `Event` more than any of its contents.
         let (tx, rx) = std::sync::mpsc::channel();
 
-        std::thread::spawn(move || {
+        let sent = std::thread::spawn(move || {
             tx.send(Event::TurnStarted {
                 turn: TurnId::FIRST,
             })
+            .is_ok()
         })
         .join()
-        .unwrap()
         .unwrap();
 
+        assert!(sent, "the event receiver went away before the send");
         assert!(matches!(rx.recv().unwrap(), Event::TurnStarted { .. }));
     }
 

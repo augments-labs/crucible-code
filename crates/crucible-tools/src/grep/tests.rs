@@ -459,8 +459,7 @@ fn a_search_stopped_inside_one_file_keeps_what_it_read_and_names_the_file() {
         &mut searcher,
         &matcher,
         (&reached, &file),
-        (Mode::Content, &hits),
-        &cancel,
+        (Mode::Content, &hits, &cancel),
     );
     let hits = hits.into_inner().unwrap();
 

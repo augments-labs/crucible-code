@@ -568,7 +568,6 @@ impl Read {
     /// past the end reads that way — and a file nobody was shown is not one
     /// anybody may replace.
     fn numbered(
-        &self,
         mut lines: impl BufRead,
         requested: &str,
         from: usize,
@@ -768,7 +767,7 @@ impl Tool for Read {
             Err(problem) => return Ok(ToolOutput::failed(problem.to_string())),
         };
 
-        let (output, shown) = self.numbered(
+        let (output, shown) = Self::numbered(
             BufReader::new(file),
             requested,
             from,
@@ -1443,16 +1442,12 @@ mod tests {
             }
         }
 
-        let sample = Sample::new("read-cancel-offset");
         let cancel = Cancel::new();
         let input = BufReader::new(Stops {
             cancel: cancel.clone(),
         });
-        let tool = Read::new(sample.workspace(), Ledger::new());
 
-        let problem = tool
-            .numbered(input, "huge.txt", usize::MAX, CEILING, &cancel)
-            .unwrap_err();
+        let problem = Read::numbered(input, "huge.txt", usize::MAX, CEILING, &cancel).unwrap_err();
 
         assert!(matches!(problem, ToolError::Cancelled(ref tool) if &**tool == NAME));
     }

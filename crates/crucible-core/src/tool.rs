@@ -924,6 +924,11 @@ pub trait Tool: Send + Sync {
     ///
     /// The invocation pipeline calls this before and after any argument
     /// transformation. It must be side-effect free.
+    ///
+    /// # Errors
+    ///
+    /// [`ToolError`] when the arguments are not one complete call this tool
+    /// can execute.
     fn validate(&self, args: &ToolArgs) -> Result<(), ToolError>;
 
     /// How dangerous this particular call is.

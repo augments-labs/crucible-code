@@ -877,8 +877,9 @@ impl ToolSnapshot {
                 });
             }
 
-            if let Some(first) = entries[..at]
+            if let Some(first) = entries
                 .iter()
+                .take(at)
                 .find(|first| first.descriptor().name() == entry.descriptor().name())
             {
                 return Err(ToolsetError::Duplicate {

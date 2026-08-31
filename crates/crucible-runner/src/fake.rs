@@ -349,7 +349,7 @@ impl DescribeTool for Fixed {
         self.name
     }
 
-    fn schema(&self) -> &str {
+    fn schema(&self) -> &'static str {
         r#"{"type":"object","properties":{}}"#
     }
 }
@@ -424,7 +424,7 @@ impl DescribeTool for Typing {
         self.name
     }
 
-    fn schema(&self) -> &str {
+    fn schema(&self) -> &'static str {
         r#"{"type":"object","properties":{}}"#
     }
 }

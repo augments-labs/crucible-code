@@ -500,7 +500,9 @@ fn a_full_window_prunes_tool_output_from_the_active_turn_and_carries_on() {
         .position(|left| *left == Some(0))
         .expect("the bounded results filled the active window");
     assert!(
-        carried[full + 1..]
+        carried
+            .get(full.saturating_add(1)..)
+            .unwrap_or_default()
             .iter()
             .any(|left| left.is_some_and(|left| left > 0)),
         "pruning did not recover room: {carried:?}"

@@ -590,7 +590,7 @@ impl Grep {
                 let Ok(Some((path, file))) = files.open_regular(entry.path()) else {
                     return WalkState::Continue;
                 };
-                let mine = self.lines(&mut searcher, matcher, (&path, &file), (mode, hits), cancel);
+                let mine = self.lines(&mut searcher, matcher, (&path, &file), (mode, hits, cancel));
                 if let Some(name) = mine.partly
                     && let Ok(mut partly) = partly.lock()
                 {
@@ -645,11 +645,10 @@ impl Grep {
         searcher: &mut Searcher,
         matcher: &RegexMatcher,
         opened: (&WorkspacePath, &std::fs::File),
-        wanted: (Mode, &Mutex<Top>),
-        cancel: &Cancel,
+        wanted: (Mode, &Mutex<Top>, &Cancel),
     ) -> Searched {
         let (path, file) = opened;
-        let (mode, hits) = wanted;
+        let (mode, hits, cancel) = wanted;
         // Spelled by the module that owns the walk, so `glob` cannot name the
         // same file a second way.
         let shown = crate::tree::named(&self.workspace, path.as_path());
