@@ -1,7 +1,5 @@
 //! What `grep` finds, and what it declines to look at.
 
-use crucible_core::Unwatched;
-
 use std::path::Path;
 
 use crucible_core::Disposition;
@@ -13,14 +11,16 @@ use super::{
 use crate::sample::{Sample, allowed, under};
 
 fn grep(sample: &Sample, args: &str) -> ToolOutput {
-    let tool = Grep::new(sample.workspace(), Cancel::new());
-    tool.run(allowed(&tool, args), &Unwatched).unwrap()
+    let tool = Grep::new(sample.workspace());
+    tool.run(allowed(&tool, args), &crate::sample::context())
+        .unwrap()
 }
 
 /// The same search, with rules standing about files below the one searched.
 fn grep_under(sample: &Sample, args: &str, rules: &[(Disposition, &str)]) -> ToolOutput {
-    let tool = Grep::new(sample.workspace(), Cancel::new());
-    tool.run(under(&tool, args, rules), &Unwatched).unwrap()
+    let tool = Grep::new(sample.workspace());
+    tool.run(under(&tool, args, rules), &crate::sample::context())
+        .unwrap()
 }
 
 /// A tree with something to find in two files and something to skip.
@@ -79,12 +79,12 @@ fn a_mode_this_tool_does_not_have_is_refused_rather_than_guessed_at() {
     // set is two words long and named in the schema, so a word outside it is
     // a call to correct rather than one to reinterpret.
     let sample = tree("grep-mode-unknown");
-    let tool = Grep::new(sample.workspace(), Cancel::new());
+    let tool = Grep::new(sample.workspace());
 
     let problem = tool
         .run(
             allowed(&tool, r#"{"pattern":"needle","mode":"paths"}"#),
-            &Unwatched,
+            &crate::sample::context(),
         )
         .unwrap_err()
         .to_string();
@@ -363,9 +363,12 @@ fn a_search_the_user_stopped_never_reaches_the_files() {
     let cancel = Cancel::new();
     cancel.request();
 
-    let tool = Grep::new(sample.workspace(), cancel);
+    let tool = Grep::new(sample.workspace());
     let output = tool
-        .run(allowed(&tool, r#"{"pattern":"needle"}"#), &Unwatched)
+        .run(
+            allowed(&tool, r#"{"pattern":"needle"}"#),
+            &crate::sample::cancelled_by(&cancel),
+        )
         .unwrap();
 
     assert!(output.is_failed());
@@ -447,7 +450,7 @@ fn a_search_stopped_inside_one_file_keeps_what_it_read_and_names_the_file() {
     let named = workspace.root().join("many.txt");
     let reached = root.walked(&named).unwrap();
 
-    let tool = Grep::new(workspace.clone(), cancel);
+    let tool = Grep::new(workspace.clone());
     let mut searcher = SearcherBuilder::new().line_number(true).build();
     let matcher = RegexMatcherBuilder::new().build("needle").unwrap();
     let hits = std::sync::Mutex::new(Top::new(1_000, 0));
@@ -456,7 +459,7 @@ fn a_search_stopped_inside_one_file_keeps_what_it_read_and_names_the_file() {
         &mut searcher,
         &matcher,
         (&reached, &file),
-        (Mode::Content, &hits),
+        (Mode::Content, &hits, &cancel),
     );
     let hits = hits.into_inner().unwrap();
 
@@ -713,7 +716,7 @@ fn a_path_the_walk_could_not_have_reached_is_refused() {
     // pinned here. The one that costs nothing is the one that keeps a file out
     // of an answer.
     let sample = tree("grep-elsewhere");
-    let tool = Grep::new(sample.workspace(), Cancel::new());
+    let tool = Grep::new(sample.workspace());
     let approved = under(
         &tool,
         r#"{"pattern":"needle"}"#,
@@ -770,7 +773,7 @@ fn a_search_with_no_path_named_covers_the_whole_workspace() {
     // The honest answer to what it acts on, and a wider one than a file: see
     // the note on searching in the permissions documentation.
     let sample = Sample::new("grep-sensitivity");
-    let tool = Grep::new(sample.workspace(), Cancel::new());
+    let tool = Grep::new(sample.workspace());
 
     let sensitivity = tool.sensitivity(&ToolArgs::new("{}"));
 

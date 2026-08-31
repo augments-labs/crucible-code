@@ -3,6 +3,7 @@
 use std::path::Path;
 
 use crate::tool::{ToolArgs, ToolCall};
+use crate::toolset::ToolGeneration;
 use crate::workspace::{Workspace, WorkspacePath};
 
 use super::rule::Denials;
@@ -43,6 +44,12 @@ impl Grant {
 #[derive(Debug)]
 pub struct Approved {
     call: ToolCall,
+
+    /// The immutable tool generation that admitted this call. Direct uses of
+    /// the permission engine outside the invocation pipeline leave this empty
+    /// and therefore cannot resolve through a [`crate::ToolSnapshot`].
+    generation: Option<ToolGeneration>,
+
     /// Never read. Holding it is the point: an `Approved` cannot be built
     /// without one, and one cannot be built without an allow.
     _grant: Grant,
@@ -63,15 +70,21 @@ impl Approved {
     pub(super) fn new(
         call: ToolCall,
         sensitivity: Sensitivity,
+        generation: Option<ToolGeneration>,
         grant: Grant,
         denied: Denials,
     ) -> Self {
         Self {
             call,
+            generation,
             _grant: grant,
             sensitivity,
             denied,
         }
+    }
+
+    pub(crate) fn generation(&self) -> Option<&ToolGeneration> {
+        self.generation.as_ref()
     }
 
     /// What the verdict was reached about the call doing.
@@ -158,7 +171,13 @@ mod tests {
         let sensitivity = Sensitivity::MutatesFile {
             target: Target::at("/w/src/a.rs", Some("src/a.rs")),
         };
-        let approved = Approved::new(call(), sensitivity, grant, Rules::new().denials("write"));
+        let approved = Approved::new(
+            call(),
+            sensitivity,
+            None,
+            grant,
+            Rules::new().denials("write"),
+        );
 
         assert_eq!(approved.tool(), "write");
         assert_eq!(approved.args().as_str(), r#"{"path":"src/a.rs"}"#);

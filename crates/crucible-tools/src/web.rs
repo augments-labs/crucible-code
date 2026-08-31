@@ -21,8 +21,8 @@
 use std::sync::{Arc, LazyLock};
 
 use crucible_core::{
-    Approved, Cancel, Fetch, Host, Search, Sensitivity, Summary, Tool, ToolArgs, ToolError,
-    ToolOutput, Watch,
+    Approved, DescribeTool, Fetch, Host, Search, Sensitivity, Summary, Tool, ToolArgs, ToolContext,
+    ToolError, ToolOutput,
 };
 
 #[cfg(test)]
@@ -112,24 +112,31 @@ static FETCH_SCHEMA: LazyLock<String> = LazyLock::new(|| {
 #[derive(Debug)]
 pub struct WebSearch {
     source: Arc<dyn Search>,
-    cancel: Cancel,
 }
 
 impl WebSearch {
     /// A tool answered by `source`.
     #[must_use]
-    pub fn new(source: Arc<dyn Search>, cancel: Cancel) -> Self {
-        Self { source, cancel }
+    pub fn new(source: Arc<dyn Search>) -> Self {
+        Self { source }
+    }
+}
+
+impl DescribeTool for WebSearch {
+    fn name(&self) -> &str {
+        SEARCH
+    }
+
+    fn schema(&self) -> &str {
+        SEARCH_SCHEMA.as_str()
     }
 }
 
 impl Tool for WebSearch {
-    fn name(&self) -> &'static str {
-        SEARCH
-    }
-
-    fn schema(&self) -> &'static str {
-        SEARCH_SCHEMA.as_str()
+    fn validate(&self, args: &ToolArgs) -> Result<(), ToolError> {
+        let args = Args::parse(SEARCH, args)?;
+        args.text(QUERY)?;
+        args.count(LIMIT, RESULTS).map(drop)
     }
 
     /// The query, and where it goes.
@@ -159,12 +166,12 @@ impl Tool for WebSearch {
         summary::field(SEARCH, args, QUERY)
     }
 
-    fn run(&self, approved: Approved, _watch: &dyn Watch) -> Result<ToolOutput, ToolError> {
+    fn run(&self, approved: Approved, context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
         let args = Args::parse(SEARCH, approved.args())?;
         let query = args.text(QUERY)?;
         let limit = args.count(LIMIT, RESULTS)?.min(CEILING);
 
-        let found = match self.source.search(query, &self.cancel) {
+        let found = match self.source.search(query, context.cancel()) {
             Ok(found) => found,
             Err(problem) => return failed(SEARCH, &problem),
         };
@@ -197,24 +204,29 @@ impl Tool for WebSearch {
 #[derive(Debug)]
 pub struct WebFetch {
     source: Arc<dyn Fetch>,
-    cancel: Cancel,
 }
 
 impl WebFetch {
     /// A tool answered by `source`.
     #[must_use]
-    pub fn new(source: Arc<dyn Fetch>, cancel: Cancel) -> Self {
-        Self { source, cancel }
+    pub fn new(source: Arc<dyn Fetch>) -> Self {
+        Self { source }
+    }
+}
+
+impl DescribeTool for WebFetch {
+    fn name(&self) -> &str {
+        FETCH
+    }
+
+    fn schema(&self) -> &str {
+        FETCH_SCHEMA.as_str()
     }
 }
 
 impl Tool for WebFetch {
-    fn name(&self) -> &'static str {
-        FETCH
-    }
-
-    fn schema(&self) -> &'static str {
-        FETCH_SCHEMA.as_str()
+    fn validate(&self, args: &ToolArgs) -> Result<(), ToolError> {
+        Args::parse(FETCH, args)?.text(URL).map(drop)
     }
 
     /// Wherever the call is pointed, which is why this reads the arguments and
@@ -241,11 +253,11 @@ impl Tool for WebFetch {
         summary::field(FETCH, args, URL)
     }
 
-    fn run(&self, approved: Approved, _watch: &dyn Watch) -> Result<ToolOutput, ToolError> {
+    fn run(&self, approved: Approved, context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
         let args = Args::parse(FETCH, approved.args())?;
         let url = args.text(URL)?;
 
-        let page = match self.source.fetch(url, &self.cancel) {
+        let page = match self.source.fetch(url, context.cancel()) {
             Ok(page) => page,
             Err(problem) => return failed(FETCH, &problem),
         };
@@ -318,7 +330,7 @@ fn failed(
     problem: &crucible_core::SourceError,
 ) -> Result<ToolOutput, ToolError> {
     match problem {
-        crucible_core::SourceError::Cancelled(_) => Err(ToolError::Cancelled(tool)),
+        crucible_core::SourceError::Cancelled(_) => Err(ToolError::Cancelled(tool.into())),
 
         // Bounded like any other answer. A refusal carries the service's own
         // reply, which is somebody else's bytes and can be a whole error page —

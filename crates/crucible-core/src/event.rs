@@ -12,6 +12,7 @@ use crate::ids::{RunId, ToolId, TurnId};
 use crate::provider::{ProviderError, Spend};
 use crate::run::Ancestry;
 use crate::tool::{Summary, ToolCall, ToolError, ToolOutput, Wrote};
+use crate::toolset::{ToolReceipt, ToolsetError};
 use crate::transcript::{Attachment, StopReason};
 
 /// Why a turn ended badly.
@@ -27,6 +28,19 @@ pub enum TurnError {
     /// A tool could not be carried out.
     #[error(transparent)]
     Tool(#[from] ToolError),
+
+    /// The live tool roster could not be materialized.
+    #[error(transparent)]
+    Toolset(#[from] ToolsetError),
+
+    /// A toolset lifecycle failed and its required cleanup failed as well.
+    #[error("{primary}; toolset cleanup also failed: {cleanup}")]
+    ToolsetCleanup {
+        /// The failure that ended the work.
+        primary: Box<TurnError>,
+        /// The independent cleanup failure that must not be lost.
+        cleanup: ToolsetError,
+    },
 
     /// The model asked for a tool the user refused.
     #[error("{0} was not allowed")]
@@ -72,7 +86,7 @@ pub enum TurnError {
 /// Widening what is carried is not free: it is this method, every destination
 /// that implements it and every place that reports. The envelope is the answer
 /// to that, and adding to it is the cheap change; adding beside it is not.
-pub trait Post {
+pub trait Post: Send + Sync {
     /// Reports one event, and which execution produced it.
     ///
     /// Cannot fail. Nothing a worker does depends on anyone still listening,
@@ -219,6 +233,11 @@ pub enum Event {
         call: ToolId,
         /// What it produced.
         output: ToolOutput,
+        /// Bounded audit and usage evidence from the invocation pipeline.
+        ///
+        /// `None` is reserved for synthetic renderer events. The runner emits
+        /// `Some` for every recorded call.
+        receipt: Option<ToolReceipt>,
     },
 
     /// The response the turn was waiting on failed before it said anything, and
@@ -358,10 +377,15 @@ impl std::fmt::Debug for Event {
                 .field("call", call)
                 .field("text", text)
                 .finish(),
-            Self::ToolFinished { call, output } => f
+            Self::ToolFinished {
+                call,
+                output,
+                receipt,
+            } => f
                 .debug_struct("ToolFinished")
                 .field("call", call)
                 .field("output", output)
+                .field("receipt", receipt)
                 .finish(),
             Self::Retrying => f.write_str("Retrying"),
             Self::Carried { left } => f.debug_struct("Carried").field("left", left).finish(),
@@ -428,15 +452,16 @@ mod tests {
         // that matters about `Event` more than any of its contents.
         let (tx, rx) = std::sync::mpsc::channel();
 
-        std::thread::spawn(move || {
+        let sent = std::thread::spawn(move || {
             tx.send(Event::TurnStarted {
                 turn: TurnId::FIRST,
             })
+            .is_ok()
         })
         .join()
-        .unwrap()
         .unwrap();
 
+        assert!(sent, "the event receiver went away before the send");
         assert!(matches!(rx.recv().unwrap(), Event::TurnStarted { .. }));
     }
 

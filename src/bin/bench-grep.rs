@@ -28,8 +28,9 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    Approved, Ask, Disposition, Mode, Permission, Remember, RuleError, Rules, Sensitivity, Settled,
-    Tool, ToolArgs, ToolCall, ToolId, Unwatched, Verdict, Workspace,
+    Ancestry, Approved, Ask, Cancel, DescribeTool, Disposition, Mode, Permission, Remember,
+    RuleError, Rules, Sensitivity, Settled, Tool, ToolArgs, ToolCall, ToolContext, ToolId,
+    Unwatched, Verdict, Workspace,
 };
 use crucible_tools::Grep;
 
@@ -240,7 +241,8 @@ fn percentile(values: &[f64], percent: usize) -> Result<f64, Problem> {
 /// One search through the tool, timed, with rules standing behind it or not.
 fn ours(corpus: &Corpus, workload: Workload, ruled: bool) -> Result<Duration, Problem> {
     let workspace = Workspace::open(corpus.path())?;
-    let grep = Grep::new(workspace, crucible_core::Cancel::new());
+    let cancel = Cancel::new();
+    let grep = Grep::new(workspace);
     let args = ToolArgs::new(format!(
         r#"{{"pattern":"{}","limit":100000}}"#,
         workload.pattern
@@ -249,9 +251,16 @@ fn ours(corpus: &Corpus, workload: Workload, ruled: bool) -> Result<Duration, Pr
     // Read outside the clock. What the two runs are being compared on is what a
     // walk pays per file, and reading four patterns once is neither.
     let mut engine = engine(ruled)?;
+    let context = ToolContext::new(
+        Ancestry::new(),
+        ToolId::new("bench-grep"),
+        &cancel,
+        None,
+        &Unwatched,
+    );
 
     let started = Instant::now();
-    let output = grep.run(approved(&grep, args, &mut engine)?, &Unwatched)?;
+    let output = grep.run(approved(&grep, args, &mut engine)?, &context)?;
     let took = started.elapsed();
 
     let expected = match workload.expected {

@@ -15,8 +15,9 @@ use std::sync::Arc;
 use crucible_auth::StoredCredentials;
 use crucible_config::Settings;
 use crucible_core::{
-    AgentId, ApiKey, Cancel, Credential, Effort, Fetch, Header, HeaderKey, Message, Modalities,
-    Mode, Provider, Revealed, Search, SessionId, Tool, Transcript, Workspace,
+    AgentId, ApiKey, Credential, DescribeTool, Effort, Fetch, Header, HeaderKey, Message,
+    Modalities, Mode, Provider, Revealed, Search, SessionId, Tool, ToolsetError, Transcript,
+    Workspace,
 };
 use crucible_provider::{
     Anthropic, AnthropicWeb, Endpoint, Https, Moonshot, MoonshotWeb, OpenAi, OpenAiWeb, Unavailable,
@@ -107,11 +108,8 @@ pub(super) struct Startup<'a> {
     pub(super) sessions: &'a Path,
     /// The directory being worked in.
     pub(super) workspace: &'a Workspace,
-    /// What stops a turn.
-    pub(super) cancel: &'a Cancel,
-    /// Which files have been read. Made by the caller for the same reason the
-    /// cancel is: the loop holds one too, and the commands that leave a
-    /// session empty it.
+    /// Which files have been read. Made by the caller because the loop holds
+    /// one too, and the commands that leave a session empty it.
     pub(super) ledger: &'a Ledger,
     /// Which deferred tools this session has looked up. Held by the caller for
     /// the same reason the ledger is: `/clear` empties it, and a session that
@@ -201,7 +199,7 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<Runner, Fatal> {
     // tools this run actually registered — and which those are is the wiring's
     // answer, arrived at a line above rather than written down a second time
     // in a sentence.
-    let offering = tools(startup, settings, reaching);
+    let offering = tools(startup, settings, reaching)?;
 
     // Nothing has ended yet, so there is no command left running to report.
     // This is the definition's opening value rather than any turn's prompt:
@@ -673,14 +671,17 @@ fn key(
 /// comes after those, being the one that does nothing to the workspace — and
 /// the two web tools last of all, because they are the only ones that are not
 /// always there and the only ones that leave the machine.
-fn tools(startup: &Startup<'_>, settings: &Settings, reaching: Reaching) -> Tools {
+fn tools(
+    startup: &Startup<'_>,
+    settings: &Settings,
+    reaching: Reaching,
+) -> Result<Tools, ToolsetError> {
     // Read off the wiring rather than taken one by one. Five things a tool is
     // built with is five arguments beside the settings, which is a call nobody
     // can read — and every one of them is already a field of the value that
     // describes how this run was set up.
     let Startup {
         workspace,
-        cancel,
         ledger: seen,
         plan,
         leaving,
@@ -697,18 +698,14 @@ fn tools(startup: &Startup<'_>, settings: &Settings, reaching: Reaching) -> Tool
 
     // Which files have been read is learned by one tool and asked by another,
     // and this is the only place that may know they share it. The record itself
-    // comes from the caller, the same as the cancel: `/clear` and `/resume`
-    // empty it when they leave the session those files were read in, and
-    // neither tool can reach the other to be told.
-    tools.add(Box::new(Read::new(
-        workspace.clone(),
-        cancel.clone(),
-        seen.clone(),
-    )));
-    tools.add(Box::new(Grep::new(workspace.clone(), cancel.clone())));
-    tools.add(Box::new(Glob::new(workspace.clone(), cancel.clone())));
-    tools.add(Box::new(Edit::new(workspace.clone(), cancel.clone())));
-    tools.add(Box::new(Write::new(workspace.clone(), seen.clone())));
+    // comes from the caller: `/clear` and `/resume` empty it when they leave
+    // the session those files were read in, and neither tool can reach the
+    // other to be told.
+    tools.add_builtin(Read::new(workspace.clone(), seen.clone()))?;
+    tools.add_builtin(Grep::new(workspace.clone()))?;
+    tools.add_builtin(Glob::new(workspace.clone()))?;
+    tools.add_builtin(Edit::new(workspace.clone()))?;
+    tools.add_builtin(Write::new(workspace.clone(), seen.clone()))?;
 
     // The `env` block goes to the commands crucible runs and nowhere else.
     // crucible cannot put a variable in its own environment — writing to one is
@@ -717,11 +714,11 @@ fn tools(startup: &Startup<'_>, settings: &Settings, reaching: Reaching) -> Tool
     // And the other end of the row under the box. The clone shares one registry
     // rather than copying it, which is what lets the loop draw what is running and
     // stop one — and what makes the caller's copy the thing that ends them all.
-    tools.add(Box::new(
-        Bash::new(workspace.clone(), cancel.clone())
+    tools.add_builtin(
+        Bash::new(workspace.clone())
             .exporting(settings.env())
             .leaving(leaving.clone()),
-    ));
+    )?;
 
     // The other end of the panel above the prompt. The clone shares one plan
     // rather than copying it, which is what makes a call on the worker thread
@@ -729,29 +726,17 @@ fn tools(startup: &Startup<'_>, settings: &Settings, reaching: Reaching) -> Tool
     // Deferred from here down. `todo_write` is the largest of them and the one
     // a short session never reaches for; the two web tools are the ones a
     // session without a question about the world never touches at all.
-    defer(
-        &mut tools,
-        &mut held,
-        Box::new(TodoWrite::new(plan.clone())),
-    );
+    defer(&mut tools, &mut held, TodoWrite::new(plan.clone()))?;
 
     // Last, and only where this session has a source. One `Arc` serves both:
     // the two tools ask it different questions, and a session whose vendor
     // answers only one of them registers only that one the day such a source
     // exists.
     if let Some(searching) = reaching.searching {
-        defer(
-            &mut tools,
-            &mut held,
-            Box::new(WebSearch::new(searching, cancel.clone())),
-        );
+        defer(&mut tools, &mut held, WebSearch::new(searching))?;
     }
     if let Some(fetching) = reaching.fetching {
-        defer(
-            &mut tools,
-            &mut held,
-            Box::new(WebFetch::new(fetching, cancel.clone())),
-        );
+        defer(&mut tools, &mut held, WebFetch::new(fetching))?;
     }
 
     // Advertised rather than deferred, and that is the one place this tool
@@ -764,17 +749,17 @@ fn tools(startup: &Startup<'_>, settings: &Settings, reaching: Reaching) -> Tool
     // ask, so the schema would be spent saying there is no one here — the same
     // argument the search below makes about a session that defers nothing.
     if terminal {
-        tools.add(Box::new(AskUser::new(Arc::new(putting.clone()))));
+        tools.add_builtin(AskUser::new(Arc::new(putting.clone())))?;
     }
 
     // Last, and only where there is anything to find. A search that can only
     // ever answer "nothing" is a schema spent saying so.
     let looking = ToolSearch::new(held, startup.revealed.clone());
     if !looking.is_empty() {
-        tools.add(Box::new(looking));
+        tools.add_builtin(looking)?;
     }
 
-    tools
+    Ok(tools)
 }
 
 /// Registers `tool` unadvertised, and records how a search would find it.
@@ -782,12 +767,15 @@ fn tools(startup: &Startup<'_>, settings: &Settings, reaching: Reaching) -> Tool
 /// The two go together because they cannot disagree: a tool held back that no
 /// search knows about is one the model can never reach, and an entry with no
 /// tool behind it is a search that offers something that will not run.
-fn defer(tools: &mut Tools, held: &mut Vec<Held>, tool: Box<dyn Tool>) {
+fn defer<T>(tools: &mut Tools, held: &mut Vec<Held>, tool: T) -> Result<(), ToolsetError>
+where
+    T: DescribeTool + Tool + 'static,
+{
     held.push(Held {
         name: tool.name().into(),
         about: about(tool.schema()),
     });
-    tools.defer(tool);
+    tools.defer_builtin(tool)
 }
 
 /// The first sentence of what a schema says the tool does.
@@ -885,6 +873,7 @@ fn policy(settings: &Settings) -> RunPolicy {
             ask_on_resume: said.ask_on_resume,
         },
         retry: asked.retry,
+        tools: asked.tools,
     }
 }
 

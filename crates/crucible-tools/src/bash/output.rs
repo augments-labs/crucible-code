@@ -29,6 +29,14 @@ use super::platform::{Output, ReadState, Scope};
 use super::{NAME, TICK, io as tool_io};
 use crate::bound::OUTPUT;
 
+/// One stream's fixed prefix and rolling suffix budgets.
+const CAPTURE_HEAD: usize = OUTPUT / 2;
+const CAPTURE_TAIL: usize = OUTPUT - CAPTURE_HEAD;
+
+/// Raw output left beside a capture-elision note. The invocation pipeline
+/// later applies the authoritative encoded bound.
+pub(super) const CAPTURE_TEXT: usize = OUTPUT - 256;
+
 /// The most one handover carries, in bytes.
 ///
 /// A window on a live command rather than a record of it: the reader is being
@@ -103,7 +111,7 @@ pub(super) fn collect(
 
         if cancel.requested() {
             let _ = running.stop()?;
-            return Err(ToolError::Cancelled(NAME));
+            return Err(ToolError::Cancelled(NAME.into()));
         }
 
         if Instant::now() >= deadline {
@@ -147,10 +155,13 @@ pub(super) fn collect(
     out.close()?;
     err.close()?;
 
+    let captured = joined(&out, &err);
     Ok(Left::Answered(
         Finished {
             code: status.and_then(|status| status.code()),
-            out: joined(&out, &err),
+            out: captured.text,
+            original: captured.original,
+            omitted: captured.omitted,
             arriving: !ended,
             expired,
         }
@@ -381,6 +392,10 @@ struct Finished {
     /// `None` when a signal ended it, which is what a kill looks like.
     code: Option<i32>,
     out: String,
+    /// Raw bytes both process pipes produced before capture elision.
+    original: usize,
+    /// Raw bytes removed from their middle during capture.
+    omitted: usize,
     /// Whether the readers were still short of the end of a pipe when the wait
     /// for them ran out, which makes `out` a prefix of the output.
     arriving: bool,
@@ -414,7 +429,8 @@ impl Finished {
 
             return ToolOutput::failed(format!(
                 "{body}\n\n[stopped: the command ran too long{held}]"
-            ));
+            ))
+            .with_capture_elision(self.original, self.omitted);
         }
 
         // Said whatever the exit status was: the command can succeed and still
@@ -426,11 +442,12 @@ impl Finished {
             );
         }
 
-        match self.code {
+        let output = match self.code {
             Some(0) => ToolOutput::ok(body),
             Some(code) => ToolOutput::failed(format!("{body}\n\n[exit status {code}]")),
             None => ToolOutput::failed(format!("{body}\n\n[the command was killed]")),
-        }
+        };
+        output.with_capture_elision(self.original, self.omitted)
     }
 }
 
@@ -440,10 +457,10 @@ impl Finished {
 /// runs once and the reader runs for as long as the command does: `yes` or
 /// `cat /dev/urandom` fills memory with bytes that were always going to be
 /// thrown away, and the 30 KB the model finally sees says nothing about the
-/// gigabyte it took to choose them. Each end holds `OUTPUT`, which is twice
-/// what the join can take from either end of one stream — the slack is what
-/// makes the two streams composable without either one having to know how long
-/// the other is.
+/// gigabyte it took to choose them. The fixed head and rolling tail together
+/// retain at most `OUTPUT` per stream; joining the two streams performs one
+/// second bounded selection before the invocation pipeline applies the exact
+/// encoded-result ceiling.
 #[derive(Default)]
 struct Kept {
     head: Vec<u8>,
@@ -487,28 +504,30 @@ impl Kept {
 
         // The head fills once and then never moves again, which is what makes
         // it the *first* bytes rather than some later window of them.
-        let room = OUTPUT.saturating_sub(self.head.len()).min(arrived.len());
+        let room = CAPTURE_HEAD
+            .saturating_sub(self.head.len())
+            .min(arrived.len());
         let (first, rest) = arrived.split_at(room);
         self.head.extend_from_slice(first);
         if rest.is_empty() {
             return;
         }
 
-        // Only the last `OUTPUT` bytes of a batch can outlive it, so a batch
+        // Only the rolling-tail budget of a batch can outlive it, so a batch
         // bigger than the ring is cut down to its own tail in one step instead
         // of one byte at a time — a command emitting megabytes a second is
         // exactly the one that must not pay per byte here.
-        let stale = rest.len().saturating_sub(OUTPUT);
+        let stale = rest.len().saturating_sub(CAPTURE_TAIL);
         let (gone, keep) = rest.split_at(stale);
         self.dropped = self.dropped.saturating_add(gone.len());
 
-        // `keep` is at most `OUTPUT`, so the spill is never more than the ring
-        // is currently holding.
+        // `keep` is at most the tail budget, so the spill is never more than
+        // the ring is currently holding.
         let spill = self
             .tail
             .len()
             .saturating_add(keep.len())
-            .saturating_sub(OUTPUT);
+            .saturating_sub(CAPTURE_TAIL);
         self.tail.drain(..spill);
         self.dropped = self.dropped.saturating_add(spill);
         self.tail.extend(keep);
@@ -579,8 +598,8 @@ impl Kept {
     /// where it gets said, because that is where the two streams have been put
     /// together and there is one gap to describe.
     fn bytes(&self) -> Vec<u8> {
-        // Bounded by `2 * OUTPUT` however long the command ran, which is what
-        // this type exists to guarantee.
+        // Bounded by `OUTPUT` however long the command ran, which is what this
+        // type exists to guarantee.
         let mut all = self.head.clone();
         all.extend(&self.tail);
         all
@@ -780,15 +799,18 @@ fn settle(out: &Pipe, err: &Pipe) -> bool {
 /// read on two threads carry no shared order and none is recorded, so the
 /// result is not the sequence a terminal would have shown — a progress line on
 /// `stderr` says nothing here about which `stdout` line it came between.
-fn joined(out: &Pipe, err: &Pipe) -> String {
+fn joined(out: &Pipe, err: &Pipe) -> Captured {
     let (mut both, from_out) = out.take();
     let (rest, from_err) = err.take();
     both.extend(rest);
 
-    cut(
-        &String::from_utf8_lossy(&both),
-        from_out.saturating_add(from_err),
-    )
+    captured(&both, from_out.saturating_add(from_err))
+}
+
+struct Captured {
+    text: String,
+    original: usize,
+    omitted: usize,
 }
 
 /// The head and the tail, when there is more than anything can use.
@@ -797,28 +819,46 @@ fn joined(out: &Pipe, err: &Pipe) -> String {
 /// started doing, and how it ended. `already` is what the readers let go before
 /// this ever saw it, and it belongs in the same count — one number for the gap,
 /// because there is one gap.
+#[cfg(test)]
 fn cut(text: &str, already: usize) -> String {
-    if text.len() <= OUTPUT {
-        // Nothing to elide. A stream that let anything go kept a full head and
-        // a full tail, which is `2 * OUTPUT` on its own, so `already` is zero
-        // whenever this branch is the one taken.
-        return text.trim_end().to_owned();
+    captured(text.as_bytes(), already).text
+}
+
+fn captured(bytes: &[u8], already: usize) -> Captured {
+    let original = bytes.len().saturating_add(already);
+    if already == 0 && bytes.len() <= CAPTURE_TEXT {
+        return Captured {
+            text: String::from_utf8_lossy(bytes).trim_end().to_owned(),
+            original,
+            omitted: 0,
+        };
     }
 
-    let half = OUTPUT / 2;
-    let head = text.get(..boundary(text, half)).unwrap_or_default();
-    let tail = text
-        .get(boundary(text, text.len() - half)..)
-        .unwrap_or_default();
-    let dropped = already.saturating_add(
-        text.len()
-            .saturating_sub(head.len())
-            .saturating_sub(tail.len()),
-    );
+    let source = CAPTURE_TEXT.min(bytes.len());
+    let head_budget = source / 2;
+    let tail_budget = source.saturating_sub(head_budget);
+    let (head_end, tail_start) = match std::str::from_utf8(bytes) {
+        Ok(text) => (
+            boundary_before(text, head_budget),
+            boundary(text, text.len().saturating_sub(tail_budget)),
+        ),
+        Err(_) => (head_budget, bytes.len().saturating_sub(tail_budget)),
+    };
+    let head = String::from_utf8_lossy(bytes.get(..head_end).unwrap_or_default());
+    let tail = String::from_utf8_lossy(bytes.get(tail_start..).unwrap_or_default());
+    let kept = head_end.saturating_add(bytes.len().saturating_sub(tail_start));
+    let omitted = already.saturating_add(bytes.len().saturating_sub(kept));
+    let text = format!(
+        "{head}\n\n[process output was {original} bytes; {omitted} bytes omitted from the middle during capture]\n\n{tail}"
+    )
+    .trim_end()
+    .to_owned();
 
-    format!("{head}\n\n[{dropped} bytes of output cut from the middle]\n\n{tail}")
-        .trim_end()
-        .to_owned()
+    Captured {
+        text,
+        original,
+        omitted,
+    }
 }
 
 /// The nearest character boundary at or after `at`, so a cut never lands
@@ -827,6 +867,14 @@ fn boundary(text: &str, at: usize) -> usize {
     (at..=text.len())
         .find(|index| text.is_char_boundary(*index))
         .unwrap_or(text.len())
+}
+
+/// The nearest character boundary at or before `at`.
+fn boundary_before(text: &str, at: usize) -> usize {
+    (0..=at.min(text.len()))
+        .rev()
+        .find(|index| text.is_char_boundary(*index))
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

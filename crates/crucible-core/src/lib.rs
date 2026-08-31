@@ -33,6 +33,7 @@ mod run;
 mod source;
 mod steer;
 mod tool;
+mod toolset;
 mod transcript;
 mod workspace;
 
@@ -62,8 +63,17 @@ pub use run::Ancestry;
 pub use source::{Fetch, Page, Search, SearchResult, SourceError};
 pub use steer::Steer;
 pub use tool::{
-    Account, Changed, Remembered, Summary, Tool, ToolArgs, ToolCall, ToolError, ToolOutput,
-    Unwatched, Watch, Wrote,
+    Account, Changed, Remembered, Summary, TOOL_RESULT_BYTES, TOOL_RESULT_MIN_BYTES, Tool,
+    ToolArgs, ToolCall, ToolContext, ToolError, ToolOutput, ToolOutputRetention, Unwatched, Watch,
+    Wrote,
+};
+pub use toolset::{
+    ArgumentTransform, DescribeTool, InputGuard, OutputGuard, TOOL_ARGUMENT_BYTES,
+    TOOL_CALL_ID_BYTES, TOOL_NAME_BYTES, TOOL_RESOURCE_KEY_BYTES, TOOL_SCHEMA_BYTES,
+    TOOL_SNAPSHOT_BYTES, TOOL_SNAPSHOT_ENTRIES, TOOL_SOURCE_ID_BYTES, TOOL_SOURCE_LABEL_BYTES,
+    ToolAdmission, ToolDescriptor, ToolDescriptorError, ToolEntry, ToolExecutionMode,
+    ToolGeneration, ToolHooks, ToolOutcome, ToolProvenance, ToolReceipt, ToolResourceKey,
+    ToolSnapshot, ToolSourceKind, ToolSourceReceipt, Toolset, ToolsetContext, ToolsetError,
 };
 pub use transcript::{Attachment, Message, StopReason, ToolResult, Transcript};
 pub use workspace::{PathError, WalkFiles, Workspace, WorkspacePath, written};

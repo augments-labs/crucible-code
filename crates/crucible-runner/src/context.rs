@@ -325,6 +325,7 @@ mod tests {
                 recap_tokens: 256,
                 ..Compaction::default()
             },
+            tools: crate::ToolScheduling::default(),
         });
 
         let child = run.child(RunPolicy {
@@ -342,6 +343,7 @@ mod tests {
                 recap_tokens: u32::MAX,
                 ..Compaction::default()
             },
+            tools: crate::ToolScheduling::default(),
         });
 
         // Every budget, not only the three in `Bounds`: the name says what a

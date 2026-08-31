@@ -32,8 +32,8 @@ use std::fmt::Write as _;
 use std::sync::{Arc, LazyLock};
 
 use crucible_core::{
-    Answer, Answered, Approved, Put, Question, Sensitivity, Summary, Target, Tool, ToolArgs,
-    ToolError, ToolOutput, Watch,
+    Answer, Answered, Approved, DescribeTool, Put, Question, Sensitivity, Summary, Target, Tool,
+    ToolArgs, ToolContext, ToolError, ToolOutput,
 };
 
 use crate::args::Args;
@@ -235,13 +235,20 @@ impl std::fmt::Debug for AskUser {
     }
 }
 
-impl Tool for AskUser {
-    fn name(&self) -> &'static str {
+impl DescribeTool for AskUser {
+    fn name(&self) -> &str {
         NAME
     }
 
-    fn schema(&self) -> &'static str {
+    fn schema(&self) -> &str {
         SCHEMA.as_str()
+    }
+}
+
+impl Tool for AskUser {
+    fn validate(&self, args: &ToolArgs) -> Result<(), ToolError> {
+        let args = Args::parse(NAME, args)?;
+        questions(&args).map(drop)
     }
 
     /// Reads nothing and reaches nothing. It puts words on the screen and waits
@@ -271,7 +278,7 @@ impl Tool for AskUser {
         }
     }
 
-    fn run(&self, approved: Approved, _watch: &dyn Watch) -> Result<ToolOutput, ToolError> {
+    fn run(&self, approved: Approved, _context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
         let args = Args::parse(NAME, approved.args())?;
         let asked = questions(&args)?;
 

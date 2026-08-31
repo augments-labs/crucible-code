@@ -19,7 +19,9 @@
 //! Nothing here decides anything the runner did not already decide. This is
 //! where the loop lives now, not a second opinion about how a turn should go.
 
-use crucible_core::{Ask, Compacting, Event, Message, ProviderError, StopReason, TurnError};
+use crucible_core::{
+    Ask, Compacting, Event, Message, ProviderError, StopReason, ToolsetContext, TurnError,
+};
 
 use crate::context::RunContext;
 
@@ -34,6 +36,10 @@ pub(super) struct AgentLoop<'a> {
     /// How to put a call to the user. Not the runner's, because who is being
     /// asked is a property of the run and not of the session it belongs to.
     ask: &'a mut dyn Ask,
+    /// The narrow lifecycle context the live toolset was prepared under.
+    toolsets: &'a ToolsetContext,
+    /// Whether the first immutable generation is still to be captured.
+    first_tools: bool,
 }
 
 impl<'a> AgentLoop<'a> {
@@ -42,8 +48,15 @@ impl<'a> AgentLoop<'a> {
         runner: &'a mut Runner,
         run: &'a RunContext<'a>,
         ask: &'a mut dyn Ask,
+        toolsets: &'a ToolsetContext,
     ) -> Self {
-        Self { runner, run, ask }
+        Self {
+            runner,
+            run,
+            ask,
+            toolsets,
+            first_tools: true,
+        }
     }
 
     /// Takes passes until the turn ends, and says how it ended.
@@ -104,7 +117,14 @@ impl<'a> AgentLoop<'a> {
             // Read once per pass: `tool_search` can reveal a schema mid-turn.
             // The exact set measured here is handed to the request below, so an
             // estimate cannot count one set and send another.
-            let advertised = self.runner.tools.advertised();
+            let tools = if self.first_tools {
+                self.first_tools = false;
+                self.runner.toolset.snapshot(self.toolsets)?
+            } else {
+                self.runner.toolset.refresh(self.toolsets)?
+            };
+            self.runner.tools = tools.clone();
+            let advertised = tools.advertised();
 
             // Recording is what measures the transcript, and it happens on the
             // runner rather than here; reading it back at the top of each pass
@@ -260,9 +280,14 @@ impl<'a> AgentLoop<'a> {
             for call in &calls {
                 // A name no tool answers to is a call `Work` refuses a moment
                 // later, and it has nothing to say about itself first.
+                let entry = tools.find(&call.name);
                 events.post(Event::ToolRequested {
-                    summary: self.runner.about(call),
-                    backgroundable: self.runner.backgroundable(call),
+                    summary: entry.map_or_else(
+                        || crucible_core::Summary::new(""),
+                        |entry| entry.tool().summary(&call.args),
+                    ),
+                    backgroundable: entry
+                        .is_some_and(|entry| entry.tool().backgroundable(&call.args)),
                     call: call.clone(),
                 });
             }
@@ -282,11 +307,13 @@ impl<'a> AgentLoop<'a> {
             });
 
             let (results, went, output_bytes) = Work {
-                tools: &self.runner.tools,
+                tools: &tools,
                 permission: &mut self.runner.permission,
                 ask: &mut *self.ask,
                 events,
                 cancel,
+                ancestry: run.ancestry(),
+                concurrency: run.policy().tools.maximum_concurrency(),
             }
             .pass(&calls, bounds.tool_output, tool_output_maximum);
 

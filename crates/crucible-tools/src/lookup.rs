@@ -27,7 +27,8 @@ use std::fmt::Write as _;
 use std::sync::LazyLock;
 
 use crucible_core::{
-    Approved, Revealed, Sensitivity, Summary, Target, Tool, ToolArgs, ToolError, ToolOutput, Watch,
+    Approved, DescribeTool, Revealed, Sensitivity, Summary, Target, Tool, ToolArgs, ToolContext,
+    ToolError, ToolOutput,
 };
 
 use crate::args::Args;
@@ -103,13 +104,19 @@ impl ToolSearch {
     }
 }
 
-impl Tool for ToolSearch {
-    fn name(&self) -> &'static str {
+impl DescribeTool for ToolSearch {
+    fn name(&self) -> &str {
         NAME
     }
 
-    fn schema(&self) -> &'static str {
+    fn schema(&self) -> &str {
         SCHEMA.as_str()
+    }
+}
+
+impl Tool for ToolSearch {
+    fn validate(&self, args: &ToolArgs) -> Result<(), ToolError> {
+        Args::parse(NAME, args)?.text(QUERY).map(drop)
     }
 
     /// Reads nothing and reaches nothing. It changes what this session offers
@@ -125,7 +132,7 @@ impl Tool for ToolSearch {
         summary::field(NAME, args, QUERY)
     }
 
-    fn run(&self, approved: Approved, _watch: &dyn Watch) -> Result<ToolOutput, ToolError> {
+    fn run(&self, approved: Approved, _context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
         let args = Args::parse(NAME, approved.args())?;
         let query = args.text(QUERY)?;
 

@@ -13,7 +13,7 @@ use std::sync::atomic::Ordering;
 
 use crucible_auth::StoredCredentials;
 use crucible_core::{
-    Cancel, Delta, Message, Mode, Permission, Revealed, Rules, StopReason, ToolId, Workspace,
+    Delta, Message, Mode, Permission, Revealed, Rules, StopReason, ToolId, Workspace,
 };
 use crucible_runner::{Session, Tools};
 use crucible_tools::Ledger;
@@ -92,15 +92,12 @@ fn untouched(sample: &Sample, ledger: &Ledger) -> Tools {
 
     let workspace: Workspace = sample.workspace();
     let mut offered = Tools::new();
-    offered.add(Box::new(crucible_tools::Read::new(
-        workspace.clone(),
-        Cancel::new(),
-        ledger.clone(),
-    )));
-    offered.add(Box::new(crucible_tools::Write::new(
-        workspace,
-        ledger.clone(),
-    )));
+    offered
+        .add_builtin(crucible_tools::Read::new(workspace.clone(), ledger.clone()))
+        .unwrap();
+    offered
+        .add_builtin(crucible_tools::Write::new(workspace, ledger.clone()))
+        .unwrap();
     offered
 }
 

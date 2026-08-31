@@ -74,6 +74,7 @@ fn the_active_call_decides_whether_the_background_key_is_live() {
     turning.saw(&Event::ToolFinished {
         call: ToolId::new("a"),
         output: ToolOutput::ok("done"),
+        receipt: None,
     });
     turning.saw(&requested_as("bash", true));
     assert!(turning.can_background());
@@ -97,6 +98,7 @@ fn the_word_says_which_of_the_two_things_a_turn_does_is_happening() {
         after(&Event::ToolFinished {
             call: ToolId::new("a"),
             output: ToolOutput::ok("done"),
+            receipt: None,
         }),
         "thinking"
     );
@@ -608,6 +610,7 @@ fn what_a_command_printed_is_handed_back_when_its_tool_answers() {
     turning.saw(&Event::ToolFinished {
         call: ToolId::new("a"),
         output: ToolOutput::ok("done"),
+        receipt: None,
     });
 
     let rows: Vec<String> = turning
@@ -718,6 +721,7 @@ fn the_call_line_comes_back_when_its_tool_answers_and_only_then() {
         turning.saw(&Event::ToolFinished {
             call: ToolId::new("a"),
             output: ToolOutput::ok("done"),
+            receipt: None,
         }),
         vec![(ToolId::new("a"), "Read(src/main.rs)".to_owned())]
     );
@@ -728,6 +732,7 @@ fn the_call_line_comes_back_when_its_tool_answers_and_only_then() {
             .saw(&Event::ToolFinished {
                 call: ToolId::new("a"),
                 output: ToolOutput::ok("done"),
+                receipt: None,
             })
             .is_empty()
     );
@@ -761,6 +766,7 @@ fn several_requested_calls_return_the_heading_named_by_each_result() {
             turning.saw(&Event::ToolFinished {
                 call: ToolId::new(id),
                 output: ToolOutput::ok("done"),
+                receipt: None,
             }),
             vec![(ToolId::new(id), called.to_owned())]
         );
@@ -777,6 +783,7 @@ fn an_unknown_result_does_not_take_another_calls_heading() {
             .saw(&Event::ToolFinished {
                 call: ToolId::new("unknown"),
                 output: ToolOutput::ok("done"),
+                receipt: None,
             })
             .is_empty()
     );
@@ -784,6 +791,7 @@ fn an_unknown_result_does_not_take_another_calls_heading() {
         turning.saw(&Event::ToolFinished {
             call: ToolId::new("a"),
             output: ToolOutput::ok("done"),
+            receipt: None,
         }),
         vec![(ToolId::new("a"), "Read(src/main.rs)".to_owned())]
     );
@@ -864,6 +872,7 @@ fn a_turn_asked_to_stop_still_lets_the_call_it_had_out_come_back() {
         turning.saw(&Event::ToolFinished {
             call: ToolId::new("a"),
             output: ToolOutput::ok("done"),
+            receipt: None,
         }),
         vec![(ToolId::new("a"), "Read(src/main.rs)".to_owned())]
     );
@@ -941,6 +950,7 @@ fn the_call_line_is_on_the_value_the_loop_keys_a_redraw_on() {
     turning.saw(&Event::ToolFinished {
         call: ToolId::new("a"),
         output: ToolOutput::ok("done"),
+        receipt: None,
     });
     assert!(turning.moved(), "the call went and the footing did not");
 }

@@ -15,8 +15,8 @@
 use std::io::{self, Read as _};
 
 use crucible_core::{
-    Approved, Cancel, Remembered, Sensitivity, Summary, Tool, ToolArgs, ToolError, ToolOutput,
-    Watch, Workspace,
+    Approved, Cancel, DescribeTool, Remembered, Sensitivity, Summary, Tool, ToolArgs, ToolContext,
+    ToolError, ToolOutput, Workspace,
 };
 
 use std::sync::LazyLock;
@@ -139,24 +139,32 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
 #[derive(Debug)]
 pub struct Edit {
     workspace: Workspace,
-    cancel: Cancel,
 }
 
 impl Edit {
     /// Edits inside `workspace`, and nowhere else.
     #[must_use]
-    pub fn new(workspace: Workspace, cancel: Cancel) -> Self {
-        Self { workspace, cancel }
+    pub fn new(workspace: Workspace) -> Self {
+        Self { workspace }
+    }
+}
+
+impl DescribeTool for Edit {
+    fn name(&self) -> &str {
+        NAME
+    }
+
+    fn schema(&self) -> &str {
+        SCHEMA.as_str()
     }
 }
 
 impl Tool for Edit {
-    fn name(&self) -> &'static str {
-        NAME
-    }
-
-    fn schema(&self) -> &'static str {
-        SCHEMA.as_str()
+    fn validate(&self, args: &ToolArgs) -> Result<(), ToolError> {
+        let args = Args::parse(NAME, args)?;
+        args.text(PATH)?;
+        let listed = args.list(EDITS)?;
+        changes(&args, listed.as_deref()).map(drop)
     }
 
     fn sensitivity(&self, args: &ToolArgs) -> Sensitivity {
@@ -173,7 +181,7 @@ impl Tool for Edit {
         summary::remembered(NAME, args, true)
     }
 
-    fn run(&self, approved: Approved, _watch: &dyn Watch) -> Result<ToolOutput, ToolError> {
+    fn run(&self, approved: Approved, context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
         let args = Args::parse(NAME, approved.args())?;
         let requested = args.text(PATH)?;
         let listed = args.list(EDITS)?;
@@ -209,10 +217,10 @@ impl Tool for Edit {
         // retained source bytes below the declared whole-file ceiling. A large
         // sparse or minified input is therefore bounded both in memory and in
         // how long a stopped turn keeps reading it.
-        let before = match source(&mut file, &self.cancel) {
+        let before = match source(&mut file, context.cancel()) {
             Ok(Source::Text(before)) => before,
             Ok(Source::TooLarge) => return Ok(too_large(requested)),
-            Ok(Source::Cancelled) => return Err(ToolError::Cancelled(NAME)),
+            Ok(Source::Cancelled) => return Err(ToolError::Cancelled(NAME.into())),
             Ok(Source::Binary) => {
                 return Ok(ToolOutput::failed(format!(
                     "{requested} is not a text file"
@@ -220,7 +228,7 @@ impl Tool for Edit {
             }
             Err(source) => {
                 return Err(ToolError::Io {
-                    tool: NAME,
+                    tool: NAME.into(),
                     problem: format!("could not read {requested}").into(),
                     source,
                 });
@@ -238,8 +246,8 @@ impl Tool for Edit {
         let mut after = before.clone();
         let mut replaced = 0_usize;
         for (at, change) in wanted.iter().enumerate() {
-            if self.cancel.requested() {
-                return Err(ToolError::Cancelled(NAME));
+            if context.cancel().requested() {
+                return Err(ToolError::Cancelled(NAME.into()));
             }
 
             let found = after.matches(change.find).count();
@@ -263,13 +271,13 @@ impl Tool for Edit {
         let permissions = file
             .metadata()
             .map_err(|source| ToolError::Io {
-                tool: NAME,
+                tool: NAME.into(),
                 problem: format!("could not inspect {requested}").into(),
                 source,
             })?
             .permissions();
-        if self.cancel.requested() {
-            return Err(ToolError::Cancelled(NAME));
+        if context.cancel().requested() {
+            return Err(ToolError::Cancelled(NAME.into()));
         }
         // The replacement is prepared beside the old file, flushed, and
         // renamed only after it is whole. At no point can a reader observe the

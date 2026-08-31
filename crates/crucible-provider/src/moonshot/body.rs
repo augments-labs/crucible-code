@@ -291,7 +291,7 @@ fn write_result(message: &mut Object<'_>, result: &ToolResult, found: &[&Attache
 ///
 /// Nested under a `function` object, which is where this endpoint keeps a
 /// tool's name and schema and where the newer one does not.
-fn write_tool(tool: &mut Object<'_>, schema: &ToolSchema) {
+fn write_tool(tool: &mut Object<'_>, schema: &ToolSchema<'_>) {
     let (parameters, description) = described(schema.schema);
     tool.text("type", "function");
     tool.object("function", |function| {

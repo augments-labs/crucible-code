@@ -10,8 +10,8 @@ use std::fs;
 use std::io::Read as _;
 
 use crucible_core::{
-    Approved, PathError, Remembered, Sensitivity, Summary, Tool, ToolArgs, ToolError, ToolOutput,
-    Watch, Workspace,
+    Approved, DescribeTool, PathError, Remembered, Sensitivity, Summary, Tool, ToolArgs,
+    ToolContext, ToolError, ToolOutput, Workspace,
 };
 
 use std::sync::LazyLock;
@@ -88,13 +88,21 @@ impl Write {
     }
 }
 
-impl Tool for Write {
-    fn name(&self) -> &'static str {
+impl DescribeTool for Write {
+    fn name(&self) -> &str {
         NAME
     }
 
-    fn schema(&self) -> &'static str {
+    fn schema(&self) -> &str {
         SCHEMA.as_str()
+    }
+}
+
+impl Tool for Write {
+    fn validate(&self, args: &ToolArgs) -> Result<(), ToolError> {
+        let args = Args::parse(NAME, args)?;
+        args.text(PATH)?;
+        args.exact(CONTENT).map(drop)
     }
 
     fn sensitivity(&self, args: &ToolArgs) -> Sensitivity {
@@ -111,7 +119,7 @@ impl Tool for Write {
         summary::remembered(NAME, args, true)
     }
 
-    fn run(&self, approved: Approved, _watch: &dyn Watch) -> Result<ToolOutput, ToolError> {
+    fn run(&self, approved: Approved, _context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
         let args = Args::parse(NAME, approved.args())?;
         let requested = args.text(PATH)?;
         let content = args.exact(CONTENT)?;
@@ -167,7 +175,7 @@ impl Tool for Write {
             .map(|file| file.metadata().map(|metadata| metadata.permissions()))
             .transpose()
             .map_err(|source| ToolError::Io {
-                tool: NAME,
+                tool: NAME.into(),
                 problem: format!("could not inspect {requested}").into(),
                 source,
             })?;

@@ -5,17 +5,17 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    Ask, Command, Mode, Permission, Remember, Rules, ToolCall, ToolId, Unwatched, Verdict,
+    Ask, Cancel, Command, DescribeTool, Mode, Permission, Remember, Rules, ToolCall, ToolId,
+    Verdict,
 };
 
 use super::background::{Background, MOST};
-use super::{Bash, Cancel, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, environment};
-use crate::bound::OUTPUT;
+use super::{Bash, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, environment};
 use crate::sample::{Sample, allowed};
 
 fn bash(sample: &Sample, args: &str) -> Result<ToolOutput, ToolError> {
-    let tool = Bash::new(sample.workspace(), Cancel::new());
-    tool.run(allowed(&tool, args), &Unwatched)
+    let tool = Bash::new(sample.workspace());
+    tool.run(allowed(&tool, args), &crate::sample::context())
 }
 
 fn ran(sample: &Sample, args: &str) -> ToolOutput {
@@ -47,12 +47,12 @@ fn what_a_command_prints_is_handed_over_while_it_is_still_running() {
     // one tick has nothing to watch. That is not a gap — a result nobody had to
     // wait for is a result, and this is the surface for the other kind.
     let sample = Sample::new("bash-watched");
-    let tool = Bash::new(sample.workspace(), Cancel::new());
+    let tool = Bash::new(sample.workspace());
     let watched = Watched::default();
 
     let args = r#"{"command":"printf 'Compiling one\nCompiling two\n'; sleep 1"}"#;
     let output = tool
-        .run(allowed(&tool, args), &watched)
+        .run(allowed(&tool, args), &crate::sample::watching(&watched))
         .expect("the command ran");
 
     assert_eq!(
@@ -276,12 +276,15 @@ fn a_turn_the_user_stopped_ends_the_command_with_it() {
     });
 
     let started = Instant::now();
-    let tool = Bash::new(sample.workspace(), cancel);
+    let tool = Bash::new(sample.workspace());
     let problem = tool
-        .run(allowed(&tool, r#"{"command":"sleep 30"}"#), &Unwatched)
+        .run(
+            allowed(&tool, r#"{"command":"sleep 30"}"#),
+            &crate::sample::cancelled_by(&cancel),
+        )
         .expect_err("the turn was stopped");
 
-    assert!(matches!(problem, ToolError::Cancelled("bash")));
+    assert!(matches!(problem, ToolError::Cancelled(ref tool) if &**tool == "bash"));
     assert!(
         started.elapsed() < Duration::from_secs(10),
         "it waited out the sleep"
@@ -294,15 +297,15 @@ fn a_turn_already_stopped_never_starts_the_command() {
     let cancel = Cancel::new();
     cancel.request();
 
-    let tool = Bash::new(sample.workspace(), cancel);
+    let tool = Bash::new(sample.workspace());
     let problem = tool
         .run(
             allowed(&tool, r#"{"command":"touch should-not-exist"}"#),
-            &Unwatched,
+            &crate::sample::cancelled_by(&cancel),
         )
         .expect_err("the turn was stopped");
 
-    assert!(matches!(problem, ToolError::Cancelled("bash")));
+    assert!(matches!(problem, ToolError::Cancelled(ref tool) if &**tool == "bash"));
     assert!(!sample.root().join("should-not-exist").exists());
 }
 
@@ -330,9 +333,12 @@ fn the_shell_is_not_something_the_workspace_can_supply() {
         other => std::env::var_os(other),
     };
 
-    let tool = Bash::inheriting(sample.workspace(), Cancel::new(), empty_element_first);
+    let tool = Bash::inheriting(sample.workspace(), empty_element_first);
     let output = tool
-        .run(allowed(&tool, r#"{"command":"echo hello"}"#), &Unwatched)
+        .run(
+            allowed(&tool, r#"{"command":"echo hello"}"#),
+            &crate::sample::context(),
+        )
         .expect("the command ran");
 
     assert_eq!(output.text(), "hello");
@@ -362,8 +368,8 @@ fn a_command_that_floods_its_pipe_reports_everything_that_went() {
 
     assert!(
         output.text().contains(&format!(
-            "[{} bytes of output cut from the middle]",
-            FLOOD - OUTPUT
+            "[process output was {FLOOD} bytes; {} bytes omitted from the middle during capture]",
+            FLOOD - super::output::CAPTURE_TEXT
         )),
         "{}",
         output.text()
@@ -373,7 +379,7 @@ fn a_command_that_floods_its_pipe_reports_everything_that_went() {
 #[test]
 fn the_sensitivity_carries_what_the_call_will_run() {
     let sample = Sample::new("bash-sensitivity");
-    let tool = Bash::new(sample.workspace(), Cancel::new());
+    let tool = Bash::new(sample.workspace());
 
     let sensitivity = tool.sensitivity(&ToolArgs::new(r#"{"command":"/usr/bin/git status"}"#));
 
@@ -404,7 +410,7 @@ fn asks(sample: &Sample, mode: Mode, line: &str) -> bool {
         }
     }
 
-    let tool = Bash::new(sample.workspace(), Cancel::new());
+    let tool = Bash::new(sample.workspace());
     let call = ToolCall {
         id: ToolId::new("one"),
         name: tool.name().into(),
@@ -483,7 +489,7 @@ fn a_call_too_malformed_to_read_reports_the_whole_of_what_was_sent() {
     // `run` will refuse it, but a sensitivity is needed first, and the safe
     // answer to "what will this run" when the answer is unknown is everything.
     let sample = Sample::new("bash-malformed");
-    let tool = Bash::new(sample.workspace(), Cancel::new());
+    let tool = Bash::new(sample.workspace());
 
     assert_eq!(
         tool.sensitivity(&ToolArgs::new("not json at all")),
@@ -501,11 +507,10 @@ fn the_variables_the_tool_was_given_reach_the_command() {
     // model's commands get them and nothing else on the machine does.
     let sample = Sample::new("bash-env");
 
-    let tool =
-        Bash::new(sample.workspace(), Cancel::new()).exporting([("CRUCIBLE_TEST_PAGER", "cat")]);
+    let tool = Bash::new(sample.workspace()).exporting([("CRUCIBLE_TEST_PAGER", "cat")]);
     let args = r#"{"command":"echo $CRUCIBLE_TEST_PAGER"}"#;
     let output = tool
-        .run(allowed(&tool, args), &Unwatched)
+        .run(allowed(&tool, args), &crate::sample::context())
         .expect("the command ran");
 
     assert_eq!(output.text(), "cat");
@@ -519,7 +524,7 @@ fn a_variable_the_tool_was_given_never_reaches_a_debug_line() {
     // there. Which name is set is what a reader needs; the value never is.
     let sample = Sample::new("bash-debug");
 
-    let tool = Bash::new(sample.workspace(), Cancel::new()).exporting([("SECRET", "hunter2")]);
+    let tool = Bash::new(sample.workspace()).exporting([("SECRET", "hunter2")]);
     let shown = format!("{tool:?}");
 
     assert!(shown.contains("SECRET"), "{shown}");
@@ -536,11 +541,10 @@ fn a_variable_the_tool_was_given_wins_over_the_one_crucible_was_started_with() {
     // only one side ever sets.
     let sample = Sample::new("bash-env-over");
 
-    let tool = Bash::new(sample.workspace(), Cancel::new())
-        .exporting([("HOME", "/nowhere-in-particular")]);
+    let tool = Bash::new(sample.workspace()).exporting([("HOME", "/nowhere-in-particular")]);
     let args = r#"{"command":"echo $HOME"}"#;
     let output = tool
-        .run(allowed(&tool, args), &Unwatched)
+        .run(allowed(&tool, args), &crate::sample::context())
         .expect("the command ran");
 
     assert_eq!(output.text(), "/nowhere-in-particular");
@@ -576,10 +580,10 @@ fn a_key_under_a_name_nothing_could_have_guessed_never_reaches_a_command() {
         _ => std::env::var_os(name),
     };
 
-    let tool = Bash::inheriting(sample.workspace(), Cancel::new(), crucibles_own);
+    let tool = Bash::inheriting(sample.workspace(), crucibles_own);
     let args = r#"{"command":"echo \"[$WORK_KEY]\"; env"}"#;
     let output = tool
-        .run(allowed(&tool, args), &Unwatched)
+        .run(allowed(&tool, args), &crate::sample::context())
         .expect("the command ran");
 
     assert!(output.text().starts_with("[]"), "{}", output.text());
@@ -622,7 +626,7 @@ fn a_command_left_running_answers_at_once_and_keeps_running() {
     // command failed on the spot, and the process is still there afterwards.
     let sample = Sample::new("bash-background");
     let left = Background::new();
-    let tool = Bash::new(sample.workspace(), Cancel::new()).leaving(left.clone());
+    let tool = Bash::new(sample.workspace()).leaving(left.clone());
 
     let started = Instant::now();
     let output = tool
@@ -631,7 +635,7 @@ fn a_command_left_running_answers_at_once_and_keeps_running() {
                 &tool,
                 r#"{"command":"printf 'up\n'; sleep 30","background":true}"#,
             ),
-            &Unwatched,
+            &crate::sample::context(),
         )
         .expect("the command started");
 
@@ -674,7 +678,7 @@ fn a_command_the_developer_let_go_of_says_who_let_go_of_it() {
     // on with whatever does not depend on it.
     let sample = Sample::new("bash-pressed");
     let left = Background::new();
-    let tool = Bash::new(sample.workspace(), Cancel::new()).leaving(left.clone());
+    let tool = Bash::new(sample.workspace()).leaving(left.clone());
 
     // Asked for before the command starts rather than raced with it: the wait
     // loop reads the request every pass, so the first pass takes it, and the
@@ -685,7 +689,7 @@ fn a_command_the_developer_let_go_of_says_who_let_go_of_it() {
     let output = tool
         .run(
             allowed(&tool, r#"{"command":"printf 'up\n'; sleep 30"}"#),
-            &Unwatched,
+            &crate::sample::context(),
         )
         .expect("the command started");
 
@@ -739,14 +743,14 @@ fn a_command_that_fails_on_the_spot_is_reported_rather_than_left_running() {
     // at all — which would leave this asserting how quickly the machine
     // running it happened to be able to spawn `sh`, rather than what the tool
     // does about a command that is already over.
-    let tool = Bash::new(sample.workspace(), Cancel::new())
+    let tool = Bash::new(sample.workspace())
         .leaving(left.clone())
         .watching(Duration::from_secs(20));
 
     let output = tool
         .run(
             allowed(&tool, r#"{"command":"exit 7","background":true}"#),
-            &Unwatched,
+            &crate::sample::context(),
         )
         .expect("the command started");
 
@@ -766,12 +770,12 @@ fn a_command_that_fails_on_the_spot_is_reported_rather_than_left_running() {
 fn the_number_of_commands_left_running_is_capped() {
     let sample = Sample::new("bash-background-cap");
     let left = Background::new();
-    let tool = Bash::new(sample.workspace(), Cancel::new()).leaving(left.clone());
+    let tool = Bash::new(sample.workspace()).leaving(left.clone());
 
     for _ in 0..MOST {
         tool.run(
             allowed(&tool, r#"{"command":"sleep 30","background":true}"#),
-            &Unwatched,
+            &crate::sample::context(),
         )
         .expect("the command started");
     }
@@ -779,7 +783,7 @@ fn the_number_of_commands_left_running_is_capped() {
     let over = tool
         .run(
             allowed(&tool, r#"{"command":"sleep 30","background":true}"#),
-            &Unwatched,
+            &crate::sample::context(),
         )
         .expect("the call was answered");
 

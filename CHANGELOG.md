@@ -8,6 +8,25 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Added
+
+- **Tool calls now run through one bounded, generation-aware platform.** Tool
+  descriptors and their provenance are owned and checked, live rosters refresh
+  between passes without invalidating admitted calls, and opt-in parallel or
+  resource-exclusive tools remain bounded and return results in model-call
+  order. The built-in roster stays sequential with the same names, schemas and
+  ordering.
+
+### Changed
+
+- **Long command output is bounded while its pipes are read.** Crucible keeps a
+  fixed beginning and rolling end, tells the model the original size and the
+  omitted middle, and applies the 30,000-byte result ceiling after JSON-string
+  escaping so quotes and control characters cannot cross it.
+
+- **Repository Codex sessions start with memories disabled.** The checked-in
+  `.codex/config.toml` now makes the project default explicit.
+
 ### Fixed
 
 - **Long `ask_user` answer descriptions wrap instead of stopping at the right

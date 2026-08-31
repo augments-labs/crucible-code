@@ -40,7 +40,7 @@ use crucible_auth::{Store, StoredCredentials};
 use crucible_config::{ConfigError, Home, Settings};
 use crucible_core::{
     Cancel, CredentialError, Effort, Modalities, PathError, Provider, Revealed, SessionId,
-    Workspace,
+    ToolsetError, Workspace,
 };
 use crucible_provider::EndpointError;
 use crucible_runner::SessionError;
@@ -472,6 +472,10 @@ pub(crate) enum Fatal {
     #[error(transparent)]
     Session(#[from] SessionError),
 
+    /// The configured tool roster was invalid or could not be materialized.
+    #[error(transparent)]
+    Toolset(#[from] ToolsetError),
+
     /// `--resume` named a session this workspace has no record of.
     ///
     /// Its own sentence rather than the session crate's, because the id came
@@ -852,7 +856,6 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         settings: &settings,
         sessions: home.sessions(),
         workspace: &workspace,
-        cancel: &cancel,
         ledger: &ledger,
         revealed: &revealed,
         plan: &plan,

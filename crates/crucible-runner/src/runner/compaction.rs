@@ -28,8 +28,8 @@
 use std::fmt::Write as _;
 
 use crucible_core::{
-    Compacted, Compacting, Delta, Message, Request, Room, Spend, StopReason, ToolId, ToolOutput,
-    Transcript, TurnError,
+    Compacted, Compacting, Delta, Message, Request, Room, Spend, StopReason, TOOL_RESULT_BYTES,
+    ToolId, ToolOutput, Transcript, TurnError,
 };
 
 use crate::context::RunContext;
@@ -42,7 +42,7 @@ use super::{Load, Runner};
 /// that lost the output it just asked for would be flying blind. Beyond this a
 /// result is old enough that the recap — which says what it found — is the
 /// better thing to keep.
-const PROTECT: u64 = 60_000;
+const PROTECT: u64 = TOOL_RESULT_BYTES as u64;
 
 /// The least a pruning has to recover to be worth recording, in bytes.
 ///
@@ -394,8 +394,8 @@ impl Runner {
         for message in self.transcript.messages().iter().take(replacing) {
             if let Message::Agent { calls, .. } = message {
                 for call in calls {
-                    if let Some(tool) = self.tools.find(&call.name)
-                        && let Some(file) = tool.remember(&call.args)
+                    if let Some(entry) = self.tools.find(&call.name)
+                        && let Some(file) = entry.tool().remember(&call.args)
                     {
                         files.note(file.path(), file.is_modified());
                     }
@@ -576,7 +576,13 @@ impl Runner {
                 // A result small enough that clearing it buys nothing is
                 // skipped whole, and does not spend the protected window: the
                 // window is for output worth keeping, and this is neither.
-                if recent < PROTECT {
+                // Protect the newest result even if it predates the encoded
+                // ceiling, then protect further results only while their
+                // complete bodies fit the remaining window. Checking the
+                // running count alone would admit a second ceiling-sized
+                // result when the first is a few JSON quote bytes below the
+                // encoded limit.
+                if recent == 0 || recent.saturating_add(bytes) <= PROTECT {
                     recent = recent.saturating_add(bytes);
                     continue;
                 }

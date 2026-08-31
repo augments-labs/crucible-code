@@ -25,13 +25,40 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Instant;
 
 /// A shared "stop what you are doing" flag.
 ///
 /// Cloning shares the flag rather than copying it, so a clone handed to a
 /// worker thread sees the cancellation the input thread requested.
-#[derive(Debug, Clone, Default)]
-pub struct Cancel(Arc<AtomicBool>);
+#[derive(Clone)]
+pub struct Cancel(Arc<State>);
+
+struct State {
+    requested: AtomicBool,
+    parent: Option<Cancel>,
+    deadline: Option<Instant>,
+}
+
+impl Default for Cancel {
+    fn default() -> Self {
+        Self(Arc::new(State {
+            requested: AtomicBool::new(false),
+            parent: None,
+            deadline: None,
+        }))
+    }
+}
+
+impl std::fmt::Debug for Cancel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Cancel")
+            .field("requested", &self.requested())
+            .field("has_parent", &self.0.parent.is_some())
+            .field("deadline", &self.0.deadline)
+            .finish()
+    }
+}
 
 impl Cancel {
     /// A flag that has not been raised.
@@ -40,17 +67,42 @@ impl Cancel {
         Self::default()
     }
 
+    /// A local child that also observes every request made of this token.
+    #[must_use]
+    pub fn child(&self) -> Self {
+        self.child_until(None)
+    }
+
+    /// A child that stops with this token or at `deadline`.
+    ///
+    /// Requesting the child never raises its parent, which lets one timed-out
+    /// call stop without ending its run. A parent request still reaches every
+    /// descendant.
+    #[must_use]
+    pub fn child_until(&self, deadline: Option<Instant>) -> Self {
+        Self(Arc::new(State {
+            requested: AtomicBool::new(false),
+            parent: Some(self.clone()),
+            deadline,
+        }))
+    }
+
     /// Asks every holder to stop at its next check.
     pub fn request(&self) {
         // Release: the work a thread does after observing this must not be
         // reordered before it observes the request.
-        self.0.store(true, Ordering::Release);
+        self.0.requested.store(true, Ordering::Release);
     }
 
     /// Whether a stop has been asked for.
     #[must_use]
     pub fn requested(&self) -> bool {
-        self.0.load(Ordering::Acquire)
+        self.0.requested.load(Ordering::Acquire)
+            || self
+                .0
+                .deadline
+                .is_some_and(|deadline| Instant::now() >= deadline)
+            || self.0.parent.as_ref().is_some_and(Self::requested)
     }
 
     /// Clears the flag, ready for the turn about to run.
@@ -67,7 +119,7 @@ impl Cancel {
     /// to stop. A turn that finds the flag raised is a turn somebody stopped,
     /// and it stops.
     pub fn reset(&self) {
-        self.0.store(false, Ordering::Release);
+        self.0.requested.store(false, Ordering::Release);
     }
 }
 
@@ -116,5 +168,29 @@ mod tests {
         cancel.request();
         cancel.reset();
         assert!(!cancel.requested());
+    }
+
+    #[test]
+    fn a_child_stops_with_its_parent_without_stopping_its_siblings() {
+        let parent = Cancel::new();
+        let one = parent.child();
+        let two = parent.child();
+
+        one.request();
+        assert!(one.requested());
+        assert!(!parent.requested());
+        assert!(!two.requested());
+
+        parent.request();
+        assert!(two.requested());
+    }
+
+    #[test]
+    fn a_child_deadline_is_a_cancellation_only_for_that_child() {
+        let parent = Cancel::new();
+        let child = parent.child_until(Some(std::time::Instant::now()));
+
+        assert!(child.requested());
+        assert!(!parent.requested());
     }
 }

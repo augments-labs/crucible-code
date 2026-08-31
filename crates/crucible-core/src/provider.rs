@@ -252,7 +252,7 @@ pub struct Request<'a> {
     /// The transcript so far.
     pub transcript: &'a Transcript,
     /// The tools the model may call, as JSON Schema.
-    pub tools: &'a [ToolSchema],
+    pub tools: &'a [ToolSchema<'a>],
     /// Ceiling on the response length.
     pub max_tokens: u32,
     /// The system prompt, if the session has one.
@@ -417,12 +417,12 @@ impl std::str::FromStr for Effort {
 }
 
 /// A tool as advertised to a provider.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ToolSchema {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ToolSchema<'a> {
     /// The name the model calls.
-    pub name: &'static str,
+    pub name: &'a str,
     /// The JSON Schema for the arguments.
-    pub schema: &'static str,
+    pub schema: &'a str,
 }
 
 /// What a response has cost, counted in the tokens the model produced.

@@ -1,6 +1,7 @@
 //! What making room changes, preserves, and reports.
 
 use super::*;
+use crucible_core::TOOL_RESULT_BYTES;
 
 /// A response that reports it carried `carried` tokens and then calls a tool.
 fn carrying(carried: u64, id: &str) -> Vec<Delta> {
@@ -466,7 +467,10 @@ fn a_full_window_prunes_tool_output_from_the_active_turn_and_carries_on() {
         Verdict::Allow,
         session,
     );
-    scripted.runner.spec.model.window = Some(80_000);
+    // Three individually bounded results still outweigh this window. The
+    // third therefore has to trigger active-turn pruning even though no one
+    // result may exceed the shared result ceiling.
+    scripted.runner.spec.model.window = Some(25_000);
     scripted.runner.policy.compaction = Compaction {
         reserve: Some(1),
         ..Compaction::default()
@@ -484,15 +488,24 @@ fn a_full_window_prunes_tool_output_from_the_active_turn_and_carries_on() {
             .any(|event| matches!(event, Event::Delta { text } if text.contains("carried on")))
     );
     assert_eq!(scripted.asked(), [1, 3, 5, 7]);
-    assert_eq!(
-        events
+    let carried: Vec<Option<u8>> = events
+        .iter()
+        .filter_map(|event| match event {
+            Event::Carried { left } => Some(*left),
+            _ => None,
+        })
+        .collect();
+    let full = carried
+        .iter()
+        .position(|left| *left == Some(0))
+        .expect("the bounded results filled the active window");
+    assert!(
+        carried
+            .get(full.saturating_add(1)..)
+            .unwrap_or_default()
             .iter()
-            .filter_map(|event| match event {
-                Event::Carried { left } => Some(*left),
-                _ => None,
-            })
-            .collect::<Vec<_>>(),
-        [Some(62), Some(24), Some(0), Some(0), Some(62)]
+            .any(|left| left.is_some_and(|left| left > 0)),
+        "pruning did not recover room: {carried:?}"
     );
 
     let sizes: Vec<usize> = scripted
@@ -519,15 +532,22 @@ fn a_full_window_prunes_tool_output_from_the_active_turn_and_carries_on() {
         older.iter().all(|size| *size < output.len()),
         "older active-turn results were not pruned: {sizes:?}"
     );
-    assert_eq!(*newest, output.len(), "the newest result was pruned");
+    assert!(
+        *newest <= TOOL_RESULT_BYTES,
+        "the newest result escaped the shared ceiling: {sizes:?}"
+    );
+    assert!(
+        *newest > older.iter().copied().max().unwrap_or_default(),
+        "the newest result was pruned: {sizes:?}"
+    );
 
     let path = scripted.runner.session().path().to_path_buf();
     drop(scripted);
     let log = std::fs::read_to_string(path).expect("the session log");
     assert_eq!(
-        log.matches(&output).count(),
+        log.matches("tool result was 90002 encoded bytes").count(),
         3,
-        "pruning rewrote or dropped original tool output from the durable log"
+        "the durable log lost the model-visible elision accounting"
     );
 }
 
@@ -717,10 +737,9 @@ fn a_compaction_clears_the_bulk_of_old_tool_output_before_the_recap() {
     // and the answer's prose stay; only the result's bulk is gone, and only
     // from what the model is sent.
     //
-    // Three results, newest protected first. The newest two fall inside the
-    // sixty-thousand-byte protected window — each is kept because the running
-    // count is still under it when they are reached — and the oldest is past it
-    // and crosses the savings floor, so it is the one that goes.
+    // Three results, newest protected first. The protection window is the
+    // shared one-result ceiling, so only the newest retains its bounded body;
+    // both older results cross the savings floor and are cleared.
     // Four reads. The first is old enough to be the middle the recap
     // replaces; the three after it are the kept tail the clearing runs over.
     let script = Script::new(vec![
@@ -736,20 +755,20 @@ fn a_compaction_clears_the_bulk_of_old_tool_output_before_the_recap() {
         recap("notes to self"),
     ]);
 
-    // One tool, and every call to it returns a ninety-thousand-byte result —
-    // the four ids above each get one, which is what the clearing then tells
-    // apart by age.
+    // One tool, and every call to it produces a ninety-thousand-byte source.
+    // The invocation pipeline bounds each encoded result before compaction
+    // sees it; clearing then tells the bounded copies apart by age.
     let mut scripted = Scripted::new(
         script,
         tools([Fixed::new("read").answering(&"x".repeat(90_000))]),
         Verdict::Allow,
     );
-    // Keep the three recent read turns whole — about sixty thousand tokens at
+    // Keep the three recent read turns whole — about thirty thousand tokens at
     // the uncalibrated three bytes to the token — so their results survive the
     // recap and the clearing is what the test reads. The first turn is the
     // middle that gets replaced.
     scripted.runner.policy.compaction = Compaction {
-        keep_tokens: 70_000,
+        keep_tokens: 25_000,
         ..Compaction::default()
     };
 
@@ -794,19 +813,18 @@ fn a_compaction_clears_the_bulk_of_old_tool_output_before_the_recap() {
         .collect();
 
     // Three results stand in the kept tail, oldest first. The newest sits
-    // inside the sixty-thousand-byte protected window and keeps its ninety
-    // thousand bytes; the two older ones are past it and cross the savings
-    // floor, so they are placeholders of a few words.
+    // inside the one-result protected window and keeps its bounded body; the
+    // two older ones are placeholders of a few words.
     let [older @ .., newest] = cleared.as_slice() else {
         panic!("expected three results standing, got {}", cleared.len());
     };
     assert_eq!(cleared.len(), 3, "the kept tail: {cleared:?}");
-    assert_eq!(
-        *newest, 90_000,
-        "the newest result was cleared: {cleared:?}"
+    assert!(
+        *newest <= TOOL_RESULT_BYTES,
+        "the newest result escaped the shared ceiling: {cleared:?}"
     );
     assert!(
-        older.iter().all(|size| *size < 90_000),
+        older.iter().all(|size| *size < *newest),
         "an old result kept its bulk: {cleared:?}"
     );
 }

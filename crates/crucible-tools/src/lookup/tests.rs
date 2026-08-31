@@ -1,7 +1,5 @@
 //! What a look-up finds, what it offers afterwards, and what it refuses to.
 
-use crucible_core::Unwatched;
-
 use super::*;
 use crate::sample;
 
@@ -38,7 +36,7 @@ fn looked_up(query: &str) -> (String, Revealed) {
         serde_json::to_string(query).expect("a query that encodes")
     );
     let output = tool
-        .run(sample::allowed(&tool, &args), &Unwatched)
+        .run(sample::allowed(&tool, &args), &crate::sample::context())
         .expect("a search to answer");
 
     (output.text().to_owned(), revealed)
@@ -83,8 +81,11 @@ fn an_empty_query_is_not_a_way_to_ask_for_everything() {
     // An absent query never reaches the matching at all — the arguments are
     // refused, which is the same answer by an earlier route.
     let (tool, revealed) = searching();
-    tool.run(sample::allowed(&tool, r#"{"query":""}"#), &Unwatched)
-        .expect_err("an empty query to be refused as arguments");
+    tool.run(
+        sample::allowed(&tool, r#"{"query":""}"#),
+        &crate::sample::context(),
+    )
+    .expect_err("an empty query to be refused as arguments");
     assert!(!revealed.holds("web_search"));
 
     // These do reach it, and must come back with nothing.
@@ -94,7 +95,7 @@ fn an_empty_query_is_not_a_way_to_ask_for_everything() {
             r#"{{"query":{}}}"#,
             serde_json::to_string(query).expect("a query that encodes")
         );
-        tool.run(sample::allowed(&tool, &args), &Unwatched)
+        tool.run(sample::allowed(&tool, &args), &crate::sample::context())
             .expect("a search to answer");
 
         for name in ["web_search", "web_fetch", "todo_write", "notes"] {
@@ -126,7 +127,7 @@ fn a_query_matching_nothing_says_so_and_offers_nothing() {
     let output = tool
         .run(
             sample::allowed(&tool, r#"{"query":"frobnicate"}"#),
-            &Unwatched,
+            &crate::sample::context(),
         )
         .expect("a search to answer");
 
@@ -162,7 +163,7 @@ fn looking_the_same_tool_up_twice_is_not_a_mistake() {
         let output = tool
             .run(
                 sample::allowed(&tool, r#"{"query":"web_search"}"#),
-                &Unwatched,
+                &crate::sample::context(),
             )
             .expect("a search to answer");
         assert!(!output.is_failed());

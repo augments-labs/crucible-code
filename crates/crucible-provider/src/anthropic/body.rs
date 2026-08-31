@@ -243,7 +243,7 @@ fn write_result(block: &mut Object<'_>, result: &ToolResult, found: &[&Attached<
 }
 
 /// One tool, as advertised.
-fn write_tool(tool: &mut Object<'_>, schema: &ToolSchema) {
+fn write_tool(tool: &mut Object<'_>, schema: &ToolSchema<'_>) {
     let (input, description) = described(schema.schema);
     tool.text("name", schema.name);
     tool.text("description", &description);

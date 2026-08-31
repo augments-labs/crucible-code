@@ -426,7 +426,6 @@ fn a_startup_with_nothing_to_authenticate_with_leaves_no_session_behind() {
         settings: &Settings::default(),
         sessions: &logs,
         workspace: &workspace,
-        cancel: &Cancel::new(),
         ledger: &Ledger::new(),
         revealed: &Revealed::new(),
         plan: &Plan::new(),
@@ -464,7 +463,6 @@ fn a_session_with_nothing_chosen_starts_and_asks_for_no_model() {
         settings: &Settings::default(),
         sessions: &logs,
         workspace: &workspace,
-        cancel: &Cancel::new(),
         ledger: &Ledger::new(),
         revealed: &Revealed::new(),
         plan: &Plan::new(),
@@ -589,7 +587,6 @@ fn reaching_for(named: &str, model: Option<&'static str>) -> Reaching {
             settings: &Settings::default(),
             sessions: &logs,
             workspace: &workspace,
-            cancel: &Cancel::new(),
             ledger: &Ledger::new(),
             revealed: &Revealed::new(),
             plan: &Plan::new(),
@@ -660,7 +657,6 @@ fn offered(terminal: bool) -> crucible_runner::Tools {
             settings: &Settings::default(),
             sessions: &logs,
             workspace: &workspace,
-            cancel: &Cancel::new(),
             ledger: &Ledger::new(),
             revealed: &Revealed::new(),
             plan: &Plan::new(),
@@ -676,6 +672,7 @@ fn offered(terminal: bool) -> crucible_runner::Tools {
             fetching: None,
         },
     )
+    .expect("the built-in tool roster is valid")
 }
 
 #[test]
@@ -705,7 +702,7 @@ fn a_session_with_nobody_there_does_not_carry_a_tool_for_asking_them() {
         tools
             .deferred()
             .iter()
-            .all(|schema| schema.name != "ask_user")
+            .all(|schema| schema.name() != "ask_user")
     );
 }
 
@@ -814,7 +811,6 @@ fn a_session_is_assembled_asking_under_the_prompt_the_wiring_built() {
         settings: &configured,
         sessions: &logs,
         workspace: &workspace,
-        cancel: &Cancel::new(),
         ledger: &Ledger::new(),
         revealed: &Revealed::new(),
         plan: &Plan::new(),

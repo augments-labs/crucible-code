@@ -1,6 +1,6 @@
 //! What a call is read as having said about itself.
 
-use crucible_core::{Cancel, Tool, ToolArgs, Workspace};
+use crucible_core::{DescribeTool, ToolArgs, ToolDescriptor, ToolProvenance, Workspace};
 
 use super::of;
 use crate::sample::Sample;
@@ -11,11 +11,16 @@ use crate::{Bash, Edit, Ledger, Read, Write};
 /// Which is the tools whose calls stop at a panel: a command and the two ways
 /// to change a file. A read is allowed or refused without being asked about, so
 /// prose sent with one would be paid for and never drawn.
-fn inviting(workspace: &Workspace) -> Vec<Box<dyn Tool>> {
+fn inviting(workspace: &Workspace) -> Vec<ToolDescriptor> {
+    fn descriptor(tool: &impl DescribeTool) -> ToolDescriptor {
+        tool.descriptor(ToolProvenance::builtin(tool.name()).unwrap())
+            .unwrap()
+    }
+
     vec![
-        Box::new(Bash::new(workspace.clone(), Cancel::new())),
-        Box::new(Write::new(workspace.clone(), Ledger::new())),
-        Box::new(Edit::new(workspace.clone(), Cancel::new())),
+        descriptor(&Bash::new(workspace.clone())),
+        descriptor(&Write::new(workspace.clone(), Ledger::new())),
+        descriptor(&Edit::new(workspace.clone())),
     ]
 }
 
@@ -109,7 +114,7 @@ fn a_tool_that_invites_an_account_is_a_tool_whose_schema_asks_for_one() {
     // And one that does not, so the assertion above is about this schema rather
     // than about the word `description` appearing anywhere in a schema at all —
     // every one of them opens with the tool's own.
-    let quiet = Read::new(workspace, Cancel::new(), Ledger::new());
+    let quiet = Read::new(workspace, Ledger::new());
     assert!(!quiet.schema().contains(r#""description": {"#));
     assert!(!quiet.schema().contains(r#""explanation": {"#));
 }

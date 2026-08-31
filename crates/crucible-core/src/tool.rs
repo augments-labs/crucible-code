@@ -9,11 +9,23 @@
 //! knows what it means.
 
 use std::fmt;
+use std::time::Instant;
 
 use crate::diff::Diff;
-use crate::ids::ToolId;
+use crate::ids::{RunId, ToolId};
 use crate::permission::{Approved, Sensitivity};
 use crate::transcript::Attachment;
+use crate::{Ancestry, Cancel};
+
+/// The most encoded bytes one retained tool result may occupy.
+///
+/// Owned here because both invocation and request-load reservation enforce the
+/// same boundary. The encoded JSON string is measured, including its quotes
+/// and escapes, rather than the raw UTF-8 that can grow during serialization.
+pub const TOOL_RESULT_BYTES: usize = 30_000;
+
+/// The smallest descriptor-local result limit that can always state elision.
+pub const TOOL_RESULT_MIN_BYTES: usize = 160;
 
 /// Why a tool call did not produce a result.
 ///
@@ -30,7 +42,7 @@ pub enum ToolError {
     #[error("{tool}: {problem}")]
     Arguments {
         /// Which tool rejected them.
-        tool: &'static str,
+        tool: Box<str>,
         /// What was wrong, in words the model can act on.
         problem: Box<str>,
     },
@@ -39,7 +51,7 @@ pub enum ToolError {
     #[error("{tool}: {problem}")]
     Io {
         /// Which tool was running.
-        tool: &'static str,
+        tool: Box<str>,
         /// What failed, without the underlying path if it is sensitive.
         problem: Box<str>,
         /// What the operating system reported.
@@ -48,7 +60,26 @@ pub enum ToolError {
 
     /// The user cancelled while the tool was running.
     #[error("{0} cancelled")]
-    Cancelled(&'static str),
+    Cancelled(Box<str>),
+
+    /// The provider returned a call whose retained identity or arguments were
+    /// unusable at invocation admission.
+    #[error("invalid tool call {field}: {actual} bytes; the maximum is {maximum}")]
+    InvalidCall {
+        /// Which call field crossed its boundary.
+        field: &'static str,
+        /// The retained boundary.
+        maximum: usize,
+        /// What the call supplied.
+        actual: usize,
+    },
+
+    /// An admission from one immutable generation was presented to another.
+    #[error("tool {tool} is not reachable in the admitted generation")]
+    StaleGeneration {
+        /// The provider-visible name, without either generation identity.
+        tool: Box<str>,
+    },
 }
 
 /// The model asking to run a tool.
@@ -317,7 +348,7 @@ impl fmt::Debug for Wrote {
 /// dispatched the call, which is the layer that knows — so a tool cannot post
 /// output under another call's name, in the same way it cannot obtain an
 /// [`Approved`] for a call it was not given.
-pub trait Watch {
+pub trait Watch: Send + Sync {
     /// Reports what has been produced since the last time this was called.
     ///
     /// Cannot fail, for the reason [`crate::Post::post`] cannot: a tool that
@@ -337,6 +368,98 @@ pub struct Unwatched;
 
 impl Watch for Unwatched {
     fn wrote(&self, _text: Wrote) {}
+}
+
+/// The run-scoped capabilities one admitted tool call receives.
+///
+/// Narrow by design: a tool can identify its run and call, observe its own
+/// child cancellation/deadline, and stream output under that call. It cannot
+/// emit arbitrary events, mint approval, steer the agent, or reach a session.
+pub struct ToolContext<'a> {
+    ancestry: Ancestry,
+    call: ToolId,
+    cancel: Cancel,
+    deadline: Option<Instant>,
+    watch: &'a dyn Watch,
+}
+
+impl<'a> ToolContext<'a> {
+    /// Builds a per-call context under `parent` cancellation.
+    #[must_use]
+    pub fn new(
+        ancestry: Ancestry,
+        call: ToolId,
+        parent: &Cancel,
+        deadline: Option<Instant>,
+        watch: &'a dyn Watch,
+    ) -> Self {
+        Self {
+            ancestry,
+            call,
+            cancel: parent.child_until(deadline),
+            deadline,
+            watch,
+        }
+    }
+
+    /// The run this call belongs to.
+    #[must_use]
+    pub const fn run(&self) -> RunId {
+        self.ancestry.run()
+    }
+
+    /// The run and its parentage.
+    #[must_use]
+    pub const fn ancestry(&self) -> Ancestry {
+        self.ancestry
+    }
+
+    /// The provider call this context belongs to.
+    #[must_use]
+    pub const fn call(&self) -> &ToolId {
+        &self.call
+    }
+
+    /// Cancellation local to this call and inherited from its run.
+    #[must_use]
+    pub const fn cancel(&self) -> &Cancel {
+        &self.cancel
+    }
+
+    /// The monotonic deadline, where the descriptor set one.
+    #[must_use]
+    pub const fn deadline(&self) -> Option<Instant> {
+        self.deadline
+    }
+
+    /// Whether this call's own deadline has passed.
+    #[must_use]
+    pub fn timed_out(&self) -> bool {
+        self.deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+    }
+
+    /// Reports incremental output under this call's identity.
+    pub fn wrote(&self, text: Wrote) {
+        self.watch.wrote(text);
+    }
+}
+
+impl fmt::Debug for ToolContext<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ToolContext")
+            .field("ancestry", &self.ancestry)
+            .field("call", &"[redacted]")
+            .field("cancelled", &self.cancel.requested())
+            .field("deadline", &self.deadline)
+            .finish()
+    }
+}
+
+impl Watch for ToolContext<'_> {
+    fn wrote(&self, text: Wrote) {
+        ToolContext::wrote(self, text);
+    }
 }
 
 /// How many lines a call changed, once the lines themselves are gone.
@@ -399,9 +522,44 @@ impl Changed {
 pub struct ToolOutput {
     text: Box<str>,
     failed: bool,
+    capture: Option<CaptureElision>,
     diff: Option<Diff>,
     changed: Option<Changed>,
     attachments: Box<[Attachment]>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CaptureElision {
+    original: usize,
+    omitted: usize,
+}
+
+/// What one encoded-result bound retained and omitted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ToolOutputRetention {
+    original: usize,
+    retained: usize,
+    omitted: usize,
+}
+
+impl ToolOutputRetention {
+    /// The original JSON-string size, including quotes and escapes.
+    #[must_use]
+    pub const fn original(self) -> usize {
+        self.original
+    }
+
+    /// The final JSON-string size retained for the model.
+    #[must_use]
+    pub const fn retained(self) -> usize {
+        self.retained
+    }
+
+    /// Encoded source bytes removed from the middle.
+    #[must_use]
+    pub const fn omitted(self) -> usize {
+        self.omitted
+    }
 }
 
 impl fmt::Debug for ToolOutput {
@@ -409,6 +567,7 @@ impl fmt::Debug for ToolOutput {
         f.debug_struct("ToolOutput")
             .field("text", &"[redacted]")
             .field("failed", &self.failed)
+            .field("capture", &self.capture)
             .field("diff", &self.diff)
             .field("changed", &self.changed)
             .field("attachments", &self.attachments)
@@ -423,6 +582,7 @@ impl ToolOutput {
         Self {
             text: text.into(),
             failed: false,
+            capture: None,
             diff: None,
             changed: None,
             attachments: Box::new([]),
@@ -436,6 +596,7 @@ impl ToolOutput {
         Self {
             text: text.into(),
             failed: true,
+            capture: None,
             diff: None,
             changed: None,
             attachments: Box::new([]),
@@ -565,6 +726,57 @@ impl ToolOutput {
         self.failed
     }
 
+    /// Records capture-time process elision for the encoded limiter.
+    ///
+    /// Process tools already state this in their returned text. Retaining the
+    /// counts here lets a later encoded-size pass repeat the fact if it must
+    /// replace that middle marker with its own.
+    #[must_use]
+    pub fn with_capture_elision(mut self, original: usize, omitted: usize) -> Self {
+        self.capture = (omitted > 0).then_some(CaptureElision { original, omitted });
+        self
+    }
+
+    /// Elides the middle until the JSON-encoded text fits `maximum`.
+    ///
+    /// Both ends survive: the head carries setup and the tail usually carries
+    /// the failure or final status. When anything is removed, the inserted
+    /// model-visible note states the original encoded size and the encoded
+    /// bytes omitted. Callers must supply at least [`TOOL_RESULT_MIN_BYTES`],
+    /// which descriptor construction enforces for local limits.
+    #[must_use]
+    pub fn limit_encoded(&mut self, maximum: usize) -> ToolOutputRetention {
+        let original = encoded_string_bytes(&self.text);
+        if original <= maximum {
+            return ToolOutputRetention {
+                original,
+                retained: original,
+                omitted: 0,
+            };
+        }
+
+        // Use the largest possible omission count to reserve the marker. The
+        // actual count can have fewer digits but never more, so the final text
+        // remains at or below the requested encoded ceiling without a sizing
+        // loop whose answer could oscillate at a decimal boundary.
+        let reserved = elision(original, original, self.capture);
+        let source = maximum
+            .saturating_sub(2)
+            .saturating_sub(encoded_content_bytes(&reserved));
+        let (head, tail, kept) = encoded_ends(&self.text, source);
+        let omitted = original.saturating_sub(2).saturating_sub(kept);
+        let marker = elision(original, omitted, self.capture);
+        self.text = format!("{head}{marker}{tail}").into();
+        let retained = encoded_string_bytes(&self.text);
+
+        debug_assert!(maximum < TOOL_RESULT_MIN_BYTES || retained <= maximum);
+        ToolOutputRetention {
+            original,
+            retained,
+            omitted,
+        }
+    }
+
     /// What the call changed, where it changed a file and said so.
     #[must_use]
     pub fn diff(&self) -> Option<&Diff> {
@@ -622,6 +834,7 @@ impl ToolOutput {
         }
 
         self.text = format!("[cleared to make room — {freed} bytes]").into();
+        self.capture = None;
 
         // The files go with the words. They cost the transcript almost
         // nothing — an attachment is a path — but a request reads every one it
@@ -641,13 +854,82 @@ impl ToolOutput {
     pub const MIN_PRUNE_BYTES: usize = 64;
 }
 
+fn elision(original: usize, omitted: usize, capture: Option<CaptureElision>) -> String {
+    let captured = capture.map_or_else(String::new, |capture| {
+        format!(
+            "process output was {} bytes; {} bytes omitted during capture; ",
+            capture.original, capture.omitted
+        )
+    });
+    format!(
+        "\n\n[{captured}tool result was {original} encoded bytes; {omitted} encoded bytes omitted from the middle]\n\n"
+    )
+}
+
+fn encoded_ends(text: &str, budget: usize) -> (&str, &str, usize) {
+    let head_budget = budget / 2;
+    let tail_budget = budget.saturating_sub(head_budget);
+
+    let mut head_end = 0;
+    let mut head_cost = 0_usize;
+    for (at, character) in text.char_indices() {
+        let cost = encoded_character_bytes(character);
+        if head_cost.saturating_add(cost) > head_budget {
+            break;
+        }
+        head_cost = head_cost.saturating_add(cost);
+        head_end = at.saturating_add(character.len_utf8());
+    }
+
+    let mut tail_start = text.len();
+    let mut tail_cost = 0_usize;
+    for (relative, character) in text[head_end..].char_indices().rev() {
+        let cost = encoded_character_bytes(character);
+        if tail_cost.saturating_add(cost) > tail_budget {
+            break;
+        }
+        tail_cost = tail_cost.saturating_add(cost);
+        tail_start = head_end.saturating_add(relative);
+    }
+
+    (
+        text.get(..head_end).unwrap_or_default(),
+        text.get(tail_start..).unwrap_or_default(),
+        head_cost.saturating_add(tail_cost),
+    )
+}
+
+fn encoded_string_bytes(text: &str) -> usize {
+    2_usize.saturating_add(encoded_content_bytes(text))
+}
+
+fn encoded_content_bytes(text: &str) -> usize {
+    text.chars().fold(0_usize, |bytes, character| {
+        bytes.saturating_add(encoded_character_bytes(character))
+    })
+}
+
+const fn encoded_character_bytes(character: char) -> usize {
+    match character {
+        '"' | '\\' | '\u{08}' | '\u{0c}' | '\n' | '\r' | '\t' => 2,
+        '\u{00}'..='\u{1f}' => 6,
+        other => other.len_utf8(),
+    }
+}
+
 /// One tool the agent can call.
 pub trait Tool: Send + Sync {
-    /// The name the model uses. Must match the `name` in [`Tool::schema`].
-    fn name(&self) -> &'static str;
-
-    /// The JSON Schema for this tool's arguments, as sent to the provider.
-    fn schema(&self) -> &'static str;
+    /// Checks that `args` are a call this executor understands, without
+    /// causing an effect.
+    ///
+    /// The invocation pipeline calls this before and after any argument
+    /// transformation. It must be side-effect free.
+    ///
+    /// # Errors
+    ///
+    /// [`ToolError`] when the arguments are not one complete call this tool
+    /// can execute.
+    fn validate(&self, args: &ToolArgs) -> Result<(), ToolError>;
 
     /// How dangerous this particular call is.
     ///
@@ -715,23 +997,21 @@ pub trait Tool: Send + Sync {
     /// separate `args` parameter, and a handle found beside the call, both
     /// left that to the caller's care.
     ///
-    /// `watch` is where it reports what it has printed before it returns.
-    /// Most tools produce their answer at once and never touch it; a command
-    /// that runs for two minutes is the reason it is here. [`Unwatched`] is what
-    /// a caller with nothing to draw passes, so there is no absence to check
-    /// for.
+    /// `context` carries per-call cancellation/deadline and the only output
+    /// sink this executor may use. Most tools report nothing while running;
+    /// commands are the reason the sink is present.
     ///
     /// # Errors
     ///
     /// [`ToolError`] when the call could not be carried out at all. A result
     /// the model should see, including a failure, comes back as a failed
     /// [`ToolOutput`].
-    fn run(&self, approved: Approved, watch: &dyn Watch) -> Result<ToolOutput, ToolError>;
+    fn run(&self, approved: Approved, context: &ToolContext<'_>) -> Result<ToolOutput, ToolError>;
 }
 
 impl fmt::Debug for dyn Tool {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Tool({})", self.name())
+        f.write_str("Tool([executor])")
     }
 }
 
@@ -780,6 +1060,64 @@ mod tests {
             media_type: "image/png".into(),
             hash: [0xab; 32],
         }
+    }
+
+    #[test]
+    fn a_result_is_bounded_by_its_encoded_size_and_names_what_was_omitted() {
+        let source = format!("HEAD{}TAIL", "\"\\\n".repeat(12_000));
+        assert!(source.len() > TOOL_RESULT_BYTES);
+        let original = encoded_string_bytes(&source);
+        let mut output = ToolOutput::ok(source);
+
+        let retained = output.limit_encoded(TOOL_RESULT_BYTES);
+
+        assert_eq!(retained.original(), original);
+        assert!(retained.omitted() > 0);
+        assert!(retained.retained() <= TOOL_RESULT_BYTES);
+        assert_eq!(encoded_string_bytes(output.text()), retained.retained());
+        assert!(output.text().starts_with("HEAD"), "{}", output.text());
+        assert!(output.text().ends_with("TAIL"), "{}", output.text());
+        assert!(
+            output.text().contains(&original.to_string()),
+            "{}",
+            output.text()
+        );
+        assert!(
+            output.text().contains(&retained.omitted().to_string()),
+            "{}",
+            output.text()
+        );
+    }
+
+    #[test]
+    fn escaping_can_cross_the_result_ceiling_when_raw_bytes_do_not() {
+        let source = "\"".repeat(TOOL_RESULT_BYTES / 2 + 1);
+        assert!(source.len() < TOOL_RESULT_BYTES);
+        assert!(encoded_string_bytes(&source) > TOOL_RESULT_BYTES);
+        let mut output = ToolOutput::ok(source);
+
+        let retained = output.limit_encoded(TOOL_RESULT_BYTES);
+
+        assert!(retained.omitted() > 0);
+        assert!(encoded_string_bytes(output.text()) <= TOOL_RESULT_BYTES);
+    }
+
+    #[test]
+    fn a_tool_context_has_call_identity_and_child_cancellation() {
+        let parent = Cancel::new();
+        let context = ToolContext::new(
+            Ancestry::new(),
+            ToolId::new("call-context"),
+            &parent,
+            None,
+            &Unwatched,
+        );
+
+        assert_eq!(context.call().as_str(), "call-context");
+        assert_eq!(context.run(), context.ancestry().run());
+        context.cancel().request();
+        assert!(context.cancel().requested());
+        assert!(!parent.requested());
     }
 
     /// The lines a call changed, whose text nothing outside the reader may see.

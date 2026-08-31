@@ -25,7 +25,7 @@ model_reasoning_effort = "xhigh"
 web_search = "cached"
 
 [features]
-memories = true
+memories = false
 
 [agents]
 # A shallow tree keeps reviews independent rather than turning one task into an

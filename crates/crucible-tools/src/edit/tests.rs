@@ -1,7 +1,5 @@
 //! What `edit` changes, and what it declines to guess at.
 
-use crucible_core::Unwatched;
-
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
@@ -12,14 +10,16 @@ use super::{Cancel, Edit, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput};
 use crate::sample::{Sample, allowed};
 
 fn edit(sample: &Sample, args: &str) -> ToolOutput {
-    let tool = Edit::new(sample.workspace(), Cancel::new());
-    tool.run(allowed(&tool, args), &Unwatched).unwrap()
+    let tool = Edit::new(sample.workspace());
+    tool.run(allowed(&tool, args), &crate::sample::context())
+        .unwrap()
 }
 
 /// A call the tool cannot read, which ends the turn rather than answering.
 fn refuse(sample: &Sample, args: &str) -> ToolError {
-    let tool = Edit::new(sample.workspace(), Cancel::new());
-    tool.run(allowed(&tool, args), &Unwatched).unwrap_err()
+    let tool = Edit::new(sample.workspace());
+    tool.run(allowed(&tool, args), &crate::sample::context())
+        .unwrap_err()
 }
 
 fn read(sample: &Sample, at: &str) -> String {
@@ -330,7 +330,7 @@ fn a_stopped_turn_does_not_scan_or_change_the_file() {
     sample.write("one.txt", &"a".repeat(super::FILE_LIMIT));
     let cancel = Cancel::new();
     cancel.request();
-    let tool = Edit::new(sample.workspace(), cancel);
+    let tool = Edit::new(sample.workspace());
 
     let problem = tool
         .run(
@@ -338,13 +338,13 @@ fn a_stopped_turn_does_not_scan_or_change_the_file() {
                 &tool,
                 r#"{"path":"one.txt","find":"a","replace":"b","all":true}"#,
             ),
-            &Unwatched,
+            &crate::sample::cancelled_by(&cancel),
         )
         .unwrap_err();
 
     assert!(matches!(
         problem,
-        crucible_core::ToolError::Cancelled("edit")
+        crucible_core::ToolError::Cancelled(ref tool) if &**tool == "edit"
     ));
     assert_eq!(
         fs::metadata(sample.root().join("one.txt")).unwrap().len(),
@@ -408,11 +408,11 @@ fn an_edit_preserves_the_existing_file_mode() {
 fn a_call_with_no_find_says_what_is_missing() {
     let sample = Sample::new("edit-nofind");
 
-    let tool = Edit::new(sample.workspace(), Cancel::new());
+    let tool = Edit::new(sample.workspace());
     let problem = tool
         .run(
             allowed(&tool, r#"{"path":"one.rs","replace":"b"}"#),
-            &Unwatched,
+            &crate::sample::context(),
         )
         .unwrap_err();
 
@@ -423,7 +423,7 @@ fn a_call_with_no_find_says_what_is_missing() {
 fn editing_names_the_file_it_would_change() {
     let sample = Sample::new("edit-sensitivity");
     sample.write("one.rs", "a\n");
-    let tool = Edit::new(sample.workspace(), Cancel::new());
+    let tool = Edit::new(sample.workspace());
 
     let sensitivity = tool.sensitivity(&ToolArgs::new(r#"{"path":"one.rs"}"#));
 

@@ -5,8 +5,8 @@
 //! the decision actually lives.
 
 use crucible_core::{
-    Ask, Cancel, Mode, Permission, Remember, Rules, Sensitivity, Settled, Tool, ToolArgs, ToolCall,
-    ToolId, Unwatched, Verdict,
+    Ancestry, Ask, Cancel, DescribeTool, Mode, Permission, Remember, Rules, Sensitivity, Settled,
+    Tool, ToolArgs, ToolCall, ToolContext, ToolId, Unwatched, Verdict,
 };
 use crucible_tools::{Background, Bash};
 
@@ -27,7 +27,8 @@ use super::*;
 fn running(case: &str, count: usize) -> (Background, Sample) {
     let here = Sample::new(case);
     let left = Background::new();
-    let tool = Bash::new(here.workspace(), Cancel::new()).leaving(left.clone());
+    let cancel = Cancel::new();
+    let tool = Bash::new(here.workspace()).leaving(left.clone());
     let mut engine = Permission::with(Mode::FullAccess, Rules::default());
 
     for at in 0..count {
@@ -43,7 +44,8 @@ fn running(case: &str, count: usize) -> (Background, Sample) {
             panic!("full access asked about a command");
         };
 
-        let output = tool.run(approved, &Unwatched).expect("the command started");
+        let context = ToolContext::new(Ancestry::new(), call.id.clone(), &cancel, None, &Unwatched);
+        let output = tool.run(approved, &context).expect("the command started");
         assert!(
             !output.is_failed(),
             "a command this test needs running was refused: {}",

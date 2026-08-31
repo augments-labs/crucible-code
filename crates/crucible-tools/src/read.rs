@@ -5,8 +5,8 @@ use std::io::{self, BufRead, BufReader, ErrorKind, Read as _};
 use std::sync::LazyLock;
 
 use crucible_core::{
-    Approved, Attachment, Cancel, Kind, Modality, Remembered, Sensitivity, Summary, Tool, ToolArgs,
-    ToolError, ToolOutput, Watch, Workspace, WorkspacePath, kind, written,
+    Approved, Attachment, Cancel, DescribeTool, Kind, Modality, Remembered, Sensitivity, Summary,
+    Tool, ToolArgs, ToolContext, ToolError, ToolOutput, Workspace, WorkspacePath, kind, written,
 };
 use sha2::{Digest as _, Sha256};
 
@@ -545,7 +545,6 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
 #[derive(Debug)]
 pub struct Read {
     workspace: Workspace,
-    cancel: Cancel,
     seen: Ledger,
 }
 
@@ -553,12 +552,8 @@ impl Read {
     /// Reads inside `workspace`, and nowhere else, telling `seen` about every
     /// file it shows.
     #[must_use]
-    pub fn new(workspace: Workspace, cancel: Cancel, seen: Ledger) -> Self {
-        Self {
-            workspace,
-            cancel,
-            seen,
-        }
+    pub fn new(workspace: Workspace, seen: Ledger) -> Self {
+        Self { workspace, seen }
     }
 
     /// Numbers the lines the call asked for, and says how many it showed.
@@ -573,11 +568,11 @@ impl Read {
     /// past the end reads that way — and a file nobody was shown is not one
     /// anybody may replace.
     fn numbered(
-        &self,
         mut lines: impl BufRead,
         requested: &str,
         from: usize,
         limit: usize,
+        cancel: &Cancel,
     ) -> Result<(ToolOutput, usize), ToolError> {
         let mut out = String::new();
         let mut shown = 0;
@@ -585,10 +580,10 @@ impl Read {
         let mut more = None;
 
         loop {
-            let line = match bounded_line(&mut lines, &self.cancel) {
+            let line = match bounded_line(&mut lines, cancel) {
                 Ok(NextLine::Line(line)) => line,
                 Ok(NextLine::End) => break,
-                Ok(NextLine::Cancelled) => return Err(ToolError::Cancelled(NAME)),
+                Ok(NextLine::Cancelled) => return Err(ToolError::Cancelled(NAME.into())),
                 // Not text. That is an answer the model should have, not a
                 // breakdown of the mechanism — and where the name says what the
                 // file is, the answer carries the next move as well.
@@ -601,7 +596,7 @@ impl Read {
                 }
                 Err(source) => {
                     return Err(ToolError::Io {
-                        tool: NAME,
+                        tool: NAME.into(),
                         problem: format!("could not read {requested}").into(),
                         source,
                     });
@@ -703,13 +698,22 @@ impl Read {
     }
 }
 
-impl Tool for Read {
-    fn name(&self) -> &'static str {
+impl DescribeTool for Read {
+    fn name(&self) -> &str {
         NAME
     }
 
-    fn schema(&self) -> &'static str {
+    fn schema(&self) -> &str {
         SCHEMA.as_str()
+    }
+}
+
+impl Tool for Read {
+    fn validate(&self, args: &ToolArgs) -> Result<(), ToolError> {
+        let args = Args::parse(NAME, args)?;
+        args.text(PATH)?;
+        args.count(OFFSET, 1)?;
+        args.count(LIMIT, LINES).map(drop)
     }
 
     fn sensitivity(&self, args: &ToolArgs) -> Sensitivity {
@@ -724,7 +728,7 @@ impl Tool for Read {
         summary::remembered(NAME, args, false)
     }
 
-    fn run(&self, approved: Approved, _watch: &dyn Watch) -> Result<ToolOutput, ToolError> {
+    fn run(&self, approved: Approved, context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
         let args = Args::parse(NAME, approved.args())?;
         let requested = args.text(PATH)?;
         let from = args.count(OFFSET, 1)?;
@@ -763,7 +767,13 @@ impl Tool for Read {
             Err(problem) => return Ok(ToolOutput::failed(problem.to_string())),
         };
 
-        let (output, shown) = self.numbered(BufReader::new(file), requested, from, limit)?;
+        let (output, shown) = Self::numbered(
+            BufReader::new(file),
+            requested,
+            from,
+            limit,
+            context.cancel(),
+        )?;
 
         // The resolved path rather than the requested one, because `write` asks
         // with a resolved path too — otherwise `./one.txt` and `one.txt` would
@@ -894,8 +904,6 @@ fn finish_utf8(
 
 #[cfg(test)]
 mod tests {
-    use crucible_core::Unwatched;
-
     use super::*;
     use crate::sample::{Sample, allowed};
 
@@ -904,8 +912,9 @@ mod tests {
     }
 
     fn reading(sample: &Sample, args: &str, seen: &Ledger) -> ToolOutput {
-        let tool = Read::new(sample.workspace(), Cancel::new(), seen.clone());
-        tool.run(allowed(&tool, args), &Unwatched).unwrap()
+        let tool = Read::new(sample.workspace(), seen.clone());
+        tool.run(allowed(&tool, args), &crate::sample::context())
+            .unwrap()
     }
 
     #[test]
@@ -1040,13 +1049,13 @@ mod tests {
         let secret = sample.outside("secret.txt", "nobody was asked about this\n");
         crate::sample::symlink("inside.txt", sample.root().join("door.txt"));
 
-        let tool = Read::new(sample.workspace(), Cancel::new(), Ledger::new());
+        let tool = Read::new(sample.workspace(), Ledger::new());
         let approved = allowed(&tool, r#"{"path":"door.txt"}"#);
 
         std::fs::remove_file(sample.root().join("door.txt")).expect("the link is there");
         crate::sample::symlink(&secret, sample.root().join("door.txt"));
 
-        let output = tool.run(approved, &Unwatched).unwrap();
+        let output = tool.run(approved, &crate::sample::context()).unwrap();
         assert!(output.is_failed(), "{}", output.text());
         assert!(
             !output.text().contains("nobody was asked"),
@@ -1069,7 +1078,7 @@ mod tests {
 
         let sample = Sample::new("read-outside-asked");
         let outside = sample.outside("secret.txt", "classified");
-        let tool = Read::new(sample.workspace(), Cancel::new(), Ledger::new());
+        let tool = Read::new(sample.workspace(), Ledger::new());
         let call = ToolCall {
             id: crucible_core::ToolId::new("outside-1"),
             name: tool.name().into(),
@@ -1091,7 +1100,7 @@ mod tests {
         let Settled::Approved(approved) = settled else {
             panic!("the answer above was yes");
         };
-        let output = tool.run(approved, &Unwatched).unwrap();
+        let output = tool.run(approved, &crate::sample::context()).unwrap();
         assert!(output.text().contains("classified"));
     }
 
@@ -1433,18 +1442,14 @@ mod tests {
             }
         }
 
-        let sample = Sample::new("read-cancel-offset");
         let cancel = Cancel::new();
         let input = BufReader::new(Stops {
             cancel: cancel.clone(),
         });
-        let tool = Read::new(sample.workspace(), cancel, Ledger::new());
 
-        let problem = tool
-            .numbered(input, "huge.txt", usize::MAX, CEILING)
-            .unwrap_err();
+        let problem = Read::numbered(input, "huge.txt", usize::MAX, CEILING, &cancel).unwrap_err();
 
-        assert!(matches!(problem, ToolError::Cancelled(NAME)));
+        assert!(matches!(problem, ToolError::Cancelled(ref tool) if &**tool == NAME));
     }
 
     #[cfg(unix)]
@@ -1502,8 +1507,10 @@ mod tests {
     fn a_call_with_no_path_says_what_is_missing() {
         let sample = Sample::new("read-nopath");
 
-        let tool = Read::new(sample.workspace(), Cancel::new(), Ledger::new());
-        let problem = tool.run(allowed(&tool, "{}"), &Unwatched).unwrap_err();
+        let tool = Read::new(sample.workspace(), Ledger::new());
+        let problem = tool
+            .run(allowed(&tool, "{}"), &crate::sample::context())
+            .unwrap_err();
 
         assert_eq!(problem.to_string(), "read: path is required");
     }
@@ -1514,7 +1521,7 @@ mod tests {
         // it, and a rule is about a path.
         let sample = Sample::new("read-sensitivity");
         sample.write("one.txt", "alpha\n");
-        let tool = Read::new(sample.workspace(), Cancel::new(), Ledger::new());
+        let tool = Read::new(sample.workspace(), Ledger::new());
 
         let sensitivity = tool.sensitivity(&ToolArgs::new(r#"{"path":"one.txt"}"#));
 
@@ -1525,7 +1532,7 @@ mod tests {
     #[test]
     fn the_schema_declares_what_the_parser_reads_with_the_bounds_the_code_holds() {
         let sample = Sample::new("read-schema");
-        let tool = Read::new(sample.workspace(), Cancel::new(), Ledger::new());
+        let tool = Read::new(sample.workspace(), Ledger::new());
         let value: serde_json::Value = serde_json::from_str(tool.schema()).unwrap();
         let at = |path: &str| value.pointer(path).expect(path);
 
