@@ -130,9 +130,20 @@ pub trait ContextSection {
 ///
 /// A [`BTreeMap`] owns the order. Serialization therefore cannot depend on
 /// discovery order, hash seeds, or which section happened to refresh first.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct ContextSnapshot {
     sections: BTreeMap<Box<str>, Value>,
+}
+
+impl fmt::Debug for ContextSnapshot {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ContextSnapshot")
+            .field(
+                "sections",
+                &format_args!("{} values redacted", self.sections.len()),
+            )
+            .finish()
+    }
 }
 
 impl ContextSnapshot {
@@ -608,5 +619,20 @@ mod tests {
         retained.behind(1);
 
         assert!(matches!(recorded.seen(&section, &retained), Seen::Stale));
+    }
+
+    #[test]
+    fn snapshot_debug_redacts_model_visible_state() {
+        let section = State {
+            id: "workspace",
+            value: json!({ "root": "/private/context-debug-canary" }),
+        };
+        let mut snapshot = ContextSnapshot::new();
+        snapshot.capture(&section).unwrap();
+
+        let shown = format!("{snapshot:?}");
+
+        assert!(!shown.contains("context-debug-canary"), "{shown}");
+        assert!(shown.contains("redacted"), "{shown}");
     }
 }

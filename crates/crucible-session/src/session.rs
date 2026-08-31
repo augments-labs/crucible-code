@@ -24,7 +24,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{SyncSender, sync_channel};
 use std::thread::{self, JoinHandle};
 
-use crucible_core::{Calibration, Message, SessionId, Transcript, Workspace};
+use crucible_core::{
+    Calibration, ContextError, ContextPatch, ContextSnapshot, Message, SessionId, Transcript,
+    Workspace,
+};
 
 mod beside;
 mod claim;
@@ -160,6 +163,15 @@ pub enum SessionError {
         /// The workspace it was asked for in.
         at: Box<str>,
     },
+
+    /// A persisted context patch could not reconstruct a valid snapshot.
+    #[error("could not replay context in {at}: {source}")]
+    Context {
+        /// Which log contained the invalid patch.
+        at: Box<str>,
+        /// Why the patch could not represent typed context.
+        source: ContextError,
+    },
 }
 
 /// One session's durable record.
@@ -185,6 +197,11 @@ pub struct Session {
     /// where the log still says. `None` in a session that was started rather
     /// than continued, and in one whose log stopped before it could say.
     calibration: Option<Calibration>,
+    /// Typed model-visible state reconstructed from context patches.
+    ///
+    /// `None` is the compatibility state for a pre-context session that has
+    /// not yet written its first patch. It means unknown, not empty.
+    context: Option<ContextSnapshot>,
     /// How many messages this session holds, kept as they are appended.
     ///
     /// A continued session starts from what the replay handed back, so the
@@ -373,6 +390,7 @@ impl Session {
             transcript,
             settled_at,
             calibration,
+            context,
             pruned,
         } = replay(path)?;
 
@@ -384,6 +402,7 @@ impl Session {
         let mut session = Self::writing(path.to_owned(), open(path)?);
         session.claim = held;
         session.calibration = calibration;
+        session.context = context;
         session.pruned = pruned;
         // What a continue replays is what the session now holds: a stale or
         // legacy index count is repaired from here when the session ends.
@@ -402,6 +421,7 @@ impl Session {
             writer: None,
             claim: None,
             calibration: None,
+            context: Some(ContextSnapshot::new()),
             messages: AtomicUsize::new(0),
             pruned: Pruned::default(),
             trouble: Trouble::default(),
@@ -447,6 +467,35 @@ impl Session {
         let Some(to) = &self.to else { return };
         drop(to.send(wire::line(message).into()));
         self.messages.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Records one per-pass merge patch and advances the reconstructed state.
+    ///
+    /// A legacy session has no baseline, so its first patch applies to empty
+    /// state and establishes one. Only the patch is written; the full snapshot
+    /// remains an in-memory replay product.
+    ///
+    /// # Errors
+    ///
+    /// [`ContextError`] if a caller supplied a persisted-style patch that
+    /// cannot produce a valid snapshot.
+    pub fn contextual(&mut self, patch: &ContextPatch) -> Result<(), ContextError> {
+        let prior = self.context.as_ref().cloned().unwrap_or_default();
+        let current = patch.apply(&prior)?;
+        if let Some(to) = &self.to {
+            drop(to.send(wire::contextual(patch).into()));
+        }
+        self.context = Some(current);
+        Ok(())
+    }
+
+    /// The typed state reconstructed for this session.
+    ///
+    /// `None` means a pre-context session whose model-visible fragments have
+    /// unknown vintage. It must never be read as a known empty snapshot.
+    #[must_use]
+    pub const fn context_snapshot(&self) -> Option<&ContextSnapshot> {
+        self.context.as_ref()
     }
 
     /// Records that room was made, and what the notes stand in place of.
@@ -565,6 +614,7 @@ impl Session {
             writer: Some(writer),
             claim: None,
             calibration: None,
+            context: Some(ContextSnapshot::new()),
             messages: AtomicUsize::new(0),
             pruned: Pruned::default(),
             trouble,

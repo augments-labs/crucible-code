@@ -52,7 +52,7 @@
 //! spending them.
 
 use std::collections::BTreeSet;
-use std::fmt::Write as _;
+use std::fmt::{self, Write as _};
 use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value, json};
@@ -486,9 +486,14 @@ impl Identity {
 }
 
 /// The workspace fact every relative tool path is interpreted against.
-#[derive(Debug)]
 pub struct WorkspaceSection<'a> {
     root: &'a Path,
+}
+
+impl fmt::Debug for WorkspaceSection<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("WorkspaceSection([redacted])")
+    }
 }
 
 impl<'a> WorkspaceSection<'a> {
@@ -539,9 +544,14 @@ impl ContextSection for WorkspaceSection<'_> {
 ///
 /// This borrows the engine so reporting cannot manufacture a parallel state.
 /// Its snapshot contains no grant and cannot be turned into [`crate::Approved`].
-#[derive(Debug)]
 pub struct PermissionsSection<'a> {
     permission: &'a Permission,
+}
+
+impl fmt::Debug for PermissionsSection<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("PermissionsSection([redacted])")
+    }
 }
 
 impl<'a> PermissionsSection<'a> {
@@ -585,9 +595,16 @@ impl ContextSection for PermissionsSection<'_> {
 }
 
 /// The bounded, unread skill catalogue discovered for this workspace.
-#[derive(Debug)]
 pub struct SkillsSection<'a> {
     skills: &'a [Skill],
+}
+
+impl fmt::Debug for SkillsSection<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("SkillsSection")
+            .field(&format_args!("{} entries redacted", self.skills.len()))
+            .finish()
+    }
 }
 
 impl<'a> SkillsSection<'a> {
@@ -613,10 +630,13 @@ impl ContextSection for SkillsSection<'_> {
                 }),
             );
         }
-        json!({
-            "skills": skills,
-            "omitted": self.skills.len().saturating_sub(SKILLS),
-        })
+        let mut state = Map::new();
+        state.insert("skills".to_owned(), Value::Object(skills));
+        let omitted = self.skills.len().saturating_sub(SKILLS);
+        if omitted > 0 {
+            state.insert("omitted".to_owned(), json!(omitted));
+        }
+        Value::Object(state)
     }
 
     fn render(&self, prior: Seen<&Value>) -> Option<Fragment> {
@@ -649,9 +669,14 @@ impl ContextSection for SkillsSection<'_> {
 /// Borrowing the snapshot makes the roster and its generation indivisible. A
 /// caller cannot combine names from one materialization with another one's
 /// label, and the borrow prevents that snapshot being replaced while rendered.
-#[derive(Debug)]
 pub struct ToolsSection<'a> {
     tools: &'a ToolSnapshot,
+}
+
+impl fmt::Debug for ToolsSection<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("ToolsSection([redacted])")
+    }
 }
 
 impl<'a> ToolsSection<'a> {
@@ -695,11 +720,16 @@ impl ContextSection for ToolsSection<'_> {
 }
 
 /// The date and target platform facts a model cannot reliably infer.
-#[derive(Debug)]
 pub struct EnvironmentSection<'a> {
     date: &'a str,
     os: &'a str,
     architecture: &'a str,
+}
+
+impl fmt::Debug for EnvironmentSection<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("EnvironmentSection([redacted])")
+    }
 }
 
 impl<'a> EnvironmentSection<'a> {
@@ -742,10 +772,15 @@ impl ContextSection for EnvironmentSection<'_> {
 }
 
 /// The model name and effort attached to the next provider request.
-#[derive(Debug)]
 pub struct ModelSection<'a> {
     model: &'a str,
     effort: Option<Effort>,
+}
+
+impl fmt::Debug for ModelSection<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("ModelSection([redacted])")
+    }
 }
 
 impl<'a> ModelSection<'a> {

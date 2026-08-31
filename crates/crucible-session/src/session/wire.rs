@@ -14,8 +14,8 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use crucible_core::{
-    Attachment, Calibration, Carried, Changed, Fragment, Message, Modality, SessionId, Spend,
-    StopReason, ToolCall, ToolId, ToolOutput, ToolResult,
+    Attachment, Calibration, Carried, Changed, ContextError, ContextPatch, Fragment, Message,
+    Modality, SessionId, Spend, StopReason, ToolCall, ToolId, ToolOutput, ToolResult,
 };
 use serde_json::{Value, json};
 
@@ -165,6 +165,19 @@ pub(crate) fn measure(line: &str) -> Option<Calibration> {
         sent: measured.get("bytes")?.as_u64()?,
         overhead: measured.get("overhead")?.as_u64()?,
     })
+}
+
+/// One RFC 7386 context patch as an additive session line.
+pub(crate) fn contextual(patch: &ContextPatch) -> String {
+    json!({ "context_patch": patch.value() }).to_string()
+}
+
+/// What a context-patch line says, including a malformed persisted patch.
+pub(crate) fn context_patch(line: &str) -> Option<Result<ContextPatch, ContextError>> {
+    let value: Value = serde_json::from_str(line).ok()?;
+    Some(ContextPatch::from_value(
+        value.get("context_patch")?.clone(),
+    ))
 }
 
 /// The first line, which says what the file is and what it belongs to.
@@ -513,6 +526,7 @@ fn result(value: &Value) -> Option<ToolResult> {
 
 #[cfg(test)]
 mod tests {
+    use crucible_core::ContextPatch;
     use crucible_core::{
         Approved, Ask, Attachment, Modality, Permission, Remember, Sensitivity, Settled, Target,
         ToolArgs, Verdict,
@@ -645,6 +659,25 @@ mod tests {
             r#"{"context":{"section":"workspace","text":"Workspace: /src"}}"#
         );
         assert_eq!(message(&line(&fragment)).as_ref(), Some(&fragment));
+    }
+
+    #[test]
+    fn a_context_patch_survives_its_additive_line() {
+        let patch = ContextPatch::from_value(json!({
+            "model": { "model": "gpt-test", "effort": "high" }
+        }))
+        .unwrap();
+
+        let written = contextual(&patch);
+        let read = context_patch(&written)
+            .expect("a patch line")
+            .expect("a valid patch");
+
+        assert_eq!(read, patch);
+        assert_eq!(
+            written,
+            r#"{"context_patch":{"model":{"effort":"high","model":"gpt-test"}}}"#
+        );
     }
 
     #[test]

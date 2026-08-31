@@ -7,8 +7,8 @@ use std::str::FromStr as _;
 use std::sync::{Arc, Mutex};
 
 use crucible_core::{
-    Calibration, Carried, Message, SessionId, Spend, StopReason, ToolArgs, ToolCall, ToolId,
-    ToolOutput, ToolResult,
+    Calibration, Carried, ContextPatch, ContextSnapshot, Message, SessionId, Spend, StopReason,
+    ToolArgs, ToolCall, ToolId, ToolOutput, ToolResult,
 };
 use serde_json::Value;
 
@@ -59,6 +59,68 @@ fn record(sample: &Sample, messages: &[Message]) -> PathBuf {
     // Dropping is what waits for the queue, so the file is complete after it.
     drop(session);
     path
+}
+
+#[test]
+fn a_fresh_session_starts_with_a_known_empty_context_snapshot() {
+    let sample = Sample::new("fresh-context-snapshot");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();
+
+    assert_eq!(session.context_snapshot(), Some(&ContextSnapshot::new()));
+}
+
+#[test]
+fn context_is_recorded_as_ordered_patches_and_reconstructed_on_resume() {
+    let sample = Sample::new("context-patch-replay");
+    let mut session = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();
+    let path = session.path().to_owned();
+    let first = ContextPatch::from_value(serde_json::json!({
+        "workspace": { "root": "/work" },
+        "model": { "model": "old" }
+    }))
+    .unwrap();
+    let second = ContextPatch::from_value(serde_json::json!({
+        "model": { "model": "new" }
+    }))
+    .unwrap();
+
+    session.contextual(&first).unwrap();
+    session.contextual(&second).unwrap();
+    drop(session);
+
+    let log = fs::read_to_string(&path).unwrap();
+    let patch_lines: Vec<&str> = log
+        .lines()
+        .filter(|line| line.contains("context_patch"))
+        .collect();
+    assert_eq!(patch_lines.len(), 2);
+    assert!(!patch_lines[1].contains("workspace"), "{log}");
+
+    let (resumed, _) = Session::resume(&sample.logs(), &sample.workspace()).unwrap();
+    assert_eq!(
+        resumed.context_snapshot().unwrap().value(),
+        serde_json::json!({
+            "model": { "model": "new" },
+            "workspace": { "root": "/work" }
+        })
+    );
+}
+
+#[test]
+fn a_pre_context_session_replays_without_a_typed_baseline() {
+    let sample = Sample::new("legacy-context-unknown");
+    let id = "0000000000001-000001";
+    sample.plant(
+        id,
+        &[
+            sample.header(9, id),
+            r#"{"user":"before typed context"}"#.to_owned(),
+        ],
+    );
+
+    let (resumed, _) = Session::resume(&sample.logs(), &sample.workspace()).unwrap();
+
+    assert_eq!(resumed.context_snapshot(), None);
 }
 
 #[test]
