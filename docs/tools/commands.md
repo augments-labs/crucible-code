@@ -213,16 +213,20 @@ started is still holding the pipe open, so what you are reading is a prefix. It
 is said whatever the exit status was: a command can succeed and still have more
 to print, and unsaid, the model reads the prefix as the whole.
 
-Output longer than 30000 bytes keeps its two ends and says how much went:
+Long process output keeps its two ends and says both how much arrived and how
+much of the middle was omitted while the pipes were being read:
 
 ```
-[41200 bytes of output cut from the middle]
+[process output was 41200 bytes; 11456 bytes omitted from the middle during capture]
 ```
 
 The ends are what carry the meaning — what the command started doing, and how it
 ended. The bound is applied while the command is still running rather than on
 the way out, so `yes` or `cat /dev/urandom` costs a fixed amount of memory rather
-than filling it with bytes that were always going to be thrown away.
+than filling it with bytes that were always going to be thrown away. The final
+tool result is capped at 30,000 encoded JSON-string bytes, including escaping;
+if that removes more of an escape-heavy result, a second note gives its original
+encoded size and the encoded bytes omitted.
 
 ## When it stops
 
