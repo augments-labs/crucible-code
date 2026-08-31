@@ -302,11 +302,8 @@ impl Transcript {
 
     /// Drops the last `many` messages.
     ///
-    /// What a compaction leaves behind, replayed: the notes that stood in for
-    /// them go on next, so this is the half that takes them off. Fewer than
-    /// `many` present is a log that says it replaced more than it holds, which
-    /// is damage rather than a shape to guess at — everything goes, and the
-    /// notes stand for the session so far.
+    /// Fewer than `many` present empties the transcript rather than guessing at
+    /// an invalid boundary.
     pub fn behind(&mut self, many: usize) {
         let keeping = self.messages.len().saturating_sub(many);
         self.messages.truncate(keeping);
@@ -358,6 +355,20 @@ impl Transcript {
     pub fn forget_context(&mut self) {
         self.messages
             .retain(|message| !matches!(message, Message::Context(_)));
+    }
+
+    /// Replaces a compacted prefix with its recap and keeps the tail in order.
+    ///
+    /// `replaced` is a raw transcript-message count, including typed context.
+    /// Every context fragment is removed even where one stood in the retained
+    /// tail: a delta cannot survive independently of the full fragment it may
+    /// amend. The recap is a user-shaped harness message and becomes the new
+    /// first entry, exactly as the live provider transcript reads it.
+    pub fn compacted(&mut self, replaced: usize, recap: impl Into<Box<str>>) {
+        let boundary = replaced.min(self.messages.len());
+        self.messages.drain(..boundary);
+        self.forget_context();
+        self.messages.insert(0, Message::said(recap));
     }
 
     /// How many messages the transcript holds.
@@ -541,6 +552,22 @@ mod tests {
             transcript.messages().get(1),
             Some(Message::Agent { .. })
         ));
+    }
+
+    #[test]
+    fn compaction_replaces_the_prefix_and_removes_context_from_the_retained_tail() {
+        let mut transcript = Transcript::new();
+        transcript.push(Message::said("replace one"));
+        transcript.push(Message::said("replace two"));
+        transcript.push(Message::Context(Fragment::new("model", "changed")));
+        transcript.push(Message::said("retain three"));
+
+        transcript.compacted(2, "recap");
+
+        assert_eq!(
+            transcript.messages(),
+            &[Message::said("recap"), Message::said("retain three")]
+        );
     }
 
     #[test]

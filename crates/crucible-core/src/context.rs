@@ -113,10 +113,12 @@ pub trait ContextSection {
     ///
     /// # Errors
     ///
-    /// [`ContextError::NullSnapshot`] when `snapshot` returned JSON `null`.
+    /// [`ContextError::NullSnapshot`] when `snapshot` returned JSON `null` or
+    /// placed one in an object member, where RFC 7386 would read it as removal
+    /// rather than state.
     fn checked_snapshot(&self) -> Result<Value, ContextError> {
         let snapshot = self.snapshot();
-        if snapshot.is_null() {
+        if snapshot.is_null() || contains_merge_removal(&snapshot) {
             Err(ContextError::NullSnapshot {
                 section: self.id().into(),
             })
@@ -169,8 +171,8 @@ impl ContextSnapshot {
     /// # Errors
     ///
     /// [`ContextError::SnapshotNotObject`] for any other root, or
-    /// [`ContextError::NullSnapshot`] for a removed section masquerading as
-    /// present state.
+    /// [`ContextError::NullSnapshot`] for a removed section or object member
+    /// masquerading as present state.
     pub fn from_value(value: Value) -> Result<Self, ContextError> {
         let Value::Object(object) = value else {
             return Err(ContextError::SnapshotNotObject);
@@ -178,7 +180,7 @@ impl ContextSnapshot {
 
         let mut sections = BTreeMap::new();
         for (section, state) in object {
-            if state.is_null() {
+            if state.is_null() || contains_merge_removal(&state) {
                 return Err(ContextError::NullSnapshot {
                     section: section.into(),
                 });
@@ -241,6 +243,20 @@ impl ContextSnapshot {
     pub fn patch_from(&self, prior: &Self) -> Option<ContextPatch> {
         merge_difference(&prior.value(), &self.value()).map(ContextPatch)
     }
+}
+
+/// Whether RFC 7386 would read snapshot state as an instruction to remove.
+///
+/// Arrays are replaced atomically by merge patch, so a null nested inside one
+/// remains ordinary array data. Object members are recursively patched, and a
+/// null in any of those positions can only mean deletion.
+fn contains_merge_removal(value: &Value) -> bool {
+    let Value::Object(object) = value else {
+        return false;
+    };
+    object
+        .values()
+        .any(|value| value.is_null() || contains_merge_removal(value))
 }
 
 /// An RFC 7386 JSON merge patch over a [`ContextSnapshot`].
@@ -441,6 +457,24 @@ mod tests {
         }
     }
 
+    struct NullMemberSection;
+
+    impl ContextSection for NullMemberSection {
+        const ID: &'static str = "environment";
+
+        fn snapshot(&self) -> Value {
+            json!({ "date": null })
+        }
+
+        fn render(&self, _prior: Seen<&Value>) -> Option<Fragment> {
+            None
+        }
+
+        fn recognizes(&self, fragment: &Fragment) -> bool {
+            fragment.section() == Self::ID
+        }
+    }
+
     #[test]
     fn the_four_seen_states_keep_stale_fresh_and_unknown_distinct() {
         let known = json!({ "root": "/before" });
@@ -476,6 +510,18 @@ mod tests {
         assert_eq!(
             problem.to_string(),
             "context section permissions serialized to null"
+        );
+    }
+
+    #[test]
+    fn null_object_members_are_rejected_before_merge_patch_can_read_them_as_removal() {
+        let problem = NullMemberSection.checked_snapshot().unwrap_err();
+
+        assert_eq!(
+            problem,
+            ContextError::NullSnapshot {
+                section: "environment".into()
+            }
         );
     }
 

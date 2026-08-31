@@ -448,7 +448,7 @@ fn a_compacted_session_replays_as_the_notes_and_what_they_did_not_replace() {
     session.append(&said("one"));
     session.append(&said("two"));
     session.append(&said("three"));
-    session.compacted(2, "notes on two and three");
+    session.compacted(2, "notes on one and two");
     session.append(&said("four"));
     drop(session);
 
@@ -464,9 +464,44 @@ fn a_compacted_session_replays_as_the_notes_and_what_they_did_not_replace() {
         })
         .collect();
 
-    // `one` survives. The line said it replaced two, and two is what it
-    // replaced.
-    assert_eq!(replayed, ["one", "notes on two and three", "four"]);
+    // The first two are the prefix the live runner replaces. The third message
+    // is the retained tail and must stand after the recap on resume too.
+    assert_eq!(replayed, ["notes on one and two", "three", "four"]);
+}
+
+#[test]
+fn compaction_replay_drops_context_from_the_tail_but_keeps_its_typed_snapshot() {
+    let sample = Sample::new("session-compacted-context");
+    let mut session = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();
+    let patch = ContextPatch::from_value(serde_json::json!({
+        "model": { "model": "kept-model" }
+    }))
+    .unwrap();
+
+    session.append(&said("replace me"));
+    session.append(&Message::Context(Fragment::new(
+        "model",
+        "Model: kept-model",
+    )));
+    session.contextual(&patch).unwrap();
+    session.append(&said("retain me"));
+    session.compacted(1, "recap");
+    drop(session);
+
+    let (resumed, transcript) =
+        Session::resume(&sample.logs(), &sample.workspace()).expect("the compacted session");
+
+    assert_eq!(
+        transcript.messages(),
+        &[said("recap"), said("retain me")],
+        "typed context must not survive independently in the retained tail"
+    );
+    assert_eq!(
+        resumed.context_snapshot().map(ContextSnapshot::value),
+        Some(serde_json::json!({
+            "model": { "model": "kept-model" }
+        }))
+    );
 }
 
 #[test]

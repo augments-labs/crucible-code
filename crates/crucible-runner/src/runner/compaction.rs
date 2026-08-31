@@ -29,7 +29,7 @@ use std::fmt::Write as _;
 
 use crucible_core::{
     Compacted, Compacting, Delta, Message, Request, Room, Spend, StopReason, TOOL_RESULT_BYTES,
-    ToolId, ToolOutput, Transcript, TurnError,
+    ToolId, ToolOutput, TurnError,
 };
 
 use crate::context::RunContext;
@@ -243,29 +243,13 @@ impl Runner {
             .filter(|message| !matches!(message, Message::Context(_)))
             .count();
 
-        let mut messages = std::mem::take(&mut self.transcript).into_messages();
-
-        // Drained rather than collected into a second transcript: this is the
-        // one value here that grows with the session, and holding two of them
-        // at once is what the peak-memory budget is set to refuse.
-        let standing: Vec<Message> = messages.drain(replacing..).collect();
-        drop(messages);
-
         let standing_as = format!("{}{recap}", crucible_core::RECAP);
 
         // Written to the log before the transcript is replaced, so a crash
         // between the two leaves a log that says what happened rather than one
         // that quietly lost the messages.
         self.session.compacted(replacing, &standing_as);
-
-        let mut rebuilt = Transcript::new();
-        rebuilt.push(Message::said(standing_as));
-        for message in standing {
-            if !matches!(message, Message::Context(_)) {
-                rebuilt.push(message);
-            }
-        }
-        self.transcript = rebuilt;
+        self.transcript.compacted(replacing, standing_as);
 
         self.load.replaced();
         for message in self.transcript.messages() {

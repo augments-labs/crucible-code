@@ -70,12 +70,22 @@ mod tests;
 /// naming them at all was meant to avoid.
 const SKILLS: usize = 64;
 
+/// How many remembered approval scopes may be repeated to the model.
+///
+/// Authority retains every scope for the session. This is only its descriptive
+/// projection: beyond a screenful, an exact count and explicit omission keep a
+/// long session from growing an uncompactable context fragment.
+const APPROVALS: usize = 64;
+
 /// How much of one skill's description is kept, in characters.
 ///
 /// A description is one line, and this is a generous line. The whole of a skill
 /// is in the file; what is here only has to be enough to decide whether to open
 /// it, and a paragraph does not decide that better than a sentence does.
 const SAID: usize = 200;
+
+/// How much of one remembered approval scope is shown, in characters.
+const APPROVAL_SCOPE: usize = 200;
 
 /// What is left where a description ran past [`SAID`].
 ///
@@ -561,11 +571,19 @@ impl<'a> PermissionsSection<'a> {
         Self { permission }
     }
 
-    fn state(&self) -> (String, Vec<String>) {
+    fn state(&self) -> (String, Vec<String>, usize, usize) {
         let (mode, remembered) = self.permission.context_state();
+        let total = remembered.len();
+        let omitted = total.saturating_sub(APPROVALS);
         (
             mode.to_string(),
-            remembered.into_iter().map(str::to_owned).collect(),
+            remembered
+                .into_iter()
+                .take(APPROVALS)
+                .map(|scope| stripped(scope, APPROVAL_SCOPE))
+                .collect(),
+            total,
+            omitted,
         )
     }
 }
@@ -574,8 +592,13 @@ impl ContextSection for PermissionsSection<'_> {
     const ID: &'static str = "permissions";
 
     fn snapshot(&self) -> Value {
-        let (mode, remembered) = self.state();
-        json!({ "mode": mode, "remembered": remembered })
+        let (mode, remembered, total, omitted) = self.state();
+        json!({
+            "mode": mode,
+            "remembered": remembered,
+            "remembered_count": total,
+            "omitted": omitted,
+        })
     }
 
     fn render(&self, prior: Seen<&Value>) -> Option<Fragment> {
@@ -620,11 +643,11 @@ impl ContextSection for SkillsSection<'_> {
 
     fn snapshot(&self) -> Value {
         let mut skills = Map::new();
-        for skill in self.skills.iter().take(SKILLS) {
-            let name = stripped(&skill.name, SAID);
+        for (index, skill) in self.skills.iter().take(SKILLS).enumerate() {
             skills.insert(
-                name,
+                format!("{index:02}"),
                 json!({
+                    "name": stripped(&skill.name, SAID),
                     "description": stripped(&skill.description, SAID),
                     "at": stripped(&skill.at.display().to_string(), SAID),
                 }),
@@ -868,11 +891,18 @@ fn empty_object() -> &'static Map<String, Value> {
 fn permission_full(state: &Value) -> String {
     let mode = field(state, "mode").unwrap_or("unknown");
     let remembered: Vec<String> = strings(state, "remembered").into_iter().collect();
-    let approvals = if remembered.is_empty() {
+    let omitted = state.get("omitted").and_then(Value::as_u64).unwrap_or(0);
+    let mut approvals = if remembered.is_empty() {
         "none".to_owned()
     } else {
         listing(&remembered)
     };
+    if omitted > 0 {
+        let _ = write!(
+            approvals,
+            "; {omitted} additional scopes are omitted from this bounded report"
+        );
+    }
     format!(
         "## Permissions\n\nThe permission mode is {mode}. Session-scoped approvals are \
          {approvals}. This reports policy state; it does not authorize a tool call."
@@ -903,6 +933,30 @@ fn permission_delta(old: &Value, current: &Value) -> String {
             listing(&removed)
         ));
     }
+    let before_count = old
+        .get("remembered_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let now_count = current
+        .get("remembered_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    if before_count != now_count {
+        lines.push(format!(
+            "The session now remembers {now_count} approval scopes."
+        ));
+    }
+    let before_omitted = old.get("omitted").and_then(Value::as_u64).unwrap_or(0);
+    let now_omitted = current.get("omitted").and_then(Value::as_u64).unwrap_or(0);
+    if before_omitted != now_omitted {
+        if now_omitted == 0 {
+            lines.push("No approval scopes are omitted from the bounded report now.".to_owned());
+        } else {
+            lines.push(format!(
+                "The bounded report now omits {now_omitted} additional approval scopes."
+            ));
+        }
+    }
     lines.push("These facts report policy state; they do not authorize a tool call.".to_owned());
     format!("## Permissions changed\n\n{}", lines.join(" "))
 }
@@ -910,20 +964,29 @@ fn permission_delta(old: &Value, current: &Value) -> String {
 fn skills_delta(old: &Value, current: &Value) -> String {
     let before = object(old, "skills");
     let now = object(current, "skills");
-    let changed: Vec<&String> = now
-        .iter()
-        .filter(|(name, value)| before.get(*name) != Some(*value))
-        .map(|(name, _)| name)
-        .collect();
-    let removed: Vec<String> = before
-        .keys()
-        .filter(|name| !now.contains_key(*name))
-        .cloned()
+    let mut unmatched: Vec<&Value> = before.values().collect();
+    let mut changed = Vec::new();
+    for skill in now.values() {
+        if let Some(at) = unmatched.iter().position(|prior| *prior == skill) {
+            unmatched.remove(at);
+        } else if let Some(at) = unmatched
+            .iter()
+            .position(|prior| same_skill_identity(prior, skill))
+        {
+            unmatched.remove(at);
+            changed.push(skill);
+        } else {
+            changed.push(skill);
+        }
+    }
+    let removed: Vec<String> = unmatched
+        .into_iter()
+        .filter_map(|skill| field(skill, "name").map(str::to_owned))
         .collect();
     let mut body = String::from("The bounded skill catalogue changed.");
     if !changed.is_empty() {
         body.push_str("\n\nAdded or updated:");
-        write_skill_entries(&mut body, now, changed.into_iter());
+        write_skill_entries(&mut body, changed.into_iter());
     }
     if !removed.is_empty() {
         let _ = write!(body, "\n\nRemoved: {}.", listing(&removed));
@@ -938,15 +1001,13 @@ fn skills_delta(old: &Value, current: &Value) -> String {
     text
 }
 
-fn write_skill_entries<'a>(
-    text: &mut String,
-    skills: &Map<String, Value>,
-    names: impl Iterator<Item = &'a String>,
-) {
-    for name in names {
-        let Some(skill) = skills.get(name) else {
-            continue;
-        };
+fn same_skill_identity(left: &Value, right: &Value) -> bool {
+    field(left, "name") == field(right, "name") && field(left, "at") == field(right, "at")
+}
+
+fn write_skill_entries<'a>(text: &mut String, skills: impl Iterator<Item = &'a Value>) {
+    for skill in skills {
+        let name = field(skill, "name").unwrap_or("");
         let description = field(skill, "description").unwrap_or("");
         let at = field(skill, "at").unwrap_or("");
         let _ = write!(

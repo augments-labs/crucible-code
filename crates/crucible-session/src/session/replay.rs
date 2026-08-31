@@ -207,14 +207,12 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
             continue;
         }
 
-        // Room having been made. The notes replace exactly the messages the
-        // line says they replace — counted back from here rather than taken to
-        // mean everything above, so a log that ever holds more than one thread
-        // of messages still reads correctly.
+        // Room having been made. The notes replace exactly the prefix count the
+        // line carries. Earlier compaction markers have already transformed
+        // the transcript, so the count applies to its current model-visible
+        // shape rather than to physical lines above this one.
         if let Some((replaced, recap)) = whole.and_then(wire::made_room) {
-            transcript.behind(replaced);
-            transcript.forget_context();
-            transcript.push(Message::said(recap));
+            transcript.compacted(replaced, recap);
             calibration = None;
             through += read as u64;
             continue;
