@@ -8,6 +8,8 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-08-31
+
 ### Added
 
 - **Prompt caching is enabled by default through each shipped provider's native
@@ -3115,7 +3117,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.30.0...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.31.0...HEAD
+[0.31.0]: https://github.com/augments-labs/crucible-code/compare/v0.30.0...v0.31.0
 [0.30.0]: https://github.com/augments-labs/crucible-code/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/augments-labs/crucible-code/compare/v0.28.2...v0.29.0
 [0.28.2]: https://github.com/augments-labs/crucible-code/compare/v0.28.1...v0.28.2
