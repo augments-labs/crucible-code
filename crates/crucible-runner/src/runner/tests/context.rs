@@ -21,10 +21,11 @@ fn contexts(transcript: &Transcript) -> Vec<&Fragment> {
 fn static_context_is_assembled_once_in_stable_order_and_charged_before_fullness() {
     let mut scripted = Scripted::new(Script::new(Vec::new()), Tools::new(), Verdict::Allow);
     let before = scripted.runner.load;
+    let ancestry = Ancestry::new();
 
     scripted
         .runner
-        .assemble_context()
+        .assemble_context(ancestry)
         .expect("the first context");
 
     let first = contexts(scripted.runner.transcript());
@@ -67,7 +68,7 @@ fn static_context_is_assembled_once_in_stable_order_and_charged_before_fullness(
     let charged = scripted.runner.load.tokens();
     scripted
         .runner
-        .assemble_context()
+        .assemble_context(ancestry)
         .expect("unchanged context");
 
     assert_eq!(scripted.runner.transcript().len(), messages);
@@ -168,7 +169,7 @@ fn a_pre_context_session_supersedes_every_unknown_section_on_its_first_pass() {
     drop(session);
 
     let current = fs::read_to_string(&path).unwrap();
-    let legacy = current.replacen(r#""format":10"#, r#""format":9"#, 1);
+    let legacy = current.replacen(r#""format":11"#, r#""format":9"#, 1);
     assert_ne!(legacy, current, "the fixture header was not downgraded");
     fs::write(&path, legacy).unwrap();
 

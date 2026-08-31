@@ -84,7 +84,10 @@ impl fmt::Debug for ContextInputs {
 
 impl Runner {
     /// Reconciles and records every section for the exact pass about to send.
-    pub(super) fn assemble_context(&mut self) -> Result<(), TurnError> {
+    pub(super) fn assemble_context(
+        &mut self,
+        ancestry: crucible_core::Ancestry,
+    ) -> Result<(), TurnError> {
         let (fragments, patch) = {
             let empty = ContextSnapshot::new();
             let persisted = self.session.context_snapshot();
@@ -124,7 +127,7 @@ impl Runner {
         // Words first, state second. A crash between them replays as Unknown;
         // the opposite order could claim the model saw words never retained.
         for fragment in fragments {
-            self.record(crucible_core::Message::Context(fragment));
+            self.record(ancestry, crucible_core::Message::Context(fragment));
         }
         if let Some(patch) = patch {
             self.session.contextual(&patch)?;

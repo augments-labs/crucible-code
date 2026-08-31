@@ -102,6 +102,40 @@ A log that stops between a tool call and its result is the one case where the
 last recorded turn does not come back: an unanswered question is not something
 to send a provider, so the replay ends before it and the file is cut to match.
 
+## Conversation, journal and checkpoints
+
+The conversation a provider receives is deliberately a closed sequence of
+context, user, agent and tool-result messages. Framework facts live beside that
+conversation rather than becoming new provider messages. A format 11 session
+therefore follows a conversation line with versioned `run_item` metadata where
+there is ancestry or lifecycle state to retain. Message metadata does not copy
+the prompt text. Prompt-cache records keep normalized per-attempt decisions,
+usage and cost; invocation records keep stable prepared, started and finished
+states. Conversation replay skips all of these records.
+
+Namespaced custom entries use the same framework journal and carry their own
+schema version, source and entry identity. They are not sent to a model unless
+code explicitly projects one into an ordinary closed message. This keeps an
+extension's private state from quietly becoming future model context.
+
+An execution checkpoint is different again. It is a bounded, owner-only,
+versioned document replaced atomically under a stable checkpoint identity, not
+a conversation message or a session log. It may hold the exact pending call or
+human question needed to continue unfinished work, but ordinary diagnostics
+redact that content. Resume checks expiry and the current endpoint, model,
+credential and authority fingerprints, along with prompt-cache policy,
+capability and pricing versions and a freshly derived cache scope and prefix. A
+saved prefix fingerprint is never treated as proof of a cache hit.
+
+Pending approvals, external tool work and human input each have a stable action
+identity and execution ancestry. Repeating the same resolution is idempotent;
+once resumed, a different resolution cannot replace it. Approved and external
+tool actions also retain a stable invocation identity. A crash before execution
+may retry, a started read-only or keyed-idempotent invocation follows its
+declared retry policy, an ambiguous non-idempotent effect requires
+reconciliation, and a durably finished invocation reuses its recorded result.
+Only settled calls are projected back into a provider transcript.
+
 ## Picking one by name
 
 ```bash

@@ -14,8 +14,11 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use crucible_core::{
-    Attachment, Calibration, Carried, Changed, ContextError, ContextPatch, Fragment, Message,
-    Modality, SessionId, Spend, StopReason, ToolCall, ToolId, ToolOutput, ToolResult,
+    Attachment, Calibration, Carried, Changed, ContextError, ContextPatch, Fragment,
+    InvocationState, MAX_RUN_ITEM_BYTES, Message, Modality, PendingAction, PricingUnit,
+    PromptCacheEligibility, PromptCacheEncoding, PromptCacheFact, PromptCacheIneligibleReason,
+    PromptCacheOutcome, PromptCacheRequestDisposition, PromptCacheSupport, RunItem, SessionId,
+    Spend, StopReason, ToolCall, ToolEffect, ToolId, ToolOutcome, ToolOutput, ToolResult,
 };
 use serde_json::{Value, json};
 
@@ -25,7 +28,7 @@ use serde_json::{Value, json};
 /// is refused rather than half-understood, which is the difference between
 /// telling the user their session cannot be continued and silently continuing
 /// a different one.
-pub(crate) const FORMAT: u32 = 10;
+pub(crate) const FORMAT: u32 = 11;
 
 /// The formats this build reads, newest first.
 ///
@@ -45,16 +48,338 @@ pub(crate) const FORMAT: u32 = 10;
 /// meant. Format 9 is, because format 10 only adds typed context and its
 /// snapshot patches; a log without either replays as context-unknown rather
 /// than pretending it recorded state it could not have written.
+/// Format 10 is, because format 11 only adds `run_item` journal lines that are
+/// explicitly outside provider-visible replay.
 ///
 /// A format that changed the meaning of a line does not go on this list however
 /// small the change looks. What it would buy is somebody's history; what it
 /// would cost is a session that looks fine and is missing turns, which is the
 /// failure the refusal exists for.
-pub(crate) const READS: &[u32] = &[10, 9, 8, 7, 6, 5, 4, 3];
+pub(crate) const READS: &[u32] = &[11, 10, 9, 8, 7, 6, 5, 4, 3];
 
 /// Whether this build can replay a log written under `format`.
 pub(crate) fn readable(format: u32) -> bool {
     READS.contains(&format)
+}
+
+/// Whether this format has the typed-context baseline introduced in format 10.
+pub(crate) const fn typed_context(format: Option<u32>) -> bool {
+    matches!(format, Some(10 | 11))
+}
+
+/// Whether a whole line is framework history rather than a conversation line.
+pub(crate) fn journaled(line: &str) -> bool {
+    serde_json::from_str::<Value>(line)
+        .ok()
+        .is_some_and(|value| value.get("run_item").is_some())
+}
+
+/// One bounded framework record as versioned append-only metadata.
+///
+/// Conversation text remains in its ordinary message line. The companion
+/// record carries ancestry and kind but never copies prompt plaintext. Cache
+/// entries carry typed normalized facts, never routing keys or resource
+/// authorization handles.
+pub(crate) fn journal(item: &RunItem) -> Option<String> {
+    item.validate_retained().ok()?;
+    let ancestry = ancestry(item.ancestry());
+    let body = match item {
+        RunItem::Message { .. } => json!({
+            "kind": "message",
+            "ancestry": ancestry,
+        }),
+        RunItem::ProviderAttempt { fact, .. } => cache_fact(fact, &ancestry),
+        RunItem::Interrupt(action) => interrupted(action, &ancestry),
+        RunItem::Invocation(invocation) => {
+            let state = match invocation.state() {
+                InvocationState::Prepared => json!({ "state": "prepared" }),
+                InvocationState::Started => json!({ "state": "started" }),
+                InvocationState::Finished { outcome, output } => json!({
+                    "state": "finished",
+                    "outcome": tool_outcome(*outcome),
+                    "result": answered(&ToolResult {
+                        id: invocation.call().id.clone(),
+                        output: output.clone(),
+                    }),
+                }),
+            };
+            json!({
+                "kind": "invocation",
+                "ancestry": ancestry,
+                "invocation": invocation.id().to_string(),
+                "call": invocation.call().id.as_str(),
+                "tool": invocation.call().name.as_ref(),
+                "effect": effect(invocation.effect()),
+                "idempotency_key_present": invocation.idempotency_key().is_some(),
+                "invocation_state": state,
+            })
+        }
+        RunItem::Compaction(compaction) => json!({
+            "kind": "compaction",
+            "ancestry": ancestry,
+            "replaced": compaction.replaced(),
+            "recap_bytes": compaction.recap_bytes(),
+            "recap_digest": hex(&compaction.recap_digest()),
+        }),
+        RunItem::Custom(entry) => json!({
+            "kind": "custom",
+            "ancestry": ancestry,
+            "entry": entry.id().to_string(),
+            "namespace": entry.namespace(),
+            "schema_version": entry.schema_version(),
+            "source": entry.source(),
+            "data": serde_json::from_str::<Value>(entry.data()).ok()?,
+        }),
+    };
+
+    let line = json!({ "run_item": { "version": 1, "body": body } }).to_string();
+    (line.len() <= MAX_RUN_ITEM_BYTES).then_some(line)
+}
+
+/// Restores provider-visible attachments through the crate's single protected
+/// persistence seam. Both conversation replay and execution checkpoints enter
+/// here after their owner-only, versioned codecs validate the record.
+pub(super) fn restored_output(
+    output: ToolOutput,
+    attachments: impl Into<Box<[Attachment]>>,
+) -> ToolOutput {
+    output.replayed(attachments)
+}
+
+fn ancestry(ancestry: crucible_core::Ancestry) -> Value {
+    json!({
+        "run": ancestry.run().to_string(),
+        "parent": ancestry.parent().map(|id| id.to_string()),
+        "root": ancestry.root().to_string(),
+        "depth": ancestry.depth(),
+    })
+}
+
+fn interrupted(action: &PendingAction, ancestry: &Value) -> Value {
+    let kind = match action {
+        PendingAction::Approval(_) => "approval",
+        PendingAction::ExternalTool(_) => "external_tool",
+        PendingAction::HumanInput(_) => "human_input",
+    };
+    json!({
+        "kind": "interrupt",
+        "ancestry": ancestry,
+        "action": action.id().to_string(),
+        "pending_kind": kind,
+        "call": action.call().map(|call| call.id.as_str()),
+        "invocation": action.invocation().map(|id| id.to_string()),
+        "expires_at": action.expires_at(),
+    })
+}
+
+fn cache_fact(fact: &PromptCacheFact, ancestry: &Value) -> Value {
+    match fact {
+        PromptCacheFact::Planned(fact) => json!({
+            "kind": "provider_attempt",
+            "ancestry": ancestry,
+            "event": "planned",
+            "attempt": fact.attempt.to_string(),
+            "support": support(fact.support),
+            "capability_version": fact.capability_version,
+            "model_revision": fact.model_revision,
+            "policy_version": fact.policy_version.as_str(),
+            "policy": {
+                "mode": fact.policy.mode().as_str(),
+                "isolation": fact.policy.isolation().as_str(),
+                "retention": fact.policy.retention().class().as_str(),
+                "maximum_seconds": fact.policy.retention().maximum_seconds(),
+                "persistent_resources": fact.policy.persistent_resources().as_str(),
+            },
+            "eligibility": eligibility(fact.eligibility),
+            "selected": fact.selected.map(|selected| json!({
+                "mechanism": selected.mechanism().as_str(),
+                "retention": selected.retention().as_str(),
+            })),
+            "scope_fingerprint": hex(&fact.scope.bytes()),
+            "prefix_fingerprint": hex(&fact.prefix.bytes()),
+            "stable_bytes": fact.stable_bytes,
+            "estimated_tokens": fact.estimated_tokens,
+            "request_shape_version": fact.request_shape_version,
+        }),
+        PromptCacheFact::RequestEncoded(fact) => json!({
+            "kind": "provider_attempt",
+            "ancestry": ancestry,
+            "event": "request",
+            "attempt": fact.attempt.to_string(),
+            "encoding": encoding(fact.encoding),
+            "disposition": disposition(fact.disposition),
+        }),
+        PromptCacheFact::UsageReported(fact) => json!({
+            "kind": "provider_attempt",
+            "ancestry": ancestry,
+            "event": "usage",
+            "attempt": fact.attempt.to_string(),
+            "outcome": cache_outcome(fact.outcome),
+            "usage": {
+                "input": {
+                    "total": fact.usage.input.total,
+                    "uncached": fact.usage.input.uncached,
+                    "cache_read": fact.usage.input.cache_read,
+                    "cache_write_or_creation": fact.usage.input.cache_write_or_creation,
+                },
+                "output": fact.usage.output,
+                "reasoning": fact.usage.reasoning,
+                "total": fact.usage.total,
+                "storage_token_hours": fact.usage.storage_token_hours,
+                "details": fact.usage.details().iter().map(|detail| {
+                    json!({ "label": detail.label, "value": detail.value })
+                }).collect::<Vec<_>>(),
+            },
+            "cost": cost(&fact.cost),
+        }),
+        PromptCacheFact::ResourceChanged(fact) => json!({
+            "kind": "provider_attempt",
+            "ancestry": ancestry,
+            "event": "resource",
+            "attempt": fact.attempt.map(|id| id.to_string()),
+            "resource": fact.resource.as_str(),
+            "operation": fact.operation.map(crucible_core::PromptCacheResourceOperation::as_str),
+            "state": fact.state.as_str(),
+            "expires_at": fact.expires_at,
+            "isolation": fact.owner.isolation().as_str(),
+            "exclusive": fact.owner.exclusive(),
+        }),
+    }
+}
+
+fn cost(cost: &crucible_core::UsageCost) -> Value {
+    fn amount(value: Option<crucible_core::CostAmount>) -> Value {
+        value.map_or(Value::Null, |amount| {
+            json!({
+                "femtocurrency": amount.femtocurrency().to_string(),
+                "currency": amount.currency().as_str(),
+                "unit": pricing_unit(amount.unit()),
+            })
+        })
+    }
+    json!({
+        "uncached_input": amount(cost.uncached_input),
+        "cache_read_input": amount(cost.cache_read_input),
+        "cache_write_input": amount(cost.cache_write_input),
+        "output": amount(cost.output),
+        "reasoning": amount(cost.reasoning),
+        "storage": amount(cost.storage),
+        "other": amount(cost.other),
+        "total": amount(cost.total),
+        "pricing_version": cost.pricing_version,
+        "effective_from": cost.effective_from.map(|date| format!(
+            "{:04}-{:02}-{:02}", date.year(), date.month(), date.day()
+        )),
+        "source_url": cost.source_url,
+        "currency": cost.currency.map(crucible_core::PricingCurrency::as_str),
+        "unit": cost.unit.map(pricing_unit),
+    })
+}
+
+const fn support(value: PromptCacheSupport) -> &'static str {
+    match value {
+        PromptCacheSupport::Unknown => "unknown",
+        PromptCacheSupport::Unsupported => "unsupported",
+        PromptCacheSupport::Supported => "supported",
+    }
+}
+
+fn eligibility(value: PromptCacheEligibility) -> Value {
+    match value {
+        PromptCacheEligibility::Eligible => json!({ "state": "eligible" }),
+        PromptCacheEligibility::Ineligible(reason) => {
+            json!({ "state": "ineligible", "reason": ineligible(reason) })
+        }
+    }
+}
+
+const fn ineligible(value: PromptCacheIneligibleReason) -> &'static str {
+    match value {
+        PromptCacheIneligibleReason::ObserveOnly => "observe_only",
+        PromptCacheIneligibleReason::UnknownSupport => "unknown_support",
+        PromptCacheIneligibleReason::Unsupported => "unsupported",
+        PromptCacheIneligibleReason::EmptyPrefix => "empty_prefix",
+        PromptCacheIneligibleReason::BelowMinimum => "below_minimum",
+        PromptCacheIneligibleReason::UnsupportedContent => "unsupported_content",
+        PromptCacheIneligibleReason::UnsupportedBoundary => "unsupported_boundary",
+        PromptCacheIneligibleReason::TooManyBreakpoints => "too_many_breakpoints",
+        PromptCacheIneligibleReason::DisallowedRetention => "disallowed_retention",
+        PromptCacheIneligibleReason::MechanismDisallowed => "mechanism_disallowed",
+        PromptCacheIneligibleReason::ResourceUnavailable => "resource_unavailable",
+        PromptCacheIneligibleReason::OptOutUnavailable => "opt_out_unavailable",
+        PromptCacheIneligibleReason::PolicyConflict => "policy_conflict",
+    }
+}
+
+fn encoding(value: PromptCacheEncoding) -> Value {
+    match value {
+        PromptCacheEncoding::NoControlIntended => json!("no_control_intended"),
+        PromptCacheEncoding::NoExtraControlEncoded => json!("no_extra_control"),
+        PromptCacheEncoding::AutomaticHintEncoded => json!("automatic_hint"),
+        PromptCacheEncoding::BreakpointsEncoded(count) => {
+            json!({ "breakpoints": count })
+        }
+        PromptCacheEncoding::PersistentResourceReferenced => json!("persistent_resource"),
+        PromptCacheEncoding::Failed(reason) => json!({ "failed": ineligible(reason) }),
+    }
+}
+
+const fn disposition(value: PromptCacheRequestDisposition) -> &'static str {
+    match value {
+        PromptCacheRequestDisposition::NotSent => "not_sent",
+        PromptCacheRequestDisposition::Unknown => "unknown",
+        PromptCacheRequestDisposition::Rejected => "rejected",
+        PromptCacheRequestDisposition::Accepted => "accepted",
+    }
+}
+
+const fn cache_outcome(value: PromptCacheOutcome) -> &'static str {
+    match value {
+        PromptCacheOutcome::Unreported => "unreported",
+        PromptCacheOutcome::NoActivity => "no_activity",
+        PromptCacheOutcome::Write => "write",
+        PromptCacheOutcome::Read => "read",
+        PromptCacheOutcome::ReadAndWrite => "read_and_write",
+    }
+}
+
+const fn effect(value: ToolEffect) -> &'static str {
+    match value {
+        ToolEffect::ReadOnly => "read_only",
+        ToolEffect::Idempotent => "idempotent",
+        ToolEffect::NonIdempotent => "non_idempotent",
+    }
+}
+
+const fn tool_outcome(value: ToolOutcome) -> &'static str {
+    match value {
+        ToolOutcome::Succeeded => "succeeded",
+        ToolOutcome::Failed => "failed",
+        ToolOutcome::Forbidden => "forbidden",
+        ToolOutcome::Refused => "refused",
+        ToolOutcome::Cancelled => "cancelled",
+        ToolOutcome::TimedOut => "timed_out",
+        ToolOutcome::Rejected => "rejected",
+        ToolOutcome::NotRun => "not_run",
+        ToolOutcome::OutputLimit => "output_limit",
+        ToolOutcome::Panicked => "panicked",
+    }
+}
+
+const fn pricing_unit(value: PricingUnit) -> &'static str {
+    match value {
+        PricingUnit::MillionTokens => "million_tokens",
+        PricingUnit::MillionTokenHours => "million_token_hours",
+        PricingUnit::Mixed => "mixed",
+    }
+}
+
+fn hex(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
 }
 
 /// Whether this line says everything above it was forgotten.
@@ -503,7 +828,7 @@ fn result(value: &Value) -> Option<ToolResult> {
     // is over and no log holds one; what says it was reached is that this build
     // wrote the line at all.
     let output = match value.get("attached") {
-        Some(attached) => output.replayed(read(attached, attachment)?),
+        Some(attached) => restored_output(output, read(attached, attachment)?),
         None => output,
     };
 
@@ -528,8 +853,10 @@ fn result(value: &Value) -> Option<ToolResult> {
 mod tests {
     use crucible_core::ContextPatch;
     use crucible_core::{
-        Approved, Ask, Attachment, Modality, Permission, Remember, Sensitivity, Settled, Target,
-        ToolArgs, Verdict,
+        Ancestry, Approved, Ask, Attachment, InputTokenUsage, Modality, Permission,
+        PromptCacheFingerprint, PromptCachePlanned, PromptCachePolicy, PromptCachePolicyVersion,
+        PromptCacheScopeDigest, PromptCacheUsageFact, ProviderAttemptId, ProviderUsage, Remember,
+        Sensitivity, Settled, Target, ToolArgs, UsageCost, Verdict,
     };
 
     use super::*;
@@ -731,8 +1058,84 @@ mod tests {
 
     #[test]
     fn the_format_moves_with_the_line_shape() {
-        assert_eq!(FORMAT, 10);
+        assert_eq!(FORMAT, 11);
         assert!(readable(FORMAT));
+        assert!(typed_context(Some(10)));
+        assert!(typed_context(Some(FORMAT)));
+    }
+
+    #[test]
+    fn message_journal_metadata_never_copies_the_message_plaintext() {
+        let item =
+            RunItem::message(Ancestry::new(), Message::said("prompt-plaintext-canary")).unwrap();
+
+        let written = journal(&item).expect("bounded journal metadata");
+
+        assert!(journaled(&written));
+        assert!(written.contains(r#""version":1"#));
+        assert!(written.contains(r#""kind":"message""#));
+        assert!(!written.contains("prompt-plaintext-canary"));
+        assert!(message(&written).is_none());
+    }
+
+    #[test]
+    fn provider_attempt_journal_keeps_normalized_versions_fingerprints_usage_and_cost_once() {
+        let attempt = ProviderAttemptId::new();
+        let planned = RunItem::provider_attempt(
+            Ancestry::new(),
+            PromptCacheFact::Planned(Box::new(PromptCachePlanned {
+                attempt,
+                support: PromptCacheSupport::Supported,
+                capability_version: "capabilities-v7",
+                model_revision: Some("model-revision-v2"),
+                policy_version: PromptCachePolicyVersion::CURRENT,
+                policy: PromptCachePolicy::default(),
+                eligibility: PromptCacheEligibility::Ineligible(
+                    PromptCacheIneligibleReason::BelowMinimum,
+                ),
+                selected: None,
+                scope: PromptCacheScopeDigest::new([0x31; 32]),
+                prefix: PromptCacheFingerprint::new([0x41; 32]),
+                stable_bytes: 400,
+                estimated_tokens: 100,
+                request_shape_version: "shape-v3",
+            })),
+        );
+        let usage = ProviderUsage::new(
+            InputTokenUsage::inclusive_read(Some(100), Some(40)).unwrap(),
+            Some(20),
+            Some(5),
+            Some(120),
+            &[],
+        )
+        .unwrap();
+        let reported = RunItem::provider_attempt(
+            planned.ancestry(),
+            PromptCacheFact::UsageReported(Box::new(PromptCacheUsageFact {
+                attempt,
+                outcome: PromptCacheOutcome::Read,
+                usage,
+                cost: UsageCost::UNKNOWN,
+            })),
+        );
+
+        let planned = journal(&planned).unwrap();
+        let reported = journal(&reported).unwrap();
+
+        assert!(planned.contains("capabilities-v7"));
+        assert!(planned.contains(PromptCachePolicyVersion::CURRENT.as_str()));
+        assert!(planned.contains("shape-v3"));
+        assert!(planned.contains(&"31".repeat(32)));
+        assert!(planned.contains(&"41".repeat(32)));
+        assert!(!planned.contains("prompt-plaintext-canary"));
+        assert!(!planned.contains("routing-key-canary"));
+        assert!(!planned.contains("resource-handle-canary"));
+        assert_eq!(reported.matches(&attempt.to_string()).count(), 1);
+        assert!(reported.contains(r#""total":100"#));
+        assert!(reported.contains(r#""uncached":60"#));
+        assert!(reported.contains(r#""cache_read":40"#));
+        assert!(reported.contains(r#""total":120"#));
+        assert!(reported.contains(r#""pricing_version":null"#));
     }
 
     #[test]

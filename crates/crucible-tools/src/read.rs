@@ -6,7 +6,8 @@ use std::sync::LazyLock;
 
 use crucible_core::{
     Approved, Attachment, Cancel, DescribeTool, Kind, Modality, Remembered, Sensitivity, Summary,
-    Tool, ToolArgs, ToolContext, ToolError, ToolOutput, Workspace, WorkspacePath, kind, written,
+    Tool, ToolArgs, ToolContext, ToolEffect, ToolError, ToolOutput, Workspace, WorkspacePath, kind,
+    written,
 };
 use sha2::{Digest as _, Sha256};
 
@@ -705,6 +706,10 @@ impl DescribeTool for Read {
 
     fn schema(&self) -> &str {
         SCHEMA.as_str()
+    }
+
+    fn effect(&self) -> ToolEffect {
+        ToolEffect::ReadOnly
     }
 }
 

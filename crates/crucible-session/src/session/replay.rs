@@ -170,10 +170,10 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
     // Taken only where nothing follows it, which is why it is cleared by every
     // other line rather than kept until something replaces it. See [`Replayed`].
     let mut calibration = None;
-    // A new format-10 log establishes that nothing has been sent yet. An old
-    // header establishes no typed baseline; its first appended patch upgrades
-    // it in place without rewriting the header.
-    let mut context = (format == Some(wire::FORMAT)).then(ContextSnapshot::new);
+    // Formats 10 and later establish that nothing has been sent yet. An older
+    // header has no typed baseline; its first appended patch upgrades it in
+    // place without rewriting the header.
+    let mut context = wire::typed_context(format).then(ContextSnapshot::new);
 
     loop {
         raw.clear();
@@ -200,7 +200,7 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
         // to be told it again.
         if whole.is_some_and(wire::forgets) {
             transcript.forget();
-            context = (format == Some(wire::FORMAT)).then(ContextSnapshot::new);
+            context = wire::typed_context(format).then(ContextSnapshot::new);
             calibration = None;
             before = through;
             through += read as u64;
@@ -270,6 +270,14 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
                         })?,
                 );
             calibration = None;
+            through += read as u64;
+            continue;
+        }
+
+        // Framework metadata is deliberately not a conversation message. It
+        // advances the crash-safe file prefix while leaving transcript,
+        // calibration and typed context exactly as they were.
+        if whole.is_some_and(wire::journaled) {
             through += read as u64;
             continue;
         }

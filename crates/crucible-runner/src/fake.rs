@@ -79,6 +79,8 @@ pub(crate) struct Script {
     drop_usage: Option<crucible_core::ProviderUsage>,
     /// A line typed into this queue as the first request goes out.
     types: Mutex<Option<(Steer, Box<str>)>>,
+    /// Whether an exhausted script reports cancellation instead of silence.
+    cancels_when_empty: bool,
 
     /// Whether every request is refused for not fitting the window.
     ///
@@ -120,6 +122,7 @@ impl Script {
             drops: Mutex::new(0),
             drop_usage: None,
             types: Mutex::new(None),
+            cancels_when_empty: false,
             over_window: false,
             cache: CacheFixture::default(),
             resource_delete: ResourceDelete::Deleted,
@@ -157,6 +160,13 @@ impl Script {
             types: Mutex::new(Some((steer, line.into()))),
             ..Self::new(rounds)
         }
+    }
+
+    /// Answers the supplied rounds, then reports a request cancelled before a
+    /// response stream was constructed.
+    pub(crate) fn cancelling_when_exhausted(mut self) -> Self {
+        self.cancels_when_empty = true;
+        self
     }
 
     /// A provider that refuses every request, with a status nothing recovers
@@ -468,7 +478,15 @@ impl Provider for Script {
         }
         drop(drops);
 
-        let round = self.rounds.lock().unwrap().pop_front().unwrap_or_default();
+        let Some(round) = self.rounds.lock().unwrap().pop_front() else {
+            if self.cancels_when_empty {
+                return Err(ProviderError::Cancelled(SCRIPT));
+            }
+            return Ok(Box::new(Recited {
+                deltas: VecDeque::new(),
+                breaks: self.breaks,
+            }));
+        };
         Ok(Box::new(Recited {
             deltas: round.into(),
             breaks: self.breaks,

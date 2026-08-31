@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 
 use crate::{
     Ancestry, Approved, Cancel, RunId, Sensitivity, TOOL_RESULT_MIN_BYTES, Tool, ToolArgs,
-    ToolCall, ToolError, ToolOutput, ToolOutputRetention, ToolSchema,
+    ToolCall, ToolEffect, ToolError, ToolOutput, ToolOutputRetention, ToolSchema,
 };
 
 /// The most bytes a provider-visible tool name may retain.
@@ -362,6 +362,7 @@ pub struct ToolDescriptor {
     schema: Box<str>,
     provenance: ToolProvenance,
     execution: ToolExecutionMode,
+    effect: ToolEffect,
     timeout: Option<Duration>,
     result_bytes: Option<NonZeroUsize>,
 }
@@ -389,6 +390,7 @@ impl ToolDescriptor {
             schema,
             provenance,
             execution: ToolExecutionMode::Sequential,
+            effect: ToolEffect::NonIdempotent,
             timeout: None,
             result_bytes: None,
         })
@@ -398,6 +400,16 @@ impl ToolDescriptor {
     #[must_use]
     pub fn executing(mut self, execution: ToolExecutionMode) -> Self {
         self.execution = execution;
+        self
+    }
+
+    /// Classifies what an ambiguous started invocation may have changed.
+    ///
+    /// The conservative default is [`ToolEffect::NonIdempotent`]. A tool opts
+    /// into retry only when its executor contract can justify it.
+    #[must_use]
+    pub const fn causing(mut self, effect: ToolEffect) -> Self {
+        self.effect = effect;
         self
     }
 
@@ -456,6 +468,12 @@ impl ToolDescriptor {
         &self.execution
     }
 
+    /// Crash-recovery effect classification.
+    #[must_use]
+    pub const fn effect(&self) -> ToolEffect {
+        self.effect
+    }
+
     /// Its cooperative timeout, where one was set.
     #[must_use]
     pub const fn timeout(&self) -> Option<Duration> {
@@ -499,6 +517,7 @@ impl fmt::Debug for ToolDescriptor {
             .field("schema", &"[redacted]")
             .field("provenance", &self.provenance)
             .field("execution", &self.execution)
+            .field("effect", &self.effect)
             .field("timeout", &self.timeout)
             .field("result_bytes", &self.result_bytes)
             .finish()
@@ -518,6 +537,11 @@ pub trait DescribeTool {
     /// The raw schema placed into an owned descriptor at registration.
     fn schema(&self) -> &str;
 
+    /// Crash-recovery effect class for this executor contract.
+    fn effect(&self) -> ToolEffect {
+        ToolEffect::NonIdempotent
+    }
+
     /// Builds the owned descriptor for `provenance`.
     ///
     /// # Errors
@@ -528,6 +552,7 @@ pub trait DescribeTool {
         provenance: ToolProvenance,
     ) -> Result<ToolDescriptor, ToolDescriptorError> {
         ToolDescriptor::new(self.name(), self.schema(), provenance)
+            .map(|descriptor| descriptor.causing(self.effect()))
     }
 }
 
@@ -1135,6 +1160,30 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn effect_classification_defaults_closed_and_descriptor_metadata_can_narrow_it() {
+        struct ReadOnly;
+        impl DescribeTool for ReadOnly {
+            fn name(&self) -> &'static str {
+                "read-only"
+            }
+
+            fn schema(&self) -> &'static str {
+                "{}"
+            }
+
+            fn effect(&self) -> ToolEffect {
+                ToolEffect::ReadOnly
+            }
+        }
+
+        let conservative = ToolDescriptor::new("unknown", "{}", source("unknown")).unwrap();
+        let read_only = ReadOnly.descriptor(source("read-only")).unwrap();
+
+        assert_eq!(conservative.effect(), ToolEffect::NonIdempotent);
+        assert_eq!(read_only.effect(), ToolEffect::ReadOnly);
     }
 
     #[test]

@@ -11,6 +11,17 @@
 
 use crate::ids::RunId;
 
+/// Why persisted execution ancestry could not represent a real tree position.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum AncestryError {
+    /// A root had a parent, or was not its own root.
+    #[error("invalid root execution ancestry")]
+    InvalidRoot,
+    /// A descendant had no parent.
+    #[error("invalid descendant execution ancestry")]
+    MissingParent,
+}
+
 /// One execution's place in the tree of executions.
 ///
 /// Carried by everything an execution produces, so that two runs cannot be read
@@ -60,6 +71,33 @@ impl Ancestry {
             root: self.root,
             depth: self.depth.saturating_add(1),
         }
+    }
+
+    /// Restores ancestry from a protected versioned checkpoint or journal.
+    ///
+    /// # Errors
+    ///
+    /// A depth-zero run must be its own root with no parent; a descendant must
+    /// name a parent. Callers still revalidate authority independently.
+    pub fn restore(
+        run: RunId,
+        parent: Option<RunId>,
+        root: RunId,
+        depth: u16,
+    ) -> Result<Self, AncestryError> {
+        if depth == 0 {
+            if parent.is_some() || run != root {
+                return Err(AncestryError::InvalidRoot);
+            }
+        } else if parent.is_none() {
+            return Err(AncestryError::MissingParent);
+        }
+        Ok(Self {
+            run,
+            parent,
+            root,
+            depth,
+        })
     }
 
     /// This execution.

@@ -220,6 +220,22 @@ fn a_recap_stopped_part_way_replaces_nothing() {
 }
 
 #[test]
+fn a_recap_cancelled_before_its_stream_exists_is_still_a_clean_stop() {
+    let script = Script::new(vec![saying("first"), saying("second")]).cancelling_when_exhausted();
+    let mut scripted = Scripted::within(script, 10_000, keeping_one());
+    scripted.turn("first").expect("a turn to compact from");
+    scripted.turn("second").expect("a middle to replace");
+    let before = conversation(scripted.runner.transcript());
+
+    let made = scripted
+        .compacting()
+        .expect("a pre-stream cancellation is a stopped recap, not a provider failure");
+
+    assert_eq!(made, Room::Stopped);
+    assert_eq!(conversation(scripted.runner.transcript()), before);
+}
+
+#[test]
 fn a_recap_whose_connection_broke_says_so_and_replaces_nothing() {
     // The failure is the provider's, and the reason handed on is the
     // provider's own — a recap that broke off reading as "incomplete" sends
@@ -545,9 +561,12 @@ fn a_full_window_prunes_tool_output_from_the_active_turn_and_carries_on() {
     drop(scripted);
     let log = std::fs::read_to_string(path).expect("the session log");
     assert_eq!(
-        log.matches("tool result was 90002 encoded bytes").count(),
+        log.lines()
+            .filter(|line| line.starts_with("{\"results\":"))
+            .map(|line| line.matches("tool result was 90002 encoded bytes").count())
+            .sum::<usize>(),
         3,
-        "the durable log lost the model-visible elision accounting"
+        "the durable provider transcript lost its model-visible elision accounting"
     );
 }
 
@@ -1007,10 +1026,13 @@ fn a_pass_is_measured_against_the_room_its_own_run_holds() {
     // Two exchanges under that one run: the first fills the window, the second
     // is the pass that has to notice.
     for prompt in ["first", "second"] {
-        scripted.runner.record(Message::User {
-            text: prompt.into(),
-            attachments: Box::new([]),
-        });
+        scripted.runner.record(
+            run.ancestry(),
+            Message::User {
+                text: prompt.into(),
+                attachments: Box::new([]),
+            },
+        );
         scripted
             .runner
             .exchange(&mut scripted.says, &run)
@@ -1352,7 +1374,9 @@ fn a_session_that_never_compacts_holds_nothing_back_from_its_window_reading() {
             ..Compaction::default()
         },
     );
-    scripted.runner.record(Message::said("x".repeat(150_000)));
+    scripted
+        .runner
+        .record(Ancestry::new(), Message::said("x".repeat(150_000)));
 
     let never = scripted.runner.left();
 
@@ -1382,7 +1406,9 @@ fn a_session_told_something_longer_reads_its_window_as_fuller_at_once() {
             ..Compaction::default()
         },
     );
-    scripted.runner.record(Message::said("x".repeat(150_000)));
+    scripted
+        .runner
+        .record(Ancestry::new(), Message::said("x".repeat(150_000)));
     scripted.runner.telling("mind the workspace");
 
     let short = scripted.runner.left();

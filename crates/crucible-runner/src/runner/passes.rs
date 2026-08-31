@@ -95,7 +95,7 @@ impl<'a> AgentLoop<'a> {
             // and so it cannot land while a tool call is out.
             for line in steer.take() {
                 events.post(Event::Steered { line: line.clone() });
-                self.runner.record(Message::said(line));
+                self.runner.record(run.ancestry(), Message::said(line));
                 events.post(Event::Carried {
                     left: self.runner.load.left(counting.window, counting.reserve),
                 });
@@ -108,7 +108,7 @@ impl<'a> AgentLoop<'a> {
             // and an event saying they did would put a sentence in the panel
             // that nobody wrote. The line above it is already on their screen.
             for note in aside.take() {
-                self.runner.record(Message::said(note));
+                self.runner.record(run.ancestry(), Message::said(note));
                 events.post(Event::Carried {
                     left: self.runner.load.left(counting.window, counting.reserve),
                 });
@@ -130,7 +130,7 @@ impl<'a> AgentLoop<'a> {
             // compaction from the preceding loop iteration rewrote history.
             // Recording the fragments updates `runner.load` before it is read
             // below, so reserve and fullness see exactly what will be sent.
-            self.runner.assemble_context()?;
+            self.runner.assemble_context(run.ancestry())?;
 
             // Recording is what measures the transcript, and it happens on the
             // runner rather than here; reading it back at the top of each pass
@@ -244,11 +244,14 @@ impl<'a> AgentLoop<'a> {
                 bounds.heard(&answer);
                 let (text, _calls) = answer.finish();
                 if !text.is_empty() {
-                    self.runner.record(Message::Agent {
-                        text,
-                        calls: Vec::new(),
-                        stop: Some(said),
-                    });
+                    self.runner.record(
+                        run.ancestry(),
+                        Message::Agent {
+                            text,
+                            calls: Vec::new(),
+                            stop: Some(said),
+                        },
+                    );
                 }
                 if !run.policy().compaction.automatic {
                     return Ok(said);
@@ -276,11 +279,14 @@ impl<'a> AgentLoop<'a> {
                 // log carries into a replay and what the providers send back to
                 // the model, and both of those outlive the notice the user read
                 // while it happened.
-                self.runner.record(Message::Agent {
-                    text,
-                    calls: Vec::new(),
-                    stop: Some(stop),
-                });
+                self.runner.record(
+                    run.ancestry(),
+                    Message::Agent {
+                        text,
+                        calls: Vec::new(),
+                        stop: Some(stop),
+                    },
+                );
                 return Ok(stop);
             }
 
@@ -307,11 +313,14 @@ impl<'a> AgentLoop<'a> {
             // drops on the way back in. The calls are cloned because the pass
             // needs them too — one pass's worth, which is what the turn holds
             // either way and does not grow with the transcript.
-            self.runner.record(Message::Agent {
-                text,
-                calls: calls.clone(),
-                stop: Some(said),
-            });
+            self.runner.record(
+                run.ancestry(),
+                Message::Agent {
+                    text,
+                    calls: calls.clone(),
+                    stop: Some(said),
+                },
+            );
 
             let (results, went, output_bytes) = Work {
                 tools: &tools,
@@ -320,13 +329,15 @@ impl<'a> AgentLoop<'a> {
                 events,
                 cancel,
                 ancestry: run.ancestry(),
+                journal: &self.runner.session,
                 concurrency: run.policy().tools.maximum_concurrency(),
             }
             .pass(&calls, bounds.tool_output, tool_output_maximum);
 
             bounds.tool_output = bounds.tool_output.saturating_add(output_bytes);
 
-            self.runner.record(Message::ToolResults(results));
+            self.runner
+                .record(run.ancestry(), Message::ToolResults(results));
             events.post(Event::Carried {
                 left: self.runner.load.left(counting.window, counting.reserve),
             });

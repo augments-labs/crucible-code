@@ -23,6 +23,9 @@ pub enum IdError {
     /// A session identifier was neither a UUID v7 nor `<millis>-<6 hex>`.
     #[error("not a session id: expected a uuid or <millis>-<6 hex>, got {0:?}")]
     NotASessionId(Box<str>),
+    /// A run/provider-attempt identifier was not a canonical UUID v7.
+    #[error("not a canonical uuid-v7 execution identity: {0:?}")]
+    NotAnExecutionId(Box<str>),
 }
 
 /// Names one session: a conversation bound to a working directory.
@@ -188,6 +191,15 @@ impl RunId {
     pub fn new() -> Self {
         Self(Uuid::now_v7())
     }
+
+    /// Reads the canonical UUID-v7 spelling written to a protected journal.
+    ///
+    /// # Errors
+    ///
+    /// [`IdError::NotAnExecutionId`] for any other UUID version or spelling.
+    pub fn parse(value: &str) -> Result<Self, IdError> {
+        canonical_v7(value).map(Self)
+    }
 }
 
 /// Every call is a different id.
@@ -219,6 +231,14 @@ impl fmt::Debug for RunId {
     }
 }
 
+impl FromStr for RunId {
+    type Err = IdError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::parse(value)
+    }
+}
+
 /// Names one attempt to send a logical provider request.
 ///
 /// Retries mint another value even when the cache identity is unchanged. The
@@ -233,6 +253,15 @@ impl ProviderAttemptId {
     #[must_use]
     pub fn new() -> Self {
         Self(Uuid::now_v7())
+    }
+
+    /// Reads one canonical UUID-v7 attempt identity.
+    ///
+    /// # Errors
+    ///
+    /// [`IdError::NotAnExecutionId`] for any other UUID version or spelling.
+    pub fn parse(value: &str) -> Result<Self, IdError> {
+        canonical_v7(value).map(Self)
     }
 }
 
@@ -252,6 +281,23 @@ impl fmt::Debug for ProviderAttemptId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "ProviderAttemptId({})", self.0.as_hyphenated())
     }
+}
+
+impl FromStr for ProviderAttemptId {
+    type Err = IdError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::parse(value)
+    }
+}
+
+fn canonical_v7(value: &str) -> Result<Uuid, IdError> {
+    let reject = || IdError::NotAnExecutionId(value.into());
+    let uuid = Uuid::try_parse(value).map_err(|_| reject())?;
+    if uuid.get_version_num() != 7 || uuid.to_string() != value {
+        return Err(reject());
+    }
+    Ok(uuid)
 }
 
 /// Non-secret identity of credential-owned authorization material.

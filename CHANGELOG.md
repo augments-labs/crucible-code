@@ -8,6 +8,31 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Added
+
+- **Framework history is now separate from the provider transcript.** Session
+  logs retain versioned ancestry, prompt-cache attempt facts, tool-invocation
+  recovery states and namespaced custom entries without widening the closed
+  message vocabulary or sending custom state to a model by default.
+
+- **Interrupted execution has a bounded durable contract.** Owner-only atomic
+  checkpoints can retain approvals, external tool results and human input with
+  stable action and invocation identities; resume revalidates authority and
+  cache semantics, while ambiguous side effects retry only when their effect
+  class and idempotency evidence make that safe.
+
+### Changed
+
+- **New session logs use format 11.** Format 11 adds versioned `run_item`
+  journal lines outside conversation replay. Format 10 and every earlier
+  compatible format remain readable.
+
+### Fixed
+
+- **Cancelling compaction before its provider stream exists is a clean stop.**
+  Escape now leaves the conversation unchanged whether cancellation lands just
+  before streaming or while recap text is arriving.
+
 ## [0.31.0] - 2026-08-31
 
 ### Added

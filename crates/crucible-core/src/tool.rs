@@ -15,7 +15,7 @@ use crate::diff::Diff;
 use crate::ids::{RunId, ToolId};
 use crate::permission::{Approved, Sensitivity};
 use crate::transcript::Attachment;
-use crate::{Ancestry, Cancel};
+use crate::{Ancestry, Cancel, IdempotencyKey};
 
 /// The most encoded bytes one retained tool result may occupy.
 ///
@@ -655,13 +655,14 @@ impl ToolOutput {
         self
     }
 
-    /// The files this result showed, restored from a log this build wrote.
+    /// The files this result showed, restored from protected persistence this
+    /// build wrote.
     ///
     /// The one way files reach a result without the proof that admitted them,
     /// and it is here because that proof is not a thing a log can hold: a
     /// verdict is reached about a call, and the call is long over. What stands
-    /// in its place is where the line came from — an owner-only session log
-    /// that this build wrote, and wrote only once the engine had allowed the
+    /// in its place is where the record came from — an owner-only session or
+    /// checkpoint that this build wrote only after the engine had allowed the
     /// call. Reading back what was recorded is not deciding it again.
     ///
     /// A log somebody has edited can put any readable path into a request this
@@ -936,6 +937,15 @@ pub trait Tool: Send + Sync {
     /// Takes the arguments because it is not a property of the tool: `bash`
     /// running `ls` and `bash` running `rm -rf` are the same tool.
     fn sensitivity(&self, args: &ToolArgs) -> Sensitivity;
+
+    /// Stable executor key that makes repeating this exact admitted call one
+    /// effect, where the descriptor declares [`crate::ToolEffect::Idempotent`].
+    ///
+    /// The default is no such guarantee. A returned key is retained only in a
+    /// protected execution checkpoint and redacted from ordinary diagnostics.
+    fn idempotency_key(&self, _args: &ToolArgs) -> Option<IdempotencyKey> {
+        None
+    }
 
     /// What this call is about — the [`Summary`] a transcript row shows.
     ///
