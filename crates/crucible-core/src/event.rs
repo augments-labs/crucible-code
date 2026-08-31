@@ -185,6 +185,12 @@ impl<'a> Reporter<'a> {
         Self { ancestry, to }
     }
 
+    /// Execution attribution fixed on every event this reporter posts.
+    #[must_use]
+    pub const fn ancestry(&self) -> Ancestry {
+        self.ancestry
+    }
+
     /// Reports one event as this execution's.
     pub fn post(&self, event: Event) {
         self.to.post(EventEnvelope::new(self.ancestry, event));

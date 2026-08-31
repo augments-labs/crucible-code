@@ -22,7 +22,7 @@ use std::sync::{Arc, LazyLock};
 
 use crucible_core::{
     Approved, DescribeTool, Fetch, Host, Search, Sensitivity, Summary, Tool, ToolArgs, ToolContext,
-    ToolError, ToolOutput,
+    ToolEffect, ToolError, ToolOutput,
 };
 
 #[cfg(test)]
@@ -130,6 +130,10 @@ impl DescribeTool for WebSearch {
     fn schema(&self) -> &str {
         SEARCH_SCHEMA.as_str()
     }
+
+    fn effect(&self) -> ToolEffect {
+        ToolEffect::ReadOnly
+    }
 }
 
 impl Tool for WebSearch {
@@ -221,6 +225,10 @@ impl DescribeTool for WebFetch {
 
     fn schema(&self) -> &str {
         FETCH_SCHEMA.as_str()
+    }
+
+    fn effect(&self) -> ToolEffect {
+        ToolEffect::ReadOnly
     }
 }
 

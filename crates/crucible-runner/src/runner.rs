@@ -24,16 +24,17 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crucible_core::{
-    Aside, Ask, Attachment, Cancel, Compacting, Content, ContextSection, Delta, DeltaStream,
-    Effort, Event, Message, Modalities, Mode, Permission, PermissionsSection, Post,
-    PromptCacheAttempt, PromptCacheEncoding, PromptCacheFact, PromptCacheOutcome,
-    PromptCachePlanned, PromptCachePreparationError, PromptCacheRequestDisposition,
-    PromptCacheRequestFact, PromptCacheResourceDeadline, PromptCacheResourceError,
-    PromptCacheResourceOperation, PromptCacheResourceRecord, PromptCacheResourceState,
-    PromptCacheRetentionClass, PromptCacheScopeDigest, PromptCacheUsageFact,
-    PromptCacheUsageReporting, Provider, ProviderError, ProviderUsage, Reporter, Request, Room,
-    Spend, Steer, StopReason, Summary, ToolCall, ToolGeneration, ToolSchema, ToolSnapshot, Toolset,
-    ToolsetContext, Transcript, TurnError, TurnId, UsageCost,
+    Ancestry, Aside, Ask, Attachment, Cancel, Compacting, Content, ContextSection, Delta,
+    DeltaStream, Effort, Event, JournalStore, Message, Modalities, Mode, Permission,
+    PermissionsSection, Post, PromptCacheAttempt, PromptCacheEncoding, PromptCacheFact,
+    PromptCacheOutcome, PromptCachePlanned, PromptCachePreparationError,
+    PromptCacheRequestDisposition, PromptCacheRequestFact, PromptCacheResourceDeadline,
+    PromptCacheResourceError, PromptCacheResourceOperation, PromptCacheResourceRecord,
+    PromptCacheResourceState, PromptCacheRetentionClass, PromptCacheScopeDigest,
+    PromptCacheUsageFact, PromptCacheUsageReporting, Provider, ProviderError, ProviderUsage,
+    Reporter, Request, Room, RunItem, SessionStore, Spend, Steer, StopReason, Summary, ToolCall,
+    ToolGeneration, ToolSchema, ToolSnapshot, Toolset, ToolsetContext, Transcript, TurnError,
+    TurnId, UsageCost,
 };
 
 use crucible_session::{Pruned, Session};
@@ -962,8 +963,18 @@ impl Runner {
     /// The only way either the transcript or the log is written. Two calls
     /// that could be made separately would eventually be made separately, and
     /// a log that is missing one message is a session that cannot be continued.
-    fn record(&mut self, message: Message) {
-        self.session.append(&message);
+    fn record(&mut self, ancestry: Ancestry, message: Message) {
+        match RunItem::message(ancestry, message.clone()) {
+            Ok(item) => {
+                SessionStore::append_message(&self.session, &message);
+                JournalStore::append_run_item(&self.session, &item);
+            }
+            // The provider and tool admission boundaries already enforce
+            // these bounds. Preserve the conversation if an internal caller
+            // ever violates that contract, while its missing companion record
+            // makes the defect visible instead of writing unsafe metadata.
+            Err(_) => SessionStore::append_message(&self.session, &message),
+        }
         self.load.recorded(&message);
         self.transcript.push(message);
 
@@ -973,6 +984,20 @@ impl Runner {
         if let Some(calibration) = self.load.calibrated() {
             self.session.measured(&calibration);
         }
+    }
+
+    /// Writes one normalized cache fact to the durable framework journal and
+    /// emits the same typed fact to the live event stream.
+    fn report_prompt_cache(&self, run: &RunContext<'_>, fact: PromptCacheFact) {
+        self.report_prompt_cache_to(&run.reporting(), fact);
+    }
+
+    fn report_prompt_cache_to(&self, events: &Reporter<'_>, fact: PromptCacheFact) {
+        JournalStore::append_run_item(
+            &self.session,
+            &RunItem::provider_attempt(events.ancestry(), fact.clone()),
+        );
+        events.post(Event::PromptCache { fact });
     }
 
     /// A run against this session, under the policy the session was given.
@@ -1078,16 +1103,20 @@ impl Runner {
 
         self.turn = turn;
         events.post(Event::TurnStarted { turn: self.turn });
-        self.record(Message::User {
-            text: prompt.into(),
-            attachments,
-        });
+        self.record(
+            run.ancestry(),
+            Message::User {
+                text: prompt.into(),
+                attachments,
+            },
+        );
 
         // Posted from here rather than from either place the exchange ends, so
         // that a turn cannot acquire a second way to finish without one. The
         // reason is what tells a truncated answer from a complete one, and it
         // has to reach the thread that draws — a return value never does.
-        let stop = self.exchange(ask, run)?.stop();
+        let exchanged = self.exchange(ask, run);
+        let stop = exchanged?.stop();
         events.post(Event::TurnFinished {
             turn: self.turn,
             stop,
@@ -1297,11 +1326,14 @@ impl Runner {
 
             let stop = answer.stop();
             let (text, _) = answer.finish();
-            self.record(Message::Agent {
-                text,
-                calls: Vec::new(),
-                stop,
-            });
+            self.record(
+                listening.run.ancestry(),
+                Message::Agent {
+                    text,
+                    calls: Vec::new(),
+                    stop,
+                },
+            );
 
             return Err(problem);
         }
@@ -1434,9 +1466,7 @@ impl Runner {
                 _ => prompt_cache::prepare(&request, capabilities, &scope),
             };
             for fact in resource_facts {
-                listening.run.reporting().post(Event::PromptCache {
-                    fact: PromptCacheFact::ResourceChanged(fact),
-                });
+                self.report_prompt_cache(listening.run, PromptCacheFact::ResourceChanged(fact));
             }
             let prepared = prepared?;
             let mut cache = prepared.request();
@@ -1451,9 +1481,10 @@ impl Runner {
                 usage: None,
                 cost: UsageCost::UNKNOWN,
             });
-            listening.run.reporting().post(Event::PromptCache {
-                fact: PromptCacheFact::Planned(Box::new(PromptCachePlanned::from_request(&cache))),
-            });
+            self.report_prompt_cache(
+                listening.run,
+                PromptCacheFact::Planned(Box::new(PromptCachePlanned::from_request(&cache))),
+            );
             let mut encoding = self.provider.prompt_cache_encoding(&Request {
                 prompt_cache: Some(&cache),
                 ..request
@@ -1466,21 +1497,21 @@ impl Runner {
                 attempt.encoding = encoding;
             }
             if let PromptCacheEncoding::Failed(reason) = encoding {
-                listening.run.reporting().post(Event::PromptCache {
-                    fact: PromptCacheFact::RequestEncoded(PromptCacheRequestFact {
+                self.report_prompt_cache(
+                    listening.run,
+                    PromptCacheFact::RequestEncoded(PromptCacheRequestFact {
                         attempt: cache.attempt,
                         encoding,
                         disposition: PromptCacheRequestDisposition::NotSent,
                     }),
-                });
+                );
                 cache = prepared
                     .fallback_request(reason)
                     .ok_or(PromptCachePreparationError::Encoding(reason))?;
-                listening.run.reporting().post(Event::PromptCache {
-                    fact: PromptCacheFact::Planned(Box::new(PromptCachePlanned::from_request(
-                        &cache,
-                    ))),
-                });
+                self.report_prompt_cache(
+                    listening.run,
+                    PromptCacheFact::Planned(Box::new(PromptCachePlanned::from_request(&cache))),
+                );
                 encoding = self.provider.prompt_cache_encoding(&Request {
                     prompt_cache: Some(&cache),
                     ..request
@@ -1511,13 +1542,14 @@ impl Runner {
             {
                 attempt.disposition = disposition;
             }
-            listening.run.reporting().post(Event::PromptCache {
-                fact: PromptCacheFact::RequestEncoded(PromptCacheRequestFact {
+            self.report_prompt_cache(
+                listening.run,
+                PromptCacheFact::RequestEncoded(PromptCacheRequestFact {
                     attempt: cache.attempt,
                     encoding,
                     disposition,
                 }),
-            });
+            );
             (
                 streamed?,
                 CacheObservation {
@@ -1656,14 +1688,15 @@ impl Runner {
                         cache.usage = Some(usage.clone());
                         cache.cost = cost;
                     }
-                    events.post(Event::PromptCache {
-                        fact: PromptCacheFact::UsageReported(Box::new(PromptCacheUsageFact {
+                    self.report_prompt_cache(
+                        listening.run,
+                        PromptCacheFact::UsageReported(Box::new(PromptCacheUsageFact {
                             attempt: cache_observation.attempt,
                             outcome,
                             usage,
                             cost,
                         })),
-                    });
+                    );
                     events.post(Event::Carried {
                         left: counting.left(),
                     });

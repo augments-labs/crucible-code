@@ -25,8 +25,8 @@ use std::sync::mpsc::{SyncSender, sync_channel};
 use std::thread::{self, JoinHandle};
 
 use crucible_core::{
-    Calibration, ContextError, ContextPatch, ContextSnapshot, Message, SessionId, Transcript,
-    Workspace,
+    Attachment, Calibration, ContextError, ContextPatch, ContextSnapshot, JournalStore, Message,
+    RunItem, SessionId, SessionStore, ToolOutput, Transcript, Workspace,
 };
 
 mod beside;
@@ -39,6 +39,13 @@ mod prompts;
 mod recent;
 mod replay;
 mod wire;
+
+pub(crate) fn restored_output(
+    output: ToolOutput,
+    attachments: impl Into<Box<[Attachment]>>,
+) -> ToolOutput {
+    wire::restored_output(output, attachments)
+}
 
 use claim::{Claim, Claimed, claim};
 pub use glimpse::{Glimpse, glimpse};
@@ -481,6 +488,25 @@ impl Session {
         }
     }
 
+    /// Records one framework item. A conversation item keeps the established
+    /// message line and follows it with versioned ancestry metadata; all other
+    /// kinds write only their bounded journal line.
+    pub fn append_item(&self, item: &RunItem) {
+        if let Some(message) = item.model_message() {
+            self.append(message);
+        }
+        self.append_journal(item);
+    }
+
+    /// Records only the framework-journal representation of `item`.
+    /// Conversation storage remains owned by [`Self::append`].
+    pub fn append_journal(&self, item: &RunItem) {
+        let Some(to) = &self.to else { return };
+        if let Some(line) = wire::journal(item) {
+            drop(to.send(line.into()));
+        }
+    }
+
     /// Records one per-pass merge patch and advances the reconstructed state.
     ///
     /// A legacy session has no baseline, so its first patch applies to empty
@@ -728,6 +754,18 @@ impl Drop for Session {
         if let (Some(id), Some(directory)) = (self.id.as_ref(), self.path.parent()) {
             let _ = index::tally(directory, id, self.messages.load(Ordering::Relaxed));
         }
+    }
+}
+
+impl SessionStore for Session {
+    fn append_message(&self, message: &Message) {
+        self.append(message);
+    }
+}
+
+impl JournalStore for Session {
+    fn append_run_item(&self, item: &RunItem) {
+        self.append_journal(item);
     }
 }
 

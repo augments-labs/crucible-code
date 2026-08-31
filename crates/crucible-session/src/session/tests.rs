@@ -7,8 +7,9 @@ use std::str::FromStr as _;
 use std::sync::{Arc, Mutex};
 
 use crucible_core::{
-    Calibration, Carried, ContextPatch, ContextSnapshot, Fragment, Message, SessionId, Spend,
-    StopReason, ToolArgs, ToolCall, ToolId, ToolOutput, ToolResult,
+    Ancestry, Calibration, Carried, ContextPatch, ContextSnapshot, CustomEntry, Fragment,
+    JournalEntryId, Message, RunItem, SessionId, Spend, StopReason, ToolArgs, ToolCall, ToolId,
+    ToolOutput, ToolResult,
 };
 use serde_json::Value;
 
@@ -432,6 +433,54 @@ fn a_log_from_the_format_before_this_one_is_still_a_session_to_continue() {
     assert_eq!(
         transcript.messages(),
         &[said("what an older build recorded")]
+    );
+}
+
+#[test]
+fn framework_journal_lines_replay_past_without_entering_the_provider_transcript() {
+    let sample = Sample::new("session-journal-projection");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a session");
+    let path = session.path().to_owned();
+    let ancestry = Ancestry::new();
+    let message = RunItem::message(ancestry, said("prompt-plaintext-canary")).unwrap();
+    let custom = CustomEntry::for_run(
+        JournalEntryId::new(),
+        ancestry,
+        "fixture.private",
+        7,
+        r#"{"private":"extension-canary"}"#,
+        "fixture",
+    )
+    .unwrap();
+
+    session.append_item(&message);
+    session.append_item(&RunItem::Custom(custom));
+    session.append(&answering("after the private entry"));
+    drop(session);
+
+    let log = fs::read_to_string(&path).unwrap();
+    assert_eq!(
+        log.matches("prompt-plaintext-canary").count(),
+        1,
+        "message companion metadata copied prompt plaintext"
+    );
+    assert!(log.contains(r#""namespace":"fixture.private""#));
+    assert!(log.contains(r#""schema_version":7"#));
+    assert_eq!(log.matches(r#""run_item":{"body"#).count(), 2);
+
+    let (_session, transcript) = Session::resume(&sample.logs(), &sample.workspace()).unwrap();
+    assert_eq!(
+        transcript.messages(),
+        &[
+            said("prompt-plaintext-canary"),
+            answering("after the private entry"),
+        ]
+    );
+    assert!(
+        transcript
+            .messages()
+            .iter()
+            .all(|message| !format!("{message:?}").contains("extension-canary"))
     );
 }
 

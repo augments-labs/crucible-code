@@ -28,7 +28,7 @@ use std::sync::LazyLock;
 
 use crucible_core::{
     Approved, DescribeTool, Revealed, Sensitivity, Summary, Target, Tool, ToolArgs, ToolContext,
-    ToolError, ToolOutput,
+    ToolEffect, ToolError, ToolOutput,
 };
 
 use crate::args::Args;
@@ -111,6 +111,10 @@ impl DescribeTool for ToolSearch {
 
     fn schema(&self) -> &str {
         SCHEMA.as_str()
+    }
+
+    fn effect(&self) -> ToolEffect {
+        ToolEffect::ReadOnly
     }
 }
 

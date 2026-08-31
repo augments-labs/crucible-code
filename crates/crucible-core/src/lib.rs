@@ -25,6 +25,8 @@ mod credential;
 mod diff;
 mod event;
 mod ids;
+mod interruption;
+mod journal;
 mod modality;
 mod permission;
 mod prompt;
@@ -52,6 +54,19 @@ pub use diff::{Change, Diff, Line};
 pub use event::{Event, EventEnvelope, Post, Reporter, TurnError};
 pub use ids::{
     AgentId, CredentialScopeId, IdError, ProviderAttemptId, RunId, SessionId, ToolId, TurnId,
+};
+pub use interruption::{
+    ActionId, ActionResolution, ApprovalDecision, CacheCheckpoint, CheckpointId, CheckpointStore,
+    ExecutionCheckpoint, IdempotencyKey, InterruptionError, InvocationId, InvocationRecord,
+    InvocationState, JournalEntryId, MAX_CHECKPOINT_INVOCATIONS, MAX_CHECKPOINT_WORD_BYTES,
+    MAX_HUMAN_INPUT_BYTES, MAX_PENDING_ACTIONS, PendingAction, PendingActions, PendingApproval,
+    PendingExternalTool, PendingHumanInput, RecoveryAction, ResolutionChange, ResumeDigest,
+    ResumeEvidence, ResumeScope, ResumedAction, ToolEffect, ValidatedResume,
+};
+pub use journal::{
+    CompactionRecord, CustomEntry, CustomProjector, JournalError, JournalStore,
+    MAX_CUSTOM_DATA_BYTES, MAX_JOURNAL_WORD_BYTES, MAX_RUN_HISTORY_BYTES, MAX_RUN_ITEM_BYTES,
+    MAX_RUN_ITEM_RETAINED_BYTES, MAX_RUN_ITEMS, RunHistory, RunItem, SessionStore,
 };
 pub use modality::{Modalities, Modality, ModalityError};
 pub use permission::{
@@ -108,7 +123,7 @@ pub use provider::{
     ProviderError, ProviderLimit, Request, Spend, ToolSchema,
 };
 pub use revealed::Revealed;
-pub use run::Ancestry;
+pub use run::{Ancestry, AncestryError};
 pub use source::{Fetch, Page, Search, SearchResult, SourceError};
 pub use steer::Steer;
 pub use tool::{

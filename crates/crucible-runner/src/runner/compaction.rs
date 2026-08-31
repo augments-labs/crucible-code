@@ -26,11 +26,11 @@
 //! was meant to replace would lose the rest of them for good.
 
 use crucible_core::{
-    Compacted, Compacting, ContextSection, Delta, Event, Message, PermissionsSection,
+    Compacted, Compacting, CompactionRecord, ContextSection, Delta, Message, PermissionsSection,
     PromptCacheAttempt, PromptCacheEncoding, PromptCacheFact, PromptCacheOutcome,
     PromptCachePlanned, PromptCachePreparationError, PromptCacheRequestDisposition,
-    PromptCacheRequestFact, PromptCacheUsageFact, ProviderError, Request, Room, Spend, StopReason,
-    TOOL_RESULT_BYTES, ToolId, ToolOutput, TurnError, UsageCost,
+    PromptCacheRequestFact, PromptCacheUsageFact, ProviderError, Request, Room, RunItem, Spend,
+    StopReason, TOOL_RESULT_BYTES, ToolId, ToolOutput, TurnError, UsageCost,
 };
 use std::fmt::Write as _;
 
@@ -260,6 +260,12 @@ impl Runner {
         // between the two leaves a log that says what happened rather than one
         // that quietly lost the messages.
         self.session.compacted(replacing, &standing_as);
+        self.session
+            .append_item(&RunItem::Compaction(CompactionRecord::new(
+                run.ancestry(),
+                replacing,
+                &standing_as,
+            )));
         self.transcript.compacted(replacing, standing_as);
 
         self.load.replaced();
@@ -526,9 +532,7 @@ impl Runner {
             _ => prompt_cache::prepare(&request, capabilities, &scope),
         };
         for fact in resource_facts {
-            events.post(Event::PromptCache {
-                fact: PromptCacheFact::ResourceChanged(fact),
-            });
+            self.report_prompt_cache(run, PromptCacheFact::ResourceChanged(fact));
         }
         let prepared = match prepared {
             Ok(prepared) => prepared,
@@ -549,12 +553,12 @@ impl Runner {
             usage: None,
             cost: UsageCost::UNKNOWN,
         });
-        events.post(Event::PromptCache {
-            fact: PromptCacheFact::Planned(Box::new(PromptCachePlanned::from_request(&cache))),
-        });
+        let planned = PromptCachePlanned::from_request(&cache);
+        self.report_prompt_cache(run, PromptCacheFact::Planned(Box::new(planned)));
         if let Some(resource) = prepared.resource.as_ref() {
-            events.post(Event::PromptCache {
-                fact: PromptCacheFact::ResourceChanged(crucible_core::PromptCacheResourceFact {
+            self.report_prompt_cache(
+                run,
+                PromptCacheFact::ResourceChanged(crucible_core::PromptCacheResourceFact {
                     attempt: Some(cache.attempt),
                     resource: resource.id().clone(),
                     operation: resource.pending(),
@@ -562,7 +566,7 @@ impl Runner {
                     expires_at: resource.expires_at(),
                     owner: resource.binding().owner(),
                 }),
-            });
+            );
         }
         let mut encoding = self.provider.prompt_cache_encoding(&Request {
             prompt_cache: Some(&cache),
@@ -572,21 +576,21 @@ impl Runner {
             attempt.encoding = encoding;
         }
         if let PromptCacheEncoding::Failed(reason) = encoding {
-            events.post(Event::PromptCache {
-                fact: PromptCacheFact::RequestEncoded(PromptCacheRequestFact {
+            self.report_prompt_cache(
+                run,
+                PromptCacheFact::RequestEncoded(PromptCacheRequestFact {
                     attempt: cache.attempt,
                     encoding,
                     disposition: PromptCacheRequestDisposition::NotSent,
                 }),
-            });
+            );
             let Some(fallback) = prepared.fallback_request(reason) else {
                 self.transcript.pop();
                 return Err(PromptCachePreparationError::Encoding(reason).into());
             };
             cache = fallback;
-            events.post(Event::PromptCache {
-                fact: PromptCacheFact::Planned(Box::new(PromptCachePlanned::from_request(&cache))),
-            });
+            let planned = PromptCachePlanned::from_request(&cache);
+            self.report_prompt_cache(run, PromptCacheFact::Planned(Box::new(planned)));
             encoding = self.provider.prompt_cache_encoding(&Request {
                 prompt_cache: Some(&cache),
                 ..request
@@ -609,13 +613,14 @@ impl Runner {
         if let Some(attempt) = self.prompt_cache_attempt.as_mut() {
             attempt.disposition = disposition;
         }
-        events.post(Event::PromptCache {
-            fact: PromptCacheFact::RequestEncoded(PromptCacheRequestFact {
+        self.report_prompt_cache(
+            run,
+            PromptCacheFact::RequestEncoded(PromptCacheRequestFact {
                 attempt: cache.attempt,
                 encoding,
                 disposition,
             }),
-        });
+        );
         let cache = super::CacheObservation {
             attempt: cache.attempt,
             reporting: cache.capabilities.usage(),
@@ -656,14 +661,23 @@ impl Runner {
             cache,
             why,
         } = reading;
-        let mut stream = asked?;
+        let mut stream = match asked {
+            Ok(stream) => stream,
+            Err(ProviderError::Cancelled(_)) => return Ok(Recap::Stopped),
+            Err(problem) => return Err(problem.into()),
+        };
         let mut said = String::new();
         let mut part = 0;
         let mut stopped = None;
         let before = *spent;
 
         while let Some(delta) = stream.next() {
-            match delta? {
+            let delta = match delta {
+                Ok(delta) => delta,
+                Err(ProviderError::Cancelled(_)) => return Ok(Recap::Stopped),
+                Err(problem) => return Err(problem.into()),
+            };
+            match delta {
                 Delta::Text(text) => {
                     said.push_str(&text);
                     if said.len() > MAX_RECAP_TEXT {
@@ -715,14 +729,15 @@ impl Runner {
                         attempt.usage = Some(usage.clone());
                         attempt.cost = cost;
                     }
-                    events.post(Event::PromptCache {
-                        fact: PromptCacheFact::UsageReported(Box::new(PromptCacheUsageFact {
+                    self.report_prompt_cache_to(
+                        &events,
+                        PromptCacheFact::UsageReported(Box::new(PromptCacheUsageFact {
                             attempt: cache.attempt,
                             outcome,
                             usage,
                             cost,
                         })),
-                    });
+                    );
                 }
                 Delta::ToolStarted { .. } | Delta::ToolArgs(_) | Delta::Carried(_) => {}
                 Delta::Stopped(reason) => {

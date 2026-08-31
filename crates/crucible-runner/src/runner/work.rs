@@ -11,10 +11,10 @@ use std::thread;
 use std::time::Instant;
 
 use crucible_core::{
-    Ancestry, Approved, Ask, Cancel, Event, Permission, Reporter, Settled, StopReason,
-    TOOL_RESULT_BYTES, ToolCall, ToolContext, ToolEntry, ToolError, ToolExecutionMode, ToolId,
-    ToolOutcome, ToolOutput, ToolOutputRetention, ToolReceipt, ToolResult, ToolSnapshot,
-    ToolSourceReceipt, Watch, Wrote,
+    Ancestry, Approved, Ask, Cancel, Event, InvocationRecord, JournalStore, Permission, Reporter,
+    RunItem, Settled, StopReason, TOOL_RESULT_BYTES, ToolCall, ToolContext, ToolEntry, ToolError,
+    ToolExecutionMode, ToolId, ToolOutcome, ToolOutput, ToolOutputRetention, ToolReceipt,
+    ToolResult, ToolSnapshot, ToolSourceReceipt, Watch, Wrote,
 };
 
 /// What a call is answered with when the turn ended before it could run.
@@ -58,6 +58,8 @@ pub(crate) struct Work<'a> {
     pub(crate) cancel: &'a Cancel,
     /// The run identity placed in each per-call context.
     pub(crate) ancestry: Ancestry,
+    /// Durable framework history, distinct from provider messages.
+    pub(crate) journal: &'a dyn JournalStore,
     /// The most opt-in calls that may execute at once.
     pub(crate) concurrency: usize,
 }
@@ -295,12 +297,23 @@ impl Work<'_> {
 
         match settled {
             Settled::Approved(approved) => match self.tools.resolve_approved(&approved) {
-                Ok(approved_entry) => Decision::Ready(Prepared {
-                    call: transformed,
-                    entry: approved_entry.clone(),
-                    approved,
-                    evidence,
-                }),
+                Ok(approved_entry) => {
+                    let record = InvocationRecord::new(
+                        transformed.clone(),
+                        self.ancestry,
+                        approved_entry.descriptor().effect(),
+                        approved_entry.tool().idempotency_key(&transformed.args),
+                    );
+                    self.journal
+                        .append_run_item(&RunItem::Invocation(record.clone()));
+                    Decision::Ready(Prepared {
+                        call: transformed,
+                        entry: approved_entry.clone(),
+                        approved,
+                        evidence,
+                        record,
+                    })
+                }
                 Err(problem) => Decision::Done(Invocation::failed(
                     transformed.clone(),
                     &problem,
@@ -333,9 +346,13 @@ impl Work<'_> {
             return decisions
                 .into_iter()
                 .map(|decision| match decision {
-                    Decision::Ready(prepared) => {
-                        execute_contained(prepared, self.ancestry, self.cancel, self.events)
-                    }
+                    Decision::Ready(prepared) => execute_contained(
+                        prepared,
+                        self.ancestry,
+                        self.cancel,
+                        self.events,
+                        self.journal,
+                    ),
                     Decision::Done(invocation)
                     | Decision::Refused(invocation)
                     | Decision::Stopped(invocation)
@@ -345,6 +362,7 @@ impl Work<'_> {
         }
 
         let mut completed = Vec::with_capacity(decisions.len());
+        let journal = self.journal;
         thread::scope(|scope| {
             let mut running = Vec::with_capacity(ready);
             for (index, decision) in decisions.into_iter().enumerate() {
@@ -358,7 +376,7 @@ impl Work<'_> {
                             index,
                             fallback,
                             scope.spawn(move || {
-                                execute_contained(prepared, ancestry, cancel, events)
+                                execute_contained(prepared, ancestry, cancel, events, journal)
                             }),
                         ));
                     }
@@ -491,6 +509,11 @@ impl Work<'_> {
         }
         *produced = produced.saturating_add(invocation.output.text().len());
 
+        if let Some(mut recovery) = invocation.recovery.take() {
+            let _ = recovery.finish(invocation.outcome, invocation.output.clone());
+            self.journal.append_run_item(&RunItem::Invocation(recovery));
+        }
+
         let receipt = ToolReceipt::new(
             self.tools.generation().clone(),
             invocation.evidence.source,
@@ -530,6 +553,7 @@ struct Prepared {
     entry: ToolEntry,
     approved: Approved,
     evidence: InvocationEvidence,
+    record: InvocationRecord,
 }
 
 impl Prepared {
@@ -540,6 +564,7 @@ impl Prepared {
             ToolOutcome::NotRun,
             self.evidence,
         )
+        .recovering(self.record)
     }
 }
 
@@ -566,6 +591,7 @@ struct Invocation {
     outcome: ToolOutcome,
     evidence: InvocationEvidence,
     retention: ToolOutputRetention,
+    recovery: Option<InvocationRecord>,
 }
 
 impl Invocation {
@@ -582,6 +608,7 @@ impl Invocation {
             outcome,
             evidence,
             retention,
+            recovery: None,
         }
     }
 
@@ -593,6 +620,11 @@ impl Invocation {
     ) -> Self {
         Self::new(call, failure(problem), outcome, evidence)
     }
+
+    fn recovering(mut self, record: InvocationRecord) -> Self {
+        self.recovery = Some(record);
+        self
+    }
 }
 
 fn execute_contained(
@@ -600,10 +632,11 @@ fn execute_contained(
     ancestry: Ancestry,
     cancel: &Cancel,
     events: Reporter<'_>,
+    journal: &dyn JournalStore,
 ) -> Invocation {
     let fallback = PanicFallback::from(&prepared);
     match catch_unwind(AssertUnwindSafe(|| {
-        execute(prepared, ancestry, cancel, events)
+        execute(prepared, ancestry, cancel, events, journal)
     })) {
         Ok(invocation) => invocation,
         Err(_) => fallback.panicked(),
@@ -615,13 +648,17 @@ fn execute(
     ancestry: Ancestry,
     cancel: &Cancel,
     events: Reporter<'_>,
+    journal: &dyn JournalStore,
 ) -> Invocation {
     let Prepared {
         call,
         entry,
         approved,
         evidence,
+        mut record,
     } = prepared;
+    let _ = record.start();
+    journal.append_run_item(&RunItem::Invocation(record.clone()));
     let deadline = entry
         .descriptor()
         .timeout()
@@ -639,7 +676,8 @@ fn execute(
             ToolOutput::failed(NOT_RUN),
             ToolOutcome::Cancelled,
             evidence,
-        );
+        )
+        .recovering(record);
     }
     if context.timed_out() {
         return Invocation::new(
@@ -647,7 +685,8 @@ fn execute(
             ToolOutput::failed("tool timed out"),
             ToolOutcome::TimedOut,
             evidence,
-        );
+        )
+        .recovering(record);
     }
 
     let output = match ran {
@@ -655,7 +694,8 @@ fn execute(
             Some(guard) => match guard.guard(&call, output) {
                 Ok(output) => output,
                 Err(problem) => {
-                    return Invocation::failed(call, &problem, ToolOutcome::Failed, evidence);
+                    return Invocation::failed(call, &problem, ToolOutcome::Failed, evidence)
+                        .recovering(record);
                 }
             },
             None => output,
@@ -666,10 +706,12 @@ fn execute(
                 ToolOutput::failed(NOT_RUN),
                 ToolOutcome::Cancelled,
                 evidence,
-            );
+            )
+            .recovering(record);
         }
         Err(problem) => {
-            return Invocation::failed(call, &problem, ToolOutcome::Failed, evidence);
+            return Invocation::failed(call, &problem, ToolOutcome::Failed, evidence)
+                .recovering(record);
         }
     };
     let outcome = if output.is_failed() {
@@ -677,12 +719,13 @@ fn execute(
     } else {
         ToolOutcome::Succeeded
     };
-    Invocation::new(call, output, outcome, evidence)
+    Invocation::new(call, output, outcome, evidence).recovering(record)
 }
 
 struct PanicFallback {
     call: ToolCall,
     evidence: InvocationEvidence,
+    record: InvocationRecord,
 }
 
 impl From<&Prepared> for PanicFallback {
@@ -690,6 +733,7 @@ impl From<&Prepared> for PanicFallback {
         Self {
             call: prepared.call.clone(),
             evidence: prepared.evidence.clone(),
+            record: prepared.record.clone(),
         }
     }
 }
@@ -702,6 +746,7 @@ impl PanicFallback {
             ToolOutcome::Panicked,
             self.evidence,
         )
+        .recovering(self.record)
     }
 }
 
@@ -752,8 +797,9 @@ mod tests {
     use std::time::Duration;
 
     use crucible_core::{
-        Ancestry, ArgumentTransform, Disposition, EventEnvelope, InputGuard, Mode, OutputGuard,
-        Post, Remember, Rules, Sensitivity, Summary, Target, Tool, ToolArgs, ToolDescriptor,
+        Ancestry, ArgumentTransform, Disposition, EventEnvelope, IdempotencyKey, InputGuard,
+        InvocationState, JournalStore, Mode, OutputGuard, Post, RecoveryAction, Remember, Rules,
+        Sensitivity, Summary, Target, Tool, ToolArgs, ToolDescriptor, ToolEffect,
         ToolExecutionMode, ToolHooks, ToolId, ToolProvenance, ToolResourceKey, ToolSourceKind,
         Verdict,
     };
@@ -960,6 +1006,7 @@ mod tests {
         let ancestry = Ancestry::new();
         let snapshot = tools.snapshot().unwrap();
         let cancel = Cancel::new();
+        let journal = crucible_session::Session::nowhere();
         let (results, went, _) = Work {
             tools: &snapshot,
             permission,
@@ -967,6 +1014,7 @@ mod tests {
             events: Reporter::new(ancestry, &keeping),
             cancel: &cancel,
             ancestry,
+            journal: &journal,
             concurrency,
         }
         .pass(calls, 0, maximum);
@@ -1038,6 +1086,102 @@ mod tests {
             *trace.lock().unwrap(),
             ["validate raw", "transform", "validate transformed"]
         );
+    }
+
+    #[derive(Default)]
+    struct KeepingJournal(Mutex<Vec<RunItem>>);
+
+    impl JournalStore for KeepingJournal {
+        fn append_run_item(&self, item: &RunItem) {
+            self.0.lock().unwrap().push(item.clone());
+        }
+    }
+
+    struct KeyedEffect;
+
+    impl Tool for KeyedEffect {
+        fn validate(&self, _args: &ToolArgs) -> Result<(), ToolError> {
+            Ok(())
+        }
+
+        fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
+            Sensitivity::ReadOnly {
+                target: Target::unresolved(),
+            }
+        }
+
+        fn idempotency_key(&self, _args: &ToolArgs) -> Option<IdempotencyKey> {
+            Some(IdempotencyKey::new("operation-42").unwrap())
+        }
+
+        fn summary(&self, _args: &ToolArgs) -> Summary {
+            Summary::new("keyed effect")
+        }
+
+        fn run(
+            &self,
+            _approved: Approved,
+            _context: &ToolContext<'_>,
+        ) -> Result<ToolOutput, ToolError> {
+            Ok(ToolOutput::ok("one effect"))
+        }
+    }
+
+    #[test]
+    fn an_approved_effect_journals_one_stable_prepared_started_and_finished_invocation() {
+        let descriptor = ToolDescriptor::new(
+            "keyed",
+            "{}",
+            ToolProvenance::new(ToolSourceKind::User, "test:keyed", "keyed test").unwrap(),
+        )
+        .unwrap()
+        .causing(ToolEffect::Idempotent);
+        let mut tools = Tools::new();
+        tools.add(descriptor, Arc::new(KeyedEffect)).unwrap();
+        let snapshot = tools.snapshot().unwrap();
+        let journal = KeepingJournal::default();
+        let (events, _seen) = channel();
+        let keeping = Keeping(events);
+        let ancestry = Ancestry::new();
+        let cancel = Cancel::new();
+        let mut permission = Permission::new();
+        let mut ask = Says::new(Verdict::Allow);
+
+        let (results, went, _) = Work {
+            tools: &snapshot,
+            permission: &mut permission,
+            ask: &mut ask,
+            events: Reporter::new(ancestry, &keeping),
+            cancel: &cancel,
+            ancestry,
+            journal: &journal,
+            concurrency: 1,
+        }
+        .pass(&[call("keyed-call", "keyed")], 0, usize::MAX);
+
+        assert!(matches!(went, Went::On));
+        assert_eq!(results.len(), 1);
+        let held = journal.0.lock().unwrap();
+        let invocations = held
+            .iter()
+            .filter_map(|item| match item {
+                RunItem::Invocation(invocation) => Some(invocation),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let [prepared, started, finished] = invocations.as_slice() else {
+            panic!("expected prepared, started and finished records");
+        };
+        assert_eq!(prepared.id(), started.id());
+        assert_eq!(started.id(), finished.id());
+        assert!(matches!(prepared.state(), InvocationState::Prepared));
+        assert!(matches!(started.state(), InvocationState::Started));
+        assert!(matches!(finished.state(), InvocationState::Finished { .. }));
+        assert_eq!(prepared.effect(), ToolEffect::Idempotent);
+        assert!(prepared.idempotency_key().is_some());
+        assert_eq!(prepared.recovery(), RecoveryAction::Retry);
+        assert_eq!(started.recovery(), RecoveryAction::RetryWithIdempotencyKey);
+        assert_eq!(finished.recovery(), RecoveryAction::UseRecordedResult);
     }
 
     #[test]
@@ -1502,6 +1646,7 @@ mod tests {
         ) -> (Vec<ToolResult>, Went, usize) {
             let events = Reporter::new(Ancestry::new(), &self.events);
             let tools = self.tools.snapshot().unwrap();
+            let journal = crucible_session::Session::nowhere();
 
             Work {
                 tools: &tools,
@@ -1510,6 +1655,7 @@ mod tests {
                 events,
                 cancel: &self.cancel,
                 ancestry: Ancestry::new(),
+                journal: &journal,
                 concurrency: 1,
             }
             .pass(calls, held, maximum)
