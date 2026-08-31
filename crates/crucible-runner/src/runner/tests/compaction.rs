@@ -125,14 +125,14 @@ fn a_recap_cut_off_at_its_token_ceiling_replaces_nothing() {
     scripted.runner.policy.compaction = keeping_one();
     scripted.turn("first").expect("a turn to compact from");
     scripted.turn("second").expect("a middle to replace");
-    let before = scripted.runner.transcript().messages().to_vec();
+    let before = conversation(scripted.runner.transcript());
 
     let problem = scripted
         .compacting()
         .expect_err("a truncated recap must not replace context");
 
     assert!(matches!(problem, TurnError::RecapIncomplete));
-    assert_eq!(scripted.runner.transcript().messages(), before.as_slice());
+    assert_eq!(conversation(scripted.runner.transcript()), before);
 }
 
 #[test]
@@ -205,7 +205,7 @@ fn a_recap_stopped_part_way_replaces_nothing() {
     let mut scripted = Scripted::within(script, 10_000, keeping_one());
     scripted.turn("first").expect("a turn to compact from");
     scripted.turn("second").expect("a middle to replace");
-    let before = scripted.runner.transcript().messages().to_vec();
+    let before = conversation(scripted.runner.transcript());
 
     let made = scripted
         .compacting()
@@ -213,8 +213,8 @@ fn a_recap_stopped_part_way_replaces_nothing() {
 
     assert_eq!(made, Room::Stopped, "a stopped recap made room");
     assert_eq!(
-        scripted.runner.transcript().messages(),
-        before.as_slice(),
+        conversation(scripted.runner.transcript()),
+        before,
         "a stopped recap changed the transcript"
     );
 }
@@ -394,7 +394,7 @@ fn an_answer_cut_off_by_the_window_is_recorded_when_room_is_not_made() {
 
     assert_eq!(stop, StopReason::WindowExceeded);
     assert_eq!(
-        scripted.runner.transcript().messages(),
+        conversation(scripted.runner.transcript()),
         [
             Message::said("go"),
             Message::Agent {
@@ -487,7 +487,7 @@ fn a_full_window_prunes_tool_output_from_the_active_turn_and_carries_on() {
             .iter()
             .any(|event| matches!(event, Event::Delta { text } if text.contains("carried on")))
     );
-    assert_eq!(scripted.asked(), [1, 3, 5, 7]);
+    assert_eq!(scripted.asked(), [7, 9, 11, 13]);
     let carried: Vec<Option<u8>> = events
         .iter()
         .filter_map(|event| match event {
@@ -520,7 +520,7 @@ fn a_full_window_prunes_tool_output_from_the_active_turn_and_carries_on() {
                     .map(|result| result.output.text().len())
                     .collect::<Vec<_>>(),
             ),
-            Message::User { .. } | Message::Agent { .. } => None,
+            Message::Context(_) | Message::User { .. } | Message::Agent { .. } => None,
         })
         .flatten()
         .collect();
@@ -951,7 +951,7 @@ fn the_recap_request_carries_no_system_prompt_so_a_standing_note_cannot_become_a
 fn a_pass_is_measured_against_the_room_its_own_run_holds() {
     let script = Script::new(vec![
         vec![
-            Delta::Carried(Carried::new(40_000)),
+            Delta::Carried(Carried::new(120_000)),
             Delta::Text("first".into()),
             Delta::Stopped(StopReason::Yielded),
         ],
@@ -1313,7 +1313,7 @@ fn a_run_that_declined_to_make_room_keeps_the_answer_the_window_cut() {
         "the cut answer was answered by making room and asking again"
     );
     assert_eq!(
-        scripted.runner.transcript().messages(),
+        conversation(scripted.runner.transcript()),
         [
             Message::said("go"),
             Message::Agent {
@@ -1502,7 +1502,7 @@ fn the_room_a_prune_reports_is_read_off_the_run_that_asked() {
 
     assert_eq!(
         carried.last(),
-        Some(&Some(58)),
+        Some(&Some(57)),
         "the room reported after the prune was not measured against the run's \
          own reserve: {carried:?}"
     );

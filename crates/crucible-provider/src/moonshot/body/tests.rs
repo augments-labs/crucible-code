@@ -1,6 +1,6 @@
 use crucible_core::{
-    Attached, Attachment, Change, Changed, Content, Diff, Effort, Line, Modality, ToolArgs,
-    ToolCall, ToolId, ToolOutput, Transcript,
+    Attached, Attachment, Change, Changed, Content, Diff, Effort, Fragment, Line, Modality,
+    ToolArgs, ToolCall, ToolId, ToolOutput, Transcript,
 };
 
 use super::*;
@@ -134,6 +134,24 @@ fn standing_instructions_lead_the_transcript_as_a_message_of_their_own() {
         &json!({"role": "system", "content": "be brief"})
     );
     assert_eq!(at(&body, "/messages/1/role"), &json!("user"));
+}
+
+#[test]
+fn typed_context_is_sent_as_retained_model_input() {
+    let mut transcript = Transcript::new();
+    transcript.push(Message::Context(Fragment::new(
+        "workspace",
+        "Workspace: /src",
+    )));
+    transcript.push(Message::said("continue"));
+
+    let body = build(&request(transcript));
+
+    assert_eq!(
+        at(&body, "/messages/0"),
+        &json!({"role": "user", "content": "Workspace: /src"})
+    );
+    assert_eq!(at(&body, "/messages/1/content"), &json!("continue"));
 }
 
 #[test]

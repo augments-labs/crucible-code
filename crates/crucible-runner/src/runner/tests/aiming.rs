@@ -72,7 +72,7 @@ fn changing_model_replaces_its_limits_and_reestimates_the_load() {
     scripted.turn("go").expect("a measured turn");
     assert_eq!(
         scripted.runner.left(),
-        Some(32),
+        Some(72),
         "the exact output correction visibly freed uncompacted context"
     );
 
@@ -129,7 +129,7 @@ fn changing_provider_reestimates_usage_reported_by_the_old_one() {
     scripted.turn("go").expect("a measured turn");
     assert_eq!(
         scripted.runner.left(),
-        Some(32),
+        Some(72),
         "the exact output correction visibly freed uncompacted context"
     );
 

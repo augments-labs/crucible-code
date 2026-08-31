@@ -2,8 +2,16 @@
 
 use std::path::PathBuf;
 
-use super::{Identity, SAID, SKILLS, Skill, SystemPrompt, Tone};
-use crate::Effort;
+use serde_json::Value;
+
+use super::{
+    APPROVAL_SCOPE, APPROVALS, EnvironmentSection, Identity, ModelSection, PermissionsSection,
+    SAID, SKILLS, Skill, SkillsSection, SystemPrompt, Tone, ToolsSection, WorkspaceSection,
+};
+use crate::{
+    Ask, ContextSection, ContextSnapshot, Effort, Permission, Remember, Seen, Sensitivity, Settled,
+    Target, ToolArgs, ToolCall, ToolId, ToolSnapshot, Verdict,
+};
 
 /// A skill named and described, at a path under the workspace.
 fn skill(name: &str, description: &str) -> Skill {
@@ -35,6 +43,225 @@ fn a_prompt_nobody_has_added_to_is_crucibles_own_instructions_and_nothing_else()
     assert!(!said.contains("The workspace root"), "{said}");
     assert!(!said.contains("<skills>"), "{said}");
     assert!(!said.contains("The tools registered"), "{said}");
+}
+
+#[test]
+fn operator_instructions_can_be_rendered_without_session_facts() {
+    let prompt = SystemPrompt {
+        tools: vec!["bash".to_owned()],
+        root: Some(PathBuf::from("/src/thing")),
+        identity: Some(Identity {
+            model: "claude-opus-5".to_owned(),
+            effort: Some(Effort::High),
+        }),
+        ..SystemPrompt::default()
+    };
+
+    let instructions = prompt.instructions_text();
+
+    assert!(
+        instructions.contains("operating inside crucible"),
+        "{instructions}"
+    );
+    assert!(!instructions.contains("/src/thing"), "{instructions}");
+    assert!(!instructions.contains("bash"), "{instructions}");
+    assert!(!instructions.contains("claude-opus-5"), "{instructions}");
+}
+
+#[test]
+fn every_shipped_section_has_non_null_state_and_a_full_first_render() {
+    fn assert_section(section: &impl ContextSection) {
+        let state = section
+            .checked_snapshot()
+            .unwrap_or_else(|problem| panic!("{}: {problem}", section.id()));
+        assert!(!state.is_null(), "{}", section.id());
+        let fragment = section
+            .render(Seen::Fresh)
+            .unwrap_or_else(|| panic!("{} did not render", section.id()));
+        assert_eq!(fragment.section(), section.id());
+        assert!(!fragment.text().is_empty(), "{}", section.id());
+
+        let before = ContextSnapshot::new();
+        let mut current = ContextSnapshot::new();
+        current
+            .capture(section)
+            .unwrap_or_else(|problem| panic!("{}: {problem}", section.id()));
+        let patch = current
+            .patch_from(&before)
+            .unwrap_or_else(|| panic!("{} produced no initial patch", section.id()));
+        assert_eq!(
+            patch
+                .apply(&before)
+                .unwrap_or_else(|problem| panic!("{}: {problem}", section.id())),
+            current
+        );
+    }
+
+    let root = PathBuf::from("/src/thing");
+    let skills = [skill("release", "Cuts a release")];
+    let tools = ToolSnapshot::empty();
+    let permission = Permission::new();
+    assert_section(&WorkspaceSection::new(&root));
+    assert_section(&PermissionsSection::new(&permission));
+    assert_section(&SkillsSection::new(&skills));
+    assert_section(&ToolsSection::new(&tools));
+    assert_section(&EnvironmentSection::new("2026-08-31", "linux", "x86_64"));
+    assert_section(&ModelSection::new("claude-opus-5", Some(Effort::High)));
+}
+
+#[test]
+fn an_unchanged_shipped_section_renders_nothing_after_its_first_fragment() {
+    let root = PathBuf::from("/src/thing");
+    let section = WorkspaceSection::new(&root);
+    let mut snapshot = ContextSnapshot::new();
+    snapshot.capture(&section).unwrap();
+    let prior = snapshot.get(WorkspaceSection::ID).unwrap();
+
+    assert!(section.render(Seen::Known(prior)).is_none());
+}
+
+#[test]
+fn an_unknown_shipped_section_explicitly_supersedes_what_came_before() {
+    let section = EnvironmentSection::new("2026-08-31", "linux", "x86_64");
+    let rendered = section.render(Seen::Unknown).unwrap();
+
+    assert!(rendered.text().contains("supersedes"), "{rendered:?}");
+}
+
+#[test]
+fn the_permissions_section_bounds_scopes_and_states_exactly_what_it_omits() {
+    struct Remembering;
+
+    impl Ask for Remembering {
+        fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
+            (Verdict::Allow, Remember::Session)
+        }
+    }
+
+    let mut permission = Permission::new();
+    let mut answer = Remembering;
+    for number in 0..APPROVALS + 3 {
+        let call = ToolCall {
+            id: ToolId::new(format!("call-{number}")),
+            name: "edit".into(),
+            args: ToolArgs::new("{}"),
+        };
+        let relative = format!("scope-{number:03}-{}", "x".repeat(APPROVAL_SCOPE + 20));
+        let sensitivity = Sensitivity::MutatesFile {
+            target: Target::at(&format!("/work/{relative}"), Some(&relative)),
+        };
+
+        assert!(matches!(
+            permission.decide(&call, &sensitivity, &mut answer),
+            Settled::Approved(_)
+        ));
+    }
+
+    let section = PermissionsSection::new(&permission);
+    let snapshot = section.snapshot();
+    let remembered = snapshot
+        .get("remembered")
+        .and_then(Value::as_array)
+        .expect("bounded scopes");
+    assert_eq!(remembered.len(), APPROVALS);
+    assert_eq!(
+        snapshot.get("remembered_count").and_then(Value::as_u64),
+        u64::try_from(APPROVALS + 3).ok()
+    );
+    assert_eq!(snapshot.get("omitted").and_then(Value::as_u64), Some(3));
+    assert!(remembered.iter().all(|scope| {
+        scope
+            .as_str()
+            .is_some_and(|scope| scope.chars().count() <= APPROVAL_SCOPE + 1)
+    }));
+
+    let rendered = section.render(Seen::Fresh).expect("full permissions");
+    assert!(rendered.text().contains("3 additional scopes are omitted"));
+}
+
+#[test]
+fn the_skills_section_keeps_the_existing_entry_bound_and_states_the_omission() {
+    let skills: Vec<Skill> = (0..SKILLS + 3)
+        .map(|number| skill(&format!("skill-{number}"), "Does one bounded thing"))
+        .collect();
+    let rendered = SkillsSection::new(&skills).render(Seen::Fresh).unwrap();
+
+    assert_eq!(rendered.text().matches("<skill>").count(), SKILLS);
+    assert!(rendered.text().contains("And 3 more"), "{rendered:?}");
+}
+
+#[test]
+fn colliding_skill_names_do_not_hide_a_changed_model_visible_entry() {
+    let before = [
+        skill("release", "Cuts the old release"),
+        skill("release", "Documents the release"),
+    ];
+    let current = [
+        skill("release", "Cuts the new release"),
+        skill("release", "Documents the release"),
+    ];
+    let prior = SkillsSection::new(&before).snapshot();
+
+    let rendered = SkillsSection::new(&current)
+        .render(Seen::Known(&prior))
+        .expect("the changed first entry must not be collapsed under the second");
+
+    assert!(
+        rendered.text().contains("Cuts the new release"),
+        "{rendered:?}"
+    );
+}
+
+#[test]
+fn reordering_skills_does_not_report_still_present_entries_as_removed() {
+    let before = [
+        skill("release", "Cuts the release"),
+        skill("review", "Reviews the candidate"),
+    ];
+    let current = [
+        skill("review", "Reviews the candidate"),
+        skill("release", "Cuts the release"),
+    ];
+    let prior = SkillsSection::new(&before).snapshot();
+
+    let rendered = SkillsSection::new(&current)
+        .render(Seen::Known(&prior))
+        .expect("the ordered snapshot changed");
+
+    assert!(
+        !rendered.text().contains("Removed:"),
+        "still-present skills were reported removed: {rendered:?}"
+    );
+}
+
+#[test]
+fn the_tools_section_reports_the_exact_generation_it_snapshotted() {
+    let tools = ToolSnapshot::empty();
+    let section = ToolsSection::new(&tools);
+    let state = section.snapshot();
+    let rendered = section.render(Seen::Fresh).unwrap();
+
+    let generation = state
+        .get("generation")
+        .and_then(|generation| generation.as_str())
+        .expect("a generation");
+    assert!(
+        state.get("tools").is_some_and(Value::is_object),
+        "tools must be keyed: {state}"
+    );
+    assert!(rendered.text().contains(generation), "{rendered:?}");
+}
+
+#[test]
+fn a_changed_section_renders_only_the_changed_fact() {
+    let before = EnvironmentSection::new("2026-08-30", "linux", "x86_64").snapshot();
+    let current = EnvironmentSection::new("2026-08-31", "linux", "x86_64");
+
+    let rendered = current.render(Seen::Known(&before)).unwrap();
+
+    assert!(rendered.text().contains("date_utc is now 2026-08-31"));
+    assert!(!rendered.text().contains("platform is"), "{rendered:?}");
+    assert!(!rendered.text().contains("x86_64"), "{rendered:?}");
 }
 
 #[test]

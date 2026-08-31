@@ -127,6 +127,7 @@ where
                 effort: None,
             },
         ),
+        ContextInputs::new(std::env::temp_dir()).dated("2026-08-31"),
         Session::nowhere(),
     );
     let context = runner.starting(&events, &cancel, &steer, &aside);

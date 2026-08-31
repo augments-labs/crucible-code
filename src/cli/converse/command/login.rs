@@ -692,6 +692,7 @@ mod tests {
                     effort: None,
                 },
             ),
+            crucible_runner::ContextInputs::new(std::env::temp_dir()),
             crucible_runner::Session::nowhere(),
         )
     }

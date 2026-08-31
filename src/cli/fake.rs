@@ -9,22 +9,20 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    Approved, Cancel, Command, Delta, DeltaStream, DescribeTool, Modalities, Modality, Provider,
-    ProviderError, Request, Sensitivity, Summary, Target, Tool, ToolArgs, ToolContext, ToolError,
-    ToolOutput,
+    Approved, Cancel, Command, Delta, DeltaStream, DescribeTool, Message, Modalities, Modality,
+    Provider, ProviderError, Request, Sensitivity, Summary, Target, Tool, ToolArgs, ToolContext,
+    ToolError, ToolOutput,
 };
 
 /// How many requests a script has been given, readable after it has moved into
 /// a runner.
 pub(crate) type Asked = Arc<AtomicUsize>;
 
-/// What each request was asked under, in the order the requests arrived and
-/// readable after the script has moved into a runner.
+/// The instructions and typed context each request was asked under, in order.
 ///
-/// The system prompt is the one part of a request nothing on screen shows, and
-/// half of what it says is about the session rather than about the harness — so
-/// a session that changed model and went on saying it was the old one would
-/// look right from every other angle.
+/// Neither is shown on screen. Stable operator instructions occupy the system
+/// field; session facts occupy typed transcript fragments. Keeping both makes
+/// this fixture observe what the model actually read across that boundary.
 pub(crate) type Under = Arc<Mutex<Vec<String>>>;
 
 /// Answers each request with the next batch of deltas it was given.
@@ -93,7 +91,20 @@ impl Provider for Script {
         // A poisoned lock is a panic in another test's thread, which this one
         // cannot report better than by having nothing to assert on.
         if let Ok(mut under) = self.under.lock() {
-            under.push(request.system.unwrap_or_default().to_owned());
+            let mut assembled = request.system.unwrap_or_default().to_owned();
+            for fragment in request
+                .transcript
+                .messages()
+                .iter()
+                .filter_map(|message| match message {
+                    Message::Context(fragment) => Some(fragment),
+                    Message::User { .. } | Message::Agent { .. } | Message::ToolResults(_) => None,
+                })
+            {
+                assembled.push_str("\n\n");
+                assembled.push_str(fragment.text());
+            }
+            under.push(assembled);
         }
 
         if self.refusing {

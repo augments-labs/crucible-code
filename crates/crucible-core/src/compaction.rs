@@ -39,7 +39,10 @@ pub enum Compacting {
 pub struct Compacted {
     /// Why it happened.
     pub why: Compacting,
-    /// How many messages the recap stands in place of.
+    /// How many conversation messages the recap stands in place of.
+    ///
+    /// Typed harness context is omitted: it is reassembled after compaction
+    /// and was never a user or agent message shown in the conversation.
     pub replaced: usize,
     /// What the next request would have carried before it.
     pub before: u64,

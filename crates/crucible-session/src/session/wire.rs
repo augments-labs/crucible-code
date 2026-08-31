@@ -14,8 +14,8 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use crucible_core::{
-    Attachment, Calibration, Carried, Changed, Message, Modality, SessionId, Spend, StopReason,
-    ToolCall, ToolId, ToolOutput, ToolResult,
+    Attachment, Calibration, Carried, Changed, ContextError, ContextPatch, Fragment, Message,
+    Modality, SessionId, Spend, StopReason, ToolCall, ToolId, ToolOutput, ToolResult,
 };
 use serde_json::{Value, json};
 
@@ -25,7 +25,7 @@ use serde_json::{Value, json};
 /// is refused rather than half-understood, which is the difference between
 /// telling the user their session cannot be continued and silently continuing
 /// a different one.
-pub(crate) const FORMAT: u32 = 9;
+pub(crate) const FORMAT: u32 = 10;
 
 /// The formats this build reads, newest first.
 ///
@@ -42,13 +42,15 @@ pub(crate) const FORMAT: u32 = 9;
 /// format 9 only added a key to a line of tool results — the count a change came
 /// to — and a result written without one already means a call that changed no
 /// file, which is what a build with nowhere to say it could only ever have
-/// meant.
+/// meant. Format 9 is, because format 10 only adds typed context and its
+/// snapshot patches; a log without either replays as context-unknown rather
+/// than pretending it recorded state it could not have written.
 ///
 /// A format that changed the meaning of a line does not go on this list however
 /// small the change looks. What it would buy is somebody's history; what it
 /// would cost is a session that looks fine and is missing turns, which is the
 /// failure the refusal exists for.
-pub(crate) const READS: &[u32] = &[9, 8, 7, 6, 5, 4, 3];
+pub(crate) const READS: &[u32] = &[10, 9, 8, 7, 6, 5, 4, 3];
 
 /// Whether this build can replay a log written under `format`.
 pub(crate) fn readable(format: u32) -> bool {
@@ -165,6 +167,19 @@ pub(crate) fn measure(line: &str) -> Option<Calibration> {
     })
 }
 
+/// One RFC 7386 context patch as an additive session line.
+pub(crate) fn contextual(patch: &ContextPatch) -> String {
+    json!({ "context_patch": patch.value() }).to_string()
+}
+
+/// What a context-patch line says, including a malformed persisted patch.
+pub(crate) fn context_patch(line: &str) -> Option<Result<ContextPatch, ContextError>> {
+    let value: Value = serde_json::from_str(line).ok()?;
+    Some(ContextPatch::from_value(
+        value.get("context_patch")?.clone(),
+    ))
+}
+
 /// The first line, which says what the file is and what it belongs to.
 ///
 /// The branch is whatever the caller says the workspace's version control had
@@ -207,6 +222,12 @@ pub(crate) struct Opening {
 /// One message as the line that records it.
 pub(crate) fn line(message: &Message) -> String {
     let value = match message {
+        Message::Context(fragment) => json!({
+            "context": {
+                "section": fragment.section(),
+                "text": fragment.text(),
+            }
+        }),
         // Written without the key when there are no files, so a text-only
         // session's log is byte for byte what format 5 wrote.
         Message::User { text, attachments } if attachments.is_empty() => {
@@ -232,6 +253,13 @@ pub(crate) fn line(message: &Message) -> String {
 /// One line as the message it records, or `None` if it is not one.
 pub(crate) fn message(line: &str) -> Option<Message> {
     let value: Value = serde_json::from_str(line).ok()?;
+
+    if let Some(context) = value.get("context") {
+        return Some(Message::Context(Fragment::new(
+            context.get("section")?.as_str()?,
+            context.get("text")?.as_str()?,
+        )));
+    }
 
     if let Some(text) = value.get("user") {
         let attachments = match value.get("attached") {
@@ -498,6 +526,7 @@ fn result(value: &Value) -> Option<ToolResult> {
 
 #[cfg(test)]
 mod tests {
+    use crucible_core::ContextPatch;
     use crucible_core::{
         Approved, Ask, Attachment, Modality, Permission, Remember, Sensitivity, Settled, Target,
         ToolArgs, Verdict,
@@ -622,6 +651,36 @@ mod tests {
     }
 
     #[test]
+    fn a_context_fragment_survives_the_line_that_records_it() {
+        let fragment = Message::Context(Fragment::new("workspace", "Workspace: /src"));
+
+        assert_eq!(
+            line(&fragment),
+            r#"{"context":{"section":"workspace","text":"Workspace: /src"}}"#
+        );
+        assert_eq!(message(&line(&fragment)).as_ref(), Some(&fragment));
+    }
+
+    #[test]
+    fn a_context_patch_survives_its_additive_line() {
+        let patch = ContextPatch::from_value(json!({
+            "model": { "model": "gpt-test", "effort": "high" }
+        }))
+        .unwrap();
+
+        let written = contextual(&patch);
+        let read = context_patch(&written)
+            .expect("a patch line")
+            .expect("a valid patch");
+
+        assert_eq!(read, patch);
+        assert_eq!(
+            written,
+            r#"{"context_patch":{"model":{"effort":"high","model":"gpt-test"}}}"#
+        );
+    }
+
+    #[test]
     fn a_line_a_format_five_build_wrote_still_reads_as_the_prompt_it_recorded() {
         // Frozen bytes, not a round trip: a round trip would agree with itself
         // however the shape moved.
@@ -672,7 +731,7 @@ mod tests {
 
     #[test]
     fn the_format_moves_with_the_line_shape() {
-        assert_eq!(FORMAT, 9);
+        assert_eq!(FORMAT, 10);
         assert!(readable(FORMAT));
     }
 

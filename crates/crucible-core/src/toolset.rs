@@ -684,13 +684,33 @@ impl fmt::Debug for ToolEntry {
     }
 }
 
-/// Opaque equality identity for one materialized roster.
+/// Equality identity and model-visible label for one materialized roster.
+///
+/// Equality stays pointer-based: the label is evidence a context section can
+/// report, never an authorization token and never a second way to resolve an
+/// admitted call. Its UUID only prevents a resumed process from accidentally
+/// describing a different first generation with the same persisted label.
 #[derive(Clone)]
-pub struct ToolGeneration(Arc<()>);
+pub struct ToolGeneration(Arc<Generation>);
+
+struct Generation {
+    context: Box<str>,
+}
 
 impl ToolGeneration {
     fn new() -> Self {
-        Self(Arc::new(()))
+        Self(Arc::new(Generation {
+            context: uuid::Uuid::now_v7().to_string().into(),
+        }))
+    }
+
+    /// The opaque label safe for the model-visible tool advertisement.
+    ///
+    /// This is descriptive evidence only. Invocation still requires an
+    /// admission and [`Approved`] proof bound to this value's pointer identity.
+    #[must_use]
+    pub(crate) fn context_id(&self) -> &str {
+        &self.0.context
     }
 }
 
@@ -1125,5 +1145,13 @@ mod tests {
 
         assert_eq!(snapshot.generation(), same.generation());
         assert_ne!(snapshot.generation(), other.generation());
+        assert_eq!(
+            snapshot.generation().context_id(),
+            same.generation().context_id()
+        );
+        assert_ne!(
+            snapshot.generation().context_id(),
+            other.generation().context_id()
+        );
     }
 }

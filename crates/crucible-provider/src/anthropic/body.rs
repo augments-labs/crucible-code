@@ -79,6 +79,10 @@ fn write_message(
     attached: &[Attached<'_>],
 ) {
     match message {
+        Message::Context(fragment) => messages.object(|message| {
+            message.text("role", "user");
+            message.text("content", fragment.text());
+        }),
         Message::User { text, .. } => messages.object(|message| {
             message.text("role", "user");
 
@@ -253,8 +257,8 @@ fn write_tool(tool: &mut Object<'_>, schema: &ToolSchema<'_>) {
 #[cfg(test)]
 mod tests {
     use crucible_core::{
-        Attached, Change, Changed, Content, Diff, Effort, Line, Modality, ToolArgs, ToolCall,
-        ToolId, ToolOutput, Transcript,
+        Attached, Change, Changed, Content, Diff, Effort, Fragment, Line, Modality, ToolArgs,
+        ToolCall, ToolId, ToolOutput, Transcript,
     };
 
     use super::*;
@@ -351,6 +355,24 @@ mod tests {
         request.system = Some("be brief");
 
         assert_eq!(at(&build(&request), "/system"), &json!("be brief"));
+    }
+
+    #[test]
+    fn typed_context_is_sent_as_retained_model_input() {
+        let mut transcript = Transcript::new();
+        transcript.push(Message::Context(Fragment::new(
+            "workspace",
+            "Workspace: /src",
+        )));
+        transcript.push(Message::said("continue"));
+
+        let body = build(&request(transcript));
+
+        assert_eq!(
+            at(&body, "/messages/0"),
+            &json!({"role": "user", "content": "Workspace: /src"})
+        );
+        assert_eq!(at(&body, "/messages/1/content"), &json!("continue"));
     }
 
     #[test]

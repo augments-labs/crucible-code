@@ -14,7 +14,9 @@ use std::io::{self, BufRead as _, BufReader};
 use std::path::{Path, PathBuf};
 use std::str::{self, FromStr as _};
 
-use crucible_core::{Calibration, Message, SessionId, ToolId, Transcript, Workspace};
+use crucible_core::{
+    Calibration, ContextSnapshot, Message, SessionId, ToolId, Transcript, Workspace,
+};
 
 use super::{SUFFIX, SessionError, wire};
 
@@ -154,6 +156,11 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
 
     // The header is not a message, but its bytes are where the messages start.
     let mut through = log.read_until(b'\n', &mut raw).map_err(trouble)? as u64;
+    let format = str::from_utf8(&raw)
+        .ok()
+        .map(str::trim_end)
+        .and_then(wire::opening)
+        .map(|opening| opening.format);
     // The same, one message back, for when the last one turns out to be a
     // question the log never answers.
     let mut before = through;
@@ -163,6 +170,10 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
     // Taken only where nothing follows it, which is why it is cleared by every
     // other line rather than kept until something replaces it. See [`Replayed`].
     let mut calibration = None;
+    // A new format-10 log establishes that nothing has been sent yet. An old
+    // header establishes no typed baseline; its first appended patch upgrades
+    // it in place without rewriting the header.
+    let mut context = (format == Some(wire::FORMAT)).then(ContextSnapshot::new);
 
     loop {
         raw.clear();
@@ -189,19 +200,19 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
         // to be told it again.
         if whole.is_some_and(wire::forgets) {
             transcript.forget();
+            context = (format == Some(wire::FORMAT)).then(ContextSnapshot::new);
             calibration = None;
             before = through;
             through += read as u64;
             continue;
         }
 
-        // Room having been made. The notes replace exactly the messages the
-        // line says they replace — counted back from here rather than taken to
-        // mean everything above, so a log that ever holds more than one thread
-        // of messages still reads correctly.
+        // Room having been made. The notes replace exactly the prefix count the
+        // line carries. Earlier compaction markers have already transformed
+        // the transcript, so the count applies to its current model-visible
+        // shape rather than to physical lines above this one.
         if let Some((replaced, recap)) = whole.and_then(wire::made_room) {
-            transcript.behind(replaced);
-            transcript.push(Message::said(recap));
+            transcript.compacted(replaced, recap);
             calibration = None;
             through += read as u64;
             continue;
@@ -243,6 +254,26 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
             continue;
         }
 
+        if let Some(patch) = whole.and_then(wire::context_patch) {
+            let context_patch = patch.map_err(|source| SessionError::Context {
+                at: path.display().to_string().into(),
+                source,
+            })?;
+            let prior = context.clone().unwrap_or_default();
+            context =
+                Some(
+                    context_patch
+                        .apply(&prior)
+                        .map_err(|source| SessionError::Context {
+                            at: path.display().to_string().into(),
+                            source,
+                        })?,
+                );
+            calibration = None;
+            through += read as u64;
+            continue;
+        }
+
         let Some(message) = whole.and_then(wire::message) else {
             // Where the damage sits is what decides what to do about it. At the
             // end of the file it is where the log stops, and what came before
@@ -273,6 +304,7 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
             pruned,
             settled_at: before,
             calibration: None,
+            context,
         });
     }
 
@@ -281,6 +313,7 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
         pruned,
         settled_at: through,
         calibration,
+        context,
     })
 }
 
@@ -297,6 +330,7 @@ pub(super) struct Replayed {
     pub(super) pruned: Pruned,
     pub(super) settled_at: u64,
     pub(super) calibration: Option<Calibration>,
+    pub(super) context: Option<ContextSnapshot>,
 }
 
 /// What results said before a pruning cleared them.

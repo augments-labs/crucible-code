@@ -198,6 +198,10 @@ fn said<T: Terminal>(
     let style = against.style;
 
     match message {
+        // Harness facts belong in what the model reads, not in the transcript
+        // attributed to either participant on screen.
+        Message::Context(_) => {}
+
         // The notes a compaction left standing, under a line saying whose words
         // they are, and through the same door the model's prose goes through —
         // because that is what they are.
@@ -342,6 +346,7 @@ mod tests {
                     effort: None::<Effort>,
                 },
             ),
+            crucible_runner::ContextInputs::new(std::env::temp_dir()),
             Session::nowhere(),
         )
         .resuming(transcript)

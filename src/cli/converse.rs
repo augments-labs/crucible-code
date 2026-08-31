@@ -1086,7 +1086,7 @@ impl Turn<'_, '_> {
 }
 
 fn take<T: Terminal>(
-    mut runner: Runner,
+    runner: Runner,
     renderer: &mut Renderer<T>,
     terms: &Terms,
     work: Work,
@@ -1116,19 +1116,6 @@ fn take<T: Terminal>(
     // `/model` and `/effort` change it — neither of which can be run while the
     // turn they would change is the one running.
     let mut says = typing::under(&runner);
-
-    // Read here for the same reason and at the same moment: half of what a turn
-    // is asked under is about the session — which model is answering, and how
-    // hard it was asked to think — and a model can find out neither for itself.
-    // Written once at startup it would go on describing the session the first
-    // turn was taken in, so it is written again for each.
-    runner.telling(&standing::under(standing::Standing {
-        settings: &terms.settings,
-        model: runner.model(),
-        effort: runner.effort(),
-        workspace: &terms.workspace,
-        tools: runner.offering(),
-    }));
 
     // And what ended while nothing was running goes into the aside rather than
     // into what is above, which is the one place a fact like this can be put

@@ -86,6 +86,7 @@ fn over(session: Session) -> Runner {
                 effort: None,
             },
         ),
+        crucible_runner::ContextInputs::new(std::env::temp_dir()),
         session,
     )
 }

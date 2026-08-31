@@ -61,8 +61,8 @@ fn the_next_turn_is_asked_with_the_transcript_of_the_session_picked_up() {
 
     assert_eq!(
         scripted.asked(),
-        [1, 3],
-        "the second request carried the earlier session's turn and the new prompt"
+        [7, 9],
+        "each session renders context once; the second also carries the earlier turn"
     );
     assert!(
         scripted
@@ -114,8 +114,8 @@ fn a_session_picked_up_with_nothing_in_it_is_asked_at_turn_one_and_carries_nothi
 
     assert_eq!(
         scripted.asked(),
-        [1, 1],
-        "one prompt each: the second request carried nothing of the first turn"
+        [7, 7],
+        "one prompt and six fresh sections each; no conversation crossed sessions"
     );
     assert_eq!(scripted.started(), [1, 1]);
 }
@@ -202,7 +202,7 @@ fn a_session_picked_up_estimates_window_left_before_it_answers_again() {
     scripted.turn("go").expect("a measured turn");
     assert_eq!(
         scripted.runner.left(),
-        Some(32),
+        Some(72),
         "the exact output correction visibly freed uncompacted context"
     );
 

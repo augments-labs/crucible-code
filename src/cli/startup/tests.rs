@@ -2,13 +2,23 @@
 
 use std::cell::RefCell;
 
-use crucible_core::Outgoing;
+use crucible_core::{
+    Aside, Ask, Cancel, Message, Outgoing, Remember, Sensitivity, Steer, ToolCall, Verdict,
+};
 
 use crucible_config::Settings;
 
 use super::*;
 use crate::cli::sample::{Sample, WRITTEN};
 use crate::cli::{NO_MODEL_CHOSEN, NOTHING_TO_ASK};
+
+struct Nobody;
+
+impl Ask for Nobody {
+    fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
+        (Verdict::Deny, Remember::Never)
+    }
+}
 
 /// The entry the wiring resolves before it builds anything.
 fn serving(named: &str) -> Served {
@@ -742,18 +752,10 @@ fn recap_room_defaults_to_ten_k_and_accepts_a_configured_ceiling() {
 
 #[test]
 fn the_agent_is_named_coding_and_stands_under_what_the_wiring_asked() {
-    // Two of the five fields the wiring decides, and the two a later reader
-    // arrives needing. Nothing outside a test reads `id` yet — a later
-    // registry will select on it — and `instructions` is the definition's
-    // opening value: what the window
-    // reading and `Runner::instructions` answer with before a turn is taken.
-    // `Runner::telling` replaces it before every turn, the first included, so
-    // no turn goes out under this exact text.
-    //
-    // So this pins what `coding` puts in the definition, and not that a prompt
-    // reaches the runner at all: it is handed `asked` and asserts it comes back
-    // out. `a_session_is_assembled_asking_under_the_prompt_the_wiring_built`
-    // is the one that follows it through `assemble`.
+    // Two fields the wiring decides and a later registry needs. This pins the
+    // stable operator instructions `coding` puts in the definition; the
+    // assembly test below follows them through the runner and separately
+    // proves the workspace fact reaches typed context.
     let asked = "read the workspace before changing it";
     let built = coding(
         "anthropic",
@@ -789,18 +791,16 @@ fn a_definition_the_wiring_had_nothing_to_say_under_is_told_nothing() {
 }
 
 #[test]
-fn a_session_is_assembled_asking_under_the_prompt_the_wiring_built() {
-    // What `coding` is handed, rather than what it does with it. Everything
-    // above tests the two ends — `standing::under` builds a prompt, `coding`
-    // keeps the one it is given, `policy` resolves a document — and nothing
-    // tested that either arrives, so `assemble` could pass an empty string or
-    // drop the resolved ceiling on the way through and leave the whole package
-    // green.
+fn a_session_is_assembled_with_stable_instructions_and_workspace_context() {
+    // Both request surfaces the wiring owns: operator instructions stay in the
+    // stable system field, while the workspace root is assembled as typed
+    // context on the first pass. Testing only either half would let startup
+    // silently drop the other at their new boundary.
     let sample = Sample::new("startup-assembled-under");
     let (logs, workspace) = (sample.logs(), sample.workspace());
     let configured = sample.settings(r#"{"compaction":{"spendCeiling":500000}}"#);
 
-    let runner = assemble(&Startup {
+    let mut runner = assemble(&Startup {
         provider: None,
         unasked: NOTHING_TO_ASK,
         model: None,
@@ -822,16 +822,33 @@ fn a_session_is_assembled_asking_under_the_prompt_the_wiring_built() {
     })
     .expect("a session to assemble");
 
-    // The workspace root, because `standing::under` is the only thing that puts
-    // it there. A substring rather than the whole prompt: this is about the
-    // prompt having been built and handed over, and the wording of it belongs
-    // to the tests that own the wording.
     let asked = runner
         .instructions()
         .expect("a turn is asked under something");
+    assert_eq!(asked, standing::under(&configured));
+    assert!(!asked.contains(&workspace.root().display().to_string()));
+
+    let (events, _seen) = std::sync::mpsc::channel();
+    let (cancel, steer, aside) = (Cancel::new(), Steer::new(), Aside::new());
+    let run = runner.starting(&events, &cancel, &steer, &aside);
+    let _ = runner.turn("probe", Box::new([]), &mut Nobody, &run);
+    let workspace_fact = runner
+        .transcript()
+        .messages()
+        .iter()
+        .find_map(|message| match message {
+            Message::Context(fragment) if fragment.section() == "workspace" => {
+                Some(fragment.text())
+            }
+            Message::Context(_)
+            | Message::User { .. }
+            | Message::Agent { .. }
+            | Message::ToolResults(_) => None,
+        })
+        .expect("the first pass workspace context");
     assert!(
-        asked.contains(&workspace.root().display().to_string()),
-        "the session was assembled without the prompt the wiring built"
+        workspace_fact.contains(&workspace.root().display().to_string()),
+        "the session was assembled without its workspace context"
     );
 
     assert_eq!(

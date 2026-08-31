@@ -39,6 +39,7 @@ use crate::policy::{Compaction, RunPolicy};
 use crate::tools::Tools;
 
 mod answer;
+mod assembly;
 pub mod attachments;
 mod compaction;
 mod load;
@@ -46,6 +47,7 @@ mod passes;
 mod work;
 
 use answer::Answer;
+pub use assembly::ContextInputs;
 use load::{Counting, Load};
 use passes::AgentLoop;
 use work::{Went, Work};
@@ -103,10 +105,9 @@ impl TurnBounds {
 
 /// Which model to ask, and how.
 ///
-/// Model selection only. What the model is *told* is the agent's, and lives on
-/// [`crate::AgentSpec::instructions`]: one session asks two models under the
-/// same instructions when a key arrives mid-run, and one agent is asked under
-/// different instructions every turn as what they describe moves.
+/// Model selection only. Stable operator instructions live on
+/// [`crate::AgentSpec::instructions`]; the model name and effort are assembled
+/// separately as typed context on every provider pass.
 #[derive(Debug, Clone)]
 pub struct Model {
     /// The model's name, as the provider spells it.
@@ -145,12 +146,18 @@ pub struct Runner {
     toolset: Arc<dyn Toolset>,
     tools: ToolSnapshot,
     spec: AgentSpec,
+    context: ContextInputs,
     permission: Permission,
     transcript: Transcript,
     session: Session,
     turn: TurnId,
     policy: RunPolicy,
     load: Load,
+}
+
+struct Tooling {
+    source: Arc<dyn Toolset>,
+    snapshot: ToolSnapshot,
 }
 
 impl Runner {
@@ -160,10 +167,20 @@ impl Runner {
         provider: Box<dyn Provider>,
         tools: Tools,
         spec: AgentSpec,
+        context: ContextInputs,
         session: Session,
     ) -> Self {
         let snapshot = tools.snapshot().unwrap_or_default();
-        Self::from_parts(provider, Arc::new(tools), snapshot, spec, session)
+        Self::from_parts(
+            provider,
+            Tooling {
+                source: Arc::new(tools),
+                snapshot,
+            },
+            spec,
+            context,
+            session,
+        )
     }
 
     /// A session backed by an arbitrary live toolset.
@@ -176,6 +193,7 @@ impl Runner {
         provider: Box<dyn Provider>,
         toolset: T,
         spec: AgentSpec,
+        context: ContextInputs,
         session: Session,
     ) -> Self
     where
@@ -183,25 +201,33 @@ impl Runner {
     {
         Self::from_parts(
             provider,
-            Arc::new(toolset),
-            ToolSnapshot::empty(),
+            Tooling {
+                source: Arc::new(toolset),
+                snapshot: ToolSnapshot::empty(),
+            },
             spec,
+            context,
             session,
         )
     }
 
     fn from_parts(
         provider: Box<dyn Provider>,
-        toolset: Arc<dyn Toolset>,
-        tools: ToolSnapshot,
+        tooling: Tooling,
         spec: AgentSpec,
+        context: ContextInputs,
         session: Session,
     ) -> Self {
+        let Tooling {
+            source: toolset,
+            snapshot: tools,
+        } = tooling;
         let mut runner = Self {
             provider,
             toolset,
             tools,
             spec,
+            context,
             permission: Permission::new(),
             transcript: Transcript::new(),
             session,
@@ -407,11 +433,10 @@ impl Runner {
         self.policy
     }
 
-    /// What every turn of this session is asked under, where anything is.
+    /// The stable operator instructions every turn is asked under, if any.
     ///
-    /// Absent until the wiring says, and rewritten by [`Runner::telling`]
-    /// before every turn, the first included — so this is the answer in force
-    /// now, not a record of what the session was assembled with.
+    /// Session facts are not included. They are assembled as typed transcript
+    /// context once per pass so a changing fact does not rewrite this prefix.
     #[must_use]
     pub fn instructions(&self) -> Option<&str> {
         self.spec.instructions()
@@ -470,11 +495,9 @@ impl Runner {
 
     /// The tools this session is advertising, by name.
     ///
-    /// For the sentence the model is asked under, which names what it has and
-    /// describes none of it. Off the registry rather than out of a list beside
-    /// it, so a tool this build stopped offering cannot go on being advertised
-    /// by a prompt nobody edited — and so a tool looked up mid-session is named
-    /// from the turn after it is found.
+    /// Read from the exact immutable generation last admitted. The typed tools
+    /// context section reports changes from that same generation; this accessor
+    /// remains the between-turn view used by the terminal.
     #[must_use]
     pub fn offering(&self) -> Vec<String> {
         self.tools
@@ -547,14 +570,12 @@ impl Runner {
         self.load.reestimated();
     }
 
-    /// Stands the session under different instructions from the next turn on.
+    /// Stands the session under different operator instructions from the next
+    /// turn on.
     ///
-    /// The caller writes them, because what a turn is asked under is a fact
-    /// about the harness rather than about the loop. This exists because part
-    /// of what they say is about the session itself — which model is answering,
-    /// and how hard it was asked to think — and both of those change while a
-    /// session runs. Written once at startup they would go on describing the
-    /// session the first turn was taken in.
+    /// Model-visible session facts do not belong here. [`Runner::ask`],
+    /// [`Runner::think`], permission changes, and toolset refreshes are observed
+    /// by typed context assembly without rewriting these stable bytes.
     ///
     /// Reachable between turns, where [`Runner::ask`] is and for the same
     /// reason: a turn owns the runner while it runs.

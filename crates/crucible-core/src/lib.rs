@@ -20,6 +20,7 @@ mod ask;
 mod attachable;
 mod cancel;
 mod compaction;
+mod context;
 mod credential;
 mod diff;
 mod event;
@@ -42,6 +43,7 @@ pub use ask::{Answer, Answered, Put, Question};
 pub use attachable::{CEILING, KINDS, Kind, kind};
 pub use cancel::Cancel;
 pub use compaction::{Compacted, Compacting, RECAP, Room};
+pub use context::{ContextError, ContextPatch, ContextSection, ContextSnapshot, Fragment, Seen};
 pub use credential::{
     ApiKey, Credential, CredentialError, Header, HeaderKey, Outgoing, Redactions,
 };
@@ -53,7 +55,10 @@ pub use permission::{
     Approved, Ask, Command, Disposition, Grant, Host, Minted, Mode, Permission, Remember,
     RuleError, Rules, Sensitivity, Settled, Target, Verdict, narrowest,
 };
-pub use prompt::{Identity, Skill, SystemPrompt, Tone, ToneError};
+pub use prompt::{
+    EnvironmentSection, Identity, ModelSection, PermissionsSection, Skill, SkillsSection,
+    SystemPrompt, Tone, ToneError, ToolsSection, WorkspaceSection,
+};
 pub use provider::{
     Attached, Calibration, Carried, Content, Delta, DeltaStream, Effort, EffortError, Provider,
     ProviderError, ProviderLimit, Request, Spend, ToolSchema,

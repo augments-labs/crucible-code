@@ -15,10 +15,11 @@ fn shape(transcript: &Transcript) -> Vec<&'static str> {
     transcript
         .messages()
         .iter()
-        .map(|message| match message {
-            Message::User { .. } => "user",
-            Message::Agent { .. } => "agent",
-            Message::ToolResults(_) => "results",
+        .filter_map(|message| match message {
+            Message::Context(_) => None,
+            Message::User { .. } => Some("user"),
+            Message::Agent { .. } => Some("agent"),
+            Message::ToolResults(_) => Some("results"),
         })
         .collect()
 }

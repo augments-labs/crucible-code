@@ -7,8 +7,8 @@ use std::str::FromStr as _;
 use std::sync::{Arc, Mutex};
 
 use crucible_core::{
-    Calibration, Carried, Message, SessionId, Spend, StopReason, ToolArgs, ToolCall, ToolId,
-    ToolOutput, ToolResult,
+    Calibration, Carried, ContextPatch, ContextSnapshot, Fragment, Message, SessionId, Spend,
+    StopReason, ToolArgs, ToolCall, ToolId, ToolOutput, ToolResult,
 };
 use serde_json::Value;
 
@@ -59,6 +59,74 @@ fn record(sample: &Sample, messages: &[Message]) -> PathBuf {
     // Dropping is what waits for the queue, so the file is complete after it.
     drop(session);
     path
+}
+
+#[test]
+fn a_fresh_session_starts_with_a_known_empty_context_snapshot() {
+    let sample = Sample::new("fresh-context-snapshot");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();
+
+    assert_eq!(session.context_snapshot(), Some(&ContextSnapshot::new()));
+}
+
+#[test]
+fn context_is_recorded_as_ordered_patches_and_reconstructed_on_resume() {
+    let sample = Sample::new("context-patch-replay");
+    let mut session = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();
+    let path = session.path().to_owned();
+    let first = ContextPatch::from_value(serde_json::json!({
+        "workspace": { "root": "/work" },
+        "model": { "model": "old" }
+    }))
+    .unwrap();
+    let second = ContextPatch::from_value(serde_json::json!({
+        "model": { "model": "new" }
+    }))
+    .unwrap();
+
+    session.contextual(&first).unwrap();
+    session.contextual(&second).unwrap();
+    drop(session);
+
+    let log = fs::read_to_string(&path).unwrap();
+    let patch_lines: Vec<&str> = log
+        .lines()
+        .filter(|line| line.contains("context_patch"))
+        .collect();
+    assert_eq!(patch_lines.len(), 2);
+    assert!(
+        !patch_lines
+            .get(1)
+            .expect("the second context patch")
+            .contains("workspace"),
+        "{log}"
+    );
+
+    let (resumed, _) = Session::resume(&sample.logs(), &sample.workspace()).unwrap();
+    assert_eq!(
+        resumed.context_snapshot().unwrap().value(),
+        serde_json::json!({
+            "model": { "model": "new" },
+            "workspace": { "root": "/work" }
+        })
+    );
+}
+
+#[test]
+fn a_pre_context_session_replays_without_a_typed_baseline() {
+    let sample = Sample::new("legacy-context-unknown");
+    let id = "0000000000001-000001";
+    sample.plant(
+        id,
+        &[
+            sample.header(9, id),
+            r#"{"user":"before typed context"}"#.to_owned(),
+        ],
+    );
+
+    let (resumed, _) = Session::resume(&sample.logs(), &sample.workspace()).unwrap();
+
+    assert_eq!(resumed.context_snapshot(), None);
 }
 
 #[test]
@@ -380,7 +448,7 @@ fn a_compacted_session_replays_as_the_notes_and_what_they_did_not_replace() {
     session.append(&said("one"));
     session.append(&said("two"));
     session.append(&said("three"));
-    session.compacted(2, "notes on two and three");
+    session.compacted(2, "notes on one and two");
     session.append(&said("four"));
     drop(session);
 
@@ -396,9 +464,44 @@ fn a_compacted_session_replays_as_the_notes_and_what_they_did_not_replace() {
         })
         .collect();
 
-    // `one` survives. The line said it replaced two, and two is what it
-    // replaced.
-    assert_eq!(replayed, ["one", "notes on two and three", "four"]);
+    // The first two are the prefix the live runner replaces. The third message
+    // is the retained tail and must stand after the recap on resume too.
+    assert_eq!(replayed, ["notes on one and two", "three", "four"]);
+}
+
+#[test]
+fn compaction_replay_drops_context_from_the_tail_but_keeps_its_typed_snapshot() {
+    let sample = Sample::new("session-compacted-context");
+    let mut session = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();
+    let patch = ContextPatch::from_value(serde_json::json!({
+        "model": { "model": "kept-model" }
+    }))
+    .unwrap();
+
+    session.append(&said("replace me"));
+    session.append(&Message::Context(Fragment::new(
+        "model",
+        "Model: kept-model",
+    )));
+    session.contextual(&patch).unwrap();
+    session.append(&said("retain me"));
+    session.compacted(1, "recap");
+    drop(session);
+
+    let (resumed, transcript) =
+        Session::resume(&sample.logs(), &sample.workspace()).expect("the compacted session");
+
+    assert_eq!(
+        transcript.messages(),
+        &[said("recap"), said("retain me")],
+        "typed context must not survive independently in the retained tail"
+    );
+    assert_eq!(
+        resumed.context_snapshot().map(ContextSnapshot::value),
+        Some(serde_json::json!({
+            "model": { "model": "kept-model" }
+        }))
+    );
 }
 
 #[test]
@@ -651,10 +754,14 @@ fn the_branch_a_session_starts_on_reaches_the_listing() {
 }
 
 #[test]
-fn the_message_count_follows_appends_and_survives_a_resume() {
+fn the_conversation_message_count_ignores_context_and_survives_a_resume() {
     let sample = Sample::new("session-counted");
     let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
     session.append(&said("one"));
+    session.append(&Message::Context(Fragment::new(
+        "workspace",
+        "Workspace: /private/project",
+    )));
     session.append(&answering("two"));
     session.append(&said("three"));
     drop(session);
@@ -664,7 +771,11 @@ fn the_message_count_follows_appends_and_survives_a_resume() {
 
     let (continued, transcript) =
         Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
-    assert_eq!(transcript.len(), 3);
+    assert_eq!(transcript.len(), 4);
+    continued.append(&Message::Context(Fragment::new(
+        "model",
+        "Model: private-model",
+    )));
     continued.append(&answering("four"));
     drop(continued);
 

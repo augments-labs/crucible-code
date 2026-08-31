@@ -4,8 +4,8 @@
 //! per-file cap.
 
 use crucible_core::{
-    Attached, Change, Changed, Content, Diff, Effort, Line, Modality, ToolArgs, ToolId, ToolOutput,
-    Transcript,
+    Attached, Change, Changed, Content, Diff, Effort, Fragment, Line, Modality, ToolArgs, ToolId,
+    ToolOutput, Transcript,
 };
 use serde_json::json;
 
@@ -153,6 +153,22 @@ fn a_system_prompt_is_a_field_rather_than_a_message() {
     assert_eq!(at(&body, "/input/0/role"), "user");
     assert_eq!(at(&body, "/input/0/content"), "hello");
     assert_eq!(at(&body, "/input/1"), &NOTHING);
+}
+
+#[test]
+fn typed_context_is_sent_as_retained_model_input() {
+    let mut transcript = Transcript::new();
+    transcript.push(Message::Context(Fragment::new(
+        "workspace",
+        "Workspace: /src",
+    )));
+    transcript.push(Message::said("continue"));
+
+    let body = build(&request(transcript));
+
+    assert_eq!(at(&body, "/input/0/role"), "user");
+    assert_eq!(at(&body, "/input/0/content"), "Workspace: /src");
+    assert_eq!(at(&body, "/input/1/content"), "continue");
 }
 
 #[test]

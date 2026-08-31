@@ -105,8 +105,8 @@ impl fmt::Debug for ToolCall {
 
 /// Tool arguments as JSON text.
 ///
-/// Deliberately not a parsed value: core has no JSON dependency and no opinion
-/// about any tool's schema.
+/// Deliberately not a parsed value: argument validation and interpretation
+/// belong to the tool whose schema describes them, not to the execution core.
 #[derive(Clone, PartialEq, Eq)]
 pub struct ToolArgs(Box<str>);
 

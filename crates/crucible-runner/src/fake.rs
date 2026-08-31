@@ -9,9 +9,9 @@ use std::hash::{DefaultHasher, Hash as _, Hasher as _};
 use std::sync::{Arc, Mutex};
 
 use crucible_core::{
-    Approved, Ask, Cancel, Delta, DeltaStream, DescribeTool, Diff, Effort, Message, Modalities,
-    Modality, Provider, ProviderError, Remember, Request, Sensitivity, Steer, Summary, Target,
-    Tool, ToolArgs, ToolCall, ToolContext, ToolError, ToolOutput, Verdict, Wrote,
+    Approved, Ask, Cancel, Delta, DeltaStream, DescribeTool, Diff, Effort, Fragment, Message,
+    Modalities, Modality, Provider, ProviderError, Remember, Request, Sensitivity, Steer, Summary,
+    Target, Tool, ToolArgs, ToolCall, ToolContext, ToolError, ToolOutput, Verdict, Wrote,
 };
 
 /// The name a scripted provider answers to.
@@ -24,6 +24,7 @@ pub(crate) type Sent = Arc<Mutex<Vec<SentRequest>>>;
 #[derive(Debug)]
 pub(crate) struct SentRequest {
     pub(crate) transcript_len: usize,
+    pub(crate) context: Vec<Fragment>,
     agent_text: Vec<u64>,
     pub(crate) tools: Vec<SentToolSchema>,
     pub(crate) max_tokens: u32,
@@ -187,13 +188,22 @@ impl Provider for Script {
     ) -> Result<Box<dyn DeltaStream>, ProviderError> {
         self.sent.lock().unwrap().push(SentRequest {
             transcript_len: request.transcript.len(),
+            context: request
+                .transcript
+                .messages()
+                .iter()
+                .filter_map(|message| match message {
+                    Message::Context(fragment) => Some(fragment.clone()),
+                    Message::User { .. } | Message::Agent { .. } | Message::ToolResults(_) => None,
+                })
+                .collect(),
             agent_text: request
                 .transcript
                 .messages()
                 .iter()
                 .filter_map(|message| match message {
                     Message::Agent { text, .. } => Some(fingerprint(text)),
-                    Message::User { .. } | Message::ToolResults(_) => None,
+                    Message::Context(_) | Message::User { .. } | Message::ToolResults(_) => None,
                 })
                 .collect(),
             tools: request

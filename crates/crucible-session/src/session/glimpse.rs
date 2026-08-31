@@ -134,6 +134,9 @@ pub fn glimpse(
         // everything a turn is made of survives, because a preview that kept
         // only the prose would show a conversation nobody had.
         match wire::message(piece) {
+            // Harness context is sent to the model and never attributed to the
+            // developer, so it does not become a line in their transcript
+            // preview either.
             Some(Message::User { text, attachments }) => messages.push(Message::User {
                 text: cleaned(&text),
                 attachments,
@@ -148,7 +151,7 @@ pub fn glimpse(
                     results.into_iter().map(safely).collect(),
                 ));
             }
-            None => {}
+            Some(Message::Context(_)) | None => {}
         }
     }
 

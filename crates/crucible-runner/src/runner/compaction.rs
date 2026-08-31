@@ -29,7 +29,7 @@ use std::fmt::Write as _;
 
 use crucible_core::{
     Compacted, Compacting, Delta, Message, Request, Room, Spend, StopReason, TOOL_RESULT_BYTES,
-    ToolId, ToolOutput, Transcript, TurnError,
+    ToolId, ToolOutput, TurnError,
 };
 
 use crate::context::RunContext;
@@ -229,13 +229,19 @@ impl Runner {
         // sleeping the worker; the renderer gives it a short visible dwell.
         events.post(crucible_core::Event::Compacting { why, part: 100 });
 
-        let mut messages = std::mem::take(&mut self.transcript).into_messages();
-
-        // Drained rather than collected into a second transcript: this is the
-        // one value here that grows with the session, and holding two of them
-        // at once is what the peak-memory budget is set to refuse.
-        let standing: Vec<Message> = messages.drain(replacing..).collect();
-        drop(messages);
+        // The log boundary below is in raw transcript messages and therefore
+        // includes typed harness context. The reader-facing event keeps its
+        // established meaning: how much conversation the recap replaced. A
+        // context fragment is model-visible but was never a user or agent
+        // message, and counting it here would make the same two turns suddenly
+        // look six messages longer after context assembly was introduced.
+        let reported_replaced = self
+            .transcript
+            .messages()
+            .iter()
+            .take(replacing)
+            .filter(|message| !matches!(message, Message::Context(_)))
+            .count();
 
         let standing_as = format!("{}{recap}", crucible_core::RECAP);
 
@@ -243,13 +249,7 @@ impl Runner {
         // between the two leaves a log that says what happened rather than one
         // that quietly lost the messages.
         self.session.compacted(replacing, &standing_as);
-
-        let mut rebuilt = Transcript::new();
-        rebuilt.push(Message::said(standing_as));
-        for message in standing {
-            rebuilt.push(message);
-        }
-        self.transcript = rebuilt;
+        self.transcript.compacted(replacing, standing_as);
 
         self.load.replaced();
         for message in self.transcript.messages() {
@@ -265,7 +265,7 @@ impl Runner {
 
         let compacted = Compacted {
             why,
-            replaced: replacing,
+            replaced: reported_replaced,
             before,
             after: self.load.tokens(),
             kept,
@@ -343,6 +343,7 @@ impl Runner {
     /// direction that costs context rather than the turn.
     fn estimated(&self, message: &Message) -> u64 {
         let bytes = match message {
+            Message::Context(fragment) => fragment.text().len(),
             Message::User { text: said, .. } => said.len(),
             Message::Agent { text, .. } => text.len(),
             Message::ToolResults(results) => results
