@@ -647,6 +647,9 @@ fn checkpoint_diagnostics_redact_pending_and_invocation_content() {
         "idempotency-secret-canary",
         "invocation-output-secret-canary",
     ] {
-        assert!(!debug.contains(secret), "checkpoint debug leaked {secret}");
+        assert!(
+            !debug.contains(secret),
+            "checkpoint debug leaked protected content"
+        );
     }
 }
