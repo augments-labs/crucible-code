@@ -15,9 +15,9 @@
 use std::fmt;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use crate::{Tool, ToolSchema};
+use crate::{Ancestry, Approved, Cancel, RunId, Tool, ToolCall, ToolError, ToolSchema};
 
 /// The most bytes a provider-visible tool name may retain.
 ///
@@ -25,6 +25,12 @@ use crate::{Tool, ToolSchema};
 /// can be shown but whose returned name the runner would refuse is not a usable
 /// descriptor.
 pub const TOOL_NAME_BYTES: usize = 4 * 1024;
+
+/// The most bytes retained for one provider tool-call identifier.
+pub const TOOL_CALL_ID_BYTES: usize = 16 * 1024;
+
+/// The most bytes retained for one tool call's argument text.
+pub const TOOL_ARGUMENT_BYTES: usize = 1024 * 1024;
 
 /// The most bytes one exact provider schema may retain.
 pub const TOOL_SCHEMA_BYTES: usize = 1024 * 1024;
@@ -43,6 +49,114 @@ pub const TOOL_SNAPSHOT_ENTRIES: usize = 1024;
 
 /// The aggregate descriptor bytes one immutable snapshot retains.
 pub const TOOL_SNAPSHOT_BYTES: usize = 16 * 1024 * 1024;
+
+/// The run-scoped capabilities a live toolset may use while materializing.
+///
+/// Deliberately narrower than the runner's context: discovery and cleanup can
+/// observe cancellation and a monotonic deadline, but cannot emit arbitrary
+/// run events, steer the agent, mutate permission state, or reach a session.
+#[derive(Clone)]
+pub struct ToolsetContext {
+    ancestry: Ancestry,
+    cancel: Cancel,
+    deadline: Option<Instant>,
+}
+
+impl ToolsetContext {
+    /// Builds the context for one toolset lifecycle.
+    #[must_use]
+    pub fn new(ancestry: Ancestry, cancel: Cancel, deadline: Option<Instant>) -> Self {
+        Self {
+            ancestry,
+            cancel,
+            deadline,
+        }
+    }
+
+    /// The run this materialization belongs to.
+    #[must_use]
+    pub const fn run(&self) -> RunId {
+        self.ancestry.run()
+    }
+
+    /// The run and its parentage.
+    #[must_use]
+    pub const fn ancestry(&self) -> Ancestry {
+        self.ancestry
+    }
+
+    /// A cancellation handle scoped to this lifecycle.
+    #[must_use]
+    pub const fn cancel(&self) -> &Cancel {
+        &self.cancel
+    }
+
+    /// The monotonic time by which preparation or refresh should finish.
+    #[must_use]
+    pub const fn deadline(&self) -> Option<Instant> {
+        self.deadline
+    }
+}
+
+impl fmt::Debug for ToolsetContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ToolsetContext")
+            .field("ancestry", &self.ancestry)
+            .field("cancelled", &self.cancel.requested())
+            .field("deadline", &self.deadline)
+            .finish()
+    }
+}
+
+/// A live, reusable source of immutable tool generations.
+///
+/// One lifecycle is prepared for a run, snapshotted for its first provider
+/// admission, optionally refreshed only between later admissions, and then
+/// disposed. Implementations must make [`Toolset::dispose`] idempotent,
+/// including when preparation or refresh failed. A later run may prepare the
+/// same toolset again after disposal.
+pub trait Toolset: Send + Sync {
+    /// Acquires the resources this run needs before its first snapshot.
+    ///
+    /// # Errors
+    ///
+    /// [`ToolsetError`] when the source cannot be prepared. The caller still
+    /// invokes [`Toolset::dispose`].
+    fn prepare(&self, context: &ToolsetContext) -> Result<(), ToolsetError>;
+
+    /// Captures the current ordered, visible, and reachable generation.
+    ///
+    /// # Errors
+    ///
+    /// [`ToolsetError`] when no bounded coherent snapshot can be produced.
+    fn snapshot(&self, context: &ToolsetContext) -> Result<ToolSnapshot, ToolsetError>;
+
+    /// Refreshes external state between admissions and captures its new view.
+    ///
+    /// An earlier [`ToolSnapshot`] remains immutable and valid for calls it
+    /// already admitted; this result governs only later admissions.
+    ///
+    /// # Errors
+    ///
+    /// [`ToolsetError`] when refresh or materialization fails.
+    fn refresh(&self, context: &ToolsetContext) -> Result<ToolSnapshot, ToolsetError>;
+
+    /// Releases every resource acquired for the lifecycle.
+    ///
+    /// This must be safe to call after any earlier failure and more than once.
+    ///
+    /// # Errors
+    ///
+    /// [`ToolsetError`] when cleanup could not be completed. A repeated call
+    /// must not repeat an effect merely to reproduce the error.
+    fn dispose(&self, context: &ToolsetContext) -> Result<(), ToolsetError>;
+}
+
+impl fmt::Debug for dyn Toolset {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Toolset([live source])")
+    }
+}
 
 /// Where a tool registration came from.
 ///
@@ -435,6 +549,36 @@ impl ToolGeneration {
     }
 }
 
+/// A name admitted from one exact immutable generation.
+///
+/// Constructed only by [`ToolSnapshot::admit`]. It is intentionally not an
+/// executor handle: resolving it through a snapshot rechecks the opaque
+/// generation before any tool behavior becomes reachable.
+#[derive(Debug, Clone)]
+pub struct ToolAdmission {
+    generation: ToolGeneration,
+    index: usize,
+    call: ToolCall,
+}
+
+impl ToolAdmission {
+    /// The generation permission approval must remain bound to.
+    #[must_use]
+    pub const fn generation(&self) -> &ToolGeneration {
+        &self.generation
+    }
+
+    /// The exact admitted provider-visible name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.call.name
+    }
+
+    pub(crate) const fn call(&self) -> &ToolCall {
+        &self.call
+    }
+}
+
 impl PartialEq for ToolGeneration {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
@@ -457,6 +601,15 @@ pub struct ToolSnapshot {
 }
 
 impl ToolSnapshot {
+    /// An empty generation.
+    #[must_use]
+    pub fn empty() -> Self {
+        Self {
+            generation: ToolGeneration::new(),
+            entries: Arc::new([]),
+        }
+    }
+
     /// Materializes one bounded generation.
     ///
     /// # Errors
@@ -514,6 +667,73 @@ impl ToolSnapshot {
             .find(|entry| entry.descriptor().name() == name)
     }
 
+    /// Validates and admits one call from this generation.
+    ///
+    /// # Errors
+    ///
+    /// [`ToolError::InvalidCall`] when a retained field crosses its boundary,
+    /// or [`ToolError::Unknown`] when no visible and reachable descriptor in
+    /// this generation owns the name.
+    pub fn admit(&self, call: &ToolCall) -> Result<ToolAdmission, ToolError> {
+        call_bound("identifier", call.id.as_str(), TOOL_CALL_ID_BYTES)?;
+        call_bound("name", &call.name, TOOL_NAME_BYTES)?;
+        if call.args.as_str().len() > TOOL_ARGUMENT_BYTES {
+            return Err(ToolError::InvalidCall {
+                field: "arguments",
+                maximum: TOOL_ARGUMENT_BYTES,
+                actual: call.args.as_str().len(),
+            });
+        }
+
+        let Some((index, _entry)) = self
+            .entries
+            .iter()
+            .enumerate()
+            .find(|(_, entry)| entry.descriptor().name() == &*call.name)
+        else {
+            return Err(ToolError::Unknown(call.name.clone()));
+        };
+
+        Ok(ToolAdmission {
+            generation: self.generation.clone(),
+            index,
+            call: call.clone(),
+        })
+    }
+
+    /// Resolves an admission only through the generation that minted it.
+    ///
+    /// # Errors
+    ///
+    /// [`ToolError::StaleGeneration`] for a different generation or an
+    /// internally inconsistent handle. Both fail before an executor is
+    /// returned.
+    pub fn resolve(&self, admission: &ToolAdmission) -> Result<&ToolEntry, ToolError> {
+        if admission.generation != self.generation {
+            return Err(stale(admission.name()));
+        }
+
+        self.entries
+            .get(admission.index)
+            .filter(|entry| entry.descriptor().name() == admission.name())
+            .ok_or_else(|| stale(admission.name()))
+    }
+
+    /// Resolves an approved call only through its admitted generation.
+    ///
+    /// # Errors
+    ///
+    /// [`ToolError::StaleGeneration`] when the approval was minted without an
+    /// admission, belongs to another generation, or names no current entry.
+    pub fn resolve_approved(&self, approved: &Approved) -> Result<&ToolEntry, ToolError> {
+        if approved.generation() != Some(&self.generation) {
+            return Err(stale(approved.tool()));
+        }
+
+        self.find(approved.tool())
+            .ok_or_else(|| stale(approved.tool()))
+    }
+
     /// The provider projections, in materialized order.
     #[must_use]
     pub fn advertised(&self) -> Vec<ToolSchema<'_>> {
@@ -527,6 +747,12 @@ impl ToolSnapshot {
     #[must_use]
     pub fn entries(&self) -> &[ToolEntry] {
         &self.entries
+    }
+}
+
+impl Default for ToolSnapshot {
+    fn default() -> Self {
+        Self::empty()
     }
 }
 
@@ -603,6 +829,21 @@ fn bounded(field: &'static str, value: &str, maximum: usize) -> Result<(), ToolD
         });
     }
     Ok(())
+}
+
+fn call_bound(field: &'static str, value: &str, maximum: usize) -> Result<(), ToolError> {
+    if value.is_empty() || value.len() > maximum {
+        return Err(ToolError::InvalidCall {
+            field,
+            maximum,
+            actual: value.len(),
+        });
+    }
+    Ok(())
+}
+
+fn stale(tool: &str) -> ToolError {
+    ToolError::StaleGeneration { tool: tool.into() }
 }
 
 #[cfg(test)]

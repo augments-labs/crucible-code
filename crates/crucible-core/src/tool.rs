@@ -49,6 +49,25 @@ pub enum ToolError {
     /// The user cancelled while the tool was running.
     #[error("{0} cancelled")]
     Cancelled(Box<str>),
+
+    /// The provider returned a call whose retained identity or arguments were
+    /// unusable at invocation admission.
+    #[error("invalid tool call {field}: {actual} bytes; the maximum is {maximum}")]
+    InvalidCall {
+        /// Which call field crossed its boundary.
+        field: &'static str,
+        /// The retained boundary.
+        maximum: usize,
+        /// What the call supplied.
+        actual: usize,
+    },
+
+    /// An admission from one immutable generation was presented to another.
+    #[error("tool {tool} is not reachable in the admitted generation")]
+    StaleGeneration {
+        /// The provider-visible name, without either generation identity.
+        tool: Box<str>,
+    },
 }
 
 /// The model asking to run a tool.

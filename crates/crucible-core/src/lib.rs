@@ -67,10 +67,11 @@ pub use tool::{
     Unwatched, Watch, Wrote,
 };
 pub use toolset::{
-    DescribeTool, TOOL_NAME_BYTES, TOOL_RESOURCE_KEY_BYTES, TOOL_SCHEMA_BYTES, TOOL_SNAPSHOT_BYTES,
-    TOOL_SNAPSHOT_ENTRIES, TOOL_SOURCE_ID_BYTES, TOOL_SOURCE_LABEL_BYTES, ToolDescriptor,
+    DescribeTool, TOOL_ARGUMENT_BYTES, TOOL_CALL_ID_BYTES, TOOL_NAME_BYTES,
+    TOOL_RESOURCE_KEY_BYTES, TOOL_SCHEMA_BYTES, TOOL_SNAPSHOT_BYTES, TOOL_SNAPSHOT_ENTRIES,
+    TOOL_SOURCE_ID_BYTES, TOOL_SOURCE_LABEL_BYTES, ToolAdmission, ToolDescriptor,
     ToolDescriptorError, ToolEntry, ToolExecutionMode, ToolGeneration, ToolProvenance,
-    ToolResourceKey, ToolSnapshot, ToolSourceKind, ToolsetError,
+    ToolResourceKey, ToolSnapshot, ToolSourceKind, Toolset, ToolsetContext, ToolsetError,
 };
 pub use transcript::{Attachment, Message, StopReason, ToolResult, Transcript};
 pub use workspace::{PathError, WalkFiles, Workspace, WorkspacePath, written};

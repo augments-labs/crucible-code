@@ -83,16 +83,12 @@ fn a_line_typed_while_a_call_is_out_lands_after_the_answer_it_waited_for() {
     // reader's words inside an exchange the provider reads as one unit, and a
     // replay would carry a prompt where an answer belongs.
     let script = Script::new(vec![calling("a", "type", "{}"), saying("done")]);
-    let mut steering = Steering::new(script, Tools::new());
-    steering
-        .runner
-        .tools
-        .add_builtin(Typing::new(
-            "type",
-            steering.steer.clone(),
-            "actually do this",
-        ))
+    let steer = Steer::new();
+    let mut offered = Tools::new();
+    offered
+        .add_builtin(Typing::new("type", steer.clone(), "actually do this"))
         .unwrap();
+    let mut steering = Steering::steered(steer, script, offered);
 
     steering.turn("first").expect("a turn");
 

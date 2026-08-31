@@ -33,6 +33,15 @@ pub enum TurnError {
     #[error(transparent)]
     Toolset(#[from] ToolsetError),
 
+    /// A toolset lifecycle failed and its required cleanup failed as well.
+    #[error("{primary}; toolset cleanup also failed: {cleanup}")]
+    ToolsetCleanup {
+        /// The failure that ended the work.
+        primary: Box<TurnError>,
+        /// The independent cleanup failure that must not be lost.
+        cleanup: ToolsetError,
+    },
+
     /// The model asked for a tool the user refused.
     #[error("{0} was not allowed")]
     Refused(Box<str>),

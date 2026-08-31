@@ -19,13 +19,15 @@
 //! the one request, the recap and the retry that a pass reaches for. A caller
 //! never sees the split: [`Runner::turn`] is still the whole of the way in.
 
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
 use crucible_core::{
     Aside, Ask, Attached, Attachment, Cancel, Compacting, Content, Delta, DeltaStream, Effort,
     Event, Message, Modalities, Mode, Permission, Post, Provider, Reporter, Request, Room, Spend,
-    Steer, StopReason, Summary, ToolCall, ToolSchema, Transcript, TurnError, TurnId,
+    Steer, StopReason, Summary, ToolCall, ToolSchema, ToolSnapshot, Toolset, ToolsetContext,
+    Transcript, TurnError, TurnId,
 };
 
 use crucible_session::{Pruned, Session};
@@ -140,7 +142,8 @@ pub struct Model {
 #[derive(Debug)]
 pub struct Runner {
     provider: Box<dyn Provider>,
-    tools: Tools,
+    toolset: Arc<dyn Toolset>,
+    tools: ToolSnapshot,
     spec: AgentSpec,
     permission: Permission,
     transcript: Transcript,
@@ -159,8 +162,44 @@ impl Runner {
         spec: AgentSpec,
         session: Session,
     ) -> Self {
+        let snapshot = tools.snapshot().unwrap_or_default();
+        Self::from_parts(provider, Arc::new(tools), snapshot, spec, session)
+    }
+
+    /// A session backed by an arbitrary live toolset.
+    ///
+    /// Its first exact generation is prepared at turn admission. Until then,
+    /// the between-turn descriptive view is empty; after a pass it is the last
+    /// immutable generation that pass admitted.
+    #[must_use]
+    pub fn with_toolset<T>(
+        provider: Box<dyn Provider>,
+        toolset: T,
+        spec: AgentSpec,
+        session: Session,
+    ) -> Self
+    where
+        T: Toolset + 'static,
+    {
+        Self::from_parts(
+            provider,
+            Arc::new(toolset),
+            ToolSnapshot::empty(),
+            spec,
+            session,
+        )
+    }
+
+    fn from_parts(
+        provider: Box<dyn Provider>,
+        toolset: Arc<dyn Toolset>,
+        tools: ToolSnapshot,
+        spec: AgentSpec,
+        session: Session,
+    ) -> Self {
         let mut runner = Self {
             provider,
+            toolset,
             tools,
             spec,
             permission: Permission::new(),
@@ -294,17 +333,6 @@ impl Runner {
             || Summary::new(""),
             |entry| entry.tool().summary(&call.args),
         )
-    }
-
-    /// Whether this call can be left running while the turn goes on.
-    ///
-    /// False for an unknown or unrevealed name, which is a call the pass refuses
-    /// rather than one the interface should offer to control.
-    #[must_use]
-    fn backgroundable(&self, call: &ToolCall) -> bool {
-        self.tools
-            .find(&call.name)
-            .is_some_and(|entry| entry.tool().backgroundable(&call.args))
     }
 
     /// What the next request would carry, in tokens.
@@ -449,7 +477,11 @@ impl Runner {
     /// from the turn after it is found.
     #[must_use]
     pub fn offering(&self) -> Vec<String> {
-        self.tools.offering()
+        self.tools
+            .advertised()
+            .into_iter()
+            .map(|schema| schema.name.to_owned())
+            .collect()
     }
 
     /// The maximum output carried with the next provider request.
@@ -777,26 +809,42 @@ impl Runner {
         // provider without passing through `turn` has to take the ceiling
         // itself, the way [`Runner::compact`] does.
 
-        // The turn's own running totals. A bound only where somebody asked for
-        // one: a turn that runs long because there is work in it is not a turn
-        // to stop, and what a runaway one actually consumes is this.
-        //
-        // Held out here rather than inside the passes because the loop has
-        // enough ways out that carrying the total back through each return
-        // value would mean writing it at every one. What that buys is the
-        // bookkeeping, not the reporting: the `?` below leaves on the failure
-        // exits without a result, and a `TurnError` has nowhere to put a
-        // figure, so only a turn that ended says what it spent.
-        let mut counting = Counting {
-            spent: Spend::NONE,
-            load: self.load,
-            window: self.spec.model.window,
-            reserve: self.reserve(run.policy().compaction, self.spec.model.window),
+        let toolsets = ToolsetContext::new(run.ancestry(), run.cancel().clone(), None);
+        let ran = match self.toolset.prepare(&toolsets) {
+            Ok(()) => {
+                // The turn's own running totals. A bound only where somebody asked for
+                // one: a turn that runs long because there is work in it is not a turn
+                // to stop, and what a runaway one actually consumes is this.
+                //
+                // Held out here rather than inside the passes because the loop has
+                // enough ways out that carrying the total back through each return
+                // value would mean writing it at every one. What that buys is the
+                // bookkeeping, not the reporting: the `?` below leaves on the failure
+                // exits without a result, and a `TurnError` has nowhere to put a
+                // figure, so only a turn that ended says what it spent.
+                let mut counting = Counting {
+                    spent: Spend::NONE,
+                    load: self.load,
+                    window: self.spec.model.window,
+                    reserve: self.reserve(run.policy().compaction, self.spec.model.window),
+                };
+
+                AgentLoop::new(self, run, ask, &toolsets)
+                    .drive(&mut counting)
+                    .map(|stop| RunResult::new(run.run(), stop, counting.spent))
+            }
+            Err(problem) => Err(TurnError::Toolset(problem)),
         };
 
-        let stop = AgentLoop::new(self, run, ask).drive(&mut counting)?;
-
-        Ok(RunResult::new(run.run(), stop, counting.spent))
+        match (ran, self.toolset.dispose(&toolsets)) {
+            (Ok(result), Ok(())) => Ok(result),
+            (Ok(_), Err(cleanup)) => Err(TurnError::Toolset(cleanup)),
+            (Err(primary), Ok(())) => Err(primary),
+            (Err(primary), Err(cleanup)) => Err(TurnError::ToolsetCleanup {
+                primary: Box::new(primary),
+                cleanup,
+            }),
+        }
     }
 
     /// Makes room, and says what the turn may do next.

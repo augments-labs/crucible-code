@@ -19,7 +19,9 @@
 //! Nothing here decides anything the runner did not already decide. This is
 //! where the loop lives now, not a second opinion about how a turn should go.
 
-use crucible_core::{Ask, Compacting, Event, Message, ProviderError, StopReason, TurnError};
+use crucible_core::{
+    Ask, Compacting, Event, Message, ProviderError, StopReason, ToolsetContext, TurnError,
+};
 
 use crate::context::RunContext;
 
@@ -34,6 +36,10 @@ pub(super) struct AgentLoop<'a> {
     /// How to put a call to the user. Not the runner's, because who is being
     /// asked is a property of the run and not of the session it belongs to.
     ask: &'a mut dyn Ask,
+    /// The narrow lifecycle context the live toolset was prepared under.
+    toolsets: &'a ToolsetContext,
+    /// Whether the first immutable generation is still to be captured.
+    first_tools: bool,
 }
 
 impl<'a> AgentLoop<'a> {
@@ -42,8 +48,15 @@ impl<'a> AgentLoop<'a> {
         runner: &'a mut Runner,
         run: &'a RunContext<'a>,
         ask: &'a mut dyn Ask,
+        toolsets: &'a ToolsetContext,
     ) -> Self {
-        Self { runner, run, ask }
+        Self {
+            runner,
+            run,
+            ask,
+            toolsets,
+            first_tools: true,
+        }
     }
 
     /// Takes passes until the turn ends, and says how it ended.
@@ -104,7 +117,13 @@ impl<'a> AgentLoop<'a> {
             // Read once per pass: `tool_search` can reveal a schema mid-turn.
             // The exact set measured here is handed to the request below, so an
             // estimate cannot count one set and send another.
-            let tools = self.runner.tools.snapshot()?;
+            let tools = if self.first_tools {
+                self.first_tools = false;
+                self.runner.toolset.snapshot(self.toolsets)?
+            } else {
+                self.runner.toolset.refresh(self.toolsets)?
+            };
+            self.runner.tools = tools.clone();
             let advertised = tools.advertised();
 
             // Recording is what measures the transcript, and it happens on the

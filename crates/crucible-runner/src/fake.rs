@@ -40,7 +40,6 @@ pub(crate) struct SentRequest {
 #[derive(Debug)]
 pub(crate) struct SentToolSchema {
     pub(crate) name: Box<str>,
-    pub(crate) schema: Box<str>,
 }
 
 impl SentRequest {
@@ -202,7 +201,6 @@ impl Provider for Script {
                 .iter()
                 .map(|tool| SentToolSchema {
                     name: tool.name.into(),
-                    schema: tool.schema.into(),
                 })
                 .collect(),
             max_tokens: request.max_tokens,

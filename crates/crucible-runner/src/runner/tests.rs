@@ -41,6 +41,7 @@ mod aiming;
 mod attachments;
 mod attribution;
 mod compaction;
+mod lifecycle;
 mod outcome;
 mod pick_up;
 mod preserved;

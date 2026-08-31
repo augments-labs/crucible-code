@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 
 use crucible_core::{
     DescribeTool, Revealed, Tool, ToolDescriptor, ToolEntry, ToolProvenance, ToolSchema,
-    ToolSnapshot, ToolsetError,
+    ToolSnapshot, Toolset, ToolsetContext, ToolsetError,
 };
 
 /// Every tool the model may call.
@@ -255,17 +255,51 @@ impl Tools {
     }
 }
 
+impl Toolset for Tools {
+    fn prepare(&self, _context: &ToolsetContext) -> Result<(), ToolsetError> {
+        Ok(())
+    }
+
+    fn snapshot(&self, _context: &ToolsetContext) -> Result<ToolSnapshot, ToolsetError> {
+        Self::snapshot(self)
+    }
+
+    fn refresh(&self, _context: &ToolsetContext) -> Result<ToolSnapshot, ToolsetError> {
+        Self::snapshot(self)
+    }
+
+    fn dispose(&self, _context: &ToolsetContext) -> Result<(), ToolsetError> {
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
     use crucible_core::{
-        Permission, Settled, ToolArgs, ToolCall, ToolDescriptor, ToolId, ToolProvenance,
-        ToolSourceKind, Unwatched, Verdict,
+        Ancestry, Cancel, Permission, Settled, ToolArgs, ToolCall, ToolDescriptor, ToolId,
+        ToolProvenance, ToolSourceKind, Toolset, ToolsetContext, Unwatched, Verdict,
     };
 
     use super::*;
     use crate::fake::{Fixed, Says, changing};
+
+    #[test]
+    fn the_static_roster_adapts_to_the_live_toolset_lifecycle() {
+        let mut tools = Tools::new();
+        tools.add_builtin(Fixed::new("read")).unwrap();
+        let context = ToolsetContext::new(Ancestry::new(), Cancel::new(), None);
+
+        Toolset::prepare(&tools, &context).unwrap();
+        let before = Toolset::snapshot(&tools, &context).unwrap();
+        let refreshed = Toolset::refresh(&tools, &context).unwrap();
+        Toolset::dispose(&tools, &context).unwrap();
+        Toolset::dispose(&tools, &context).unwrap();
+
+        assert_eq!(before.advertised()[0].name, "read");
+        assert_eq!(refreshed.advertised()[0].name, "read");
+    }
 
     #[test]
     fn owned_descriptor_data_can_be_advertised_and_invoked_from_its_snapshot() {
@@ -408,6 +442,40 @@ mod tests {
                 .map(|entry| entry.descriptor().name()),
             Some("web_fetch")
         );
+    }
+
+    #[test]
+    fn an_admission_is_reachable_only_through_the_generation_that_minted_it() {
+        let revealed = Revealed::new();
+        let mut tools = Tools::looking_up(revealed.clone());
+        tools.defer_builtin(Fixed::new("web_fetch")).unwrap();
+        let call = ToolCall {
+            id: ToolId::new("fetch-one"),
+            name: "web_fetch".into(),
+            args: ToolArgs::new("{}"),
+        };
+
+        assert!(tools.snapshot().unwrap().admit(&call).is_err());
+        revealed.reveal("web_fetch");
+        let admitted_from = tools.snapshot().unwrap();
+        let admission = admitted_from.admit(&call).unwrap();
+        let entry = admitted_from.resolve(&admission).unwrap();
+        let sensitivity = entry.tool().sensitivity(&call.args);
+        let mut permission = Permission::new();
+        let mut ask = Says::new(Verdict::Allow);
+        let Settled::Approved(approved) =
+            permission.decide_admitted(&admission, &sensitivity, &mut ask)
+        else {
+            panic!("the admitted read-only fixture was not approved");
+        };
+        revealed.forget();
+        let current = tools.snapshot().unwrap();
+
+        assert!(admitted_from.resolve(&admission).is_ok());
+        assert!(admitted_from.resolve_approved(&approved).is_ok());
+        assert!(current.resolve(&admission).is_err());
+        assert!(current.resolve_approved(&approved).is_err());
+        assert!(current.admit(&call).is_err());
     }
 
     #[test]

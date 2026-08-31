@@ -29,6 +29,7 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use crate::tool::ToolCall;
+use crate::toolset::{ToolAdmission, ToolGeneration};
 
 mod grant;
 mod mode;
@@ -171,10 +172,39 @@ impl Permission {
         sensitivity: &Sensitivity,
         ask: &mut dyn Ask,
     ) -> Settled {
+        self.decide_for(call, sensitivity, None, ask)
+    }
+
+    /// Decides a call admitted from one immutable tool generation.
+    ///
+    /// The resulting [`Approved`] remains bound to that generation, so a
+    /// refresh cannot redirect it to a different tool registered under the
+    /// same provider-visible name.
+    pub fn decide_admitted(
+        &mut self,
+        admission: &ToolAdmission,
+        sensitivity: &Sensitivity,
+        ask: &mut dyn Ask,
+    ) -> Settled {
+        self.decide_for(
+            admission.call(),
+            sensitivity,
+            Some(admission.generation()),
+            ask,
+        )
+    }
+
+    fn decide_for(
+        &mut self,
+        call: &ToolCall,
+        sensitivity: &Sensitivity,
+        generation: Option<&ToolGeneration>,
+        ask: &mut dyn Ask,
+    ) -> Settled {
         match self.disposition(call, sensitivity) {
-            Disposition::Allow => self.approve(call, sensitivity, Verdict::Allow),
+            Disposition::Allow => self.approve(call, sensitivity, generation, Verdict::Allow),
             Disposition::Deny => Settled::Forbidden,
-            Disposition::Ask => self.put(call, sensitivity, ask),
+            Disposition::Ask => self.put(call, sensitivity, generation, ask),
         }
     }
 
@@ -204,10 +234,16 @@ impl Permission {
     }
 
     /// Asks, unless this scope was already allowed for the session.
-    fn put(&mut self, call: &ToolCall, sensitivity: &Sensitivity, ask: &mut dyn Ask) -> Settled {
+    fn put(
+        &mut self,
+        call: &ToolCall,
+        sensitivity: &Sensitivity,
+        generation: Option<&ToolGeneration>,
+        ask: &mut dyn Ask,
+    ) -> Settled {
         let scope = Self::scope(call, sensitivity);
         if self.remembered.contains(&scope) {
-            return self.approve(call, sensitivity, Verdict::Allow);
+            return self.approve(call, sensitivity, generation, Verdict::Allow);
         }
 
         let (verdict, remember) = ask.ask(call, sensitivity);
@@ -225,7 +261,7 @@ impl Permission {
         // Nothing is remembered about a no. The turn ends on one, so there is
         // no next call in it to remember for, and the next turn is a fresh
         // instruction that deserves its own question.
-        self.approve(call, sensitivity, verdict)
+        self.approve(call, sensitivity, generation, verdict)
     }
 
     /// Mints the proof, or reports that the user said no.
@@ -238,11 +274,18 @@ impl Permission {
     /// is what the verdict was reached about, and a tool that resolved its
     /// path afresh in `run` would otherwise have nothing to hold the new
     /// answer against.
-    fn approve(&self, call: &ToolCall, sensitivity: &Sensitivity, verdict: Verdict) -> Settled {
+    fn approve(
+        &self,
+        call: &ToolCall,
+        sensitivity: &Sensitivity,
+        generation: Option<&ToolGeneration>,
+        verdict: Verdict,
+    ) -> Settled {
         match Grant::issue(verdict) {
             Some(grant) => Settled::Approved(Approved::new(
                 call.clone(),
                 sensitivity.clone(),
+                generation.cloned(),
                 grant,
                 self.rules.denials(&call.name),
             )),
