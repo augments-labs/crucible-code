@@ -43,7 +43,7 @@ pub use ask::{Answer, Answered, Put, Question};
 pub use attachable::{CEILING, KINDS, Kind, kind};
 pub use cancel::Cancel;
 pub use compaction::{Compacted, Compacting, RECAP, Room};
-pub use context::{ContextError, ContextSection, Fragment, Seen};
+pub use context::{ContextError, ContextPatch, ContextSection, ContextSnapshot, Fragment, Seen};
 pub use credential::{
     ApiKey, Credential, CredentialError, Header, HeaderKey, Outgoing, Redactions,
 };

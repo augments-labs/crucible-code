@@ -6,9 +6,10 @@
 //! transcript has been rewritten. The state and history are both necessary:
 //! either one alone can claim the model knows words compaction removed.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 /// What the retained transcript proves the model has seen for one section.
 ///
@@ -37,24 +38,24 @@ pub enum Seen<T> {
 /// scopes are user data even when their section name is not.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Fragment {
-    section: &'static str,
+    section: Box<str>,
     text: Box<str>,
 }
 
 impl Fragment {
     /// Takes the words one stable section produced.
     #[must_use]
-    pub fn new(section: &'static str, text: impl Into<Box<str>>) -> Self {
+    pub fn new(section: impl Into<Box<str>>, text: impl Into<Box<str>>) -> Self {
         Self {
-            section,
+            section: section.into(),
             text: text.into(),
         }
     }
 
     /// The stable persistence identity of the section that produced this.
     #[must_use]
-    pub const fn section(&self) -> &'static str {
-        self.section
+    pub fn section(&self) -> &str {
+        &self.section
     }
 
     /// The exact words the model reads.
@@ -82,6 +83,15 @@ pub trait ContextSection {
     /// Stable, persisted section identity. Never rename a shipped value.
     const ID: &'static str;
 
+    /// The stable identifier for this instance.
+    ///
+    /// Ordinary sections use [`ContextSection::ID`]. The method exists so a
+    /// registry can expose several data-driven sections through one concrete
+    /// implementation without turning their persisted identities into prose.
+    fn id(&self) -> &'static str {
+        Self::ID
+    }
+
     /// What is true now, as JSON state suitable for an RFC 7386 merge patch.
     ///
     /// Callers use [`ContextSection::checked_snapshot`] rather than retaining
@@ -105,9 +115,201 @@ pub trait ContextSection {
     fn checked_snapshot(&self) -> Result<Value, ContextError> {
         let snapshot = self.snapshot();
         if snapshot.is_null() {
-            Err(ContextError::NullSnapshot { section: Self::ID })
+            Err(ContextError::NullSnapshot {
+                section: self.id().into(),
+            })
         } else {
             Ok(snapshot)
+        }
+    }
+}
+
+/// The complete typed context state after zero or more section updates.
+///
+/// A [`BTreeMap`] owns the order. Serialization therefore cannot depend on
+/// discovery order, hash seeds, or which section happened to refresh first.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ContextSnapshot {
+    sections: BTreeMap<Box<str>, Value>,
+}
+
+impl ContextSnapshot {
+    /// An empty state: no section has been sent yet.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Captures one section, replacing its earlier state if it had one.
+    ///
+    /// # Errors
+    ///
+    /// [`ContextError::NullSnapshot`] before null can enter the set.
+    pub fn capture(&mut self, section: &impl ContextSection) -> Result<(), ContextError> {
+        let state = section.checked_snapshot()?;
+        self.sections.insert(section.id().into(), state);
+        Ok(())
+    }
+
+    /// Reconstructs a snapshot from its persisted JSON object.
+    ///
+    /// # Errors
+    ///
+    /// [`ContextError::SnapshotNotObject`] for any other root, or
+    /// [`ContextError::NullSnapshot`] for a removed section masquerading as
+    /// present state.
+    pub fn from_value(value: Value) -> Result<Self, ContextError> {
+        let Value::Object(object) = value else {
+            return Err(ContextError::SnapshotNotObject);
+        };
+
+        let mut sections = BTreeMap::new();
+        for (section, state) in object {
+            if state.is_null() {
+                return Err(ContextError::NullSnapshot {
+                    section: section.into(),
+                });
+            }
+            sections.insert(section.into(), state);
+        }
+
+        Ok(Self { sections })
+    }
+
+    /// One section's recorded state.
+    #[must_use]
+    pub fn get(&self, section: &str) -> Option<&Value> {
+        self.sections.get(section)
+    }
+
+    /// Every section in stable identifier order.
+    pub fn sections(&self) -> impl ExactSizeIterator<Item = (&str, &Value)> {
+        self.sections
+            .iter()
+            .map(|(section, state)| (section.as_ref(), state))
+    }
+
+    /// The deterministic JSON object persisted and patched.
+    #[must_use]
+    pub fn value(&self) -> Value {
+        let object: Map<String, Value> = self
+            .sections
+            .iter()
+            .map(|(section, state)| (section.to_string(), state.clone()))
+            .collect();
+        Value::Object(object)
+    }
+
+    /// The RFC 7386 patch that turns `prior` into this state.
+    #[must_use]
+    pub fn patch_from(&self, prior: &Self) -> Option<ContextPatch> {
+        merge_difference(&prior.value(), &self.value()).map(ContextPatch)
+    }
+}
+
+/// An RFC 7386 JSON merge patch over a [`ContextSnapshot`].
+#[derive(Clone, PartialEq, Eq)]
+pub struct ContextPatch(Value);
+
+impl ContextPatch {
+    /// Reads a persisted patch, whose root must be an object because a context
+    /// snapshot's root is the section map and is never replaced wholesale.
+    ///
+    /// # Errors
+    ///
+    /// [`ContextError::PatchNotObject`] for a non-object root.
+    pub fn from_value(value: Value) -> Result<Self, ContextError> {
+        if value.is_object() {
+            Ok(Self(value))
+        } else {
+            Err(ContextError::PatchNotObject)
+        }
+    }
+
+    /// The exact deterministic JSON patch.
+    #[must_use]
+    pub const fn value(&self) -> &Value {
+        &self.0
+    }
+
+    /// Applies this patch to `prior` with RFC 7386 semantics.
+    ///
+    /// # Errors
+    ///
+    /// A derived patch cannot produce an invalid snapshot. A patch read from a
+    /// session can, and is refused as a typed context error rather than
+    /// accepted until some later section tries to use it.
+    pub fn apply(&self, prior: &ContextSnapshot) -> Result<ContextSnapshot, ContextError> {
+        let mut value = prior.value();
+        merge_apply(&mut value, &self.0);
+        ContextSnapshot::from_value(value)
+    }
+}
+
+impl fmt::Debug for ContextPatch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("ContextPatch([redacted])")
+    }
+}
+
+/// Derives the smallest RFC 7386 patch that changes `prior` into `current`.
+fn merge_difference(prior: &Value, current: &Value) -> Option<Value> {
+    if prior == current {
+        return None;
+    }
+
+    let (Value::Object(before), Value::Object(after)) = (prior, current) else {
+        return Some(current.clone());
+    };
+
+    let keys: BTreeSet<&String> = before.keys().chain(after.keys()).collect();
+    let mut changed = BTreeMap::new();
+    for key in keys {
+        match (before.get(key), after.get(key)) {
+            (Some(_), None) => {
+                changed.insert(key.clone(), Value::Null);
+            }
+            (None, Some(value)) => {
+                changed.insert(key.clone(), value.clone());
+            }
+            (Some(old), Some(new)) => {
+                if let Some(value) = merge_difference(old, new) {
+                    changed.insert(key.clone(), value);
+                }
+            }
+            (None, None) => {}
+        }
+    }
+
+    Some(Value::Object(changed.into_iter().collect()))
+}
+
+/// Applies one RFC 7386 merge patch in place.
+fn merge_apply(target: &mut Value, patch: &Value) {
+    let Value::Object(changes) = patch else {
+        *target = patch.clone();
+        return;
+    };
+
+    if !target.is_object() {
+        *target = Value::Object(Map::new());
+    }
+    let Some(object) = target.as_object_mut() else {
+        return;
+    };
+
+    for (key, change) in changes {
+        if change.is_null() {
+            object.remove(key);
+            continue;
+        }
+
+        if let Some(value) = object.get_mut(key) {
+            merge_apply(value, change);
+        } else {
+            let mut value = Value::Null;
+            merge_apply(&mut value, change);
+            object.insert(key.clone(), value);
         }
     }
 }
@@ -119,15 +321,46 @@ pub enum ContextError {
     #[error("context section {section} serialized to null")]
     NullSnapshot {
         /// The stable section whose state was defective.
-        section: &'static str,
+        section: Box<str>,
     },
+    /// A complete context snapshot was not a section map.
+    #[error("context snapshot is not a JSON object")]
+    SnapshotNotObject,
+    /// A persisted merge patch tried to replace the section map wholesale.
+    #[error("context merge patch is not a JSON object")]
+    PatchNotObject,
 }
 
 #[cfg(test)]
 mod tests {
     use serde_json::{Value, json};
 
-    use super::{ContextError, ContextSection, Fragment, Seen};
+    use super::{ContextError, ContextPatch, ContextSection, ContextSnapshot, Fragment, Seen};
+
+    struct State {
+        id: &'static str,
+        value: Value,
+    }
+
+    impl ContextSection for State {
+        const ID: &'static str = "state";
+
+        fn snapshot(&self) -> Value {
+            self.value.clone()
+        }
+
+        fn render(&self, _prior: Seen<&Value>) -> Option<Fragment> {
+            None
+        }
+
+        fn recognizes(&self, fragment: &Fragment) -> bool {
+            fragment.section() == self.id
+        }
+
+        fn id(&self) -> &'static str {
+            self.id
+        }
+    }
 
     struct Workspace;
 
@@ -199,7 +432,7 @@ mod tests {
         assert_eq!(
             problem,
             ContextError::NullSnapshot {
-                section: "permissions"
+                section: "permissions".into()
             }
         );
         assert_eq!(
@@ -214,5 +447,89 @@ mod tests {
             Workspace.checked_snapshot().unwrap(),
             json!({ "root": "/work" })
         );
+    }
+
+    #[test]
+    fn section_order_is_deterministic_whatever_order_it_was_captured_in() {
+        let a = State {
+            id: "a",
+            value: json!({ "value": 1 }),
+        };
+        let z = State {
+            id: "z",
+            value: json!({ "value": 2 }),
+        };
+        let mut first = ContextSnapshot::new();
+        first.capture(&z).unwrap();
+        first.capture(&a).unwrap();
+        let mut second = ContextSnapshot::new();
+        second.capture(&a).unwrap();
+        second.capture(&z).unwrap();
+
+        assert_eq!(first, second);
+        assert_eq!(
+            serde_json::to_string(&first.value()).unwrap(),
+            r#"{"a":{"value":1},"z":{"value":2}}"#
+        );
+    }
+
+    #[test]
+    fn merge_patch_derivation_and_application_round_trip_the_snapshot() {
+        let prior = ContextSnapshot::from_value(json!({
+            "environment": { "platform": "linux", "date": "2026-08-30" },
+            "tools": { "generation": "one", "visible": { "read": true, "bash": true } }
+        }))
+        .unwrap();
+        let current = ContextSnapshot::from_value(json!({
+            "environment": { "platform": "linux", "date": "2026-08-31" },
+            "tools": { "generation": "two", "visible": { "read": true, "grep": true } }
+        }))
+        .unwrap();
+
+        let patch = current.patch_from(&prior).expect("the state changed");
+
+        assert_eq!(
+            patch.value(),
+            &json!({
+                "environment": { "date": "2026-08-31" },
+                "tools": {
+                    "generation": "two",
+                    "visible": { "bash": null, "grep": true }
+                }
+            })
+        );
+        assert_eq!(patch.apply(&prior).unwrap(), current);
+    }
+
+    #[test]
+    fn absence_and_present_empty_state_are_distinct_and_both_expressible() {
+        let absent = ContextSnapshot::new();
+        let present = ContextSnapshot::from_value(json!({ "skills": {} })).unwrap();
+
+        let adding = present
+            .patch_from(&absent)
+            .expect("an empty section was added");
+        assert_eq!(adding.value(), &json!({ "skills": {} }));
+        assert_eq!(adding.apply(&absent).unwrap(), present);
+
+        let removing = absent
+            .patch_from(&present)
+            .expect("the empty section was removed");
+        assert_eq!(removing.value(), &json!({ "skills": null }));
+        assert_eq!(removing.apply(&present).unwrap(), absent);
+    }
+
+    #[test]
+    fn equal_snapshots_need_no_patch() {
+        let snapshot = ContextSnapshot::from_value(json!({ "model": { "name": "one" } })).unwrap();
+
+        assert_eq!(snapshot.patch_from(&snapshot), None);
+    }
+
+    #[test]
+    fn a_persisted_patch_must_be_an_object() {
+        let problem = ContextPatch::from_value(json!("replace everything")).unwrap_err();
+
+        assert_eq!(problem, ContextError::PatchNotObject);
     }
 }
