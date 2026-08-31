@@ -20,6 +20,7 @@ mod ask;
 mod attachable;
 mod cancel;
 mod compaction;
+mod context;
 mod credential;
 mod diff;
 mod event;
@@ -42,6 +43,7 @@ pub use ask::{Answer, Answered, Put, Question};
 pub use attachable::{CEILING, KINDS, Kind, kind};
 pub use cancel::Cancel;
 pub use compaction::{Compacted, Compacting, RECAP, Room};
+pub use context::{ContextError, ContextSection, Fragment, Seen};
 pub use credential::{
     ApiKey, Credential, CredentialError, Header, HeaderKey, Outgoing, Redactions,
 };

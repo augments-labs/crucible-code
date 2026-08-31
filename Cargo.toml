@@ -181,11 +181,12 @@ globset = "=0.4.20"
 grep-searcher = "=0.1.17"
 grep-regex = "=0.1.14"
 
-# JSON. Every wire protocol here speaks it, and hand-rolling the parser would
+# JSON. Every wire protocol here speaks it, and context snapshots use its value
+# tree for the RFC 7386 merge-patch boundary. Hand-rolling either parser would
 # mean hand-rolling string escapes and surrogate pairs — where a mistake is a
 # silently wrong answer rather than a crash. Used without `derive`: the vendor
-# shapes differ per provider and are read once at the boundary, so a set of
-# mirror structs per provider would be more code than the field lookups.
+# shapes differ per provider and are read once at the boundary, while context
+# snapshots are already values rather than mirror structs.
 serde_json = "=1.0.151"
 
 # Display width. A terminal wraps by columns, not by characters: CJK takes two

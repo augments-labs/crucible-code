@@ -383,6 +383,7 @@ version = "0.29.0"
 dependencies = [
  "globset",
  "rustix",
+ "serde_json",
  "thiserror",
  "uuid",
  "windows-sys 0.61.2",
