@@ -10,7 +10,9 @@
 //! down.
 
 use crucible_core::{
-    Attached, Content, Message, Modality, Request, StopReason, ToolResult, ToolSchema,
+    Attached, Content, Message, Modality, PromptCacheBoundary, PromptCacheEncoding,
+    PromptCacheIneligibleReason, PromptCacheMechanism, PromptCacheRetentionClass, Request,
+    StopReason, ToolResult, ToolSchema,
 };
 use serde_json::Value;
 #[cfg(test)]
@@ -20,17 +22,35 @@ use crate::json::{Array, Json, Object, described, object};
 
 /// The whole request body.
 pub(super) fn serialize(request: &Request<'_>) -> String {
+    let automatic = automatic_retention(request);
+    let explicit = explicit_placement(request);
     let mut json = Json::new();
     json.object(|body| {
         body.text("model", request.model);
         body.number("max_tokens", request.max_tokens);
         body.boolean("stream", true);
-        body.array("messages", |messages| write_messages(messages, request));
+
+        if let Some(retention) = automatic {
+            write_cache_control(body, retention);
+        }
+        body.array("messages", |messages| {
+            write_messages(messages, request, explicit);
+        });
 
         // Absent rather than null: the API rejects a null system prompt, and a
         // session without one is the ordinary case.
         if let Some(system) = request.system {
-            body.text("system", system);
+            if let Some(ExplicitPlacement::System(retention)) = explicit {
+                body.array("system", |content| {
+                    content.object(|block| {
+                        block.text("type", "text");
+                        block.text("text", system);
+                        write_cache_control(block, retention);
+                    });
+                });
+            } else {
+                body.text("system", system);
+            }
         }
 
         // Only where somebody chose one. Anthropic's own default is what a model
@@ -46,13 +66,116 @@ pub(super) fn serialize(request: &Request<'_>) -> String {
 
         if !request.tools.is_empty() {
             body.array("tools", |tools| {
-                for schema in request.tools {
-                    tools.object(|tool| write_tool(tool, schema));
+                for (index, schema) in request.tools.iter().enumerate() {
+                    let retention = match explicit {
+                        Some(ExplicitPlacement::Tools(retention))
+                            if index + 1 == request.tools.len() =>
+                        {
+                            Some(retention)
+                        }
+                        _ => None,
+                    };
+                    tools.object(|tool| write_tool(tool, schema, retention));
                 }
             });
         }
     });
     json.finish()
+}
+
+/// The cache metadata [`serialize`] adds for this exact request.
+pub(super) fn prompt_cache_encoding(request: &Request<'_>) -> PromptCacheEncoding {
+    let Some(selected) = request
+        .prompt_cache
+        .and_then(|cache| cache.selection.selected())
+    else {
+        return PromptCacheEncoding::NoControlIntended;
+    };
+    match selected.mechanism() {
+        PromptCacheMechanism::AutomaticPrefix => PromptCacheEncoding::AutomaticHintEncoded,
+        PromptCacheMechanism::ExplicitBreakpoints => {
+            if explicit_placement(request).is_some() {
+                PromptCacheEncoding::BreakpointsEncoded(1)
+            } else {
+                PromptCacheEncoding::Failed(PromptCacheIneligibleReason::UnsupportedBoundary)
+            }
+        }
+        PromptCacheMechanism::ProviderManagedUsageOnly => {
+            PromptCacheEncoding::NoExtraControlEncoded
+        }
+        PromptCacheMechanism::PersistentContent => {
+            PromptCacheEncoding::Failed(PromptCacheIneligibleReason::Unsupported)
+        }
+    }
+}
+
+/// The exact request-level automatic control selected for this request.
+fn automatic_retention(request: &Request<'_>) -> Option<PromptCacheRetentionClass> {
+    request
+        .prompt_cache?
+        .selection
+        .selected()
+        .filter(|selected| selected.mechanism() == PromptCacheMechanism::AutomaticPrefix)
+        .map(crucible_core::PromptCacheSelected::retention)
+}
+
+/// One explicit marker at the latest provider-visible legal stable boundary.
+///
+/// A single marker caches the complete stable prefix and stays inside the
+/// four-breakpoint ceiling. The neutral plan already proved content,
+/// threshold, retention and point limits; lowering repeats the placement
+/// check so a hand-built request cannot emit an unreviewed marker.
+fn explicit_placement(request: &Request<'_>) -> Option<ExplicitPlacement> {
+    let cache = request.prompt_cache?;
+    let selected = cache
+        .selection
+        .selected()
+        .filter(|selected| selected.mechanism() == PromptCacheMechanism::ExplicitBreakpoints)?;
+    let capability = cache
+        .capabilities
+        .mechanisms()
+        .iter()
+        .find(|candidate| candidate.mechanism() == PromptCacheMechanism::ExplicitBreakpoints)?;
+    if capability.maximum_breakpoints() == 0
+        || !capability.retentions().contains(&selected.retention())
+    {
+        return None;
+    }
+
+    cache
+        .plan
+        .boundaries()
+        .iter()
+        .rev()
+        .find(|point| capability.boundaries().contains(&point.kind()))
+        .and_then(|point| match point.kind() {
+            PromptCacheBoundary::AfterSystem => request
+                .system
+                .map(|_| ExplicitPlacement::System(selected.retention())),
+            PromptCacheBoundary::AfterTools => (!request.tools.is_empty())
+                .then_some(ExplicitPlacement::Tools(selected.retention())),
+            PromptCacheBoundary::AfterMessage | PromptCacheBoundary::AfterContent => point
+                .message()
+                .and_then(|message| usize::try_from(message).ok())
+                .filter(|message| *message < request.transcript.messages().len())
+                .map(|message| ExplicitPlacement::Message(message, selected.retention())),
+        })
+}
+
+#[derive(Clone, Copy)]
+enum ExplicitPlacement {
+    System(PromptCacheRetentionClass),
+    Tools(PromptCacheRetentionClass),
+    Message(usize, PromptCacheRetentionClass),
+}
+
+fn write_cache_control(parent: &mut Object<'_>, retention: PromptCacheRetentionClass) {
+    parent.object("cache_control", |control| {
+        control.text("type", "ephemeral");
+        if retention == PromptCacheRetentionClass::Extended {
+            control.text("ttl", "1h");
+        }
+    });
 }
 
 #[cfg(test)]
@@ -61,9 +184,17 @@ fn build(request: &Request<'_>) -> Value {
 }
 
 /// Every message that has something in it, in order.
-fn write_messages(messages: &mut Array<'_>, request: &Request<'_>) {
+fn write_messages(
+    messages: &mut Array<'_>,
+    request: &Request<'_>,
+    explicit: Option<ExplicitPlacement>,
+) {
     for (nth, message) in request.transcript.messages().iter().enumerate() {
-        write_message(messages, message, nth, request.attached);
+        let retention = match explicit {
+            Some(ExplicitPlacement::Message(target, retention)) if target == nth => Some(retention),
+            _ => None,
+        };
+        write_message(messages, message, nth, request.attached, retention);
     }
 }
 
@@ -77,18 +208,39 @@ fn write_message(
     message: &Message,
     nth: usize,
     attached: &[Attached<'_>],
+    cache_retention: Option<PromptCacheRetentionClass>,
 ) {
     match message {
         Message::Context(fragment) => messages.object(|message| {
             message.text("role", "user");
-            message.text("content", fragment.text());
+            if let Some(retention) = cache_retention {
+                message.array("content", |content| {
+                    content.object(|block| {
+                        block.text("type", "text");
+                        block.text("text", fragment.text());
+                        write_cache_control(block, retention);
+                    });
+                });
+            } else {
+                message.text("content", fragment.text());
+            }
         }),
         Message::User { text, .. } => messages.object(|message| {
             message.text("role", "user");
 
             let mut files = attached.iter().filter(|one| one.message == nth).peekable();
             if files.peek().is_none() {
-                message.text("content", text);
+                if let Some(retention) = cache_retention {
+                    message.array("content", |content| {
+                        content.object(|block| {
+                            block.text("type", "text");
+                            block.text("text", text);
+                            write_cache_control(block, retention);
+                        });
+                    });
+                } else {
+                    message.text("content", text);
+                }
                 return;
             }
 
@@ -96,8 +248,17 @@ fn write_message(
             // ahead of the words, and the words are one prompt behind however
             // many files it named.
             message.array("content", |content| {
-                for one in files {
-                    content.object(|block| write_attached(block, one));
+                let file_count = files.clone().count();
+                for (index, one) in files.enumerate() {
+                    content.object(|block| {
+                        write_attached(block, one);
+                        if text.is_empty()
+                            && index + 1 == file_count
+                            && let Some(retention) = cache_retention
+                        {
+                            write_cache_control(block, retention);
+                        }
+                    });
                 }
                 // A prompt that named a file and said nothing else is the
                 // picture alone: an empty text block is one this vendor
@@ -106,6 +267,9 @@ fn write_message(
                     content.object(|block| {
                         block.text("type", "text");
                         block.text("text", text);
+                        if let Some(retention) = cache_retention {
+                            write_cache_control(block, retention);
+                        }
                     });
                 }
             });
@@ -122,31 +286,47 @@ fn write_message(
             messages.object(|message| {
                 message.text("role", "assistant");
                 message.array("content", |content| {
+                    let cut = StopReason::cut(*stop);
                     // An empty text block is refused by the API, and the model
                     // produces one when it calls a tool without speaking first.
                     if !text.is_empty() {
                         content.object(|block| {
                             block.text("type", "text");
                             block.text("text", text);
+                            if calls.is_empty()
+                                && cut.is_none()
+                                && let Some(retention) = cache_retention
+                            {
+                                write_cache_control(block, retention);
+                            }
                         });
                     }
 
-                    for call in calls {
+                    for (index, call) in calls.iter().enumerate() {
                         let input = Value::Object(object(call.args.as_str()));
                         content.object(|block| {
                             block.text("type", "tool_use");
                             block.text("id", call.id.as_str());
                             block.text("name", &call.name);
                             block.value("input", &input);
+                            if index + 1 == calls.len()
+                                && cut.is_none()
+                                && let Some(retention) = cache_retention
+                            {
+                                write_cache_control(block, retention);
+                            }
                         });
                     }
 
                     // A block of its own after a cut answer. Left off, the model
                     // reads its half-sentence as a turn it chose to end.
-                    if let Some(said) = StopReason::cut(*stop) {
+                    if let Some(said) = cut {
                         content.object(|block| {
                             block.text("type", "text");
                             block.text("text", said);
+                            if let Some(retention) = cache_retention {
+                                write_cache_control(block, retention);
+                            }
                         });
                     }
                 });
@@ -162,12 +342,19 @@ fn write_message(
             // one starts where it stopped.
             let mut files = attached.iter().filter(|one| one.message == nth);
             message.array("content", |content| {
-                for result in results {
+                for (index, result) in results.iter().enumerate() {
                     let found: Vec<_> = files
                         .by_ref()
                         .take(result.output.attachments().len())
                         .collect();
-                    content.object(|block| write_result(block, result, &found));
+                    content.object(|block| {
+                        write_result(block, result, &found);
+                        if index + 1 == results.len()
+                            && let Some(retention) = cache_retention
+                        {
+                            write_cache_control(block, retention);
+                        }
+                    });
                 }
             });
         }),
@@ -247,11 +434,18 @@ fn write_result(block: &mut Object<'_>, result: &ToolResult, found: &[&Attached<
 }
 
 /// One tool, as advertised.
-fn write_tool(tool: &mut Object<'_>, schema: &ToolSchema<'_>) {
+fn write_tool(
+    tool: &mut Object<'_>,
+    schema: &ToolSchema<'_>,
+    cache_retention: Option<PromptCacheRetentionClass>,
+) {
     let (input, description) = described(schema.schema);
     tool.text("name", schema.name);
     tool.text("description", &description);
     tool.value("input_schema", &Value::Object(input));
+    if let Some(retention) = cache_retention {
+        write_cache_control(tool, retention);
+    }
 }
 
 #[cfg(test)]
@@ -262,7 +456,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::fake::{failed, found, picture};
+    use crate::fake::{cached, failed, found, observed, picture};
 
     /// What a pointer finds when there is nothing there.
     const NOTHING: Value = Value::Null;
@@ -276,6 +470,7 @@ mod tests {
             max_tokens: 1024,
             system: None,
             effort: None,
+            prompt_cache: None,
         }
     }
 
@@ -337,6 +532,98 @@ mod tests {
         assert_eq!(at(&body, "/model"), &json!("claude-test"));
         assert_eq!(at(&body, "/stream"), &json!(true));
         assert_eq!(at(&body, "/max_tokens"), &json!(1024));
+    }
+
+    #[test]
+    fn default_automatic_caching_adds_only_the_short_lived_native_control() {
+        let plain = build(&request(said("hello")));
+        let cached = build(&cached(
+            request(said("hello")),
+            PromptCacheMechanism::AutomaticPrefix,
+            PromptCacheRetentionClass::ProviderDefault,
+            false,
+        ));
+
+        assert_eq!(at(&cached, "/cache_control"), &json!({"type": "ephemeral"}));
+        let mut without_control = cached;
+        without_control
+            .as_object_mut()
+            .expect("body object")
+            .remove("cache_control");
+        assert_eq!(without_control, plain);
+    }
+
+    #[test]
+    fn observe_only_preserves_the_request_bytes() {
+        let plain = request(said("hello"));
+        let observed = observed(request(said("hello")));
+
+        assert_eq!(serialize(&observed), serialize(&plain));
+    }
+
+    #[test]
+    fn extended_automatic_caching_uses_the_documented_one_hour_ttl() {
+        let cached = cached(
+            request(said("hello")),
+            PromptCacheMechanism::AutomaticPrefix,
+            PromptCacheRetentionClass::Extended,
+            false,
+        );
+
+        assert_eq!(
+            at(&build(&cached), "/cache_control"),
+            &json!({"type": "ephemeral", "ttl": "1h"})
+        );
+    }
+
+    #[test]
+    fn explicit_caching_marks_the_latest_legal_system_tool_or_message_boundary() {
+        let mut system = request(said("current"));
+        system.system = Some("stable instructions");
+        let system = cached(
+            system,
+            PromptCacheMechanism::ExplicitBreakpoints,
+            PromptCacheRetentionClass::ProviderDefault,
+            false,
+        );
+        assert_eq!(
+            at(&build(&system), "/system/0/cache_control"),
+            &json!({"type": "ephemeral"})
+        );
+
+        let mut tools = request(said("current"));
+        tools.tools = Box::leak(Box::new([ToolSchema {
+            name: "read",
+            schema: r#"{"description":"Read","type":"object"}"#,
+        }]));
+        let tools = cached(
+            tools,
+            PromptCacheMechanism::ExplicitBreakpoints,
+            PromptCacheRetentionClass::Extended,
+            false,
+        );
+        assert_eq!(
+            at(&build(&tools), "/tools/0/cache_control"),
+            &json!({"type": "ephemeral", "ttl": "1h"})
+        );
+
+        let mut history = said("earlier");
+        history.push(Message::Agent {
+            text: "answer".into(),
+            calls: Vec::new(),
+            stop: Some(StopReason::Yielded),
+        });
+        history.push(Message::said("current"));
+        let history = cached(
+            request(history),
+            PromptCacheMechanism::ExplicitBreakpoints,
+            PromptCacheRetentionClass::ProviderDefault,
+            false,
+        );
+        assert_eq!(
+            at(&build(&history), "/messages/1/content/0/cache_control"),
+            &json!({"type": "ephemeral"})
+        );
     }
 
     #[test]

@@ -7,6 +7,7 @@ use serde_json::Value;
 
 use crate::env;
 use crate::error::ConfigError;
+use crate::settings::prompt_cache::{self, PromptCacheLayer};
 use crate::shape::DOCUMENT;
 
 mod check;
@@ -79,6 +80,8 @@ pub(crate) struct Document {
     /// resolved: a rule that will not parse has to be reported with the file it
     /// is in, and by then nothing could say which file that was.
     rules: Rules,
+    /// Typed prompt-cache fields this one layer actually stated.
+    prompt_cache: Option<PromptCacheLayer>,
 }
 
 impl fmt::Debug for Document {
@@ -90,6 +93,10 @@ impl fmt::Debug for Document {
             .field("value", &env::Redacted(&self.value))
             .field("origin", &self.origin)
             .field("rules", &self.rules)
+            .field(
+                "prompt_cache",
+                &self.prompt_cache.as_ref().map(|_| "[policy]"),
+            )
             .finish()
     }
 }
@@ -124,11 +131,13 @@ impl Document {
         reader.variables(&value)?;
         reader.directories(&value)?;
         let rules = rules::read(&reader, &value)?;
+        let prompt_cache = prompt_cache::read(&value, file, text, origin)?;
 
         Ok(Self {
             value,
             origin,
             rules,
+            prompt_cache,
         })
     }
 
@@ -140,6 +149,11 @@ impl Document {
     /// Which layer this came from, which is what decides precedence.
     pub(crate) fn origin(&self) -> Origin {
         self.origin
+    }
+
+    /// Prompt-cache fields this layer stated, if it named the block.
+    pub(crate) fn prompt_cache(&self) -> Option<&PromptCacheLayer> {
+        self.prompt_cache.as_ref()
     }
 
     /// The rules this file stated, for the layering above to concatenate.

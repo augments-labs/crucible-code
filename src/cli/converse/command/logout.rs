@@ -181,6 +181,9 @@ fn forgetting<T: Terminal>(
     runner: &mut Runner,
     terms: &Terms,
 ) -> Result<(), Fatal> {
+    if terms.provider.get() == Some(named.name) && !super::cache::retire(renderer, runner)? {
+        return Ok(());
+    }
     // Whether there was still one there to forget is not the question being
     // answered. Another crucible having taken it between the read above and
     // this line leaves the key gone, which is what was asked for.

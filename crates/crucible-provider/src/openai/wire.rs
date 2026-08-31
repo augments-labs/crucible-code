@@ -11,7 +11,10 @@
 //! Every event says its own `type`, so that is what is read rather than the SSE
 //! event name beside it. One name, one place it is spelled.
 
-use crucible_core::{Carried, Delta, ProviderError, Spend, StopReason, ToolId};
+use crucible_core::{
+    Delta, InputTokenUsage, ProviderError, ProviderNumericDetail, ProviderUsage, StopReason,
+    ToolId, UsageError,
+};
 use serde_json::Value;
 
 use crate::openai::NAME;
@@ -27,6 +30,25 @@ pub(super) struct Responses {
     /// Whether this response has asked for a tool at any point, which is what
     /// it stops for. See [`stop`].
     called: bool,
+    /// Whether the exact requested model documents a cache-write usage bucket.
+    cache_write_reporting: bool,
+}
+
+impl Responses {
+    pub(super) fn for_model(model: &str) -> Self {
+        Self {
+            cache_write_reporting: model.starts_with("gpt-5.6-"),
+            ..Self::default()
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn reporting_cache_writes() -> Self {
+        Self {
+            cache_write_reporting: true,
+            ..Self::default()
+        }
+    }
 }
 
 impl Wire for Responses {
@@ -89,8 +111,12 @@ fn deltas(event: &SseEvent, response: &mut Responses) -> Result<Vec<Delta>, Prov
         // The three ways a response ends. `completed` is the only one that is
         // not a failure, and which of the two finishes it is depends on what
         // the response turned out to ask for.
-        "response.completed" => Ok(ended(&payload, stop(response.called))),
-        "response.incomplete" => Ok(ended(&payload, cut(&payload))),
+        "response.completed" => ended(
+            &payload,
+            stop(response.called),
+            response.cache_write_reporting,
+        ),
+        "response.incomplete" => ended(&payload, cut(&payload), response.cache_write_reporting),
         "response.failed" => Err(failed(&payload)),
 
         // A failure outside any response, which arrives flat rather than under
@@ -225,45 +251,70 @@ fn finished(payload: &Value, open: &mut Open) -> Result<Vec<Delta>, ProviderErro
 /// before a ceiling cut the answer short are tokens produced, and a turn that
 /// read the cost off a clean finish alone would report the truncated response
 /// as the one that cost nothing.
-fn ended(payload: &Value, stop: StopReason) -> Vec<Delta> {
-    carried(payload)
+fn ended(
+    payload: &Value,
+    stop: StopReason,
+    cache_write_reporting: bool,
+) -> Result<Vec<Delta>, ProviderError> {
+    Ok(usage(payload, cache_write_reporting)?
         .into_iter()
-        .chain(spent(payload))
         .chain([Delta::Stopped(stop)])
-        .collect()
+        .collect())
 }
 
-/// What the request this response answers carried.
-///
-/// The other half of the same usage object, read for the reason the half beside
-/// it is not enough: what the model produced says what the answer cost, and this
-/// says how much room is left to ask again.
-///
-/// Absent rather than zero where the count is missing, for the reason [`spent`]
-/// gives about its own.
-fn carried(payload: &Value) -> Option<Delta> {
-    let tokens = payload
+/// Normalizes the inclusive Responses usage object once at the wire boundary.
+fn usage(payload: &Value, cache_write_reporting: bool) -> Result<Option<Delta>, ProviderError> {
+    let Some(usage) = payload
         .get("response")
         .and_then(|response| response.get("usage"))
-        .and_then(|usage| usage.get("input_tokens"))
-        .and_then(Value::as_u64)?;
+    else {
+        return Ok(None);
+    };
+    let input_total = number(usage, "input_tokens");
+    let input_details = usage.get("input_tokens_details");
+    let cache_read = input_details.and_then(|details| number(details, "cached_tokens"));
+    let cache_write = input_details.and_then(|details| number(details, "cache_write_tokens"));
+    let output = number(usage, "output_tokens");
+    let reasoning = usage
+        .get("output_tokens_details")
+        .and_then(|details| number(details, "reasoning_tokens"));
+    let reported_total = number(usage, "total_tokens");
+    let mut details = Vec::new();
+    detail(&mut details, "cached_tokens", cache_read)?;
+    detail(&mut details, "cache_write_tokens", cache_write)?;
+    detail(&mut details, "reasoning_tokens", reasoning)?;
 
-    Some(Delta::Carried(Carried::new(tokens)))
+    let input = if cache_write_reporting || cache_write.is_some() {
+        InputTokenUsage::inclusive_read_write(input_total, cache_read, cache_write)
+    } else {
+        InputTokenUsage::inclusive_read(input_total, cache_read)
+    }
+    .map_err(usage_problem)?;
+    let normalized = ProviderUsage::new(input, output, reasoning, reported_total, &details)
+        .map_err(usage_problem)?;
+    Ok(Some(Delta::Usage(normalized)))
 }
 
-/// What the response cost, said once and under the response it belongs to.
-///
-/// Output tokens only. Absent rather than zero where the counts are missing: a
-/// response that produced nothing and a provider that never says are different
-/// facts, and only one of them is worth a number on the screen.
-fn spent(payload: &Value) -> Option<Delta> {
-    let tokens = payload
-        .get("response")
-        .and_then(|response| response.get("usage"))
-        .and_then(|usage| usage.get("output_tokens"))
-        .and_then(Value::as_u64)?;
+fn number(value: &Value, field: &str) -> Option<u64> {
+    value.get(field).and_then(Value::as_u64)
+}
 
-    Some(Delta::Spent(Spend::new(tokens)))
+fn detail(
+    details: &mut Vec<ProviderNumericDetail>,
+    label: &'static str,
+    value: Option<u64>,
+) -> Result<(), ProviderError> {
+    if let Some(value) = value {
+        details.push(ProviderNumericDetail::new(label, value).map_err(usage_problem)?);
+    }
+    Ok(())
+}
+
+fn usage_problem(problem: UsageError) -> ProviderError {
+    ProviderError::Protocol {
+        provider: NAME,
+        problem: format!("invalid usage accounting: {problem}").into(),
+    }
 }
 
 /// Why a response that finished finished.

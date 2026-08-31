@@ -14,11 +14,12 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
-use crucible_core::{Cancel, Credential, CredentialError, Outgoing};
+use crucible_core::{Cancel, Credential, CredentialError, CredentialScopeId, Outgoing};
 use sha2::{Digest as _, Sha256};
 
 use super::{
     LoginAttempt, LoginMethod, LoginSlot, LoginUpdate, OAuthError, SubscriptionLogin, Tokens,
+    credential_scope,
 };
 use crate::{Store, StoredCredentials};
 
@@ -135,19 +136,28 @@ pub struct OpenAiCredential {
     store: Store,
     flow: Flow,
     tokens: Mutex<Tokens>,
+    scope: CredentialScopeId,
+    identity_bound: bool,
 }
 
 impl OpenAiCredential {
     pub(crate) fn new(store: Store, tokens: Tokens, flow: Flow) -> Self {
+        let durable = credential_scope(b"openai-account", tokens.detail(ACCOUNT));
         Self {
             store,
             flow,
             tokens: Mutex::new(tokens),
+            scope: durable.unwrap_or_default(),
+            identity_bound: durable.is_some(),
         }
     }
 }
 
 impl Credential for OpenAiCredential {
+    fn scope(&self) -> CredentialScopeId {
+        self.scope
+    }
+
     fn authorize(&self, request: &mut Outgoing) -> Result<(), CredentialError> {
         let mut tokens = self
             .tokens
@@ -157,7 +167,16 @@ impl Credential for OpenAiCredential {
             *tokens = self
                 .store
                 .refresh_subscription("openai", needs_refresh, |current| {
-                    self.flow.refresh(current)
+                    let refreshed = self.flow.refresh(current)?;
+                    if self.identity_bound
+                        && credential_scope(b"openai-account", refreshed.detail(ACCOUNT))
+                            != Some(self.scope)
+                    {
+                        return Err(OAuthError::Invalid {
+                            step: "refreshed account identity",
+                        });
+                    }
+                    Ok(refreshed)
                 })
                 .map_err(|problem| CredentialError::NotRenewed(problem.to_string().into()))?;
         }

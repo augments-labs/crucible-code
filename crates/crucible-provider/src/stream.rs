@@ -45,9 +45,9 @@ use crate::sse::{Events, Framed, SseEvent};
 /// is open, and one that carries a whole call in a single event has nothing to
 /// remember at all.
 ///
-/// Whatever it remembers starts empty, which is what `Default` says here — a
-/// response begins with no call open and nothing half-read, so the loop builds
-/// its own parser and a caller never passes one in.
+/// Whatever it remembers starts empty, which is what `Default` says here. A
+/// provider may additionally supply request-bound reporting semantics when it
+/// opens the response; no prompt or credential data belongs in that parser.
 pub(crate) trait Wire: Default + Send {
     /// What this provider is called, in the failures this loop reports.
     const PROVIDER: &'static str;
@@ -85,12 +85,22 @@ pub(crate) struct Response<W: Wire> {
 impl<W: Wire> Response<W> {
     /// Reads `body` until it ends or `cancel` is raised.
     pub(crate) fn new(body: Box<dyn Read + Send>, cancel: Cancel, redactions: Redactions) -> Self {
+        Self::with_wire(body, cancel, redactions, W::default())
+    }
+
+    /// Reads one response with request-bound parser semantics.
+    pub(crate) fn with_wire(
+        body: Box<dyn Read + Send>,
+        cancel: Cancel,
+        redactions: Redactions,
+        wire: W,
+    ) -> Self {
         Self {
             events: Events::new(BufReader::new(body)),
             cancel,
             redactions,
             pending: VecDeque::new(),
-            wire: W::default(),
+            wire,
             stopped: false,
             finished: false,
         }

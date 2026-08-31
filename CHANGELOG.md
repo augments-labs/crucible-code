@@ -8,6 +8,20 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Added
+
+- **Prompt caching is enabled by default through each shipped provider's native
+  mechanism.** OpenAI and Kimi receive opaque session-scoped routing keys,
+  Anthropic receives its short-lived automatic cache control, and `/cache`
+  reports the resolved policy, exact capability, wire attempt, provider usage,
+  cost provenance and redacted persistent-resource state.
+
+- **Prompt-cache policy, accounting and optional persistent resources now have
+  provider-neutral contracts.** Configuration can narrow mechanism, retention,
+  isolation and resource authority; usage and pricing preserve unknown values;
+  and explicitly authorized remote resources use bounded, private metadata with
+  deadline-aware reconciliation and cleanup.
+
 ## [0.30.0] - 2026-08-31
 
 ### Added

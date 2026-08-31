@@ -133,7 +133,7 @@ fn changing_provider_reestimates_usage_reported_by_the_old_one() {
         "the exact output correction visibly freed uncompacted context"
     );
 
-    scripted.runner.serve(Box::new(Elsewhere));
+    scripted.runner.serve(Box::new(Elsewhere::new()));
 
     assert_eq!(scripted.runner.left(), Some(99));
     assert_eq!(
@@ -158,7 +158,7 @@ fn the_vendor_a_session_names_is_the_one_it_would_write_to_now() {
 
     assert_eq!(scripted.runner.serving(), "script");
 
-    scripted.runner.serve(Box::new(Elsewhere));
+    scripted.runner.serve(Box::new(Elsewhere::new()));
 
     assert_eq!(scripted.runner.serving(), ELSEWHERE);
 }
@@ -167,7 +167,17 @@ fn the_vendor_a_session_names_is_the_one_it_would_write_to_now() {
 ///
 /// Every other provider here is called the same thing, and one assertion needs
 /// two that can be told apart.
-struct Elsewhere;
+struct Elsewhere {
+    credential_scope: crucible_core::CredentialScopeId,
+}
+
+impl Elsewhere {
+    fn new() -> Self {
+        Self {
+            credential_scope: crucible_core::CredentialScopeId::new(),
+        }
+    }
+}
 
 /// What it calls itself.
 const ELSEWHERE: &str = "elsewhere";
@@ -184,6 +194,26 @@ impl Provider for Elsewhere {
     /// provider has.
     fn spells(&self) -> Modalities {
         Modalities::empty().insert(Modality::Text)
+    }
+
+    fn prompt_cache_capabilities(&self, _model: &str) -> crucible_core::PromptCacheCapabilities {
+        crucible_core::PromptCacheCapabilities::unknown("elsewhere-fixture-v1")
+    }
+
+    fn prompt_cache_route(&self) -> crucible_core::PromptCacheRoute<'_> {
+        crucible_core::PromptCacheRoute {
+            protocol: ELSEWHERE,
+            endpoint: ELSEWHERE,
+            custom_endpoint: true,
+            credential_scope: self.credential_scope,
+            account: None,
+            project: None,
+            request_shape_version: "elsewhere-fixture-v1",
+        }
+    }
+
+    fn prompt_cache_encoding(&self, _request: &Request<'_>) -> crucible_core::PromptCacheEncoding {
+        crucible_core::PromptCacheEncoding::NoControlIntended
     }
 
     fn stream(

@@ -870,6 +870,7 @@ fn policy(settings: &Settings) -> RunPolicy {
         },
         retry: asked.retry,
         tools: asked.tools,
+        prompt_cache: settings.prompt_cache(),
     }
 }
 

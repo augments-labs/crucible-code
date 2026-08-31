@@ -1,10 +1,11 @@
 use crucible_core::{
     Attached, Attachment, Change, Changed, Content, Diff, Effort, Fragment, Line, Modality,
-    ToolArgs, ToolCall, ToolId, ToolOutput, Transcript,
+    PromptCacheMechanism, PromptCacheRetentionClass, ToolArgs, ToolCall, ToolId, ToolOutput,
+    Transcript,
 };
 
 use super::*;
-use crate::fake::{failed, found, picture};
+use crate::fake::{cached, failed, found, observed, picture};
 
 /// What a pointer finds when there is nothing there.
 const NOTHING: Value = Value::Null;
@@ -18,6 +19,7 @@ fn request(transcript: Transcript) -> Request<'static> {
         max_tokens: 1024,
         system: None,
         effort: None,
+        prompt_cache: None,
     }
 }
 
@@ -88,6 +90,24 @@ fn a_request_streams_and_names_its_model() {
         at(&body, "/messages/0"),
         &json!({"role": "user", "content": "hello"})
     );
+}
+
+#[test]
+fn automatic_caching_uses_the_prepared_routing_key_while_observe_only_preserves_bytes() {
+    let plain = request(said("hello"));
+    let automatic = cached(
+        request(said("hello")),
+        PromptCacheMechanism::AutomaticPrefix,
+        PromptCacheRetentionClass::ProviderDefault,
+        true,
+    );
+    let observed = observed(request(said("hello")));
+
+    assert_eq!(
+        at(&build(&automatic), "/prompt_cache_key"),
+        &json!("44".repeat(32))
+    );
+    assert_eq!(serialize(&observed), serialize(&plain));
 }
 
 #[test]

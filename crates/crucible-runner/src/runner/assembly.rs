@@ -50,6 +50,11 @@ impl ContextInputs {
         self
     }
 
+    /// Workspace identity input, consumed only by local scope hashing.
+    pub(super) fn workspace(&self) -> &std::path::Path {
+        &self.workspace
+    }
+
     #[cfg(test)]
     pub(super) fn dated(mut self, date: &str) -> Self {
         self.date = Some(date.into());

@@ -271,6 +271,13 @@ pub struct Request<'a> {
     /// transcript appears here exactly once — the ones whose bytes fit, and the
     /// ones that stand in their own place carrying a line instead.
     pub attached: &'a [Attached<'a>],
+    /// One provider-neutral cache plan for this attempt.
+    ///
+    /// `None` is reserved for compatibility fixtures and non-conversation
+    /// internal requests. Shipped turn requests carry `Some` even under
+    /// observe-only policy, so reported automatic provider usage keeps its
+    /// policy and attempt identity.
+    pub prompt_cache: Option<&'a crate::PromptCacheRequest<'a>>,
 }
 
 /// One attachment as a request carries it.
@@ -334,6 +341,7 @@ impl fmt::Debug for Request<'_> {
             // path, and it names one on purpose, for a model that can act on
             // it. A backtrace is not that reader.
             .field("attached", &"[redacted]")
+            .field("prompt_cache", &self.prompt_cache)
             .finish()
     }
 }
@@ -546,6 +554,12 @@ pub enum Delta {
     },
     /// More of the current tool call's argument JSON.
     ToolArgs(Box<str>),
+    /// Normalized partial or complete usage for this provider attempt.
+    ///
+    /// Shipped adapters use this variant. The legacy output/input level
+    /// variants remain temporarily for compatibility with synthetic provider
+    /// fixtures and are normalized by the runner at the same boundary.
+    Usage(crate::ProviderUsage),
     /// What this response has cost so far, replacing whatever it last said.
     Spent(Spend),
     /// What the request this response answers carried, replacing whatever it
@@ -574,6 +588,7 @@ impl fmt::Debug for Delta {
                 .field("name", &"[redacted]")
                 .finish(),
             Self::ToolArgs(_) => f.debug_tuple("ToolArgs").field(&"[redacted]").finish(),
+            Self::Usage(usage) => f.debug_tuple("Usage").field(usage).finish(),
             Self::Spent(spend) => f.debug_tuple("Spent").field(spend).finish(),
             Self::Carried(carried) => f.debug_tuple("Carried").field(carried).finish(),
             Self::Stopped(stop) => f.debug_tuple("Stopped").field(stop).finish(),
@@ -604,6 +619,18 @@ pub trait DeltaStream: Send {
 }
 
 /// One LLM backend adapter.
+///
+/// Prompt-cache adapter conformance is deliberately protocol/model exact. A
+/// new implementation must prove all applicable rows before advertising them:
+///
+/// - unknown custom/proxy routes emit no speculative controls;
+/// - verified unsupported routes fail required use without inventing a field;
+/// - provider-managed and automatic prefixes preserve logical request bytes;
+/// - explicit breakpoints validate content, placement, count, threshold, and TTL;
+/// - persistent content implements the separate cancellable lifecycle and store binding;
+/// - usage-only adapters report provider facts without claiming request control;
+/// - inclusive and disjoint usage normalize once and retain unknown categories;
+/// - routing proxies bind the resolved upstream route or remain unknown.
 pub trait Provider: Send + Sync {
     /// The provider's name, for errors and for the status line.
     fn name(&self) -> &'static str;
@@ -624,6 +651,62 @@ pub trait Provider: Send + Sync {
     /// same failure as guessing; adding one is already an edit to several
     /// places at once, and this is one of them.
     fn spells(&self) -> Modalities;
+
+    /// Exact effective prompt-cache capabilities for this model and route.
+    ///
+    /// The adapter intersects what it can encode/parse today with a reviewed
+    /// endpoint/model record. A custom compatible endpoint is `Unknown` until
+    /// explicitly verified; an empty mechanism list is never support.
+    fn prompt_cache_capabilities(&self, model: &str) -> crate::PromptCacheCapabilities;
+
+    /// Exact reviewed token pricing for this route/model/retention/input band.
+    ///
+    /// `None` is the fail-closed answer for custom endpoints, subscription or
+    /// quota products without a published per-token price, unknown models,
+    /// missing input totals, and dates outside compiled provenance. Missing
+    /// pricing is never interpreted as free usage.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when equally authoritative records are ambiguous or
+    /// their exact pricing metadata cannot be evaluated safely.
+    // Model, revision, quantity, retention, and date are independent lookup
+    // dimensions on this provider-owned query boundary.
+    #[allow(clippy::too_many_arguments)]
+    fn prompt_cache_pricing(
+        &self,
+        _model: &str,
+        _revision: Option<&str>,
+        _input_tokens: Option<u64>,
+        _retention: crate::PromptCacheRetentionClass,
+        _at: crate::PricingDate,
+    ) -> Result<Option<crate::PromptCachePricing>, crate::PricingError> {
+        Ok(None)
+    }
+
+    /// Stateful lifecycle for separately managed cached-content resources.
+    ///
+    /// This capability is independent of automatic prefix caching. `None` is
+    /// the honest answer for adapters, models, and routes that cannot create,
+    /// resolve, renew, delete, reconcile, and inspect one exact resource.
+    fn prompt_cache_resources(&self) -> Option<&dyn crate::PromptCacheResourceLifecycle> {
+        None
+    }
+
+    /// Non-secret route facts used to derive a scoped opaque cache identity.
+    ///
+    /// Stateful response continuation is declared separately inside the
+    /// capability record and never satisfies prompt-cache support.
+    fn prompt_cache_route(&self) -> crate::PromptCacheRoute<'_>;
+
+    /// Cache-specific metadata this adapter will actually encode.
+    ///
+    /// This is evaluated against the same request the adapter serializes. It
+    /// must describe concrete wire lowering rather than repeat capability or
+    /// eligibility claims: a selected provider-managed cache can correctly
+    /// report `NoExtraControlEncoded`, while observe-only reports
+    /// `NoControlIntended`.
+    fn prompt_cache_encoding(&self, request: &Request<'_>) -> crate::PromptCacheEncoding;
 
     /// Starts a request and returns its stream of deltas.
     ///

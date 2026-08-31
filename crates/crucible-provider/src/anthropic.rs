@@ -17,8 +17,12 @@ mod stream;
 mod wire;
 
 use crucible_core::{
-    Cancel, Credential, DeltaStream, Modalities, Modality, Outgoing, Provider, ProviderError,
-    Request,
+    Cancel, Credential, CredentialScopeId, DeltaStream, Modalities, Modality, Outgoing, PriceRate,
+    PricingCurrency, PricingDate, PricingError, PricingUnit, PromptCacheBoundary,
+    PromptCacheCapabilities, PromptCacheContent, PromptCacheMechanismCapability,
+    PromptCachePricing, PromptCacheProvenance, PromptCacheRates, PromptCacheRetentionClass,
+    PromptCacheRoute, PromptCacheUsageReporting, Provider, ProviderError, Request,
+    StatefulTransportCapability, UsageRate,
 };
 
 use crate::anthropic::stream::Stream;
@@ -36,12 +40,46 @@ const VENDOR: Endpoint = Endpoint::fixed("https://api.anthropic.com/v1/messages"
 /// a deliberate change here rather than something that drifts.
 const VERSION: &str = "2023-06-01";
 
+const ANTHROPIC_CACHE_CONTENT: &[PromptCacheContent] = &[
+    PromptCacheContent::Text,
+    PromptCacheContent::Tools,
+    PromptCacheContent::Images,
+    PromptCacheContent::Documents,
+];
+const ANTHROPIC_CACHE_BOUNDARIES: &[PromptCacheBoundary] = &[
+    PromptCacheBoundary::AfterSystem,
+    PromptCacheBoundary::AfterTools,
+    PromptCacheBoundary::AfterMessage,
+];
+const ANTHROPIC_RETENTIONS: &[PromptCacheRetentionClass] = &[
+    PromptCacheRetentionClass::ProviderDefault,
+    PromptCacheRetentionClass::Ephemeral,
+    PromptCacheRetentionClass::Extended,
+];
+
+const USD: PricingCurrency = PricingCurrency::new("USD");
+const PRICING_REVIEWED: PricingDate = PricingDate::new(2026, 8, 31);
+const PRICING_SOURCE: &str = "https://platform.claude.com/docs/en/about-claude/pricing";
+
+const fn anthropic_rates(input: u64, read: u64, write: u64, output: u64) -> PromptCacheRates {
+    PromptCacheRates {
+        uncached_input: UsageRate::priced(PriceRate::per_million(input)),
+        cache_read: UsageRate::priced(PriceRate::per_million(read)),
+        cache_write_or_creation: UsageRate::priced(PriceRate::per_million(write)),
+        output: UsageRate::priced(PriceRate::per_million(output)),
+        reasoning: UsageRate::NotApplicable,
+        storage: UsageRate::NotApplicable,
+        other: UsageRate::NotApplicable,
+    }
+}
+
 /// Anthropic's Messages API.
 #[derive(Debug)]
 pub struct Anthropic {
     credential: Box<dyn Credential>,
     transport: Box<dyn Transport>,
     endpoint: Endpoint,
+    credential_scope: CredentialScopeId,
 }
 
 impl Anthropic {
@@ -63,10 +101,12 @@ impl Anthropic {
         credential: Box<dyn Credential>,
         transport: Box<dyn Transport>,
     ) -> Self {
+        let credential_scope = credential.scope();
         Self {
             credential,
             transport,
             endpoint,
+            credential_scope,
         }
     }
 
@@ -103,6 +143,147 @@ impl Provider for Anthropic {
             .insert(Modality::Text)
             .insert(Modality::Image)
             .insert(Modality::Pdf)
+    }
+
+    fn prompt_cache_capabilities(&self, model: &str) -> PromptCacheCapabilities {
+        if self.endpoint != VENDOR {
+            return PromptCacheCapabilities::unknown("custom endpoint");
+        }
+        let (minimum, revision) = match model {
+            "claude-fable-5" => (512, "claude-fable-5"),
+            "claude-opus-5" => (512, "claude-opus-5"),
+            "claude-sonnet-5" => (1_024, "claude-sonnet-5"),
+            "claude-haiku-4-5" => (4_096, "claude-haiku-4-5-20251001"),
+            _ => return PromptCacheCapabilities::unknown("unreviewed model"),
+        };
+        let automatic = PromptCacheMechanismCapability::automatic_prefix(
+            minimum,
+            false,
+            true,
+            ANTHROPIC_CACHE_CONTENT,
+        )
+        .with_retentions(ANTHROPIC_RETENTIONS);
+        let explicit = PromptCacheMechanismCapability::explicit_breakpoints(
+            minimum,
+            4,
+            ANTHROPIC_CACHE_BOUNDARIES,
+            ANTHROPIC_CACHE_CONTENT,
+        )
+        .with_retentions(ANTHROPIC_RETENTIONS);
+        PromptCacheCapabilities::supported(
+            "anthropic-prompt-cache-2026-08-31",
+            Some(revision),
+            PromptCacheProvenance::new(
+                "https://platform.claude.com/docs/en/build-with-claude/prompt-caching",
+                "2026-08-31",
+                "anthropic-prompt-cache-2026-08-31",
+            ),
+            StatefulTransportCapability::Unsupported,
+            &[automatic, explicit],
+            PromptCacheUsageReporting::ReadAndWriteTokens,
+        )
+    }
+
+    fn prompt_cache_pricing(
+        &self,
+        model: &str,
+        revision: Option<&str>,
+        input_tokens: Option<u64>,
+        retention: PromptCacheRetentionClass,
+        at: PricingDate,
+    ) -> Result<Option<PromptCachePricing>, PricingError> {
+        if self.endpoint != VENDOR || at < PRICING_REVIEWED || input_tokens.is_none() {
+            return Ok(None);
+        }
+        if !matches!(
+            retention,
+            PromptCacheRetentionClass::ProviderDefault
+                | PromptCacheRetentionClass::Ephemeral
+                | PromptCacheRetentionClass::Extended
+        ) {
+            return Ok(None);
+        }
+        let (model, resolved_revision, input, read, short_write, extended_write, output) =
+            match (model, revision) {
+                ("claude-fable-5", Some("claude-fable-5")) => (
+                    "claude-fable-5",
+                    "claude-fable-5",
+                    10_000_000_000,
+                    1_000_000_000,
+                    12_500_000_000,
+                    20_000_000_000,
+                    50_000_000_000,
+                ),
+                ("claude-opus-5", Some("claude-opus-5")) => (
+                    "claude-opus-5",
+                    "claude-opus-5",
+                    5_000_000_000,
+                    500_000_000,
+                    6_250_000_000,
+                    10_000_000_000,
+                    25_000_000_000,
+                ),
+                ("claude-sonnet-5", Some("claude-sonnet-5")) => (
+                    "claude-sonnet-5",
+                    "claude-sonnet-5",
+                    2_000_000_000,
+                    200_000_000,
+                    2_500_000_000,
+                    4_000_000_000,
+                    10_000_000_000,
+                ),
+                ("claude-haiku-4-5", Some("claude-haiku-4-5-20251001")) => (
+                    "claude-haiku-4-5",
+                    "claude-haiku-4-5-20251001",
+                    1_000_000_000,
+                    100_000_000,
+                    1_250_000_000,
+                    2_000_000_000,
+                    5_000_000_000,
+                ),
+                _ => return Ok(None),
+            };
+        let extended = retention == PromptCacheRetentionClass::Extended;
+        let write = if extended {
+            extended_write
+        } else {
+            short_write
+        };
+        Ok(Some(
+            PromptCachePricing::new(
+                "anthropic-messages",
+                "https://api.anthropic.com/v1/messages",
+                model,
+                Some(resolved_revision),
+                PRICING_REVIEWED,
+                if extended {
+                    "anthropic-direct-1h-2026-08-31"
+                } else {
+                    "anthropic-direct-5m-2026-08-31"
+                },
+                PRICING_SOURCE,
+                USD,
+                PricingUnit::MillionTokens,
+                anthropic_rates(input, read, write, output),
+            )
+            .with_retention(retention),
+        ))
+    }
+
+    fn prompt_cache_route(&self) -> PromptCacheRoute<'_> {
+        PromptCacheRoute {
+            protocol: "anthropic-messages",
+            endpoint: self.endpoint.as_str(),
+            custom_endpoint: self.endpoint != VENDOR,
+            credential_scope: self.credential_scope,
+            account: None,
+            project: None,
+            request_shape_version: "anthropic-messages-2023-06-01-v1",
+        }
+    }
+
+    fn prompt_cache_encoding(&self, request: &Request<'_>) -> crucible_core::PromptCacheEncoding {
+        body::prompt_cache_encoding(request)
     }
 
     fn stream(
@@ -145,10 +326,14 @@ impl Provider for Anthropic {
 
 #[cfg(test)]
 mod tests {
-    use crucible_core::{ApiKey, Delta, Header, HeaderKey, Message, Spend, StopReason, Transcript};
+    use crucible_core::{
+        ApiKey, Delta, Header, HeaderKey, Message, PriceRate, PricingDate,
+        PromptCacheRetentionClass, StopReason, Transcript, UsageRate,
+    };
 
     use super::stream::tests::{ANSWER, deltas};
     use super::*;
+    use crate::fake::output_usage;
     use crate::transport::{Replay, Sent};
 
     /// The exact key that must never appear anywhere but a header value.
@@ -166,6 +351,85 @@ mod tests {
             ),
             replay,
         )
+    }
+
+    #[test]
+    fn exact_model_and_retention_select_current_first_party_prices() {
+        let (provider, _) = provider(200, ANSWER);
+        let five_minutes = provider
+            .prompt_cache_pricing(
+                "claude-fable-5",
+                Some("claude-fable-5"),
+                Some(1_000),
+                PromptCacheRetentionClass::ProviderDefault,
+                PricingDate::new(2026, 8, 31),
+            )
+            .unwrap()
+            .unwrap();
+        let one_hour = provider
+            .prompt_cache_pricing(
+                "claude-fable-5",
+                Some("claude-fable-5"),
+                Some(1_000),
+                PromptCacheRetentionClass::Extended,
+                PricingDate::new(2026, 8, 31),
+            )
+            .unwrap()
+            .unwrap();
+        let sonnet = provider
+            .prompt_cache_pricing(
+                "claude-sonnet-5",
+                Some("claude-sonnet-5"),
+                Some(1_000),
+                PromptCacheRetentionClass::ProviderDefault,
+                PricingDate::new(2026, 9, 1),
+            )
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(
+            five_minutes.rates().cache_write_or_creation,
+            UsageRate::priced(PriceRate::per_million(12_500_000_000))
+        );
+        assert_eq!(
+            one_hour.rates().cache_write_or_creation,
+            UsageRate::priced(PriceRate::per_million(20_000_000_000))
+        );
+        assert_eq!(
+            sonnet.rates().uncached_input,
+            UsageRate::priced(PriceRate::per_million(2_000_000_000))
+        );
+    }
+
+    #[test]
+    fn reviewed_models_default_to_native_automatic_caching_and_custom_routes_are_unknown() {
+        let (provider, _) = provider(200, ANSWER);
+        let reviewed = provider.prompt_cache_capabilities("claude-fable-5");
+
+        assert_eq!(
+            reviewed.support(),
+            crucible_core::PromptCacheSupport::Supported
+        );
+        assert_eq!(
+            reviewed
+                .mechanisms()
+                .first()
+                .map(crucible_core::PromptCacheMechanismCapability::mechanism),
+            Some(crucible_core::PromptCacheMechanism::AutomaticPrefix)
+        );
+
+        let custom = Anthropic::at(
+            Endpoint::parse("https://proxy.invalid/v1/messages").unwrap(),
+            Box::new(HeaderKey::new(
+                ApiKey::new(SECRET),
+                Header::bare("x-api-key"),
+            )),
+            Box::new(Replay::new(200, ANSWER)),
+        );
+        assert_eq!(
+            custom.prompt_cache_capabilities("claude-fable-5").support(),
+            crucible_core::PromptCacheSupport::Unknown
+        );
     }
 
     #[test]
@@ -201,6 +465,7 @@ mod tests {
             max_tokens: 1024,
             system: None,
             effort: None,
+            prompt_cache: None,
         }
     }
 
@@ -258,7 +523,7 @@ mod tests {
             vec![
                 Delta::Text("Hello".into()),
                 Delta::Text(", world".into()),
-                Delta::Spent(Spend::new(4)),
+                output_usage(4),
                 Delta::Stopped(StopReason::Yielded),
             ]
         );

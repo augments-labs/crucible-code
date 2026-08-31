@@ -9,9 +9,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    Approved, Cancel, Command, Delta, DeltaStream, DescribeTool, Message, Modalities, Modality,
-    Provider, ProviderError, Request, Sensitivity, Summary, Target, Tool, ToolArgs, ToolContext,
-    ToolError, ToolOutput,
+    Approved, Cancel, Command, CredentialScopeId, Delta, DeltaStream, DescribeTool, Message,
+    Modalities, Modality, PromptCacheCapabilities, PromptCacheEncoding, PromptCacheRoute, Provider,
+    ProviderError, Request, Sensitivity, Summary, Target, Tool, ToolArgs, ToolContext, ToolError,
+    ToolOutput,
 };
 
 /// How many requests a script has been given, readable after it has moved into
@@ -28,6 +29,7 @@ pub(crate) type Under = Arc<Mutex<Vec<String>>>;
 /// Answers each request with the next batch of deltas it was given.
 #[derive(Debug)]
 pub(crate) struct Script {
+    credential_scope: CredentialScopeId,
     rounds: Mutex<std::vec::IntoIter<Vec<Delta>>>,
     asked: Asked,
     under: Under,
@@ -39,6 +41,7 @@ pub(crate) struct Script {
 impl Script {
     pub(crate) fn new(rounds: Vec<Vec<Delta>>) -> Self {
         Self {
+            credential_scope: CredentialScopeId::new(),
             rounds: Mutex::new(rounds.into_iter()),
             asked: Asked::default(),
             under: Under::default(),
@@ -79,6 +82,26 @@ impl Provider for Script {
     /// provider has.
     fn spells(&self) -> Modalities {
         Modalities::empty().insert(Modality::Text)
+    }
+
+    fn prompt_cache_capabilities(&self, _model: &str) -> PromptCacheCapabilities {
+        PromptCacheCapabilities::unknown("cli-script-fixture-v1")
+    }
+
+    fn prompt_cache_route(&self) -> PromptCacheRoute<'_> {
+        PromptCacheRoute {
+            protocol: "script",
+            endpoint: "script",
+            custom_endpoint: true,
+            credential_scope: self.credential_scope,
+            account: None,
+            project: None,
+            request_shape_version: "cli-script-fixture-v1",
+        }
+    }
+
+    fn prompt_cache_encoding(&self, _request: &Request<'_>) -> PromptCacheEncoding {
+        PromptCacheEncoding::NoControlIntended
     }
 
     fn stream(
@@ -142,6 +165,7 @@ impl DeltaStream for Reading {
 #[derive(Debug)]
 pub(crate) struct Stalling {
     escaped: Arc<AtomicBool>,
+    credential_scope: CredentialScopeId,
 }
 
 impl Stalling {
@@ -151,6 +175,7 @@ impl Stalling {
         (
             Self {
                 escaped: Arc::clone(&escaped),
+                credential_scope: CredentialScopeId::new(),
             },
             escaped,
         )
@@ -169,6 +194,26 @@ impl Provider for Stalling {
     /// provider has.
     fn spells(&self) -> Modalities {
         Modalities::empty().insert(Modality::Text)
+    }
+
+    fn prompt_cache_capabilities(&self, _model: &str) -> PromptCacheCapabilities {
+        PromptCacheCapabilities::unknown("stalling-fixture-v1")
+    }
+
+    fn prompt_cache_route(&self) -> PromptCacheRoute<'_> {
+        PromptCacheRoute {
+            protocol: "stalling",
+            endpoint: "stalling",
+            custom_endpoint: true,
+            credential_scope: self.credential_scope,
+            account: None,
+            project: None,
+            request_shape_version: "stalling-fixture-v1",
+        }
+    }
+
+    fn prompt_cache_encoding(&self, _request: &Request<'_>) -> PromptCacheEncoding {
+        PromptCacheEncoding::NoControlIntended
     }
 
     fn stream(

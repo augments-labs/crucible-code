@@ -559,13 +559,19 @@ fn taken<T: Terminal>(
     terms: &Terms,
 ) -> Result<bool, Fatal> {
     let provider = selected.name;
-    if terms.provider.get() != Some(provider) {
+    let provider_changed = terms.provider.get() != Some(provider);
+    if provider_changed {
         let set = match (terms.serving)(selected, &terms.logins.read()) {
             Ok(set) => set,
             Err(problem) => return refused(renderer, &problem).map(|()| false),
         };
+        if !super::cache::retire(renderer, runner)? {
+            return Ok(false);
+        }
         runner.serve(set.provider);
         terms.provider.set(Some(provider));
+    } else if runner.model() != name && !super::cache::retire(renderer, runner)? {
+        return Ok(false);
     }
     runner.ask(
         name,

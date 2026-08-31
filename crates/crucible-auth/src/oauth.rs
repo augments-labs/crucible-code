@@ -21,12 +21,32 @@ use std::sync::mpsc::{self, RecvTimeoutError, TrySendError};
 use std::thread;
 use std::time::Duration;
 
-use crucible_core::{Cancel, Credential};
+use crucible_core::{Cancel, Credential, CredentialScopeId};
+use sha2::{Digest as _, Sha256};
 
 use crate::{AuthError, Store, StoredCredentials};
 
 pub use kimi::{KimiCredential, KimiOAuth};
 pub use openai::{OpenAiCredential, OpenAiOAuth};
+
+fn credential_scope(domain: &[u8], identity: Option<&str>) -> Option<CredentialScopeId> {
+    let identity = identity.filter(|value| !value.is_empty())?;
+    let mut digest = Sha256::new();
+    digest.update(b"crucible.oauth-credential-scope.v1");
+    digest.update(
+        u64::try_from(domain.len())
+            .unwrap_or(u64::MAX)
+            .to_be_bytes(),
+    );
+    digest.update(domain);
+    digest.update(
+        u64::try_from(identity.len())
+            .unwrap_or(u64::MAX)
+            .to_be_bytes(),
+    );
+    digest.update(identity.as_bytes());
+    Some(CredentialScopeId::from_digest(digest.finalize().into()))
+}
 
 /// One provider-owned way to authorize an account.
 ///

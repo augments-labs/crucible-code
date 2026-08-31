@@ -25,14 +25,17 @@
 //! session's memory is not one, and standing it in place of the messages it
 //! was meant to replace would lose the rest of them for good.
 
+use crucible_core::{
+    Compacted, Compacting, ContextSection, Delta, Event, Message, PermissionsSection,
+    PromptCacheAttempt, PromptCacheEncoding, PromptCacheFact, PromptCacheOutcome,
+    PromptCachePlanned, PromptCachePreparationError, PromptCacheRequestDisposition,
+    PromptCacheRequestFact, PromptCacheUsageFact, ProviderError, Request, Room, Spend, StopReason,
+    TOOL_RESULT_BYTES, ToolId, ToolOutput, TurnError, UsageCost,
+};
 use std::fmt::Write as _;
 
-use crucible_core::{
-    Compacted, Compacting, Delta, Message, Request, Room, Spend, StopReason, TOOL_RESULT_BYTES,
-    ToolId, ToolOutput, TurnError,
-};
-
 use crate::context::RunContext;
+use crate::prompt_cache::{self, ScopeInputs};
 
 use super::{Load, Runner};
 
@@ -51,6 +54,14 @@ const PROTECT: u64 = TOOL_RESULT_BYTES as u64;
 /// Pruning is for the sessions where tool output is the bulk; where it is not,
 /// the recap alone is the answer.
 const MINIMUM: u64 = 30_000;
+
+struct RecapReading<'a> {
+    events: crucible_core::Reporter<'a>,
+    touched: &'a (Vec<String>, Vec<String>),
+    spent: &'a mut Spend,
+    cache: super::CacheObservation,
+    why: Compacting,
+}
 
 /// What the model is asked for, in place of the next turn.
 ///
@@ -444,103 +455,300 @@ impl Runner {
             return Ok(Recap::Incomplete);
         }
 
-        let asked = self.provider.stream(
-            Request {
-                model: &self.spec.model.name,
-                transcript: &self.transcript,
-                tools: &[],
-                max_tokens: room,
-                system: None,
-                effort: self.spec.model.effort,
-                // Nothing, deliberately. This request exists to turn a
-                // transcript into a recap, and a recap is text; re-sending
-                // megabytes of pictures to write one would spend the whole
-                // ceiling on the code path that fires when the window is
-                // already full. What the recap can say about a file is what
-                // the prompt naming it said.
-                attached: &[],
+        let pricing_date = super::pricing_today();
+        let capabilities = self
+            .provider
+            .prompt_cache_capabilities(&self.spec.model.name);
+        let model_revision = capabilities.model_revision();
+        let route = self.provider.prompt_cache_route();
+        let authority = PermissionsSection::new(&self.permission)
+            .snapshot()
+            .to_string();
+        let workspace = self.context.workspace().to_string_lossy();
+        let user = self
+            .session
+            .path()
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new(""))
+            .to_string_lossy();
+        let request = Request {
+            model: &self.spec.model.name,
+            transcript: &self.transcript,
+            tools: &[],
+            max_tokens: room,
+            system: None,
+            effort: self.spec.model.effort,
+            // Nothing, deliberately. This request exists to turn a
+            // transcript into a recap, and a recap is text; re-sending
+            // megabytes of pictures to write one would spend the whole
+            // ceiling on the code path that fires when the window is
+            // already full. What the recap can say about a file is what
+            // the prompt naming it said.
+            attached: &[],
+            prompt_cache: None,
+        };
+        let scope = ScopeInputs {
+            route,
+            policy: run.policy().prompt_cache,
+            model: &self.spec.model.name,
+            model_revision,
+            max_tokens: room,
+            effort: self.spec.model.effort,
+            run: run.run(),
+            session: self.session.id().map(crucible_core::SessionId::as_str),
+            workspace: workspace.as_bytes(),
+            user: user.as_bytes(),
+            trust: b"local-workspace-authority-v1",
+            authority: authority.as_bytes(),
+            // The standalone recap deliberately sends no system prompt or
+            // tools, so its cache identity must bind those exact absences.
+            instructions: b"",
+            tool_generation: "compaction-no-tools-v1",
+        };
+        let mut resource_facts = Vec::new();
+        let prepared = match (
+            self.provider.prompt_cache_resources(),
+            self.prompt_cache_store.as_deref_mut(),
+        ) {
+            (Some(lifecycle), Some(store)) => prompt_cache::prepare_with_resource_facts(
+                &request,
+                capabilities,
+                &scope,
+                prompt_cache::ResourceInputs {
+                    store,
+                    lifecycle,
+                    cancel,
+                    now: super::unix_now(),
+                    deadline: std::time::Instant::now() + super::PROMPT_CACHE_RESOURCE_DEADLINE,
+                },
+                &mut resource_facts,
+            ),
+            _ => prompt_cache::prepare(&request, capabilities, &scope),
+        };
+        for fact in resource_facts {
+            events.post(Event::PromptCache {
+                fact: PromptCacheFact::ResourceChanged(fact),
+            });
+        }
+        let prepared = match prepared {
+            Ok(prepared) => prepared,
+            Err(problem) => {
+                self.transcript.pop();
+                return Err(problem);
+            }
+        };
+        let mut cache = prepared.request();
+        self.prompt_cache_attempt = Some(PromptCacheAttempt {
+            id: cache.attempt,
+            capabilities: cache.capabilities.clone(),
+            policy: cache.policy,
+            selection: cache.selection,
+            encoding: PromptCacheEncoding::NoControlIntended,
+            disposition: PromptCacheRequestDisposition::NotSent,
+            outcome: PromptCacheOutcome::Unreported,
+            usage: None,
+            cost: UsageCost::UNKNOWN,
+        });
+        events.post(Event::PromptCache {
+            fact: PromptCacheFact::Planned(Box::new(PromptCachePlanned::from_request(&cache))),
+        });
+        if let Some(resource) = prepared.resource.as_ref() {
+            events.post(Event::PromptCache {
+                fact: PromptCacheFact::ResourceChanged(crucible_core::PromptCacheResourceFact {
+                    attempt: Some(cache.attempt),
+                    resource: resource.id().clone(),
+                    operation: resource.pending(),
+                    state: resource.state(),
+                    expires_at: resource.expires_at(),
+                    owner: resource.binding().owner(),
+                }),
+            });
+        }
+        let mut encoding = self.provider.prompt_cache_encoding(&Request {
+            prompt_cache: Some(&cache),
+            ..request
+        });
+        if let Some(attempt) = self.prompt_cache_attempt.as_mut() {
+            attempt.encoding = encoding;
+        }
+        if let PromptCacheEncoding::Failed(reason) = encoding {
+            events.post(Event::PromptCache {
+                fact: PromptCacheFact::RequestEncoded(PromptCacheRequestFact {
+                    attempt: cache.attempt,
+                    encoding,
+                    disposition: PromptCacheRequestDisposition::NotSent,
+                }),
+            });
+            let Some(fallback) = prepared.fallback_request(reason) else {
+                self.transcript.pop();
+                return Err(PromptCachePreparationError::Encoding(reason).into());
+            };
+            cache = fallback;
+            events.post(Event::PromptCache {
+                fact: PromptCacheFact::Planned(Box::new(PromptCachePlanned::from_request(&cache))),
+            });
+            encoding = self.provider.prompt_cache_encoding(&Request {
+                prompt_cache: Some(&cache),
+                ..request
+            });
+            if let Some(attempt) = self.prompt_cache_attempt.as_mut() {
+                attempt.selection = cache.selection;
+                attempt.encoding = encoding;
+            }
+            if let PromptCacheEncoding::Failed(reason) = encoding {
+                self.transcript.pop();
+                return Err(PromptCachePreparationError::Encoding(reason).into());
+            }
+        }
+        let request = Request {
+            prompt_cache: Some(&cache),
+            ..request
+        };
+        let asked = self.provider.stream(request, cancel);
+        let disposition = super::request_disposition(&asked);
+        if let Some(attempt) = self.prompt_cache_attempt.as_mut() {
+            attempt.disposition = disposition;
+        }
+        events.post(Event::PromptCache {
+            fact: PromptCacheFact::RequestEncoded(PromptCacheRequestFact {
+                attempt: cache.attempt,
+                encoding,
+                disposition,
+            }),
+        });
+        let cache = super::CacheObservation {
+            attempt: cache.attempt,
+            reporting: cache.capabilities.usage(),
+            model_revision,
+            retention: cache
+                .selection
+                .selected()
+                .map_or(cache.policy.retention().class(), |selected| {
+                    selected.retention()
+                }),
+            pricing_date,
+        };
+        let said = self.read_recap(
+            asked,
+            RecapReading {
+                events,
+                touched,
+                spent,
+                cache,
+                why,
             },
-            cancel,
         );
 
-        // Counted from the text rather than from what the provider says it has
-        // produced: one of them reports that only in its last chunk, so a bar
-        // following it would sit at nothing for the whole request and then be
-        // over — which is what a reader watching it called broken.
-        let said = asked.and_then(|mut stream| {
-            let mut said = String::new();
-            let mut part = 0;
-            let mut stopped = None;
+        self.transcript.pop();
+        said
+    }
 
-            // What the turn had spent before this request opened. A provider's
-            // readings are this response's total so far, so each lands on this
-            // fixed figure rather than on the reading before it — the same
-            // arithmetic every other response of the turn is counted by.
-            let before = *spent;
+    /// Reads one standalone recap response while preserving attempt accounting.
+    fn read_recap(
+        &mut self,
+        asked: Result<Box<dyn crucible_core::DeltaStream>, ProviderError>,
+        reading: RecapReading<'_>,
+    ) -> Result<Recap, TurnError> {
+        let RecapReading {
+            events,
+            touched,
+            spent,
+            cache,
+            why,
+        } = reading;
+        let mut stream = asked?;
+        let mut said = String::new();
+        let mut part = 0;
+        let mut stopped = None;
+        let before = *spent;
 
-            while let Some(delta) = stream.next() {
-                match delta {
-                    Ok(Delta::Text(text)) => {
-                        said.push_str(&text);
-                        if said.len() > MAX_RECAP_TEXT {
-                            return Ok(Recap::Incomplete);
-                        }
-
-                        // Posted only when the number it would draw has moved,
-                        // which for a row redrawn on a beat is the difference
-                        // between reporting a hundred times and a hundred
-                        // thousand.
-                        let now = reached(said.len() as u64);
-                        if now != part {
-                            part = now;
-                            events.post(crucible_core::Event::Compacting { why, part });
-                        }
+        while let Some(delta) = stream.next() {
+            match delta? {
+                Delta::Text(text) => {
+                    said.push_str(&text);
+                    if said.len() > MAX_RECAP_TEXT {
+                        return Ok(Recap::Incomplete);
                     }
-                    // The recap is a response of the turn like any other, and
-                    // what it produces counts: a reading that skipped it would
-                    // hold the ceiling and the row both under what the turn
-                    // actually ran to.
-                    Ok(Delta::Spent(reading)) => {
-                        *spent = before.and(reading);
+                    let now = reached(said.len() as u64);
+                    if now != part {
+                        part = now;
+                        events.post(crucible_core::Event::Compacting { why, part });
+                    }
+                }
+                Delta::Spent(reported) => {
+                    *spent = before.and(reported);
+                    events.post(crucible_core::Event::Spent { spend: *spent });
+                }
+                Delta::Usage(usage) => {
+                    let usage = super::merge_usage(
+                        self.prompt_cache_attempt
+                            .as_ref()
+                            .filter(|attempt| attempt.id == cache.attempt)
+                            .and_then(|attempt| attempt.usage.as_ref()),
+                        usage,
+                        self.provider.name(),
+                    )?;
+                    if let Some(tokens) = usage.output {
+                        *spent = before.and(crucible_core::Spend::new(tokens));
                         events.post(crucible_core::Event::Spent { spend: *spent });
                     }
-                    // No tools are advertised, so no call can arrive; and what
-                    // this request carried measures a transcript that is about
-                    // to be replaced, so there is nothing standing for the
-                    // reading to correct.
-                    Ok(Delta::ToolStarted { .. } | Delta::ToolArgs(_) | Delta::Carried(_)) => {}
-                    Ok(Delta::Stopped(reason)) => {
-                        stopped = Some(reason);
-                        break;
+                    let cost = self
+                        .provider
+                        .prompt_cache_pricing(
+                            &self.spec.model.name,
+                            cache.model_revision,
+                            usage.input.total,
+                            cache.retention,
+                            cache.pricing_date,
+                        )
+                        .ok()
+                        .flatten()
+                        .and_then(|pricing| pricing.cost(&usage).ok())
+                        .unwrap_or(UsageCost::UNKNOWN);
+                    let outcome = usage.input.outcome(cache.reporting);
+                    if let Some(attempt) = self
+                        .prompt_cache_attempt
+                        .as_mut()
+                        .filter(|attempt| attempt.id == cache.attempt)
+                    {
+                        attempt.outcome = outcome;
+                        attempt.usage = Some(usage.clone());
+                        attempt.cost = cost;
                     }
-                    // The provider's own failure, handed on as itself: a
-                    // recap whose connection broke did not produce a recap
-                    // that fell short, and calling it one would hide the only
-                    // fact the caller can act on.
-                    Err(problem) => return Err(problem),
+                    events.post(Event::PromptCache {
+                        fact: PromptCacheFact::UsageReported(Box::new(PromptCacheUsageFact {
+                            attempt: cache.attempt,
+                            outcome,
+                            usage,
+                            cost,
+                        })),
+                    });
+                }
+                Delta::ToolStarted { .. } | Delta::ToolArgs(_) | Delta::Carried(_) => {}
+                Delta::Stopped(reason) => {
+                    stopped = Some(reason);
+                    break;
                 }
             }
-            Ok(match stopped {
-                Some(StopReason::Yielded) if structured(&said) => {
-                    append_files(&mut said, touched);
-                    Recap::Complete(said)
-                }
-                Some(StopReason::Cancelled) => Recap::Stopped,
-                Some(
-                    StopReason::Yielded
-                    | StopReason::OutOfTokens
-                    | StopReason::WindowExceeded
-                    | StopReason::Filtered
-                    | StopReason::Paused
-                    | StopReason::Unknown
-                    | StopReason::WantsTools,
-                )
-                | None => Recap::Incomplete,
-            })
-        });
+        }
 
-        self.transcript.pop();
-        Ok(said?)
+        Ok(match stopped {
+            Some(StopReason::Yielded) if structured(&said) => {
+                append_files(&mut said, touched);
+                Recap::Complete(said)
+            }
+            Some(StopReason::Cancelled) => Recap::Stopped,
+            Some(
+                StopReason::Yielded
+                | StopReason::OutOfTokens
+                | StopReason::WindowExceeded
+                | StopReason::Filtered
+                | StopReason::Paused
+                | StopReason::Unknown
+                | StopReason::WantsTools,
+            )
+            | None => Recap::Incomplete,
+        })
     }
 
     /// Clears old tool results from what the model is sent, and records it.

@@ -3,7 +3,6 @@ source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
 80x24 cursor 20,5 scrolled 0
-|╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
 |                                                                                |
 |Warning: No models available. Use /login or set an API key environment variable.|
@@ -17,6 +16,7 @@ expression: window.picture()
 |  /mode      ask · allowEdits · fullAccess                                      |
 |  /theme     pick the colours crucible draws with                               |
 |  /resume    pick up an earlier session here                                    |
+|  /cache     inspect or clean prompt-cache state                                |
 |  /compact   replace what is behind you with notes on it                        |
 |  /clear     start a new session, leaving this one                              |
 |  /exit      leave                                                              |

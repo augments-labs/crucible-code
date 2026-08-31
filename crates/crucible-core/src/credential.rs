@@ -17,6 +17,10 @@
 
 use std::fmt;
 
+use sha2::{Digest as _, Sha256};
+
+use crate::CredentialScopeId;
+
 /// Why a credential could not be resolved or applied.
 #[derive(Debug, thiserror::Error)]
 pub enum CredentialError {
@@ -157,10 +161,24 @@ impl HeaderKey {
 }
 
 impl Credential for HeaderKey {
+    fn scope(&self) -> CredentialScopeId {
+        let mut digest = Sha256::new();
+        digest.update(b"crucible.header-credential-scope.v1");
+        scope_field(&mut digest, self.header.name.as_bytes());
+        scope_field(&mut digest, self.header.scheme.as_bytes());
+        scope_field(&mut digest, self.key.0.as_bytes());
+        CredentialScopeId::from_digest(digest.finalize().into())
+    }
+
     fn authorize(&self, request: &mut Outgoing) -> Result<(), CredentialError> {
         self.key.apply(request, &self.header);
         Ok(())
     }
+}
+
+fn scope_field(digest: &mut Sha256, value: &[u8]) {
+    digest.update(u64::try_from(value.len()).unwrap_or(u64::MAX).to_be_bytes());
+    digest.update(value);
 }
 
 impl fmt::Debug for ApiKey {
@@ -309,6 +327,14 @@ impl fmt::Debug for Outgoing {
 /// Takes the request rather than returning the secret, so the secret never
 /// becomes a value a caller can hold, format or store.
 pub trait Credential: Send + Sync + fmt::Debug {
+    /// Opaque identity used to keep provider-side resources credential-bound.
+    ///
+    /// A durable credential derives this from stable identity material with a
+    /// cryptographic one-way function. A credential without such material
+    /// returns a freshly minted scope and therefore declines cross-restart
+    /// reuse. Implementations must never expose or persist the source material.
+    fn scope(&self) -> CredentialScopeId;
+
     /// Writes whatever this credential needs into the request.
     ///
     /// Every exact secret representation written into a header must also be
@@ -491,6 +517,22 @@ mod tests {
         assert_eq!(header(&openai, "authorization"), format!("Bearer {SECRET}"));
     }
 
+    #[test]
+    fn a_header_credential_has_a_restart_stable_redacted_scope() {
+        let first = HeaderKey::new(ApiKey::new(SECRET), Header::bearer());
+        let reconstructed = HeaderKey::new(ApiKey::new(SECRET), Header::bearer());
+        let other_key = HeaderKey::new(ApiKey::new("sk-other"), Header::bearer());
+        let other_header = HeaderKey::new(ApiKey::new(SECRET), Header::bare("x-api-key"));
+
+        assert_eq!(first.scope(), reconstructed.scope());
+        assert_ne!(first.scope(), other_key.scope());
+        assert_ne!(first.scope(), other_header.scope());
+
+        let shown = format!("{:?}", first.scope());
+        assert_eq!(shown, "CredentialScopeId([redacted])");
+        assert!(!shown.contains(SECRET));
+    }
+
     /// A credential that has to renew something before it can answer, and
     /// cannot. The shape one takes when what it holds has expired and renewing
     /// it was refused.
@@ -498,6 +540,10 @@ mod tests {
     struct Stale;
 
     impl Credential for Stale {
+        fn scope(&self) -> crate::CredentialScopeId {
+            crate::CredentialScopeId::new()
+        }
+
         fn authorize(&self, _request: &mut Outgoing) -> Result<(), CredentialError> {
             Err(CredentialError::NotRenewed("the login has expired".into()))
         }

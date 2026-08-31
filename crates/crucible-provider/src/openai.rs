@@ -41,8 +41,12 @@ mod stream;
 mod wire;
 
 use crucible_core::{
-    Cancel, Credential, DeltaStream, Modalities, Modality, Outgoing, Provider, ProviderError,
-    Request,
+    Cancel, Credential, CredentialScopeId, DeltaStream, Modalities, Modality, Outgoing, PriceRate,
+    PricingCurrency, PricingDate, PricingError, PricingUnit, PromptCacheBoundary,
+    PromptCacheCapabilities, PromptCacheContent, PromptCacheMechanismCapability,
+    PromptCachePricing, PromptCacheProvenance, PromptCacheRates, PromptCacheRetentionClass,
+    PromptCacheRoute, PromptCacheUsageReporting, Provider, ProviderError, Request,
+    StatefulTransportCapability, UsageRate,
 };
 
 use crate::endpoint::Endpoint;
@@ -58,6 +62,47 @@ const VENDOR: Endpoint = Endpoint::fixed("https://api.openai.com/v1/responses");
 
 /// Where `ChatGPT` subscription credentials serve the Responses protocol.
 const SUBSCRIPTION: Endpoint = Endpoint::fixed("https://chatgpt.com/backend-api/codex/responses");
+
+const OPENAI_CACHE_CONTENT: &[PromptCacheContent] = &[
+    PromptCacheContent::Text,
+    PromptCacheContent::Tools,
+    PromptCacheContent::Images,
+    PromptCacheContent::Documents,
+];
+const OPENAI_EXPLICIT_BOUNDARIES: &[PromptCacheBoundary] = &[PromptCacheBoundary::AfterMessage];
+const OPENAI_56_RETENTIONS: &[PromptCacheRetentionClass] = &[
+    PromptCacheRetentionClass::ProviderDefault,
+    PromptCacheRetentionClass::Ephemeral,
+];
+const OPENAI_55_RETENTIONS: &[PromptCacheRetentionClass] = &[
+    PromptCacheRetentionClass::ProviderDefault,
+    PromptCacheRetentionClass::Extended,
+];
+
+const USD: PricingCurrency = PricingCurrency::new("USD");
+const PRICING_REVIEWED: PricingDate = PricingDate::new(2026, 8, 31);
+const PRICING_SOURCE: &str = "https://developers.openai.com/api/docs/pricing";
+const MODEL_55_PRICING_SOURCE: &str = "https://developers.openai.com/api/docs/models/gpt-5.5";
+
+const fn rate(nanocurrency: u64) -> UsageRate {
+    UsageRate::priced(PriceRate::per_million(nanocurrency))
+}
+
+const fn optional_rate(nanocurrency: u64) -> UsageRate {
+    UsageRate::optional(PriceRate::per_million(nanocurrency))
+}
+
+const fn openai_rates(input: u64, read: u64, write: UsageRate, output: u64) -> PromptCacheRates {
+    PromptCacheRates {
+        uncached_input: rate(input),
+        cache_read: rate(read),
+        cache_write_or_creation: write,
+        output: rate(output),
+        reasoning: UsageRate::NotApplicable,
+        storage: UsageRate::NotApplicable,
+        other: UsageRate::NotApplicable,
+    }
+}
 
 /// Which of the two services a request is bound for.
 ///
@@ -97,6 +142,7 @@ pub struct OpenAi {
     credential: Box<dyn Credential>,
     transport: Box<dyn Transport>,
     endpoint: Endpoint,
+    credential_scope: CredentialScopeId,
 }
 
 impl OpenAi {
@@ -125,10 +171,12 @@ impl OpenAi {
         credential: Box<dyn Credential>,
         transport: Box<dyn Transport>,
     ) -> Self {
+        let credential_scope = credential.scope();
         Self {
             credential,
             transport,
             endpoint,
+            credential_scope,
         }
     }
 
@@ -169,6 +217,197 @@ impl Provider for OpenAi {
             .insert(Modality::Pdf)
     }
 
+    fn prompt_cache_capabilities(&self, model: &str) -> PromptCacheCapabilities {
+        if self.endpoint != VENDOR && self.endpoint != SUBSCRIPTION {
+            return PromptCacheCapabilities::unknown("custom endpoint");
+        }
+
+        let (minimum, revision, retentions, usage): (u32, &'static str, &[_], _) = match model {
+            "gpt-5.6-sol" => (
+                1_024,
+                "gpt-5.6-sol",
+                OPENAI_56_RETENTIONS,
+                PromptCacheUsageReporting::ReadAndWriteTokens,
+            ),
+            "gpt-5.6-terra" => (
+                1_024,
+                "gpt-5.6-terra",
+                OPENAI_56_RETENTIONS,
+                PromptCacheUsageReporting::ReadAndWriteTokens,
+            ),
+            "gpt-5.6-luna" => (
+                1_024,
+                "gpt-5.6-luna",
+                OPENAI_56_RETENTIONS,
+                PromptCacheUsageReporting::ReadAndWriteTokens,
+            ),
+            "gpt-5.5" => (
+                2_048,
+                "gpt-5.5",
+                OPENAI_55_RETENTIONS,
+                PromptCacheUsageReporting::ReadTokens,
+            ),
+            _ => return PromptCacheCapabilities::unknown("unreviewed model"),
+        };
+        let automatic = PromptCacheMechanismCapability::automatic_prefix(
+            minimum,
+            true,
+            true,
+            OPENAI_CACHE_CONTENT,
+        )
+        .with_retentions(retentions);
+        let mechanisms = if self.endpoint == VENDOR && model.starts_with("gpt-5.6-") {
+            vec![
+                automatic,
+                PromptCacheMechanismCapability::explicit_breakpoints(
+                    minimum,
+                    4,
+                    OPENAI_EXPLICIT_BOUNDARIES,
+                    OPENAI_CACHE_CONTENT,
+                )
+                .with_retentions(OPENAI_56_RETENTIONS),
+            ]
+        } else {
+            vec![automatic]
+        };
+        PromptCacheCapabilities::supported(
+            "openai-prompt-cache-2026-08-31",
+            Some(revision),
+            PromptCacheProvenance::new(
+                "https://developers.openai.com/api/docs/guides/prompt-caching",
+                "2026-08-31",
+                "openai-prompt-cache-2026-08-31",
+            ),
+            StatefulTransportCapability::Unsupported,
+            &mechanisms,
+            usage,
+        )
+    }
+
+    fn prompt_cache_pricing(
+        &self,
+        model: &str,
+        revision: Option<&str>,
+        input_tokens: Option<u64>,
+        retention: PromptCacheRetentionClass,
+        at: PricingDate,
+    ) -> Result<Option<PromptCachePricing>, PricingError> {
+        if self.endpoint != VENDOR || at < PRICING_REVIEWED {
+            return Ok(None);
+        }
+        let Some(input_tokens) = input_tokens else {
+            return Ok(None);
+        };
+        let (model, source, short, long) = match (model, revision) {
+            ("gpt-5.6-sol", Some("gpt-5.6-sol")) => (
+                "gpt-5.6-sol",
+                PRICING_SOURCE,
+                openai_rates(
+                    4_000_000_000,
+                    400_000_000,
+                    rate(5_000_000_000),
+                    20_000_000_000,
+                ),
+                openai_rates(
+                    8_000_000_000,
+                    800_000_000,
+                    rate(10_000_000_000),
+                    30_000_000_000,
+                ),
+            ),
+            ("gpt-5.6-terra", Some("gpt-5.6-terra")) => (
+                "gpt-5.6-terra",
+                PRICING_SOURCE,
+                openai_rates(
+                    2_000_000_000,
+                    200_000_000,
+                    rate(2_500_000_000),
+                    12_000_000_000,
+                ),
+                openai_rates(
+                    4_000_000_000,
+                    400_000_000,
+                    rate(5_000_000_000),
+                    18_000_000_000,
+                ),
+            ),
+            ("gpt-5.6-luna", Some("gpt-5.6-luna")) => (
+                "gpt-5.6-luna",
+                PRICING_SOURCE,
+                openai_rates(200_000_000, 20_000_000, rate(250_000_000), 1_200_000_000),
+                openai_rates(400_000_000, 40_000_000, rate(500_000_000), 1_800_000_000),
+            ),
+            ("gpt-5.5", Some("gpt-5.5")) => (
+                "gpt-5.5",
+                MODEL_55_PRICING_SOURCE,
+                openai_rates(
+                    5_000_000_000,
+                    500_000_000,
+                    optional_rate(5_000_000_000),
+                    30_000_000_000,
+                ),
+                openai_rates(
+                    10_000_000_000,
+                    1_000_000_000,
+                    optional_rate(10_000_000_000),
+                    45_000_000_000,
+                ),
+            ),
+            _ => return Ok(None),
+        };
+        let allowed_retention = if model == "gpt-5.5" {
+            matches!(
+                retention,
+                PromptCacheRetentionClass::ProviderDefault | PromptCacheRetentionClass::Extended
+            )
+        } else {
+            matches!(
+                retention,
+                PromptCacheRetentionClass::ProviderDefault | PromptCacheRetentionClass::Ephemeral
+            )
+        };
+        if !allowed_retention {
+            return Ok(None);
+        }
+        let (rates, minimum, maximum, version) = if input_tokens <= 272_000 {
+            (short, 0, Some(272_000), "openai-standard-short-2026-08-31")
+        } else {
+            (long, 272_001, None, "openai-standard-long-2026-08-31")
+        };
+        Ok(Some(
+            PromptCachePricing::new(
+                "openai-responses",
+                "https://api.openai.com/v1/responses",
+                model,
+                Some(model),
+                PRICING_REVIEWED,
+                version,
+                source,
+                USD,
+                PricingUnit::MillionTokens,
+                rates,
+            )
+            .with_input_band(minimum, maximum)
+            .with_retention(retention),
+        ))
+    }
+
+    fn prompt_cache_route(&self) -> PromptCacheRoute<'_> {
+        PromptCacheRoute {
+            protocol: "openai-responses",
+            endpoint: self.endpoint.as_str(),
+            custom_endpoint: self.endpoint != VENDOR && self.endpoint != SUBSCRIPTION,
+            credential_scope: self.credential_scope,
+            account: None,
+            project: None,
+            request_shape_version: "openai-responses-v1",
+        }
+    }
+
+    fn prompt_cache_encoding(&self, request: &Request<'_>) -> crucible_core::PromptCacheEncoding {
+        body::prompt_cache_encoding(request, Serving::of(&self.endpoint))
+    }
+
     fn stream(
         &self,
         request: Request<'_>,
@@ -199,10 +438,11 @@ impl Provider for OpenAi {
             ));
         }
 
-        Ok(Box::new(Stream::new(
+        Ok(Box::new(Stream::with_wire(
             response.body,
             cancel.clone(),
             redactions,
+            wire::Responses::for_model(request.model),
         )))
     }
 }
@@ -210,11 +450,13 @@ impl Provider for OpenAi {
 #[cfg(test)]
 mod tests {
     use crucible_core::{
-        ApiKey, Carried, Delta, Header, HeaderKey, Message, Spend, StopReason, Transcript,
+        ApiKey, Delta, Header, HeaderKey, Message, PriceRate, PricingDate,
+        PromptCacheRetentionClass, PromptCacheUsageReporting, StopReason, Transcript, UsageRate,
     };
 
     use super::stream::tests::{ANSWER, deltas};
     use super::*;
+    use crate::fake::inclusive_usage;
     use crate::transport::{Replay, Sent};
 
     /// The exact key that must never appear anywhere but a header value.
@@ -232,6 +474,150 @@ mod tests {
             ),
             replay,
         )
+    }
+
+    #[test]
+    fn reconstructed_providers_keep_only_the_same_credentials_cache_scope() {
+        let replay = || Box::new(Replay::new(200, ANSWER));
+        let first = OpenAi::at(
+            OpenAi::VENDOR,
+            Box::new(HeaderKey::new(ApiKey::new(SECRET), Header::bearer())),
+            replay(),
+        );
+        let reconstructed = OpenAi::at(
+            OpenAi::VENDOR,
+            Box::new(HeaderKey::new(ApiKey::new(SECRET), Header::bearer())),
+            replay(),
+        );
+        let other = OpenAi::at(
+            OpenAi::VENDOR,
+            Box::new(HeaderKey::new(ApiKey::new("sk-other"), Header::bearer())),
+            replay(),
+        );
+
+        assert_eq!(
+            first.prompt_cache_route().credential_scope,
+            reconstructed.prompt_cache_route().credential_scope
+        );
+        assert_ne!(
+            first.prompt_cache_route().credential_scope,
+            other.prompt_cache_route().credential_scope
+        );
+    }
+
+    #[test]
+    fn exact_model_and_input_band_select_current_standard_token_prices() {
+        let (provider, _) = provider(200, ANSWER);
+        let date = PricingDate::new(2026, 8, 31);
+        let short = provider
+            .prompt_cache_pricing(
+                "gpt-5.6-sol",
+                Some("gpt-5.6-sol"),
+                Some(272_000),
+                PromptCacheRetentionClass::ProviderDefault,
+                date,
+            )
+            .unwrap()
+            .unwrap();
+        let long = provider
+            .prompt_cache_pricing(
+                "gpt-5.6-sol",
+                Some("gpt-5.6-sol"),
+                Some(272_001),
+                PromptCacheRetentionClass::ProviderDefault,
+                date,
+            )
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(
+            short.rates().uncached_input,
+            UsageRate::priced(PriceRate::per_million(4_000_000_000))
+        );
+        assert_eq!(
+            short.rates().cache_write_or_creation,
+            UsageRate::priced(PriceRate::per_million(5_000_000_000))
+        );
+        assert_eq!(
+            long.rates().uncached_input,
+            UsageRate::priced(PriceRate::per_million(8_000_000_000))
+        );
+    }
+
+    #[test]
+    fn older_model_reporting_and_subscription_pricing_remain_exactly_unknown() {
+        let (provider, _) = provider(200, ANSWER);
+        assert_eq!(
+            provider.prompt_cache_capabilities("gpt-5.5").usage(),
+            PromptCacheUsageReporting::ReadTokens
+        );
+
+        let replay = std::sync::Arc::new(Replay::new(200, ANSWER));
+        let credential = HeaderKey::new(ApiKey::new(SECRET), Header::bearer());
+        let subscription = OpenAi::at(
+            OpenAi::SUBSCRIPTION,
+            Box::new(credential),
+            Box::new(std::sync::Arc::clone(&replay)),
+        );
+        assert!(
+            subscription
+                .prompt_cache_pricing(
+                    "gpt-5.6-sol",
+                    Some("gpt-5.6-sol"),
+                    Some(1_000),
+                    PromptCacheRetentionClass::ProviderDefault,
+                    PricingDate::new(2026, 8, 31),
+                )
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn current_models_advertise_implicit_and_explicit_cache_boundaries() {
+        let (provider, _) = provider(200, ANSWER);
+        let current = provider.prompt_cache_capabilities("gpt-5.6-sol");
+        let older = provider.prompt_cache_capabilities("gpt-5.5");
+
+        let replay = std::sync::Arc::new(Replay::new(200, ANSWER));
+        let credential = HeaderKey::new(ApiKey::new(SECRET), Header::bearer());
+        let subscription = OpenAi::at(OpenAi::SUBSCRIPTION, Box::new(credential), Box::new(replay));
+        let subscription = subscription.prompt_cache_capabilities("gpt-5.6-sol");
+
+        let [automatic, explicit] = current.mechanisms() else {
+            panic!("current OpenAI models need automatic and explicit mechanisms");
+        };
+        assert_eq!(
+            automatic.mechanism(),
+            crucible_core::PromptCacheMechanism::AutomaticPrefix
+        );
+        assert_eq!(
+            explicit.mechanism(),
+            crucible_core::PromptCacheMechanism::ExplicitBreakpoints
+        );
+        assert_eq!(explicit.maximum_breakpoints(), 4);
+        assert_eq!(older.mechanisms().len(), 1);
+        assert_eq!(
+            subscription
+                .mechanisms()
+                .first()
+                .map(crucible_core::PromptCacheMechanismCapability::mechanism),
+            Some(crucible_core::PromptCacheMechanism::AutomaticPrefix)
+        );
+    }
+
+    #[test]
+    fn a_custom_responses_route_never_inherits_first_party_cache_controls() {
+        let custom = OpenAi::at(
+            Endpoint::parse("https://proxy.invalid/v1/responses").unwrap(),
+            Box::new(HeaderKey::new(ApiKey::new(SECRET), Header::bearer())),
+            Box::new(Replay::new(200, ANSWER)),
+        );
+
+        assert_eq!(
+            custom.prompt_cache_capabilities("gpt-5.6-sol").support(),
+            crucible_core::PromptCacheSupport::Unknown
+        );
     }
 
     #[test]
@@ -311,6 +697,7 @@ mod tests {
             max_tokens: 1024,
             system: None,
             effort: None,
+            prompt_cache: None,
         }
     }
 
@@ -372,8 +759,7 @@ mod tests {
             vec![
                 Delta::Text("Hello".into()),
                 Delta::Text(", world".into()),
-                Delta::Carried(Carried::new(9)),
-                Delta::Spent(Spend::new(4)),
+                inclusive_usage(Some(9), None, Some(4)),
                 Delta::Stopped(StopReason::Yielded),
             ]
         );

@@ -28,6 +28,7 @@ mod ids;
 mod modality;
 mod permission;
 mod prompt;
+mod prompt_cache;
 mod provider;
 mod revealed;
 mod run;
@@ -49,7 +50,9 @@ pub use credential::{
 };
 pub use diff::{Change, Diff, Line};
 pub use event::{Event, EventEnvelope, Post, Reporter, TurnError};
-pub use ids::{AgentId, IdError, RunId, SessionId, ToolId, TurnId};
+pub use ids::{
+    AgentId, CredentialScopeId, IdError, ProviderAttemptId, RunId, SessionId, ToolId, TurnId,
+};
 pub use modality::{Modalities, Modality, ModalityError};
 pub use permission::{
     Approved, Ask, Command, Disposition, Grant, Host, Minted, Mode, Permission, Remember,
@@ -58,6 +61,47 @@ pub use permission::{
 pub use prompt::{
     EnvironmentSection, Identity, ModelSection, PermissionsSection, Skill, SkillsSection,
     SystemPrompt, Tone, ToneError, ToolsSection, WorkspaceSection,
+};
+pub use prompt_cache::{
+    CostAmount, PriceRate, PricingCurrency, PricingDate, PricingError, PricingQuery, PricingUnit,
+    PromptCachePricing, PromptCacheRates, UsageCost, UsageRate, select_pricing,
+};
+pub use prompt_cache::{
+    InputTokenUsage, MAX_PROVIDER_USAGE_DETAIL_LABEL_BYTES, MAX_PROVIDER_USAGE_DETAILS,
+    ProviderNumericDetail, ProviderUsage, UsageError,
+};
+pub use prompt_cache::{
+    MAX_PROMPT_CACHE_BOUNDARIES, PromptCacheBoundaryPoint, PromptCacheContentSet,
+    PromptCacheProjection, PromptCacheProjectionError,
+};
+pub use prompt_cache::{
+    MAX_PROMPT_CACHE_HANDLE_BYTES, MAX_PROMPT_CACHE_RESOURCE_WORD_BYTES,
+    MAX_PROMPT_CACHE_RESOURCES, PromptCachePolicyDigest, PromptCacheResourceBinding,
+    PromptCacheResourceCreate, PromptCacheResourceCreated, PromptCacheResourceDeadline,
+    PromptCacheResourceError, PromptCacheResourceFact, PromptCacheResourceHandle,
+    PromptCacheResourceId, PromptCacheResourceLifecycle, PromptCacheResourceOperation,
+    PromptCacheResourceOwner, PromptCacheResourceRecord, PromptCacheResourceReference,
+    PromptCacheResourceRemote, PromptCacheResourceState, PromptCacheResourceStore,
+    PromptCacheResourceWordError,
+};
+pub use prompt_cache::{
+    MAX_PROMPT_CACHE_MECHANISMS, PromptCacheBoundary, PromptCacheCapabilities,
+    PromptCacheCapabilityWordError, PromptCacheContent, PromptCacheMechanism,
+    PromptCacheMechanismCapability, PromptCacheProvenance, PromptCacheRetentionClass,
+    PromptCacheSupport, PromptCacheUsageReporting, StatefulTransportCapability,
+};
+pub use prompt_cache::{
+    MAX_PROMPT_CACHE_NAMESPACE_BYTES, MAX_PROMPT_CACHE_RETENTION_SECONDS, PromptCacheIsolation,
+    PromptCacheMechanisms, PromptCacheMode, PromptCacheNamespace, PromptCachePersistentMode,
+    PromptCachePolicy, PromptCachePolicyConflict, PromptCachePolicyError, PromptCachePolicySource,
+    PromptCachePolicySources, PromptCachePolicyVersion, PromptCacheRetention,
+};
+pub use prompt_cache::{
+    PromptCacheAttempt, PromptCacheEligibility, PromptCacheEncoding, PromptCacheFact,
+    PromptCacheFingerprint, PromptCacheIdentity, PromptCacheIneligibleReason, PromptCacheKey,
+    PromptCacheOutcome, PromptCachePlan, PromptCachePlanned, PromptCachePreparationError,
+    PromptCacheRequest, PromptCacheRequestDisposition, PromptCacheRequestFact, PromptCacheRoute,
+    PromptCacheScopeDigest, PromptCacheSelected, PromptCacheSelection, PromptCacheUsageFact,
 };
 pub use provider::{
     Attached, Calibration, Carried, Content, Delta, DeltaStream, Effort, EffortError, Provider,

@@ -14,10 +14,11 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crucible_core::{Cancel, Credential, CredentialError, Outgoing};
+use crucible_core::{Cancel, Credential, CredentialError, CredentialScopeId, Outgoing};
 
 use super::{
     LoginAttempt, LoginMethod, LoginSlot, LoginUpdate, OAuthError, SubscriptionLogin, Tokens,
+    credential_scope,
 };
 use crate::{Store, StoredCredentials};
 
@@ -84,11 +85,11 @@ impl KimiOAuth {
 
     fn stored_credential(&self, stored: &StoredCredentials) -> Option<Box<dyn Credential>> {
         let (store, tokens) = stored.subscription(self.provider())?;
-        Some(Box::new(KimiCredential {
+        Some(Box::new(KimiCredential::new(
             store,
-            flow: self.shared.flow.clone(),
-            tokens: Mutex::new(tokens),
-        }))
+            tokens,
+            self.shared.flow.clone(),
+        )))
     }
 }
 
@@ -123,9 +124,28 @@ pub struct KimiCredential {
     store: Store,
     flow: Flow,
     tokens: Mutex<Tokens>,
+    scope: CredentialScopeId,
+    identity_bound: bool,
+}
+
+impl KimiCredential {
+    fn new(store: Store, tokens: Tokens, flow: Flow) -> Self {
+        let durable = credential_scope(b"moonshot-device", tokens.detail(DEVICE_ID));
+        Self {
+            store,
+            flow,
+            tokens: Mutex::new(tokens),
+            scope: durable.unwrap_or_default(),
+            identity_bound: durable.is_some(),
+        }
+    }
 }
 
 impl Credential for KimiCredential {
+    fn scope(&self) -> CredentialScopeId {
+        self.scope
+    }
+
     fn authorize(&self, request: &mut Outgoing) -> Result<(), CredentialError> {
         let mut tokens = self
             .tokens
@@ -135,7 +155,16 @@ impl Credential for KimiCredential {
             *tokens = self
                 .store
                 .refresh_subscription("moonshot", needs_refresh, |current| {
-                    self.flow.refresh(current)
+                    let refreshed = self.flow.refresh(current)?;
+                    if self.identity_bound
+                        && credential_scope(b"moonshot-device", refreshed.detail(DEVICE_ID))
+                            != Some(self.scope)
+                    {
+                        return Err(OAuthError::Invalid {
+                            step: "refreshed installation identity",
+                        });
+                    }
+                    Ok(refreshed)
                 })
                 .map_err(|problem| CredentialError::NotRenewed(problem.to_string().into()))?;
         }

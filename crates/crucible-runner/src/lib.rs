@@ -22,6 +22,7 @@ mod context;
 mod fake;
 mod outcome;
 mod policy;
+mod prompt_cache;
 mod runner;
 #[cfg(test)]
 mod sample;
@@ -36,5 +37,5 @@ pub use crucible_session::{
 pub use outcome::{RunResult, RunStatus};
 pub use policy::{Bounds, Compaction, MAXIMUM_TOOL_CONCURRENCY, Retry, RunPolicy, ToolScheduling};
 pub use runner::attachments;
-pub use runner::{ContextInputs, Model, Runner};
+pub use runner::{ContextInputs, Model, PromptCacheCleanup, Runner};
 pub use tools::Tools;

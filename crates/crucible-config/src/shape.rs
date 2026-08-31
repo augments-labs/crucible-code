@@ -444,6 +444,112 @@ pub(crate) const MODE: &[&str] = &["ask", "allowEdits", "fullAccess"];
 /// Every answer `compaction.when` accepts.
 pub(crate) const COMPACTION_WHEN: &[&str] = &["full", "never"];
 
+/// Every answer `promptCaching.mode` accepts.
+pub(crate) const PROMPT_CACHE_MODE: &[&str] = &["observeOnly", "prefer", "require", "prohibit"];
+
+/// Every provider-neutral prompt-cache mechanism a policy may allow.
+pub(crate) const PROMPT_CACHE_MECHANISM: &[&str] = &[
+    "providerManagedUsageOnly",
+    "automaticPrefix",
+    "explicitBreakpoints",
+    "persistentContent",
+];
+
+/// Every answer `promptCaching.isolationScope` accepts, narrowest first.
+pub(crate) const PROMPT_CACHE_ISOLATION: &[&str] = &["run", "session", "workspace", "user"];
+
+/// Provider-neutral retention classes.
+pub(crate) const PROMPT_CACHE_RETENTION: &[&str] = &["providerDefault", "ephemeral", "extended"];
+
+/// Authority over separately managed remote cache resources.
+pub(crate) const PROMPT_CACHE_PERSISTENT: &[&str] = &["forbid", "reuse", "create", "require"];
+
+/// One allowed prompt-cache mechanism.
+const CACHE_MECHANISM: Shape = Shape::Choice(PROMPT_CACHE_MECHANISM);
+
+/// A bounded requested retention class and ceiling.
+const CACHE_RETENTION: &[Field] = &[
+    Field {
+        name: "class",
+        about: "Provider-neutral retention class; extended retention must be chosen in the user configuration",
+        shape: Shape::Choice(PROMPT_CACHE_RETENTION),
+        examples: &[],
+        usual: Some("providerDefault"),
+        widens: false,
+    },
+    Field {
+        name: "maxSeconds",
+        about: "Hard maximum provider retention in seconds; required for ephemeral and extended retention",
+        shape: Shape::Count,
+        examples: &[],
+        usual: None,
+        widens: false,
+    },
+];
+
+/// Whether persistent cached-content resources may be used or created.
+const CACHE_RESOURCES: &[Field] = &[Field {
+    name: "mode",
+    about: "Whether remote persistent cache resources are forbidden, reusable, creatable, or required; creation authority must come from user configuration",
+    shape: Shape::Choice(PROMPT_CACHE_PERSISTENT),
+    examples: &[],
+    usual: Some("forbid"),
+    widens: false,
+}];
+
+/// Provider-neutral prompt-cache policy.
+const PROMPT_CACHE: &[Field] = &[
+    Field {
+        name: "mode",
+        about: "Whether Crucible observes provider caching, prefers the verified native mechanism, requires it, or requires a documented opt-out",
+        shape: Shape::Choice(PROMPT_CACHE_MODE),
+        examples: &[],
+        usual: Some("prefer"),
+        widens: false,
+    },
+    Field {
+        name: "allowedMechanisms",
+        about: "Provider-neutral cache mechanisms still permitted after capability resolution; layers intersect this list",
+        shape: Shape::List(&CACHE_MECHANISM),
+        examples: &[],
+        usual: None,
+        widens: false,
+    },
+    Field {
+        name: "isolationScope",
+        about: "Broadest identity scope allowed to share a cache prefix",
+        shape: Shape::Choice(PROMPT_CACHE_ISOLATION),
+        examples: &[],
+        usual: Some("session"),
+        widens: false,
+    },
+    Field {
+        name: "requestedRetention",
+        about: "Optional provider-neutral retention request under a hard duration ceiling",
+        shape: Shape::Fields(CACHE_RETENTION),
+        examples: &[],
+        usual: None,
+        widens: false,
+    },
+    Field {
+        name: "persistentResources",
+        about: "Separate authority for remotely persisted cached-content resources",
+        shape: Shape::Fields(CACHE_RESOURCES),
+        examples: &[],
+        usual: None,
+        widens: false,
+    },
+    Field {
+        name: "namespace",
+        about: "Bounded opaque user-owned label included in cache scope identity; never a provider cache key",
+        shape: Shape::Text,
+        examples: &["personal"],
+        usual: None,
+        // A project-chosen external identity could collide with another scope.
+        widens: true,
+    },
+];
+
 /// What a session does when the model's window fills.
 ///
 /// A turn that reaches the end of a window has always had one of two endings:
@@ -662,6 +768,14 @@ pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
         name: "compaction",
         about: "What happens when the model's window fills up",
         shape: Shape::Fields(COMPACTION),
+        examples: &[],
+        usual: None,
+        widens: false,
+    },
+    Field {
+        name: "promptCaching",
+        about: "Provider-side reuse of an identical prompt prefix, enabled through each provider's verified native mechanism by default",
+        shape: Shape::Fields(PROMPT_CACHE),
         examples: &[],
         usual: None,
         widens: false,

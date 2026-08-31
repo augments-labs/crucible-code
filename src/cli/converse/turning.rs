@@ -604,6 +604,7 @@ impl Turning {
             // A steered line is committed to the transcript by the loop that
             // reads it, not here: this row keeps naming what is still queued.
             Event::TurnStarted { .. }
+            | Event::PromptCache { .. }
             | Event::Delta { .. }
             | Event::Spent { .. }
             | Event::Carried { .. }
@@ -654,6 +655,7 @@ impl Turning {
             Event::Retrying => Doing::Retrying,
             Event::Compacting { .. } => Doing::Compacting,
             Event::TurnStarted { .. }
+            | Event::PromptCache { .. }
             | Event::Spent { .. }
             | Event::Carried { .. }
             | Event::Steered { .. }

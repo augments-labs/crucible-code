@@ -219,6 +219,87 @@ impl fmt::Debug for RunId {
     }
 }
 
+/// Names one attempt to send a logical provider request.
+///
+/// Retries mint another value even when the cache identity is unchanged. The
+/// distinction is what prevents usage from one accepted attempt being replayed
+/// onto another and charged twice. Pointer-free because it travels on streamed
+/// usage and cache facts.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ProviderAttemptId(Uuid);
+
+impl ProviderAttemptId {
+    /// Mints one provider-attempt identity.
+    #[must_use]
+    pub fn new() -> Self {
+        Self(Uuid::now_v7())
+    }
+}
+
+impl Default for ProviderAttemptId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl fmt::Display for ProviderAttemptId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0.as_hyphenated())
+    }
+}
+
+impl fmt::Debug for ProviderAttemptId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ProviderAttemptId({})", self.0.as_hyphenated())
+    }
+}
+
+/// Non-secret identity of credential-owned authorization material.
+///
+/// Credential implementations derive a stable value when they own a durable,
+/// verified identity and otherwise mint a fresh fail-closed value. The bytes
+/// may participate in private cache-scope derivation but never diagnostics.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CredentialScopeId(Uuid);
+
+impl CredentialScopeId {
+    /// Mints a fresh fail-closed credential scope.
+    #[must_use]
+    pub fn new() -> Self {
+        Self(Uuid::now_v7())
+    }
+
+    /// Takes the first 128 bits of a cryptographic, domain-separated digest.
+    ///
+    /// This constructor deliberately accepts the digest rather than identity
+    /// material. The credential implementation owns the material and is the
+    /// only layer allowed to decide what remains stable across renewal.
+    #[must_use]
+    pub fn from_digest(digest: [u8; 32]) -> Self {
+        let mut bytes = [0_u8; 16];
+        bytes.copy_from_slice(&digest[..16]);
+        Self(Uuid::from_bytes(bytes))
+    }
+
+    /// Fixed bytes for local cache-identity derivation.
+    #[must_use]
+    pub const fn bytes(self) -> [u8; 16] {
+        self.0.into_bytes()
+    }
+}
+
+impl Default for CredentialScopeId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl fmt::Debug for CredentialScopeId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("CredentialScopeId([redacted])")
+    }
+}
+
 /// Names one reusable agent definition.
 ///
 /// Text, because an agent is written down by somebody and referred to by the
