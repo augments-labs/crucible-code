@@ -55,7 +55,8 @@ pub struct Recorded {
     /// The branch its header said the workspace had checked out, where the
     /// caller that started it could say.
     branch: Option<Box<str>>,
-    /// How many messages its log holds, as the index counted them.
+    /// How many conversation messages its log holds, as the index counted
+    /// them.
     messages: usize,
     /// The title somebody saved over the first prompt, where they did.
     titled: Option<Box<str>>,
@@ -94,7 +95,7 @@ impl Recorded {
         self.branch.as_deref()
     }
 
-    /// How many messages the session's log holds.
+    /// How many conversation messages the session's log holds.
     ///
     /// Zero for a session indexed before counting existed; the count is
     /// repaired the next time that session is continued.

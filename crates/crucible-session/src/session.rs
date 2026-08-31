@@ -202,12 +202,14 @@ pub struct Session {
     /// `None` is the compatibility state for a pre-context session that has
     /// not yet written its first patch. It means unknown, not empty.
     context: Option<ContextSnapshot>,
-    /// How many messages this session holds, kept as they are appended.
+    /// How many conversation messages this session holds, kept as they are
+    /// appended.
     ///
     /// A continued session starts from what the replay handed back, so the
-    /// number is what a continue would replay — a compacted log counts its
-    /// transcript, not its lines. Written to the index once, from [`Drop`],
-    /// which is also what repairs the zero a legacy session was indexed with.
+    /// number is what a continue would replay except internal context records
+    /// — a compacted log counts its conversation transcript, not its lines.
+    /// Written to the index once, from [`Drop`], which is also what repairs the
+    /// zero a legacy session was indexed with.
     messages: AtomicUsize,
     /// What the results a pruning cleared said, for whatever draws the session
     /// back onto a screen. Empty in a session that was started rather than
@@ -404,9 +406,17 @@ impl Session {
         session.calibration = calibration;
         session.context = context;
         session.pruned = pruned;
-        // What a continue replays is what the session now holds: a stale or
-        // legacy index count is repaired from here when the session ends.
-        session.messages = AtomicUsize::new(transcript.len());
+        // What a continue replays is what the session now holds, except typed
+        // context records are harness state rather than messages somebody
+        // said: a stale or legacy index count is repaired from here when the
+        // session ends.
+        session.messages = AtomicUsize::new(
+            transcript
+                .messages()
+                .iter()
+                .filter(|message| is_conversation_message(message))
+                .count(),
+        );
 
         Ok((session, transcript))
     }
@@ -466,7 +476,9 @@ impl Session {
     pub fn append(&self, message: &Message) {
         let Some(to) = &self.to else { return };
         drop(to.send(wire::line(message).into()));
-        self.messages.fetch_add(1, Ordering::Relaxed);
+        if is_conversation_message(message) {
+            self.messages.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     /// Records one per-pass merge patch and advances the reconstructed state.
@@ -620,6 +632,11 @@ impl Session {
             trouble,
         }
     }
+}
+
+/// Whether one persisted transcript entry belongs in the picker-facing count.
+fn is_conversation_message(message: &Message) -> bool {
+    !matches!(message, Message::Context(_))
 }
 
 /// Saves `title` as what every later listing calls the session `id` names.

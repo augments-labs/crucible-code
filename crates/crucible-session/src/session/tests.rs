@@ -7,8 +7,8 @@ use std::str::FromStr as _;
 use std::sync::{Arc, Mutex};
 
 use crucible_core::{
-    Calibration, Carried, ContextPatch, ContextSnapshot, Message, SessionId, Spend, StopReason,
-    ToolArgs, ToolCall, ToolId, ToolOutput, ToolResult,
+    Calibration, Carried, ContextPatch, ContextSnapshot, Fragment, Message, SessionId, Spend,
+    StopReason, ToolArgs, ToolCall, ToolId, ToolOutput, ToolResult,
 };
 use serde_json::Value;
 
@@ -719,10 +719,14 @@ fn the_branch_a_session_starts_on_reaches_the_listing() {
 }
 
 #[test]
-fn the_message_count_follows_appends_and_survives_a_resume() {
+fn the_conversation_message_count_ignores_context_and_survives_a_resume() {
     let sample = Sample::new("session-counted");
     let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
     session.append(&said("one"));
+    session.append(&Message::Context(Fragment::new(
+        "workspace",
+        "Workspace: /private/project",
+    )));
     session.append(&answering("two"));
     session.append(&said("three"));
     drop(session);
@@ -732,7 +736,11 @@ fn the_message_count_follows_appends_and_survives_a_resume() {
 
     let (continued, transcript) =
         Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
-    assert_eq!(transcript.len(), 3);
+    assert_eq!(transcript.len(), 4);
+    continued.append(&Message::Context(Fragment::new(
+        "model",
+        "Model: private-model",
+    )));
     continued.append(&answering("four"));
     drop(continued);
 

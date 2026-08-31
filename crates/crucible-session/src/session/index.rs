@@ -49,7 +49,8 @@ const BYTES: u64 = 640 * 1024;
 pub(super) struct Entry {
     /// Which session the entry names.
     pub(super) id: SessionId,
-    /// How many messages its log holds, maintained as appends happen.
+    /// How many conversation messages its log holds, maintained as appends
+    /// happen.
     pub(super) messages: usize,
     /// The title somebody saved over the first prompt, where they did.
     pub(super) title: Option<Box<str>>,
@@ -109,7 +110,7 @@ pub(super) fn record(directory: &Path, id: &SessionId) -> Result<(), SessionErro
     replace(&path, &entries)
 }
 
-/// Records how many messages the session's log now holds.
+/// Records how many conversation messages the session's log now holds.
 ///
 /// A name the fixed window has already let go of is left gone: the window
 /// dropped it deliberately, and a count is not a reason to grow past it.
