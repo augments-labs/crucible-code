@@ -11,6 +11,8 @@ use std::fmt;
 
 use serde_json::{Map, Value};
 
+use crate::transcript::{Message, Transcript};
+
 /// What the retained transcript proves the model has seen for one section.
 ///
 /// `Stale` and `Fresh` both require a complete rendering, but they remain
@@ -182,6 +184,29 @@ impl ContextSnapshot {
         self.sections.get(section)
     }
 
+    /// Resolves what retained history proves for one section.
+    ///
+    /// Both halves are load-bearing. Recorded state without a retained
+    /// fragment is stale after compaction; a retained fragment without its
+    /// typed state is unknown and must be superseded defensively.
+    #[must_use]
+    pub fn seen<'a>(
+        &'a self,
+        section: &impl ContextSection,
+        transcript: &Transcript,
+    ) -> Seen<&'a Value> {
+        let recognized = transcript.messages().iter().any(
+            |message| matches!(message, Message::Context(fragment) if section.recognizes(fragment)),
+        );
+
+        match (self.get(section.id()), recognized) {
+            (Some(snapshot), true) => Seen::Known(snapshot),
+            (Some(_), false) => Seen::Stale,
+            (None, true) => Seen::Unknown,
+            (None, false) => Seen::Fresh,
+        }
+    }
+
     /// Every section in stable identifier order.
     pub fn sections(&self) -> impl ExactSizeIterator<Item = (&str, &Value)> {
         self.sections
@@ -334,6 +359,8 @@ pub enum ContextError {
 #[cfg(test)]
 mod tests {
     use serde_json::{Value, json};
+
+    use crate::{Message, Transcript};
 
     use super::{ContextError, ContextPatch, ContextSection, ContextSnapshot, Fragment, Seen};
 
@@ -531,5 +558,55 @@ mod tests {
         let problem = ContextPatch::from_value(json!("replace everything")).unwrap_err();
 
         assert_eq!(problem, ContextError::PatchNotObject);
+    }
+
+    #[test]
+    fn reconciliation_uses_recorded_state_and_retained_history_together() {
+        let section = Workspace;
+        let mut recorded = ContextSnapshot::new();
+        recorded.capture(&section).unwrap();
+        let mut retained = Transcript::new();
+        retained.push(Message::Context(Fragment::new(
+            Workspace::ID,
+            "workspace is /work",
+        )));
+
+        assert!(matches!(
+            recorded.seen(&section, &retained),
+            Seen::Known(state) if state == &json!({ "root": "/work" })
+        ));
+
+        assert!(matches!(
+            recorded.seen(&section, &Transcript::new()),
+            Seen::Stale
+        ));
+
+        assert!(matches!(
+            ContextSnapshot::new().seen(&section, &retained),
+            Seen::Unknown
+        ));
+
+        assert!(matches!(
+            ContextSnapshot::new().seen(&section, &Transcript::new()),
+            Seen::Fresh
+        ));
+    }
+
+    #[test]
+    fn reconciliation_after_history_rewrite_detects_the_removed_fragment() {
+        let section = Workspace;
+        let mut recorded = ContextSnapshot::new();
+        recorded.capture(&section).unwrap();
+        let mut retained = Transcript::new();
+        retained.push(Message::Context(Fragment::new(
+            Workspace::ID,
+            "workspace is /work",
+        )));
+
+        assert!(matches!(recorded.seen(&section, &retained), Seen::Known(_)));
+
+        retained.behind(1);
+
+        assert!(matches!(recorded.seen(&section, &retained), Seen::Stale));
     }
 }

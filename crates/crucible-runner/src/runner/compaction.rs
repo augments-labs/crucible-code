@@ -343,6 +343,7 @@ impl Runner {
     /// direction that costs context rather than the turn.
     fn estimated(&self, message: &Message) -> u64 {
         let bytes = match message {
+            Message::Context(fragment) => fragment.text().len(),
             Message::User { text: said, .. } => said.len(),
             Message::Agent { text, .. } => text.len(),
             Message::ToolResults(results) => results

@@ -378,12 +378,18 @@ impl Load {
         let estimated = match message {
             Message::Agent { .. } if self.output_reported => 0,
             Message::Agent { .. } if self.output_seen => self.unreported,
-            Message::Agent { .. } | Message::User { .. } | Message::ToolResults(_) => bytes,
+            Message::Context(_)
+            | Message::Agent { .. }
+            | Message::User { .. }
+            | Message::ToolResults(_) => bytes,
         };
 
         self.bytes = self.bytes.saturating_add(bytes);
         self.appended = self.appended.saturating_add(estimated);
-        if matches!(message, Message::User { .. } | Message::ToolResults(_)) {
+        if matches!(
+            message,
+            Message::Context(_) | Message::User { .. } | Message::ToolResults(_)
+        ) {
             // The next response has not reported the request containing this
             // message, nor any output it may go on to produce.
             self.input_reported = false;
@@ -408,6 +414,7 @@ impl Load {
 
     fn bytes(message: &Message) -> u64 {
         (match message {
+            Message::Context(fragment) => fragment.text().len(),
             Message::Agent { text, calls, .. } => text.len().saturating_add(
                 calls
                     .iter()

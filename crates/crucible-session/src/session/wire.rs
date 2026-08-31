@@ -14,8 +14,8 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use crucible_core::{
-    Attachment, Calibration, Carried, Changed, Message, Modality, SessionId, Spend, StopReason,
-    ToolCall, ToolId, ToolOutput, ToolResult,
+    Attachment, Calibration, Carried, Changed, Fragment, Message, Modality, SessionId, Spend,
+    StopReason, ToolCall, ToolId, ToolOutput, ToolResult,
 };
 use serde_json::{Value, json};
 
@@ -25,7 +25,7 @@ use serde_json::{Value, json};
 /// is refused rather than half-understood, which is the difference between
 /// telling the user their session cannot be continued and silently continuing
 /// a different one.
-pub(crate) const FORMAT: u32 = 9;
+pub(crate) const FORMAT: u32 = 10;
 
 /// The formats this build reads, newest first.
 ///
@@ -42,13 +42,15 @@ pub(crate) const FORMAT: u32 = 9;
 /// format 9 only added a key to a line of tool results — the count a change came
 /// to — and a result written without one already means a call that changed no
 /// file, which is what a build with nowhere to say it could only ever have
-/// meant.
+/// meant. Format 9 is, because format 10 only adds typed context and its
+/// snapshot patches; a log without either replays as context-unknown rather
+/// than pretending it recorded state it could not have written.
 ///
 /// A format that changed the meaning of a line does not go on this list however
 /// small the change looks. What it would buy is somebody's history; what it
 /// would cost is a session that looks fine and is missing turns, which is the
 /// failure the refusal exists for.
-pub(crate) const READS: &[u32] = &[9, 8, 7, 6, 5, 4, 3];
+pub(crate) const READS: &[u32] = &[10, 9, 8, 7, 6, 5, 4, 3];
 
 /// Whether this build can replay a log written under `format`.
 pub(crate) fn readable(format: u32) -> bool {
@@ -207,6 +209,12 @@ pub(crate) struct Opening {
 /// One message as the line that records it.
 pub(crate) fn line(message: &Message) -> String {
     let value = match message {
+        Message::Context(fragment) => json!({
+            "context": {
+                "section": fragment.section(),
+                "text": fragment.text(),
+            }
+        }),
         // Written without the key when there are no files, so a text-only
         // session's log is byte for byte what format 5 wrote.
         Message::User { text, attachments } if attachments.is_empty() => {
@@ -232,6 +240,13 @@ pub(crate) fn line(message: &Message) -> String {
 /// One line as the message it records, or `None` if it is not one.
 pub(crate) fn message(line: &str) -> Option<Message> {
     let value: Value = serde_json::from_str(line).ok()?;
+
+    if let Some(context) = value.get("context") {
+        return Some(Message::Context(Fragment::new(
+            context.get("section")?.as_str()?,
+            context.get("text")?.as_str()?,
+        )));
+    }
 
     if let Some(text) = value.get("user") {
         let attachments = match value.get("attached") {
@@ -622,6 +637,17 @@ mod tests {
     }
 
     #[test]
+    fn a_context_fragment_survives_the_line_that_records_it() {
+        let fragment = Message::Context(Fragment::new("workspace", "Workspace: /src"));
+
+        assert_eq!(
+            line(&fragment),
+            r#"{"context":{"section":"workspace","text":"Workspace: /src"}}"#
+        );
+        assert_eq!(message(&line(&fragment)).as_ref(), Some(&fragment));
+    }
+
+    #[test]
     fn a_line_a_format_five_build_wrote_still_reads_as_the_prompt_it_recorded() {
         // Frozen bytes, not a round trip: a round trip would agree with itself
         // however the shape moved.
@@ -672,7 +698,7 @@ mod tests {
 
     #[test]
     fn the_format_moves_with_the_line_shape() {
-        assert_eq!(FORMAT, 9);
+        assert_eq!(FORMAT, 10);
         assert!(readable(FORMAT));
     }
 

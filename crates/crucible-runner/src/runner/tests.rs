@@ -1267,7 +1267,7 @@ fn the_calls_of_a_pass_are_recorded_before_the_tools_run() {
         Some(Message::ToolResults(results)) => results
             .first()
             .map(|result| result.output.text().to_owned()),
-        Some(Message::User { .. } | Message::Agent { .. }) | None => None,
+        Some(Message::Context(_) | Message::User { .. } | Message::Agent { .. }) | None => None,
     }
     .expect("the tool ran and its result was recorded");
 
@@ -1601,7 +1601,7 @@ fn a_diff_reaches_the_reader_and_stops_before_the_transcript() {
         .iter()
         .filter_map(|message| match message {
             Message::ToolResults(results) => Some(results),
-            Message::User { .. } | Message::Agent { .. } => None,
+            Message::Context(_) | Message::User { .. } | Message::Agent { .. } => None,
         })
         .flatten()
         .map(|result| result.output.diff())

@@ -88,6 +88,10 @@ fn write_messages(messages: &mut Array<'_>, request: &Request<'_>) {
 /// two.
 fn append(messages: &mut Array<'_>, message: &Message, nth: usize, attached: &[Attached<'_>]) {
     match message {
+        Message::Context(fragment) => messages.object(|message| {
+            message.text("role", "user");
+            message.text("content", fragment.text());
+        }),
         Message::User { text, .. } => messages.object(|message| {
             message.text("role", "user");
 

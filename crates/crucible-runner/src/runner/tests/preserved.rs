@@ -16,6 +16,7 @@ fn shape(transcript: &Transcript) -> Vec<&'static str> {
         .messages()
         .iter()
         .map(|message| match message {
+            Message::Context(_) => "context",
             Message::User { .. } => "user",
             Message::Agent { .. } => "agent",
             Message::ToolResults(_) => "results",

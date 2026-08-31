@@ -193,7 +193,7 @@ impl Provider for Script {
                 .iter()
                 .filter_map(|message| match message {
                     Message::Agent { text, .. } => Some(fingerprint(text)),
-                    Message::User { .. } | Message::ToolResults(_) => None,
+                    Message::Context(_) | Message::User { .. } | Message::ToolResults(_) => None,
                 })
                 .collect(),
             tools: request

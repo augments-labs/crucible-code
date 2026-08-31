@@ -520,7 +520,7 @@ fn a_full_window_prunes_tool_output_from_the_active_turn_and_carries_on() {
                     .map(|result| result.output.text().len())
                     .collect::<Vec<_>>(),
             ),
-            Message::User { .. } | Message::Agent { .. } => None,
+            Message::Context(_) | Message::User { .. } | Message::Agent { .. } => None,
         })
         .flatten()
         .collect();

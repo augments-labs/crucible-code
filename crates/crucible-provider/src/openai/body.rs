@@ -99,6 +99,10 @@ fn write_input(items: &mut Array<'_>, request: &Request<'_>) {
 /// called none is one.
 fn append(items: &mut Array<'_>, message: &Message, nth: usize, attached: &[Attached<'_>]) {
     match message {
+        Message::Context(fragment) => items.object(|item| {
+            item.text("role", "user");
+            item.text("content", fragment.text());
+        }),
         Message::User { text, .. } => items.object(|item| {
             item.text("role", "user");
 

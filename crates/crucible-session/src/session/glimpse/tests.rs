@@ -40,6 +40,7 @@ fn said(glimpse: &Glimpse) -> Vec<(bool, String)> {
         .messages()
         .iter()
         .filter_map(|message| match message {
+            Message::Context(_) => None,
             Message::User { text, .. } => Some((true, text.to_string())),
             Message::Agent { text, .. } => Some((false, text.to_string())),
             Message::ToolResults(_) => None,

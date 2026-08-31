@@ -13,6 +13,7 @@
 
 use std::fmt;
 
+use crate::context::Fragment;
 use crate::ids::ToolId;
 use crate::modality::Modality;
 use crate::tool::{ToolCall, ToolOutput};
@@ -69,6 +70,13 @@ impl fmt::Debug for Attachment {
 /// so a new variant must break every provider that has not handled it.
 #[derive(Clone, PartialEq, Eq)]
 pub enum Message {
+    /// A typed harness fact rendered for this request and retained thereafter.
+    ///
+    /// Separate from [`Self::User`] so it starts no turn, is never attributed
+    /// to the developer, and can be recognized after compaction without a
+    /// user being able to forge its ownership by typing the same words.
+    Context(Fragment),
+
     /// What the user typed, and the files they put beside it. Starts a turn.
     User {
         /// The prompt.
@@ -122,6 +130,7 @@ impl Message {
     #[must_use]
     pub fn attachments(&self) -> Vec<&Attachment> {
         match self {
+            Self::Context(_) => Vec::new(),
             Self::User { attachments, .. } => attachments.iter().collect(),
             Self::Agent { .. } => Vec::new(),
             Self::ToolResults(results) => results
@@ -135,6 +144,7 @@ impl Message {
 impl fmt::Debug for Message {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Context(fragment) => f.debug_tuple("Context").field(&fragment.section()).finish(),
             Self::User { attachments, .. } => f
                 .debug_struct("User")
                 .field("text", &"[redacted]")
@@ -415,6 +425,19 @@ mod tests {
     }
 
     #[test]
+    fn context_is_retained_without_starting_a_user_turn() {
+        let mut transcript = Transcript::new();
+        transcript.push(Message::Context(Fragment::new(
+            "workspace",
+            "Workspace: /private/project",
+        )));
+
+        assert_eq!(transcript.turns(), 0);
+        assert_eq!(transcript.len(), 1);
+        assert!(transcript.messages()[0].attachments().is_empty());
+    }
+
+    #[test]
     fn a_turn_that_ended_the_way_the_model_meant_it_to_is_not_marked() {
         // Every turn ends. A note under each one saying so would be spent on
         // the path taken every time, and the model would learn nothing from it.
@@ -481,6 +504,10 @@ mod tests {
     #[test]
     fn transcript_debug_redacts_prompts_answers_and_tool_results() {
         let mut transcript = Transcript::new();
+        transcript.push(Message::Context(Fragment::new(
+            "workspace",
+            "context-debug-canary",
+        )));
         transcript.push(Message::said("prompt-debug-canary"));
         transcript.push(Message::Agent {
             text: "answer-debug-canary".into(),
@@ -494,6 +521,7 @@ mod tests {
 
         let shown = format!("{transcript:?}");
         for canary in [
+            "context-debug-canary",
             "prompt-debug-canary",
             "answer-debug-canary",
             "call-debug-canary",
