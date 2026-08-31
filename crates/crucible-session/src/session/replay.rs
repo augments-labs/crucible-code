@@ -200,6 +200,7 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
         // to be told it again.
         if whole.is_some_and(wire::forgets) {
             transcript.forget();
+            context = (format == Some(wire::FORMAT)).then(ContextSnapshot::new);
             calibration = None;
             before = through;
             through += read as u64;
@@ -212,6 +213,7 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
         // of messages still reads correctly.
         if let Some((replaced, recap)) = whole.and_then(wire::made_room) {
             transcript.behind(replaced);
+            transcript.forget_context();
             transcript.push(Message::said(recap));
             calibration = None;
             through += read as u64;

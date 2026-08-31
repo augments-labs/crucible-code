@@ -73,9 +73,9 @@ pub struct AgentSpec {
     /// later phase reads out of files are where an empty body stops being a
     /// mistake and becomes an ordinary case.
     ///
-    /// Rewritten by [`crate::Runner::telling`] on the runner's own definition:
-    /// part of what these say is about the session — which model is answering,
-    /// how hard it was asked to think — and both of those move while it runs.
+    /// May be rewritten by [`crate::Runner::telling`] where operator-authored
+    /// instructions change. Model, effort, tool, permission, and workspace
+    /// facts are typed context sections and never enter this field.
     ///
     /// [`told`]: AgentSpec::told
     instructions: Option<Box<str>>,

@@ -22,7 +22,9 @@ use crucible_core::{
 use crucible_provider::{
     Anthropic, AnthropicWeb, Endpoint, Https, Moonshot, MoonshotWeb, OpenAi, OpenAiWeb, Unavailable,
 };
-use crucible_runner::{AgentSpec, Bounds, Compaction, Model, RunPolicy, Runner, Session, Tools};
+use crucible_runner::{
+    AgentSpec, Bounds, Compaction, ContextInputs, Model, RunPolicy, Runner, Session, Tools,
+};
 use crucible_tools::{
     AskUser, Background, Bash, Edit, Glob, Grep, Held, Ledger, Plan, Read, TodoWrite, ToolSearch,
     WebFetch, WebSearch, Write,
@@ -195,34 +197,28 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<Runner, Fatal> {
         }
     };
 
-    // The registry before either, because what a turn is asked under names the
-    // tools this run actually registered — and which those are is the wiring's
-    // answer, arrived at a line above rather than written down a second time
-    // in a sentence.
+    // Build the registry before the runner, because its exact immutable
+    // generation is one of the typed facts the first pass assembles.
     let offering = tools(startup, settings, reaching)?;
 
-    // Nothing has ended yet, so there is no command left running to report.
-    // This is the definition's opening value rather than any turn's prompt:
-    // `Runner::telling` writes it again before every turn, the first included,
-    // because three of the four things in it move while a session runs. What
-    // this one is for is the window reading a session shows before it has
-    // taken a turn, which is measured against whatever the definition holds.
+    // Operator-authored instructions are the stable request prefix. Everything
+    // that can move within the session is read by context assembly instead.
     let name = startup.model.unwrap_or_default();
-    let asked = standing::under(standing::Standing {
-        settings,
-        model: name,
-        effort: startup.effort,
-        workspace,
-        tools: offering.offering(),
-    });
+    let asked = standing::under(settings);
 
     // Read before the provider is handed over, because which vendor is being
     // written to is what says which model's limits are being asked about.
     let asking = coding(provider.name(), name, startup.effort, settings, &asked);
 
-    let mut runner = Runner::new(provider, offering, asking, session)
-        .permitting(settings.permission(startup.mode))
-        .under(policy(settings));
+    let mut runner = Runner::new(
+        provider,
+        offering,
+        asking,
+        ContextInputs::new(workspace.root()),
+        session,
+    )
+    .permitting(settings.permission(startup.mode))
+    .under(policy(settings));
     if let Some(transcript) = earlier {
         planned(startup.plan, &transcript);
         runner = runner.resuming(transcript);

@@ -709,6 +709,7 @@ mod tests {
                     effort: None,
                 },
             ),
+            crucible_runner::ContextInputs::new(std::env::temp_dir()),
             Session::nowhere(),
         )
     }
@@ -728,6 +729,7 @@ mod tests {
                     effort: None,
                 },
             ),
+            crucible_runner::ContextInputs::new(std::env::temp_dir()),
             Session::nowhere(),
         )
     }
@@ -839,6 +841,7 @@ mod tests {
                     effort: None,
                 },
             ),
+            crucible_runner::ContextInputs::new(std::env::temp_dir()),
             Session::nowhere(),
         );
         let mut renderer = Renderer::new(Recording::new(80, 24));

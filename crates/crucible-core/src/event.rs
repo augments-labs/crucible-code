@@ -8,6 +8,7 @@
 //! A closed set, deliberately. Adding an event must break every `match` that
 //! decides how to draw one.
 
+use crate::ContextError;
 use crate::ids::{RunId, ToolId, TurnId};
 use crate::provider::{ProviderError, Spend};
 use crate::run::Ancestry;
@@ -21,6 +22,10 @@ use crate::transcript::{Attachment, StopReason};
 /// and an event that names a runner type would invert the dependency.
 #[derive(Debug, thiserror::Error)]
 pub enum TurnError {
+    /// Typed request context could not be snapshotted or patched.
+    #[error(transparent)]
+    Context(#[from] ContextError),
+
     /// The provider failed.
     #[error(transparent)]
     Provider(#[from] ProviderError),

@@ -126,6 +126,12 @@ impl<'a> AgentLoop<'a> {
             self.runner.tools = tools.clone();
             let advertised = tools.advertised();
 
+            // Once, against this exact immutable generation and after any
+            // compaction from the preceding loop iteration rewrote history.
+            // Recording the fragments updates `runner.load` before it is read
+            // below, so reserve and fullness see exactly what will be sent.
+            self.runner.assemble_context()?;
+
             // Recording is what measures the transcript, and it happens on the
             // runner rather than here; reading it back at the top of each pass
             // is what makes the check below see the results of the last one.

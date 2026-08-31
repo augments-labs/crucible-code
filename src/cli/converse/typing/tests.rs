@@ -49,6 +49,7 @@ fn engine(mode: Mode) -> Runner {
                 effort: None,
             },
         ),
+        crucible_runner::ContextInputs::new(std::env::temp_dir()),
         Session::nowhere(),
     )
     .permitting(Permission::with(mode, Rules::new()))

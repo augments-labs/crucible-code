@@ -32,6 +32,17 @@ fn holding(maximum: usize) -> RunPolicy {
     }
 }
 
+/// The conversational messages, leaving typed harness facts to their own
+/// context-assembly assertions.
+fn conversation(transcript: &Transcript) -> Vec<Message> {
+    transcript
+        .messages()
+        .iter()
+        .filter(|message| !matches!(message, Message::Context(_)))
+        .cloned()
+        .collect()
+}
+
 /// What the model these tests ask reads: prose and the pictures they attach.
 const READS: Modalities = Modalities::empty()
     .insert(Modality::Text)
@@ -41,6 +52,7 @@ mod aiming;
 mod attachments;
 mod attribution;
 mod compaction;
+mod context;
 mod lifecycle;
 mod outcome;
 mod pick_up;
@@ -96,6 +108,7 @@ impl Scripted {
                         effort: None,
                     },
                 ),
+                ContextInputs::new(std::env::temp_dir()).dated("2026-08-31"),
                 session,
             ),
             sent,
@@ -475,6 +488,7 @@ impl Steering {
                         effort: None,
                     },
                 ),
+                ContextInputs::new(std::env::temp_dir()).dated("2026-08-31"),
                 Session::nowhere(),
             ),
             sent,
@@ -702,7 +716,7 @@ fn a_turn_that_yields_records_what_the_model_said() {
 
     assert_eq!(scripted.said(), "Hello, world");
     assert_eq!(
-        scripted.runner.transcript().messages(),
+        conversation(scripted.runner.transcript()),
         [
             Message::said("hi"),
             Message::Agent {
@@ -728,7 +742,7 @@ fn a_tool_call_runs_and_what_it_produced_goes_back_to_the_model() {
 
     assert_eq!(scripted.turn("read x").unwrap(), StopReason::Yielded);
 
-    let messages = scripted.runner.transcript().messages();
+    let messages = conversation(scripted.runner.transcript());
     assert_eq!(messages.len(), 4, "prompt, call, result, answer");
     assert!(matches!(
         messages.get(2),
@@ -748,8 +762,8 @@ fn the_second_request_carries_the_first_pass_in_full() {
 
     assert_eq!(
         scripted.asked(),
-        [1, 3],
-        "first the prompt; then the prompt, the call, and its result"
+        [7, 9],
+        "the first request adds six sections; the second adds only call and result"
     );
 }
 
@@ -843,7 +857,7 @@ fn a_call_the_model_never_finished_asking_for_is_not_recorded() {
     assert_eq!(scripted.turn("go").unwrap(), StopReason::Cancelled);
 
     assert_eq!(
-        scripted.runner.transcript().messages(),
+        conversation(scripted.runner.transcript()),
         [
             Message::said("go"),
             Message::Agent {
@@ -906,7 +920,7 @@ fn an_answer_the_connection_broke_off_is_still_in_the_transcript() {
         "{problem}"
     );
     assert_eq!(
-        scripted.runner.transcript().messages(),
+        conversation(scripted.runner.transcript()),
         [
             Message::said("what is in main.rs?"),
             Message::Agent {
@@ -939,7 +953,7 @@ fn a_response_that_went_away_before_it_said_anything_is_asked_for_again() {
     // Nothing of the attempt that went away is left behind: an empty agent
     // message here is one the next request carries, and every request after it.
     assert_eq!(
-        scripted.runner.transcript().messages(),
+        conversation(scripted.runner.transcript()),
         [
             Message::said("go"),
             Message::Agent {
@@ -1262,7 +1276,7 @@ fn the_calls_of_a_pass_are_recorded_before_the_tools_run() {
 
     scripted.turn("go").expect("the turn");
 
-    let messages = scripted.runner.transcript().messages();
+    let messages = conversation(scripted.runner.transcript());
     let seen = match messages.get(2) {
         Some(Message::ToolResults(results)) => results
             .first()
@@ -1482,7 +1496,7 @@ fn a_turn_that_was_cut_off_comes_back_from_a_replay_still_cut_off() {
         Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
 
     assert_eq!(
-        replayed.messages(),
+        conversation(&replayed),
         [
             Message::said("write it all out"),
             Message::Agent {
@@ -1513,7 +1527,7 @@ fn a_stream_that_never_said_why_it_stopped_fails_the_turn_rather_than_finishing_
     // What the user already read is still recorded, and it is recorded as an
     // answer that never reached an ending.
     assert_eq!(
-        scripted.runner.transcript().messages(),
+        conversation(scripted.runner.transcript()),
         [
             Message::said("go"),
             Message::Agent {

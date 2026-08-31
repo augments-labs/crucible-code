@@ -349,6 +349,18 @@ impl Transcript {
         self.messages = Vec::new();
     }
 
+    /// Removes every typed context fragment after history was summarized.
+    ///
+    /// A retained delta is not evidence that the full fragment it amended also
+    /// survived. Dropping the complete family at the rewrite boundary makes
+    /// reconciliation conservative and forces one fresh full rendering before
+    /// the next provider request. User, agent, tool, and recap messages stay
+    /// byte-for-byte as compaction selected them.
+    pub fn forget_context(&mut self) {
+        self.messages
+            .retain(|message| !matches!(message, Message::Context(_)));
+    }
+
     /// How many messages the transcript holds.
     #[must_use]
     pub fn len(&self) -> usize {
@@ -499,6 +511,24 @@ mod tests {
         assert_eq!(transcript.len(), 0);
         assert_eq!(transcript.turns(), 0);
         assert_eq!(transcript.messages(), []);
+    }
+
+    #[test]
+    fn a_history_rewrite_can_remove_context_without_touching_the_conversation() {
+        let mut transcript = Transcript::new();
+        transcript.push(Message::said("keep the prompt"));
+        transcript.push(Message::Context(Fragment::new("workspace", "private")));
+        transcript.push(Message::Agent {
+            text: "keep the answer".into(),
+            calls: Vec::new(),
+            stop: Some(StopReason::Yielded),
+        });
+
+        transcript.forget_context();
+
+        assert_eq!(transcript.len(), 2);
+        assert!(matches!(transcript.messages()[0], Message::User { .. }));
+        assert!(matches!(transcript.messages()[1], Message::Agent { .. }));
     }
 
     #[test]

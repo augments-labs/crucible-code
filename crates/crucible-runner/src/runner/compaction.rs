@@ -229,6 +229,20 @@ impl Runner {
         // sleeping the worker; the renderer gives it a short visible dwell.
         events.post(crucible_core::Event::Compacting { why, part: 100 });
 
+        // The log boundary below is in raw transcript messages and therefore
+        // includes typed harness context. The reader-facing event keeps its
+        // established meaning: how much conversation the recap replaced. A
+        // context fragment is model-visible but was never a user or agent
+        // message, and counting it here would make the same two turns suddenly
+        // look six messages longer after context assembly was introduced.
+        let reported_replaced = self
+            .transcript
+            .messages()
+            .iter()
+            .take(replacing)
+            .filter(|message| !matches!(message, Message::Context(_)))
+            .count();
+
         let mut messages = std::mem::take(&mut self.transcript).into_messages();
 
         // Drained rather than collected into a second transcript: this is the
@@ -247,7 +261,9 @@ impl Runner {
         let mut rebuilt = Transcript::new();
         rebuilt.push(Message::said(standing_as));
         for message in standing {
-            rebuilt.push(message);
+            if !matches!(message, Message::Context(_)) {
+                rebuilt.push(message);
+            }
         }
         self.transcript = rebuilt;
 
@@ -265,7 +281,7 @@ impl Runner {
 
         let compacted = Compacted {
             why,
-            replaced: replacing,
+            replaced: reported_replaced,
             before,
             after: self.load.tokens(),
             kept,
