@@ -191,7 +191,7 @@ impl SandboxSession for LinuxSession {
             command: &command,
             view: &self.view,
             materialization: self.materialization.as_ref(),
-            projection: projection.as_ref(),
+            projection: Some(&projection),
             status_descriptor,
         }) {
             Ok(process) => process,
@@ -237,7 +237,7 @@ impl SandboxSession for LinuxSession {
         };
         let launch = LinuxLaunch {
             process: Some(process),
-            projection,
+            projection: Some(projection),
             status_channel: Some(status_channel),
             inspection: self.inspection.clone(),
             audit: self.request.audit().clone(),

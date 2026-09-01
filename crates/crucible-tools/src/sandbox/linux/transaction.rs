@@ -121,7 +121,7 @@ pub(super) struct Machine {
 /// One append-only, fsynced transaction record plus the descriptor-held global
 /// lease that gives it exclusive writable authority.
 pub(super) struct Transaction {
-    _lease: Lease,
+    _lease: Option<Lease>,
     journal: File,
     machine: Machine,
     frame: FrameState,
@@ -145,7 +145,7 @@ struct OwnerIdentity {
 
 impl Transaction {
     pub(super) fn start(
-        lease: Lease,
+        lease: Option<Lease>,
         directory: &Path,
         sandbox: SandboxId,
         mode: InvocationMode,
@@ -161,7 +161,7 @@ impl Transaction {
     }
 
     fn start_owned(
-        lease: Lease,
+        lease: Option<Lease>,
         directory: &Path,
         sandbox: SandboxId,
         invocation: Invocation,
@@ -981,10 +981,8 @@ impl Lease {
             lease.test_serial = Some(test_serial);
             lease
         };
-        reconcile_stale_transactions(Path::new("/var/tmp")).map_err(|_| {
-            SandboxError::BackendUnavailable {
-                reason: "stale writable transaction requires recovery or quarantine review".into(),
-            }
+        reconcile_host_transactions().map_err(|_| SandboxError::BackendUnavailable {
+            reason: "stale writable transaction requires recovery or quarantine review".into(),
         })?;
         Ok(Some(lease))
     }
@@ -1154,6 +1152,18 @@ fn validate_lock(state_path: &Path, lock: &File) -> io::Result<()> {
     Ok(())
 }
 
+pub(super) fn reconcile_host_transactions() -> io::Result<()> {
+    for base in [Path::new("/var/tmp"), Path::new("/tmp")] {
+        let Ok(canonical) = base.canonicalize() else {
+            continue;
+        };
+        if canonical == base {
+            reconcile_stale_transactions(base)?;
+        }
+    }
+    Ok(())
+}
+
 fn reconcile_stale_transactions(base: &Path) -> io::Result<()> {
     let mut candidates = Vec::new();
     for entry in fs::read_dir(base)? {
@@ -1162,6 +1172,12 @@ fn reconcile_stale_transactions(base: &Path) -> io::Result<()> {
             .file_name()
             .as_bytes()
             .starts_with(STAGE_PREFIX.as_bytes())
+        {
+            continue;
+        }
+        let metadata = fs::symlink_metadata(entry.path())?;
+        if metadata.uid() != rustix::process::getuid().as_raw()
+            || metadata.gid() != rustix::process::getgid().as_raw()
         {
             continue;
         }
@@ -1205,6 +1221,9 @@ fn reconcile_stale_transactions(base: &Path) -> io::Result<()> {
         let mut recovered = recover_wal_at(&directory)?;
         if recovered.frame.identity.as_slice() != sandbox.to_string().as_bytes() {
             return Err(invalid("stale sandbox journal names another transaction"));
+        }
+        if !recovered.machine.is_terminal() && !recovered.frame.owner.owner_is_dead()? {
+            continue;
         }
         if !recovered.machine.is_terminal() {
             recover_stale_transaction(&candidate, &mut recovered)?;
@@ -1564,7 +1583,7 @@ mod tests {
         let key = CallResultKey::from_digest([0x3c; 32]);
         let receipt = [0x5a; 32];
         let mut transaction = Transaction::start(
-            lease,
+            Some(lease),
             &projection_root,
             SandboxId::new(),
             InvocationMode::Background,
@@ -1700,14 +1719,46 @@ mod tests {
     }
 
     #[test]
-    fn nonterminal_stale_transactions_block_and_retain_their_evidence() {
+    fn live_nonterminal_transactions_are_skipped_and_retain_their_evidence() {
         let sample = crate::sample::Sample::new("sandbox-nonterminal-recovery");
         let base = sample.root().join("recovery");
         create_private_test_directory(&base);
         let stage = stale_journal(&sample, &base, false);
 
-        assert!(reconcile_stale_transactions(&base).is_err());
+        reconcile_stale_transactions(&base).expect("live transaction is not stale");
         assert!(stage.join("transaction.wal").exists());
+    }
+
+    #[test]
+    fn read_only_lifecycles_have_a_durable_transaction_without_a_writer_lease() {
+        use std::os::unix::fs::DirBuilderExt as _;
+
+        let sample = crate::sample::Sample::new("sandbox-read-only-transaction");
+        let stage = sample.root().join("stage");
+        let mut builder = fs::DirBuilder::new();
+        builder.mode(0o700);
+        builder.create(&stage).expect("stage directory");
+        let mut transaction = Transaction::start(
+            None,
+            &stage,
+            SandboxId::new(),
+            InvocationMode::Foreground,
+            None,
+        )
+        .expect("read-only lifecycle journal");
+        for record in [
+            Record::Prepared,
+            Record::RefusalObserved,
+            Record::PreparationCleanupIntent,
+            Record::PreparationCleanupProved,
+            Record::Refused,
+        ] {
+            transaction.append(record).expect("lifecycle record");
+        }
+        drop(transaction);
+
+        let recovered = recover_wal(&stage.join("transaction.wal")).expect("read-only WAL");
+        assert_eq!(recovered.machine.terminal(), Some(Record::Refused));
     }
 
     #[test]
@@ -1822,7 +1873,7 @@ mod tests {
         builder.create(&projection_root).expect("stage directory");
         let lease = Lease::acquire_at(&state_root).expect("transaction lease");
         let mut transaction = Transaction::start(
-            lease,
+            Some(lease),
             &projection_root,
             SandboxId::new(),
             InvocationMode::Foreground,
@@ -1866,7 +1917,7 @@ mod tests {
         create_private_test_directory(&stage);
         let lease = Lease::acquire_at(&sample.root().join("state")).expect("transaction lease");
         let mut transaction = Transaction::start_owned(
-            lease,
+            Some(lease),
             &stage,
             sandbox,
             Invocation::new(InvocationMode::Foreground, None).expect("foreground identity"),

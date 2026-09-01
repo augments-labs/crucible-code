@@ -705,6 +705,60 @@ fn background_ownership_precedes_release_and_command_start() {
 }
 
 #[test]
+fn read_only_background_commands_have_a_durable_lifecycle() {
+    let service = LocalSandbox::new();
+    if service.probe().is_err() {
+        return;
+    }
+    let sample = Sample::new("sandbox-read-only-background-lifecycle");
+    sample.write("input.txt", "read-only input\n");
+    let policy = SandboxPolicy::new(
+        SandboxMode::Required,
+        [SandboxFilesystemRule::new(
+            sample.root().clone(),
+            SandboxFilesystemAccess::ReadOnly,
+            SandboxFilesystemProvenance::Workspace,
+        )
+        .expect("read-only workspace rule")],
+        sample.root().clone(),
+        SandboxNetworkPolicy::Closed,
+        SandboxResourceLimits::default(),
+    )
+    .expect("read-only policy");
+    let context = crate::sample::context_for("read-only-background");
+    let request = SandboxRequest::new(
+        SandboxId::new(),
+        Ancestry::new(),
+        ToolId::new("read-only-background"),
+        policy,
+        SandboxManifest::empty(),
+    )
+    .with_invocation_mode(SandboxInvocationMode::Background)
+    .with_call_result_key(context.call_result_key().expect("durable result key"));
+    let mut session = service.prepare(request).expect("prepared sandbox");
+    session.materialize().expect("materialized workspace");
+    let mut launch = session
+        .stage(command("cat input.txt"))
+        .expect("staged read-only launch");
+    launch.transfer_owner().expect("application owner transfer");
+    let mut process = launch.release().expect("released read-only launch");
+    process
+        .accept_background(
+            &context,
+            &ToolResult {
+                id: ToolId::new("read-only-background"),
+                output: ToolOutput::ok("accepted"),
+            },
+        )
+        .expect("durable read-only acceptance");
+
+    let (status, output, errors) = finish(process);
+
+    assert!(status.success(), "{}", String::from_utf8_lossy(&errors));
+    assert_eq!(output, b"read-only input\n");
+}
+
+#[test]
 fn background_release_without_an_application_owner_is_refused_before_go() {
     let service = LocalSandbox::new();
     if service.probe().is_err() {

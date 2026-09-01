@@ -114,7 +114,8 @@ struct Root {
     baseline: Snapshot,
 }
 
-/// Host-owned writable copies. None of their pathnames reaches the workload.
+/// One durable command lifecycle plus any host-owned writable copies.
+/// None of their host pathnames reaches the workload.
 pub(super) struct Projection {
     stage: Stage,
     roots: Vec<Root>,
@@ -128,7 +129,13 @@ impl Projection {
         view: &View,
         materialization: Option<&Materialization>,
         lease: Option<transaction::Lease>,
-    ) -> Result<Option<Self>, SandboxError> {
+    ) -> Result<Self, SandboxError> {
+        transaction::reconcile_host_transactions().map_err(|source| {
+            failed(
+                "stale sandbox lifecycle requires recovery or review",
+                source,
+            )
+        })?;
         let mut specifications = Vec::new();
         for bind in view.binds().iter().filter(|bind| !bind.read_only()) {
             let authority = bind.duplicate().map_err(|source| {
@@ -166,10 +173,11 @@ impl Projection {
                     "writable transaction admission has no projected authority",
                 ));
             }
-            return Ok(None);
+        } else if lease.is_none() {
+            return Err(refused(
+                "writable projection has no global transaction admission",
+            ));
         }
-        let lease = lease
-            .ok_or_else(|| refused("writable projection has no global transaction admission"))?;
         specifications.sort_by(|left, right| {
             left.0
                 .components()
@@ -245,12 +253,12 @@ impl Projection {
         transaction
             .append(transaction::Record::Prepared)
             .map_err(|source| failed("could not durably prepare writable transaction", source))?;
-        Ok(Some(Self {
+        Ok(Self {
             stage,
             roots,
             published: false,
             transaction,
-        }))
+        })
     }
 
     pub(super) fn record(&mut self, record: transaction::Record) -> io::Result<()> {
