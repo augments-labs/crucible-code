@@ -2,12 +2,14 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
-use std::fs::{self, File, FileTimes, OpenOptions};
+use std::fs;
 use std::io;
-use std::os::unix::fs::{PermissionsExt as _, symlink};
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 
-use super::{Entry, Root, Snapshot, copy_file, digest_file, snapshot_filtered, sparse_extents};
+use super::{
+    Entry, Root, Snapshot, authority, copy_file, digest_file, snapshot_filtered, sparse_extents,
+};
 
 type ContentKey = (u64, [u8; 32], Vec<(u64, u64)>);
 
@@ -193,7 +195,7 @@ pub(super) fn apply(roots: &[Root], stage: &Path, finals: &[Snapshot]) -> io::Re
     }
     for (root, final_snapshot) in roots.iter().zip(finals) {
         validate_root_shape(root, final_snapshot)?;
-        if snapshot_filtered(&root.host, &root.exclusions)? != root.baseline {
+        if snapshot_filtered(&root.publication_path(), &root.exclusions)? != root.baseline {
             return Err(io::Error::other(format!(
                 "writable root changed outside the sandbox before publication; terminal delta category: {}",
                 difference(&root.baseline, final_snapshot)
@@ -220,7 +222,7 @@ pub(super) fn apply(roots: &[Root], stage: &Path, finals: &[Snapshot]) -> io::Re
             continue;
         }
         if let Err(problem) = apply_snapshot(
-            &root.host,
+            root,
             &root.exclusions,
             final_snapshot,
             &prepared_root.contents,
@@ -286,7 +288,8 @@ impl Prepared {
     fn new(root: &Root, desired: &Snapshot, directory: &Path) -> io::Result<Self> {
         create_private_directory(directory)?;
         let changed = changed_paths(&root.baseline, desired);
-        let baseline_sources = content_sources(&root.host, &root.baseline);
+        let publication_root = root.publication_path();
+        let baseline_sources = content_sources(&publication_root, &root.baseline);
         let mut contents = ContentStore::new(directory.to_path_buf());
 
         for path in &changed {
@@ -297,8 +300,13 @@ impl Prepared {
                 ..
             }) = root.baseline.entries.get(path)
             {
-                let source = root_path(&root.host, path);
-                contents.retain((*length, *digest, extents.clone()), &source)?;
+                let source = root_path(&publication_root, path);
+                let key = (*length, *digest, extents.clone());
+                if root.directory {
+                    contents.retain(key, &source)?;
+                } else {
+                    contents.retain_copy(key, &source)?;
+                }
             }
         }
         for path in &changed {
@@ -347,16 +355,25 @@ impl ContentStore {
     }
 
     fn retain(&mut self, key: ContentKey, source: &Path) -> io::Result<()> {
+        self.retain_with(key, source, true)
+    }
+
+    fn retain_copy(&mut self, key: ContentKey, source: &Path) -> io::Result<()> {
+        self.retain_with(key, source, false)
+    }
+
+    fn retain_with(&mut self, key: ContentKey, source: &Path, allow_link: bool) -> io::Result<()> {
         if self.contains(&key) {
             return Ok(());
         }
         let destination = self.directory.join(self.files.len().to_string());
-        match fs::hard_link(source, &destination) {
-            Ok(()) => {}
-            Err(problem) if problem.raw_os_error() == Some(18) => {
+        match allow_link.then(|| fs::hard_link(source, &destination)) {
+            None => copy_file(source, &destination)?,
+            Some(Ok(())) => {}
+            Some(Err(problem)) if problem.raw_os_error() == Some(18) => {
                 copy_file(source, &destination)?;
             }
-            Err(problem) => return Err(problem),
+            Some(Err(problem)) => return Err(problem),
         }
         verify_content(&destination, &key)?;
         self.files.insert(key, destination);
@@ -384,13 +401,8 @@ fn rollback(
         let contents = prepared
             .get(index)
             .ok_or_else(|| invalid("rollback content index is unavailable"))?;
-        apply_snapshot(
-            &root.host,
-            &root.exclusions,
-            &root.baseline,
-            &contents.contents,
-        )?;
-        if snapshot_filtered(&root.host, &root.exclusions)? != root.baseline {
+        apply_snapshot(root, &root.exclusions, &root.baseline, &contents.contents)?;
+        if snapshot_filtered(&root.publication_path(), &root.exclusions)? != root.baseline {
             return Err(invalid(
                 "rollback did not restore the baseline semantic view",
             ));
@@ -400,12 +412,13 @@ fn rollback(
 }
 
 fn apply_snapshot(
-    host: &Path,
+    root: &Root,
     exclusions: &[PathBuf],
     desired: &Snapshot,
     contents: &ContentStore,
 ) -> io::Result<()> {
-    let current = snapshot_filtered(host, exclusions)?;
+    let publication_root = root.publication_path();
+    let current = snapshot_filtered(&publication_root, exclusions)?;
     let mut removals = current
         .entries
         .iter()
@@ -415,27 +428,32 @@ fn apply_snapshot(
                     .entries
                     .get(path)
                     .is_none_or(|wanted| entry_type(entry) != entry_type(wanted)))
-            .then_some(path.clone())
+            .then_some((path.clone(), matches!(entry, Entry::Directory { .. })))
         })
         .collect::<Vec<_>>();
-    removals.sort_by(|left, right| {
+    removals.sort_by(|(left, _), (right, _)| {
         right
             .components()
             .count()
             .cmp(&left.components().count())
             .then_with(|| right.cmp(left))
     });
-    for path in removals {
-        remove_path(&root_path(host, &path))?;
+    for (path, directory) in removals {
+        if !root.directory {
+            return Err(invalid("file-root publication contains a nested removal"));
+        }
+        authority::remove(root, &path, directory)?;
     }
 
     for (path, entry) in &desired.entries {
         if path.as_os_str().is_empty() || !matches!(entry, Entry::Directory { .. }) {
             continue;
         }
-        let target = root_path(host, path);
-        if !fs::symlink_metadata(&target).is_ok_and(|metadata| metadata.is_dir()) {
-            fs::create_dir(&target)?;
+        if !matches!(current.entries.get(path), Some(Entry::Directory { .. })) {
+            if !root.directory {
+                return Err(invalid("file-root publication contains a directory"));
+            }
+            authority::create_directory(root, path)?;
         }
     }
 
@@ -443,8 +461,8 @@ fn apply_snapshot(
         match entry {
             Entry::File {
                 linked_to: None, ..
-            } => apply_file(host, path, entry, current.entries.get(path), contents)?,
-            Entry::Symlink(target) => apply_symlink(host, path, target)?,
+            } => apply_file(root, path, entry, current.entries.get(path), contents)?,
+            Entry::Symlink(target) => apply_symlink(root, path, target, current.entries.get(path))?,
             Entry::Directory { .. }
             | Entry::File {
                 linked_to: Some(_), ..
@@ -459,12 +477,15 @@ fn apply_snapshot(
         else {
             continue;
         };
-        let target = root_path(host, path);
-        let anchor = root_path(host, anchor);
-        if fs::symlink_metadata(&target).is_ok() {
-            remove_path(&target)?;
+        if !root.directory {
+            return Err(invalid("file-root publication contains a hard-link alias"));
         }
-        fs::hard_link(anchor, target)?;
+        authority::hard_link(
+            root,
+            anchor,
+            path,
+            matches!(current.entries.get(path), Some(Entry::File { .. })),
+        )?;
     }
 
     let mut directories = desired
@@ -482,10 +503,10 @@ fn apply_snapshot(
             .then_with(|| right.cmp(left))
     });
     for (path, entry) in directories {
-        apply_metadata(&root_path(host, path), entry, true)?;
+        apply_metadata(root, path, entry, true)?;
     }
-    File::open(host)?.sync_all()?;
-    if snapshot_filtered(host, exclusions)? == *desired {
+    authority::sync(root)?;
+    if snapshot_filtered(&publication_root, exclusions)? == *desired {
         Ok(())
     } else {
         Err(invalid(
@@ -495,7 +516,7 @@ fn apply_snapshot(
 }
 
 fn apply_file(
-    host: &Path,
+    root: &Root,
     relative: &Path,
     entry: &Entry,
     current: Option<&Entry>,
@@ -511,52 +532,50 @@ fn apply_file(
     else {
         return Err(invalid("publication file anchor is invalid"));
     };
-    let target = root_path(host, relative);
     if current == Some(entry) {
-        return apply_metadata(&target, entry, false);
+        return apply_metadata(root, relative, entry, false);
     }
     let key = (*length, *digest, extents.clone());
     let source = contents.get(&key)?;
-    let temporary = temporary_path(&target, "file")?;
-    remove_if_present(&temporary)?;
-    copy_file(source, &temporary)?;
-    apply_metadata(&temporary, entry, false)?;
-    fs::rename(&temporary, &target)?;
-    sync_parent(&target)
+    let (mode, modified) = entry_metadata(entry)?;
+    if !root.directory {
+        if !relative.as_os_str().is_empty() {
+            return Err(invalid("file-root publication contains a nested file"));
+        }
+        return authority::replace_root_file(root, source, (mode, modified));
+    }
+    let replace = matches!(current, Some(Entry::File { .. }));
+    authority::replace_file(root, relative, source, (mode, modified), replace)
 }
 
-fn apply_symlink(host: &Path, relative: &Path, target: &OsStr) -> io::Result<()> {
-    let destination = root_path(host, relative);
-    if fs::symlink_metadata(&destination).is_ok_and(|metadata| metadata.file_type().is_symlink())
-        && fs::read_link(&destination).is_ok_and(|current| current.as_os_str() == target)
-    {
+fn apply_symlink(
+    root: &Root,
+    relative: &Path,
+    target: &OsStr,
+    current: Option<&Entry>,
+) -> io::Result<()> {
+    if current == Some(&Entry::Symlink(target.to_owned())) {
         return Ok(());
     }
-    let temporary = temporary_path(&destination, "link")?;
-    remove_if_present(&temporary)?;
-    symlink(target, &temporary)?;
-    fs::rename(&temporary, &destination)?;
-    sync_parent(&destination)
+    if !root.directory {
+        return Err(invalid("file-root publication contains a symbolic link"));
+    }
+    let replace = matches!(current, Some(Entry::Symlink(_)));
+    authority::replace_symlink(root, relative, target, replace)
 }
 
-fn apply_metadata(path: &Path, entry: &Entry, directory: bool) -> io::Result<()> {
-    let (mode, modified) = match entry {
+fn apply_metadata(root: &Root, path: &Path, entry: &Entry, directory: bool) -> io::Result<()> {
+    let (mode, modified) = entry_metadata(entry)?;
+    authority::apply_metadata(root, path, mode, modified, directory)
+}
+
+fn entry_metadata(entry: &Entry) -> io::Result<(u32, Option<std::time::SystemTime>)> {
+    match entry {
         Entry::Directory { mode, modified } | Entry::File { mode, modified, .. } => {
-            (*mode, *modified)
+            Ok((*mode, *modified))
         }
-        Entry::Symlink(_) => return Ok(()),
-    };
-    fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
-    let mut times = FileTimes::new();
-    if let Some(modified) = modified {
-        times = times.set_modified(modified);
+        Entry::Symlink(_) => Err(invalid("symbolic links do not carry publication metadata")),
     }
-    let file = if directory {
-        File::open(path)?
-    } else {
-        OpenOptions::new().write(true).open(path)?
-    };
-    file.set_times(times)
 }
 
 fn changed_paths(baseline: &Snapshot, desired: &Snapshot) -> BTreeSet<PathBuf> {
@@ -612,35 +631,6 @@ fn verify_content(path: &Path, expected: &ContentKey) -> io::Result<()> {
     Ok(())
 }
 
-fn remove_path(path: &Path) -> io::Result<()> {
-    let metadata = fs::symlink_metadata(path)?;
-    if metadata.is_dir() {
-        fs::remove_dir(path)
-    } else {
-        fs::remove_file(path)
-    }
-}
-
-fn remove_if_present(path: &Path) -> io::Result<()> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.is_dir() => fs::remove_dir(path),
-        Ok(_) => fs::remove_file(path),
-        Err(problem) if problem.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(problem) => Err(problem),
-    }
-}
-
-fn temporary_path(target: &Path, kind: &str) -> io::Result<PathBuf> {
-    let parent = target
-        .parent()
-        .ok_or_else(|| invalid("publication target has no parent"))?;
-    let name = target
-        .file_name()
-        .unwrap_or_else(|| OsStr::new("root"))
-        .to_string_lossy();
-    Ok(parent.join(format!(".{name}.crucible-sandbox-{kind}")))
-}
-
 fn root_path(root: &Path, relative: &Path) -> PathBuf {
     if relative.as_os_str().is_empty() {
         root.to_path_buf()
@@ -660,14 +650,6 @@ fn entry_type(entry: &Entry) -> u8 {
 fn create_private_directory(path: &Path) -> io::Result<()> {
     fs::create_dir(path)?;
     fs::set_permissions(path, fs::Permissions::from_mode(0o700))
-}
-
-fn sync_parent(path: &Path) -> io::Result<()> {
-    File::open(
-        path.parent()
-            .ok_or_else(|| invalid("publication target has no parent"))?,
-    )?
-    .sync_all()
 }
 
 fn invalid(problem: &'static str) -> io::Error {

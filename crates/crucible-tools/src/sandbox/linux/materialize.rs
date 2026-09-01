@@ -151,6 +151,10 @@ impl PreparedMount {
         self.source.as_raw_fd()
     }
 
+    pub(super) fn duplicate(&self) -> std::io::Result<OwnedFd> {
+        rustix::io::fcntl_dupfd_cloexec(&self.source, 3).map_err(Into::into)
+    }
+
     pub(super) fn destination(&self) -> &Path {
         &self.destination
     }
@@ -209,8 +213,12 @@ fn prepare_mount(
         validate_mount_tree(&canonical, named.dev(), access)?;
     }
 
-    let source = File::open(&canonical)
-        .map_err(|error| failed("manifest mount source could not be opened", error))?;
+    let source = if named.is_file() && access == SandboxFilesystemAccess::ReadWrite {
+        OpenOptions::new().read(true).write(true).open(&canonical)
+    } else {
+        File::open(&canonical)
+    }
+    .map_err(|error| failed("manifest mount source could not be opened", error))?;
     let opened = source
         .metadata()
         .map_err(|error| failed("manifest mount source could not be verified", error))?;

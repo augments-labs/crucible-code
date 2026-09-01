@@ -1,5 +1,6 @@
 //! Private writable-root projection and terminal publication.
 
+mod authority;
 mod protocol;
 mod publish;
 
@@ -7,7 +8,7 @@ use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, FileTimes, OpenOptions};
 use std::io::{self, Read, Seek as _, SeekFrom, Write};
-use std::os::fd::{AsRawFd, RawFd};
+use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _};
 use std::os::unix::process::ExitStatusExt as _;
 use std::path::{Path, PathBuf};
@@ -101,7 +102,7 @@ impl PartialEq for Entry {
 impl Eq for Entry {}
 
 struct Root {
-    host: PathBuf,
+    authority: OwnedFd,
     destination: PathBuf,
     source: Option<File>,
     directory: bool,
@@ -124,9 +125,12 @@ impl Projection {
     ) -> Result<Option<Self>, SandboxError> {
         let mut specifications = Vec::new();
         for bind in view.binds().iter().filter(|bind| !bind.read_only()) {
+            let authority = bind.duplicate().map_err(|source| {
+                failed("writable root authority could not be retained", source)
+            })?;
             specifications.push((
                 bind.host().to_path_buf(),
-                descriptor_path(bind.descriptor()),
+                authority,
                 bind.destination().to_path_buf(),
                 bind.directory(),
                 view.exclusions_beneath(bind.destination()),
@@ -138,9 +142,12 @@ impl Projection {
                 .iter()
                 .filter(|mount| mount.access() == SandboxFilesystemAccess::ReadWrite)
             {
+                let authority = mount.duplicate().map_err(|source| {
+                    failed("writable mount authority could not be retained", source)
+                })?;
                 specifications.push((
                     mount.host().to_path_buf(),
-                    descriptor_path(mount.descriptor()),
+                    authority,
                     mount.destination().to_path_buf(),
                     mount.directory(),
                     Vec::new(),
@@ -168,9 +175,10 @@ impl Projection {
             .map_err(|source| failed("could not create projected roots", source))?;
 
         let mut roots = Vec::with_capacity(specifications.len());
-        for (index, (host, pinned, destination, directory, exclusions)) in
+        for (index, (_host, authority, destination, directory, exclusions)) in
             specifications.into_iter().enumerate()
         {
+            let pinned = descriptor_path(authority.as_raw_fd());
             let before = snapshot_filtered(&pinned, &exclusions)
                 .map_err(|source| failed("writable root could not be fingerprinted", source))?;
             let source = if directory {
@@ -198,7 +206,7 @@ impl Projection {
                 ));
             }
             roots.push(Root {
-                host,
+                authority,
                 destination,
                 source,
                 directory,
@@ -246,6 +254,12 @@ impl Projection {
         publish::apply(&self.roots, self.stage.root(), &canonical)?;
         self.published = true;
         Ok(())
+    }
+}
+
+impl Root {
+    fn publication_path(&self) -> PathBuf {
+        descriptor_path(self.authority.as_raw_fd())
     }
 }
 
@@ -399,15 +413,20 @@ fn copy_file(source: &Path, destination: &Path) -> io::Result<()> {
     options.write(true).create_new(true);
     options.mode(0o600);
     let mut output = options.open(destination)?;
+    copy_file_into(source, &mut output)
+}
+
+fn copy_file_into(source: &Path, output: &mut File) -> io::Result<()> {
     let metadata = fs::metadata(source)?;
     let extents = sparse_extents(source, metadata.len())?;
+    output.set_len(0)?;
     output.set_len(metadata.len())?;
     let mut input = File::open(source)?;
     let mut buffer = vec![0_u8; 64 * 1024].into_boxed_slice();
     for (offset, length) in extents {
         input.seek(SeekFrom::Start(offset))?;
         output.seek(SeekFrom::Start(offset))?;
-        copy_exact(&mut input, &mut output, length, &mut buffer)?;
+        copy_exact(&mut input, &mut *output, length, &mut buffer)?;
     }
     output.sync_all()
 }

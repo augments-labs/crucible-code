@@ -178,13 +178,7 @@ fn write_snapshot(
                 write_u8(channel, u8::from(payload))?;
                 if payload {
                     write_u64(channel, extent_bytes(extents)?)?;
-                    stream_file(
-                        channel,
-                        &root.join(raw_path(path)),
-                        *length,
-                        *digest,
-                        extents,
-                    )?;
+                    stream_file(channel, &root_path(root, path), *length, *digest, extents)?;
                 }
             }
             Entry::Symlink(target) => {
@@ -588,6 +582,14 @@ fn mtime(metadata: &fs::Metadata) -> io::Result<(i64, u32)> {
 
 fn raw_path(bytes: &[u8]) -> PathBuf {
     PathBuf::from(OsString::from_vec(bytes.to_vec()))
+}
+
+fn root_path(root: &Path, relative: &[u8]) -> PathBuf {
+    if relative.is_empty() {
+        root.to_path_buf()
+    } else {
+        root.join(raw_path(relative))
+    }
 }
 
 fn safe_mode(metadata: &fs::Metadata) -> u32 {

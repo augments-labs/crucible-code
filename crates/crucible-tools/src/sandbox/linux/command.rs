@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::ffi::{OsStr, OsString};
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::os::unix::ffi::OsStringExt as _;
 use std::os::unix::fs::MetadataExt as _;
@@ -133,7 +133,12 @@ impl Bind {
                 None,
             ));
         }
-        let source = fs::File::open(&canonical).map_err(|source| {
+        let source = if named.is_file() && !mount.read_only {
+            OpenOptions::new().read(true).write(true).open(&canonical)
+        } else {
+            fs::File::open(&canonical)
+        }
+        .map_err(|source| {
             materialization(
                 "sandbox filesystem source could not be opened",
                 Some(source),
@@ -169,6 +174,10 @@ impl Bind {
 
     pub(super) fn descriptor(&self) -> RawFd {
         self.source.as_raw_fd()
+    }
+
+    pub(super) fn duplicate(&self) -> std::io::Result<OwnedFd> {
+        rustix::io::fcntl_dupfd_cloexec(&self.source, 3).map_err(Into::into)
     }
 
     pub(super) fn host(&self) -> &Path {

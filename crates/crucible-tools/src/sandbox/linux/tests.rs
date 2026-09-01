@@ -650,6 +650,72 @@ fn read_only_mounts_cannot_be_mutated() {
 }
 
 #[test]
+fn replacing_a_writable_file_after_stage_cannot_retarget_publication() {
+    let service = LocalSandbox::new();
+    if service.probe().is_err() {
+        return;
+    }
+    let sample = Sample::new("sandbox-writable-file-authority");
+    let external = PathBuf::from(sample.beside("writable-file"));
+    let source = external.join("source.txt");
+    std::fs::write(&source, "validated inode\n").expect("source fixture");
+    let base = SandboxPolicy::standard(&sample.workspace()).expect("base policy");
+    let policy = SandboxPolicy::new(
+        SandboxMode::Required,
+        base.filesystem()
+            .iter()
+            .cloned()
+            .chain([SandboxFilesystemRule::new(
+                source.clone(),
+                SandboxFilesystemAccess::ReadWrite,
+                SandboxFilesystemProvenance::Manifest,
+            )
+            .expect("writable file rule")]),
+        sample.root().clone(),
+        SandboxNetworkPolicy::Closed,
+        SandboxResourceLimits::default(),
+    )
+    .expect("policy");
+    let manifest = SandboxManifest::new([SandboxManifestEntry::mount(
+        source.clone(),
+        "mounted/source.txt",
+        SandboxFilesystemAccess::ReadWrite,
+        SandboxFilesystemProvenance::Manifest,
+    )
+    .expect("entry")])
+    .expect("manifest");
+    let request = SandboxRequest::new(
+        SandboxId::new(),
+        Ancestry::new(),
+        ToolId::new("writable-file-authority"),
+        policy,
+        manifest,
+    );
+    let mut session = service.prepare(request).expect("prepared sandbox");
+    session.materialize().expect("materialized workspace");
+    let launch = session
+        .stage(command(
+            "printf 'published through file authority\n' > /crucible/manifest/mounted/source.txt",
+        ))
+        .expect("staged command");
+    let validated = external.join("validated.txt");
+    std::fs::rename(&source, &validated).expect("rename validated inode");
+    std::fs::write(&source, "replacement inode\n").expect("replacement fixture");
+
+    let (status, _, errors) = finish(launch.release().expect("released command"));
+
+    assert!(status.success(), "{}", String::from_utf8_lossy(&errors));
+    assert_eq!(
+        std::fs::read_to_string(validated).expect("pinned publication"),
+        "published through file authority\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(source).expect("replacement file"),
+        "replacement inode\n"
+    );
+}
+
+#[test]
 fn a_replaced_mount_source_cannot_retarget_the_prepared_descriptor() {
     let service = LocalSandbox::new();
     if service.probe().is_err() {
@@ -732,11 +798,8 @@ fn replacing_a_workspace_root_after_prepare_cannot_retarget_it() {
         .prepare(request(&sample, SandboxManifest::empty()))
         .expect("prepared sandbox");
     session.materialize().expect("materialized workspace");
-    std::fs::rename(
-        sample.root(),
-        sample.root().with_file_name("validated-inside"),
-    )
-    .expect("rename validated workspace");
+    let validated = sample.root().with_file_name("validated-inside");
+    std::fs::rename(sample.root(), &validated).expect("rename validated workspace");
     std::fs::create_dir(sample.root()).expect("replacement workspace");
     std::fs::write(
         sample.root().join("identity.txt"),
@@ -746,7 +809,9 @@ fn replacing_a_workspace_root_after_prepare_cannot_retarget_it() {
 
     let (status, output, _) = finish(
         session
-            .start(command("cat identity.txt"))
+            .start(command(
+                "cat identity.txt; printf 'published through authority\n' > published.txt",
+            ))
             .expect("started command"),
     );
 
@@ -754,6 +819,14 @@ fn replacing_a_workspace_root_after_prepare_cannot_retarget_it() {
     assert_eq!(
         String::from_utf8(output).expect("utf8"),
         "validated workspace\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(validated.join("published.txt")).expect("pinned publication"),
+        "published through authority\n"
+    );
+    assert!(
+        !sample.root().join("published.txt").exists(),
+        "publication was redirected into the replacement workspace"
     );
 }
 
