@@ -6,15 +6,15 @@ use std::process::{ChildStderr, ChildStdout};
 #[cfg(unix)]
 mod unix;
 #[cfg(unix)]
-pub(super) use unix::Scope;
+pub(crate) use unix::Scope;
 
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
-pub(super) use windows::Scope;
+pub(crate) use windows::Scope;
 
 /// What one non-blocking attempt found on an output pipe.
-pub(super) enum ReadState {
+pub(crate) enum ReadState {
     /// Bytes were copied into the caller's buffer.
     Bytes(usize),
     /// The writer remains open but has nothing available now.
@@ -24,7 +24,7 @@ pub(super) enum ReadState {
 }
 
 /// A child output stream that can be polled without trapping its reader thread.
-pub(super) trait Output: Read + Send + 'static {
+pub(crate) trait Output: Read + Send + 'static {
     /// Prepares the stream for non-blocking reads where the platform needs it.
     fn prepare(&self) -> io::Result<()>;
 

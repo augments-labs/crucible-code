@@ -23,13 +23,12 @@
 //! which this workspace denies, and the shipped documentation says so rather than
 //! implying otherwise.
 
-use std::process::Child;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use super::output::Pipe;
-use super::platform::Scope;
+use crucible_core::SandboxProcess;
 
 /// How many commands may be left running at once.
 ///
@@ -50,8 +49,7 @@ struct Left {
     said: Box<str>,
     /// The number the result gave the model, and the panel shows.
     number: usize,
-    child: Child,
-    scope: Scope,
+    process: Box<dyn SandboxProcess>,
     /// Still draining, so what it prints goes on being kept and bounded.
     out: Pipe,
     err: Pipe,
@@ -119,7 +117,7 @@ impl Drop for Held {
         // makes, and the reason the panic strategy for this workspace is unwind:
         // an abort would run none of it and leave the commands behind.
         for left in &mut self.left {
-            let _ = super::output::end(&left.scope, &mut left.child);
+            let _ = super::output::end(left.process.as_mut());
         }
     }
 }
@@ -185,7 +183,7 @@ impl Background {
             // Ended here rather than reported and forgotten. The caller has
             // already let go of it, so this is the last code that could, and a
             // command nobody can see or stop is the outcome the cap exists for.
-            let _ = super::output::end(&taking.scope, &mut taking.child);
+            let _ = super::output::end(taking.process.as_mut());
             return None;
         }
 
@@ -196,8 +194,7 @@ impl Background {
             called: called.into(),
             said: said.into(),
             number,
-            child: taking.child,
-            scope: taking.scope,
+            process: taking.process,
             out: taking.out,
             err: taking.err,
             since: taking.since,
@@ -268,7 +265,7 @@ impl Background {
 
         if let Some(at) = standing.left.iter().position(|left| left.number == number) {
             let mut left = standing.left.remove(at);
-            let _ = super::output::end(&left.scope, &mut left.child);
+            let _ = super::output::end(left.process.as_mut());
         }
     }
 
@@ -306,11 +303,11 @@ impl Background {
         let mut still = Vec::with_capacity(standing.left.len());
 
         for mut left in standing.left.drain(..) {
-            match left.child.try_wait() {
+            match left.process.try_wait() {
                 Ok(Some(status)) => {
                     // The shell has gone; its descendants have not necessarily,
                     // and this is the one path where nothing else will end them.
-                    let _ = super::output::end(&left.scope, &mut left.child);
+                    let _ = super::output::end(left.process.as_mut());
                     let (lines, _) = left.counted();
 
                     ended.push(Ended {
@@ -344,8 +341,7 @@ impl Background {
 /// because they belong together: they are one command's lifetime, and how it
 /// came to have one.
 pub(super) struct Taking {
-    pub(super) child: Child,
-    pub(super) scope: Scope,
+    pub(super) process: Box<dyn SandboxProcess>,
     pub(super) out: Pipe,
     pub(super) err: Pipe,
     pub(super) since: Instant,

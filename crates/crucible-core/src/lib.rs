@@ -34,6 +34,7 @@ mod prompt_cache;
 mod provider;
 mod revealed;
 mod run;
+mod sandbox;
 mod source;
 mod steer;
 mod tool;
@@ -53,7 +54,8 @@ pub use credential::{
 pub use diff::{Change, Diff, Line};
 pub use event::{Event, EventEnvelope, Post, Reporter, TurnError};
 pub use ids::{
-    AgentId, CredentialScopeId, IdError, ProviderAttemptId, RunId, SessionId, ToolId, TurnId,
+    AgentId, CredentialScopeId, IdError, ProviderAttemptId, RunId, SandboxId, SessionId, ToolId,
+    TurnId,
 };
 pub use interruption::{
     ActionId, ActionResolution, ApprovalDecision, CacheCheckpoint, CheckpointId, CheckpointStore,
@@ -124,6 +126,20 @@ pub use provider::{
 };
 pub use revealed::Revealed;
 pub use run::{Ancestry, AncestryError};
+pub use sandbox::{
+    MAX_SANDBOX_BACKEND_ID_BYTES, MAX_SANDBOX_BACKEND_WORD_BYTES, MAX_SANDBOX_COMMAND_ARGUMENTS,
+    MAX_SANDBOX_COMMAND_BYTES, MAX_SANDBOX_ENVIRONMENT_BYTES, MAX_SANDBOX_ENVIRONMENT_ENTRIES,
+    MAX_SANDBOX_ENVIRONMENT_NAME_BYTES, MAX_SANDBOX_FILESYSTEM_RULES, MAX_SANDBOX_HOST_BYTES,
+    MAX_SANDBOX_MANIFEST_BYTES, MAX_SANDBOX_MANIFEST_ENTRIES, MAX_SANDBOX_MANIFEST_FILE_BYTES,
+    MAX_SANDBOX_NETWORK_ENDPOINTS, MAX_SANDBOX_PATH_BYTES, SandboxBackendId,
+    SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities, SandboxCapability,
+    SandboxCapabilityError, SandboxCleanup, SandboxCommand, SandboxEnvironment, SandboxError,
+    SandboxFeature, SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule,
+    SandboxInspection, SandboxManifest, SandboxManifestEntry, SandboxManifestError, SandboxMode,
+    SandboxNetworkEndpoint, SandboxNetworkPolicy, SandboxOutput, SandboxPolicy, SandboxPolicyError,
+    SandboxProcess, SandboxRead, SandboxRequest, SandboxResourceLimits, SandboxService,
+    SandboxSession, SandboxUsage,
+};
 pub use source::{Fetch, Page, Search, SearchResult, SourceError};
 pub use steer::Steer;
 pub use tool::{

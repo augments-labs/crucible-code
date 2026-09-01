@@ -151,18 +151,16 @@ fn byte_counts_saturate_instead_of_wrapping() {
 #[cfg(unix)]
 #[test]
 fn a_live_child_is_never_reaped_with_an_unbounded_wait() {
-    let mut child = std::process::Command::new("sh")
-        .args(["-c", "sleep 5"])
-        .spawn()
-        .unwrap();
+    let mut command = std::process::Command::new("sh");
+    command.args(["-c", "sleep 5"]);
+    let mut process = crate::sandbox::process::testing(command).unwrap();
     let started = std::time::Instant::now();
 
-    let status = super::reap(&mut child, std::time::Duration::from_millis(40)).unwrap();
+    let status = super::reap(process.as_mut(), std::time::Duration::from_millis(40)).unwrap();
 
     assert!(status.is_none());
     assert!(started.elapsed() < std::time::Duration::from_millis(500));
-    child.kill().unwrap();
-    child.wait().unwrap();
+    process.stop().unwrap();
 }
 
 #[cfg(unix)]
@@ -174,10 +172,9 @@ fn an_early_return_guard_stops_the_whole_process_group() {
     command
         .args(["-c", "(sleep 0.3; printf x > \"$MARKER\") & wait"])
         .env("MARKER", &base);
-    let scope = super::Scope::new(&mut command);
-    let child = command.spawn().unwrap();
+    let process = crate::sandbox::process::testing(command).unwrap();
 
-    drop(super::Waited::new(child, scope));
+    drop(super::Waited::new(process));
     std::thread::sleep(std::time::Duration::from_millis(450));
 
     assert!(!base.exists(), "a descendant survived early-return cleanup");

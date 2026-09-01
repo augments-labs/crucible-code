@@ -106,4 +106,13 @@ impl Workspace {
     pub fn root(&self) -> &Path {
         self.roots.root()
     }
+
+    /// Every canonical directory this workspace was explicitly granted.
+    ///
+    /// The root comes first, followed by configured extra directories in their
+    /// declaration order. The iterator borrows the immutable workspace, so a
+    /// consumer can derive a policy snapshot without gaining a way to widen it.
+    pub fn roots(&self) -> impl Iterator<Item = &Path> {
+        self.roots.iter()
+    }
 }

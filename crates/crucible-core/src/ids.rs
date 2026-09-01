@@ -23,7 +23,7 @@ pub enum IdError {
     /// A session identifier was neither a UUID v7 nor `<millis>-<6 hex>`.
     #[error("not a session id: expected a uuid or <millis>-<6 hex>, got {0:?}")]
     NotASessionId(Box<str>),
-    /// A run/provider-attempt identifier was not a canonical UUID v7.
+    /// A run/provider-attempt/sandbox identifier was not a canonical UUID v7.
     #[error("not a canonical uuid-v7 execution identity: {0:?}")]
     NotAnExecutionId(Box<str>),
 }
@@ -284,6 +284,58 @@ impl fmt::Debug for ProviderAttemptId {
 }
 
 impl FromStr for ProviderAttemptId {
+    type Err = IdError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::parse(value)
+    }
+}
+
+/// Names one prepared sandbox lifecycle.
+///
+/// Minted before capability negotiation so refusals and setup failures have
+/// the same stable audit identity as a command that reaches execution. A UUID
+/// v7 keeps lifecycle facts ordered without deriving identity from a tool call
+/// or process identifier, either of which may be retried.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SandboxId(Uuid);
+
+impl SandboxId {
+    /// Mints one sandbox lifecycle identity.
+    #[must_use]
+    pub fn new() -> Self {
+        Self(Uuid::now_v7())
+    }
+
+    /// Reads one canonical UUID-v7 sandbox identity.
+    ///
+    /// # Errors
+    ///
+    /// [`IdError::NotAnExecutionId`] for any other UUID version or spelling.
+    pub fn parse(value: &str) -> Result<Self, IdError> {
+        canonical_v7(value).map(Self)
+    }
+}
+
+impl Default for SandboxId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl fmt::Display for SandboxId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0.as_hyphenated())
+    }
+}
+
+impl fmt::Debug for SandboxId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "SandboxId({})", self.0.as_hyphenated())
+    }
+}
+
+impl FromStr for SandboxId {
     type Err = IdError;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {

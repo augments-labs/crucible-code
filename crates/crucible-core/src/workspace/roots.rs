@@ -60,6 +60,11 @@ impl Roots {
         &self.root
     }
 
+    /// All explicitly granted roots, with the primary root first.
+    pub(super) fn iter(&self) -> impl Iterator<Item = &Path> {
+        std::iter::once(self.root.as_ref()).chain(self.extra.iter().map(AsRef::as_ref))
+    }
+
     /// Which directory the workspace reaches a resolved path through, if any.
     ///
     /// The argument is already canonical — that is the whole reason this

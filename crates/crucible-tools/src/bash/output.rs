@@ -15,17 +15,18 @@
 
 use std::collections::VecDeque;
 use std::io;
-use std::process::{Child, ExitStatus};
+use std::process::ExitStatus;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crucible_core::{Cancel, ToolError, ToolOutput, Watch, Wrote};
+use crucible_core::{
+    Cancel, SandboxOutput, SandboxProcess, SandboxRead, ToolError, ToolOutput, Watch, Wrote,
+};
 
 use super::background::{Background, Taking};
 
-use super::platform::{Output, ReadState, Scope};
 use super::{NAME, TICK, io as tool_io};
 use crate::bound::OUTPUT;
 
@@ -64,8 +65,7 @@ const SETTLE: Duration = Duration::from_millis(200);
 /// afterwards would deadlock the moment a command produced more output than a
 /// pipe buffer holds, which is most commands worth running.
 pub(super) fn collect(
-    child: Child,
-    scope: Scope,
+    process: Box<dyn SandboxProcess>,
     waiting: &Waiting<'_>,
 ) -> Result<Left, ToolError> {
     let Waiting {
@@ -77,9 +77,9 @@ pub(super) fn collect(
     // Own the child before the first fallible pipe operation. Any `?` below
     // therefore stops the process scope and performs only a bounded reap.
     let started = Instant::now();
-    let mut running = Waited::new(child, scope);
-    let mut out = Pipe::drain(running.taking()?.stdout.take(), "stdout")?;
-    let mut err = Pipe::drain(running.taking()?.stderr.take(), "stderr")?;
+    let mut running = Waited::new(process);
+    let mut out = Pipe::drain(running.taking()?.take_stdout(), "stdout")?;
+    let mut err = Pipe::drain(running.taking()?.take_stderr(), "stderr")?;
 
     let deadline = started + *allowed;
     let mut expired = false;
@@ -97,11 +97,10 @@ pub(super) fn collect(
         // of the three that keeps the command: a press and a timeout landing in
         // the same tick should leave the command running rather than kill it.
         if let Some(why) = leaving.as_ref().and_then(|leaving| leaving.now(started))
-            && let Some((child, scope)) = running.given()
+            && let Some(process) = running.given()
         {
             return Ok(Left::Running(Taking {
-                child,
-                scope,
+                process,
                 out,
                 err,
                 since: started,
@@ -169,16 +168,6 @@ pub(super) fn collect(
     ))
 }
 
-/// Stops a child that could not be handed to [`collect`].
-///
-/// Used after Windows job attachment fails. The shell is still suspended, but
-/// waiting for it without first ending it would be just as unbounded as any
-/// other child wait.
-#[cfg(windows)]
-pub(super) fn discard(child: Child, scope: Scope) {
-    drop(Waited::new(child, scope));
-}
-
 /// A child whose scope is stopped and reaped on every return path.
 ///
 /// `Child::kill` signals the shell alone, and a shell is rarely the only
@@ -201,16 +190,14 @@ pub(super) fn discard(child: Child, scope: Scope) {
 /// It owns the scope rather than borrowing it, because one exit path from
 /// [`collect`] hands both on to whatever will end them later instead.
 struct Waited {
-    child: Option<Child>,
-    scope: Option<Scope>,
+    process: Option<Box<dyn SandboxProcess>>,
     released: bool,
 }
 
 impl Waited {
-    fn new(child: Child, scope: Scope) -> Self {
+    fn new(process: Box<dyn SandboxProcess>) -> Self {
         Self {
-            child: Some(child),
-            scope: Some(scope),
+            process: Some(process),
             released: false,
         }
     }
@@ -220,8 +207,8 @@ impl Waited {
     /// An error rather than a panic where it has been handed on: every path that
     /// asks has already returned by then, so this is the arm nothing takes, and a
     /// session is worth more than a proof about a branch.
-    fn taking(&mut self) -> Result<&mut Child, ToolError> {
-        self.child.as_mut().ok_or_else(|| {
+    fn taking(&mut self) -> Result<&mut (dyn SandboxProcess + 'static), ToolError> {
+        self.process.as_deref_mut().ok_or_else(|| {
             tool_io(
                 "the command was handed over while it was still being waited for",
                 io::Error::other("no child left to wait for"),
@@ -233,8 +220,8 @@ impl Waited {
     ///
     /// After this the guard ends nothing: what it was guarding against is a
     /// command nobody owns, and somebody does.
-    fn given(&mut self) -> Option<(Child, Scope)> {
-        let taken = (self.child.take()?, self.scope.take()?);
+    fn given(&mut self) -> Option<Box<dyn SandboxProcess>> {
+        let taken = self.process.take()?;
         self.released = true;
 
         Some(taken)
@@ -242,11 +229,11 @@ impl Waited {
 
     /// Stops the scope and gives the shell a bounded interval to become reapable.
     fn stop(&mut self) -> Result<Option<ExitStatus>, ToolError> {
-        let Some((scope, child)) = self.scope.as_ref().zip(self.child.as_mut()) else {
+        let Some(process) = self.process.as_deref_mut() else {
             return Ok(None);
         };
 
-        end(scope, child).map_err(|source| tool_io("could not stop the command", source))?;
+        end(process).map_err(|source| tool_io("could not stop the command", source))?;
         let status = reap(self.taking()?, SETTLE)
             .map_err(|source| tool_io("could not inspect the stopped command", source))?;
         let Some(status) = status else {
@@ -264,12 +251,11 @@ impl Waited {
 
     /// Stops descendants after `try_wait` has already reaped the shell.
     fn finish_after_exit(&mut self) -> Result<(), ToolError> {
-        let Some((scope, child)) = self.scope.as_ref().zip(self.child.as_mut()) else {
+        let Some(process) = self.process.as_deref_mut() else {
             return Ok(());
         };
 
-        end(scope, child)
-            .map_err(|source| tool_io("could not stop command descendants", source))?;
+        end(process).map_err(|source| tool_io("could not stop command descendants", source))?;
         self.released = true;
         Ok(())
     }
@@ -283,20 +269,23 @@ impl Drop for Waited {
 
         // Destructors cannot report a second failure over the error already on
         // its way out. They can still guarantee that cleanup itself is bounded.
-        let Some((scope, child)) = self.scope.as_ref().zip(self.child.as_mut()) else {
+        let Some(process) = self.process.as_deref_mut() else {
             return;
         };
 
-        let _ = end(scope, child);
-        let _ = reap(child, SETTLE);
+        let _ = end(process);
+        let _ = reap(process, SETTLE);
     }
 }
 
 /// Waits only until `allowed`; a failed termination can never become a hang.
-fn reap(child: &mut Child, allowed: Duration) -> io::Result<Option<ExitStatus>> {
+fn reap(
+    process: &mut (dyn SandboxProcess + 'static),
+    allowed: Duration,
+) -> io::Result<Option<ExitStatus>> {
     let deadline = Instant::now() + allowed;
     loop {
-        if let Some(status) = child.try_wait()? {
+        if let Some(status) = process.try_wait()? {
             return Ok(Some(status));
         }
         if Instant::now() >= deadline {
@@ -310,15 +299,8 @@ fn reap(child: &mut Child, allowed: Duration) -> io::Result<Option<ExitStatus>> 
 ///
 /// Named here rather than in two places because two modules end a command now:
 /// the wait that owns one, and the registry that took one over.
-#[cfg(unix)]
-pub(super) fn end(_scope: &Scope, child: &mut Child) -> io::Result<()> {
-    Scope::stop(child)
-}
-
-/// The same, for a job the shell was attached to.
-#[cfg(windows)]
-pub(super) fn end(scope: &Scope, child: &mut Child) -> io::Result<()> {
-    scope.stop(child)
+pub(super) fn end(process: &mut (dyn SandboxProcess + 'static)) -> io::Result<()> {
+    process.stop()
 }
 
 /// Everything the wait needs besides the command itself.
@@ -620,7 +602,10 @@ pub(super) struct Pipe {
 
 impl Pipe {
     /// Starts reading `pipe` on a thread.
-    fn drain<R: Output>(pipe: Option<R>, stream: &'static str) -> Result<Self, ToolError> {
+    fn drain(
+        pipe: Option<Box<dyn SandboxOutput>>,
+        stream: &'static str,
+    ) -> Result<Self, ToolError> {
         let kept = Arc::new(Mutex::new(Kept::default()));
         let stop = Arc::new(AtomicBool::new(false));
         let (into, until) = (Arc::clone(&kept), Arc::clone(&stop));
@@ -632,9 +617,6 @@ impl Pipe {
                 reader: None,
             });
         };
-        pipe.prepare()
-            .map_err(|source| tool_io("could not prepare a command output pipe", source))?;
-
         let reader = thread::Builder::new()
             .name(format!("crucible-bash-{stream}"))
             .spawn(move || {
@@ -648,9 +630,9 @@ impl Pipe {
                     let read = match pipe.read_ready(&mut buffer) {
                         // The end of the pipe, and the only way out of here that
                         // [`ended`] is entitled to read as one.
-                        Ok(ReadState::End) => return Ok(()),
-                        Ok(ReadState::Bytes(read)) => read,
-                        Ok(ReadState::Pending) => {
+                        Ok(SandboxRead::End) => return Ok(()),
+                        Ok(SandboxRead::Bytes(read)) => read,
+                        Ok(SandboxRead::Pending) => {
                             thread::sleep(TICK);
                             continue;
                         }

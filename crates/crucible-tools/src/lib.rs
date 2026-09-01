@@ -82,6 +82,7 @@ mod program;
 mod read;
 #[cfg(test)]
 mod sample;
+mod sandbox;
 mod schema;
 mod summary;
 mod target;
@@ -99,5 +100,6 @@ pub use ledger::Ledger;
 pub use lookup::{Held, ToolSearch};
 pub use plan::{Plan, State, Task, TodoWrite};
 pub use read::Read;
+pub use sandbox::LocalSandbox;
 pub use web::{WebFetch, WebSearch};
 pub use write::Write;

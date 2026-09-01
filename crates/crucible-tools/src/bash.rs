@@ -1,10 +1,10 @@
 //! Running a shell command.
 //!
 //! The command runs in the workspace root through `sh -c`, so the model gets
-//! pipes and redirection without this file growing a shell of its own. Nothing
-//! here confines what runs: a shell can reach anything the user can, which is
-//! why every call comes through the permission engine and why the question the
-//! user is asked names the command.
+//! pipes and redirection without this file growing a shell of its own. The
+//! permission engine still decides whether Crucible may invoke it; an injected
+//! [`crucible_core::SandboxService`] separately owns the operating-system view,
+//! spawn, descendants, limits, and cleanup.
 //!
 //! What a command is *started with* is confined. crucible's own environment
 //! holds the provider credential, so a child is given a chosen set of variables
@@ -28,19 +28,20 @@ mod background;
 mod command;
 mod environment;
 mod output;
-mod platform;
+pub(crate) mod platform;
 mod reporting;
 mod shell;
 mod wrapper;
 
 use std::ffi::OsString;
-use std::process::Stdio;
+use std::sync::Arc;
 use std::time::Duration;
 
 pub use background::{Background, Ended, MOST, Standing};
 use crucible_core::{
-    Approved, DescribeTool, Looking, Sensitivity, Summary, Tool, ToolArgs, ToolContext, ToolError,
-    ToolOutput, Workspace,
+    Approved, DescribeTool, Looking, SandboxCommand, SandboxEnvironment, SandboxManifest,
+    SandboxMode, SandboxPolicy, SandboxRequest, SandboxResourceLimits, SandboxService, Sensitivity,
+    Summary, Tool, ToolArgs, ToolContext, ToolError, ToolOutput, Workspace,
 };
 
 use std::sync::LazyLock;
@@ -170,6 +171,12 @@ pub struct Bash {
     /// The whole of what a command is started with: the names [`environment`]
     /// inherits, with the `env` block laid over them by [`Bash::exporting`].
     env: Vec<(Box<str>, OsString)>,
+    /// Host-owned process boundary. A tool can request one lifecycle but never
+    /// receives backend mechanics or a direct-spawn escape hatch.
+    sandbox: Arc<dyn SandboxService>,
+    /// Resolved once with the workspace. `Err` is retained so an unusually
+    /// long host path fails before spawn without making construction panic.
+    policy: Result<SandboxPolicy, Box<str>>,
     /// How long a command asked to be left running is watched before the call
     /// answers. [`FIRST`] unless [`Bash::watching`] says otherwise.
     first: Duration,
@@ -188,6 +195,8 @@ impl std::fmt::Debug for Bash {
             .field("leaving", &self.leaving)
             .field("shell", &self.shell)
             .field("env", &Exported(&self.env))
+            .field("sandbox", &self.sandbox)
+            .field("policy", &self.policy)
             .field("first", &self.first)
             .finish()
     }
@@ -224,13 +233,30 @@ impl Bash {
     /// resolved wherever it is spawned, and a command here is spawned in the
     /// workspace. [`shell`] says what that costs.
     fn inheriting(workspace: Workspace, lookup: impl Fn(&str) -> Option<OsString>) -> Self {
+        let policy = SandboxPolicy::standard(&workspace).map_err(|error| error.to_string().into());
         Self {
             workspace,
             leaving: None,
             shell: shell::find(&lookup),
             env: environment::inherited(lookup),
+            sandbox: Arc::new(crate::LocalSandbox::new()),
+            policy,
             first: FIRST,
         }
+    }
+
+    /// Replaces the local service and applies a host-authorized top-level mode.
+    ///
+    /// The binary composition root uses this after configuration provenance has
+    /// established that only a user layer may select `degraded` or `off`.
+    /// Descendant/project narrowing happens before a policy reaches this tool.
+    #[must_use]
+    pub fn sandboxing(mut self, service: Arc<dyn SandboxService>, mode: SandboxMode) -> Self {
+        self.sandbox = service;
+        if let Ok(policy) = &mut self.policy {
+            *policy = policy.clone().with_mode(mode);
+        }
+        self
     }
 
     /// Where commands this tool is asked to leave running are kept.
@@ -405,50 +431,58 @@ impl Tool for Bash {
             )
         })?;
 
-        let mut spawning = std::process::Command::new(shell);
-        spawning
-            .arg("-c")
-            .arg(command)
-            .current_dir(self.workspace.root())
-            // The child's environment is built rather than inherited: what
-            // crucible was started with holds the provider credential, and
-            // `env` is a command a model runs for ordinary reasons. The
-            // `environment` module says what a child gets instead.
-            .env_clear()
-            .envs(
-                self.env
-                    .iter()
-                    .map(|(name, value)| (name.as_ref(), value.as_os_str())),
-            )
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-
-        #[cfg(unix)]
-        let scope = platform::Scope::new(&mut spawning);
-        #[cfg(windows)]
-        let scope = platform::Scope::new(&mut spawning)
-            .map_err(|source| io("could not prepare command containment", source))?;
-
-        let child = spawning
-            .spawn()
-            .map_err(|source| io("could not start a shell", source))?;
-        #[cfg(windows)]
-        let child = {
-            if let Err(source) = scope.attach(&child) {
-                // Consumed, because the job handle goes with the command it was
-                // holding: closing it is what ends anything the shell managed to
-                // start before the assignment failed.
-                output::discard(child, scope);
-                return Err(io("could not contain the command", source));
-            }
-            child
-        };
-
         // `count` already refused anything but a positive number, and the
         // ceiling above bounds it, so the fallback is unreachable arithmetic
         // rather than a decision.
         let allowed = Duration::from_secs(u64::try_from(seconds).unwrap_or(60));
+
+        let environment = SandboxEnvironment::new(
+            self.env
+                .iter()
+                .map(|(name, value)| (name.as_ref(), value.as_os_str())),
+        )
+        .map_err(|error| sandbox_io("could not prepare the command environment", error))?;
+        let sandbox_command = SandboxCommand::new(
+            shell,
+            [OsString::from("-c"), OsString::from(command)],
+            environment,
+        )
+        .map_err(|error| sandbox_io("could not prepare the sandbox command", error))?;
+        let base = self.policy.as_ref().map_err(|problem| {
+            io(
+                "could not resolve the sandbox policy",
+                std::io::Error::other(problem.to_string()),
+            )
+        })?;
+        let limits = SandboxResourceLimits {
+            command_time: Some(allowed),
+            output_bytes: Some(u64::try_from(crate::bound::OUTPUT).unwrap_or(u64::MAX)),
+            concurrent_commands: Some(16),
+            ..SandboxResourceLimits::default()
+        };
+        let policy = base.clone().with_limits(limits).map_err(|error| {
+            io(
+                "could not resolve command limits",
+                std::io::Error::other(error),
+            )
+        })?;
+        let request = SandboxRequest::new(
+            crucible_core::SandboxId::new(),
+            context.ancestry(),
+            context.call().clone(),
+            policy,
+            SandboxManifest::empty(),
+        );
+        let mut session = self
+            .sandbox
+            .prepare(request)
+            .map_err(|error| sandbox_io("could not prepare operating-system confinement", error))?;
+        session
+            .materialize()
+            .map_err(|error| sandbox_io("could not materialize the sandbox", error))?;
+        let process = session
+            .start(sandbox_command)
+            .map_err(|error| sandbox_io("could not start the confined shell", error))?;
 
         let waiting = output::Waiting {
             allowed,
@@ -457,7 +491,7 @@ impl Tool for Bash {
             leaving,
         };
 
-        match output::collect(child, scope, &waiting)? {
+        match output::collect(process, &waiting)? {
             output::Left::Answered(output) => Ok(output),
 
             // Kept, or refused and ended — the registry owns both, because it is
@@ -502,6 +536,17 @@ fn io(problem: &'static str, source: std::io::Error) -> ToolError {
         tool: NAME.into(),
         problem: problem.into(),
         source,
+    }
+}
+
+/// A sandbox failure, kept typed until the tool boundary and redacted by its
+/// module-owned display implementation.
+fn sandbox_io(problem: &'static str, source: crucible_core::SandboxError) -> ToolError {
+    let detail = source.to_string();
+    ToolError::Io {
+        tool: NAME.into(),
+        problem: format!("{problem}: {detail}").into(),
+        source: std::io::Error::other(source),
     }
 }
 
