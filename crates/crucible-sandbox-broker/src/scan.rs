@@ -257,6 +257,7 @@ impl Builder {
         } else {
             fs::symlink_metadata(&path)?
         };
+        validate_publishable_metadata(&path, &metadata)?;
         let raw_relative = relative.as_os_str().as_bytes().to_vec();
         if raw_relative.len() > MAX_SCAN_PATH_BYTES {
             return Err(invalid("projected path exceeds its byte bound"));
@@ -594,6 +595,24 @@ fn root_path(root: &Path, relative: &[u8]) -> PathBuf {
 
 fn safe_mode(metadata: &fs::Metadata) -> u32 {
     metadata.permissions().mode() & 0o777
+}
+
+fn validate_publishable_metadata(path: &Path, metadata: &fs::Metadata) -> io::Result<()> {
+    use rustix::io::Errno;
+
+    if metadata.mode() & 0o7000 != 0 {
+        return Err(invalid(
+            "projected tree contains special mode bits the publisher cannot preserve",
+        ));
+    }
+    let mut names = [0_u8; 4096];
+    match rustix::fs::llistxattr(path, &mut names) {
+        Ok(0) | Err(Errno::NOTSUP) => Ok(()),
+        Ok(_) | Err(Errno::RANGE) => Err(invalid(
+            "projected tree contains extended metadata the publisher cannot preserve",
+        )),
+        Err(problem) => Err(problem.into()),
+    }
 }
 
 fn protected_name(name: &OsStr) -> bool {

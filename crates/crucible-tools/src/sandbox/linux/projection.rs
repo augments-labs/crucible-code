@@ -334,6 +334,7 @@ impl SnapshotBuilder {
         } else {
             fs::symlink_metadata(&path)?
         };
+        validate_publishable_metadata(&path, &metadata)?;
         let entry = if metadata.is_dir() {
             Entry::Directory {
                 mode: safe_mode(&metadata),
@@ -526,6 +527,31 @@ fn protected_name(name: &OsStr) -> bool {
     )
 }
 
+fn validate_publishable_metadata(path: &Path, metadata: &fs::Metadata) -> io::Result<()> {
+    use rustix::io::Errno;
+
+    if metadata.uid() != rustix::process::getuid().as_raw()
+        || metadata.gid() != rustix::process::getgid().as_raw()
+    {
+        return Err(io::Error::other(
+            "writable projection contains ownership the publisher cannot preserve",
+        ));
+    }
+    if metadata.mode() & 0o7000 != 0 {
+        return Err(io::Error::other(
+            "writable projection contains special mode bits the publisher cannot preserve",
+        ));
+    }
+    let mut names = [0_u8; 4096];
+    match rustix::fs::llistxattr(path, &mut names) {
+        Ok(0) | Err(Errno::NOTSUP) => Ok(()),
+        Ok(_) | Err(Errno::RANGE) => Err(io::Error::other(
+            "writable projection contains extended metadata the publisher cannot preserve",
+        )),
+        Err(problem) => Err(problem.into()),
+    }
+}
+
 fn failed(problem: &'static str, source: io::Error) -> SandboxError {
     SandboxError::Materialization {
         problem: problem.into(),
@@ -604,7 +630,20 @@ impl SandboxProcess for ProjectedProcess {
             .receiver
             .as_mut()
             .ok_or_else(|| io::Error::other("sandbox terminal scan receiver is unavailable"))?
-            .finish()?;
+            .finish();
+        let terminal = match terminal {
+            Ok(terminal) => terminal,
+            Err(problem) => {
+                let discarded = self.projection.take().is_some() && !self.terminal;
+                self.receiver.take();
+                self.control.take();
+                self.terminal = true;
+                if discarded {
+                    self.lifecycle(SandboxLifecycle::RolledBack)?;
+                }
+                return Err(problem);
+            }
+        };
         self.receiver.take();
         self.control.take();
         let status = terminal.status;
@@ -695,5 +734,29 @@ mod tests {
             assert!(protected_name(OsStr::new(name)));
         }
         assert!(!protected_name(OsStr::new(".github")));
+    }
+
+    #[test]
+    fn unsupported_extended_and_special_metadata_is_refused() {
+        use rustix::fs::XattrFlags;
+        use rustix::io::Errno;
+
+        let sample = crate::sample::Sample::new("sandbox-publication-metadata");
+        let path = sample.root().join("metadata.txt");
+        std::fs::write(&path, "metadata\n").expect("fixture");
+        match rustix::fs::setxattr(&path, "user.crucible-test", b"value", XattrFlags::empty()) {
+            Ok(()) => {
+                let metadata = std::fs::symlink_metadata(&path).expect("metadata");
+                assert!(validate_publishable_metadata(&path, &metadata).is_err());
+                rustix::fs::removexattr(&path, "user.crucible-test").expect("remove xattr");
+            }
+            Err(Errno::NOTSUP) => {}
+            Err(problem) => panic!("could not create xattr fixture: {problem}"),
+        }
+
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o4755))
+            .expect("special mode fixture");
+        let metadata = std::fs::symlink_metadata(&path).expect("metadata");
+        assert!(validate_publishable_metadata(&path, &metadata).is_err());
     }
 }

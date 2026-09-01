@@ -454,6 +454,55 @@ fn create_update_delete_rename_and_mode_publish_as_one_terminal_delta() {
 }
 
 #[test]
+fn unsupported_terminal_metadata_refuses_the_complete_private_delta() {
+    let service = LocalSandbox::new();
+    if service.probe().is_err() {
+        return;
+    }
+    let sample = Sample::new("sandbox-terminal-metadata-refusal");
+    let request = request(&sample, SandboxManifest::empty());
+    let audit = request.audit().clone();
+    let mut session = service.prepare(request).expect("prepared sandbox");
+    session.materialize().expect("materialized workspace");
+    let mut process = session
+        .start(command(
+            "printf 'ordinary\n' > ordinary.txt; \
+             printf 'special\n' > special.txt; chmod 4755 special.txt",
+        ))
+        .expect("started command");
+
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        match process.try_wait() {
+            Err(_) => break,
+            Ok(None) => {}
+            Ok(Some(status)) => panic!("unsupported metadata was published after {status}"),
+        }
+        assert!(
+            Instant::now() < deadline,
+            "metadata-refusing command did not terminate"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    let _ = process.stop();
+
+    assert!(!sample.root().join("ordinary.txt").exists());
+    assert!(!sample.root().join("special.txt").exists());
+    assert!(
+        audit
+            .records()
+            .expect("audit records")
+            .iter()
+            .any(|record| {
+                matches!(
+                    record.fact().kind(),
+                    SandboxFactKind::Lifecycle(SandboxLifecycle::RolledBack)
+                )
+            })
+    );
+}
+
+#[test]
 fn an_external_baseline_conflict_publishes_none_of_the_private_delta() {
     let service = LocalSandbox::new();
     if service.probe().is_err() {
