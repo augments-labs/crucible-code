@@ -11,10 +11,11 @@ use std::thread;
 use std::time::Instant;
 
 use crucible_core::{
-    Ancestry, Approved, Ask, Cancel, Event, InvocationRecord, JournalStore, Permission, Reporter,
-    RunItem, SandboxAudit, SandboxAuditRegistry, Settled, StopReason, TOOL_RESULT_BYTES, ToolCall,
-    ToolContext, ToolEntry, ToolError, ToolExecutionMode, ToolId, ToolOutcome, ToolOutput,
-    ToolOutputRetention, ToolReceipt, ToolResult, ToolSnapshot, ToolSourceReceipt, Watch, Wrote,
+    Ancestry, Approved, Ask, Cancel, Event, InvocationRecord, JournalStore, PendingCallResult,
+    Permission, Reporter, RunItem, SandboxAudit, SandboxAuditRegistry, Settled, StopReason,
+    TOOL_RESULT_BYTES, ToolCall, ToolContext, ToolEntry, ToolError, ToolExecutionMode, ToolId,
+    ToolOutcome, ToolOutput, ToolOutputRetention, ToolReceipt, ToolResult, ToolSnapshot,
+    ToolSourceReceipt, Watch, Wrote,
 };
 
 mod audit;
@@ -30,6 +31,9 @@ const DENIED: &str = "the user did not allow this";
 
 /// What a call is answered with when its output would cross the turn boundary.
 const OUTPUT_LIMIT: &str = "not run: the turn output limit was reached";
+
+/// What replaces a background acceptance whose protected result write failed.
+const RESULT_STORAGE_FAILED: &str = "background command could not be durably accepted";
 
 /// What a call is answered with when standing policy forbids it — a rule, or
 /// the engine keeping its own configuration out of reach. Phrased for the
@@ -495,7 +499,8 @@ impl Work<'_> {
             .saturating_sub(held)
             .saturating_sub(*produced)
             .saturating_sub(reserved);
-        if invocation.output.text().len() > room {
+        let turn_limited = invocation.output.text().len() > room;
+        if turn_limited {
             invocation.output = ToolOutput::failed(if OUTPUT_LIMIT.len() <= room {
                 OUTPUT_LIMIT
             } else {
@@ -507,6 +512,35 @@ impl Work<'_> {
             if matches!(went, Went::On | Went::OutputLimit) {
                 *went = Went::OutputLimit;
                 invocation.outcome = ToolOutcome::OutputLimit;
+            }
+        }
+        if let Some(pending) = invocation.pending_result.take()
+            && !turn_limited
+        {
+            let mut durable_output = invocation.output.clone();
+            durable_output.forget_diff();
+            let result = ToolResult {
+                id: invocation.call.id.clone(),
+                output: durable_output,
+            };
+            if let Ok(receipt) = self.journal.put_call_result(pending.key(), &result) {
+                // The result is already durable and replayable. A failed
+                // executor acknowledgement quarantines/stops its owned scope,
+                // but cannot replace that sole accepted result.
+                let _ = pending.accept(receipt);
+            } else {
+                // Dropping the unaccepted executor half reclaims its
+                // application-owned process scope.
+                drop(pending);
+                invocation.output = ToolOutput::failed(if RESULT_STORAGE_FAILED.len() <= room {
+                    RESULT_STORAGE_FAILED
+                } else {
+                    ""
+                });
+                invocation.retention = invocation
+                    .output
+                    .limit_encoded(invocation.evidence.result_limit);
+                invocation.outcome = ToolOutcome::Failed;
             }
         }
         *produced = produced.saturating_add(invocation.output.text().len());
@@ -594,6 +628,7 @@ struct Invocation {
     evidence: InvocationEvidence,
     retention: ToolOutputRetention,
     recovery: Option<InvocationRecord>,
+    pending_result: Option<PendingCallResult>,
 }
 
 impl Invocation {
@@ -611,6 +646,7 @@ impl Invocation {
             evidence,
             retention,
             recovery: None,
+            pending_result: None,
         }
     }
 
@@ -625,6 +661,11 @@ impl Invocation {
 
     fn recovering(mut self, record: InvocationRecord) -> Self {
         self.recovery = Some(record);
+        self
+    }
+
+    fn accepting(mut self, pending: Option<PendingCallResult>) -> Self {
+        self.pending_result = pending;
         self
     }
 }
@@ -753,12 +794,26 @@ fn execute(prepared: Prepared, host: ExecutionHost<'_>, audit: SandboxAudit) -> 
                 .recovering(record);
         }
     };
+    let pending = match context.take_call_result() {
+        Ok(pending) => pending,
+        Err(problem) => {
+            let problem = ToolError::Io {
+                tool: call.name.clone(),
+                problem: "could not transfer deferred result ownership".into(),
+                source: std::io::Error::other(problem),
+            };
+            return Invocation::failed(call, &problem, ToolOutcome::Failed, evidence)
+                .recovering(record);
+        }
+    };
     let outcome = if output.is_failed() {
         ToolOutcome::Failed
     } else {
         ToolOutcome::Succeeded
     };
-    Invocation::new(call, output, outcome, evidence).recovering(record)
+    Invocation::new(call, output, outcome, evidence)
+        .recovering(record)
+        .accepting(pending)
 }
 
 struct PanicFallback {
@@ -846,7 +901,8 @@ mod tests {
     use std::time::Duration;
 
     use crucible_core::{
-        Ancestry, ArgumentTransform, Disposition, EventEnvelope, IdempotencyKey, InputGuard,
+        Ancestry, ArgumentTransform, CallResultAcceptance, CallResultKey, CallResultReceipt,
+        CallResultStoreError, Disposition, EventEnvelope, IdempotencyKey, InputGuard,
         InvocationState, JournalStore, Mode, OutputGuard, Post, RecoveryAction, Remember, Rules,
         SandboxCleanup, SandboxFactKind, SandboxId, SandboxLifecycle, Sensitivity, Summary, Target,
         Tool, ToolArgs, ToolDescriptor, ToolEffect, ToolExecutionMode, ToolHooks, ToolId,
@@ -863,6 +919,27 @@ mod tests {
     impl JournalStore for KeepingJournal {
         fn append_run_item(&self, item: &RunItem) {
             self.0.lock().unwrap().push(item.clone());
+        }
+    }
+
+    #[derive(Default)]
+    struct ResultJournal {
+        items: Mutex<Vec<RunItem>>,
+        results: Mutex<Vec<(CallResultKey, ToolResult)>>,
+    }
+
+    impl JournalStore for ResultJournal {
+        fn append_run_item(&self, item: &RunItem) {
+            self.items.lock().unwrap().push(item.clone());
+        }
+
+        fn put_call_result(
+            &self,
+            key: CallResultKey,
+            result: &ToolResult,
+        ) -> Result<CallResultReceipt, CallResultStoreError> {
+            self.results.lock().unwrap().push((key, result.clone()));
+            Ok(CallResultReceipt::from_digest([0x44; 32]))
         }
     }
 
@@ -1002,6 +1079,223 @@ mod tests {
             marked(&self.0, "output guard");
             Ok(output)
         }
+    }
+
+    struct ReplaceOutput;
+
+    impl OutputGuard for ReplaceOutput {
+        fn guard(&self, _call: &ToolCall, _output: ToolOutput) -> Result<ToolOutput, ToolError> {
+            Ok(ToolOutput::ok("guarded final output"))
+        }
+    }
+
+    struct AcceptedResult(Arc<Mutex<Option<CallResultReceipt>>>);
+
+    impl Drop for AcceptedResult {
+        fn drop(&mut self) {
+            let Ok(mut accepted) = self.0.lock() else {
+                return;
+            };
+            if accepted.is_none() {
+                *accepted = Some(CallResultReceipt::from_digest([0xdd; 32]));
+            }
+        }
+    }
+
+    impl CallResultAcceptance for AcceptedResult {
+        fn accept(
+            self: Box<Self>,
+            receipt: CallResultReceipt,
+        ) -> Result<(), crucible_core::SandboxError> {
+            *self.0.lock().unwrap() = Some(receipt);
+            Ok(())
+        }
+    }
+
+    struct DeferredResultTool(Arc<Mutex<Option<CallResultReceipt>>>);
+
+    impl Tool for DeferredResultTool {
+        fn validate(&self, _args: &ToolArgs) -> Result<(), ToolError> {
+            Ok(())
+        }
+
+        fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
+            Sensitivity::ReadOnly {
+                target: Target::unresolved(),
+            }
+        }
+
+        fn summary(&self, _args: &ToolArgs) -> Summary {
+            Summary::new("deferred result")
+        }
+
+        fn run(
+            &self,
+            _approved: Approved,
+            context: &ToolContext<'_>,
+        ) -> Result<ToolOutput, ToolError> {
+            context
+                .defer_call_result(Box::new(AcceptedResult(Arc::clone(&self.0))))
+                .map_err(|problem| ToolError::Io {
+                    tool: "deferred".into(),
+                    problem: "could not defer the final result".into(),
+                    source: std::io::Error::other(problem),
+                })?;
+            Ok(ToolOutput::ok("raw executor output"))
+        }
+    }
+
+    struct LongOutput;
+
+    impl OutputGuard for LongOutput {
+        fn guard(&self, _call: &ToolCall, _output: ToolOutput) -> Result<ToolOutput, ToolError> {
+            Ok(ToolOutput::ok("x".repeat(100)))
+        }
+    }
+
+    #[derive(Default)]
+    struct FailingResultJournal;
+
+    impl JournalStore for FailingResultJournal {
+        fn append_run_item(&self, _item: &RunItem) {}
+
+        fn put_call_result(
+            &self,
+            _key: CallResultKey,
+            _result: &ToolResult,
+        ) -> Result<CallResultReceipt, CallResultStoreError> {
+            Err(CallResultStoreError::Storage)
+        }
+    }
+
+    fn deferred_tools(
+        accepted: &Arc<Mutex<Option<CallResultReceipt>>>,
+        guard: Arc<dyn OutputGuard>,
+    ) -> Tools {
+        let descriptor = ToolDescriptor::new(
+            "deferred",
+            "{}",
+            ToolProvenance::new(ToolSourceKind::User, "test:deferred", "deferred test").unwrap(),
+        )
+        .unwrap();
+        let mut tools = Tools::new();
+        tools
+            .add_with_hooks(
+                descriptor,
+                Arc::new(DeferredResultTool(Arc::clone(accepted))),
+                ToolHooks::new().guarding_output(guard),
+            )
+            .unwrap();
+        tools
+    }
+
+    #[test]
+    fn deferred_results_commit_the_exact_guarded_runner_output() {
+        let accepted = Arc::new(Mutex::new(None));
+        let tools = deferred_tools(&accepted, Arc::new(ReplaceOutput));
+        let snapshot = tools.snapshot().unwrap();
+        let journal = ResultJournal::default();
+        let (events, _seen) = channel();
+        let keeping = Keeping(events);
+        let ancestry = Ancestry::new();
+        let cancel = Cancel::new();
+        let mut permission = Permission::new();
+        let mut ask = Says::new(Verdict::Allow);
+
+        let (results, went, _) = Work {
+            tools: &snapshot,
+            permission: &mut permission,
+            ask: &mut ask,
+            events: Reporter::new(ancestry, &keeping),
+            cancel: &cancel,
+            ancestry,
+            journal: &journal,
+            audits: &SandboxAuditRegistry::new(),
+            concurrency: 1,
+        }
+        .pass(&[call("deferred-call", "deferred")], 0, usize::MAX);
+
+        assert!(matches!(went, Went::On));
+        let result = results.first().expect("one result");
+        assert_eq!(result.output.text(), "guarded final output");
+        let stored = journal.results.lock().unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored.first().map(|(_, stored)| stored), Some(result));
+        assert_eq!(
+            *accepted.lock().unwrap(),
+            Some(CallResultReceipt::from_digest([0x44; 32]))
+        );
+    }
+
+    #[test]
+    fn a_turn_output_refusal_reclaims_the_unaccepted_background_scope() {
+        let accepted = Arc::new(Mutex::new(None));
+        let tools = deferred_tools(&accepted, Arc::new(LongOutput));
+        let snapshot = tools.snapshot().unwrap();
+        let journal = ResultJournal::default();
+        let (events, _seen) = channel();
+        let keeping = Keeping(events);
+        let ancestry = Ancestry::new();
+        let cancel = Cancel::new();
+        let mut permission = Permission::new();
+        let mut ask = Says::new(Verdict::Allow);
+
+        let (results, went, _) = Work {
+            tools: &snapshot,
+            permission: &mut permission,
+            ask: &mut ask,
+            events: Reporter::new(ancestry, &keeping),
+            cancel: &cancel,
+            ancestry,
+            journal: &journal,
+            audits: &SandboxAuditRegistry::new(),
+            concurrency: 1,
+        }
+        .pass(&[call("deferred-call", "deferred")], 0, 40);
+
+        assert!(matches!(went, Went::OutputLimit));
+        assert!(results.first().expect("one result").output.is_failed());
+        assert!(journal.results.lock().unwrap().is_empty());
+        assert_eq!(
+            *accepted.lock().unwrap(),
+            Some(CallResultReceipt::from_digest([0xdd; 32]))
+        );
+    }
+
+    #[test]
+    fn a_failed_durable_result_write_reclaims_the_background_scope() {
+        let accepted = Arc::new(Mutex::new(None));
+        let tools = deferred_tools(&accepted, Arc::new(ReplaceOutput));
+        let snapshot = tools.snapshot().unwrap();
+        let journal = FailingResultJournal;
+        let (events, _seen) = channel();
+        let keeping = Keeping(events);
+        let ancestry = Ancestry::new();
+        let cancel = Cancel::new();
+        let mut permission = Permission::new();
+        let mut ask = Says::new(Verdict::Allow);
+
+        let (results, went, _) = Work {
+            tools: &snapshot,
+            permission: &mut permission,
+            ask: &mut ask,
+            events: Reporter::new(ancestry, &keeping),
+            cancel: &cancel,
+            ancestry,
+            journal: &journal,
+            audits: &SandboxAuditRegistry::new(),
+            concurrency: 1,
+        }
+        .pass(&[call("deferred-call", "deferred")], 0, usize::MAX);
+
+        assert!(matches!(went, Went::On));
+        let result = results.first().expect("one result");
+        assert!(result.output.is_failed());
+        assert_eq!(result.output.text(), RESULT_STORAGE_FAILED);
+        assert_eq!(
+            *accepted.lock().unwrap(),
+            Some(CallResultReceipt::from_digest([0xdd; 32]))
+        );
     }
 
     struct TracedAsk(Trace);

@@ -6,9 +6,7 @@ use std::path::{Component, Path, PathBuf};
 use std::process::ExitStatus;
 use std::time::Duration;
 
-use crate::{
-    Ancestry, CallResultKey, CallResultReceipt, SandboxId, ToolContext, ToolId, ToolResult,
-};
+use crate::{Ancestry, CallResultKey, CallResultReceipt, SandboxId, ToolId};
 use sha2::{Digest as _, Sha256};
 
 use super::audit::SandboxAudit;
@@ -1354,21 +1352,30 @@ pub trait SandboxProcess: Send {
     /// First hard resource violation observed by the host supervisor.
     fn violation(&self) -> Option<SandboxViolation>;
 
-    /// Commits the sole caller-visible background result between WAL intent
-    /// and acceptance records.
+    /// Durably begins the background result transition before runner
+    /// finalization writes the exact caller-visible result.
     ///
     /// # Errors
     ///
-    /// Foreground processes and backends without a closed acceptance
-    /// transaction refuse this operation. A persistence failure leaves no
-    /// accepted WAL state.
-    fn accept_background(
-        &mut self,
-        _context: &ToolContext<'_>,
-        _result: &ToolResult,
-    ) -> Result<CallResultReceipt, SandboxError> {
+    /// Foreground processes, a mismatched result identity, and duplicate
+    /// transitions are refused.
+    fn begin_background_acceptance(&mut self, _key: CallResultKey) -> Result<(), SandboxError> {
         Err(SandboxError::Lifecycle(io::Error::other(
-            "sandbox process does not support durable background acceptance",
+            "sandbox process does not support background result intent",
+        )))
+    }
+
+    /// Binds the protected result-store receipt into the begun transition.
+    ///
+    /// # Errors
+    ///
+    /// No transition is pending or the backend could not durably close it.
+    fn complete_background_acceptance(
+        &mut self,
+        _receipt: CallResultReceipt,
+    ) -> Result<(), SandboxError> {
+        Err(SandboxError::Lifecycle(io::Error::other(
+            "sandbox process does not support background result completion",
         )))
     }
 }

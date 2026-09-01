@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use crucible_core::{
     CallResultKey, CallResultReceipt, SandboxAudit, SandboxCleanup, SandboxFactKind, SandboxId,
     SandboxInspection, SandboxInvocationMode, SandboxLifecycle, SandboxOutput, SandboxProcess,
-    SandboxRead, SandboxResourceLimits, SandboxUsage, SandboxViolation, ToolContext, ToolResult,
+    SandboxRead, SandboxResourceLimits, SandboxUsage, SandboxViolation,
 };
 
 use crate::bash::platform::{Output as PlatformOutput, ReadState, Scope, Terminator};
@@ -248,6 +248,7 @@ pub(super) fn spawn(
         audit_state: AuditState::default(),
         invocation,
         call_result_key,
+        background_acceptance: BackgroundAcceptance::None,
     }))
 }
 
@@ -485,6 +486,14 @@ struct LocalProcess {
     audit_state: AuditState,
     invocation: SandboxInvocationMode,
     call_result_key: Option<CallResultKey>,
+    background_acceptance: BackgroundAcceptance,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BackgroundAcceptance {
+    None,
+    Pending,
+    Accepted,
 }
 
 #[derive(Default)]
@@ -622,22 +631,34 @@ impl SandboxProcess for LocalProcess {
         self.control.violation()
     }
 
-    fn accept_background(
+    fn begin_background_acceptance(
         &mut self,
-        context: &ToolContext<'_>,
-        result: &ToolResult,
-    ) -> Result<CallResultReceipt, crucible_core::SandboxError> {
+        key: CallResultKey,
+    ) -> Result<(), crucible_core::SandboxError> {
         if self.invocation != SandboxInvocationMode::Background
             || self.call_result_key.is_none()
-            || self.call_result_key != context.call_result_key()
+            || self.call_result_key != Some(key)
+            || self.background_acceptance != BackgroundAcceptance::None
         {
             return Err(crucible_core::SandboxError::Lifecycle(io::Error::other(
                 "sandbox background result identity is invalid",
             )));
         }
-        context
-            .put_call_result(result)
-            .map_err(|problem| crucible_core::SandboxError::Lifecycle(io::Error::other(problem)))
+        self.background_acceptance = BackgroundAcceptance::Pending;
+        Ok(())
+    }
+
+    fn complete_background_acceptance(
+        &mut self,
+        _receipt: CallResultReceipt,
+    ) -> Result<(), crucible_core::SandboxError> {
+        if self.background_acceptance != BackgroundAcceptance::Pending {
+            return Err(crucible_core::SandboxError::Lifecycle(io::Error::other(
+                "sandbox background result intent is unavailable",
+            )));
+        }
+        self.background_acceptance = BackgroundAcceptance::Accepted;
+        Ok(())
     }
 }
 

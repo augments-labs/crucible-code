@@ -41,7 +41,7 @@ pub use background::{Background, Ended, MOST, Standing};
 use crucible_core::{
     Approved, DescribeTool, Looking, SandboxCommand, SandboxEnvironment, SandboxManifest,
     SandboxMode, SandboxPolicy, SandboxRequest, SandboxResourceLimits, SandboxService, Sensitivity,
-    Summary, Tool, ToolArgs, ToolContext, ToolError, ToolOutput, ToolResult, Workspace,
+    Summary, Tool, ToolArgs, ToolContext, ToolError, ToolOutput, Workspace,
 };
 
 use std::sync::LazyLock;
@@ -313,6 +313,107 @@ impl Bash {
         }
         self
     }
+
+    fn keep_running(
+        &self,
+        approved: &Approved,
+        context: &ToolContext<'_>,
+        mut taking: background::Taking,
+        mut ownership: Option<background::Lease>,
+    ) -> Result<ToolOutput, ToolError> {
+        let args = Args::parse(NAME, approved.args())?;
+        let command = args.text(COMMAND)?;
+        let Some(left) = self.leaving.as_ref() else {
+            return Ok(ToolOutput::failed(
+                "this run cannot leave a command running",
+            ));
+        };
+        let printed = taking.printed();
+        let why = taking.why;
+
+        // The row reporting this command's eventual end is drawn after the
+        // starting turn has scrolled away, so keep the caller's description.
+        let said = crate::account::of(approved.args());
+
+        if why == output::Why::Asked {
+            let number = ownership
+                .as_ref()
+                .map(background::Lease::number)
+                .ok_or_else(|| {
+                    io(
+                        "background cleanup ownership disappeared before acceptance",
+                        std::io::Error::other("reserved background identity is unavailable"),
+                    )
+                })?;
+            let accepted = ToolOutput::ok(format!(
+                "{printed}\n\n[left running as #{number}; {LEFT_RUNNING}]"
+            ));
+            let key = context.call_result_key().ok_or_else(|| {
+                io(
+                    "cannot finalize a background command without durable result storage",
+                    std::io::Error::other("durable call-result identity is unavailable"),
+                )
+            })?;
+            taking
+                .process
+                .begin_background_acceptance(key)
+                .map_err(|error| {
+                    sandbox_io("could not begin background result acceptance", error)
+                })?;
+            let Some(kept) = left.keep(
+                taking,
+                background::Keep {
+                    called: command,
+                    said: said.description(),
+                    lease: ownership.take(),
+                    accepting: true,
+                },
+            ) else {
+                return Ok(ToolOutput::failed(
+                    "background ownership was lost before result finalization",
+                ));
+            };
+            if kept.number() != number {
+                return Ok(ToolOutput::failed(
+                    "background invocation identity changed before result finalization",
+                ));
+            }
+            let acceptance = kept.acceptance().ok_or_else(|| {
+                io(
+                    "background result ownership disappeared before finalization",
+                    std::io::Error::other("background acceptance handle is unavailable"),
+                )
+            })?;
+            context.defer_call_result(acceptance).map_err(|problem| {
+                io(
+                    "could not transfer background result finalization",
+                    std::io::Error::other(problem),
+                )
+            })?;
+            return Ok(accepted);
+        }
+
+        match left.keep(
+            taking,
+            background::Keep {
+                called: command,
+                said: said.description(),
+                lease: ownership.take(),
+                accepting: false,
+            },
+        ) {
+            Some(kept) if why == output::Why::Pressed => Ok(ToolOutput::ok(format!(
+                "{printed}\n\n[left running as #{}; {PRESSED}; {LEFT_RUNNING}]",
+                kept.number()
+            ))),
+            Some(_) => Ok(ToolOutput::failed(
+                "background invocation mode changed after release",
+            )),
+            None => Ok(ToolOutput::failed(format!(
+                "{MOST} commands are already running; stop one before leaving another"
+            ))),
+        }
+    }
 }
 
 impl DescribeTool for Bash {
@@ -538,68 +639,10 @@ impl Tool for Bash {
         match output::collect(process, &waiting)? {
             output::Left::Answered(output) => Ok(output),
 
-            // Kept, or refused and ended — the registry owns both, because it is
-            // what knows the cap and what would have to end the command anyway.
-            output::Left::Running(mut taking) => {
-                let Some(left) = self.leaving.as_ref() else {
-                    return Ok(ToolOutput::failed(
-                        "this run cannot leave a command running",
-                    ));
-                };
-                let printed = taking.printed();
-                let why = taking.why;
-
-                // What the call said it was for, read the same way the panel
-                // read it a moment ago. The row that reports this command
-                // ending is drawn after the turn that started it has scrolled
-                // away, so it is the only chance to say which command in words
-                // the reader chose rather than in the shell they expanded to.
-                let said = crate::account::of(approved.args());
-
-                if why == output::Why::Asked {
-                    let number = ownership
-                        .as_ref()
-                        .map(background::Lease::number)
-                        .ok_or_else(|| {
-                            io(
-                                "background cleanup ownership disappeared before acceptance",
-                                std::io::Error::other(
-                                    "reserved background identity is unavailable",
-                                ),
-                            )
-                        })?;
-                    let accepted = ToolOutput::ok(format!(
-                        "{printed}\n\n[left running as #{number}; {LEFT_RUNNING}]"
-                    ));
-                    let result = ToolResult {
-                        id: context.call().clone(),
-                        output: accepted.clone(),
-                    };
-                    taking
-                        .process
-                        .accept_background(context, &result)
-                        .map_err(|error| {
-                            sandbox_io("could not durably accept the background command", error)
-                        })?;
-                    return match left.keep(command, said.description(), taking, ownership.take()) {
-                        Some(kept) if kept == number => Ok(accepted),
-                        _ => Ok(ToolOutput::failed(
-                            "background ownership was lost after durable acceptance",
-                        )),
-                    };
-                }
-
-                match left.keep(command, said.description(), taking, ownership.take()) {
-                    Some(number) if why == output::Why::Pressed => Ok(ToolOutput::ok(format!(
-                        "{printed}\n\n[left running as #{number}; {PRESSED}; {LEFT_RUNNING}]"
-                    ))),
-                    Some(_) => Ok(ToolOutput::failed(
-                        "background invocation mode changed after release",
-                    )),
-                    None => Ok(ToolOutput::failed(format!(
-                        "{MOST} commands are already running; stop one before leaving another"
-                    ))),
-                }
+            // Kept, or refused and ended — the registry owns both, because it
+            // knows the cap and is the owner that can end the command later.
+            output::Left::Running(taking) => {
+                self.keep_running(&approved, context, taking, ownership.take())
             }
         }
     }

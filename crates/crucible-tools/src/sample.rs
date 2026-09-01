@@ -11,8 +11,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crucible_core::{
     Ancestry, Approved, Ask, CallResultKey, CallResultReceipt, CallResultStoreError, Cancel,
     DescribeTool, Disposition, InvocationId, JournalStore, Permission, Remember, Rules, RunItem,
-    Sensitivity, Settled, Tool, ToolArgs, ToolCall, ToolContext, ToolId, ToolResult, Unwatched,
-    Verdict, Watch, Workspace,
+    Sensitivity, Settled, Tool, ToolArgs, ToolCall, ToolContext, ToolId, ToolOutput, ToolResult,
+    Unwatched, Verdict, Watch, Workspace,
 };
 use sha2::{Digest as _, Sha256};
 
@@ -53,6 +53,23 @@ pub(crate) fn context_for(call: &str) -> ToolContext<'static> {
         &Unwatched,
     )
     .with_call_result_store(InvocationId::new(), &TEST_JOURNAL)
+}
+
+/// Completes the runner-owned result seam for direct tool tests.
+pub(crate) fn finalize_call_result(context: &ToolContext<'_>, output: &ToolOutput) {
+    let Some(pending) = context.take_call_result().expect("pending result slot") else {
+        return;
+    };
+    let mut output = output.clone();
+    output.forget_diff();
+    let result = ToolResult {
+        id: context.call().clone(),
+        output,
+    };
+    let receipt = TEST_JOURNAL
+        .put_call_result(pending.key(), &result)
+        .expect("test result receipt");
+    pending.accept(receipt).expect("test result acceptance");
 }
 
 /// A direct-test context stopped by `cancel` and otherwise unwatched.

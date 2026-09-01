@@ -155,9 +155,9 @@ pub use sandbox::{
 pub use source::{Fetch, Page, Search, SearchResult, SourceError};
 pub use steer::Steer;
 pub use tool::{
-    Account, Changed, Looking, Remembered, Summary, TOOL_RESULT_BYTES, TOOL_RESULT_MIN_BYTES, Tool,
-    ToolArgs, ToolCall, ToolContext, ToolError, ToolOutput, ToolOutputRetention, Unwatched, Watch,
-    Wrote,
+    Account, CallResultAcceptance, Changed, Looking, PendingCallResult, Remembered, Summary,
+    TOOL_RESULT_BYTES, TOOL_RESULT_MIN_BYTES, Tool, ToolArgs, ToolCall, ToolContext, ToolError,
+    ToolOutput, ToolOutputRetention, Unwatched, Watch, Wrote,
 };
 pub use toolset::{
     ArgumentTransform, DescribeTool, InputGuard, OutputGuard, TOOL_ARGUMENT_BYTES,

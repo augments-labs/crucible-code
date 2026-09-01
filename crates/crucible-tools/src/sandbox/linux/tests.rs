@@ -11,13 +11,13 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    Ancestry, SandboxCleanup, SandboxCommand, SandboxCredentialHandle, SandboxCredentialProjection,
-    SandboxCredentialProvenance, SandboxEnvironment, SandboxFactKind, SandboxFeature,
-    SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxId,
-    SandboxInvocationMode, SandboxLifecycle, SandboxManifest, SandboxManifestEntry, SandboxMode,
-    SandboxNetworkEndpoint, SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxOutput,
-    SandboxPolicy, SandboxProcess, SandboxRead, SandboxRequest, SandboxResourceLimits,
-    SandboxService, SandboxUnreadablePattern, ToolId, ToolOutput, ToolResult,
+    Ancestry, CallResultReceipt, SandboxCleanup, SandboxCommand, SandboxCredentialHandle,
+    SandboxCredentialProjection, SandboxCredentialProvenance, SandboxEnvironment, SandboxFactKind,
+    SandboxFeature, SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule,
+    SandboxId, SandboxInvocationMode, SandboxLifecycle, SandboxManifest, SandboxManifestEntry,
+    SandboxMode, SandboxNetworkEndpoint, SandboxNetworkPolicy, SandboxNetworkProvenance,
+    SandboxOutput, SandboxPolicy, SandboxProcess, SandboxRead, SandboxRequest,
+    SandboxResourceLimits, SandboxService, SandboxUnreadablePattern, ToolId,
 };
 
 use crate::LocalSandbox;
@@ -666,15 +666,13 @@ fn background_ownership_precedes_release_and_command_start() {
     let mut launch = session.stage(command("exit 0")).expect("staged launch");
     launch.transfer_owner().expect("application owner transfer");
     let mut process = launch.release().expect("released launch");
+    let key = context.call_result_key().expect("durable result key");
     process
-        .accept_background(
-            &context,
-            &ToolResult {
-                id: ToolId::new("manifest"),
-                output: ToolOutput::ok("accepted"),
-            },
-        )
-        .expect("durable acceptance");
+        .begin_background_acceptance(key)
+        .expect("acceptance intent");
+    process
+        .complete_background_acceptance(CallResultReceipt::from_digest([0x31; 32]))
+        .expect("acceptance completion");
     let (status, _, _) = finish(process);
     assert!(status.success(), "{status}");
 
@@ -742,15 +740,13 @@ fn read_only_background_commands_have_a_durable_lifecycle() {
         .expect("staged read-only launch");
     launch.transfer_owner().expect("application owner transfer");
     let mut process = launch.release().expect("released read-only launch");
+    let key = context.call_result_key().expect("durable result key");
     process
-        .accept_background(
-            &context,
-            &ToolResult {
-                id: ToolId::new("read-only-background"),
-                output: ToolOutput::ok("accepted"),
-            },
-        )
-        .expect("durable read-only acceptance");
+        .begin_background_acceptance(key)
+        .expect("read-only acceptance intent");
+    process
+        .complete_background_acceptance(CallResultReceipt::from_digest([0x32; 32]))
+        .expect("read-only acceptance completion");
 
     let (status, output, errors) = finish(process);
 

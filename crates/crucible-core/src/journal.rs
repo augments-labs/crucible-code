@@ -682,6 +682,12 @@ pub trait JournalStore: Send + Sync {
     ) -> Result<CallResultReceipt, CallResultStoreError> {
         Err(CallResultStoreError::Unavailable)
     }
+
+    /// Removes accepted sidecars only after their ordinary result message and
+    /// companion journal metadata have crossed the sink's durability barrier.
+    ///
+    /// The default is for in-memory journals, which cannot own sidecars.
+    fn settle_call_results(&self) {}
 }
 
 fn validate_projection(

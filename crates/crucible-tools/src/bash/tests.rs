@@ -34,6 +34,13 @@ fn ran(sample: &Sample, args: &str) -> ToolOutput {
     bash(sample, args).expect("the command ran")
 }
 
+fn finalized(tool: &Bash, args: &str) -> Result<ToolOutput, ToolError> {
+    let context = crate::sample::context();
+    let output = tool.run(allowed(tool, args), &context)?;
+    crate::sample::finalize_call_result(&context, &output);
+    Ok(output)
+}
+
 #[derive(Clone, Default)]
 struct RecordingSandbox {
     inner: crate::LocalSandbox,
@@ -692,15 +699,11 @@ fn a_command_left_running_answers_at_once_and_keeps_running() {
     let tool = compatible(&sample).leaving(left.clone());
 
     let started = Instant::now();
-    let output = tool
-        .run(
-            allowed(
-                &tool,
-                r#"{"command":"printf 'up\n'; sleep 30","background":true}"#,
-            ),
-            &crate::sample::context(),
-        )
-        .expect("the command started");
+    let output = finalized(
+        &tool,
+        r#"{"command":"printf 'up\n'; sleep 30","background":true}"#,
+    )
+    .expect("the command started");
 
     assert!(
         started.elapsed() < Duration::from_secs(5),
@@ -810,12 +813,8 @@ fn an_explicit_background_call_keeps_acceptance_as_its_only_result_after_a_fast_
         .leaving(left.clone())
         .watching(Duration::from_secs(20));
 
-    let output = tool
-        .run(
-            allowed(&tool, r#"{"command":"exit 7","background":true}"#),
-            &crate::sample::context(),
-        )
-        .expect("the command started");
+    let output =
+        finalized(&tool, r#"{"command":"exit 7","background":true}"#).expect("the command started");
 
     assert!(!output.is_failed(), "{}", output.text());
     assert!(
@@ -847,11 +846,7 @@ fn an_explicit_background_command_has_no_foreground_deadline() {
         )
         .leaving(left.clone());
 
-    tool.run(
-        allowed(&tool, r#"{"command":"sleep 30","background":true}"#),
-        &crate::sample::context(),
-    )
-    .expect("the command started");
+    finalized(&tool, r#"{"command":"sleep 30","background":true}"#).expect("the command started");
 
     let limits = observed.lock().expect("recorded limits");
     assert_eq!(limits.len(), 1);
@@ -890,18 +885,11 @@ fn the_number_of_commands_left_running_is_capped() {
     let tool = compatible(&sample).leaving(left.clone());
 
     for _ in 0..MOST {
-        tool.run(
-            allowed(&tool, r#"{"command":"sleep 30","background":true}"#),
-            &crate::sample::context(),
-        )
-        .expect("the command started");
+        finalized(&tool, r#"{"command":"sleep 30","background":true}"#)
+            .expect("the command started");
     }
 
-    let over = tool
-        .run(
-            allowed(&tool, r#"{"command":"sleep 30","background":true}"#),
-            &crate::sample::context(),
-        )
+    let over = finalized(&tool, r#"{"command":"sleep 30","background":true}"#)
         .expect("the call was answered");
 
     assert!(over.is_failed(), "{}", over.text());

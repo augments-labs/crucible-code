@@ -984,6 +984,7 @@ impl Runner {
     /// that could be made separately would eventually be made separately, and
     /// a log that is missing one message is a session that cannot be continued.
     fn record(&mut self, ancestry: Ancestry, message: Message) {
+        let settles_call_results = matches!(&message, Message::ToolResults(_));
         match RunItem::message(ancestry, message.clone()) {
             Ok(item) => {
                 SessionStore::append_message(&self.session, &message);
@@ -1003,6 +1004,9 @@ impl Runner {
         // it in the other order would have it covering one message less.
         if let Some(calibration) = self.load.calibrated() {
             self.session.measured(&calibration);
+        }
+        if settles_call_results {
+            JournalStore::settle_call_results(&self.session);
         }
     }
 

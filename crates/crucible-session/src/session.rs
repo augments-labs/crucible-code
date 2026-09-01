@@ -830,6 +830,25 @@ impl JournalStore for Session {
         self.sync_pending_result_source()?;
         results::put(&self.path, key, result)
     }
+
+    fn settle_call_results(&self) {
+        if self.id.is_none() || !self.path.is_file() {
+            return;
+        }
+        let Ok(_held) = self.result_lock.lock() else {
+            return;
+        };
+        let Ok(stored) = results::load(&self.path) else {
+            return;
+        };
+        if stored.is_empty() {
+            return;
+        }
+        if self.sync_pending_result_source().is_err() {
+            return;
+        }
+        let _ = results::settle(stored);
+    }
 }
 
 #[cfg(test)]

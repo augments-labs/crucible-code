@@ -17,8 +17,7 @@ use std::process::ExitStatus;
 use crucible_core::{
     CallResultKey, CallResultReceipt, SandboxAudit, SandboxError, SandboxFactKind,
     SandboxFilesystemAccess, SandboxId, SandboxInspection, SandboxInvocationMode, SandboxLifecycle,
-    SandboxOutput, SandboxProcess, SandboxRequest, SandboxUsage, SandboxViolation, ToolContext,
-    ToolResult,
+    SandboxOutput, SandboxProcess, SandboxRequest, SandboxUsage, SandboxViolation,
 };
 use crucible_sandbox_broker::CANCEL_FRAME;
 use crucible_sandbox_broker::MAX_SCAN_EXTENTS;
@@ -718,6 +717,7 @@ pub(super) fn wrap(
         control: Some(control),
         invocation,
         call_result_key,
+        acceptance_pending: false,
     }))
 }
 
@@ -732,6 +732,7 @@ struct ProjectedProcess {
     control: Option<std::os::unix::net::UnixStream>,
     invocation: SandboxInvocationMode,
     call_result_key: Option<CallResultKey>,
+    acceptance_pending: bool,
 }
 
 impl ProjectedProcess {
@@ -886,14 +887,11 @@ impl SandboxProcess for ProjectedProcess {
         self.process.violation()
     }
 
-    fn accept_background(
-        &mut self,
-        context: &ToolContext<'_>,
-        result: &ToolResult,
-    ) -> Result<CallResultReceipt, SandboxError> {
+    fn begin_background_acceptance(&mut self, key: CallResultKey) -> Result<(), SandboxError> {
         if self.invocation != SandboxInvocationMode::Background
             || self.call_result_key.is_none()
-            || self.call_result_key != context.call_result_key()
+            || self.call_result_key != Some(key)
+            || self.acceptance_pending
         {
             return Err(SandboxError::Lifecycle(io::Error::other(
                 "sandbox background result identity is invalid",
@@ -907,23 +905,33 @@ impl SandboxProcess for ProjectedProcess {
         projection
             .record(transaction::Record::CallAcceptIntent)
             .map_err(SandboxError::Lifecycle)?;
-        let receipt = match context.put_call_result(result) {
-            Ok(receipt) => receipt,
-            Err(problem) => {
-                let _ = self.stop();
-                return Err(SandboxError::Lifecycle(io::Error::other(problem)));
-            }
-        };
-        if projection
-            .record(transaction::Record::CallAccepted(receipt.bytes()))
-            .is_err()
-        {
+        self.acceptance_pending = true;
+        Ok(())
+    }
+
+    fn complete_background_acceptance(
+        &mut self,
+        receipt: CallResultReceipt,
+    ) -> Result<(), SandboxError> {
+        if !self.acceptance_pending {
+            return Err(SandboxError::Lifecycle(io::Error::other(
+                "sandbox background result intent is unavailable",
+            )));
+        }
+        let projection = self.projection.as_mut().ok_or_else(|| {
+            SandboxError::Lifecycle(io::Error::other(
+                "background sandbox has no durable transaction",
+            ))
+        })?;
+        if let Err(source) = projection.record(transaction::Record::CallAccepted(receipt.bytes())) {
             let _ = self.process.stop();
             projection.retain_evidence();
             let _ = self.lifecycle(SandboxLifecycle::Quarantined);
             self.terminal = true;
+            return Err(SandboxError::Lifecycle(source));
         }
-        Ok(receipt)
+        self.acceptance_pending = false;
+        Ok(())
     }
 }
 

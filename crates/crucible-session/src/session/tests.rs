@@ -95,6 +95,34 @@ fn durable_call_results_are_idempotent_and_content_bound() {
 }
 
 #[test]
+fn ordinary_tool_results_settle_accepted_sidecars_after_the_log_barrier() {
+    let sample = Sample::new("settle-live-call-result");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();
+    let path = session.path().to_owned();
+    session.append(&calling("call-1", "bash", "{}"));
+    let key = CallResultKey::derive(Ancestry::new(), InvocationId::new(), &ToolId::new("call-1"));
+    let result = ToolResult {
+        id: ToolId::new("call-1"),
+        output: ToolOutput::ok("background job #1 accepted"),
+    };
+    session.put_call_result(key, &result).unwrap();
+    session.append(&Message::ToolResults(vec![result.clone()]));
+
+    session.settle_call_results();
+
+    assert!(
+        !path.with_extension("results").exists(),
+        "a sidecar survived its synced ordinary result"
+    );
+    drop(session);
+    let (_resumed, transcript) = Session::resume(&sample.logs(), &sample.workspace()).unwrap();
+    assert_eq!(
+        transcript.messages().last(),
+        Some(&Message::ToolResults(vec![result]))
+    );
+}
+
+#[test]
 fn resume_commits_an_accepted_result_before_removing_its_sidecar() {
     let sample = Sample::new("recover-durable-call-result");
     let session = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();

@@ -28,7 +28,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use super::output::Pipe;
-use crucible_core::SandboxProcess;
+use crucible_core::{CallResultAcceptance, CallResultReceipt, SandboxError, SandboxProcess};
 
 /// How many commands may be left running at once.
 ///
@@ -54,6 +54,8 @@ struct Left {
     out: Pipe,
     err: Pipe,
     since: Instant,
+    /// Runner finalization has not yet bound the durable result receipt.
+    accepting: bool,
 }
 
 /// One row of what is running, for whatever is drawing it.
@@ -135,6 +137,14 @@ pub struct Background {
     asked: Arc<AtomicBool>,
 }
 
+/// Registry metadata that travels with one owned process insertion.
+pub(super) struct Keep<'a> {
+    pub(super) called: &'a str,
+    pub(super) said: &'a str,
+    pub(super) lease: Option<Lease>,
+    pub(super) accepting: bool,
+}
+
 // The lint asking a hand-written `Debug` for every field is asking for the one
 // thing this may not print: what is behind the lock is a list of command lines,
 // and a command line is where a token gets typed by accident. How many are
@@ -195,13 +205,13 @@ impl Background {
     /// `None` where the cap is already met, and then the caller still owns the
     /// child — which it ends, because a command nobody can see or stop is the one
     /// outcome this module exists to prevent.
-    pub(super) fn keep(
-        &self,
-        called: &str,
-        said: &str,
-        mut taking: Taking,
-        lease: Option<Lease>,
-    ) -> Option<usize> {
+    pub(super) fn keep(&self, mut taking: Taking, plan: Keep<'_>) -> Option<Kept> {
+        let Keep {
+            called,
+            said,
+            lease,
+            accepting,
+        } = plan;
         let mut standing = self.standing.lock().ok()?;
         let number = if let Some(mut lease) = lease {
             if !Arc::ptr_eq(&self.standing, &lease.standing) || !lease.consume_locked(&mut standing)
@@ -229,9 +239,14 @@ impl Background {
             out: taking.out,
             err: taking.err,
             since: taking.since,
+            accepting,
         });
 
-        Some(number)
+        Some(Kept {
+            standing: Arc::clone(&self.standing),
+            number,
+            accepting,
+        })
     }
 
     /// How many commands are still running.
@@ -334,6 +349,10 @@ impl Background {
         let mut still = Vec::with_capacity(standing.left.len());
 
         for mut left in standing.left.drain(..) {
+            if left.accepting {
+                still.push(left);
+                continue;
+            }
             match left.process.try_wait() {
                 Ok(Some(status)) => {
                     // The shell has gone; its descendants have not necessarily,
@@ -362,6 +381,107 @@ impl Background {
         standing.ended.append(&mut ended.clone());
 
         ended
+    }
+}
+
+/// A command installed under its stable application-owned identity.
+pub(super) struct Kept {
+    standing: Arc<Mutex<Held>>,
+    number: usize,
+    accepting: bool,
+}
+
+impl Kept {
+    /// Stable number already reported by the application registry.
+    pub(super) const fn number(&self) -> usize {
+        self.number
+    }
+
+    /// Transfers cleanup into runner-owned durable result finalization.
+    pub(super) fn acceptance(mut self) -> Option<Box<dyn CallResultAcceptance>> {
+        if !self.accepting {
+            return None;
+        }
+        self.accepting = false;
+        Some(Box::new(Acceptance {
+            standing: Arc::clone(&self.standing),
+            number: self.number,
+            armed: true,
+        }))
+    }
+}
+
+impl Drop for Kept {
+    fn drop(&mut self) {
+        if !self.accepting {
+            return;
+        }
+        let Ok(mut standing) = self.standing.lock() else {
+            return;
+        };
+        let Some(at) = standing
+            .left
+            .iter()
+            .position(|left| left.number == self.number && left.accepting)
+        else {
+            return;
+        };
+        let mut left = standing.left.remove(at);
+        drop(standing);
+        let _ = super::output::end(left.process.as_mut());
+        self.accepting = false;
+    }
+}
+
+/// Removes and stops a command unless runner finalization binds its receipt.
+struct Acceptance {
+    standing: Arc<Mutex<Held>>,
+    number: usize,
+    armed: bool,
+}
+
+impl CallResultAcceptance for Acceptance {
+    fn accept(mut self: Box<Self>, receipt: CallResultReceipt) -> Result<(), SandboxError> {
+        let mut standing = self.standing.lock().map_err(|_| {
+            SandboxError::Lifecycle(std::io::Error::other(
+                "background registry ownership is unavailable",
+            ))
+        })?;
+        let left = standing
+            .left
+            .iter_mut()
+            .find(|left| left.number == self.number && left.accepting)
+            .ok_or_else(|| {
+                SandboxError::Lifecycle(std::io::Error::other(
+                    "background result owner is unavailable",
+                ))
+            })?;
+        let completed = left.process.complete_background_acceptance(receipt);
+        left.accepting = false;
+        self.armed = false;
+        completed
+    }
+}
+
+impl Drop for Acceptance {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let Ok(mut standing) = self.standing.lock() else {
+            return;
+        };
+        let Some(at) = standing
+            .left
+            .iter()
+            .position(|left| left.number == self.number && left.accepting)
+        else {
+            return;
+        };
+        let mut left = standing.left.remove(at);
+        drop(standing);
+        let _ = super::output::end(left.process.as_mut());
+        self.armed = false;
     }
 }
 
