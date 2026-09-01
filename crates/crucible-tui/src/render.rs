@@ -31,6 +31,7 @@ use crate::bands::{Bands, Wants};
 use crate::clipboard;
 use crate::color::{Palette, Slot};
 use crate::escape::Escapes;
+use crate::forge::Forge;
 use crate::glyphs::Glyphs;
 use crate::markdown::Markdown;
 use crate::record::Record;
@@ -223,6 +224,12 @@ pub struct Renderer<T: Terminal> {
     /// Held here rather than made fresh per delta, for the reason the escapes
     /// above are: a fence arrives split across two deltas as often as not.
     markdown: Markdown,
+    /// The repository the transcript's bare numbers are counted against.
+    ///
+    /// Held here rather than in the reader alone because the reader is thrown
+    /// away and made again between messages, and which checkout this is does
+    /// not change while the session runs.
+    forge: Option<Forge>,
     /// Whether an answer is still arriving.
     ///
     /// Set by the first piece of one and put down by [`Renderer::settle`],
@@ -304,6 +311,7 @@ impl<T: Terminal> Renderer<T> {
             free: String::new(),
             escapes: Escapes::default(),
             markdown: Markdown::default(),
+            forge: None,
             arriving: Arriving::Nothing,
             palette: Palette::plain(),
             glyphs: Glyphs::default(),
@@ -585,7 +593,25 @@ impl<T: Terminal> Renderer<T> {
     /// character of its own in place of one the model wrote.
     pub fn draws(&mut self, glyphs: Glyphs) {
         self.glyphs = glyphs;
-        self.markdown = Markdown::new(glyphs);
+        self.markdown = self.reader();
+    }
+
+    /// Tells this renderer which repository the answer's bare numbers count
+    /// against.
+    ///
+    /// Said once, at startup, for the reason the glyph set is: which checkout
+    /// the session opened in is settled before the first frame. `None` where
+    /// there is no forge behind it, which leaves a number the plain text it
+    /// has always been.
+    pub fn counts(&mut self, forge: Option<Forge>) {
+        self.forge = forge;
+        self.markdown = self.reader();
+    }
+
+    /// A reader for the next message, drawing and counting the way this
+    /// renderer was told to.
+    fn reader(&self) -> Markdown {
+        Markdown::new(self.glyphs).counting(self.forge.clone())
     }
 
     /// Marks the next record line as the start of a prompt.
@@ -716,8 +742,8 @@ impl<T: Terminal> Renderer<T> {
         // the markdown state has to walk every byte of it either way, or the
         // next delta is read against a state that skipped part of one.
         let mut wrote = Ok(());
-        markdown.read(delta, columns, &mut |slot, text| {
-            let said = taking.take(slot, text);
+        markdown.read(delta, columns, &mut |slot, text, link| {
+            let said = taking.take(slot, text, link);
             if wrote.is_ok() {
                 wrote = said;
             }
@@ -1007,8 +1033,8 @@ impl<T: Terminal> Renderer<T> {
         };
 
         let mut wrote = Ok(());
-        markdown.finish(columns, &mut |slot, text| {
-            let said = taking.take(slot, text);
+        markdown.finish(columns, &mut |slot, text, link| {
+            let said = taking.take(slot, text, link);
             if wrote.is_ok() {
                 wrote = said;
             }
@@ -1018,7 +1044,7 @@ impl<T: Terminal> Renderer<T> {
         // The markers belong to the message that is ending. A fence the model
         // opened and never closed would otherwise read the tool result under it
         // as code, and the whole of the next answer after that.
-        self.markdown = Markdown::new(self.glyphs);
+        self.markdown = self.reader();
 
         // And the answer they belonged to is over, whatever ended it: the next
         // block down is a block of its own and is owed the row that says so.
@@ -1475,7 +1501,7 @@ impl<T: Terminal> Renderer<T> {
             free,
             out: redirected.then_some(terminal),
         }
-        .take(slot, text)
+        .take(slot, text, None)
     }
 
     /// One frame.
@@ -1629,14 +1655,17 @@ impl<T: Terminal> Taking<'_, T> {
     /// bytes an untrusted string put there: a row of the record is spans this
     /// program painted from a palette, and a byte of a redirected run's output
     /// is one this program meant to write.
-    fn take(&mut self, slot: Slot, text: &str) -> Result<(), TerminalError> {
+    fn take(&mut self, slot: Slot, text: &str, link: Option<&str>) -> Result<(), TerminalError> {
         let escapes = &mut *self.escapes;
         self.free.clear();
         self.free
             .extend(text.chars().filter(|character| !escapes.holds(*character)));
 
-        self.record.write(slot, self.free);
+        self.record.write(slot, self.free, link);
 
+        // The address never reaches a redirected run. What that run is written
+        // is what the row says, and an address a terminal would have swallowed
+        // is bytes in the middle of a file somebody is going to read.
         match &mut self.out {
             Some(out) => out.write(self.free),
             None => Ok(()),

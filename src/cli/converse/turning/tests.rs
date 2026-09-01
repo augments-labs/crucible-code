@@ -19,7 +19,7 @@ fn an_empty_queue_adds_no_row_to_the_footing() {
     // waiting, the footing is the same three rows it has always been — the
     // blank, the word, the blank — and not one row taller for a frame around
     // nothing.
-    let rows = Turning::started(None).rows(&nothing(), 80, Style::plain(), 24);
+    let rows = Turning::started(None).rows(&nothing(), "", 80, Style::plain(), 24);
     assert_eq!(rows.len(), ROWS, "{:?}", rows.iter().map(Row::text));
 }
 
@@ -60,7 +60,17 @@ fn requested_as(name: &str, backgroundable: bool) -> Event {
         },
         summary: Summary::new("src/main.rs"),
         backgroundable,
+        looking: None,
     }
+}
+
+/// The lines that came back, as the pairs these tests are written about: which
+/// call it was and what its row says.
+fn lines(settled: Vec<Settled>) -> Vec<(ToolId, String)> {
+    settled
+        .into_iter()
+        .map(|one| (one.call, one.said))
+        .collect()
 }
 
 #[test]
@@ -130,7 +140,7 @@ fn a_turn_asked_to_stop_goes_on_saying_so_whatever_arrives_after() {
     assert_eq!(turning.doing.word(), "interrupting");
 
     // And stops offering the key that has already been pressed.
-    let rows = turning.rows(&nothing(), 80, Style::plain(), 24);
+    let rows = turning.rows(&nothing(), "", 80, Style::plain(), 24);
     let said = rows.iter().map(Row::text).collect::<String>();
 
     assert!(said.contains("interrupting"), "{said:?}");
@@ -144,7 +154,7 @@ fn the_row_says_what_the_turn_has_spent_once_the_provider_has_said() {
     let mut turning = Turning::started(None);
     let said = |turning: &Turning| {
         turning
-            .rows(&nothing(), 80, Style::plain(), 24)
+            .rows(&nothing(), "", 80, Style::plain(), 24)
             .iter()
             .map(Row::text)
             .collect::<String>()
@@ -166,7 +176,7 @@ fn the_window_left_is_handed_to_the_prompt_and_takes_no_turn_row() {
     let mut turning = Turning::started(None);
     turning.saw(&Event::Carried { left: Some(72) });
 
-    let rows = turning.rows(&nothing(), 80, Style::plain(), 24);
+    let rows = turning.rows(&nothing(), "", 80, Style::plain(), 24);
     let texts: Vec<String> = rows.iter().map(Row::text).collect();
 
     assert_eq!(turning.left(), Some(72));
@@ -234,7 +244,7 @@ fn completed_compaction_stays_full_long_enough_to_be_seen() {
     });
 
     let complete = turning
-        .rows(&nothing(), 80, Style::plain(), 24)
+        .rows(&nothing(), "", 80, Style::plain(), 24)
         .into_iter()
         .map(|row| row.text())
         .collect::<Vec<_>>()
@@ -258,7 +268,7 @@ fn completed_compaction_stays_full_long_enough_to_be_seen() {
         "clearing the completed bar did not guarantee a following frame"
     );
     let gone = turning
-        .rows(&nothing(), 80, Style::plain(), 24)
+        .rows(&nothing(), "", 80, Style::plain(), 24)
         .into_iter()
         .map(|row| row.text())
         .collect::<Vec<_>>()
@@ -442,14 +452,16 @@ fn a_window_with_no_room_for_the_row_keeps_the_turn_s_own_output_instead() {
     for room in 0..=ROWS {
         assert!(
             turning
-                .rows(&nothing(), 80, Style::plain(), room)
+                .rows(&nothing(), "", 80, Style::plain(), room)
                 .is_empty(),
             "{room}"
         );
     }
 
     assert_eq!(
-        turning.rows(&nothing(), 80, Style::plain(), ROWS + 1).len(),
+        turning
+            .rows(&nothing(), "", 80, Style::plain(), ROWS + 1)
+            .len(),
         ROWS
     );
 }
@@ -462,7 +474,7 @@ fn a_call_stands_over_the_row_for_as_long_as_its_tool_is_out() {
     let mut turning = Turning::started(None);
     let said = |turning: &Turning| {
         turning
-            .rows(&nothing(), 80, Style::plain(), 24)
+            .rows(&nothing(), "", 80, Style::plain(), 24)
             .iter()
             .map(Row::text)
             .collect::<Vec<_>>()
@@ -510,7 +522,7 @@ fn a_command_shows_its_last_lines_and_says_how_many_there_have_been() {
     }
 
     let rows: Vec<String> = turning
-        .rows(&nothing(), 80, Style::plain(), 24)
+        .rows(&nothing(), "", 80, Style::plain(), 24)
         .iter()
         .map(Row::text)
         .collect();
@@ -553,7 +565,7 @@ fn a_native_web_call_does_not_offer_to_leave_it_running() {
         let mut turning = Turning::started(None);
         turning.saw(&requested_as(name, false));
 
-        let rows = turning.rows(&nothing(), 80, Style::plain(), 24);
+        let rows = turning.rows(&nothing(), "", 80, Style::plain(), 24);
         assert!(
             !rows.iter().any(|row| row.text().contains("ctrl+b")),
             "{name} advertised an unavailable action: {:?}",
@@ -572,7 +584,7 @@ fn the_row_under_a_call_offers_to_leave_it_running_before_it_has_printed_anythin
 
     let rows = |turning: &Turning| {
         turning
-            .rows(&nothing(), 80, Style::plain(), 24)
+            .rows(&nothing(), "", 80, Style::plain(), 24)
             .iter()
             .map(Row::text)
             .collect::<Vec<_>>()
@@ -614,7 +626,7 @@ fn what_a_command_printed_is_handed_back_when_its_tool_answers() {
     });
 
     let rows: Vec<String> = turning
-        .rows(&nothing(), 80, Style::plain(), 24)
+        .rows(&nothing(), "", 80, Style::plain(), 24)
         .iter()
         .map(Row::text)
         .collect();
@@ -634,7 +646,7 @@ fn a_window_short_of_rows_drops_the_sample_before_the_call_line() {
     turning.saw(&printed("Compiling one\n"));
 
     let rows: Vec<String> = turning
-        .rows(&nothing(), 80, Style::plain(), CALLING + 1)
+        .rows(&nothing(), "", 80, Style::plain(), CALLING + 1)
         .iter()
         .map(Row::text)
         .collect();
@@ -698,7 +710,7 @@ fn a_line_rewritten_in_place_replaces_the_row_rather_than_adding_one() {
     turning.saw(&printed("Building [====>  ] 96/128\r"));
 
     let rows: Vec<String> = turning
-        .rows(&nothing(), 80, Style::plain(), 24)
+        .rows(&nothing(), "", 80, Style::plain(), 24)
         .iter()
         .map(Row::text)
         .collect();
@@ -718,11 +730,11 @@ fn the_call_line_comes_back_when_its_tool_answers_and_only_then() {
     assert!(turning.saw(&requested()).is_empty());
     assert!(turning.saw(&Event::Delta { text: "hi".into() }).is_empty());
     assert_eq!(
-        turning.saw(&Event::ToolFinished {
+        lines(turning.saw(&Event::ToolFinished {
             call: ToolId::new("a"),
             output: ToolOutput::ok("done"),
             receipt: None,
-        }),
+        })),
         vec![(ToolId::new("a"), "Read(src/main.rs)".to_owned())]
     );
 
@@ -751,6 +763,7 @@ fn several_requested_calls_return_the_heading_named_by_each_result() {
         },
         summary: Summary::new(about),
         backgroundable: false,
+        looking: None,
     };
 
     turning.saw(&requested("read", "read", "src/main.rs"));
@@ -763,11 +776,11 @@ fn several_requested_calls_return_the_heading_named_by_each_result() {
         ("read", "Read(src/main.rs)"),
     ] {
         assert_eq!(
-            turning.saw(&Event::ToolFinished {
+            lines(turning.saw(&Event::ToolFinished {
                 call: ToolId::new(id),
                 output: ToolOutput::ok("done"),
                 receipt: None,
-            }),
+            })),
             vec![(ToolId::new(id), called.to_owned())]
         );
     }
@@ -788,11 +801,11 @@ fn an_unknown_result_does_not_take_another_calls_heading() {
             .is_empty()
     );
     assert_eq!(
-        turning.saw(&Event::ToolFinished {
+        lines(turning.saw(&Event::ToolFinished {
             call: ToolId::new("a"),
             output: ToolOutput::ok("done"),
             receipt: None,
-        }),
+        })),
         vec![(ToolId::new("a"), "Read(src/main.rs)".to_owned())]
     );
 }
@@ -817,7 +830,7 @@ fn a_turn_that_ends_with_a_tool_still_out_hands_its_call_back_anyway() {
         turning.saw(&requested());
 
         assert_eq!(
-            turning.saw(&ending),
+            lines(turning.saw(&ending)),
             vec![(ToolId::new("a"), "Read(src/main.rs)".to_owned())],
             "{ending:?}"
         );
@@ -836,13 +849,14 @@ fn a_terminal_event_drains_every_pending_call_in_request_order() {
             },
             summary: Summary::new(path),
             backgroundable: false,
+            looking: None,
         });
     }
 
     assert_eq!(
-        turning.saw(&Event::Failed {
+        lines(turning.saw(&Event::Failed {
             error: TurnError::Refused("stopped".into()),
-        }),
+        })),
         vec![
             (ToolId::new("first"), "Read(one)".to_owned()),
             (ToolId::new("second"), "Read(two)".to_owned()),
@@ -869,11 +883,11 @@ fn a_turn_asked_to_stop_still_lets_the_call_it_had_out_come_back() {
     turning.interrupting();
 
     assert_eq!(
-        turning.saw(&Event::ToolFinished {
+        lines(turning.saw(&Event::ToolFinished {
             call: ToolId::new("a"),
             output: ToolOutput::ok("done"),
             receipt: None,
-        }),
+        })),
         vec![(ToolId::new("a"), "Read(src/main.rs)".to_owned())]
     );
 }
@@ -964,7 +978,7 @@ fn queueing(lines: &[&str], columns: usize, room: usize) -> Vec<String> {
     turning.queueing(lines.iter().copied(), columns, Style::plain());
 
     turning
-        .rows(&nothing(), columns, Style::plain(), room)
+        .rows(&nothing(), "", columns, Style::plain(), room)
         .iter()
         .map(Row::text)
         .collect()
@@ -1052,7 +1066,7 @@ fn a_turn_with_nothing_waiting_behind_it_draws_no_row_for_it() {
     // window spent, and what it is spent against is the turn's own output
     // above it.
     let turning = Turning::started(None);
-    let rows = turning.rows(&nothing(), 80, Style::plain(), 24);
+    let rows = turning.rows(&nothing(), "", 80, Style::plain(), 24);
 
     assert_eq!(rows.len(), ROWS, "{:?}", rows.iter().map(Row::text));
 }
@@ -1119,7 +1133,7 @@ fn the_row_naming_a_waiting_prompt_is_never_drawn_past_the_last_column() {
             let mut turning = Turning::started(None);
             turning.queueing(["fix the failing test"].into_iter(), wide, style);
 
-            for row in turning.rows(&nothing(), wide, style, 40) {
+            for row in turning.rows(&nothing(), "", wide, style, 40) {
                 let said = row.text();
                 assert!(
                     crucible_tui::columns(&said) <= wide,
@@ -1142,7 +1156,7 @@ fn a_window_too_short_for_all_three_drops_the_call_before_the_waiting_prompt() {
 
     let said = |room: usize| {
         turning
-            .rows(&nothing(), 80, Style::plain(), room)
+            .rows(&nothing(), "", 80, Style::plain(), room)
             .iter()
             .map(Row::text)
             .collect::<Vec<_>>()
@@ -1177,7 +1191,7 @@ fn a_window_too_short_for_both_drops_the_call_before_the_row() {
     let mut turning = Turning::started(None);
     turning.saw(&requested());
 
-    let rows = turning.rows(&nothing(), 80, Style::plain(), CALLING - 1);
+    let rows = turning.rows(&nothing(), "", 80, Style::plain(), CALLING - 1);
     let said = rows.iter().map(Row::text).collect::<String>();
 
     assert_eq!(rows.len(), ROWS, "{said:?}");
@@ -1195,7 +1209,7 @@ fn the_plan_stands_under_everything_the_turn_says_and_over_the_box() {
     turning.saw(&requested());
     turning.queueing(["fix the failing test"].into_iter(), 80, Style::plain());
 
-    let rows = turning.rows(&planned(3), 80, Style::plain(), 40);
+    let rows = turning.rows(&planned(3), "", 80, Style::plain(), 40);
     let said = rows.iter().map(Row::text).collect::<Vec<_>>().join("\n");
 
     assert!(said.contains("Task 0"), "{said:?}");
@@ -1222,7 +1236,7 @@ fn a_window_short_of_rows_drops_the_call_and_the_waiting_prompt_before_a_task() 
 
     let said = |room: usize| {
         turning
-            .rows(&planning, 80, Style::plain(), room)
+            .rows(&planning, "", 80, Style::plain(), room)
             .iter()
             .map(Row::text)
             .collect::<String>()
@@ -1247,4 +1261,89 @@ fn a_window_short_of_rows_drops_the_call_and_the_waiting_prompt_before_a_task() 
     let shortest = said(panel + 4);
     assert!(!shortest.contains("queued"), "{shortest:?}");
     assert!(shortest.contains("Task 2"), "{shortest:?}");
+}
+
+#[test]
+fn a_run_of_calls_that_only_looked_around_stands_over_the_call_that_is_out() {
+    // Two rows, because they answer two questions: what the turn has been
+    // doing, and what it is doing at this instant. The run goes on top
+    // because it is what has already happened, and the transcript below the
+    // footing grows the same way down.
+    let mut turning = Turning::started(None);
+    turning.saw(&requested());
+
+    let rows: Vec<String> = turning
+        .rows(&nothing(), "Reading 4 files", 80, Style::plain(), 24)
+        .iter()
+        .map(Row::text)
+        .collect();
+
+    let run = rows
+        .iter()
+        .position(|row| row.contains("Reading 4 files"))
+        .unwrap_or_else(|| panic!("the run went unsaid: {rows:?}"));
+    let call = rows
+        .iter()
+        .position(|row| row.contains("Read(src/main.rs)"))
+        .unwrap_or_else(|| panic!("the call went unsaid: {rows:?}"));
+
+    assert_eq!(run + 1, call, "{rows:?}");
+}
+
+#[test]
+fn a_footing_with_no_run_going_stands_no_row_for_one() {
+    let mut turning = Turning::started(None);
+    turning.saw(&requested());
+
+    let alone = turning.rows(&nothing(), "", 80, Style::plain(), 24).len();
+    let over = turning
+        .rows(&nothing(), "Reading 4 files", 80, Style::plain(), 24)
+        .len();
+
+    assert_eq!(alone + 1, over, "{alone} {over}");
+}
+
+#[test]
+fn a_run_still_says_itself_between_the_calls_in_it() {
+    // One tool has answered and the next has not gone out yet. The run is
+    // still going, and this row is the only thing on the screen saying so.
+    let rows: Vec<String> = Turning::started(None)
+        .rows(&nothing(), "Reading 4 files", 80, Style::plain(), 24)
+        .iter()
+        .map(Row::text)
+        .collect();
+
+    assert!(
+        rows.iter().any(|row| row.contains("Reading 4 files")),
+        "{rows:?}"
+    );
+}
+
+#[test]
+fn the_run_wears_the_same_mark_as_the_call_beneath_it() {
+    // Which is the mark that appears and disappears on the turn's beat. Both
+    // are read out of one layout, so both are of the same instant: a run
+    // blinking against the call under it would read as two turns rather than
+    // one turn doing two things.
+    let mut turning = Turning::started(None);
+    turning.saw(&requested());
+
+    let rows: Vec<String> = turning
+        .rows(&nothing(), "Reading 4 files", 80, Style::plain(), 24)
+        .iter()
+        .map(Row::text)
+        .collect();
+
+    let mark = |said: &str| {
+        rows.iter()
+            .find(|row| row.contains(said))
+            .and_then(|row| row.chars().next())
+            .unwrap_or_else(|| panic!("{said} went unsaid: {rows:?}"))
+    };
+
+    assert_eq!(
+        mark("Reading 4 files"),
+        mark("Read(src/main.rs)"),
+        "{rows:?}"
+    );
 }

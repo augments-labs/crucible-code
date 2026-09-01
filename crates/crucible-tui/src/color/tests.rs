@@ -147,6 +147,7 @@ fn wearing(depth: Depth, theme: Theme, ground: Option<(u8, u8, u8)>) -> Palette 
 
     Palette {
         depth,
+        links: false,
         theme,
         ground,
         code: Code::default(),

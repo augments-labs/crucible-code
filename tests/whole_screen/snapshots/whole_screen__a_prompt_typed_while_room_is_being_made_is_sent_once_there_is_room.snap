@@ -1,5 +1,6 @@
 ---
 source: tests/whole_screen/main.rs
+assertion_line: 1150
 expression: window.picture()
 ---
 80x24 cursor 20,4 scrolled 0
@@ -12,10 +13,10 @@ expression: window.picture()
 |› /compact                                                                      |
 |                                                                                |
 |                                                                                |
-|⎿ ──────────────────────────────────────────────────────────────────────────────|
-|   compacted · you asked                                                        |
-|   4 messages became a recap · 6k → 7k carried · 2 turns kept whole             |
-|  ──────────────────────────────────────────────────────────────────────────────|
+|────────────────────────────────────────────────────────────────────────────────|
+| compacted · you asked                                                          |
+| 4 messages became a recap · 6k → 7k carried · 2 turns kept whole               |
+|────────────────────────────────────────────────────────────────────────────────|
 |                                                                                |
 |› what next                                                                     |
 |                                                                                |

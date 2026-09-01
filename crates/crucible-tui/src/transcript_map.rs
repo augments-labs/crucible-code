@@ -295,7 +295,7 @@ mod tests {
             if line % 5 == 0 {
                 record.landmark();
             }
-            record.write(Slot::Plain, &format!("line {line}\n"));
+            record.write(Slot::Plain, &format!("line {line}\n"), None);
         }
         let span = record.map_span(4).expect("the record to scroll");
         let row = row(&record, span, 40, Glyphs::Unicode);
@@ -315,7 +315,7 @@ mod tests {
         let now = Instant::now();
         let mut record = Record::new(40);
         for line in 0..10 {
-            record.write(Slot::Plain, &format!("line {line}\n"));
+            record.write(Slot::Plain, &format!("line {line}\n"), None);
         }
         let span = record.map_span(4).expect("the record to scroll");
         let mut map = TranscriptMap::default();
@@ -335,7 +335,7 @@ mod tests {
         let now = Instant::now();
         let mut record = Record::new(40);
         for line in 0..10 {
-            record.write(Slot::Plain, &format!("line {line}\n"));
+            record.write(Slot::Plain, &format!("line {line}\n"), None);
         }
         let span = record.map_span(4).expect("the record to scroll");
         let mut map = TranscriptMap::default();

@@ -184,6 +184,12 @@ describe '/home/you/Pictures/Screenshots/Screen Shot.png'
 The copy is content-addressed under crucible's session directory, so moving or
 deleting the original does not change what the transcript sends later.
 
+What the transcript shows of a sent attachment is its label and its number —
+`[Image #1]`, `[Video #1]`, counted per kind in the order they were attached.
+Not the path: where the file came from is a detail of getting it here, the copy
+that was sent lives somewhere you did not choose anyway, and a row of home
+directory is a row of the screen spent on neither.
+
 The row under the box has two ends. At the left is the next key: the permission
 mode in force, the key that steps it, and how many commands are still running
 behind the box. At the right is what the session is talking to — the provider,
@@ -445,6 +451,14 @@ call that was made is a call that was made whatever came back — and that mark 
 the one thing on the row left in your terminal's own foreground, so it is where
 the eye goes.
 
+A result that opens like a record is squeezed onto that line instead of cut to
+it. `gh pr view --json …` comes back pretty-printed over thirty rows whose first
+line of content is whichever key sorts first, and `"assignees": []` spends the
+reader's only line on nothing; squeezed, the row reads as much of the record as
+the window holds, in the order it arrived. Two characters decide it — a brace or
+a bracket, and something a record could hold after it — so `[exit status 3]` and
+a sentence somebody wrote in brackets keep their spaces and their meaning.
+
 A result the row had no room for says how much it left over and names the key
 that gives it back: `(+128 lines · ctrl+o to expand)`. The key is drawn in the
 accent, and what the result said reads as the quiet the rest of the transcript
@@ -469,6 +483,38 @@ what brings the newer results in.
 The row names the call you asked about, so what stands is the output of that
 call alone. A click anywhere
 else, on a row that offered nothing, leaves the screen as it was.
+
+A run of calls that only looked around is one row rather than one row each. A
+turn that greps for a pattern, reads four files and lists two directories has
+done one thing, and seven rows saying so are seven rows to scroll past on the
+way to what came of it. So they are counted instead:
+
+```
+● Searched for 1 pattern, read 4 files, listed 2 directories
+```
+
+Only the kinds that happened are named, in that order, and each carries its own
+number — a run that read one file says `read 1 file`. Two calls are enough to
+fold; a single lookup keeps the row it always had, since a count of one is the
+same width as the name it replaced and says less.
+
+What folds is looking and nothing else. `grep` counts a pattern, `read` a file,
+`glob` a directory, and a shell command counts only where the command is one
+that reports rather than changes — `git status`, `gh pr view`, `ls`, `cat`. A
+call that writes a file, or a command that could, ends the run and takes the row
+it always had. The run also ends wherever the turn does something else worth
+reading: a paragraph of the answer, your next prompt, a stop.
+
+Nothing is folded away. Clicking the line opens every result in the run at once,
+in the same view a single result opens in, each under the call it answers — so
+the run costs one row and keeps all of it. The whole line lights up under the
+pointer, because the whole line is the door.
+
+While the run is still going the counters are in the present — `Searching for 1
+pattern, reading 4 files` — on its own row over the box, above the call that is
+out. It wears the same mark as that call and blinks on the same beat, since the
+two are one turn doing one thing, and a window with room for only one of them
+shows neither.
 
 A call that changed a file is the exception, and says so by offering nothing. It
 is shown as the change itself, and a change too long for the block is cut where
@@ -566,6 +612,15 @@ A link is read the same way, and keeps both halves of itself: the words are
 underlined and the address follows them in brackets, quietly, so it can be
 copied — or clicked, in a terminal that finds its own links. A bracket that was
 not a link is left exactly as it was written.
+
+A bare `#487` is read the same way, and points at the repository you are in. The
+address comes out of the `origin` remote in `.git/config`, so a checkout cloned
+from GitHub or GitLab gets a number you can click and every other checkout gets
+the four characters it always had — a link to a repository nobody named would be
+a link somewhere wrong. `owner/repo#12` is counted against the repository it
+names instead. The number goes to the issue page, because prose cannot say
+whether a number is an issue or a pull request, and a forge that files both in
+one series answers either from there.
 
 Where there is no colour to read it into, the markers are left where the model
 put them. That covers a redirected run, `NO_COLOR`, and `--color never` — taking

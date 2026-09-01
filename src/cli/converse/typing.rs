@@ -843,7 +843,9 @@ fn working<T: Terminal>(
     // The list a `/`-started line has open stands directly above the box, over
     // the running row and plan, as it does at the prompt: a list is what the
     // reader is looking at while it is open, so the rows above give way to it.
-    let mut over = footing.turning.rows(footing.planning, columns, style, room);
+    let mut over = footing
+        .turning
+        .rows(footing.planning, footing.counting, columns, style, room);
     let left = room.saturating_sub(over.len());
     over.extend(footing.opened_list.rows(columns, left, style.glyphs()));
 
@@ -884,6 +886,11 @@ pub(super) struct Footing<'a> {
     pub(super) turning: &'a Turning,
     /// The plan the agent is working to, above that row.
     pub(super) planning: &'a Planning,
+    /// What the run of calls that only looked around has come to so far, in the
+    /// present tense — empty where no such run is going. The transcript will
+    /// write it once, past tense, when the run ends; until then it is a live
+    /// line, because the numbers in it are still moving.
+    pub(super) counting: &'a str,
     /// The command list a `/`-started line has open, standing over both.
     pub(super) opened_list: &'a Opened,
     /// Where in the retained prompts the line in the box came from. Walked
@@ -932,6 +939,7 @@ pub(super) fn during<T: Terminal>(
 ) -> Result<Meanwhile, Fatal> {
     let During {
         editor,
+        counting,
         images,
         clipboard: board,
         attachment_store,
@@ -1303,6 +1311,7 @@ pub(super) fn during<T: Terminal>(
         let footing = Footing {
             turning,
             planning,
+            counting,
             opened_list,
             history: recalling.place(),
         };
@@ -1577,6 +1586,8 @@ fn meant(arrived: Pressed) -> Meant {
 /// What can change while one turn is running.
 pub(super) struct During<'a> {
     pub(super) editor: &'a mut Editor,
+    /// What the run of calls that only looked around has come to so far.
+    pub(super) counting: &'a str,
     /// Image paths and clipboard state shared with the between-turn prompt.
     pub(super) images: &'a mut Vec<Box<str>>,
     pub(super) clipboard: &'a mut Option<arboard::Clipboard>,

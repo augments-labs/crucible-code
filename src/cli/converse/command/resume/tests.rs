@@ -557,7 +557,6 @@ fn the_preview_holds_the_work_a_session_did_and_not_only_what_was_said() {
     let runner = over(recorded(&sample, "another session entirely"));
     let against = replaying::Replay {
         runner: &runner,
-        workspace: &sample.workspace(),
         pruned: &Pruned::default(),
         style: Style::plain(),
     };
@@ -597,7 +596,6 @@ fn a_preview_is_drawn_for_the_pane_the_window_leaves_it() {
         let room = Picker::previewing(columns).expect("a window this wide keeps the pane");
         let against = replaying::Replay {
             runner: &runner,
-            workspace: &sample.workspace(),
             pruned: &Pruned::default(),
             style: Style::plain(),
         };

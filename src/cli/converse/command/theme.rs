@@ -166,7 +166,7 @@ fn read_as_code(line: &str) -> Vec<(Slot, String)> {
     markdown.read(
         &format!("```rust\n{line}\n```\n"),
         ROOM,
-        &mut |slot, text| {
+        &mut |slot, text, _| {
             if text != "\n" {
                 runs.push((slot, text.to_owned()));
             }

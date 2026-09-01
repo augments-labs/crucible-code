@@ -124,13 +124,13 @@ impl Table {
     }
 
     /// The block exactly as it arrived, for a caller putting it back.
-    pub(super) fn spilt(&self, say: &mut dyn FnMut(Slot, &str)) {
+    pub(super) fn spilt(&self, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
         for line in &self.lines {
-            say(Slot::Plain, line);
-            say(Slot::Plain, "\n");
+            say(Slot::Plain, line, None);
+            say(Slot::Plain, "\n", None);
         }
         if !self.line.is_empty() {
-            say(Slot::Plain, &self.line);
+            say(Slot::Plain, &self.line, None);
         }
     }
 
@@ -140,7 +140,12 @@ impl Table {
     /// The header, a rule under it, and the body. No border around the outside:
     /// what a reader wants from a table is the columns, and four edges are a box
     /// drawn around something that already has a shape.
-    pub(super) fn laid(&self, glyphs: Glyphs, room: usize, say: &mut dyn FnMut(Slot, &str)) {
+    pub(super) fn laid(
+        &self,
+        glyphs: Glyphs,
+        room: usize,
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
+    ) {
         let rows = self.rows(glyphs);
         let (Some(header), Some(delimiter)) = (rows.first(), self.lines.get(1)) else {
             self.spilt(say);
@@ -284,14 +289,19 @@ impl Laid {
     ///
     /// `worn`, where it is given, is the slot every run of the row takes
     /// whatever its own markers said. That is the header, and only the header.
-    fn row(&self, cells: &[Cell], worn: Option<Slot>, say: &mut dyn FnMut(Slot, &str)) {
+    fn row(
+        &self,
+        cells: &[Cell],
+        worn: Option<Slot>,
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
+    ) {
         let empty = Cell::new();
 
         for (at, room) in self.widths.iter().enumerate() {
             if at > 0 {
-                say(Slot::Quiet, " ");
-                say(Slot::Quiet, self.glyphs.vertical());
-                say(Slot::Quiet, " ");
+                say(Slot::Quiet, " ", None);
+                say(Slot::Quiet, self.glyphs.vertical(), None);
+                say(Slot::Quiet, " ", None);
             }
 
             let cell = clipped(cells.get(at).unwrap_or(&empty), *room, self.glyphs);
@@ -304,38 +314,38 @@ impl Laid {
             // back in a test.
             pad(before, say);
             for (slot, text) in &cell {
-                say(worn.unwrap_or(*slot), text);
+                say(worn.unwrap_or(*slot), text, None);
             }
             pad(after, say);
         }
 
-        say(Slot::Plain, "\n");
+        say(Slot::Plain, "\n", None);
     }
 
     /// Draws the rule that separates the header from the body.
-    fn rule(&self, say: &mut dyn FnMut(Slot, &str)) {
+    fn rule(&self, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
         for (at, room) in self.widths.iter().enumerate() {
             if at > 0 {
-                say(Slot::Quiet, self.glyphs.horizontal());
-                say(Slot::Quiet, self.glyphs.crossing());
-                say(Slot::Quiet, self.glyphs.horizontal());
+                say(Slot::Quiet, self.glyphs.horizontal(), None);
+                say(Slot::Quiet, self.glyphs.crossing(), None);
+                say(Slot::Quiet, self.glyphs.horizontal(), None);
             }
             for _ in 0..*room {
-                say(Slot::Quiet, self.glyphs.horizontal());
+                say(Slot::Quiet, self.glyphs.horizontal(), None);
             }
         }
 
-        say(Slot::Plain, "\n");
+        say(Slot::Plain, "\n", None);
     }
 }
 
 /// Writes `columns` columns of nothing.
-fn pad(columns: usize, say: &mut dyn FnMut(Slot, &str)) {
+fn pad(columns: usize, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
     let mut left = columns;
 
     while left > 0 {
         let now = left.min(SPACES.len());
-        say(Slot::Quiet, SPACES.get(..now).unwrap_or(SPACES));
+        say(Slot::Quiet, SPACES.get(..now).unwrap_or(SPACES), None);
         left = left.saturating_sub(now);
     }
 }
@@ -354,10 +364,10 @@ fn read(cell: &str, glyphs: Glyphs) -> Cell {
     let mut markdown = super::Markdown::new(glyphs);
     let mut runs = Cell::new();
 
-    markdown.read(cell, 0, &mut |slot, text| {
+    markdown.read(cell, 0, &mut |slot, text, _| {
         runs.push((slot, text.to_owned()));
     });
-    markdown.finish(0, &mut |slot, text| runs.push((slot, text.to_owned())));
+    markdown.finish(0, &mut |slot, text, _| runs.push((slot, text.to_owned())));
 
     runs
 }

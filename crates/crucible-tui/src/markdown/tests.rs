@@ -7,7 +7,7 @@ const ROOM: usize = 80;
 /// Reads one delta and returns every run with the slot it was said under.
 fn read(markdown: &mut Markdown, delta: &str) -> Vec<(Slot, String)> {
     let mut said = Vec::new();
-    markdown.read(delta, ROOM, &mut |slot, text| {
+    markdown.read(delta, ROOM, &mut |slot, text, _| {
         said.push((slot, text.to_owned()));
     });
     said
@@ -319,7 +319,7 @@ fn a_block_read_a_character_at_a_time_says_the_same_thing() {
         markdown.read(
             character.encode_utf8(&mut piece),
             ROOM,
-            &mut |slot, text| {
+            &mut |slot, text, _| {
                 apart.push((slot, text.to_owned()));
             },
         );
@@ -407,7 +407,9 @@ fn a_link_split_across_deltas_is_still_one_link() {
         let mut markdown = Markdown::default();
         let mut said = read(&mut markdown, &whole_link[..at]);
         said.extend(read(&mut markdown, &whole_link[at..]));
-        markdown.finish(ROOM, &mut |slot, text| said.push((slot, text.to_owned())));
+        markdown.finish(ROOM, &mut |slot, text, _| {
+            said.push((slot, text.to_owned()));
+        });
 
         assert_eq!(
             drawn(&said),
@@ -421,7 +423,9 @@ fn a_link_split_across_deltas_is_still_one_link() {
 fn a_message_that_ended_inside_a_link_keeps_what_it_wrote() {
     let mut markdown = Markdown::default();
     let mut said = read(&mut markdown, "see [the guide");
-    markdown.finish(ROOM, &mut |slot, text| said.push((slot, text.to_owned())));
+    markdown.finish(ROOM, &mut |slot, text, _| {
+        said.push((slot, text.to_owned()));
+    });
 
     assert_eq!(drawn(&said), "see [the guide");
 }
@@ -628,10 +632,12 @@ fn nothing_inside_a_fence_is_read_as_a_retraction() {
 fn narrowed(answer: &str, room: usize) -> Vec<(Slot, String)> {
     let mut markdown = Markdown::default();
     let mut said = Vec::new();
-    markdown.read(answer, room, &mut |slot, text| {
+    markdown.read(answer, room, &mut |slot, text, _| {
         said.push((slot, text.to_owned()));
     });
-    markdown.finish(room, &mut |slot, text| said.push((slot, text.to_owned())));
+    markdown.finish(room, &mut |slot, text, _| {
+        said.push((slot, text.to_owned()));
+    });
     said
 }
 
@@ -682,7 +688,7 @@ fn a_table_split_across_deltas_is_still_one_table() {
     let mut said = Vec::new();
 
     for piece in ["| file |\n| -", "-- |\n| main", ".rs |\n\n"] {
-        markdown.read(piece, ROOM, &mut |slot, text| {
+        markdown.read(piece, ROOM, &mut |slot, text, _| {
             said.push((slot, text.to_owned()));
         });
     }
@@ -723,10 +729,16 @@ fn a_table_the_answer_ended_in_the_middle_of_is_still_drawn() {
     let mut markdown = Markdown::default();
     let mut said = Vec::new();
 
-    markdown.read("| file |\n| --- |\n| main.rs |", ROOM, &mut |slot, text| {
+    markdown.read(
+        "| file |\n| --- |\n| main.rs |",
+        ROOM,
+        &mut |slot, text, _| {
+            said.push((slot, text.to_owned()));
+        },
+    );
+    markdown.finish(ROOM, &mut |slot, text, _| {
         said.push((slot, text.to_owned()));
     });
-    markdown.finish(ROOM, &mut |slot, text| said.push((slot, text.to_owned())));
 
     assert_eq!(drawn(&said), "file   \n───────\nmain.rs\n");
 }
@@ -963,7 +975,9 @@ fn emphasis_around_a_code_span_still_closes_after_it() {
 fn ended(answer: &str) -> Vec<(Slot, String)> {
     let mut markdown = Markdown::default();
     let mut said = read(&mut markdown, answer);
-    markdown.finish(ROOM, &mut |slot, text| said.push((slot, text.to_owned())));
+    markdown.finish(ROOM, &mut |slot, text, _| {
+        said.push((slot, text.to_owned()));
+    });
     said
 }
 
@@ -1099,7 +1113,9 @@ fn where_a_delta_ends_changes_nothing_about_what_is_drawn() {
             let mut delta = [0; 4];
             said.extend(read(&mut markdown, character.encode_utf8(&mut delta)));
         }
-        markdown.finish(ROOM, &mut |slot, text| said.push((slot, text.to_owned())));
+        markdown.finish(ROOM, &mut |slot, text, _| {
+            said.push((slot, text.to_owned()));
+        });
 
         assert_eq!(drawn(&said), drawn(&whole), "{answer:?}");
         assert_eq!(slots(&said), slots(&whole), "{answer:?}");
@@ -1169,4 +1185,159 @@ fn a_block_is_closed_by_the_marker_that_opened_it() {
     let said = ended("~~~\n```\nstill code\n~~~\n");
 
     assert_eq!(drawn(&said), "```\nstill code\n");
+}
+
+/// The repository the references below are counted against.
+fn forge() -> Forge {
+    Forge::new(
+        "https://github.com",
+        "augments-labs/crucible-code",
+        "/issues/",
+    )
+}
+
+/// One whole answer, read against a repository, with where each run points.
+fn counted(answer: &str) -> Vec<(Slot, String, Option<String>)> {
+    let mut markdown = Markdown::default().counting(Some(forge()));
+    let mut said = Vec::new();
+    let mut into = |slot, text: &str, link: Option<&str>| {
+        said.push((slot, text.to_owned(), link.map(str::to_owned)));
+    };
+    markdown.read(answer, ROOM, &mut into);
+    markdown.finish(ROOM, &mut into);
+    said
+}
+
+/// Everything one of those answers drew, with the markers gone.
+fn wrote(said: &[(Slot, String, Option<String>)]) -> String {
+    said.iter().map(|(_, text, _)| text.as_str()).collect()
+}
+
+/// The runs of one of those answers that point somewhere, and where to.
+fn points(said: &[(Slot, String, Option<String>)]) -> Vec<(&str, &str)> {
+    said.iter()
+        .filter_map(|(_, text, link)| Some((text.as_str(), link.as_deref()?)))
+        .collect()
+}
+
+#[test]
+fn a_number_the_answer_wrote_points_at_the_repository_in_hand() {
+    let said = counted("landed in #487 yesterday");
+
+    assert_eq!(wrote(&said), "landed in #487 yesterday");
+    assert_eq!(
+        points(&said),
+        [(
+            "#487",
+            "https://github.com/augments-labs/crucible-code/issues/487"
+        )]
+    );
+}
+
+#[test]
+fn a_number_that_named_a_repository_points_at_that_one() {
+    let said = counted("see someone/else#12 for why");
+
+    assert_eq!(wrote(&said), "see someone/else#12 for why");
+    assert_eq!(
+        points(&said),
+        [(
+            "someone/else#12",
+            "https://github.com/someone/else/issues/12"
+        )]
+    );
+}
+
+#[test]
+fn a_number_wears_the_slot_a_link_wears() {
+    let said = counted("landed in #487 yesterday");
+
+    let slots: Vec<_> = said.iter().map(|(slot, _, _)| *slot).collect();
+    assert_eq!(slots, [Slot::Plain, Slot::Link, Slot::Plain]);
+}
+
+#[test]
+fn a_number_with_no_repository_behind_the_session_is_left_where_it_was() {
+    // The whole reason the forge is optional: a checkout with no remote has
+    // nowhere for this to point, and somewhere wrong is worse than nowhere.
+    let said = ended("landed in #487 yesterday");
+
+    assert_eq!(drawn(&said), "landed in #487 yesterday");
+    assert_eq!(slots(&said), [Slot::Plain]);
+}
+
+#[test]
+fn a_hash_in_front_of_something_that_is_not_a_number_is_left_where_it_was() {
+    for answer in [
+        "the #include at the top",
+        "a colour like #fff there",
+        "the ## marker itself",
+        "trailing hash here #",
+        "an id like abc#def in it",
+    ] {
+        let said = counted(answer);
+        assert_eq!(wrote(&said), answer, "{answer:?}");
+        assert!(points(&said).is_empty(), "{answer:?}");
+    }
+}
+
+#[test]
+fn a_number_inside_code_is_code_like_the_rest_of_it() {
+    let said = counted("run `git show #487` first");
+
+    assert_eq!(wrote(&said), "run git show #487 first");
+    assert!(points(&said).is_empty());
+}
+
+#[test]
+fn a_number_split_across_two_deltas_is_still_one_number() {
+    let mut markdown = Markdown::default().counting(Some(forge()));
+    let mut said = Vec::new();
+    let mut into = |slot, text: &str, link: Option<&str>| {
+        said.push((slot, text.to_owned(), link.map(str::to_owned)));
+    };
+    markdown.read("landed in #4", ROOM, &mut into);
+    markdown.read("87 yesterday", ROOM, &mut into);
+    markdown.finish(ROOM, &mut into);
+
+    assert_eq!(wrote(&said), "landed in #487 yesterday");
+    assert_eq!(
+        points(&said),
+        [(
+            "#487",
+            "https://github.com/augments-labs/crucible-code/issues/487"
+        )]
+    );
+}
+
+#[test]
+fn a_number_that_ends_the_message_is_still_a_number() {
+    // The character that would have ended it never arrives, exactly as it
+    // never does for an address.
+    let said = counted("landed in #487");
+
+    assert_eq!(wrote(&said), "landed in #487");
+    assert_eq!(points(&said).len(), 1);
+}
+
+#[test]
+fn what_ends_a_sentence_after_a_number_is_not_part_of_it() {
+    let said = counted("landed in #487.");
+
+    assert_eq!(wrote(&said), "landed in #487.");
+    assert_eq!(
+        points(&said),
+        [(
+            "#487",
+            "https://github.com/augments-labs/crucible-code/issues/487"
+        )]
+    );
+}
+
+#[test]
+fn a_heading_is_still_a_heading_and_not_a_number() {
+    let said = counted("# 487 of them\n");
+
+    assert_eq!(wrote(&said), "487 of them\n");
+    assert!(points(&said).is_empty());
 }

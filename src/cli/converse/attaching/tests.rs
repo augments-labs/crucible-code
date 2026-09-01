@@ -663,7 +663,7 @@ fn sending() -> Runner {
 }
 
 #[test]
-fn a_file_sent_with_a_prompt_is_named_under_it_whichever_way_it_reached_the_screen() {
+fn a_file_sent_with_a_prompt_is_marked_under_it_whichever_way_it_reached_the_screen() {
     let sample = Sample::new("attaching-on-both-paths");
     let workspace = holding(&sample, "holiday.png", PNG);
     let prompt = "what is in holiday.png";
@@ -699,7 +699,6 @@ fn a_file_sent_with_a_prompt_is_named_under_it_whichever_way_it_reached_the_scre
         &mut replay,
         &Replay {
             runner: &back,
-            workspace: &workspace,
             pruned: &Pruned::default(),
             style,
         },
@@ -707,9 +706,8 @@ fn a_file_sent_with_a_prompt_is_named_under_it_whichever_way_it_reached_the_scre
     )
     .expect("a recording cannot fail");
 
-    // The file is named the way every other path this program prints is: by
-    // what it is called under the root, not by where the root happens to be.
-    let named = "[Image #1] holiday.png";
+    // The row is the marker the prompt above it uses, and only that.
+    let named = "[Image #1]";
     let live = live.terminal().written().to_string();
     let replayed = replay.terminal().written().to_string();
 
@@ -723,13 +721,18 @@ fn a_file_sent_with_a_prompt_is_named_under_it_whichever_way_it_reached_the_scre
     );
 
     // Wide enough here for the whole resolved path to have fitted, so its
-    // absence is the row having been named against the root rather than the
-    // row having been clipped.
+    // absence is the row having stopped at the marker rather than the row
+    // having been clipped. The prompt above names the file because the person
+    // typing it did; the row under it is the marker and the end of the row,
+    // which is what the marker is for.
     let root = written(&sample.root());
-    assert!(
-        !live.contains(&root) && !replayed.contains(&root),
-        "a row names the file, not where the workspace sits: {root:?}",
-    );
+    let after = format!("{named} ");
+    for said in [root.as_str(), after.as_str()] {
+        assert!(
+            !live.contains(said) && !replayed.contains(said),
+            "a row spells out a path the marker stands for: {said:?}",
+        );
+    }
 }
 
 #[test]

@@ -25,7 +25,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crucible_core::{
     Ancestry, Aside, Ask, Attachment, Cancel, Compacting, Content, ContextSection, Delta,
-    DeltaStream, Effort, Event, JournalStore, Message, Modalities, Mode, Permission,
+    DeltaStream, Effort, Event, JournalStore, Looking, Message, Modalities, Mode, Permission,
     PermissionsSection, Post, PromptCacheAttempt, PromptCacheEncoding, PromptCacheFact,
     PromptCacheOutcome, PromptCachePlanned, PromptCachePreparationError,
     PromptCacheRequestDisposition, PromptCacheRequestFact, PromptCacheResourceDeadline,
@@ -672,6 +672,24 @@ impl Runner {
             || Summary::new(""),
             |entry| entry.tool().summary(&call.args),
         )
+    }
+
+    /// What kind of looking-around a call is, where it is only that.
+    ///
+    /// Beside [`Runner::about`] and asked for the same reason: the answer rides
+    /// [`Event::ToolRequested`] while a call is out and is not kept in the
+    /// transcript, so a session put back on the screen asks the tool again. A
+    /// run of calls that folded into one line while it happened has to fold the
+    /// same way on the way back in, or the session a reader resumes is not the
+    /// one they left.
+    ///
+    /// `None` for a name no tool answers to, which is the right answer twice
+    /// over: a refused call is named rather than counted.
+    #[must_use]
+    pub fn folds(&self, call: &ToolCall) -> Option<Looking> {
+        self.tools
+            .find(&call.name)
+            .and_then(|entry| entry.tool().looking(&call.args))
     }
 
     /// What the next request would carry, in tokens.

@@ -12,7 +12,7 @@ use crate::ContextError;
 use crate::ids::{RunId, ToolId, TurnId};
 use crate::provider::{ProviderError, Spend};
 use crate::run::Ancestry;
-use crate::tool::{Summary, ToolCall, ToolError, ToolOutput, Wrote};
+use crate::tool::{Looking, Summary, ToolCall, ToolError, ToolOutput, Wrote};
 use crate::toolset::{ToolReceipt, ToolsetError};
 use crate::transcript::{Attachment, StopReason};
 
@@ -235,6 +235,15 @@ pub enum Event {
         summary: Summary,
         /// Whether the running call can be left to finish in the background.
         backgroundable: bool,
+        /// What kind of looking-around this call is, where it is only that —
+        /// asked of the tool beside [`Event::ToolRequested::summary`], and for
+        /// the same reason: the arguments are opaque to whatever draws the row,
+        /// and the tool is the only code that can read them.
+        ///
+        /// `None` is a call the transcript names. `Some` is a call it may fold
+        /// into a count of the ones like it, which is what keeps a turn that
+        /// read forty files from being forty rows of a reader's screen.
+        looking: Option<Looking>,
     },
 
     /// More of what a running tool has printed, in the order it arrived.
@@ -398,11 +407,13 @@ impl std::fmt::Debug for Event {
                 call,
                 summary,
                 backgroundable,
+                looking,
             } => f
                 .debug_struct("ToolRequested")
                 .field("call", call)
                 .field("summary", summary)
                 .field("backgroundable", backgroundable)
+                .field("looking", looking)
                 .finish(),
             Self::Wrote { call, text } => f
                 .debug_struct("Wrote")

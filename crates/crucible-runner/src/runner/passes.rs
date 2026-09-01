@@ -301,6 +301,7 @@ impl<'a> AgentLoop<'a> {
                     ),
                     backgroundable: entry
                         .is_some_and(|entry| entry.tool().backgroundable(&call.args)),
+                    looking: entry.and_then(|entry| entry.tool().looking(&call.args)),
                     call: call.clone(),
                 });
             }

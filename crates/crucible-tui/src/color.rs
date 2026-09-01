@@ -855,6 +855,15 @@ const TERM: &str = "TERM";
 #[derive(Debug, Clone, Copy)]
 pub struct Palette {
     depth: Depth,
+    /// Whether this terminal will take an address beside a word.
+    ///
+    /// Apart from `depth` because it is a different question with different
+    /// answers. Colour is off for a pipe, for `NO_COLOR`, for `--color never`
+    /// and for a terminal calling itself dumb; only the first and the last of
+    /// those are reasons to stop writing addresses. Somebody who asked for no
+    /// colour asked about hues, not about whether a pull request they are shown
+    /// can be opened.
+    links: bool,
     /// Which table of hues is in force.
     theme: Theme,
     /// The reader's own ground, as the terminal reported it. Held so a theme
@@ -1005,6 +1014,7 @@ impl Palette {
 
         Self {
             depth,
+            links: false,
             theme,
             ground,
             band,
@@ -1012,6 +1022,18 @@ impl Palette {
             code: Code::default(),
             pointed: false,
         }
+    }
+
+    /// The palette, writing addresses beside the words that carry one.
+    ///
+    /// Said by the caller rather than worked out here, for the reason the
+    /// colour veto is: this crate knows what a terminal announces about itself
+    /// and not whether one is attached at all. Off until somebody says
+    /// otherwise, which is the answer a recording, a pipe and a test all want.
+    #[must_use]
+    pub const fn addressing(mut self, links: bool) -> Self {
+        self.links = links;
+        self
     }
 
     /// The two sequences blended off the reader's ground, at the rung the table
@@ -1182,6 +1204,7 @@ impl Palette {
     pub fn plain() -> Self {
         Self {
             depth: Depth::Off,
+            links: false,
             theme: Theme::Dark,
             ground: None,
             band: None,
@@ -1250,6 +1273,12 @@ impl Palette {
     #[must_use]
     pub fn writes_color(&self) -> bool {
         self.depth != Depth::Off
+    }
+
+    /// Whether an address may travel beside the words it belongs to.
+    #[must_use]
+    pub const fn writes_links(&self) -> bool {
+        self.links
     }
 
     /// How far up the ladder this terminal goes.

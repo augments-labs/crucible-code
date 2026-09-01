@@ -276,13 +276,15 @@ fn laying(kept: &Kept, view: &mut View, glyphs: Glyphs, columns: usize, rows: us
             .map(showing)
             .collect(),
 
-        // Found rather than filtered: one row of the record wrote one offer, so
-        // the walk stops at it and nothing after it is looked at.
+        // Every result that row offered, and usually that is one. A row
+        // counting a folded run is the exception and the reason this filters
+        // rather than finds: several calls were shown as one line, so the line
+        // opens on all of them — a reader who was given a count is owed
+        // everything it counted.
         Over::One(at) => kept
             .newest()
-            .find(|whole| whole.at() == Some(at))
+            .filter(|whole| whole.at() == Some(at))
             .map(showing)
-            .into_iter()
             .collect(),
     };
 

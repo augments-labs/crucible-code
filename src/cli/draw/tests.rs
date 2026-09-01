@@ -154,6 +154,7 @@ fn announced(name: &str, args: &str, summary: &str) -> String {
             call: call(name, args),
             summary: Summary::new(summary),
             backgroundable: false,
+            looking: None,
         },
         &here(),
         Style::plain(),
@@ -1305,8 +1306,9 @@ fn a_question_is_wrapped_rather_than_cut_however_narrow_the_window() {
 }
 
 /// The line a background command that ended on its own leaves behind, on a
-/// window `columns` wide.
-fn ended_on(called: &str, columns: usize) -> String {
+/// window `columns` wide. The call accounted for itself in `said`, which is
+/// empty for the calls that did not.
+fn ending(called: &str, said: &str, code: Option<i32>, columns: usize) -> String {
     let mut renderer = Renderer::new(Recording::new(columns, 24));
 
     gone(
@@ -1315,7 +1317,8 @@ fn ended_on(called: &str, columns: usize) -> String {
             tool: "bash",
             number: 1,
             called: called.into(),
-            code: Some(0),
+            said: said.into(),
+            code,
             lines: 120,
         },
         Style::plain(),
@@ -1323,6 +1326,46 @@ fn ended_on(called: &str, columns: usize) -> String {
     .expect("the ending to draw");
 
     renderer.terminal().written().to_string()
+}
+
+/// The same, for a call that said nothing about itself and exited cleanly.
+fn ended_on(called: &str, columns: usize) -> String {
+    ending(called, "", Some(0), columns)
+}
+
+#[test]
+fn a_command_that_said_what_it_was_for_is_reported_in_those_words() {
+    // The row is read minutes after the call scrolled away, by somebody who
+    // allowed a sentence rather than a shell line. Handing back the expansion
+    // makes them match it up again; handing back what they agreed to does not.
+    let said = ending(
+        "gh run watch 1842 --exit-status",
+        "Watch the release run to the end",
+        Some(0),
+        80,
+    );
+
+    assert!(said.contains("Watch the release run to the end"), "{said}");
+    assert!(!said.contains("gh run watch"), "{said}");
+}
+
+#[test]
+fn a_command_that_said_nothing_about_itself_is_reported_as_the_command() {
+    // Nothing invented in its place: the command line is what there is, and a
+    // row naming it is a row a reader can act on.
+    let said = ended_on("npm run dev", 80);
+
+    assert!(said.contains("Bash(npm run dev)"), "{said}");
+}
+
+#[test]
+fn an_ending_says_the_status_it_ended_with() {
+    // The number, in all three cases. A row that said only "finished" left the
+    // one fact a reader goes looking for -- what to tell whatever is waiting on
+    // this -- off the only line that will ever mention this command again.
+    assert!(ending("npm run dev", "", Some(0), 80).contains("exit status 0"));
+    assert!(ending("npm run dev", "", Some(2), 80).contains("exit status 2"));
+    assert!(ending("npm run dev", "", None, 80).contains("killed"));
 }
 
 #[test]
@@ -1336,7 +1379,7 @@ fn a_command_long_enough_to_fill_the_row_still_says_how_it_ended() {
         80,
     );
 
-    assert!(said.contains("finished"), "{said}");
+    assert!(said.contains("exit status 0"), "{said}");
     assert!(said.contains("120 lines"), "{said}");
     assert!(said.contains("Bash(for i in"), "{said}");
     assert!(said.contains(unicode().ellipsis()), "{said}");
@@ -1454,7 +1497,7 @@ fn a_forward_slashed_persisted_path_is_named_under_its_workspace() {
 }
 
 #[test]
-fn attachment_labels_count_each_kind_separately_and_put_the_label_first() {
+fn attachment_labels_count_each_kind_separately_and_say_nothing_else() {
     let workspace = here();
     let root = workspace.root();
     let attachments = [
@@ -1464,19 +1507,25 @@ fn attachment_labels_count_each_kind_separately_and_put_the_label_first() {
     ];
     let mut renderer = Renderer::new(Recording::new(WIDE, 24));
 
-    super::attached(&mut renderer, &attachments, &workspace, Style::plain())
-        .expect("a recording cannot fail");
+    super::attached(&mut renderer, &attachments, Style::plain()).expect("a recording cannot fail");
     let screen = renderer.terminal().written();
 
-    assert!(
-        screen.contains("[Image #1] screenshots/holiday.png"),
-        "{screen}"
-    );
-    assert!(screen.contains("[Video #1] clips/demo.mp4"), "{screen}");
-    assert!(
-        screen.contains("[Image #2] diagrams/wiring.png"),
-        "{screen}"
-    );
+    assert!(screen.contains("[Image #1]"), "{screen}");
+    assert!(screen.contains("[Video #1]"), "{screen}");
+    assert!(screen.contains("[Image #2]"), "{screen}");
+
+    // The marker is what the prompt above already says, and the file behind it
+    // is one the reader picked seconds ago off their own disk. Repeating where
+    // it came from tells them nothing they did not just do, and a pasted screen
+    // grab is named by wherever the shot landed — a home directory, a mount, a
+    // path with somebody's name in it — which the marker was chosen to stand in
+    // place of.
+    for named in ["screenshots/holiday.png", "clips/demo.mp4", "wiring.png"] {
+        assert!(
+            !screen.contains(named),
+            "the row spells out a path the marker stands for: {screen}"
+        );
+    }
 }
 
 /// What the terminal ends up with when a request goes out without `files`.
@@ -1535,4 +1584,61 @@ fn a_file_the_model_does_not_read_is_named_with_no_offer_to_ask_again() {
     assert!(screen.contains("chart.png"), "{screen}");
     assert!(screen.contains("does not read it"), "{screen}");
     assert!(!screen.contains("read again"), "{screen}");
+}
+
+/// What `gh pr view --json …` comes back with, laid out the way it lays it out.
+const FORGE_JSON: &str = "{\n  \
+    \"assignees\": [],\n  \
+    \"author\": {\n    \"login\": \"a-person\"\n  },\n  \
+    \"number\": 487,\n  \
+    \"state\": \"MERGED\",\n  \
+    \"title\": \"feat(session): add journal\"\n\
+    }";
+
+#[test]
+fn a_structured_result_is_summarised_by_what_it_holds_rather_than_by_one_line_of_it() {
+    // The first content line of a pretty-printed record is whichever key sorts
+    // first, and `"assignees": []` says nothing about a pull request. What a
+    // reader wants off this row is the record: as much of it as the window
+    // holds, in the order it came in.
+    let said = hung(&ToolOutput::ok(FORGE_JSON), WIDE, Style::plain());
+
+    assert!(
+        said.contains("{\"assignees\": [], \"author\": {\"login\": \"a-person\"}, \"number\": 487"),
+        "{said}"
+    );
+}
+
+#[test]
+fn the_spaces_inside_a_structured_value_are_left_where_they_were() {
+    // Whitespace between the parts of a record is layout; whitespace inside a
+    // value is somebody's words. Only the first is dropped. Asked of the line
+    // rather than of the row, because the row is clipped against a window and
+    // what is being asked here is what the line said before one reached it.
+    let said = summary(FORGE_JSON);
+
+    assert!(
+        said.contains("\"title\": \"feat(session): add journal\""),
+        "{said}"
+    );
+    assert!(
+        said.ends_with('}'),
+        "the whole record, not a piece of it: {said}"
+    );
+}
+
+#[test]
+fn a_line_that_merely_opens_with_a_bracket_is_the_line_it_always_was() {
+    // `[exit status 3]` is a sentence in brackets, not a record, and squeezing
+    // the spaces out of one would spell it `[exitstatus3]`.
+    for text in [
+        "[exit status 3]",
+        "[warning] the file moved",
+        "{ pattern } matched nothing",
+    ] {
+        assert!(
+            hung(&ToolOutput::ok(text), WIDE, Style::plain()).contains(text),
+            "{text:?}"
+        );
+    }
 }

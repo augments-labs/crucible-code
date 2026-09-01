@@ -676,7 +676,19 @@ fn change_header_survives_resume() {
 /// pruning protects, and that what falls outside is worth clearing. Both are
 /// figures the runner holds, and this is the smallest count that clears the
 /// first two whatever the reader's own cap does to each result.
+/// The mark a result hangs under the call that made it.
+///
+/// Written out here rather than read off `Glyphs`, so a test asserting where it
+/// may not appear cannot be satisfied by the set changing under it.
+const HANGS: &str = "\u{23bf}";
+
 const READ: usize = 5;
+
+/// What the four reads after the change come to, drawn as one line.
+///
+/// Four rather than five because the first read is on the other side of the
+/// change, and a call with nothing beside it is not a run.
+const GATHERED: &str = "Read 4 files";
 
 /// How many lines each of those files has.
 ///
@@ -727,14 +739,19 @@ fn a_resumed_session_says_what_the_reader_watched() {
     // block; and the note saying room was made together with the line that asked
     // for it, which are things that happened to the session rather than messages
     // in it.
-    let mut calls: Vec<(&str, String)> = (1..=READ)
-        .map(|at| {
-            (
-                "read",
-                serde_json::json!({ "path": format!("file-{at}.txt") }).to_string(),
-            )
-        })
-        .collect();
+    let file = |at: usize| {
+        (
+            "read",
+            serde_json::json!({ "path": format!("file-{at}.txt") }).to_string(),
+        )
+    };
+
+    // One read, then the change, then the rest. The change is what parts them,
+    // and parting them is the point: the first read stands alone and keeps the
+    // row a pruning is measured against, and the four after it are a run and
+    // come to one line. Both shapes are in the one picture, which is the only
+    // place they can be compared.
+    let mut calls: Vec<(&str, String)> = vec![file(1)];
     calls.push((
         "edit",
         serde_json::json!({
@@ -744,6 +761,7 @@ fn a_resumed_session_says_what_the_reader_watched() {
         })
         .to_string(),
     ));
+    calls.extend((2..=READ).map(file));
 
     let vendor = Vendor::calling_each(&calls, IN_MARKDOWN);
 
@@ -782,11 +800,15 @@ fn a_resumed_session_says_what_the_reader_watched() {
     );
     assert!(
         live.contains(&top(1)),
-        "the live row for the first read: {live}"
+        "the live row for the read that stood alone: {live}"
     );
     assert!(
-        live.contains(&top(2)),
-        "the live row for the second read: {live}"
+        live.contains(GATHERED),
+        "the live line for the run of reads: {live}"
+    );
+    assert!(
+        !live.contains(&top(2)),
+        "a call in a folded run kept a row of its own: {live}"
     );
     assert!(
         live.contains("old tool output was cleared"),
@@ -799,8 +821,12 @@ fn a_resumed_session_says_what_the_reader_watched() {
         "the resumed screen forgot what the call changed: {again}"
     );
     assert!(
-        again.contains(&top(1)) && again.contains(&top(2)),
+        again.contains(&top(1)),
         "the resumed screen kept the placeholder where the reader saw an answer: {again}"
+    );
+    assert!(
+        again.contains(GATHERED) && !again.contains(&top(2)),
+        "the resumed screen unfolded a run the reader was shown as one line: {again}"
     );
     assert!(
         !again.contains("cleared to make room"),
@@ -826,6 +852,83 @@ fn a_resumed_session_says_what_the_reader_watched() {
         !again.contains("old tool output was cleared"),
         "the resumed screen reported a compaction as though it had just run: {again}"
     );
+}
+
+/// How many files the turn in [`a_run_of_lookups_is_one_line_that_opens_it_all`]
+/// reads.
+///
+/// Three, because two is the least a run is folded at and a count that could be
+/// mistaken for the threshold proves less than one that cannot.
+const GLANCED: usize = 3;
+
+/// One of those files, short enough that a row would have said the whole of it.
+///
+/// Which is the case worth taking: a result that fitted is dropped where a row
+/// said it, and a call in a run has no row — so a short one folded away and not
+/// held would leave the reader opening the line to find a call missing from it.
+fn glanced(at: usize) -> String {
+    format!("{}\nand the second line of it\n", top(at))
+}
+
+#[test]
+fn a_run_of_lookups_is_one_line_that_opens_it_all() {
+    // Three reads and one row, and the row is the door. The promise the fold is
+    // made under is that a reader scrolls past fewer rows and loses nothing, so
+    // the two halves are asserted together: none of the three results is on the
+    // screen, and one click on the line that replaced them stands every one.
+    let calls: Vec<(&str, String)> = (1..=GLANCED)
+        .map(|at| {
+            (
+                "read",
+                serde_json::json!({ "path": format!("file-{at}.txt") }).to_string(),
+            )
+        })
+        .collect();
+
+    let vendor = Vendor::calling_each(&calls, "Read them all.");
+    let mut window = Watched::allowing("run-folded", 80, 40, &vendor, "read(*)");
+
+    for at in 1..=GLANCED {
+        std::fs::write(
+            window.workspace().join(format!("file-{at}.txt")),
+            glanced(at),
+        )
+        .expect("a file for the call to read");
+    }
+
+    window.types_until("read those files\r", "Read them all");
+    let folded = window.picture();
+
+    assert!(
+        folded.contains("Read 3 files"),
+        "the run went unsaid: {folded}"
+    );
+    assert!(
+        !folded.contains("Read(file-1.txt)"),
+        "a call in the run kept a row of its own: {folded}"
+    );
+    for at in 1..=GLANCED {
+        assert!(
+            !folded.contains(&top(at)),
+            "a result in the run kept a row of its own: {folded}"
+        );
+    }
+
+    // The line itself, which is what the slot it is written in offers.
+    let at = folded
+        .lines()
+        .position(|line| line.contains("Read 3 files"))
+        .expect("the line the run came to")
+        - 1;
+    window.clicks(at, 4);
+    let opened = window.picture();
+
+    for at in 1..=GLANCED {
+        assert!(
+            opened.contains(&top(at)),
+            "the line opened onto {at} results short of the run: {opened}"
+        );
+    }
 }
 
 #[test]
@@ -1075,7 +1178,18 @@ fn choosing_notes_makes_room_and_says_what_it_took() {
     // Enter takes the first answer, which is the one that spends a request.
     window.types_until("\r", "compacted");
 
-    insta::assert_snapshot!(window.picture());
+    // The block is the session's own record and hangs off nothing. Ruled above
+    // and below, and a rule with a result mark shoved in front of it reads as a
+    // result whose first column went missing — which is exactly what nothing
+    // asked for it. The choice was made on a picker, so there is not even a
+    // line above for a reply to hang from.
+    let picture = window.picture();
+    assert!(
+        !picture.contains(HANGS),
+        "the record of room having been made hangs off a call it never had: {picture}"
+    );
+
+    insta::assert_snapshot!(picture);
 }
 
 #[test]
@@ -1099,7 +1213,16 @@ fn escape_while_room_is_being_made_stops_it_and_replaces_nothing() {
     window.types_and_catches("/compact\r", "compacting");
     window.types_until("\x1b", "! stopped");
 
-    insta::assert_snapshot!(window.picture());
+    // The other half of what the mark means, held here so removing it wholesale
+    // cannot be mistaken for fixing where it did not belong. A line the person
+    // typed is above this one, and the sentence under it is the answer to it.
+    let picture = window.picture();
+    assert!(
+        picture.contains(&format!("{HANGS} ! stopped")),
+        "the reply to a typed command stands loose of the line that asked: {picture}"
+    );
+
+    insta::assert_snapshot!(picture);
 }
 
 #[test]
@@ -1158,4 +1281,40 @@ fn renaming_a_long_title_types_where_the_reader_can_see_it() {
         picture.contains("ZZZ"),
         "what was typed never reached the screen: {picture}"
     );
+}
+
+/// An answer naming work by the number everybody working on it uses.
+const ABOUT_A_NUMBER: &str = "The fix landed in #487, after someone/else#12 \
+    was reverted.\n";
+
+#[test]
+fn a_number_the_answer_wrote_is_written_as_somewhere_the_reader_can_go() {
+    // In colour, because that is the run that reads the model's markdown at
+    // all — and a hyperlink is written by the same painter the colour is.
+    //
+    // The picture is half of this. A hyperlink takes no column and shows in no
+    // screenshot, so what the reader sees is the four characters the model
+    // wrote, unchanged; whether they point anywhere is a question only the
+    // command strings can answer, and both are asserted here.
+    let vendor = Vendor::answering(ABOUT_A_NUMBER);
+    let mut window = Watched::in_colour("answered-numbers", 80, 32, &vendor);
+
+    window.types_until("say something about a pull request\r", "reverted");
+
+    let picture = window.picture();
+    assert!(
+        picture.contains("The fix landed in #487, after someone/else#12 was reverted."),
+        "the words are the words the model wrote: {picture}"
+    );
+
+    let commands = window.commands();
+    for address in [
+        "8;;https://github.com/augments-labs/crucible-code/issues/487",
+        "8;;https://github.com/someone/else/issues/12",
+    ] {
+        assert!(
+            commands.iter().any(|said| said == address),
+            "{address} was never written: {commands:?}"
+        );
+    }
 }
