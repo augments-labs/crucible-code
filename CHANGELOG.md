@@ -23,6 +23,15 @@ change in any release with no deprecation period.
   guardrails, usage, cleanup and ancestry-aware lifecycle facts give later MCP
   and extension processes the same boundary without changing tool arguments.
 
+- **Writable roots are published transactionally on Linux.** A confined
+  command writes into a private projection of each writable root. An ordinary
+  exit, zero or nonzero, publishes the changed paths through a checksummed
+  write-ahead log; a signal, deadline, interrupt or output violation discards
+  them; a root changed outside the sandbox is left untouched. Publication is
+  serialized across commands, an abandoned transaction is recovered or
+  quarantined at the next preparation, and a detached command's start result is
+  accepted only once it is durably stored.
+
 ### Changed
 
 - **`sandbox.mode` defaults to `required`.** A home configuration may

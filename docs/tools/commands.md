@@ -255,6 +255,13 @@ A background process does not keep an output reader or a turn alive. It remains
 inside the same sandbox/process-tree scope until it exits or is stopped, and its
 late usage and cleanup facts keep the call attribution that started it.
 
+Under the Linux boundary, what a command writes inside a writable root stays
+private to it until it ends. An ordinary exit, whether zero or nonzero, publishes
+those writes to the workspace; a command that is stopped, times out or is killed
+by a signal leaves the workspace as it found it. A background command's writes
+therefore land when it finishes, not while it runs. The rules are described in
+[Writable roots and publication](../security/sandboxing.md#writable-roots-and-publication).
+
 ## Why it is always asked about
 
 A `SpawnsProcess` call is asked about in every [mode](../permissions/modes.md)

@@ -137,6 +137,38 @@ still terminate the PID-namespace workload. The next preparation replays the
 checksummed lifecycle WAL, rolls back an unambiguous interrupted transaction,
 and quarantines ambiguous publication instead of inventing cleanup or success.
 
+## Writable roots and publication
+
+On enforcing Linux a writable root is not handed to the command directly. The
+command writes into a private projection of that root, and the host publishes
+the changed paths back only after the command has ended. Until then nothing the
+command wrote is visible outside the sandbox, and a reader of the workspace sees
+the root exactly as it was when the command started.
+
+Publication is decided by how the command ended:
+
+- An ordinary exit, zero or nonzero, publishes the changed paths. A failing
+  build still leaves the files it wrote, as it would have without confinement.
+- Termination by a signal, a deadline, <kbd>Esc</kbd>, an output ceiling or a
+  refusal discards the projection. Nothing partial reaches the workspace.
+- A root that changed underneath the command, by anything outside the sandbox,
+  is not published. The delta is discarded rather than merged, and the result
+  says so.
+
+Publication itself is transactional. The changed paths are staged beside the
+root, journaled in a checksummed write-ahead log, applied, and verified; a
+failure between those steps rolls the root back to its pinned baseline. Where a
+rollback cannot itself be proved, the staged content is retained as quarantine
+evidence and the cleanup outcome reports it, rather than deleting what cannot be
+accounted for. Writable transactions are serialized under a host-owned registry
+lock, so two commands never publish into the same root at once, and the next
+preparation recovers any transaction an earlier process abandoned.
+
+A detached command follows the same rules when it ends later. Its start result
+is accepted only after it is durably stored, and its terminal publication is
+journaled under the same call identity, so a host restart between the two
+neither loses the command nor publishes it twice.
+
 ## Design references
 
 The implementation review was pinned to OpenAI Codex
