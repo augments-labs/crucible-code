@@ -6,6 +6,8 @@ use std::time::Duration;
 use crate::Workspace;
 use sha2::{Digest, Sha256};
 
+use super::guardrail::SandboxCommandPolicy;
+
 /// Maximum filesystem rules in one effective policy.
 pub const MAX_SANDBOX_FILESYSTEM_RULES: usize = 128;
 
@@ -328,6 +330,7 @@ pub struct SandboxPolicy {
     working_directory: PathBuf,
     network: SandboxNetworkPolicy,
     limits: SandboxResourceLimits,
+    commands: SandboxCommandPolicy,
     persistent: bool,
     snapshots: bool,
 }
@@ -413,6 +416,7 @@ impl SandboxPolicy {
             working_directory,
             network,
             limits,
+            commands: SandboxCommandPolicy::allow_all(),
             persistent: false,
             snapshots: false,
         })
@@ -424,7 +428,7 @@ impl SandboxPolicy {
     ///
     /// A weaker mode, new/wider filesystem grant, broader network policy,
     /// relaxed resource ceiling, or new persistence authority is rejected.
-    pub fn restrict(parent: &Self, candidate: Self) -> Result<Self, SandboxPolicyError> {
+    pub fn restrict(parent: &Self, mut candidate: Self) -> Result<Self, SandboxPolicyError> {
         if !parent.mode.permits(candidate.mode) {
             return Err(SandboxPolicyError::WeakerMode);
         }
@@ -441,6 +445,8 @@ impl SandboxPolicy {
         if !candidate.limits.is_no_wider_than(parent.limits) {
             return Err(SandboxPolicyError::ResourceWidening);
         }
+        candidate.commands = SandboxCommandPolicy::intersect(&parent.commands, &candidate.commands)
+            .map_err(|_| SandboxPolicyError::InvalidCommandPolicy)?;
         if (candidate.persistent && !parent.persistent)
             || (candidate.snapshots && !parent.snapshots)
         {
@@ -463,6 +469,13 @@ impl SandboxPolicy {
         }
         self.limits = limits;
         Ok(self)
+    }
+
+    /// Returns a copy with one already-bounded top-level command filter.
+    #[must_use]
+    pub fn with_command_policy(mut self, commands: SandboxCommandPolicy) -> Self {
+        self.commands = commands;
+        self
     }
 
     /// Returns a copy under a host-authorized top-level mode.
@@ -500,6 +513,12 @@ impl SandboxPolicy {
     #[must_use]
     pub const fn limits(&self) -> SandboxResourceLimits {
         self.limits
+    }
+
+    /// Defense-in-depth command allow/deny filters.
+    #[must_use]
+    pub const fn commands(&self) -> &SandboxCommandPolicy {
+        &self.commands
     }
 
     /// Whether durable session state was explicitly granted.
@@ -566,6 +585,7 @@ impl SandboxPolicy {
             }
         }
         update_limits(&mut digest, self.limits);
+        digest.update(self.commands.digest());
         digest.update([u8::from(self.persistent), u8::from(self.snapshots)]);
         digest.finalize().into()
     }
@@ -579,6 +599,7 @@ impl std::fmt::Debug for SandboxPolicy {
             .field("working_directory", &"[absolute path]")
             .field("network", &self.network)
             .field("limits", &self.limits)
+            .field("commands", &self.commands)
             .field("persistent", &self.persistent)
             .field("snapshots", &self.snapshots)
             .finish()
@@ -689,6 +710,9 @@ pub enum SandboxPolicyError {
     /// Descendants cannot add persistence or snapshot authority.
     #[error("sandbox descendant requested wider session authority")]
     SessionWidening,
+    /// The bounded parent/descendant command-filter intersection overflowed.
+    #[error("sandbox command policy intersection exceeds its bound")]
+    InvalidCommandPolicy,
 }
 
 #[cfg(test)]

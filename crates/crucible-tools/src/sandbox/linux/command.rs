@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crucible_core::{
-    SandboxCommand, SandboxError, SandboxFeature, SandboxFilesystemAccess, SandboxFilesystemRule,
-    SandboxNetworkPolicy, SandboxRequest,
+    SandboxCommand, SandboxCommandStage, SandboxError, SandboxFeature, SandboxFilesystemAccess,
+    SandboxFilesystemRule, SandboxGuardrailDecision, SandboxNetworkPolicy, SandboxRequest,
 };
 
 use super::materialize::Materialization;
@@ -350,6 +350,14 @@ pub(super) fn build(
     view: &View,
     materialization: Option<&Materialization>,
 ) -> Result<Command, SandboxError> {
+    if request
+        .policy()
+        .commands()
+        .evaluate(command, SandboxCommandStage::Effective)
+        != SandboxGuardrailDecision::Allowed
+    {
+        return Err(SandboxError::Guardrail);
+    }
     let runtime = runtime_mounts();
     let mut directories = BTreeSet::new();
     for mount in &runtime {

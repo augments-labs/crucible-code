@@ -1,15 +1,19 @@
 //! Host-level conformance probes for the Linux backend.
 
 use std::ffi::OsString;
+use std::net::TcpListener;
+use std::os::fd::AsRawFd;
+use std::os::unix::net::UnixListener;
 use std::process::ExitStatus;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    Ancestry, SandboxCommand, SandboxEnvironment, SandboxFilesystemAccess,
+    Ancestry, SandboxCommand, SandboxEnvironment, SandboxFeature, SandboxFilesystemAccess,
     SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxId, SandboxManifest,
-    SandboxManifestEntry, SandboxMode, SandboxNetworkPolicy, SandboxOutput, SandboxPolicy,
-    SandboxProcess, SandboxRead, SandboxRequest, SandboxService, ToolId,
+    SandboxManifestEntry, SandboxMode, SandboxNetworkEndpoint, SandboxNetworkPolicy, SandboxOutput,
+    SandboxPolicy, SandboxProcess, SandboxRead, SandboxRequest, SandboxResourceLimits,
+    SandboxService, ToolId,
 };
 
 use crate::LocalSandbox;
@@ -32,6 +36,10 @@ fn command(script: &str) -> SandboxCommand {
         SandboxEnvironment::empty(),
     )
     .expect("command")
+}
+
+fn direct(program: &str, arguments: impl IntoIterator<Item = OsString>) -> SandboxCommand {
+    SandboxCommand::new(program, arguments, SandboxEnvironment::empty()).expect("command")
 }
 
 fn finish(mut process: Box<dyn SandboxProcess>) -> (ExitStatus, Vec<u8>, Vec<u8>) {
@@ -62,6 +70,12 @@ fn read_ready(stream: &mut Option<Box<dyn SandboxOutput>>, bytes: &mut Vec<u8>) 
     match output.read_ready(&mut buffer).expect("read output") {
         SandboxRead::Bytes(read) => {
             bytes.extend_from_slice(buffer.get(..read).expect("reported bytes"));
+        }
+        SandboxRead::Limited {
+            retained,
+            discarded: _,
+        } => {
+            bytes.extend_from_slice(buffer.get(..retained).expect("reported bytes"));
         }
         SandboxRead::Pending => {}
         SandboxRead::End => *stream = None,
@@ -422,4 +436,275 @@ fn unreadable_rules_mask_only_the_selected_path() {
         String::from_utf8_lossy(&errors)
     );
     assert_eq!(String::from_utf8(output).expect("utf8"), "visible\n");
+}
+
+#[test]
+fn exact_network_requests_fail_before_materialization_or_spawn() {
+    let service = LocalSandbox::new();
+    if service.probe().is_err() {
+        return;
+    }
+    let sample = Sample::new("sandbox-network-allowlist-refusal");
+    let base = SandboxPolicy::standard(&sample.workspace()).expect("base policy");
+    let network = SandboxNetworkPolicy::exact(
+        [SandboxNetworkEndpoint::new("example.com", 443).expect("endpoint")],
+        true,
+        false,
+    )
+    .expect("network policy");
+    let policy = SandboxPolicy::new(
+        SandboxMode::Required,
+        base.filesystem().iter().cloned(),
+        base.working_directory().to_path_buf(),
+        network,
+        SandboxResourceLimits::default(),
+    )
+    .expect("policy");
+    let request = SandboxRequest::new(
+        SandboxId::new(),
+        Ancestry::new(),
+        ToolId::new("exact-network"),
+        policy,
+        SandboxManifest::empty(),
+    );
+
+    assert!(matches!(
+        service.prepare(request),
+        Err(crucible_core::SandboxError::Unsupported {
+            feature: SandboxFeature::NetworkAllowlist
+        })
+    ));
+}
+
+#[test]
+fn closed_network_cannot_reach_host_loopback_unix_sockets_dns_or_metadata() {
+    let service = LocalSandbox::new();
+    if service.probe().is_err() {
+        return;
+    }
+    let sample = Sample::new("sandbox-network-closed");
+    let tcp = TcpListener::bind(("127.0.0.1", 0)).expect("host TCP listener");
+    let port = tcp.local_addr().expect("listener address").port();
+    let socket_path = sample
+        .root()
+        .parent()
+        .expect("sample parent")
+        .join("host.sock");
+    let _unix = UnixListener::bind(&socket_path).expect("host Unix listener");
+    let mut session = service
+        .prepare(request(&sample, SandboxManifest::empty()))
+        .expect("prepared sandbox");
+    session.materialize().expect("materialized workspace");
+    let script = r#"
+import signal
+import socket
+import sys
+
+def tcp_refused(address):
+    stream = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    stream.settimeout(0.25)
+    try:
+        return stream.connect_ex(address) != 0
+    except OSError:
+        return True
+    finally:
+        stream.close()
+
+if not tcp_refused(("127.0.0.1", int(sys.argv[1]))):
+    raise SystemExit("host loopback was reachable")
+if not tcp_refused(("169.254.169.254", 80)):
+    raise SystemExit("cloud metadata address was reachable")
+
+stream = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+try:
+    if stream.connect_ex(sys.argv[2]) == 0:
+        raise SystemExit("host Unix socket was reachable")
+finally:
+    stream.close()
+
+def timed_out(_signal, _frame):
+    raise TimeoutError()
+
+signal.signal(signal.SIGALRM, timed_out)
+signal.alarm(1)
+try:
+    socket.getaddrinfo("example.com", 443)
+except (OSError, TimeoutError):
+    pass
+else:
+    raise SystemExit("host DNS was usable")
+finally:
+    signal.alarm(0)
+"#;
+    let (status, _, errors) = finish(
+        session
+            .start(direct(
+                "/usr/bin/python3",
+                [
+                    OsString::from("-c"),
+                    OsString::from(script),
+                    OsString::from(port.to_string()),
+                    socket_path.into_os_string(),
+                ],
+            ))
+            .expect("started command"),
+    );
+
+    assert!(
+        status.success(),
+        "{status}: {}",
+        String::from_utf8_lossy(&errors)
+    );
+}
+
+#[test]
+fn arbitrary_inheritable_host_descriptors_do_not_reach_the_command() {
+    let service = LocalSandbox::new();
+    if service.probe().is_err() {
+        return;
+    }
+    let sample = Sample::new("sandbox-inherited-descriptor");
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener");
+    let descriptor = listener.as_raw_fd();
+    let target = std::fs::read_link(format!("/proc/self/fd/{descriptor}"))
+        .expect("listener descriptor target");
+    let flags = rustix::io::fcntl_getfd(&listener).expect("descriptor flags");
+    rustix::io::fcntl_setfd(&listener, rustix::io::FdFlags::empty())
+        .expect("make descriptor inheritable");
+
+    let mut session = service
+        .prepare(request(&sample, SandboxManifest::empty()))
+        .expect("prepared sandbox");
+    session.materialize().expect("materialized workspace");
+    let started = session.start(command(
+        "for fd in /proc/self/fd/[3-9]*; do readlink \"$fd\" 2>/dev/null || true; done",
+    ));
+    rustix::io::fcntl_setfd(&listener, flags).expect("restore descriptor flags");
+    let (status, output, errors) = finish(started.expect("started command"));
+
+    assert!(
+        status.success(),
+        "{status}: {}",
+        String::from_utf8_lossy(&errors)
+    );
+    assert!(
+        !String::from_utf8_lossy(&output).contains(&target.to_string_lossy().to_string()),
+        "host listener descriptor reached the sandbox: {}",
+        String::from_utf8_lossy(&output)
+    );
+}
+
+#[test]
+fn proc_devices_capabilities_and_nested_user_namespaces_are_minimal() {
+    let service = LocalSandbox::new();
+    if service.probe().is_err() {
+        return;
+    }
+    let sample = Sample::new("sandbox-kernel-surface");
+    let host_pid = std::process::id();
+    let script = format!(
+        "test ! -e /proc/{host_pid}/status && \
+         test \"$(awk '/^NoNewPrivs:/ {{print $2}}' /proc/self/status)\" = 1 && \
+         test \"$(awk '/^CapEff:/ {{print $2}}' /proc/self/status)\" = 0000000000000000 && \
+         test ! -e /dev/mem && test ! -e /dev/sda && \
+         set -- /proc/[0-9]*; test \"$#\" -le 4 && \
+         if command -v unshare >/dev/null 2>&1; then ! unshare -U /bin/true 2>/dev/null; fi"
+    );
+    let mut session = service
+        .prepare(request(&sample, SandboxManifest::empty()))
+        .expect("prepared sandbox");
+    session.materialize().expect("materialized workspace");
+    let (status, _, errors) = finish(session.start(command(&script)).expect("started command"));
+
+    assert!(
+        status.success(),
+        "{status}: {}",
+        String::from_utf8_lossy(&errors)
+    );
+}
+
+#[test]
+fn command_deadline_kills_the_complete_bubblewrap_process_tree() {
+    let service = LocalSandbox::new();
+    if service.probe().is_err() {
+        return;
+    }
+    let sample = Sample::new("sandbox-deadline-process-tree");
+    let marker = format!(
+        "crucible-deadline-descendant-{}-{}",
+        std::process::id(),
+        sample
+            .root()
+            .file_name()
+            .and_then(std::ffi::OsStr::to_str)
+            .unwrap_or("sample")
+    );
+    assert!(live_processes_with_marker(&marker).is_empty());
+    let limits = SandboxResourceLimits {
+        command_time: Some(Duration::from_secs(1)),
+        ..SandboxResourceLimits::default()
+    };
+    let policy = SandboxPolicy::standard(&sample.workspace())
+        .expect("policy")
+        .with_limits(limits)
+        .expect("limits");
+    let request = SandboxRequest::new(
+        SandboxId::new(),
+        Ancestry::new(),
+        ToolId::new("deadline-tree"),
+        policy,
+        SandboxManifest::empty(),
+    );
+    let mut session = service.prepare(request).expect("prepared sandbox");
+    session.materialize().expect("materialized workspace");
+    let script = format!("/bin/sh -c 'sleep 30; :' {marker} & echo ready > descendant.ready; wait");
+    let mut process = session.start(command(&script)).expect("started command");
+    let ready_deadline = Instant::now() + Duration::from_millis(500);
+    while !sample.root().join("descendant.ready").exists() {
+        assert!(Instant::now() < ready_deadline, "descendant did not start");
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        !live_processes_with_marker(&marker).is_empty(),
+        "marker did not identify the live host descendant"
+    );
+    thread::sleep(Duration::from_millis(1_100));
+    let status = process.try_wait().expect("wait");
+    let violation = process.violation();
+    process.stop().expect("cleanup");
+
+    assert!(
+        status.is_some(),
+        "sandbox process tree survived its deadline"
+    );
+    assert_eq!(
+        violation,
+        Some(crucible_core::SandboxViolation::CommandTime)
+    );
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !live_processes_with_marker(&marker).is_empty() {
+        assert!(
+            Instant::now() < deadline,
+            "marked descendant remained live after cleanup"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
+fn live_processes_with_marker(marker: &str) -> Vec<u32> {
+    let marker = marker.as_bytes();
+    let Ok(processes) = std::fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+    processes
+        .flatten()
+        .filter_map(|entry| {
+            let pid = entry.file_name().to_str()?.parse::<u32>().ok()?;
+            let command = std::fs::read(entry.path().join("cmdline")).ok()?;
+            command
+                .windows(marker.len())
+                .any(|window| window == marker)
+                .then_some(pid)
+        })
+        .collect()
 }

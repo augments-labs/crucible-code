@@ -2,22 +2,30 @@
 
 use std::io;
 use std::process::{Child, Command, ExitStatus, Stdio};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    SandboxCleanup, SandboxInspection, SandboxOutput, SandboxProcess, SandboxRead, SandboxUsage,
+    SandboxCleanup, SandboxInspection, SandboxOutput, SandboxProcess, SandboxRead,
+    SandboxResourceLimits, SandboxUsage, SandboxViolation,
 };
 
-use crate::bash::platform::{Output as PlatformOutput, ReadState, Scope};
+use crate::bash::platform::{Output as PlatformOutput, ReadState, Scope, Terminator};
 
 /// Absolute ceiling even where a policy omits a smaller one.
 pub(super) const MAX_LOCAL_COMMANDS: usize = 16;
 
 /// Bounded reap interval used by destructors.
 const REAP: Duration = Duration::from_millis(250);
+
+/// Supervisor polling interval. It bounds deadline overshoot without spinning.
+const SUPERVISE: Duration = Duration::from_millis(5);
+
+const NO_VIOLATION: u8 = 0;
+const COMMAND_TIME_VIOLATION: u8 = 1;
+const OUTPUT_VIOLATION: u8 = 2;
 
 /// One concurrency reservation transferred from prepare through process drop.
 pub(super) struct Reservation {
@@ -94,6 +102,7 @@ pub(super) fn spawn(
     inspection: SandboxInspection,
     reservation: Reservation,
     stage: Option<Stage>,
+    limits: SandboxResourceLimits,
 ) -> Result<Box<dyn SandboxProcess>, crucible_core::SandboxError> {
     command
         .stdin(Stdio::null())
@@ -108,6 +117,7 @@ pub(super) fn spawn(
     let mut child = command
         .spawn()
         .map_err(crucible_core::SandboxError::Spawn)?;
+    let started = Instant::now();
 
     #[cfg(windows)]
     if let Err(source) = scope.attach(&child) {
@@ -116,50 +126,280 @@ pub(super) fn spawn(
         return Err(crucible_core::SandboxError::Spawn(source));
     }
 
-    let stdout = child
+    let terminator = match scope.terminator(&child) {
+        Ok(terminator) => terminator,
+        Err(source) => {
+            let _ = stop_scope(&scope, &mut child);
+            let _ = child.wait();
+            return Err(crucible_core::SandboxError::Spawn(source));
+        }
+    };
+
+    let control = Arc::new(Control::new(limits.output_bytes));
+
+    let stdout = match child
         .stdout
         .take()
-        .map(PreparedOutput::new)
+        .map(|output| PreparedOutput::new(output, Arc::clone(&control)))
         .transpose()
-        .map_err(crucible_core::SandboxError::Spawn)?;
-    let stderr = child
+    {
+        Ok(stdout) => stdout,
+        Err(source) => {
+            let _ = stop_scope(&scope, &mut child);
+            let _ = child.wait();
+            return Err(crucible_core::SandboxError::Spawn(source));
+        }
+    };
+    let stderr = match child
         .stderr
         .take()
-        .map(PreparedOutput::new)
+        .map(|output| PreparedOutput::new(output, Arc::clone(&control)))
         .transpose()
-        .map_err(crucible_core::SandboxError::Spawn)?;
+    {
+        Ok(stderr) => stderr,
+        Err(source) => {
+            let _ = stop_scope(&scope, &mut child);
+            let _ = child.wait();
+            return Err(crucible_core::SandboxError::Spawn(source));
+        }
+    };
+
+    let supervisor = if limits.command_time.is_some() || limits.output_bytes.is_some() {
+        match Supervisor::start(
+            Arc::clone(&control),
+            terminator,
+            limits
+                .command_time
+                .map(|allowed| started.checked_add(allowed).unwrap_or(started)),
+        ) {
+            Ok(supervisor) => Some(supervisor),
+            Err(source) => {
+                let _ = stop_scope(&scope, &mut child);
+                let _ = child.wait();
+                return Err(crucible_core::SandboxError::Spawn(source));
+            }
+        }
+    } else {
+        None
+    };
 
     Ok(Box::new(LocalProcess {
         child,
         scope,
+        terminator,
         stdout: stdout.map(|pipe| Box::new(pipe) as Box<dyn SandboxOutput>),
         stderr: stderr.map(|pipe| Box::new(pipe) as Box<dyn SandboxOutput>),
         inspection,
         reservation: Some(reservation),
         stage,
-        started: Instant::now(),
+        control,
+        supervisor,
+        status: None,
+        scope_stopped: false,
+        started,
         stopped: false,
     }))
+}
+
+/// Shared hard-limit state used by both output streams and the supervisor.
+struct Control {
+    lifecycle: Mutex<()>,
+    done: AtomicBool,
+    violation: AtomicU8,
+    output_remaining: Option<AtomicU64>,
+    output_bytes: AtomicU64,
+    failure: Mutex<Option<Failure>>,
+}
+
+#[derive(Clone, Copy)]
+struct Failure {
+    kind: io::ErrorKind,
+    raw: Option<i32>,
+}
+
+impl Control {
+    fn new(output_limit: Option<u64>) -> Self {
+        Self {
+            lifecycle: Mutex::new(()),
+            done: AtomicBool::new(false),
+            violation: AtomicU8::new(NO_VIOLATION),
+            output_remaining: output_limit.map(AtomicU64::new),
+            output_bytes: AtomicU64::new(0),
+            failure: Mutex::new(None),
+        }
+    }
+
+    fn lifecycle(&self) -> io::Result<MutexGuard<'_, ()>> {
+        self.lifecycle
+            .lock()
+            .map_err(|_| io::Error::other("sandbox lifecycle supervisor lock was poisoned"))
+    }
+
+    fn record_output(&self, bytes: usize) -> (usize, usize) {
+        let bytes_u64 = u64::try_from(bytes).unwrap_or(u64::MAX);
+        atomic_saturating_add(&self.output_bytes, bytes_u64);
+
+        let Some(remaining) = &self.output_remaining else {
+            return (bytes, 0);
+        };
+        let previous = remaining
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                Some(current.saturating_sub(bytes_u64))
+            })
+            .unwrap_or_else(|current| current);
+        let retained_u64 = previous.min(bytes_u64);
+        let retained = usize::try_from(retained_u64).unwrap_or(bytes);
+        let discarded = bytes.saturating_sub(retained);
+        if discarded > 0 {
+            self.mark(SandboxViolation::Output);
+        }
+        (retained, discarded)
+    }
+
+    fn mark(&self, violation: SandboxViolation) {
+        let code = match violation {
+            SandboxViolation::CommandTime => COMMAND_TIME_VIOLATION,
+            SandboxViolation::Output => OUTPUT_VIOLATION,
+        };
+        let _ = self.violation.compare_exchange(
+            NO_VIOLATION,
+            code,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        );
+    }
+
+    fn violation(&self) -> Option<SandboxViolation> {
+        match self.violation.load(Ordering::Acquire) {
+            COMMAND_TIME_VIOLATION => Some(SandboxViolation::CommandTime),
+            OUTPUT_VIOLATION => Some(SandboxViolation::Output),
+            _ => None,
+        }
+    }
+
+    fn record_failure(&self, problem: &io::Error) {
+        let Ok(mut failure) = self.failure.lock() else {
+            return;
+        };
+        if failure.is_none() {
+            *failure = Some(Failure {
+                kind: problem.kind(),
+                raw: problem.raw_os_error(),
+            });
+        }
+    }
+
+    fn failure(&self) -> Option<io::Error> {
+        let failure = self.failure.lock().ok()?.as_ref().copied()?;
+        Some(failure.raw.map_or_else(
+            || {
+                io::Error::new(
+                    failure.kind,
+                    "sandbox supervisor could not stop the process scope",
+                )
+            },
+            io::Error::from_raw_os_error,
+        ))
+    }
+}
+
+fn atomic_saturating_add(value: &AtomicU64, increment: u64) {
+    let _ = value.fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+        Some(current.saturating_add(increment))
+    });
+}
+
+/// One bounded thread that owns deadline/output-triggered process-tree stops.
+struct Supervisor {
+    control: Arc<Control>,
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+impl Supervisor {
+    fn start(
+        control: Arc<Control>,
+        terminator: Terminator,
+        deadline: Option<Instant>,
+    ) -> io::Result<Self> {
+        let supervised = Arc::clone(&control);
+        let thread = thread::Builder::new()
+            .name("crucible-sandbox-supervisor".into())
+            .spawn(move || {
+                loop {
+                    if supervised.done.load(Ordering::Acquire) {
+                        return;
+                    }
+                    let expired = deadline.is_some_and(|deadline| Instant::now() >= deadline);
+                    if expired {
+                        supervised.mark(SandboxViolation::CommandTime);
+                    }
+                    if supervised.violation().is_none() {
+                        thread::sleep(SUPERVISE);
+                        continue;
+                    }
+
+                    let Ok(_lifecycle) = supervised.lifecycle() else {
+                        return;
+                    };
+                    if supervised.done.load(Ordering::Acquire) {
+                        return;
+                    }
+                    if let Err(problem) = terminator.stop() {
+                        supervised.record_failure(&problem);
+                    }
+                    return;
+                }
+            })?;
+        Ok(Self {
+            control,
+            thread: Some(thread),
+        })
+    }
+
+    fn finish(&mut self) -> io::Result<()> {
+        self.control.done.store(true, Ordering::Release);
+        let Some(thread) = self.thread.take() else {
+            return Ok(());
+        };
+        thread
+            .join()
+            .map_err(|_| io::Error::other("sandbox lifecycle supervisor panicked"))
+    }
 }
 
 /// A pipe put into non-blocking mode before the process handle escapes.
 struct PreparedOutput {
     inner: Box<dyn PlatformOutput>,
+    control: Arc<Control>,
 }
 
 impl PreparedOutput {
-    fn new(output: impl PlatformOutput) -> io::Result<Self> {
+    fn new(output: impl PlatformOutput, control: Arc<Control>) -> io::Result<Self> {
         output.prepare()?;
         Ok(Self {
             inner: Box::new(output),
+            control,
         })
     }
 }
 
 impl SandboxOutput for PreparedOutput {
     fn read_ready(&mut self, buffer: &mut [u8]) -> io::Result<SandboxRead> {
+        if buffer.is_empty() {
+            return Ok(SandboxRead::Pending);
+        }
         self.inner.read_ready(buffer).map(|read| match read {
-            ReadState::Bytes(bytes) => SandboxRead::Bytes(bytes),
+            ReadState::Bytes(bytes) => {
+                let (retained, discarded) = self.control.record_output(bytes);
+                if discarded == 0 {
+                    SandboxRead::Bytes(retained)
+                } else {
+                    SandboxRead::Limited {
+                        retained,
+                        discarded,
+                    }
+                }
+            }
             ReadState::Pending => SandboxRead::Pending,
             ReadState::End => SandboxRead::End,
         })
@@ -170,11 +410,16 @@ impl SandboxOutput for PreparedOutput {
 struct LocalProcess {
     child: Child,
     scope: Scope,
+    terminator: Terminator,
     stdout: Option<Box<dyn SandboxOutput>>,
     stderr: Option<Box<dyn SandboxOutput>>,
     inspection: SandboxInspection,
     reservation: Option<Reservation>,
     stage: Option<Stage>,
+    control: Arc<Control>,
+    supervisor: Option<Supervisor>,
+    status: Option<ExitStatus>,
+    scope_stopped: bool,
     started: Instant,
     stopped: bool,
 }
@@ -189,17 +434,68 @@ impl SandboxProcess for LocalProcess {
     }
 
     fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
-        self.child.try_wait()
+        if let Some(status) = self.status {
+            return Ok(Some(status));
+        }
+        if let Some(problem) = self.control.failure() {
+            return Err(problem);
+        }
+
+        let status = {
+            let _lifecycle = self.control.lifecycle()?;
+            let status = self.scope.try_wait(&mut self.child, self.terminator)?;
+            if status.is_some() {
+                self.control.done.store(true, Ordering::Release);
+            }
+            status
+        };
+        if let Some(status) = status {
+            self.status = Some(status);
+            self.scope_stopped = true;
+            if let Some(supervisor) = &mut self.supervisor {
+                supervisor.finish()?;
+            }
+        }
+        if let Some(problem) = self.control.failure() {
+            return Err(problem);
+        }
+        Ok(status)
     }
 
     fn stop(&mut self) -> io::Result<()> {
         if self.stopped {
             return Ok(());
         }
-        stop_scope(&self.scope, &mut self.child)?;
+
+        let cleanup = {
+            let _lifecycle = self.control.lifecycle()?;
+            self.control.done.store(true, Ordering::Release);
+            let signaled = if self.scope_stopped {
+                Ok(())
+            } else {
+                stop_scope(&self.scope, &mut self.child)
+            };
+            if signaled.is_ok() {
+                self.scope_stopped = true;
+            }
+            let reaped = reap(&mut self.child, &mut self.status);
+            signaled.and(reaped)
+        };
+        let joined = self.supervisor.as_mut().map_or(Ok(()), Supervisor::finish);
+        let supervised = self.control.failure().map_or(Ok(()), Err);
+
+        self.stdout.take();
+        self.stderr.take();
+        self.stage.take();
+        self.reservation.take();
         self.stopped = true;
-        self.inspection = self.inspection.clone().cleaned(SandboxCleanup::Complete);
-        Ok(())
+        let result = cleanup.and(joined).and(supervised);
+        self.inspection = self.inspection.clone().cleaned(if result.is_ok() {
+            SandboxCleanup::Complete
+        } else {
+            SandboxCleanup::Failed
+        });
+        result
     }
 
     fn inspection(&self) -> &SandboxInspection {
@@ -209,8 +505,13 @@ impl SandboxProcess for LocalProcess {
     fn usage(&self) -> SandboxUsage {
         SandboxUsage {
             wall_time: self.started.elapsed(),
+            output_bytes: self.control.output_bytes.load(Ordering::Acquire),
             ..SandboxUsage::default()
         }
+    }
+
+    fn violation(&self) -> Option<SandboxViolation> {
+        self.control.violation()
     }
 }
 
@@ -228,18 +529,26 @@ impl std::fmt::Debug for LocalProcess {
 impl Drop for LocalProcess {
     fn drop(&mut self) {
         let _ = self.stop();
-        let deadline = Instant::now() + REAP;
-        loop {
-            match self.child.try_wait() {
-                Ok(Some(_)) | Err(_) => break,
-                Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(10)),
-                Ok(None) => break,
-            }
+    }
+}
+
+fn reap(child: &mut Child, status: &mut Option<ExitStatus>) -> io::Result<()> {
+    if status.is_some() {
+        return Ok(());
+    }
+    let deadline = Instant::now() + REAP;
+    loop {
+        if let Some(exited) = child.try_wait()? {
+            *status = Some(exited);
+            return Ok(());
         }
-        self.stdout.take();
-        self.stderr.take();
-        self.stage.take();
-        self.reservation.take();
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "sandbox process did not become reapable after termination",
+            ));
+        }
+        thread::sleep(Duration::from_millis(5));
     }
 }
 
@@ -284,5 +593,11 @@ pub(crate) fn testing(
     )?;
     let active = Arc::new(AtomicUsize::new(0));
     let reservation = Reservation::take(active, 1)?;
-    spawn(command, inspection, reservation, None)
+    spawn(
+        command,
+        inspection,
+        reservation,
+        None,
+        SandboxResourceLimits::default(),
+    )
 }

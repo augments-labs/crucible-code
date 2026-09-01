@@ -158,7 +158,8 @@ fn discover(excluded: &[&Path]) -> Result<PathBuf, SandboxError> {
 }
 
 fn functional_probe(path: &Path) -> Result<(), SandboxError> {
-    let mut child = Command::new(path)
+    let mut command = Command::new(path);
+    command
         .args([
             "--die-with-parent",
             "--new-session",
@@ -184,7 +185,11 @@ fn functional_probe(path: &Path) -> Result<(), SandboxError> {
         .env_clear()
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::null());
+    super::fd::inherit(&mut command, &[]).map_err(|_| {
+        unavailable("could not prepare descriptor isolation for the Bubblewrap probe")
+    })?;
+    let mut child = command
         .spawn()
         .map_err(|_| unavailable("could not start the system Bubblewrap probe"))?;
 

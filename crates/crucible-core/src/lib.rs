@@ -129,16 +129,19 @@ pub use run::{Ancestry, AncestryError};
 pub use sandbox::{
     MAX_SANDBOX_BACKEND_ID_BYTES, MAX_SANDBOX_BACKEND_WORD_BYTES, MAX_SANDBOX_COMMAND_ARGUMENTS,
     MAX_SANDBOX_COMMAND_BYTES, MAX_SANDBOX_ENVIRONMENT_BYTES, MAX_SANDBOX_ENVIRONMENT_ENTRIES,
-    MAX_SANDBOX_ENVIRONMENT_NAME_BYTES, MAX_SANDBOX_FILESYSTEM_RULES, MAX_SANDBOX_HOST_BYTES,
-    MAX_SANDBOX_MANIFEST_BYTES, MAX_SANDBOX_MANIFEST_ENTRIES, MAX_SANDBOX_MANIFEST_FILE_BYTES,
-    MAX_SANDBOX_NETWORK_ENDPOINTS, MAX_SANDBOX_PATH_BYTES, SandboxBackendId,
-    SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities, SandboxCapability,
-    SandboxCapabilityError, SandboxCleanup, SandboxCommand, SandboxEnvironment, SandboxError,
-    SandboxFeature, SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule,
+    MAX_SANDBOX_ENVIRONMENT_NAME_BYTES, MAX_SANDBOX_FILESYSTEM_RULES, MAX_SANDBOX_GUARDRAIL_BYTES,
+    MAX_SANDBOX_GUARDRAIL_LAYERS, MAX_SANDBOX_GUARDRAIL_RULES, MAX_SANDBOX_GUARDRAIL_WORDS,
+    MAX_SANDBOX_HOST_BYTES, MAX_SANDBOX_MANIFEST_BYTES, MAX_SANDBOX_MANIFEST_ENTRIES,
+    MAX_SANDBOX_MANIFEST_FILE_BYTES, MAX_SANDBOX_NETWORK_ENDPOINTS, MAX_SANDBOX_PATH_BYTES,
+    SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities,
+    SandboxCapability, SandboxCapabilityError, SandboxCleanup, SandboxCommand,
+    SandboxCommandPolicy, SandboxCommandRule, SandboxCommandStage, SandboxEnvironment,
+    SandboxError, SandboxFeature, SandboxFilesystemAccess, SandboxFilesystemProvenance,
+    SandboxFilesystemRule, SandboxGuardrailDecision, SandboxGuardrailEffect, SandboxGuardrailError,
     SandboxInspection, SandboxManifest, SandboxManifestEntry, SandboxManifestError, SandboxMode,
     SandboxNetworkEndpoint, SandboxNetworkPolicy, SandboxOutput, SandboxPolicy, SandboxPolicyError,
     SandboxProcess, SandboxRead, SandboxRequest, SandboxResourceLimits, SandboxService,
-    SandboxSession, SandboxUsage,
+    SandboxSession, SandboxUsage, SandboxViolation,
 };
 pub use source::{Fetch, Page, Search, SearchResult, SourceError};
 pub use steer::Steer;

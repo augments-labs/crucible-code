@@ -22,7 +22,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    Cancel, SandboxOutput, SandboxProcess, SandboxRead, ToolError, ToolOutput, Watch, Wrote,
+    Cancel, SandboxOutput, SandboxProcess, SandboxRead, SandboxViolation, ToolError, ToolOutput,
+    Watch, Wrote,
 };
 
 use super::background::{Background, Taking};
@@ -140,6 +141,9 @@ pub(super) fn collect(
         thread::sleep(TICK);
     };
 
+    let violation = running.taking()?.violation();
+    expired |= violation == Some(SandboxViolation::CommandTime);
+
     // A shell can exit successfully while a descendant of it continues, and the
     // process group or job survives its leader. Ended here on every path that
     // leaves through this function — which is every path but one: a command let
@@ -163,6 +167,7 @@ pub(super) fn collect(
             omitted: captured.omitted,
             arriving: !ended,
             expired,
+            output_limited: violation == Some(SandboxViolation::Output),
         }
         .report(),
     ))
@@ -382,6 +387,7 @@ struct Finished {
     /// for them ran out, which makes `out` a prefix of the output.
     arriving: bool,
     expired: bool,
+    output_limited: bool,
 }
 
 impl Finished {
@@ -411,6 +417,19 @@ impl Finished {
 
             return ToolOutput::failed(format!(
                 "{body}\n\n[stopped: the command ran too long{held}]"
+            ))
+            .with_capture_elision(self.original, self.omitted);
+        }
+
+        if self.output_limited {
+            let held = if self.arriving {
+                ", and something it left running still holds the output open"
+            } else {
+                ""
+            };
+
+            return ToolOutput::failed(format!(
+                "{body}\n\n[stopped: the command exceeded its captured-output ceiling{held}]"
             ))
             .with_capture_elision(self.original, self.omitted);
         }
@@ -513,6 +532,11 @@ impl Kept {
         self.tail.drain(..spill);
         self.dropped = self.dropped.saturating_add(spill);
         self.tail.extend(keep);
+    }
+
+    /// Counts bytes a lower hard ceiling consumed without retaining.
+    fn discard(&mut self, bytes: usize) {
+        self.dropped = self.dropped.saturating_add(bytes);
     }
 
     /// How many bytes have arrived, the ones since dropped included.
@@ -627,11 +651,15 @@ impl Pipe {
                         return Ok(());
                     }
 
-                    let read = match pipe.read_ready(&mut buffer) {
+                    let (read, discarded) = match pipe.read_ready(&mut buffer) {
                         // The end of the pipe, and the only way out of here that
                         // [`ended`] is entitled to read as one.
                         Ok(SandboxRead::End) => return Ok(()),
-                        Ok(SandboxRead::Bytes(read)) => read,
+                        Ok(SandboxRead::Bytes(read)) => (read, 0),
+                        Ok(SandboxRead::Limited {
+                            retained,
+                            discarded,
+                        }) => (retained, discarded),
                         Ok(SandboxRead::Pending) => {
                             thread::sleep(TICK);
                             continue;
@@ -661,6 +689,7 @@ impl Pipe {
                         return Ok(());
                     };
                     kept.push(arrived);
+                    kept.discard(discarded);
                 }
             })
             .map_err(|source| tool_io("could not start a command output reader", source))?;

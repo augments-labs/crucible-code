@@ -455,7 +455,7 @@ impl Tool for Bash {
             )
         })?;
         let limits = SandboxResourceLimits {
-            command_time: Some(allowed),
+            command_time: (!background).then_some(allowed),
             output_bytes: Some(u64::try_from(crate::bound::OUTPUT).unwrap_or(u64::MAX)),
             concurrent_commands: Some(16),
             ..SandboxResourceLimits::default()

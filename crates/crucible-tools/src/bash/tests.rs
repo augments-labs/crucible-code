@@ -5,8 +5,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    Ask, Cancel, Command, DescribeTool, Looking, Mode, Permission, Remember, Rules, ToolCall,
-    ToolId, Verdict,
+    Ask, Cancel, Command, DescribeTool, Looking, Mode, Permission, Remember, Rules,
+    SandboxBackendIdentity, SandboxCapabilities, SandboxError, SandboxRequest,
+    SandboxResourceLimits, SandboxService, SandboxSession, ToolCall, ToolId, Verdict,
 };
 
 use super::background::{Background, MOST};
@@ -31,6 +32,25 @@ fn bash(sample: &Sample, args: &str) -> Result<ToolOutput, ToolError> {
 
 fn ran(sample: &Sample, args: &str) -> ToolOutput {
     bash(sample, args).expect("the command ran")
+}
+
+#[derive(Clone, Default)]
+struct RecordingSandbox {
+    inner: crate::LocalSandbox,
+    limits: std::sync::Arc<std::sync::Mutex<Vec<SandboxResourceLimits>>>,
+}
+
+impl SandboxService for RecordingSandbox {
+    fn probe(&self) -> Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError> {
+        self.inner.probe()
+    }
+
+    fn prepare(&self, request: SandboxRequest) -> Result<Box<dyn SandboxSession>, SandboxError> {
+        if let Ok(mut limits) = self.limits.lock() {
+            limits.push(request.policy().limits());
+        }
+        self.inner.prepare(request)
+    }
 }
 
 /// A watcher that keeps what it was told, in the order it was told.
@@ -807,6 +827,32 @@ fn a_command_that_fails_on_the_spot_is_reported_rather_than_left_running() {
         left.running().is_empty(),
         "a command that had exited was kept"
     );
+}
+
+#[test]
+fn an_explicit_background_command_has_no_foreground_deadline() {
+    let sample = Sample::new("bash-background-no-deadline");
+    let left = Background::new();
+    let recording = RecordingSandbox::default();
+    let observed = std::sync::Arc::clone(&recording.limits);
+    let tool = Bash::new(sample.workspace())
+        .sandboxing(
+            std::sync::Arc::new(recording),
+            crucible_core::SandboxMode::Off,
+        )
+        .leaving(left.clone());
+
+    tool.run(
+        allowed(&tool, r#"{"command":"sleep 30","background":true}"#),
+        &crate::sample::context(),
+    )
+    .expect("the command started");
+
+    let limits = observed.lock().expect("recorded limits");
+    assert_eq!(limits.len(), 1);
+    assert_eq!(limits[0].command_time, None);
+    drop(limits);
+    left.stop(1);
 }
 
 #[test]

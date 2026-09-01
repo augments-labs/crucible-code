@@ -13,8 +13,9 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
 use crucible_core::{
-    SandboxBackendIdentity, SandboxCapabilities, SandboxCommand, SandboxError,
-    SandboxFilesystemAccess, SandboxInspection, SandboxProcess, SandboxRequest, SandboxSession,
+    SandboxBackendIdentity, SandboxCapabilities, SandboxCommand, SandboxCommandStage, SandboxError,
+    SandboxFilesystemAccess, SandboxGuardrailDecision, SandboxInspection, SandboxProcess,
+    SandboxRequest, SandboxSession,
 };
 
 use super::process::{MAX_LOCAL_COMMANDS, Reservation};
@@ -104,6 +105,15 @@ impl SandboxSession for LinuxSession {
                 source: None,
             });
         }
+        if self
+            .request
+            .policy()
+            .commands()
+            .evaluate(&command, SandboxCommandStage::Requested)
+            != SandboxGuardrailDecision::Allowed
+        {
+            return Err(SandboxError::Guardrail);
+        }
         let process = command::build(
             &self.backend,
             &self.request,
@@ -121,7 +131,13 @@ impl SandboxSession for LinuxSession {
                 (Some(stage), sources)
             });
         mount_sources.extend(materialization_sources);
-        let spawned = super::process::spawn(process, self.inspection.clone(), reservation, stage);
+        let spawned = super::process::spawn(
+            process,
+            self.inspection.clone(),
+            reservation,
+            stage,
+            self.request.policy().limits(),
+        );
         drop(mount_sources);
         spawned
     }

@@ -13,6 +13,7 @@
 //! an ordinary subprocess.
 
 mod capability;
+mod guardrail;
 mod manifest;
 mod policy;
 mod service;
@@ -21,6 +22,11 @@ pub use capability::{
     MAX_SANDBOX_BACKEND_ID_BYTES, MAX_SANDBOX_BACKEND_WORD_BYTES, SandboxBackendId,
     SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities, SandboxCapability,
     SandboxCapabilityError, SandboxFeature,
+};
+pub use guardrail::{
+    MAX_SANDBOX_GUARDRAIL_BYTES, MAX_SANDBOX_GUARDRAIL_LAYERS, MAX_SANDBOX_GUARDRAIL_RULES,
+    MAX_SANDBOX_GUARDRAIL_WORDS, SandboxCommandPolicy, SandboxCommandRule, SandboxCommandStage,
+    SandboxGuardrailDecision, SandboxGuardrailEffect, SandboxGuardrailError,
 };
 pub use manifest::{
     MAX_SANDBOX_MANIFEST_BYTES, MAX_SANDBOX_MANIFEST_ENTRIES, MAX_SANDBOX_MANIFEST_FILE_BYTES,
@@ -37,4 +43,5 @@ pub use service::{
     MAX_SANDBOX_ENVIRONMENT_ENTRIES, MAX_SANDBOX_ENVIRONMENT_NAME_BYTES, SandboxCleanup,
     SandboxCommand, SandboxEnvironment, SandboxError, SandboxInspection, SandboxOutput,
     SandboxProcess, SandboxRead, SandboxRequest, SandboxService, SandboxSession, SandboxUsage,
+    SandboxViolation,
 };

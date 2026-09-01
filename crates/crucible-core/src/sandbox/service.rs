@@ -12,6 +12,7 @@ use super::capability::{
     MAX_SANDBOX_BACKEND_WORD_BYTES, SandboxBackendIdentity, SandboxCapabilities, SandboxCapability,
     SandboxFeature,
 };
+use super::guardrail::SandboxCommandStage;
 use super::manifest::SandboxManifest;
 use super::policy::{SandboxMode, SandboxNetworkPolicy, SandboxPolicy};
 
@@ -62,6 +63,7 @@ impl SandboxEnvironment {
                 || name.contains('=')
                 || name.chars().any(char::is_control)
                 || previous == Some(name)
+                || value.as_encoded_bytes().contains(&0)
             {
                 return Err(SandboxError::InvalidEnvironment);
             }
@@ -117,6 +119,8 @@ impl std::fmt::Debug for SandboxEnvironment {
 /// One command to start inside an already negotiated session.
 #[derive(Clone, PartialEq, Eq)]
 pub struct SandboxCommand {
+    requested_program: PathBuf,
+    requested_arguments: Box<[OsString]>,
     program: PathBuf,
     arguments: Box<[OsString]>,
     environment: SandboxEnvironment,
@@ -137,39 +141,41 @@ impl SandboxCommand {
         arguments: impl IntoIterator<Item = OsString>,
         environment: SandboxEnvironment,
     ) -> Result<Self, SandboxError> {
-        let program = program.into();
-        if !program.is_absolute()
-            || program.components().any(|part| {
-                matches!(
-                    part,
-                    Component::CurDir | Component::ParentDir | Component::Prefix(_)
-                )
-            })
-        {
-            return Err(SandboxError::InvalidCommand);
-        }
-        let arguments: Vec<_> = arguments.into_iter().collect();
-        let bytes = arguments.iter().fold(
-            program.as_os_str().as_encoded_bytes().len(),
-            |total, argument| total.saturating_add(argument.as_encoded_bytes().len()),
-        );
-        if arguments.len() > MAX_SANDBOX_COMMAND_ARGUMENTS || bytes > MAX_SANDBOX_COMMAND_BYTES {
-            return Err(SandboxError::InvalidCommand);
-        }
+        let (program, arguments) = command_image(program.into(), arguments)?;
         Ok(Self {
+            requested_program: program.clone(),
+            requested_arguments: arguments.clone(),
             program,
-            arguments: arguments.into_boxed_slice(),
+            arguments,
             environment,
         })
     }
 
-    /// Absolute executable selected by trusted host code.
+    /// Applies one trusted host transformation while retaining the requested
+    /// image for the first guardrail decision.
+    ///
+    /// # Errors
+    ///
+    /// The transformed image has the same absolute-path and byte/count bounds
+    /// as the requested image.
+    pub fn transformed(
+        mut self,
+        program: impl Into<PathBuf>,
+        arguments: impl IntoIterator<Item = OsString>,
+    ) -> Result<Self, SandboxError> {
+        let (program, arguments) = command_image(program.into(), arguments)?;
+        self.program = program;
+        self.arguments = arguments;
+        Ok(self)
+    }
+
+    /// Absolute executable selected after trusted transformation.
     #[must_use]
     pub fn program(&self) -> &Path {
         &self.program
     }
 
-    /// Opaque argument vector.
+    /// Effective opaque argument vector.
     #[must_use]
     pub fn arguments(&self) -> &[OsString] {
         &self.arguments
@@ -180,6 +186,45 @@ impl SandboxCommand {
     pub const fn environment(&self) -> &SandboxEnvironment {
         &self.environment
     }
+
+    pub(super) fn image(&self, stage: SandboxCommandStage) -> (&Path, &[OsString]) {
+        match stage {
+            SandboxCommandStage::Requested => (&self.requested_program, &self.requested_arguments),
+            SandboxCommandStage::Effective => (&self.program, &self.arguments),
+        }
+    }
+}
+
+fn command_image(
+    program: PathBuf,
+    arguments: impl IntoIterator<Item = OsString>,
+) -> Result<(PathBuf, Box<[OsString]>), SandboxError> {
+    if !program.is_absolute()
+        || program.as_os_str().as_encoded_bytes().contains(&0)
+        || program.components().any(|part| {
+            matches!(
+                part,
+                Component::CurDir | Component::ParentDir | Component::Prefix(_)
+            )
+        })
+    {
+        return Err(SandboxError::InvalidCommand);
+    }
+    let arguments: Vec<_> = arguments.into_iter().collect();
+    if arguments
+        .iter()
+        .any(|argument| argument.as_encoded_bytes().contains(&0))
+    {
+        return Err(SandboxError::InvalidCommand);
+    }
+    let bytes = arguments.iter().fold(
+        program.as_os_str().as_encoded_bytes().len(),
+        |total, argument| total.saturating_add(argument.as_encoded_bytes().len()),
+    );
+    if arguments.len() > MAX_SANDBOX_COMMAND_ARGUMENTS || bytes > MAX_SANDBOX_COMMAND_BYTES {
+        return Err(SandboxError::InvalidCommand);
+    }
+    Ok((program, arguments.into_boxed_slice()))
 }
 
 impl std::fmt::Debug for SandboxCommand {
@@ -191,6 +236,11 @@ impl std::fmt::Debug for SandboxCommand {
                 &format_args!("[{} redacted]", self.arguments.len()),
             )
             .field("environment", &self.environment)
+            .field(
+                "transformed",
+                &(self.requested_program != self.program
+                    || self.requested_arguments != self.arguments),
+            )
             .finish()
     }
 }
@@ -478,11 +528,28 @@ pub struct SandboxUsage {
     pub cost_micros: Option<u64>,
 }
 
+/// A hard command ceiling crossed while the backend owned the process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SandboxViolation {
+    /// The command outlived its wall-clock deadline.
+    CommandTime,
+    /// The command produced more captured output than its shared stream budget.
+    Output,
+}
+
 /// Result of one non-blocking output read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SandboxRead {
     /// Bytes were copied into the caller's buffer.
     Bytes(usize),
+    /// Some bytes were retained and the rest were consumed past the hard
+    /// aggregate stdout/stderr ceiling.
+    Limited {
+        /// Prefix bytes available in the caller's buffer.
+        retained: usize,
+        /// Raw bytes consumed but not retained.
+        discarded: usize,
+    },
     /// The writer is live but no bytes are ready.
     Pending,
     /// Every writer has closed this stream.
@@ -514,6 +581,9 @@ pub trait SandboxProcess: Send {
 
     /// Current bounded usage snapshot.
     fn usage(&self) -> SandboxUsage;
+
+    /// First hard resource violation observed by the host supervisor.
+    fn violation(&self) -> Option<SandboxViolation>;
 }
 
 /// A prepared session. Dropping one must clean any completed staging.
@@ -705,5 +775,33 @@ mod tests {
         assert_eq!(names, ["A", "Z"]);
         let shown = format!("{environment:?}");
         assert!(!shown.contains("secret"));
+    }
+
+    #[test]
+    fn command_images_reject_interior_nul_bytes() {
+        assert!(matches!(
+            SandboxCommand::new(
+                "/bin/sh",
+                [OsString::from("bad\0argument")],
+                SandboxEnvironment::empty(),
+            ),
+            Err(SandboxError::InvalidCommand)
+        ));
+        assert!(matches!(
+            SandboxCommand::new(
+                OsString::from("/bin/bad\0program"),
+                std::iter::empty(),
+                SandboxEnvironment::empty(),
+            ),
+            Err(SandboxError::InvalidCommand)
+        ));
+    }
+
+    #[test]
+    fn environment_values_reject_interior_nul_bytes() {
+        assert!(matches!(
+            SandboxEnvironment::new([("TOKEN", OsStr::new("bad\0value"))]),
+            Err(SandboxError::InvalidEnvironment)
+        ));
     }
 }

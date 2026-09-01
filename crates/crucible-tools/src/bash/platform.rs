@@ -6,12 +6,12 @@ use std::process::{ChildStderr, ChildStdout};
 #[cfg(unix)]
 mod unix;
 #[cfg(unix)]
-pub(crate) use unix::Scope;
+pub(crate) use unix::{Scope, Terminator};
 
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
-pub(crate) use windows::Scope;
+pub(crate) use windows::{Scope, Terminator};
 
 /// What one non-blocking attempt found on an output pipe.
 pub(crate) enum ReadState {

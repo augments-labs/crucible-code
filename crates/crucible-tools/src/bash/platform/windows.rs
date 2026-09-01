@@ -8,7 +8,7 @@ use std::io::{self, Read};
 use std::mem::size_of;
 use std::os::windows::io::AsRawHandle;
 use std::os::windows::process::CommandExt as _;
-use std::process::{Child, Command};
+use std::process::{Child, Command, ExitStatus};
 
 use windows_sys::Win32::Foundation::{
     CloseHandle, ERROR_BROKEN_PIPE, ERROR_NO_DATA, HANDLE, INVALID_HANDLE_VALUE,
@@ -30,6 +30,15 @@ use super::ReadState;
 
 /// A kill-on-close job containing one command and all its descendants.
 pub(crate) struct Scope(HANDLE);
+
+/// Job termination authority borrowed by the bounded supervisor thread.
+#[derive(Clone, Copy)]
+pub(crate) struct Terminator(HANDLE);
+
+// SAFETY: `LocalProcess` joins the only thread receiving this borrowed raw
+// handle before its owning `Scope` can be dropped. `TerminateJobObject` accepts
+// a job handle from any thread and does not take ownership of it.
+unsafe impl Send for Terminator {}
 
 // SAFETY: a job object is a kernel handle rather than anything owned by the
 // thread that made it. Every call this module makes through it —
@@ -96,6 +105,24 @@ impl Scope {
         resume(child)
     }
 
+    /// Borrows the job handle for the lifetime of the joined supervisor.
+    pub(crate) fn terminator(&self, _child: &Child) -> io::Result<Terminator> {
+        Ok(Terminator(self.0))
+    }
+
+    /// Reaps a finished leader only after its stable job has been emptied.
+    pub(crate) fn try_wait(
+        &self,
+        child: &mut Child,
+        terminator: Terminator,
+    ) -> io::Result<Option<ExitStatus>> {
+        let status = child.try_wait()?;
+        if status.is_some() {
+            terminator.stop()?;
+        }
+        Ok(status)
+    }
+
     /// Stops every active process in the job, then the shell as a fallback.
     pub(crate) fn stop(&self, child: &mut Child) -> io::Result<()> {
         // SAFETY: the job handle remains owned by `self`.
@@ -111,6 +138,19 @@ impl Scope {
                 .ok_or(problem)
         });
         job_result.and(child_result)
+    }
+}
+
+impl Terminator {
+    /// Stops every process still assigned to the command job.
+    pub(crate) fn stop(self) -> io::Result<()> {
+        // SAFETY: the owning `Scope` remains live until this supervisor call
+        // returns and the thread is joined.
+        if unsafe { TerminateJobObject(self.0, 1) } == 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
     }
 }
 

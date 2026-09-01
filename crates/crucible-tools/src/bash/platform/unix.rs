@@ -2,7 +2,7 @@
 
 use std::io::{self, Read};
 use std::os::fd::AsFd;
-use std::process::{Child, Command};
+use std::process::{Child, Command, ExitStatus};
 
 use rustix::fs::OFlags;
 use rustix::io::Errno;
@@ -13,6 +13,13 @@ use super::ReadState;
 #[derive(Debug)]
 pub(crate) struct Scope;
 
+/// Copyable process-group authority borrowed by a supervisor thread.
+///
+/// The owning process handle remains unreaped until the supervisor is joined,
+/// so the numeric group leader cannot be reused while this value is live.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Terminator(rustix::process::Pid);
+
 impl Scope {
     /// Puts the shell at the head of a process group of its own.
     pub(crate) fn new(command: &mut Command) -> Self {
@@ -20,15 +27,54 @@ impl Scope {
         Self
     }
 
+    /// Captures the process-group identity after spawn.
+    pub(crate) fn terminator(&self, child: &Child) -> io::Result<Terminator> {
+        let raw = i32::try_from(child.id())
+            .map_err(|_| io::Error::other("command process id does not fit this platform"))?;
+        let group = rustix::process::Pid::from_raw(raw)
+            .ok_or_else(|| io::Error::other("command process id cannot name a process group"))?;
+        Ok(Terminator(group))
+    }
+
+    /// Observes leader exit without first releasing its numeric group identity,
+    /// then stops descendants before the standard child handle reaps it.
+    pub(crate) fn try_wait(
+        &self,
+        child: &mut Child,
+        terminator: Terminator,
+    ) -> io::Result<Option<ExitStatus>> {
+        #[cfg(target_os = "linux")]
+        {
+            use rustix::process::{WaitId, WaitIdOptions};
+
+            let raw = i32::try_from(child.id())
+                .map_err(|_| io::Error::other("command process id does not fit this platform"))?;
+            let pid = rustix::process::Pid::from_raw(raw)
+                .ok_or_else(|| io::Error::other("command process id cannot be observed"))?;
+            let options = WaitIdOptions::NOHANG | WaitIdOptions::EXITED | WaitIdOptions::NOWAIT;
+            if rustix::process::waitid(WaitId::Pid(pid), options)?.is_none() {
+                return Ok(None);
+            }
+            terminator.stop()?;
+            return child.try_wait();
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            let status = child.try_wait()?;
+            if status.is_some() {
+                terminator.stop()?;
+            }
+            Ok(status)
+        }
+    }
+
     /// Stops the shell and every descendant still in its inherited group.
     pub(crate) fn stop(child: &mut Child) -> io::Result<()> {
-        let group = i32::try_from(child.id())
+        let group_result = i32::try_from(child.id())
             .ok()
-            .and_then(rustix::process::Pid::from_raw);
-        let group_result = group.map_or(Ok(()), |group| {
-            rustix::process::kill_process_group(group, rustix::process::Signal::KILL)
-                .or_else(|problem| (problem == Errno::SRCH).then_some(()).ok_or(problem))
-        });
+            .and_then(rustix::process::Pid::from_raw)
+            .map_or(Ok(()), |group| Terminator(group).stop());
         let child_result = child.kill().or_else(|problem| {
             (problem.kind() == io::ErrorKind::InvalidInput)
                 .then_some(())
@@ -36,6 +82,15 @@ impl Scope {
         });
 
         group_result.map_err(io::Error::from).and(child_result)
+    }
+}
+
+impl Terminator {
+    /// Sends an uncatchable signal to every process still in the command group.
+    pub(crate) fn stop(self) -> io::Result<()> {
+        rustix::process::kill_process_group(self.0, rustix::process::Signal::KILL)
+            .or_else(|problem| (problem == Errno::SRCH).then_some(()).ok_or(problem))
+            .map_err(io::Error::from)
     }
 }
 
