@@ -25,6 +25,7 @@ use crucible_sandbox_broker::{
 use rustix::fs::OFlags;
 use rustix::io::Errno;
 use rustix::io::FdFlags;
+use rustix::process::{Resource, Rlimit};
 
 const BROKER_ERROR_EXIT: u8 = 125;
 
@@ -40,7 +41,7 @@ fn run() -> Option<u8> {
     }
     let descriptor_argument = arguments.next()?;
     let descriptor = parse_descriptor(&descriptor_argument)?;
-    let (roots, exclusions) = parse_plan(&mut arguments)?;
+    let (roots, exclusions, limits) = parse_plan(&mut arguments)?;
     let program = arguments.next()?;
     let workload_arguments = arguments.collect::<Vec<_>>();
 
@@ -68,9 +69,14 @@ fn run() -> Option<u8> {
         return None;
     }
 
-    let Ok(status) = Command::new(program)
-        .args(workload_arguments)
-        .process_group(0)
+    let mut workload = Command::new(program);
+    workload.args(workload_arguments).process_group(0);
+    // SAFETY: only async-signal-safe `setrlimit` syscalls run between fork and
+    // exec; the copied limit record owns no allocator-backed state.
+    unsafe {
+        workload.pre_exec(move || limits.apply());
+    }
+    let Ok(status) = workload
         .spawn()
         .and_then(|mut child| wait_workload(&mut child, &mut status_channel))
     else {
@@ -175,9 +181,10 @@ fn close_inherited_except(status: RawFd) -> std::io::Result<()> {
 
 fn parse_plan(
     arguments: &mut impl Iterator<Item = OsString>,
-) -> Option<(Vec<PathBuf>, Vec<PathBuf>)> {
+) -> Option<(Vec<PathBuf>, Vec<PathBuf>, Limits)> {
     let mut roots = Vec::new();
     let mut exclusions = Vec::new();
+    let mut limits = Limits::default();
     loop {
         let argument = arguments.next()?;
         match argument.to_str()? {
@@ -197,10 +204,72 @@ fn parse_plan(
                 }
                 exclusions.push(exclusion);
             }
-            "--" => return Some((roots, exclusions)),
+            "--limit-cpu-seconds" => {
+                limits.cpu_seconds = Some(parse_limit(arguments, limits.cpu_seconds)?);
+            }
+            "--limit-memory-bytes" => {
+                limits.memory_bytes = Some(parse_limit(arguments, limits.memory_bytes)?);
+            }
+            "--limit-open-files" => {
+                limits.open_files = Some(parse_limit(arguments, limits.open_files)?);
+            }
+            "--" => return Some((roots, exclusions, limits)),
             _ => return None,
         }
     }
+}
+
+fn parse_limit(
+    arguments: &mut impl Iterator<Item = OsString>,
+    current: Option<u64>,
+) -> Option<u64> {
+    if current.is_some() {
+        return None;
+    }
+    arguments
+        .next()?
+        .to_str()?
+        .parse::<u64>()
+        .ok()
+        .filter(|value| *value > 0)
+}
+
+#[derive(Clone, Copy, Default)]
+struct Limits {
+    cpu_seconds: Option<u64>,
+    memory_bytes: Option<u64>,
+    open_files: Option<u64>,
+}
+
+impl Limits {
+    fn apply(self) -> std::io::Result<()> {
+        set_limit(Resource::Core, 0)?;
+        if let Some(value) = self.cpu_seconds {
+            set_limit(Resource::Cpu, value)?;
+        }
+        if let Some(value) = self.memory_bytes {
+            set_limit(Resource::As, value)?;
+        }
+        if let Some(value) = self.open_files {
+            set_limit(Resource::Nofile, value)?;
+        }
+        Ok(())
+    }
+}
+
+fn set_limit(resource: Resource, requested: u64) -> std::io::Result<()> {
+    let inherited = rustix::process::getrlimit(resource);
+    let effective = inherited
+        .maximum
+        .map_or(requested, |maximum| requested.min(maximum));
+    rustix::process::setrlimit(
+        resource,
+        Rlimit {
+            current: Some(effective),
+            maximum: Some(effective),
+        },
+    )
+    .map_err(Into::into)
 }
 
 fn parse_descriptor(value: &OsStr) -> Option<RawFd> {

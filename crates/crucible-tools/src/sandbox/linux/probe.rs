@@ -326,6 +326,9 @@ pub(super) fn capabilities() -> SandboxCapabilities {
         .with(SandboxFeature::KernelSurface, enforced)
         .with(SandboxFeature::PrivilegeIsolation, enforced)
         .with(SandboxFeature::Materialization, enforced)
+        .with(SandboxFeature::CpuLimit, enforced)
+        .with(SandboxFeature::MemoryLimit, enforced)
+        .with(SandboxFeature::OpenFileLimit, enforced)
         .with(SandboxFeature::CommandTimeLimit, enforced)
         .with(SandboxFeature::OutputLimit, enforced)
         .with(SandboxFeature::ConcurrencyLimit, enforced)
@@ -355,7 +358,15 @@ mod tests {
         );
         assert_eq!(
             capabilities.claim(SandboxFeature::MemoryLimit),
-            SandboxCapability::Unsupported
+            SandboxCapability::Enforced
+        );
+        assert_eq!(
+            capabilities.claim(SandboxFeature::CpuLimit),
+            SandboxCapability::Enforced
+        );
+        assert_eq!(
+            capabilities.claim(SandboxFeature::OpenFileLimit),
+            SandboxCapability::Enforced
         );
         assert_eq!(
             capabilities.claim(SandboxFeature::Snapshot),

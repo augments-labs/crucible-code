@@ -214,11 +214,8 @@ pub(super) fn prepare(request: &SandboxRequest) -> Result<View, SandboxError> {
     }
     let limits = request.policy().limits();
     for (present, feature) in [
-        (limits.cpu_seconds.is_some(), SandboxFeature::CpuLimit),
-        (limits.memory_bytes.is_some(), SandboxFeature::MemoryLimit),
         (limits.disk_bytes.is_some(), SandboxFeature::DiskLimit),
         (limits.processes.is_some(), SandboxFeature::ProcessLimit),
-        (limits.open_files.is_some(), SandboxFeature::OpenFileLimit),
         (
             limits.session_time.is_some(),
             SandboxFeature::SessionTimeLimit,
@@ -625,12 +622,25 @@ pub(super) fn build(plan: Plan<'_>) -> Result<Command, SandboxError> {
         .arg("--status-fd")
         .arg(status_descriptor.to_string());
     append_projection_plan(&mut process, projection);
+    append_resource_limits(&mut process, request.policy().limits());
     process
         .arg("--")
         .arg(command.program())
         .args(command.arguments());
     super::fd::inherit(&mut process, &inherited)?;
     Ok(process)
+}
+
+fn append_resource_limits(process: &mut Command, limits: crucible_core::SandboxResourceLimits) {
+    for (name, value) in [
+        ("--limit-cpu-seconds", limits.cpu_seconds),
+        ("--limit-memory-bytes", limits.memory_bytes),
+        ("--limit-open-files", limits.open_files),
+    ] {
+        if let Some(value) = value {
+            process.arg(name).arg(value.to_string());
+        }
+    }
 }
 
 fn append_projection_plan(process: &mut Command, projection: Option<&Projection>) {
