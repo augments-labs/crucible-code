@@ -8,6 +8,28 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Added
+
+- **Approved commands now run behind operating-system confinement on Linux.**
+  Crucible starts `bash` in a verified Bubblewrap boundary that exposes only
+  the selected workspace and minimum read-only runtime, denies network access,
+  closes undeclared descriptors, protects repository and Crucible metadata,
+  limits time/output/concurrency, and kills the complete sandbox process tree.
+  If that boundary cannot be prepared, the command fails before it starts.
+
+- **Sandbox policy is now a reusable, inspectable host contract.** Backends
+  negotiate exact capabilities before effects; bounded manifests,
+  requested/effective policy identities, credential projections, command
+  guardrails, usage, cleanup and ancestry-aware lifecycle facts give later MCP
+  and extension processes the same boundary without changing tool arguments.
+
+### Changed
+
+- **`sandbox.mode` defaults to `required`.** A home configuration may
+  deliberately select documented `degraded` or `off` compatibility behavior;
+  workspace configuration and descendants cannot weaken the user's effective
+  requirement, and compatibility execution is always reported as unconfined.
+
 ## [0.33.0] - 2026-09-01
 
 ### Added
