@@ -11,8 +11,8 @@ use std::fmt;
 use sha2::{Digest as _, Sha256};
 
 use crate::{
-    Ancestry, Message, PromptCacheFact, TOOL_ARGUMENT_BYTES, TOOL_CALL_ID_BYTES, TOOL_NAME_BYTES,
-    TOOL_RESULT_BYTES, ToolId, Transcript,
+    Ancestry, Message, PromptCacheFact, SandboxFact, TOOL_ARGUMENT_BYTES, TOOL_CALL_ID_BYTES,
+    TOOL_NAME_BYTES, TOOL_RESULT_BYTES, ToolId, Transcript,
 };
 
 use crate::interruption::{InvocationRecord, JournalEntryId, PendingAction};
@@ -82,6 +82,15 @@ pub enum RunItem {
         /// Typed metadata with no prompt, routing key, or resource handle.
         fact: PromptCacheFact,
     },
+    /// One bounded sandbox lifecycle fact, invisible to providers.
+    Sandbox {
+        /// Execution whose tool call owns the sandbox.
+        ancestry: Ancestry,
+        /// Fixed call attribution.
+        call: ToolId,
+        /// Redacted typed lifecycle fact.
+        fact: SandboxFact,
+    },
     /// One durable interruption point.
     Interrupt(PendingAction),
     /// One prepared, started, or finished tool invocation.
@@ -112,11 +121,33 @@ impl RunItem {
         Self::ProviderAttempt { ancestry, fact }
     }
 
+    /// Records one sandbox fact under fixed run and call attribution.
+    ///
+    /// # Errors
+    ///
+    /// An empty or oversized call identity is refused at the journal boundary.
+    pub fn sandbox(
+        ancestry: Ancestry,
+        call: ToolId,
+        fact: SandboxFact,
+    ) -> Result<Self, JournalError> {
+        if call.as_str().is_empty() || call.as_str().len() > TOOL_CALL_ID_BYTES {
+            return Err(JournalError::InvalidField("sandbox tool call id"));
+        }
+        Ok(Self::Sandbox {
+            ancestry,
+            call,
+            fact,
+        })
+    }
+
     /// The producing execution.
     #[must_use]
     pub const fn ancestry(&self) -> Ancestry {
         match self {
-            Self::Message { ancestry, .. } | Self::ProviderAttempt { ancestry, .. } => *ancestry,
+            Self::Message { ancestry, .. }
+            | Self::ProviderAttempt { ancestry, .. }
+            | Self::Sandbox { ancestry, .. } => *ancestry,
             Self::Interrupt(action) => action.ancestry(),
             Self::Invocation(invocation) => invocation.ancestry(),
             Self::Compaction(compaction) => compaction.ancestry(),
@@ -130,6 +161,7 @@ impl RunItem {
         match self {
             Self::Message { message, .. } => Some(message),
             Self::ProviderAttempt { .. }
+            | Self::Sandbox { .. }
             | Self::Interrupt(_)
             | Self::Invocation(_)
             | Self::Compaction(_)
@@ -142,6 +174,15 @@ impl RunItem {
     pub const fn prompt_cache_fact(&self) -> Option<&PromptCacheFact> {
         match self {
             Self::ProviderAttempt { fact, .. } => Some(fact),
+            _ => None,
+        }
+    }
+
+    /// Sandbox fact carried by this item, with its call attribution.
+    #[must_use]
+    pub const fn sandbox_fact(&self) -> Option<(&ToolId, &SandboxFact)> {
+        match self {
+            Self::Sandbox { call, fact, .. } => Some((call, fact)),
             _ => None,
         }
     }
@@ -183,6 +224,12 @@ impl RunItem {
                 Ok(())
             }
             Self::ProviderAttempt { fact, .. } => validate_cache_fact(fact),
+            Self::Sandbox { call, .. } => {
+                if call.as_str().is_empty() || call.as_str().len() > TOOL_CALL_ID_BYTES {
+                    return Err(JournalError::InvalidField("sandbox tool call id"));
+                }
+                Ok(())
+            }
             Self::Compaction(_) | Self::Custom(_) => Ok(()),
         }
     }
@@ -199,6 +246,16 @@ impl fmt::Debug for RunItem {
             Self::ProviderAttempt { ancestry, fact } => f
                 .debug_struct("ProviderAttempt")
                 .field("ancestry", ancestry)
+                .field("fact", fact)
+                .finish(),
+            Self::Sandbox {
+                ancestry,
+                call: _,
+                fact,
+            } => f
+                .debug_struct("Sandbox")
+                .field("ancestry", ancestry)
+                .field("call", &"[redacted]")
                 .field("fact", fact)
                 .finish(),
             Self::Interrupt(action) => f.debug_tuple("Interrupt").field(action).finish(),
@@ -489,6 +546,7 @@ impl RunHistory {
                 RunItem::Message { message, .. } => Some(message.clone()),
                 RunItem::Custom(entry) => projector.and_then(|one| one.project(entry)),
                 RunItem::ProviderAttempt { .. }
+                | RunItem::Sandbox { .. }
                 | RunItem::Interrupt(_)
                 | RunItem::Invocation(_)
                 | RunItem::Compaction(_) => None,
@@ -630,6 +688,7 @@ fn item_retained_bytes(item: &RunItem) -> usize {
     base.saturating_add(match item {
         RunItem::Message { message, .. } => message_retained_bytes(message),
         RunItem::ProviderAttempt { fact, .. } => cache_fact_retained_bytes(fact),
+        RunItem::Sandbox { call, .. } => call.as_str().len().saturating_add(4_096),
         RunItem::Interrupt(action) => action
             .call()
             .map_or_else(

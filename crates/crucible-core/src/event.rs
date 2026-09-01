@@ -219,6 +219,14 @@ pub enum Event {
         fact: crate::PromptCacheFact,
     },
 
+    /// One bounded sandbox lifecycle fact for a tool invocation.
+    Sandbox {
+        /// The fixed provider call identity that owns the sandbox.
+        call: ToolId,
+        /// Redacted typed fact; ancestry is supplied by the envelope.
+        fact: crate::SandboxFact,
+    },
+
     /// Prose arrived from the model.
     Delta {
         /// The text, to be appended to the live tail.
@@ -414,6 +422,11 @@ impl std::fmt::Debug for Event {
             Self::PromptCache { fact } => {
                 f.debug_struct("PromptCache").field("fact", fact).finish()
             }
+            Self::Sandbox { call: _, fact } => f
+                .debug_struct("Sandbox")
+                .field("call", &"[redacted]")
+                .field("fact", fact)
+                .finish(),
             Self::Delta { text } => f.debug_struct("Delta").field("text", text).finish(),
             Self::ToolRequested {
                 call,

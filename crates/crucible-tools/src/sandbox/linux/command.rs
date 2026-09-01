@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crucible_core::{
-    SandboxCommand, SandboxCommandStage, SandboxError, SandboxFeature, SandboxFilesystemAccess,
-    SandboxFilesystemRule, SandboxGuardrailDecision, SandboxNetworkPolicy, SandboxRequest,
+    SandboxCommand, SandboxError, SandboxFeature, SandboxFilesystemAccess, SandboxFilesystemRule,
+    SandboxNetworkPolicy, SandboxRequest,
 };
 
 use super::materialize::Materialization;
@@ -62,8 +62,11 @@ pub(super) struct View {
 }
 
 impl View {
-    pub(super) fn sources(self) -> Vec<OwnedFd> {
-        self.binds.into_iter().map(|bind| bind.source).collect()
+    pub(super) fn sources(&mut self) -> Vec<OwnedFd> {
+        std::mem::take(&mut self.binds)
+            .into_iter()
+            .map(|bind| bind.source)
+            .collect()
     }
 }
 
@@ -350,14 +353,6 @@ pub(super) fn build(
     view: &View,
     materialization: Option<&Materialization>,
 ) -> Result<Command, SandboxError> {
-    if request
-        .policy()
-        .commands()
-        .evaluate(command, SandboxCommandStage::Effective)
-        != SandboxGuardrailDecision::Allowed
-    {
-        return Err(SandboxError::Guardrail);
-    }
     let runtime = runtime_mounts();
     let mut directories = BTreeSet::new();
     for mount in &runtime {

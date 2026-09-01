@@ -47,6 +47,22 @@ impl SandboxMode {
             Self::Required => 2,
         }
     }
+
+    /// Stable inspection/configuration spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Required => "required",
+            Self::Degraded => "degraded",
+            Self::Off => "off",
+        }
+    }
+}
+
+impl Default for SandboxMode {
+    fn default() -> Self {
+        Self::Required
+    }
 }
 
 /// Access granted to one exact filesystem subtree.
@@ -70,6 +86,17 @@ impl SandboxFilesystemAccess {
             Self::ReadWrite => 2,
         }
     }
+
+    /// Stable redacted inspection spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Unreadable => "unreadable",
+            Self::ReadOnly => "read_only",
+            Self::ReadWrite => "read_write",
+            Self::Protected => "protected",
+        }
+    }
 }
 
 /// Why a filesystem rule is present.
@@ -85,6 +112,20 @@ pub enum SandboxFilesystemProvenance {
     Descendant,
     /// An explicit manifest mount request.
     Manifest,
+}
+
+impl SandboxFilesystemProvenance {
+    /// Stable redacted inspection spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Workspace => "workspace",
+            Self::Runtime => "runtime",
+            Self::ProtectedMetadata => "protected_metadata",
+            Self::Descendant => "descendant",
+            Self::Manifest => "manifest",
+        }
+    }
 }
 
 /// One absolute, bounded filesystem rule.
@@ -246,6 +287,33 @@ impl SandboxNetworkPolicy {
                         .iter()
                         .all(|endpoint| parent_endpoints.contains(endpoint))
             }
+        }
+    }
+
+    /// Exact endpoints, or an empty slice for a closed policy.
+    #[must_use]
+    pub fn endpoints(&self) -> &[SandboxNetworkEndpoint] {
+        match self {
+            Self::Closed => &[],
+            Self::Exact { endpoints, .. } => endpoints,
+        }
+    }
+
+    /// Whether policy-authorized DNS is requested.
+    #[must_use]
+    pub const fn dns(&self) -> bool {
+        match self {
+            Self::Closed => false,
+            Self::Exact { dns, .. } => *dns,
+        }
+    }
+
+    /// Whether bounded forwarding is requested.
+    #[must_use]
+    pub const fn forwarding(&self) -> bool {
+        match self {
+            Self::Closed => false,
+            Self::Exact { forwarding, .. } => *forwarding,
         }
     }
 }

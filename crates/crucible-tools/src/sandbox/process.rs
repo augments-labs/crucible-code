@@ -8,8 +8,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    SandboxCleanup, SandboxInspection, SandboxOutput, SandboxProcess, SandboxRead,
-    SandboxResourceLimits, SandboxUsage, SandboxViolation,
+    SandboxAudit, SandboxCleanup, SandboxFactKind, SandboxId, SandboxInspection, SandboxLifecycle,
+    SandboxOutput, SandboxProcess, SandboxRead, SandboxResourceLimits, SandboxUsage,
+    SandboxViolation,
 };
 
 use crate::bash::platform::{Output as PlatformOutput, ReadState, Scope, Terminator};
@@ -103,6 +104,8 @@ pub(super) fn spawn(
     reservation: Reservation,
     stage: Option<Stage>,
     limits: SandboxResourceLimits,
+    audit: SandboxAudit,
+    sandbox: SandboxId,
 ) -> Result<Box<dyn SandboxProcess>, crucible_core::SandboxError> {
     command
         .stdin(Stdio::null())
@@ -135,7 +138,7 @@ pub(super) fn spawn(
         }
     };
 
-    let control = Arc::new(Control::new(limits.output_bytes));
+    let control = Arc::new(Control::new(limits.output_bytes, audit, sandbox));
 
     let stdout = match child
         .stdout
@@ -183,6 +186,14 @@ pub(super) fn spawn(
         None
     };
 
+    if let Err(source) = control.audit(SandboxFactKind::Lifecycle(SandboxLifecycle::CommandStarted))
+    {
+        control.done.store(true, Ordering::Release);
+        let _ = stop_scope(&scope, &mut child);
+        let _ = child.wait();
+        return Err(crucible_core::SandboxError::Audit(source));
+    }
+
     Ok(Box::new(LocalProcess {
         child,
         scope,
@@ -198,6 +209,9 @@ pub(super) fn spawn(
         scope_stopped: false,
         started,
         stopped: false,
+        finished_audited: false,
+        usage_audited: false,
+        cleanup_audited: false,
     }))
 }
 
@@ -209,6 +223,8 @@ struct Control {
     output_remaining: Option<AtomicU64>,
     output_bytes: AtomicU64,
     failure: Mutex<Option<Failure>>,
+    audit: SandboxAudit,
+    sandbox: SandboxId,
 }
 
 #[derive(Clone, Copy)]
@@ -218,7 +234,7 @@ struct Failure {
 }
 
 impl Control {
-    fn new(output_limit: Option<u64>) -> Self {
+    fn new(output_limit: Option<u64>, audit: SandboxAudit, sandbox: SandboxId) -> Self {
         Self {
             lifecycle: Mutex::new(()),
             done: AtomicBool::new(false),
@@ -226,6 +242,8 @@ impl Control {
             output_remaining: output_limit.map(AtomicU64::new),
             output_bytes: AtomicU64::new(0),
             failure: Mutex::new(None),
+            audit,
+            sandbox,
         }
     }
 
@@ -261,12 +279,15 @@ impl Control {
             SandboxViolation::CommandTime => COMMAND_TIME_VIOLATION,
             SandboxViolation::Output => OUTPUT_VIOLATION,
         };
-        let _ = self.violation.compare_exchange(
-            NO_VIOLATION,
-            code,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        );
+        if self
+            .violation
+            .compare_exchange(NO_VIOLATION, code, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            if let Err(problem) = self.audit(SandboxFactKind::Violation(violation)) {
+                self.record_failure(&io::Error::other(problem));
+            }
+        }
     }
 
     fn violation(&self) -> Option<SandboxViolation> {
@@ -300,6 +321,10 @@ impl Control {
             },
             io::Error::from_raw_os_error,
         ))
+    }
+
+    fn audit(&self, kind: SandboxFactKind) -> Result<(), crucible_core::SandboxAuditError> {
+        self.audit.record(self.sandbox, kind)
     }
 }
 
@@ -422,6 +447,40 @@ struct LocalProcess {
     scope_stopped: bool,
     started: Instant,
     stopped: bool,
+    finished_audited: bool,
+    usage_audited: bool,
+    cleanup_audited: bool,
+}
+
+impl LocalProcess {
+    fn audit_finished(&mut self) -> io::Result<()> {
+        if !self.finished_audited {
+            self.control
+                .audit(SandboxFactKind::Lifecycle(
+                    SandboxLifecycle::CommandFinished,
+                ))
+                .map_err(io::Error::other)?;
+            self.finished_audited = true;
+        }
+        if !self.usage_audited {
+            self.control
+                .audit(SandboxFactKind::Usage(self.usage()))
+                .map_err(io::Error::other)?;
+            self.usage_audited = true;
+        }
+        Ok(())
+    }
+
+    fn audit_cleanup(&mut self, cleanup: SandboxCleanup) -> io::Result<()> {
+        if self.cleanup_audited {
+            return Ok(());
+        }
+        self.control
+            .audit(SandboxFactKind::Cleanup(cleanup))
+            .map_err(io::Error::other)?;
+        self.cleanup_audited = true;
+        Ok(())
+    }
 }
 
 impl SandboxProcess for LocalProcess {
@@ -435,6 +494,7 @@ impl SandboxProcess for LocalProcess {
 
     fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
         if let Some(status) = self.status {
+            self.audit_finished()?;
             return Ok(Some(status));
         }
         if let Some(problem) = self.control.failure() {
@@ -455,6 +515,7 @@ impl SandboxProcess for LocalProcess {
             if let Some(supervisor) = &mut self.supervisor {
                 supervisor.finish()?;
             }
+            self.audit_finished()?;
         }
         if let Some(problem) = self.control.failure() {
             return Err(problem);
@@ -464,7 +525,7 @@ impl SandboxProcess for LocalProcess {
 
     fn stop(&mut self) -> io::Result<()> {
         if self.stopped {
-            return Ok(());
+            return self.control.failure().map_or(Ok(()), Err);
         }
 
         let cleanup = {
@@ -489,12 +550,17 @@ impl SandboxProcess for LocalProcess {
         self.stage.take();
         self.reservation.take();
         self.stopped = true;
-        let result = cleanup.and(joined).and(supervised);
-        self.inspection = self.inspection.clone().cleaned(if result.is_ok() {
+        let mut result = cleanup.and(joined).and(supervised);
+        let cleanup_state = if result.is_ok() {
             SandboxCleanup::Complete
         } else {
             SandboxCleanup::Failed
-        });
+        };
+        self.inspection = self.inspection.clone().cleaned(cleanup_state);
+        if self.status.is_some() {
+            result = result.and_then(|()| self.audit_finished());
+        }
+        result = result.and_then(|()| self.audit_cleanup(cleanup_state));
         result
     }
 
@@ -569,8 +635,10 @@ pub(crate) fn testing(
     command: Command,
 ) -> Result<Box<dyn SandboxProcess>, crucible_core::SandboxError> {
     use crucible_core::{
-        SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities,
-        SandboxCleanup, SandboxId,
+        Ancestry, SandboxAudit, SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance,
+        SandboxCapabilities, SandboxCleanup, SandboxFilesystemAccess, SandboxFilesystemProvenance,
+        SandboxFilesystemRule, SandboxId, SandboxManifest, SandboxMode, SandboxNetworkPolicy,
+        SandboxPolicy, ToolId,
     };
 
     let identity = SandboxBackendIdentity::new(
@@ -581,23 +649,44 @@ pub(crate) fn testing(
         None,
     )
     .map_err(|_| crucible_core::SandboxError::InvalidInspection)?;
+    let root = std::env::current_dir()
+        .and_then(|path| path.canonicalize())
+        .map_err(crucible_core::SandboxError::Spawn)?;
+    let rule = SandboxFilesystemRule::new(
+        &root,
+        SandboxFilesystemAccess::ReadWrite,
+        SandboxFilesystemProvenance::Workspace,
+    )
+    .map_err(|_| crucible_core::SandboxError::InvalidInspection)?;
+    let policy = SandboxPolicy::new(
+        SandboxMode::Off,
+        [rule],
+        root,
+        SandboxNetworkPolicy::Closed,
+        SandboxResourceLimits::default(),
+    )
+    .map_err(|_| crucible_core::SandboxError::InvalidInspection)?;
+    let manifest = SandboxManifest::empty();
     let inspection = SandboxInspection::new(
         SandboxId::new(),
         identity,
         SandboxCapabilities::none(),
-        [0; 32],
-        [0; 32],
+        &policy,
+        &manifest,
         false,
         Some("test-only unconfined process"),
         SandboxCleanup::Pending,
     )?;
     let active = Arc::new(AtomicUsize::new(0));
     let reservation = Reservation::take(active, 1)?;
+    let sandbox = inspection.id();
     spawn(
         command,
         inspection,
         reservation,
         None,
         SandboxResourceLimits::default(),
+        SandboxAudit::new(Ancestry::new(), ToolId::new("test-process")),
+        sandbox,
     )
 }

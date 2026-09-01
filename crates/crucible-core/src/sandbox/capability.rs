@@ -63,6 +63,19 @@ pub enum SandboxBackendProvenance {
     Compatibility,
 }
 
+impl SandboxBackendProvenance {
+    /// Stable inspection/persistence spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::Bundled => "bundled",
+            Self::Remote => "remote",
+            Self::Compatibility => "compatibility",
+        }
+    }
+}
+
 /// Bounded backend identity retained in audit and inspection records.
 #[derive(Clone, PartialEq, Eq)]
 pub struct SandboxBackendIdentity {
@@ -149,6 +162,16 @@ impl SandboxCapability {
     pub const fn is_enforced(self) -> bool {
         matches!(self, Self::Enforced)
     }
+
+    /// Stable capability-matrix spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Unsupported => "unsupported",
+            Self::Observed => "observed",
+            Self::Enforced => "enforced",
+        }
+    }
 }
 
 /// Independently negotiated sandbox features.
@@ -211,7 +234,7 @@ pub enum SandboxFeature {
 /// One immutable capability snapshot returned before side effects.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SandboxCapabilities {
-    claims: [SandboxCapability; 26],
+    claims: [SandboxCapability; SandboxFeature::COUNT],
 }
 
 impl SandboxCapabilities {
@@ -219,7 +242,7 @@ impl SandboxCapabilities {
     #[must_use]
     pub const fn none() -> Self {
         Self {
-            claims: [SandboxCapability::Unsupported; 26],
+            claims: [SandboxCapability::Unsupported; SandboxFeature::COUNT],
         }
     }
 
@@ -240,6 +263,13 @@ impl SandboxCapabilities {
             None => SandboxCapability::Unsupported,
         }
     }
+
+    /// Every feature and its exact claim in stable matrix order.
+    pub fn iter(&self) -> impl Iterator<Item = (SandboxFeature, SandboxCapability)> + '_ {
+        SandboxFeature::ALL
+            .into_iter()
+            .map(|feature| (feature, self.claim(feature)))
+    }
 }
 
 impl Default for SandboxCapabilities {
@@ -249,6 +279,72 @@ impl Default for SandboxCapabilities {
 }
 
 impl SandboxFeature {
+    /// Number of independently negotiated features.
+    pub const COUNT: usize = 26;
+
+    /// Stable exhaustive capability-matrix order.
+    pub const ALL: [Self; Self::COUNT] = [
+        Self::Filesystem,
+        Self::NetworkDeny,
+        Self::NetworkAllowlist,
+        Self::DescriptorIsolation,
+        Self::ProcessIsolation,
+        Self::KernelSurface,
+        Self::PrivilegeIsolation,
+        Self::Materialization,
+        Self::CpuLimit,
+        Self::MemoryLimit,
+        Self::DiskLimit,
+        Self::ProcessLimit,
+        Self::OpenFileLimit,
+        Self::CommandTimeLimit,
+        Self::SessionTimeLimit,
+        Self::OutboundByteLimit,
+        Self::OutputLimit,
+        Self::ConcurrencyLimit,
+        Self::CostLimit,
+        Self::Pty,
+        Self::FileOperations,
+        Self::Persistence,
+        Self::Snapshot,
+        Self::Resume,
+        Self::Audit,
+        Self::Usage,
+    ];
+
+    /// Stable capability-matrix spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Filesystem => "filesystem",
+            Self::NetworkDeny => "network_deny",
+            Self::NetworkAllowlist => "network_allowlist",
+            Self::DescriptorIsolation => "descriptor_isolation",
+            Self::ProcessIsolation => "process_isolation",
+            Self::KernelSurface => "kernel_surface",
+            Self::PrivilegeIsolation => "privilege_isolation",
+            Self::Materialization => "materialization",
+            Self::CpuLimit => "cpu_limit",
+            Self::MemoryLimit => "memory_limit",
+            Self::DiskLimit => "disk_limit",
+            Self::ProcessLimit => "process_limit",
+            Self::OpenFileLimit => "open_file_limit",
+            Self::CommandTimeLimit => "command_time_limit",
+            Self::SessionTimeLimit => "session_time_limit",
+            Self::OutboundByteLimit => "outbound_byte_limit",
+            Self::OutputLimit => "output_limit",
+            Self::ConcurrencyLimit => "concurrency_limit",
+            Self::CostLimit => "cost_limit",
+            Self::Pty => "pty",
+            Self::FileOperations => "file_operations",
+            Self::Persistence => "persistence",
+            Self::Snapshot => "snapshot",
+            Self::Resume => "resume",
+            Self::Audit => "audit",
+            Self::Usage => "usage",
+        }
+    }
+
     const fn index(self) -> usize {
         match self {
             Self::Filesystem => 0,

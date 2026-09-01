@@ -11,14 +11,16 @@ use uuid::Uuid;
 
 use crate::{
     Ancestry, PromptCacheFingerprint, PromptCacheResourceId, PromptCacheScopeDigest,
-    TOOL_ARGUMENT_BYTES, TOOL_CALL_ID_BYTES, TOOL_NAME_BYTES, TOOL_RESULT_BYTES, ToolCall, ToolId,
-    ToolOutcome, ToolOutput, ToolResult,
+    SandboxCheckpoint, TOOL_ARGUMENT_BYTES, TOOL_CALL_ID_BYTES, TOOL_NAME_BYTES, TOOL_RESULT_BYTES,
+    ToolCall, ToolId, ToolOutcome, ToolOutput, ToolResult,
 };
 
 /// Most pending actions retained in one execution checkpoint.
 pub const MAX_PENDING_ACTIONS: usize = 128;
 /// Most invocation records retained in one execution checkpoint.
 pub const MAX_CHECKPOINT_INVOCATIONS: usize = 512;
+/// Most sandbox identities retained in one execution checkpoint.
+pub const MAX_CHECKPOINT_SANDBOXES: usize = 128;
 /// Most bytes retained in a checkpoint metadata word or idempotency key.
 pub const MAX_CHECKPOINT_WORD_BYTES: usize = 256;
 /// Most bytes retained in a human question or answer.
@@ -1202,6 +1204,7 @@ pub struct ResumeEvidence {
     pricing_version: Option<Box<str>>,
     cache_scope: Option<PromptCacheScopeDigest>,
     cache_prefix: Option<PromptCacheFingerprint>,
+    sandboxes: Vec<SandboxCheckpoint>,
 }
 
 impl ResumeEvidence {
@@ -1221,6 +1224,7 @@ impl ResumeEvidence {
             pricing_version: pricing_version.map(Into::into),
             cache_scope: None,
             cache_prefix: None,
+            sandboxes: Vec::new(),
         }
     }
 
@@ -1237,6 +1241,25 @@ impl ResumeEvidence {
         self.cache_prefix = Some(prefix);
         self
     }
+
+    /// Supplies a freshly probed effective sandbox/backend identity.
+    ///
+    /// Evidence may include multiple independently selected sandboxes; every
+    /// checkpointed lifecycle must find one exact, non-weaker match.
+    ///
+    /// # Errors
+    ///
+    /// The fixed evidence collection is already full.
+    pub fn with_sandbox(mut self, sandbox: SandboxCheckpoint) -> Result<Self, InterruptionError> {
+        if self.sandboxes.len() >= MAX_CHECKPOINT_SANDBOXES {
+            return Err(InterruptionError::TooMany {
+                kind: "sandbox evidence",
+                maximum: MAX_CHECKPOINT_SANDBOXES,
+            });
+        }
+        self.sandboxes.push(sandbox);
+        Ok(self)
+    }
 }
 
 /// One distinct in-flight execution checkpoint.
@@ -1250,6 +1273,7 @@ pub struct ExecutionCheckpoint {
     expires_at: u64,
     pending: PendingActions,
     invocations: Vec<InvocationRecord>,
+    sandboxes: Vec<SandboxCheckpoint>,
 }
 
 impl ExecutionCheckpoint {
@@ -1282,6 +1306,7 @@ impl ExecutionCheckpoint {
             expires_at,
             pending: PendingActions::new(),
             invocations: Vec::new(),
+            sandboxes: Vec::new(),
         })
     }
 
@@ -1337,6 +1362,31 @@ impl ExecutionCheckpoint {
     #[must_use]
     pub fn invocations(&self) -> &[InvocationRecord] {
         &self.invocations
+    }
+
+    /// Minimal redacted sandbox identities requiring resume revalidation.
+    #[must_use]
+    pub fn sandboxes(&self) -> &[SandboxCheckpoint] {
+        &self.sandboxes
+    }
+
+    /// Adds one bounded sandbox checkpoint identity.
+    ///
+    /// # Errors
+    ///
+    /// Duplicate lifecycle identities and a full checkpoint are refused.
+    pub fn add_sandbox(&mut self, sandbox: SandboxCheckpoint) -> Result<(), InterruptionError> {
+        if self.sandboxes.len() >= MAX_CHECKPOINT_SANDBOXES {
+            return Err(InterruptionError::TooMany {
+                kind: "sandbox",
+                maximum: MAX_CHECKPOINT_SANDBOXES,
+            });
+        }
+        if self.sandboxes.iter().any(|held| held.id() == sandbox.id()) {
+            return Err(InterruptionError::InvalidId);
+        }
+        self.sandboxes.push(sandbox);
+        Ok(())
     }
 
     /// Adds one bounded invocation record.
@@ -1413,6 +1463,14 @@ impl ExecutionCheckpoint {
             return Err(InterruptionError::Expired);
         }
         if evidence.scope != self.scope {
+            return Err(InterruptionError::ResumeMismatch);
+        }
+        if self.sandboxes.iter().any(|saved| {
+            !evidence
+                .sandboxes
+                .iter()
+                .any(|live| saved.is_compatible_with(live))
+        }) {
             return Err(InterruptionError::ResumeMismatch);
         }
         let recovery = match &self.cache {

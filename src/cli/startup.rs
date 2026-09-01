@@ -26,8 +26,8 @@ use crucible_runner::{
     AgentSpec, Bounds, Compaction, ContextInputs, Model, RunPolicy, Runner, Session, Tools,
 };
 use crucible_tools::{
-    AskUser, Background, Bash, Edit, Glob, Grep, Held, Ledger, Plan, Read, TodoWrite, ToolSearch,
-    WebFetch, WebSearch, Write,
+    AskUser, Background, Bash, Edit, Glob, Grep, Held, Ledger, LocalSandbox, Plan, Read, TodoWrite,
+    ToolSearch, WebFetch, WebSearch, Write,
 };
 
 use super::seen::Putting;
@@ -712,6 +712,7 @@ fn tools(
     // stop one — and what makes the caller's copy the thing that ends them all.
     tools.add_builtin(
         Bash::new(workspace.clone())
+            .sandboxing(Arc::new(LocalSandbox::new()), settings.sandbox_mode())
             .exporting(settings.env())
             .leaving(leaving.clone()),
     )?;

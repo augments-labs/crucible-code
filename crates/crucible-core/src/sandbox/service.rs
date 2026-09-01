@@ -7,14 +7,19 @@ use std::process::ExitStatus;
 use std::time::Duration;
 
 use crate::{Ancestry, SandboxId, ToolId};
+use sha2::{Digest as _, Sha256};
 
+use super::audit::SandboxAudit;
 use super::capability::{
     MAX_SANDBOX_BACKEND_WORD_BYTES, SandboxBackendIdentity, SandboxCapabilities, SandboxCapability,
     SandboxFeature,
 };
 use super::guardrail::SandboxCommandStage;
 use super::manifest::SandboxManifest;
-use super::policy::{SandboxMode, SandboxNetworkPolicy, SandboxPolicy};
+use super::policy::{
+    SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxMode, SandboxNetworkPolicy,
+    SandboxPolicy, SandboxResourceLimits,
+};
 
 /// Maximum environment entries given to one command.
 pub const MAX_SANDBOX_ENVIRONMENT_ENTRIES: usize = 128;
@@ -253,25 +258,35 @@ pub struct SandboxRequest {
     call: ToolId,
     policy: SandboxPolicy,
     manifest: SandboxManifest,
+    audit: SandboxAudit,
 }
 
 impl SandboxRequest {
     /// Creates a request. This performs no backend or filesystem side effect.
     #[must_use]
-    pub const fn new(
+    pub fn new(
         id: SandboxId,
         ancestry: Ancestry,
         call: ToolId,
         policy: SandboxPolicy,
         manifest: SandboxManifest,
     ) -> Self {
+        let audit = SandboxAudit::new(ancestry, call.clone());
         Self {
             id,
             ancestry,
             call,
             policy,
             manifest,
+            audit,
         }
+    }
+
+    /// Uses the host-created fixed-attribution audit collector for this call.
+    #[must_use]
+    pub fn with_audit(mut self, audit: SandboxAudit) -> Self {
+        self.audit = audit;
+        self
     }
 
     /// Stable lifecycle identity.
@@ -302,6 +317,12 @@ impl SandboxRequest {
     #[must_use]
     pub const fn manifest(&self) -> &SandboxManifest {
         &self.manifest
+    }
+
+    /// Bounded lifecycle fact collector.
+    #[must_use]
+    pub const fn audit(&self) -> &SandboxAudit {
+        &self.audit
     }
 
     /// Verifies exact support before a service may materialize or spawn.
@@ -377,6 +398,225 @@ fn required_features(policy: &SandboxPolicy, manifest: &SandboxManifest) -> Vec<
     features
 }
 
+/// One redacted effective filesystem reach in an inspection report.
+#[derive(Clone, PartialEq, Eq)]
+pub struct SandboxRootInspection {
+    identity: [u8; 32],
+    access: SandboxFilesystemAccess,
+    provenance: SandboxFilesystemProvenance,
+}
+
+impl SandboxRootInspection {
+    /// Domain-separated identity of the canonical path, never the path itself.
+    #[must_use]
+    pub const fn identity(&self) -> [u8; 32] {
+        self.identity
+    }
+
+    /// Effective access granted at this reach.
+    #[must_use]
+    pub const fn access(&self) -> SandboxFilesystemAccess {
+        self.access
+    }
+
+    /// Authority source for the reach.
+    #[must_use]
+    pub const fn provenance(&self) -> SandboxFilesystemProvenance {
+        self.provenance
+    }
+}
+
+impl std::fmt::Debug for SandboxRootInspection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SandboxRootInspection")
+            .field("identity", &"[sha256]")
+            .field("access", &self.access)
+            .field("provenance", &self.provenance)
+            .finish()
+    }
+}
+
+/// Redacted network shape from the immutable effective plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SandboxNetworkInspection {
+    /// No network reach.
+    Closed,
+    /// Exact endpoint policy; endpoint spellings remain behind a digest.
+    Exact {
+        /// Number of canonical endpoints.
+        endpoints: usize,
+        /// Whether DNS was requested through the enforcing mechanism.
+        dns: bool,
+        /// Whether bounded forwarding was requested.
+        forwarding: bool,
+    },
+}
+
+impl SandboxNetworkInspection {
+    /// Stable network-state spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Closed => "closed",
+            Self::Exact { .. } => "exact",
+        }
+    }
+
+    /// Number of exact endpoint grants.
+    #[must_use]
+    pub const fn endpoints(self) -> usize {
+        match self {
+            Self::Closed => 0,
+            Self::Exact { endpoints, .. } => endpoints,
+        }
+    }
+
+    /// Whether DNS was requested.
+    #[must_use]
+    pub const fn dns(self) -> bool {
+        match self {
+            Self::Closed => false,
+            Self::Exact { dns, .. } => dns,
+        }
+    }
+
+    /// Whether forwarding was requested.
+    #[must_use]
+    pub const fn forwarding(self) -> bool {
+        match self {
+            Self::Closed => false,
+            Self::Exact { forwarding, .. } => forwarding,
+        }
+    }
+}
+
+/// Bounded redacted summary of the immutable effective policy and manifest.
+#[derive(Clone, PartialEq, Eq)]
+pub struct SandboxPlanInspection {
+    mode: SandboxMode,
+    roots: Box<[SandboxRootInspection]>,
+    working_directory: [u8; 32],
+    network: SandboxNetworkInspection,
+    limits: SandboxResourceLimits,
+    command_policy: [u8; 32],
+    persistent: bool,
+    snapshots: bool,
+    manifest_entries: usize,
+}
+
+impl SandboxPlanInspection {
+    fn new(policy: &SandboxPolicy, manifest: &SandboxManifest) -> Self {
+        let roots = policy
+            .filesystem()
+            .iter()
+            .map(|rule| SandboxRootInspection {
+                identity: path_identity(b"root", rule.path()),
+                access: rule.access(),
+                provenance: rule.provenance(),
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+        let network = match policy.network() {
+            SandboxNetworkPolicy::Closed => SandboxNetworkInspection::Closed,
+            SandboxNetworkPolicy::Exact { .. } => SandboxNetworkInspection::Exact {
+                endpoints: policy.network().endpoints().len(),
+                dns: policy.network().dns(),
+                forwarding: policy.network().forwarding(),
+            },
+        };
+        Self {
+            mode: policy.mode(),
+            roots,
+            working_directory: path_identity(b"working-directory", policy.working_directory()),
+            network,
+            limits: policy.limits(),
+            command_policy: policy.commands().digest(),
+            persistent: policy.persistent(),
+            snapshots: policy.snapshots(),
+            manifest_entries: manifest.entries().len(),
+        }
+    }
+
+    /// Required/degraded/off effective selection.
+    #[must_use]
+    pub const fn mode(&self) -> SandboxMode {
+        self.mode
+    }
+
+    /// Canonical reaches, represented only by domain-separated identities.
+    #[must_use]
+    pub fn roots(&self) -> &[SandboxRootInspection] {
+        &self.roots
+    }
+
+    /// Domain-separated identity of the effective working directory.
+    #[must_use]
+    pub const fn working_directory(&self) -> [u8; 32] {
+        self.working_directory
+    }
+
+    /// Effective redacted network shape.
+    #[must_use]
+    pub const fn network(&self) -> SandboxNetworkInspection {
+        self.network
+    }
+
+    /// Effective hard/observed ceiling requests.
+    #[must_use]
+    pub const fn limits(&self) -> SandboxResourceLimits {
+        self.limits
+    }
+
+    /// Domain-separated command-filter identity.
+    #[must_use]
+    pub const fn command_policy(&self) -> [u8; 32] {
+        self.command_policy
+    }
+
+    /// Whether persistent session state was requested.
+    #[must_use]
+    pub const fn persistent(&self) -> bool {
+        self.persistent
+    }
+
+    /// Whether snapshots were requested.
+    #[must_use]
+    pub const fn snapshots(&self) -> bool {
+        self.snapshots
+    }
+
+    /// Bounded manifest entry count.
+    #[must_use]
+    pub const fn manifest_entries(&self) -> usize {
+        self.manifest_entries
+    }
+}
+
+impl std::fmt::Debug for SandboxPlanInspection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SandboxPlanInspection")
+            .field("mode", &self.mode)
+            .field("roots", &self.roots)
+            .field("working_directory", &"[sha256]")
+            .field("network", &self.network)
+            .field("limits", &self.limits)
+            .field("command_policy", &"[sha256]")
+            .field("persistent", &self.persistent)
+            .field("snapshots", &self.snapshots)
+            .field("manifest_entries", &self.manifest_entries)
+            .finish()
+    }
+}
+
+fn path_identity(label: &[u8], path: &Path) -> [u8; 32] {
+    let mut digest = Sha256::new();
+    digest.update(b"crucible-sandbox-inspection-path-v1\0");
+    digest.update(label);
+    digest.update([0]);
+    digest.update(path.as_os_str().as_encoded_bytes());
+    digest.finalize().into()
+}
+
 /// Cleanup state retained without backend error text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SandboxCleanup {
@@ -394,6 +634,7 @@ pub struct SandboxInspection {
     id: SandboxId,
     backend: SandboxBackendIdentity,
     capabilities: SandboxCapabilities,
+    plan: SandboxPlanInspection,
     policy_digest: [u8; 32],
     manifest_digest: [u8; 32],
     confined: bool,
@@ -413,8 +654,8 @@ impl SandboxInspection {
         id: SandboxId,
         backend: SandboxBackendIdentity,
         capabilities: SandboxCapabilities,
-        policy_digest: [u8; 32],
-        manifest_digest: [u8; 32],
+        policy: &SandboxPolicy,
+        manifest: &SandboxManifest,
         confined: bool,
         degradation: Option<impl Into<Box<str>>>,
         cleanup: SandboxCleanup,
@@ -426,9 +667,13 @@ impl SandboxInspection {
         {
             return Err(SandboxError::InvalidInspection);
         }
+        let network = match policy.network() {
+            SandboxNetworkPolicy::Closed => SandboxFeature::NetworkDeny,
+            SandboxNetworkPolicy::Exact { .. } => SandboxFeature::NetworkAllowlist,
+        };
         let essential = [
             SandboxFeature::Filesystem,
-            SandboxFeature::NetworkDeny,
+            network,
             SandboxFeature::DescriptorIsolation,
             SandboxFeature::ProcessIsolation,
             SandboxFeature::KernelSurface,
@@ -445,8 +690,9 @@ impl SandboxInspection {
             id,
             backend,
             capabilities,
-            policy_digest,
-            manifest_digest,
+            plan: SandboxPlanInspection::new(policy, manifest),
+            policy_digest: policy.digest(),
+            manifest_digest: manifest.digest(),
             confined,
             degradation,
             cleanup,
@@ -469,6 +715,12 @@ impl SandboxInspection {
     #[must_use]
     pub const fn capabilities(&self) -> &SandboxCapabilities {
         &self.capabilities
+    }
+
+    /// Bounded redacted effective plan.
+    #[must_use]
+    pub const fn plan(&self) -> &SandboxPlanInspection {
+        &self.plan
     }
 
     /// Effective policy identity.
@@ -506,6 +758,168 @@ impl SandboxInspection {
     pub const fn cleaned(mut self, cleanup: SandboxCleanup) -> Self {
         self.cleanup = cleanup;
         self
+    }
+}
+
+/// Minimal redacted sandbox identity retained by an execution checkpoint.
+#[derive(Clone, PartialEq, Eq)]
+pub struct SandboxCheckpoint {
+    id: SandboxId,
+    backend: SandboxBackendIdentity,
+    capabilities: SandboxCapabilities,
+    mode: SandboxMode,
+    network: SandboxNetworkInspection,
+    policy_digest: [u8; 32],
+    manifest_digest: [u8; 32],
+    confined: bool,
+}
+
+impl SandboxCheckpoint {
+    /// Captures only bounded identity needed for resume revalidation.
+    #[must_use]
+    pub fn from_inspection(inspection: &SandboxInspection) -> Self {
+        Self {
+            id: inspection.id,
+            backend: inspection.backend.clone(),
+            capabilities: inspection.capabilities.clone(),
+            mode: inspection.plan.mode,
+            network: inspection.plan.network,
+            policy_digest: inspection.policy_digest,
+            manifest_digest: inspection.manifest_digest,
+            confined: inspection.confined,
+        }
+    }
+
+    /// Restores one typed checkpoint record from protected persistence.
+    ///
+    /// # Errors
+    ///
+    /// A record that calls itself confined without its exact essential network
+    /// and kernel capabilities is refused.
+    #[allow(clippy::too_many_arguments)]
+    pub fn restore(
+        id: SandboxId,
+        backend: SandboxBackendIdentity,
+        capabilities: SandboxCapabilities,
+        mode: SandboxMode,
+        network: SandboxNetworkInspection,
+        policy_digest: [u8; 32],
+        manifest_digest: [u8; 32],
+        confined: bool,
+    ) -> Result<Self, SandboxError> {
+        if matches!(
+            network,
+            SandboxNetworkInspection::Exact { endpoints: 0, .. }
+        ) || network.endpoints() > super::policy::MAX_SANDBOX_NETWORK_ENDPOINTS
+        {
+            return Err(SandboxError::InvalidInspection);
+        }
+        let network_feature = match network {
+            SandboxNetworkInspection::Closed => SandboxFeature::NetworkDeny,
+            SandboxNetworkInspection::Exact { .. } => SandboxFeature::NetworkAllowlist,
+        };
+        if confined
+            && [
+                SandboxFeature::Filesystem,
+                network_feature,
+                SandboxFeature::DescriptorIsolation,
+                SandboxFeature::ProcessIsolation,
+                SandboxFeature::KernelSurface,
+                SandboxFeature::PrivilegeIsolation,
+            ]
+            .into_iter()
+            .any(|feature| capabilities.claim(feature) != SandboxCapability::Enforced)
+        {
+            return Err(SandboxError::InvalidInspection);
+        }
+        Ok(Self {
+            id,
+            backend,
+            capabilities,
+            mode,
+            network,
+            policy_digest,
+            manifest_digest,
+            confined,
+        })
+    }
+
+    /// Original lifecycle identity.
+    #[must_use]
+    pub const fn id(&self) -> SandboxId {
+        self.id
+    }
+
+    /// Exact backend identity used before interruption.
+    #[must_use]
+    pub const fn backend(&self) -> &SandboxBackendIdentity {
+        &self.backend
+    }
+
+    /// Exact capability snapshot used before interruption.
+    #[must_use]
+    pub const fn capabilities(&self) -> &SandboxCapabilities {
+        &self.capabilities
+    }
+
+    /// Effective mode before interruption.
+    #[must_use]
+    pub const fn mode(&self) -> SandboxMode {
+        self.mode
+    }
+
+    /// Effective redacted network shape before interruption.
+    #[must_use]
+    pub const fn network(&self) -> SandboxNetworkInspection {
+        self.network
+    }
+
+    /// Effective policy identity before interruption.
+    #[must_use]
+    pub const fn policy_digest(&self) -> [u8; 32] {
+        self.policy_digest
+    }
+
+    /// Materialization identity before interruption.
+    #[must_use]
+    pub const fn manifest_digest(&self) -> [u8; 32] {
+        self.manifest_digest
+    }
+
+    /// Whether the prior backend was an enforcing kernel boundary.
+    #[must_use]
+    pub const fn confined(&self) -> bool {
+        self.confined
+    }
+
+    /// Whether fresh evidence preserves the exact backend/plan and every
+    /// earlier capability claim.
+    #[must_use]
+    pub fn is_compatible_with(&self, live: &Self) -> bool {
+        self.backend == live.backend
+            && self.mode == live.mode
+            && self.network == live.network
+            && self.policy_digest == live.policy_digest
+            && self.manifest_digest == live.manifest_digest
+            && self.confined == live.confined
+            && SandboxFeature::ALL
+                .into_iter()
+                .all(|feature| live.capabilities.claim(feature) >= self.capabilities.claim(feature))
+    }
+}
+
+impl std::fmt::Debug for SandboxCheckpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SandboxCheckpoint")
+            .field("id", &self.id)
+            .field("backend", &self.backend)
+            .field("capabilities", &self.capabilities)
+            .field("mode", &self.mode)
+            .field("network", &self.network)
+            .field("policy_digest", &"[sha256]")
+            .field("manifest_digest", &"[sha256]")
+            .field("confined", &self.confined)
+            .finish()
     }
 }
 
@@ -654,6 +1068,9 @@ impl std::fmt::Debug for dyn SandboxProcess {
 /// Why sandbox preparation, launch, or lifecycle failed.
 #[derive(Debug, thiserror::Error)]
 pub enum SandboxError {
+    /// A capability-claimed audit fact could not be retained.
+    #[error(transparent)]
+    Audit(#[from] super::audit::SandboxAuditError),
     /// A required hard feature is unavailable.
     #[error("sandbox backend cannot enforce required feature {feature:?}")]
     Unsupported {
@@ -696,6 +1113,28 @@ pub enum SandboxError {
     /// A running process could not be controlled or reaped.
     #[error("sandbox lifecycle failed")]
     Lifecycle(#[source] io::Error),
+}
+
+impl SandboxError {
+    /// Stable redacted category suitable for audit and diagnostics.
+    #[must_use]
+    pub const fn failure_kind(&self) -> super::audit::SandboxFailureKind {
+        use super::audit::SandboxFailureKind;
+
+        match self {
+            Self::Unsupported { .. } => SandboxFailureKind::Unsupported,
+            Self::BackendUnavailable { .. } => SandboxFailureKind::BackendUnavailable,
+            Self::InvalidCommand | Self::InvalidEnvironment | Self::InvalidInspection => {
+                SandboxFailureKind::InvalidInput
+            }
+            Self::Guardrail => SandboxFailureKind::Guardrail,
+            Self::Concurrency => SandboxFailureKind::Concurrency,
+            Self::Materialization { .. } => SandboxFailureKind::Materialization,
+            Self::Spawn(_) => SandboxFailureKind::Spawn,
+            Self::Lifecycle(_) => SandboxFailureKind::Lifecycle,
+            Self::Audit(_) => SandboxFailureKind::Audit,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -749,19 +1188,80 @@ mod tests {
             None,
         )
         .expect("identity");
+        let policy = policy();
+        let manifest = SandboxManifest::empty();
         assert!(
             SandboxInspection::new(
                 SandboxId::new(),
                 identity,
                 SandboxCapabilities::none(),
-                [0; 32],
-                [0; 32],
+                &policy,
+                &manifest,
                 true,
                 None::<Box<str>>,
                 SandboxCleanup::Pending,
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn confined_inspection_reports_the_exact_network_feature_and_redacts_reach() {
+        let network = SandboxNetworkPolicy::exact(
+            [crate::SandboxNetworkEndpoint::new("private.example", 443).unwrap()],
+            true,
+            false,
+        )
+        .unwrap();
+        let policy = SandboxPolicy::new(
+            SandboxMode::Required,
+            [SandboxFilesystemRule::new(
+                "/secret-workspace",
+                SandboxFilesystemAccess::ReadWrite,
+                SandboxFilesystemProvenance::Workspace,
+            )
+            .unwrap()],
+            "/secret-workspace",
+            network,
+            SandboxResourceLimits::default(),
+        )
+        .unwrap();
+        let capabilities = [
+            SandboxFeature::Filesystem,
+            SandboxFeature::NetworkAllowlist,
+            SandboxFeature::DescriptorIsolation,
+            SandboxFeature::ProcessIsolation,
+            SandboxFeature::KernelSurface,
+            SandboxFeature::PrivilegeIsolation,
+        ]
+        .into_iter()
+        .fold(SandboxCapabilities::none(), |claims, feature| {
+            claims.with(feature, SandboxCapability::Enforced)
+        });
+        let identity = SandboxBackendIdentity::new(
+            SandboxBackendId::new("exact-proxy").unwrap(),
+            "1",
+            SandboxBackendProvenance::Remote,
+            None,
+        )
+        .unwrap();
+        let inspection = SandboxInspection::new(
+            SandboxId::new(),
+            identity,
+            capabilities,
+            &policy,
+            &SandboxManifest::empty(),
+            true,
+            None::<Box<str>>,
+            SandboxCleanup::Pending,
+        )
+        .expect("exact network capability is sufficient");
+
+        assert_eq!(inspection.plan().network().endpoints(), 1);
+        assert!(inspection.plan().network().dns());
+        let shown = format!("{inspection:?}");
+        assert!(!shown.contains("secret-workspace"), "{shown}");
+        assert!(!shown.contains("private.example"), "{shown}");
     }
 
     #[test]

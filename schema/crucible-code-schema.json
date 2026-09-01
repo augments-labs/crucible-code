@@ -456,6 +456,29 @@
       },
       "type": "object"
     },
+    "sandbox": {
+      "additionalProperties": false,
+      "description": "Operating-system confinement for commands and descendant processes",
+      "properties": {
+        "$comment": {
+          "type": "string"
+        },
+        "$schema": {
+          "type": "string"
+        },
+        "mode": {
+          "default": "required",
+          "description": "Whether commands require verified kernel confinement, may use an explicit compatibility fallback, or run unconfined; only user configuration may weaken required",
+          "enum": [
+            "required",
+            "degraded",
+            "off"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "systemPrompt": {
       "additionalProperties": false,
       "description": "What the model is asked under: how much it explains, and anything you would rather it were told instead",

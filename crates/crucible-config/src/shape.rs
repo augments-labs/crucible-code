@@ -441,6 +441,21 @@ const UPDATES: &[Field] = &[Field {
 /// shows is what you would type here.
 pub(crate) const MODE: &[&str] = &["ask", "allowEdits", "fullAccess"];
 
+/// Every answer `sandbox.mode` accepts, strongest first.
+pub(crate) const SANDBOX_MODE: &[&str] = &["required", "degraded", "off"];
+
+/// Operating-system confinement policy.
+const SANDBOX: &[Field] = &[Field {
+    name: "mode",
+    about: "Whether commands require verified kernel confinement, may use an explicit compatibility fallback, or run unconfined; only user configuration may weaken required",
+    shape: Shape::Choice(SANDBOX_MODE),
+    examples: &[],
+    usual: Some("required"),
+    // Semantic parsing permits a project to state `required` while refusing
+    // only the weakening values, which this key-wide flag cannot express.
+    widens: false,
+}];
+
 /// Every answer `compaction.when` accepts.
 pub(crate) const COMPACTION_WHEN: &[&str] = &["full", "never"];
 
@@ -760,6 +775,14 @@ pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
         name: "permissions",
         about: "What runs without being put to you, what is refused outright, and where tools may reach",
         shape: Shape::Fields(PERMISSIONS),
+        examples: &[],
+        usual: None,
+        widens: false,
+    },
+    Field {
+        name: "sandbox",
+        about: "Operating-system confinement for commands and descendant processes",
+        shape: Shape::Fields(SANDBOX),
         examples: &[],
         usual: None,
         widens: false,

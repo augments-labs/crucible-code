@@ -13,9 +13,10 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
 use crucible_core::{
-    SandboxBackendIdentity, SandboxCapabilities, SandboxCommand, SandboxCommandStage, SandboxError,
-    SandboxFilesystemAccess, SandboxGuardrailDecision, SandboxInspection, SandboxProcess,
-    SandboxRequest, SandboxSession,
+    SandboxBackendIdentity, SandboxCapabilities, SandboxCleanup, SandboxCommand,
+    SandboxCommandStage, SandboxError, SandboxFactKind, SandboxFailureKind, SandboxFailurePhase,
+    SandboxFilesystemAccess, SandboxGuardrailDecision, SandboxInspection, SandboxLifecycle,
+    SandboxProcess, SandboxRequest, SandboxSession,
 };
 
 use super::process::{MAX_LOCAL_COMMANDS, Reservation};
@@ -53,11 +54,19 @@ pub(super) fn prepare(
         request.id(),
         backend.identity().clone(),
         backend.capabilities().clone(),
-        request.policy().digest(),
-        request.manifest().digest(),
+        request.policy(),
+        request.manifest(),
         true,
         None::<Box<str>>,
         crucible_core::SandboxCleanup::Pending,
+    )?;
+    request.audit().record(
+        request.id(),
+        SandboxFactKind::Negotiated(inspection.clone()),
+    )?;
+    request.audit().record(
+        request.id(),
+        SandboxFactKind::Lifecycle(SandboxLifecycle::Prepared),
     )?;
 
     Ok(Box::new(LinuxSession {
@@ -68,6 +77,7 @@ pub(super) fn prepare(
         view,
         materialization: None,
         materialized: false,
+        transferred: false,
     }))
 }
 
@@ -79,6 +89,7 @@ struct LinuxSession {
     view: command::View,
     materialization: Option<materialize::Materialization>,
     materialized: bool,
+    transferred: bool,
 }
 
 impl SandboxSession for LinuxSession {
@@ -90,8 +101,24 @@ impl SandboxSession for LinuxSession {
         if self.materialized {
             return Ok(());
         }
-        self.materialization = materialize::commit(&self.request)?;
+        self.materialization = match materialize::commit(&self.request) {
+            Ok(materialization) => materialization,
+            Err(problem) => {
+                self.request.audit().record(
+                    self.request.id(),
+                    SandboxFactKind::Failed {
+                        phase: SandboxFailurePhase::Materialize,
+                        kind: problem.failure_kind(),
+                    },
+                )?;
+                return Err(problem);
+            }
+        };
         self.materialized = true;
+        self.request.audit().record(
+            self.request.id(),
+            SandboxFactKind::Lifecycle(SandboxLifecycle::Materialized),
+        )?;
         Ok(())
     }
 
@@ -100,28 +127,59 @@ impl SandboxSession for LinuxSession {
         command: SandboxCommand,
     ) -> Result<Box<dyn SandboxProcess>, SandboxError> {
         if !self.materialized {
+            self.request.audit().record(
+                self.request.id(),
+                SandboxFactKind::Failed {
+                    phase: SandboxFailurePhase::Start,
+                    kind: SandboxFailureKind::Materialization,
+                },
+            )?;
             return Err(SandboxError::Materialization {
                 problem: "session was not materialized before start".into(),
                 source: None,
             });
         }
-        if self
-            .request
-            .policy()
-            .commands()
-            .evaluate(&command, SandboxCommandStage::Requested)
-            != SandboxGuardrailDecision::Allowed
-        {
-            return Err(SandboxError::Guardrail);
+        for stage in [
+            SandboxCommandStage::Requested,
+            SandboxCommandStage::Effective,
+        ] {
+            let decision = self.request.policy().commands().evaluate(&command, stage);
+            self.request.audit().record(
+                self.request.id(),
+                SandboxFactKind::Guardrail { stage, decision },
+            )?;
+            if decision != SandboxGuardrailDecision::Allowed {
+                self.request.audit().record(
+                    self.request.id(),
+                    SandboxFactKind::Failed {
+                        phase: SandboxFailurePhase::Start,
+                        kind: SandboxFailureKind::Guardrail,
+                    },
+                )?;
+                return Err(SandboxError::Guardrail);
+            }
         }
-        let process = command::build(
+        let process = match command::build(
             &self.backend,
             &self.request,
             &command,
             &self.view,
             self.materialization.as_ref(),
-        )?;
-        let reservation = self.reservation.take().ok_or(SandboxError::Concurrency)?;
+        ) {
+            Ok(process) => process,
+            Err(problem) => {
+                self.record_start_failure(&problem)?;
+                return Err(problem);
+            }
+        };
+        let reservation = match self.reservation.take() {
+            Some(reservation) => reservation,
+            None => {
+                let problem = SandboxError::Concurrency;
+                self.record_start_failure(&problem)?;
+                return Err(problem);
+            }
+        };
         let mut mount_sources = self.view.sources();
         let (stage, materialization_sources) = self
             .materialization
@@ -137,9 +195,44 @@ impl SandboxSession for LinuxSession {
             reservation,
             stage,
             self.request.policy().limits(),
+            self.request.audit().clone(),
+            self.request.id(),
         );
         drop(mount_sources);
-        spawned
+        match spawned {
+            Ok(process) => {
+                self.transferred = true;
+                Ok(process)
+            }
+            Err(problem) => {
+                self.record_start_failure(&problem)?;
+                Err(problem)
+            }
+        }
+    }
+}
+
+impl LinuxSession {
+    fn record_start_failure(&self, problem: &SandboxError) -> Result<(), SandboxError> {
+        self.request.audit().record(
+            self.request.id(),
+            SandboxFactKind::Failed {
+                phase: SandboxFailurePhase::Start,
+                kind: problem.failure_kind(),
+            },
+        )?;
+        Ok(())
+    }
+}
+
+impl Drop for LinuxSession {
+    fn drop(&mut self) {
+        if !self.transferred {
+            let _ = self.request.audit().record(
+                self.request.id(),
+                SandboxFactKind::Cleanup(SandboxCleanup::Complete),
+            );
+        }
     }
 }
 

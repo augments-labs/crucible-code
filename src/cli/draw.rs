@@ -133,6 +133,7 @@ pub(crate) fn event<T: Terminal>(
         // column of stale state in front of the answer.
         Event::Spent { .. }
         | Event::PromptCache { .. }
+        | Event::Sandbox { .. }
         | Event::Retrying
         | Event::Carried { .. }
         | Event::Compacting { .. } => Ok(()),

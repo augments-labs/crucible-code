@@ -4,9 +4,13 @@ use std::fs;
 
 use crucible_core::{
     Ancestry, CheckpointId, CheckpointStore, ExecutionCheckpoint, InvocationRecord, Message,
-    PendingAction, PendingApproval, PendingExternalTool, RecoveryAction, ResumeDigest, ResumeScope,
-    RunHistory, RunItem, StopReason, TOOL_ARGUMENT_BYTES, ToolArgs, ToolCall, ToolEffect, ToolId,
-    ToolOutcome, ToolOutput, ToolResult,
+    PendingAction, PendingApproval, PendingExternalTool, RecoveryAction, ResumeDigest,
+    ResumeEvidence, ResumeScope, RunHistory, RunItem, SandboxBackendId, SandboxBackendIdentity,
+    SandboxBackendProvenance, SandboxCapabilities, SandboxCapability, SandboxCheckpoint,
+    SandboxCleanup, SandboxFeature, SandboxFilesystemAccess, SandboxFilesystemProvenance,
+    SandboxFilesystemRule, SandboxId, SandboxInspection, SandboxManifest, SandboxMode,
+    SandboxNetworkPolicy, SandboxPolicy, SandboxResourceLimits, StopReason, TOOL_ARGUMENT_BYTES,
+    ToolArgs, ToolCall, ToolEffect, ToolId, ToolOutcome, ToolOutput, ToolResult,
 };
 use crucible_session::{CHECKPOINT_FORMAT, CheckpointError, FileCheckpointStore};
 
@@ -33,6 +37,54 @@ fn call(id: &str) -> ToolCall {
         name: "write".into(),
         args: ToolArgs::new(r#"{"path":"notes.txt"}"#),
     }
+}
+
+fn sandbox_checkpoint() -> SandboxCheckpoint {
+    let policy = SandboxPolicy::new(
+        SandboxMode::Required,
+        [SandboxFilesystemRule::new(
+            "/workspace",
+            SandboxFilesystemAccess::ReadWrite,
+            SandboxFilesystemProvenance::Workspace,
+        )
+        .unwrap()],
+        "/workspace",
+        SandboxNetworkPolicy::Closed,
+        SandboxResourceLimits::default(),
+    )
+    .unwrap();
+    let capabilities = [
+        SandboxFeature::Filesystem,
+        SandboxFeature::NetworkDeny,
+        SandboxFeature::DescriptorIsolation,
+        SandboxFeature::ProcessIsolation,
+        SandboxFeature::KernelSurface,
+        SandboxFeature::PrivilegeIsolation,
+        SandboxFeature::Audit,
+    ]
+    .into_iter()
+    .fold(SandboxCapabilities::none(), |claims, feature| {
+        claims.with(feature, SandboxCapability::Enforced)
+    });
+    SandboxCheckpoint::from_inspection(
+        &SandboxInspection::new(
+            SandboxId::new(),
+            SandboxBackendIdentity::new(
+                SandboxBackendId::new("checkpoint-backend").unwrap(),
+                "1.0",
+                SandboxBackendProvenance::System,
+                Some([0x44; 32]),
+            )
+            .unwrap(),
+            capabilities,
+            &policy,
+            &SandboxManifest::empty(),
+            true,
+            None::<Box<str>>,
+            SandboxCleanup::Pending,
+        )
+        .unwrap(),
+    )
 }
 
 #[test]
@@ -105,6 +157,74 @@ fn pending_actions_and_finished_invocations_round_trip_in_their_own_versioned_fi
             0o600
         );
     }
+
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn sandbox_identity_round_trips_and_resume_refuses_a_weaker_live_backend() {
+    let directory = directory("sandbox-resume");
+    let mut store = FileCheckpointStore::in_directory(&directory);
+    let id = CheckpointId::new();
+    let saved = sandbox_checkpoint();
+    let mut checkpoint =
+        ExecutionCheckpoint::new(id, Ancestry::new(), scope(), None, 1_000, 9_000).unwrap();
+    checkpoint.add_sandbox(saved.clone()).unwrap();
+    store.save(&checkpoint).unwrap();
+
+    let loaded = store.load(id).unwrap().unwrap();
+    assert_eq!(loaded.sandboxes(), [saved.clone()]);
+    let matching = ResumeEvidence::new(scope(), "policy", "capability", None::<Box<str>>)
+        .with_sandbox(saved.clone())
+        .unwrap();
+    assert!(loaded.validate_resume(&matching, 2_000).is_ok());
+
+    let weaker = SandboxCheckpoint::restore(
+        SandboxId::new(),
+        saved.backend().clone(),
+        saved
+            .capabilities()
+            .clone()
+            .with(SandboxFeature::Audit, SandboxCapability::Observed),
+        saved.mode(),
+        saved.network(),
+        saved.policy_digest(),
+        saved.manifest_digest(),
+        saved.confined(),
+    )
+    .unwrap();
+    let weaker = ResumeEvidence::new(scope(), "policy", "capability", None::<Box<str>>)
+        .with_sandbox(weaker)
+        .unwrap();
+    assert!(matches!(
+        loaded.validate_resume(&weaker, 2_000),
+        Err(crucible_core::InterruptionError::ResumeMismatch)
+    ));
+
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn format_one_checkpoints_remain_readable_without_inventing_sandbox_identity() {
+    let directory = directory("format-one");
+    let mut store = FileCheckpointStore::in_directory(&directory);
+    let id = CheckpointId::new();
+    let ancestry = Ancestry::new();
+    let checkpoint = ExecutionCheckpoint::new(id, ancestry, scope(), None, 1_000, 9_000).unwrap();
+    store.save(&checkpoint).unwrap();
+
+    let path = directory.join(format!("{id}.checkpoint"));
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let object = document.as_object_mut().expect("checkpoint object");
+    object.insert("format".to_owned(), serde_json::json!(1));
+    object.remove("sandboxes");
+    fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
+
+    let loaded = store.load(id).unwrap().expect("format-one checkpoint");
+    assert_eq!(loaded.id(), id);
+    assert_eq!(loaded.ancestry(), ancestry);
+    assert!(loaded.sandboxes().is_empty());
 
     fs::remove_dir_all(directory).unwrap();
 }

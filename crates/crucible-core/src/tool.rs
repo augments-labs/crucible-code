@@ -406,6 +406,7 @@ pub struct ToolContext<'a> {
     cancel: Cancel,
     deadline: Option<Instant>,
     watch: &'a dyn Watch,
+    sandbox: crate::SandboxAudit,
 }
 
 impl<'a> ToolContext<'a> {
@@ -418,13 +419,42 @@ impl<'a> ToolContext<'a> {
         deadline: Option<Instant>,
         watch: &'a dyn Watch,
     ) -> Self {
+        let sandbox = crate::SandboxAudit::new(ancestry, call.clone());
         Self {
             ancestry,
             call,
             cancel: parent.child_until(deadline),
             deadline,
             watch,
+            sandbox,
         }
+    }
+
+    /// Builds a context around a host-created collector that may outlive a
+    /// panicking tool frame.
+    ///
+    /// # Errors
+    ///
+    /// The collector was created for another ancestry or call.
+    pub fn with_sandbox_audit(
+        ancestry: Ancestry,
+        call: ToolId,
+        parent: &Cancel,
+        deadline: Option<Instant>,
+        watch: &'a dyn Watch,
+        sandbox: crate::SandboxAudit,
+    ) -> Result<Self, crate::SandboxAuditError> {
+        if !sandbox.belongs_to(ancestry, &call) {
+            return Err(crate::SandboxAuditError::AttributionMismatch);
+        }
+        Ok(Self {
+            ancestry,
+            call,
+            cancel: parent.child_until(deadline),
+            deadline,
+            watch,
+            sandbox,
+        })
     }
 
     /// The run this call belongs to.
@@ -467,6 +497,34 @@ impl<'a> ToolContext<'a> {
     /// Reports incremental output under this call's identity.
     pub fn wrote(&self, text: Wrote) {
         self.watch.wrote(text);
+    }
+
+    /// Fixed-attribution collector for host-owned sandbox services.
+    #[must_use]
+    pub fn sandbox_audit(&self) -> crate::SandboxAudit {
+        self.sandbox.clone()
+    }
+
+    /// Facts accumulated by sandbox lifecycles in this call.
+    ///
+    /// # Errors
+    ///
+    /// The bounded collector became unavailable.
+    pub fn sandbox_facts(
+        &self,
+    ) -> Result<Box<[crate::SandboxAuditRecord]>, crate::SandboxAuditError> {
+        self.sandbox.records()
+    }
+
+    /// Takes accumulated sandbox facts exactly once for event/journal delivery.
+    ///
+    /// # Errors
+    ///
+    /// The bounded collector became unavailable.
+    pub fn take_sandbox_facts(
+        &self,
+    ) -> Result<Box<[crate::SandboxAuditRecord]>, crate::SandboxAuditError> {
+        self.sandbox.take_records()
     }
 }
 

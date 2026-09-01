@@ -239,6 +239,7 @@ fn a_call_is_announced_before_it_runs_with_what_it_is_about() {
             Event::ToolRequested { call, summary, .. } => Some((call, summary)),
             Event::TurnStarted { .. }
             | Event::PromptCache { .. }
+            | Event::Sandbox { .. }
             | Event::Delta { .. }
             | Event::ToolFinished { .. }
             | Event::Wrote { .. }
@@ -276,6 +277,7 @@ fn a_call_is_announced_with_its_execution_capabilities() {
         Event::ToolRequested { backgroundable, .. } => Some(backgroundable),
         Event::TurnStarted { .. }
         | Event::PromptCache { .. }
+        | Event::Sandbox { .. }
         | Event::Delta { .. }
         | Event::ToolFinished { .. }
         | Event::Wrote { .. }
@@ -429,6 +431,7 @@ fn a_diff_reaches_the_reader_and_stops_before_the_transcript() {
             Event::ToolFinished { output, .. } => Some(output.diff().map(Diff::added)),
             Event::TurnStarted { .. }
             | Event::PromptCache { .. }
+            | Event::Sandbox { .. }
             | Event::Delta { .. }
             | Event::ToolRequested { .. }
             | Event::Wrote { .. }

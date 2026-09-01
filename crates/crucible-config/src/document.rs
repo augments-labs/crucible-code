@@ -8,6 +8,7 @@ use serde_json::Value;
 use crate::env;
 use crate::error::ConfigError;
 use crate::settings::prompt_cache::{self, PromptCacheLayer};
+use crate::settings::sandbox::{self, SandboxLayer};
 use crate::shape::DOCUMENT;
 
 mod check;
@@ -82,6 +83,8 @@ pub(crate) struct Document {
     rules: Rules,
     /// Typed prompt-cache fields this one layer actually stated.
     prompt_cache: Option<PromptCacheLayer>,
+    /// Typed confinement mode this layer actually stated.
+    sandbox: Option<SandboxLayer>,
 }
 
 impl fmt::Debug for Document {
@@ -97,6 +100,7 @@ impl fmt::Debug for Document {
                 "prompt_cache",
                 &self.prompt_cache.as_ref().map(|_| "[policy]"),
             )
+            .field("sandbox", &self.sandbox)
             .finish()
     }
 }
@@ -132,12 +136,14 @@ impl Document {
         reader.directories(&value)?;
         let rules = rules::read(&reader, &value)?;
         let prompt_cache = prompt_cache::read(&value, file, text, origin)?;
+        let sandbox = sandbox::read(&value, file, text, origin)?;
 
         Ok(Self {
             value,
             origin,
             rules,
             prompt_cache,
+            sandbox,
         })
     }
 
@@ -154,6 +160,11 @@ impl Document {
     /// Prompt-cache fields this layer stated, if it named the block.
     pub(crate) fn prompt_cache(&self) -> Option<&PromptCacheLayer> {
         self.prompt_cache.as_ref()
+    }
+
+    /// Confinement mode this layer stated, if any.
+    pub(crate) const fn sandbox(&self) -> Option<&SandboxLayer> {
+        self.sandbox.as_ref()
     }
 
     /// The rules this file stated, for the layering above to concatenate.

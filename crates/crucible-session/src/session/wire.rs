@@ -89,6 +89,7 @@ pub(crate) fn journal(item: &RunItem) -> Option<String> {
             "ancestry": ancestry,
         }),
         RunItem::ProviderAttempt { fact, .. } => cache_fact(fact, &ancestry),
+        RunItem::Sandbox { call, fact, .. } => sandbox_fact(call, fact, &ancestry),
         RunItem::Interrupt(action) => interrupted(action, &ancestry),
         RunItem::Invocation(invocation) => {
             let state = match invocation.state() {
@@ -134,6 +135,174 @@ pub(crate) fn journal(item: &RunItem) -> Option<String> {
 
     let line = json!({ "run_item": { "version": 1, "body": body } }).to_string();
     (line.len() <= MAX_RUN_ITEM_BYTES).then_some(line)
+}
+
+fn sandbox_fact(call: &ToolId, fact: &crucible_core::SandboxFact, ancestry: &Value) -> Value {
+    use crucible_core::SandboxFactKind;
+
+    let detail = match fact.kind() {
+        SandboxFactKind::Lifecycle(lifecycle) => json!({
+            "event": "lifecycle",
+            "lifecycle": sandbox_lifecycle(*lifecycle),
+        }),
+        SandboxFactKind::Negotiated(inspection) => json!({
+            "event": "negotiated",
+            "backend": inspection.backend().id().as_str(),
+            "backend_version": inspection.backend().version(),
+            "backend_provenance": inspection.backend().provenance().as_str(),
+            "backend_digest": inspection.backend().digest().map(|digest| hex(&digest)),
+            "capabilities": inspection.capabilities().iter().map(|(feature, claim)| json!({
+                "feature": feature.as_str(),
+                "claim": claim.as_str(),
+            })).collect::<Vec<_>>(),
+            "policy_digest": hex(&inspection.policy_digest()),
+            "manifest_digest": hex(&inspection.manifest_digest()),
+            "effective_plan": sandbox_plan(inspection.plan()),
+            "confined": inspection.confined(),
+            "degradation": inspection.degradation(),
+            "cleanup": sandbox_cleanup(inspection.cleanup()),
+        }),
+        SandboxFactKind::Guardrail { stage, decision } => json!({
+            "event": "guardrail",
+            "stage": sandbox_command_stage(*stage),
+            "decision": sandbox_guardrail_decision(*decision),
+        }),
+        SandboxFactKind::Violation(violation) => json!({
+            "event": "violation",
+            "violation": sandbox_violation(*violation),
+        }),
+        SandboxFactKind::Usage(usage) => json!({
+            "event": "usage",
+            "wall_time": duration(usage.wall_time),
+            "cpu_time": usage.cpu_time.map(duration),
+            "peak_memory_bytes": usage.peak_memory_bytes,
+            "disk_bytes": usage.disk_bytes,
+            "outbound_bytes": usage.outbound_bytes,
+            "output_bytes": usage.output_bytes,
+            "cost_micros": usage.cost_micros,
+        }),
+        SandboxFactKind::Cleanup(cleanup) => json!({
+            "event": "cleanup",
+            "cleanup": sandbox_cleanup(*cleanup),
+        }),
+        SandboxFactKind::Failed { phase, kind } => json!({
+            "event": "failed",
+            "phase": sandbox_failure_phase(*phase),
+            "failure": sandbox_failure_kind(*kind),
+        }),
+    };
+    json!({
+        "kind": "sandbox",
+        "ancestry": ancestry,
+        "call": call.as_str(),
+        "sandbox": fact.sandbox().to_string(),
+        "fact": detail,
+    })
+}
+
+fn sandbox_plan(plan: &crucible_core::SandboxPlanInspection) -> Value {
+    let network = plan.network();
+    let limits = plan.limits();
+    json!({
+        "mode": plan.mode().as_str(),
+        "roots": plan.roots().iter().map(|root| json!({
+            "identity": hex(&root.identity()),
+            "access": root.access().as_str(),
+            "provenance": root.provenance().as_str(),
+        })).collect::<Vec<_>>(),
+        "working_directory": hex(&plan.working_directory()),
+        "network": {
+            "state": network.as_str(),
+            "endpoints": network.endpoints(),
+            "dns": network.dns(),
+            "forwarding": network.forwarding(),
+        },
+        "limits": {
+            "cpu_seconds": limits.cpu_seconds,
+            "memory_bytes": limits.memory_bytes,
+            "disk_bytes": limits.disk_bytes,
+            "processes": limits.processes,
+            "open_files": limits.open_files,
+            "outbound_bytes": limits.outbound_bytes,
+            "output_bytes": limits.output_bytes,
+            "concurrent_commands": limits.concurrent_commands,
+            "command_time": limits.command_time.map(duration),
+            "session_time": limits.session_time.map(duration),
+            "cost_micros": limits.cost_micros,
+        },
+        "command_policy": hex(&plan.command_policy()),
+        "persistent": plan.persistent(),
+        "snapshots": plan.snapshots(),
+        "manifest_entries": plan.manifest_entries(),
+    })
+}
+
+fn duration(value: std::time::Duration) -> Value {
+    json!({ "seconds": value.as_secs(), "nanoseconds": value.subsec_nanos() })
+}
+
+const fn sandbox_lifecycle(value: crucible_core::SandboxLifecycle) -> &'static str {
+    match value {
+        crucible_core::SandboxLifecycle::PolicyResolved => "policy_resolved",
+        crucible_core::SandboxLifecycle::Prepared => "prepared",
+        crucible_core::SandboxLifecycle::Materialized => "materialized",
+        crucible_core::SandboxLifecycle::CommandStarted => "command_started",
+        crucible_core::SandboxLifecycle::CommandFinished => "command_finished",
+    }
+}
+
+const fn sandbox_cleanup(value: crucible_core::SandboxCleanup) -> &'static str {
+    match value {
+        crucible_core::SandboxCleanup::Pending => "pending",
+        crucible_core::SandboxCleanup::Complete => "complete",
+        crucible_core::SandboxCleanup::Failed => "failed",
+    }
+}
+
+const fn sandbox_command_stage(value: crucible_core::SandboxCommandStage) -> &'static str {
+    match value {
+        crucible_core::SandboxCommandStage::Requested => "requested",
+        crucible_core::SandboxCommandStage::Effective => "effective",
+    }
+}
+
+const fn sandbox_guardrail_decision(
+    value: crucible_core::SandboxGuardrailDecision,
+) -> &'static str {
+    match value {
+        crucible_core::SandboxGuardrailDecision::Allowed => "allowed",
+        crucible_core::SandboxGuardrailDecision::Denied => "denied",
+    }
+}
+
+const fn sandbox_violation(value: crucible_core::SandboxViolation) -> &'static str {
+    match value {
+        crucible_core::SandboxViolation::CommandTime => "command_time",
+        crucible_core::SandboxViolation::Output => "output",
+    }
+}
+
+const fn sandbox_failure_phase(value: crucible_core::SandboxFailurePhase) -> &'static str {
+    match value {
+        crucible_core::SandboxFailurePhase::Prepare => "prepare",
+        crucible_core::SandboxFailurePhase::Materialize => "materialize",
+        crucible_core::SandboxFailurePhase::Start => "start",
+        crucible_core::SandboxFailurePhase::Execute => "execute",
+    }
+}
+
+const fn sandbox_failure_kind(value: crucible_core::SandboxFailureKind) -> &'static str {
+    match value {
+        crucible_core::SandboxFailureKind::Unsupported => "unsupported",
+        crucible_core::SandboxFailureKind::BackendUnavailable => "backend_unavailable",
+        crucible_core::SandboxFailureKind::Guardrail => "guardrail",
+        crucible_core::SandboxFailureKind::Concurrency => "concurrency",
+        crucible_core::SandboxFailureKind::Materialization => "materialization",
+        crucible_core::SandboxFailureKind::Spawn => "spawn",
+        crucible_core::SandboxFailureKind::Lifecycle => "lifecycle",
+        crucible_core::SandboxFailureKind::Audit => "audit",
+        crucible_core::SandboxFailureKind::InvalidInput => "invalid_input",
+    }
 }
 
 /// Restores provider-visible attachments through the crate's single protected
@@ -1076,6 +1245,84 @@ mod tests {
         assert!(written.contains(r#""kind":"message""#));
         assert!(!written.contains("prompt-plaintext-canary"));
         assert!(message(&written).is_none());
+    }
+
+    #[test]
+    fn sandbox_journal_keeps_typed_identity_and_plan_without_raw_reach() {
+        use crucible_core::{
+            SandboxAudit, SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance,
+            SandboxCapabilities, SandboxCapability, SandboxCleanup, SandboxFactKind,
+            SandboxFeature, SandboxFilesystemAccess, SandboxFilesystemProvenance,
+            SandboxFilesystemRule, SandboxId, SandboxInspection, SandboxManifest, SandboxMode,
+            SandboxNetworkEndpoint, SandboxNetworkPolicy, SandboxPolicy, SandboxResourceLimits,
+        };
+
+        let ancestry = Ancestry::new();
+        let call = ToolId::new("sandbox-call");
+        let sandbox = SandboxId::new();
+        let policy = SandboxPolicy::new(
+            SandboxMode::Required,
+            [SandboxFilesystemRule::new(
+                "/home/alice/private-workspace",
+                SandboxFilesystemAccess::ReadWrite,
+                SandboxFilesystemProvenance::Workspace,
+            )
+            .unwrap()],
+            "/home/alice/private-workspace",
+            SandboxNetworkPolicy::exact(
+                [SandboxNetworkEndpoint::new("secret.internal", 443).unwrap()],
+                true,
+                false,
+            )
+            .unwrap(),
+            SandboxResourceLimits::default(),
+        )
+        .unwrap();
+        let capabilities = [
+            SandboxFeature::Filesystem,
+            SandboxFeature::NetworkAllowlist,
+            SandboxFeature::DescriptorIsolation,
+            SandboxFeature::ProcessIsolation,
+            SandboxFeature::KernelSurface,
+            SandboxFeature::PrivilegeIsolation,
+            SandboxFeature::Audit,
+        ]
+        .into_iter()
+        .fold(SandboxCapabilities::none(), |claims, feature| {
+            claims.with(feature, SandboxCapability::Enforced)
+        });
+        let inspection = SandboxInspection::new(
+            sandbox,
+            SandboxBackendIdentity::new(
+                SandboxBackendId::new("fixture-proxy").unwrap(),
+                "1.2.3",
+                SandboxBackendProvenance::Remote,
+                Some([0x5a; 32]),
+            )
+            .unwrap(),
+            capabilities,
+            &policy,
+            &SandboxManifest::empty(),
+            true,
+            None::<Box<str>>,
+            SandboxCleanup::Pending,
+        )
+        .unwrap();
+        let audit = SandboxAudit::new(ancestry, call.clone());
+        audit
+            .record(sandbox, SandboxFactKind::Negotiated(inspection))
+            .unwrap();
+        let fact = audit.records().unwrap()[0].fact().clone();
+        let item = RunItem::sandbox(ancestry, call, fact).unwrap();
+
+        let written = journal(&item).expect("bounded sandbox journal line");
+
+        assert!(written.contains(r#""kind":"sandbox""#));
+        assert!(written.contains(r#""network":{"dns":true,"endpoints":1"#));
+        assert!(written.contains(r#""feature":"network_allowlist""#));
+        assert!(!written.contains("alice"), "{written}");
+        assert!(!written.contains("private-workspace"), "{written}");
+        assert!(!written.contains("secret.internal"), "{written}");
     }
 
     #[test]

@@ -472,7 +472,8 @@ impl Tool for Bash {
             context.call().clone(),
             policy,
             SandboxManifest::empty(),
-        );
+        )
+        .with_audit(context.sandbox_audit());
         let mut session = self
             .sandbox
             .prepare(request)

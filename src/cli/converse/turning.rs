@@ -692,6 +692,7 @@ impl Turning {
             // reads it, not here: this row keeps naming what is still queued.
             Event::TurnStarted { .. }
             | Event::PromptCache { .. }
+            | Event::Sandbox { .. }
             | Event::Delta { .. }
             | Event::Spent { .. }
             | Event::Carried { .. }
@@ -743,6 +744,7 @@ impl Turning {
             Event::Compacting { .. } => Doing::Compacting,
             Event::TurnStarted { .. }
             | Event::PromptCache { .. }
+            | Event::Sandbox { .. }
             | Event::Spent { .. }
             | Event::Carried { .. }
             | Event::Steered { .. }

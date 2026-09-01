@@ -258,6 +258,31 @@ default, and their private metadata contains no prompt, response or credential.
 See [Prompt caching](../providers/prompt-caching.md) for exact provider behavior,
 inspection, privacy and source provenance.
 
+### `sandbox`
+
+Operating-system confinement for `bash` and the descendant processes later
+extension adapters launch:
+
+```json
+{ "sandbox": { "mode": "required" } }
+```
+
+`required` is the default. On Linux it requires a verified Bubblewrap backend
+and fails before spawning when the effective filesystem, network, descriptor,
+process, privilege, materialization, audit, or requested resource boundary
+cannot be enforced. It never falls back to an ordinary subprocess silently.
+
+Your home configuration may explicitly choose `degraded` (use a clearly
+reported compatibility backend only when enforcement is unavailable) or `off`
+(always use the unconfined compatibility backend). Either project file may
+state `required`, strengthening a user choice, but cannot state `degraded` or
+`off`. A project, tool, extension, skill, agent, or descendant therefore cannot
+weaken the confinement chosen above it.
+
+The compatibility modes retain command guardrails, deadlines, output bounds,
+usage and audit records, but their inspection report says `confined: false`.
+Permission approval and a worktree are not a sandbox in any mode.
+
 ### `permissions`
 
 What runs without asking, what is refused outright, and what happens to

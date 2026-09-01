@@ -1675,6 +1675,7 @@ fn breaks(one: &Seen) -> bool {
             | Event::Wrote { .. }
             | Event::Spent { .. }
             | Event::PromptCache { .. }
+            | Event::Sandbox { .. }
             | Event::Retrying => false,
 
             // Everything else is a row, or is about to be one. The model

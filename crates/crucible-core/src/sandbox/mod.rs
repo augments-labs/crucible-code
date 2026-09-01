@@ -12,12 +12,17 @@
 //! policy that cannot be hard-enforced is refused rather than translated into
 //! an ordinary subprocess.
 
+mod audit;
 mod capability;
 mod guardrail;
 mod manifest;
 mod policy;
 mod service;
 
+pub use audit::{
+    MAX_SANDBOX_AUDIT_FACTS, SandboxAudit, SandboxAuditError, SandboxAuditRecord, SandboxFact,
+    SandboxFactKind, SandboxFailureKind, SandboxFailurePhase, SandboxLifecycle,
+};
 pub use capability::{
     MAX_SANDBOX_BACKEND_ID_BYTES, MAX_SANDBOX_BACKEND_WORD_BYTES, SandboxBackendId,
     SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities, SandboxCapability,
@@ -40,8 +45,9 @@ pub use policy::{
 };
 pub use service::{
     MAX_SANDBOX_COMMAND_ARGUMENTS, MAX_SANDBOX_COMMAND_BYTES, MAX_SANDBOX_ENVIRONMENT_BYTES,
-    MAX_SANDBOX_ENVIRONMENT_ENTRIES, MAX_SANDBOX_ENVIRONMENT_NAME_BYTES, SandboxCleanup,
-    SandboxCommand, SandboxEnvironment, SandboxError, SandboxInspection, SandboxOutput,
-    SandboxProcess, SandboxRead, SandboxRequest, SandboxService, SandboxSession, SandboxUsage,
+    MAX_SANDBOX_ENVIRONMENT_ENTRIES, MAX_SANDBOX_ENVIRONMENT_NAME_BYTES, SandboxCheckpoint,
+    SandboxCleanup, SandboxCommand, SandboxEnvironment, SandboxError, SandboxInspection,
+    SandboxNetworkInspection, SandboxOutput, SandboxPlanInspection, SandboxProcess, SandboxRead,
+    SandboxRequest, SandboxRootInspection, SandboxService, SandboxSession, SandboxUsage,
     SandboxViolation,
 };

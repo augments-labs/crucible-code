@@ -246,6 +246,7 @@ impl Scripted {
                 Event::Unread { .. }
                 | Event::TurnStarted { .. }
                 | Event::PromptCache { .. }
+                | Event::Sandbox { .. }
                 | Event::Delta { .. }
                 | Event::ToolRequested { .. }
                 | Event::ToolFinished { .. }
@@ -272,6 +273,7 @@ impl Scripted {
                 Event::Aged { .. }
                 | Event::TurnStarted { .. }
                 | Event::PromptCache { .. }
+                | Event::Sandbox { .. }
                 | Event::Delta { .. }
                 | Event::ToolRequested { .. }
                 | Event::ToolFinished { .. }
@@ -295,6 +297,7 @@ impl Scripted {
                 Event::Delta { text } => Some(text.to_string()),
                 Event::TurnStarted { .. }
                 | Event::PromptCache { .. }
+                | Event::Sandbox { .. }
                 | Event::ToolRequested { .. }
                 | Event::ToolFinished { .. }
                 | Event::Wrote { .. }
@@ -330,6 +333,7 @@ impl Scripted {
             .filter_map(|event| match event {
                 Event::TurnStarted { turn } => Some(turn.get()),
                 Event::PromptCache { .. }
+                | Event::Sandbox { .. }
                 | Event::Delta { .. }
                 | Event::ToolRequested { .. }
                 | Event::ToolFinished { .. }
@@ -356,6 +360,7 @@ impl Scripted {
                 Event::TurnFinished { stop, .. } => Some(stop),
                 Event::TurnStarted { .. }
                 | Event::PromptCache { .. }
+                | Event::Sandbox { .. }
                 | Event::Delta { .. }
                 | Event::ToolRequested { .. }
                 | Event::ToolFinished { .. }
@@ -381,6 +386,7 @@ impl Scripted {
                 Event::Spent { spend } => Some(spend.tokens()),
                 Event::TurnStarted { .. }
                 | Event::PromptCache { .. }
+                | Event::Sandbox { .. }
                 | Event::Delta { .. }
                 | Event::ToolRequested { .. }
                 | Event::ToolFinished { .. }
