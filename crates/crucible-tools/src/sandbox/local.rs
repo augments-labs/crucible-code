@@ -246,6 +246,7 @@ impl SandboxSession for CompatibilitySession {
                 audit: self.request.audit().clone(),
                 sandbox: self.request.id(),
                 audit_started: true,
+                audit_cleanup: true,
                 invocation: self.request.invocation_mode(),
                 call_result_key: self.request.call_result_key(),
             }),

@@ -94,6 +94,23 @@ impl Stage {
     pub(super) fn retain(&mut self) {
         self.retained = true;
     }
+
+    /// Removes the complete stage and proves that its pathname is absent.
+    ///
+    /// Retained quarantine evidence deliberately fails cleanup instead of
+    /// allowing a caller to report that every sandbox resource is gone.
+    pub(super) fn cleanup(&mut self) -> io::Result<()> {
+        if self.retained {
+            return Err(io::Error::other(
+                "sandbox stage is retained as quarantine evidence",
+            ));
+        }
+        match std::fs::remove_dir_all(&self.root) {
+            Ok(()) => Ok(()),
+            Err(problem) if problem.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(problem) => Err(problem),
+        }
+    }
 }
 
 impl std::fmt::Debug for Stage {
@@ -106,9 +123,7 @@ impl std::fmt::Debug for Stage {
 
 impl Drop for Stage {
     fn drop(&mut self) {
-        if !self.retained {
-            let _ = std::fs::remove_dir_all(&self.root);
-        }
+        let _ = self.cleanup();
     }
 }
 
@@ -121,6 +136,9 @@ pub(super) struct SpawnPlan {
     pub(super) audit: SandboxAudit,
     pub(super) sandbox: SandboxId,
     pub(super) audit_started: bool,
+    /// Whether this process owns the terminal cleanup fact. Linux transfers
+    /// that responsibility to the projection wrapper that owns more state.
+    pub(super) audit_cleanup: bool,
     pub(super) invocation: SandboxInvocationMode,
     pub(super) call_result_key: Option<CallResultKey>,
 }
@@ -138,6 +156,7 @@ pub(super) fn spawn(
         audit,
         sandbox,
         audit_started,
+        audit_cleanup,
         invocation,
         call_result_key,
     } = plan;
@@ -246,6 +265,7 @@ pub(super) fn spawn(
         started,
         stopped: false,
         audit_state: AuditState::default(),
+        audit_cleanup,
         invocation,
         call_result_key,
         background_acceptance: BackgroundAcceptance::None,
@@ -484,6 +504,7 @@ struct LocalProcess {
     started: Instant,
     stopped: bool,
     audit_state: AuditState,
+    audit_cleanup: bool,
     invocation: SandboxInvocationMode,
     call_result_key: Option<CallResultKey>,
     background_acceptance: BackgroundAcceptance,
@@ -598,20 +619,28 @@ impl SandboxProcess for LocalProcess {
 
         self.stdout.take();
         self.stderr.take();
-        self.stage.take();
+        let staged = self.stage.as_mut().map_or(Ok(()), Stage::cleanup);
+        if staged.is_ok() {
+            self.stage.take();
+        }
         self.reservation.take();
         self.stopped = true;
-        let mut result = cleanup.and(joined).and(supervised);
-        let cleanup_state = if result.is_ok() {
+        let cleanup_succeeded = cleanup.is_ok() && joined.is_ok() && staged.is_ok();
+        let cleanup_state = if cleanup_succeeded {
             SandboxCleanup::Complete
         } else {
             SandboxCleanup::Failed
         };
         self.inspection = self.inspection.clone().cleaned(cleanup_state);
+        let mut result = cleanup.and(joined).and(staged).and(supervised);
         if self.status.is_some() {
-            result = result.and_then(|()| self.audit_finished());
+            let audited = self.audit_finished();
+            result = result.and(audited);
         }
-        result = result.and_then(|()| self.audit_cleanup(cleanup_state));
+        if self.audit_cleanup {
+            let audited = self.audit_cleanup(cleanup_state);
+            result = result.and(audited);
+        }
         result
     }
 
@@ -771,8 +800,28 @@ pub(crate) fn testing(
             audit: SandboxAudit::new(Ancestry::new(), ToolId::new("test-process")),
             sandbox,
             audit_started: true,
+            audit_cleanup: true,
             invocation: SandboxInvocationMode::Foreground,
             call_result_key: None,
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Stage;
+
+    #[test]
+    fn stage_cleanup_is_explicit_and_idempotent() {
+        let sample = crate::sample::Sample::new("sandbox-stage-cleanup");
+        let root = sample.root().join("stage");
+        std::fs::create_dir(&root).expect("stage fixture");
+        std::fs::write(root.join("payload"), "temporary\n").expect("stage payload");
+        let mut stage = Stage::new(root.clone());
+
+        stage.cleanup().expect("first cleanup");
+        stage.cleanup().expect("idempotent cleanup");
+
+        assert!(!root.exists());
+    }
 }

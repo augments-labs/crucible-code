@@ -39,6 +39,8 @@ const MAX_WAL_PAYLOAD_BYTES: usize = 1 + 32;
 const MAX_WAL_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_STALE_TRANSACTIONS: usize = 128;
 const STAGE_PREFIX: &str = "crucible-projection-";
+const WRITABLE_LOCK: &str = "writable.lock";
+const REGISTRY_LOCK: &str = "registry.lock";
 
 /// Whether the original call waits for the terminal result or receives one
 /// accepted result after the one-shot release boundary.
@@ -174,6 +176,7 @@ impl Transaction {
             .create_new(true)
             .mode(0o600)
             .open(path)?;
+        rustix::fs::flock(&journal, FlockOperation::LockExclusive)?;
         journal.set_permissions(fs::Permissions::from_mode(0o600))?;
         journal.sync_all()?;
         File::open(directory)?.sync_all()?;
@@ -418,17 +421,40 @@ fn recover_wal(path: &Path) -> io::Result<Recovered> {
     recover_wal_file(File::from(descriptor))
 }
 
-fn recover_wal_at(directory: &File) -> io::Result<Recovered> {
-    let descriptor = rustix::fs::openat(
+enum RecoveryProbe {
+    Busy,
+    Missing,
+    Empty(File),
+    Recovered(Box<Recovered>),
+}
+
+fn recover_wal_at(directory: &File) -> io::Result<RecoveryProbe> {
+    let descriptor = match rustix::fs::openat(
         directory,
         "transaction.wal",
         OFlags::RDWR | OFlags::NOFOLLOW | OFlags::CLOEXEC,
         Mode::empty(),
-    )?;
-    recover_wal_file(File::from(descriptor))
+    ) {
+        Ok(descriptor) => descriptor,
+        Err(rustix::io::Errno::NOENT) => return Ok(RecoveryProbe::Missing),
+        Err(problem) => return Err(problem.into()),
+    };
+    let file = File::from(descriptor);
+    match rustix::fs::flock(&file, FlockOperation::NonBlockingLockExclusive) {
+        Ok(()) => {}
+        Err(rustix::io::Errno::WOULDBLOCK) => return Ok(RecoveryProbe::Busy),
+        Err(problem) => return Err(problem.into()),
+    }
+    let metadata = validate_journal(&file)?;
+    if metadata.len() == 0 {
+        return Ok(RecoveryProbe::Empty(file));
+    }
+    recover_wal_file(file)
+        .map(Box::new)
+        .map(RecoveryProbe::Recovered)
 }
 
-fn recover_wal_file(mut file: File) -> io::Result<Recovered> {
+fn validate_journal(file: &File) -> io::Result<fs::Metadata> {
     let metadata = file.metadata()?;
     if !metadata.is_file()
         || metadata.uid() != rustix::process::getuid().as_raw()
@@ -439,6 +465,11 @@ fn recover_wal_file(mut file: File) -> io::Result<Recovered> {
     {
         return Err(invalid("sandbox transaction journal authority is invalid"));
     }
+    Ok(metadata)
+}
+
+fn recover_wal_file(mut file: File) -> io::Result<Recovered> {
+    let metadata = validate_journal(&file)?;
     let capacity = usize::try_from(metadata.len())
         .map_err(|_| invalid("sandbox transaction journal exceeds addressable memory"))?;
     let mut bytes = Vec::with_capacity(capacity);
@@ -951,6 +982,39 @@ impl Machine {
     }
 }
 
+/// Short host-registry admission held while recovery and WAL registration are
+/// mutually exclusive across processes.
+pub(super) struct RegistryLease {
+    _state: File,
+    _lock: File,
+}
+
+impl RegistryLease {
+    pub(super) fn acquire(request: &SandboxRequest) -> Result<Self, SandboxError> {
+        let state = state_directory(request)?;
+        Self::acquire_at(&state).map_err(|_| SandboxError::BackendUnavailable {
+            reason: "sandbox lifecycle registry admission is unavailable".into(),
+        })
+    }
+
+    fn acquire_at(path: &Path) -> io::Result<Self> {
+        create_state_directory(path)?;
+        let state = open_state_directory(path)?;
+        let lock = open_lock(&state, REGISTRY_LOCK)?;
+        rustix::fs::flock(&lock, FlockOperation::LockExclusive)?;
+        validate_state(path, &state)?;
+        validate_lock(path, REGISTRY_LOCK, &lock)?;
+        Ok(Self {
+            _state: state,
+            _lock: lock,
+        })
+    }
+
+    pub(super) fn reconcile(_guard: &Self) -> io::Result<()> {
+        reconcile_host_transactions()
+    }
+}
+
 /// The descriptor-held global writable-transaction lock.
 pub(super) struct Lease {
     _state: File,
@@ -995,19 +1059,16 @@ impl Lease {
             lease.test_serial = Some(test_serial);
             lease
         };
-        reconcile_host_transactions().map_err(|_| SandboxError::BackendUnavailable {
-            reason: "stale writable transaction requires recovery or quarantine review".into(),
-        })?;
         Ok(Some(lease))
     }
 
     fn acquire_at(path: &Path) -> io::Result<Self> {
         create_state_directory(path)?;
         let state = open_state_directory(path)?;
-        let lock = open_lock(&state)?;
+        let lock = open_lock(&state, WRITABLE_LOCK)?;
         rustix::fs::flock(&lock, FlockOperation::NonBlockingLockExclusive)?;
         validate_state(path, &state)?;
-        validate_lock(path, &lock)?;
+        validate_lock(path, WRITABLE_LOCK, &lock)?;
         Ok(Self {
             _state: state,
             _lock: lock,
@@ -1104,10 +1165,10 @@ fn open_state_directory(path: &Path) -> io::Result<File> {
     Ok(state)
 }
 
-fn open_lock(state: &File) -> io::Result<File> {
+fn open_lock(state: &File, name: &str) -> io::Result<File> {
     let (descriptor, created) = match rustix::fs::openat(
         state,
-        "writable.lock",
+        name,
         OFlags::RDWR | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
         Mode::RUSR | Mode::WUSR,
     ) {
@@ -1115,7 +1176,7 @@ fn open_lock(state: &File) -> io::Result<File> {
         Err(rustix::io::Errno::EXIST) => (
             rustix::fs::openat(
                 state,
-                "writable.lock",
+                name,
                 OFlags::RDWR | OFlags::NOFOLLOW | OFlags::CLOEXEC,
                 Mode::empty(),
             )?,
@@ -1135,7 +1196,7 @@ fn open_lock(state: &File) -> io::Result<File> {
         || metadata.mode() & 0o7777 != 0o600
         || metadata.nlink() != 1
     {
-        return Err(invalid("sandbox writable lock authority is invalid"));
+        return Err(invalid("sandbox transaction lock authority is invalid"));
     }
     if created {
         lock.sync_all()?;
@@ -1153,15 +1214,15 @@ fn validate_state(path: &Path, state: &File) -> io::Result<()> {
     Ok(())
 }
 
-fn validate_lock(state_path: &Path, lock: &File) -> io::Result<()> {
-    let named = fs::symlink_metadata(state_path.join("writable.lock"))?;
+fn validate_lock(state_path: &Path, name: &str, lock: &File) -> io::Result<()> {
+    let named = fs::symlink_metadata(state_path.join(name))?;
     let opened = lock.metadata()?;
     if named.dev() != opened.dev()
         || named.ino() != opened.ino()
         || named.nlink() != 1
         || !named.is_file()
     {
-        return Err(invalid("sandbox writable lock identity changed"));
+        return Err(invalid("sandbox transaction lock identity changed"));
     }
     Ok(())
 }
@@ -1189,7 +1250,11 @@ fn reconcile_stale_transactions(base: &Path) -> io::Result<()> {
         {
             continue;
         }
-        let metadata = fs::symlink_metadata(entry.path())?;
+        let metadata = match fs::symlink_metadata(entry.path()) {
+            Ok(metadata) => metadata,
+            Err(problem) if problem.kind() == io::ErrorKind::NotFound => continue,
+            Err(problem) => return Err(problem),
+        };
         if metadata.uid() != rustix::process::getuid().as_raw()
             || metadata.gid() != rustix::process::getgid().as_raw()
         {
@@ -1214,7 +1279,11 @@ fn reconcile_stale_transactions(base: &Path) -> io::Result<()> {
                 SandboxId::parse(identity)
                     .map_err(|_| invalid("stale sandbox transaction identity is invalid"))
             })?;
-        let named = fs::symlink_metadata(&candidate)?;
+        let named = match fs::symlink_metadata(&candidate) {
+            Ok(named) => named,
+            Err(problem) if problem.kind() == io::ErrorKind::NotFound => continue,
+            Err(problem) => return Err(problem),
+        };
         if !named.is_dir()
             || named.uid() != rustix::process::getuid().as_raw()
             || named.gid() != rustix::process::getgid().as_raw()
@@ -1222,17 +1291,32 @@ fn reconcile_stale_transactions(base: &Path) -> io::Result<()> {
         {
             return Err(invalid("stale sandbox transaction authority is invalid"));
         }
-        let descriptor = rustix::fs::open(
+        let descriptor = match rustix::fs::open(
             &candidate,
             OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
             Mode::empty(),
-        )?;
+        ) {
+            Ok(descriptor) => descriptor,
+            Err(rustix::io::Errno::NOENT) => continue,
+            Err(problem) => return Err(problem.into()),
+        };
         let directory = File::from(descriptor);
         let opened = directory.metadata()?;
         if opened.dev() != named.dev() || opened.ino() != named.ino() {
             return Err(invalid("stale sandbox transaction identity changed"));
         }
-        let mut recovered = recover_wal_at(&directory)?;
+        let mut recovered = match recover_wal_at(&directory)? {
+            RecoveryProbe::Busy => continue,
+            RecoveryProbe::Missing => {
+                removed |= remove_uninitialized(&candidate, directory, &named, None)?;
+                continue;
+            }
+            RecoveryProbe::Empty(journal) => {
+                removed |= remove_uninitialized(&candidate, directory, &named, Some(journal))?;
+                continue;
+            }
+            RecoveryProbe::Recovered(recovered) => *recovered,
+        };
         if recovered.frame.identity.as_slice() != sandbox.to_string().as_bytes() {
             return Err(invalid("stale sandbox journal names another transaction"));
         }
@@ -1252,20 +1336,68 @@ fn reconcile_stale_transactions(base: &Path) -> io::Result<()> {
         }
         drop(recovered);
         drop(directory);
-        let current = fs::symlink_metadata(&candidate)?;
-        if current.dev() != named.dev() || current.ino() != named.ino() || !current.is_dir() {
-            return Err(invalid("stale sandbox transaction changed before cleanup"));
-        }
-        fs::remove_dir_all(&candidate)?;
-        if candidate.exists() {
-            return Err(invalid("stale sandbox transaction cleanup is incomplete"));
-        }
-        removed = true;
+        removed |= remove_candidate(&candidate, &named)?;
     }
     if removed {
         File::open(base)?.sync_all()?;
     }
     Ok(())
+}
+
+fn remove_uninitialized(
+    candidate: &Path,
+    directory: File,
+    named: &fs::Metadata,
+    journal: Option<File>,
+) -> io::Result<bool> {
+    let entries = match fs::read_dir(candidate) {
+        Ok(entries) => entries.collect::<Result<Vec<_>, _>>()?,
+        Err(problem) if problem.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(problem) => return Err(problem),
+    };
+    let expected = match &journal {
+        None => entries.is_empty(),
+        Some(opened) => {
+            let opened = opened.metadata()?;
+            entries.len() == 1
+                && entries.first().is_some_and(|entry| {
+                    entry.file_name() == "transaction.wal"
+                        && entry.metadata().is_ok_and(|found| {
+                            found.dev() == opened.dev()
+                                && found.ino() == opened.ino()
+                                && found.len() == 0
+                        })
+                })
+        }
+    };
+    if !expected {
+        return Err(invalid(
+            "uninitialized sandbox transaction contains unowned resources",
+        ));
+    }
+    drop(journal);
+    drop(directory);
+    remove_candidate(candidate, named)
+}
+
+fn remove_candidate(candidate: &Path, named: &fs::Metadata) -> io::Result<bool> {
+    let current = match fs::symlink_metadata(candidate) {
+        Ok(current) => current,
+        Err(problem) if problem.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(problem) => return Err(problem),
+    };
+    if current.dev() != named.dev() || current.ino() != named.ino() || !current.is_dir() {
+        return Err(invalid("stale sandbox transaction changed before cleanup"));
+    }
+    match fs::remove_dir_all(candidate) {
+        Ok(()) => {}
+        Err(problem) if problem.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(problem) => return Err(problem),
+    }
+    if candidate.exists() {
+        return Err(invalid("stale sandbox transaction cleanup is incomplete"));
+    }
+    Ok(true)
 }
 
 fn recover_stale_transaction(candidate: &Path, recovered: &mut Recovered) -> io::Result<()> {
@@ -1794,6 +1926,60 @@ mod tests {
 
         reconcile_stale_transactions(&base).expect("live transaction is not stale");
         assert!(stage.join("transaction.wal").exists());
+    }
+
+    #[test]
+    fn live_transaction_wal_is_never_repaired_while_its_owner_may_append() {
+        let sample = crate::sample::Sample::new("sandbox-live-wal-lock");
+        let base = sample.root().join("recovery");
+        create_private_test_directory(&base);
+        let sandbox = SandboxId::new();
+        let stage = base.join(format!("crucible-projection-{sandbox}"));
+        create_private_test_directory(&stage);
+        let lease = Lease::acquire_at(&sample.root().join("state")).expect("transaction lease");
+        let mut transaction = Transaction::start_owned(
+            Some(lease),
+            &stage,
+            sandbox,
+            Invocation::new(InvocationMode::Foreground, None).expect("foreground identity"),
+            OwnerIdentity::current().expect("live owner"),
+        )
+        .expect("transaction journal");
+        transaction
+            .append(Record::Prepared)
+            .expect("prepared record");
+        let journal = stage.join("transaction.wal");
+        let mut concurrent = OpenOptions::new()
+            .append(true)
+            .open(&journal)
+            .expect("second journal descriptor");
+        concurrent
+            .write_all(b"CRSB")
+            .expect("partial in-flight frame");
+        concurrent.sync_all().expect("partial frame durability");
+        let length = concurrent.metadata().expect("journal metadata").len();
+
+        reconcile_stale_transactions(&base).expect("live transaction is skipped");
+
+        assert_eq!(
+            fs::metadata(&journal).expect("retained journal").len(),
+            length,
+            "reconciliation truncated a WAL its live owner may still extend"
+        );
+        drop(transaction);
+    }
+
+    #[test]
+    fn abandoned_prejournal_stage_is_removed() {
+        let sample = crate::sample::Sample::new("sandbox-abandoned-prejournal-stage");
+        let base = sample.root().join("recovery");
+        create_private_test_directory(&base);
+        let stage = base.join(format!("crucible-projection-{}", SandboxId::new()));
+        create_private_test_directory(&stage);
+
+        reconcile_stale_transactions(&base).expect("abandoned initialization cleanup");
+
+        assert!(!stage.exists());
     }
 
     #[test]

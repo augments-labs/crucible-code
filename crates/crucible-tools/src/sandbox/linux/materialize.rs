@@ -113,6 +113,10 @@ impl Materialization {
         self.manifest.as_raw_fd()
     }
 
+    pub(super) fn cleanup(&mut self) -> std::io::Result<()> {
+        self.stage.cleanup()
+    }
+
     pub(super) fn split(self) -> (Stage, Vec<OwnedFd>) {
         let Self {
             stage,

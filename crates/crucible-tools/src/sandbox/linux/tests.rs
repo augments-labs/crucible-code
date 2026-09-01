@@ -628,18 +628,28 @@ fn dropping_a_staged_launch_refuses_it_before_go_and_completes_cleanup() {
 
     assert!(!sample.root().join("refused.txt").exists());
     let facts = audit.records().expect("audit records");
-    assert!(facts.iter().any(|record| {
-        matches!(
-            record.fact().kind(),
-            SandboxFactKind::Lifecycle(SandboxLifecycle::Refused)
-        )
-    }));
-    assert!(facts.iter().any(|record| {
-        matches!(
-            record.fact().kind(),
-            SandboxFactKind::Cleanup(SandboxCleanup::Complete)
-        )
-    }));
+    let refused = facts
+        .iter()
+        .position(|record| {
+            matches!(
+                record.fact().kind(),
+                SandboxFactKind::Lifecycle(SandboxLifecycle::Refused)
+            )
+        })
+        .expect("refusal fact");
+    let cleaned = facts
+        .iter()
+        .position(|record| {
+            matches!(
+                record.fact().kind(),
+                SandboxFactKind::Cleanup(SandboxCleanup::Complete)
+            )
+        })
+        .expect("cleanup fact");
+    assert!(
+        refused < cleaned,
+        "cleanup was claimed before the projection refusal was durable"
+    );
     assert!(!facts.iter().any(|record| {
         matches!(
             record.fact().kind(),

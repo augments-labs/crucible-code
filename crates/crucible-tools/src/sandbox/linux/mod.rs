@@ -11,6 +11,7 @@ mod transaction;
 #[cfg(test)]
 mod tests;
 
+use std::io;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
@@ -62,6 +63,13 @@ pub(super) fn prepare(
         request.id(),
         SandboxFactKind::Negotiated(Box::new(inspection.clone())),
     )?;
+    let registry = transaction::RegistryLease::acquire(&request)?;
+    transaction::RegistryLease::reconcile(&registry).map_err(|_| {
+        SandboxError::BackendUnavailable {
+            reason: "stale sandbox lifecycle requires recovery or quarantine review".into(),
+        }
+    })?;
+    drop(registry);
     let transaction = transaction::Lease::acquire(&request)?;
 
     let maximum = request
@@ -222,6 +230,7 @@ impl SandboxSession for LinuxSession {
                 audit: self.request.audit().clone(),
                 sandbox: self.request.id(),
                 audit_started: false,
+                audit_cleanup: false,
                 invocation: self.request.invocation_mode(),
                 call_result_key: self.request.call_result_key(),
             },
@@ -285,37 +294,36 @@ impl SandboxLaunch for LinuxLaunch {
     }
 
     fn release(mut self: Box<Self>) -> Result<Box<dyn SandboxProcess>, SandboxError> {
-        let mut process = self.process.take().ok_or_else(|| {
-            SandboxError::Lifecycle(std::io::Error::other(
+        if self.process.is_none() {
+            return Err(SandboxError::Lifecycle(std::io::Error::other(
                 "sandbox process scope is unavailable before release",
-            ))
-        })?;
-        let mut status_channel = self.status_channel.take().ok_or_else(|| {
-            SandboxError::Lifecycle(std::io::Error::other(
+            )));
+        }
+        if self.status_channel.is_none() {
+            return Err(SandboxError::Lifecycle(std::io::Error::other(
                 "sandbox release channel is unavailable",
-            ))
-        })?;
+            )));
+        }
+        let Some(mut process) = self.process.take() else {
+            return Err(SandboxError::Lifecycle(std::io::Error::other(
+                "sandbox process scope is unavailable before release",
+            )));
+        };
         if let Some(projection) = self.projection.as_mut()
             && let Err(source) = projection.record(transaction::Record::ReleaseIntent)
         {
-            let stopped = process.stop().is_ok();
-            self.record_refusal(stopped);
-            self.released = true;
+            self.refuse_and_cleanup(process.as_mut());
             return Err(SandboxError::Lifecycle(source));
         }
         if let Err(source) = self.audit.record(
             self.sandbox,
             SandboxFactKind::Lifecycle(SandboxLifecycle::ReleaseIntent),
         ) {
-            let stopped = process.stop().is_ok();
-            self.record_refusal(stopped);
-            self.released = true;
+            self.refuse_and_cleanup(process.as_mut());
             return Err(SandboxError::Audit(source));
         }
         if self.invocation != SandboxInvocationMode::Foreground && !self.owner_transferred {
-            let stopped = process.stop().is_ok();
-            self.record_refusal(stopped);
-            self.released = true;
+            self.refuse_and_cleanup(process.as_mut());
             return Err(SandboxError::Lifecycle(std::io::Error::other(
                 "background sandbox has no application cleanup owner",
             )));
@@ -324,14 +332,15 @@ impl SandboxLaunch for LinuxLaunch {
             && let Some(projection) = self.projection.as_mut()
             && let Err(source) = projection.record(transaction::Record::OwnerTransferred)
         {
-            let stopped = process.stop().is_ok();
-            self.record_refusal(stopped);
-            self.released = true;
+            self.refuse_and_cleanup(process.as_mut());
             return Err(SandboxError::Lifecycle(source));
         }
-        if let Err(source) = status_channel.attest_ready() {
-            let stopped = process.stop().is_ok();
-            self.record_refusal(stopped);
+        let ready = self.status_channel.as_mut().map_or_else(
+            || Err(io::Error::other("sandbox release channel is unavailable")),
+            broker::StatusChannel::attest_ready,
+        );
+        if let Err(source) = ready {
+            self.refuse_and_cleanup(process.as_mut());
             let problem = SandboxError::Lifecycle(source);
             let _ = self.audit.record(
                 self.sandbox,
@@ -340,38 +349,22 @@ impl SandboxLaunch for LinuxLaunch {
                     kind: problem.failure_kind(),
                 },
             );
-            self.released = true;
             return Err(problem);
         }
         if let Some(projection) = self.projection.as_mut()
             && let Err(source) = projection.record(transaction::Record::GoSentOrAmbiguous)
         {
-            let stopped = process.stop().is_ok();
-            self.record_refusal(stopped);
-            self.released = true;
+            self.refuse_and_cleanup(process.as_mut());
             return Err(SandboxError::Lifecycle(source));
         }
-        if let Err(source) = status_channel.send_go() {
-            let stopped = process.stop().is_ok();
-            let rolled_back = self
-                .projection
-                .as_mut()
-                .is_none_or(|projection| projection.abort(stopped).is_ok());
-            let lifecycle = if stopped && rolled_back {
-                SandboxLifecycle::RolledBack
-            } else {
-                if let Some(projection) = self.projection.as_mut() {
-                    projection.retain_evidence();
-                }
-                SandboxLifecycle::Quarantined
-            };
-            let _ = self
-                .audit
-                .record(self.sandbox, SandboxFactKind::Lifecycle(lifecycle));
-            self.released = true;
+        let released = self.status_channel.as_mut().map_or_else(
+            || Err(io::Error::other("sandbox release channel is unavailable")),
+            broker::StatusChannel::send_go,
+        );
+        if let Err(source) = released {
+            self.rollback_and_cleanup(process.as_mut());
             return Err(SandboxError::Lifecycle(source));
         }
-        self.released = true;
         for lifecycle in [
             SandboxLifecycle::CommandReleased,
             SandboxLifecycle::CommandStarted,
@@ -380,15 +373,17 @@ impl SandboxLaunch for LinuxLaunch {
                 .audit
                 .record(self.sandbox, SandboxFactKind::Lifecycle(lifecycle))
             {
-                let stopped = process.stop().is_ok();
-                if let Some(projection) = self.projection.as_mut()
-                    && (projection.abort(stopped).is_err() || !stopped)
-                {
-                    projection.retain_evidence();
-                }
+                self.rollback_and_cleanup(process.as_mut());
                 return Err(SandboxError::Audit(source));
             }
         }
+        let Some(status_channel) = self.status_channel.take() else {
+            self.rollback_and_cleanup(process.as_mut());
+            return Err(SandboxError::Lifecycle(io::Error::other(
+                "sandbox release channel is unavailable",
+            )));
+        };
+        self.released = true;
         let wrapped = projection::wrap(
             process,
             projection::ProcessPlan {
@@ -409,22 +404,52 @@ impl Drop for LinuxLaunch {
         if self.released {
             return;
         }
-        let stopped = self
-            .process
-            .as_mut()
-            .is_none_or(|process| process.stop().is_ok());
-        self.record_refusal(stopped);
+        if let Some(mut process) = self.process.take() {
+            self.refuse_and_cleanup(process.as_mut());
+        } else {
+            self.status_channel.take();
+            self.finish_cleanup(false);
+        }
     }
 }
 
 impl LinuxLaunch {
-    fn record_refusal(&mut self, stopped: bool) {
+    fn record_refusal(&mut self, stopped: bool) -> io::Result<()> {
         let journaled = self
             .projection
             .as_mut()
-            .is_none_or(|projection| projection.refuse(stopped).is_ok());
-        let lifecycle = if stopped && journaled {
+            .map_or(Ok(()), |projection| projection.refuse(stopped));
+        let lifecycle = if stopped && journaled.is_ok() {
             SandboxLifecycle::Refused
+        } else {
+            if let Some(projection) = self.projection.as_mut() {
+                projection.retain_evidence();
+            }
+            SandboxLifecycle::Quarantined
+        };
+        let audited = self
+            .audit
+            .record(self.sandbox, SandboxFactKind::Lifecycle(lifecycle))
+            .map_err(io::Error::other);
+        journaled.and(audited)
+    }
+
+    fn refuse_and_cleanup(&mut self, process: &mut dyn SandboxProcess) {
+        let _ = process.stop();
+        let scope_reaped = process.inspection().cleanup() == SandboxCleanup::Complete;
+        let _ = self.record_refusal(scope_reaped);
+        self.finish_cleanup(scope_reaped);
+    }
+
+    fn rollback_and_cleanup(&mut self, process: &mut dyn SandboxProcess) {
+        let _ = process.stop();
+        let scope_reaped = process.inspection().cleanup() == SandboxCleanup::Complete;
+        let rolled_back = self
+            .projection
+            .as_mut()
+            .map_or(Ok(()), |projection| projection.abort(scope_reaped));
+        let lifecycle = if scope_reaped && rolled_back.is_ok() {
+            SandboxLifecycle::RolledBack
         } else {
             if let Some(projection) = self.projection.as_mut() {
                 projection.retain_evidence();
@@ -433,7 +458,30 @@ impl LinuxLaunch {
         };
         let _ = self
             .audit
-            .record(self.sandbox, SandboxFactKind::Lifecycle(lifecycle));
+            .record(self.sandbox, SandboxFactKind::Lifecycle(lifecycle))
+            .map_err(io::Error::other);
+        self.finish_cleanup(scope_reaped);
+    }
+
+    fn finish_cleanup(&mut self, scope_reaped: bool) {
+        self.status_channel.take();
+        let projection_cleanup = self
+            .projection
+            .as_mut()
+            .map_or(Ok(()), projection::Projection::cleanup);
+        let projection_cleaned = projection_cleanup.is_ok();
+        if projection_cleaned {
+            self.projection.take();
+        }
+        let cleanup = if scope_reaped && projection_cleaned {
+            SandboxCleanup::Complete
+        } else {
+            SandboxCleanup::Failed
+        };
+        let _ = self
+            .audit
+            .record(self.sandbox, SandboxFactKind::Cleanup(cleanup));
+        self.released = true;
     }
 }
 
@@ -453,10 +501,24 @@ impl LinuxSession {
 impl Drop for LinuxSession {
     fn drop(&mut self) {
         if !self.transferred {
-            let _ = self.request.audit().record(
-                self.request.id(),
-                SandboxFactKind::Cleanup(SandboxCleanup::Complete),
-            );
+            let cleanup = self
+                .materialization
+                .as_mut()
+                .map_or(Ok(()), materialize::Materialization::cleanup);
+            self.transaction.take();
+            self.reservation.take();
+            if cleanup.is_ok() {
+                self.materialization.take();
+            }
+            let cleanup = if cleanup.is_ok() {
+                SandboxCleanup::Complete
+            } else {
+                SandboxCleanup::Failed
+            };
+            let _ = self
+                .request
+                .audit()
+                .record(self.request.id(), SandboxFactKind::Cleanup(cleanup));
         }
     }
 }

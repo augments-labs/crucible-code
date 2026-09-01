@@ -129,7 +129,8 @@ impl Projection {
         materialization: Option<&Materialization>,
         lease: Option<transaction::Lease>,
     ) -> Result<Self, SandboxError> {
-        transaction::reconcile_host_transactions().map_err(|source| {
+        let registry = transaction::RegistryLease::acquire(request)?;
+        transaction::RegistryLease::reconcile(&registry).map_err(|source| {
             failed(
                 "stale sandbox lifecycle requires recovery or review",
                 source,
@@ -208,6 +209,7 @@ impl Projection {
             request.call_result_key(),
         )
         .map_err(|source| failed("could not initialize writable transaction journal", source))?;
+        drop(registry);
         let roots_directory = stage.root().join("roots");
         create_private_directory(&roots_directory)
             .map_err(|source| failed("could not create projected roots", source))?;
@@ -299,6 +301,10 @@ impl Projection {
 
     pub(super) fn retain_evidence(&mut self) {
         self.stage.retain();
+    }
+
+    pub(super) fn cleanup(&mut self) -> io::Result<()> {
+        self.stage.cleanup()
     }
 
     fn record_terminal_scan(&mut self) -> io::Result<()> {
@@ -693,11 +699,11 @@ pub(super) struct ProcessPlan {
 }
 
 pub(super) fn wrap(
-    process: Box<dyn SandboxProcess>,
+    mut process: Box<dyn SandboxProcess>,
     plan: ProcessPlan,
 ) -> io::Result<Box<dyn SandboxProcess>> {
     let ProcessPlan {
-        projection,
+        mut projection,
         status_channel,
         audit,
         sandbox,
@@ -707,8 +713,24 @@ pub(super) fn wrap(
     let stage = projection
         .as_ref()
         .map(|projection| projection.stage.root().to_path_buf());
+    let inspection = process.inspection().clone();
     let control = status_channel.into_stream();
-    let receiver = protocol::Receiver::spawn(control.try_clone()?, stage)?;
+    let receiver_stream = match control.try_clone() {
+        Ok(stream) => stream,
+        Err(source) => {
+            drop(control);
+            cleanup_failed_wrap(process.as_mut(), projection.as_mut(), &audit, sandbox);
+            return Err(source);
+        }
+    };
+    let receiver = match protocol::Receiver::spawn(receiver_stream, stage) {
+        Ok(receiver) => receiver,
+        Err(source) => {
+            drop(control);
+            cleanup_failed_wrap(process.as_mut(), projection.as_mut(), &audit, sandbox);
+            return Err(source);
+        }
+    };
     Ok(Box::new(ProjectedProcess {
         process,
         projection,
@@ -721,7 +743,40 @@ pub(super) fn wrap(
         invocation,
         call_result_key,
         acceptance_pending: false,
+        inspection,
+        cleanup: crucible_core::SandboxCleanup::Pending,
     }))
+}
+
+fn cleanup_failed_wrap(
+    process: &mut dyn SandboxProcess,
+    mut projection: Option<&mut Projection>,
+    audit: &SandboxAudit,
+    sandbox: SandboxId,
+) {
+    let _ = process.stop();
+    let scope_reaped = process.inspection().cleanup() == crucible_core::SandboxCleanup::Complete;
+    let rolled_back = projection
+        .as_deref_mut()
+        .map_or(Ok(()), |projection| projection.abort(scope_reaped));
+    let lifecycle = if scope_reaped && rolled_back.is_ok() {
+        SandboxLifecycle::RolledBack
+    } else {
+        if let Some(projection) = projection.as_deref_mut() {
+            projection.retain_evidence();
+        }
+        SandboxLifecycle::Quarantined
+    };
+    let _ = audit
+        .record(sandbox, SandboxFactKind::Lifecycle(lifecycle))
+        .map_err(io::Error::other);
+    let projection_cleanup = projection.map_or(Ok(()), Projection::cleanup);
+    let cleanup = if scope_reaped && projection_cleanup.is_ok() {
+        crucible_core::SandboxCleanup::Complete
+    } else {
+        crucible_core::SandboxCleanup::Failed
+    };
+    let _ = audit.record(sandbox, SandboxFactKind::Cleanup(cleanup));
 }
 
 struct ProjectedProcess {
@@ -736,12 +791,20 @@ struct ProjectedProcess {
     invocation: SandboxInvocationMode,
     call_result_key: Option<CallResultKey>,
     acceptance_pending: bool,
+    inspection: SandboxInspection,
+    cleanup: crucible_core::SandboxCleanup,
 }
 
 impl ProjectedProcess {
     fn lifecycle(&self, lifecycle: SandboxLifecycle) -> io::Result<()> {
         self.audit
             .record(self.sandbox, SandboxFactKind::Lifecycle(lifecycle))
+            .map_err(io::Error::other)
+    }
+
+    fn audit_cleanup(&self, cleanup: crucible_core::SandboxCleanup) -> io::Result<()> {
+        self.audit
+            .record(self.sandbox, SandboxFactKind::Cleanup(cleanup))
             .map_err(io::Error::other)
     }
 }
@@ -770,18 +833,17 @@ impl SandboxProcess for ProjectedProcess {
         let terminal = match terminal {
             Ok(terminal) => terminal,
             Err(problem) => {
-                let mut projection = self.projection.take();
-                let discarded = projection.is_some() && !self.terminal;
+                let discarded = self.projection.is_some() && !self.terminal;
                 self.receiver.take();
                 self.control.take();
                 self.terminal = true;
                 if discarded {
-                    let lifecycle = if let Some(projection) = projection.as_mut()
+                    let lifecycle = if let Some(projection) = self.projection.as_mut()
                         && projection.abort(true).is_ok()
                     {
                         SandboxLifecycle::RolledBack
                     } else {
-                        if let Some(projection) = projection.as_mut() {
+                        if let Some(projection) = self.projection.as_mut() {
                             projection.retain_evidence();
                         }
                         SandboxLifecycle::Quarantined
@@ -802,7 +864,6 @@ impl SandboxProcess for ProjectedProcess {
                 projection.retain_evidence();
                 self.lifecycle(SandboxLifecycle::Quarantined)?;
                 self.terminal = true;
-                self.projection.take();
                 return Err(problem);
             }
             if status.signal().is_none()
@@ -850,36 +911,66 @@ impl SandboxProcess for ProjectedProcess {
     }
 
     fn stop(&mut self) -> io::Result<()> {
+        if self.cleanup != crucible_core::SandboxCleanup::Pending {
+            return if self.cleanup == crucible_core::SandboxCleanup::Complete {
+                Ok(())
+            } else {
+                Err(io::Error::other("sandbox cleanup previously failed"))
+            };
+        }
         let needs_terminal = self.status.is_none() && !self.terminal;
         let cancellation = self.control.as_mut().map_or(Ok(()), |control| {
             control
                 .write_all(&CANCEL_FRAME)
                 .and_then(|()| control.flush())
         });
-        let result = self.process.stop();
+        let process_cleanup = self.process.stop();
+        let scope_reaped =
+            self.process.inspection().cleanup() == crucible_core::SandboxCleanup::Complete;
         if let Some(receiver) = &mut self.receiver {
             let _ = receiver.finish();
         }
         self.receiver.take();
         self.control.take();
+        let mut terminal_cleanup = Ok(());
         if needs_terminal {
-            if let Some(projection) = self.projection.as_mut() {
-                let lifecycle = if result.is_ok() && projection.abort(true).is_ok() {
+            let lifecycle = self.projection.as_mut().map(|projection| {
+                let aborted = projection.abort(scope_reaped);
+                if scope_reaped && aborted.is_ok() {
                     SandboxLifecycle::RolledBack
                 } else {
                     projection.retain_evidence();
                     SandboxLifecycle::Quarantined
-                };
-                self.lifecycle(lifecycle)?;
+                }
+            });
+            if let Some(lifecycle) = lifecycle {
+                terminal_cleanup = self.lifecycle(lifecycle);
             }
             self.terminal = true;
         }
-        self.projection.take();
-        cancellation.and(result)
+        let projection_cleanup = self.projection.as_mut().map_or(Ok(()), Projection::cleanup);
+        let projection_cleaned = projection_cleanup.is_ok();
+        if projection_cleaned {
+            self.projection.take();
+        }
+        let cleanup = if scope_reaped && projection_cleaned {
+            crucible_core::SandboxCleanup::Complete
+        } else {
+            crucible_core::SandboxCleanup::Failed
+        };
+        let mut result = cancellation
+            .and(process_cleanup)
+            .and(terminal_cleanup)
+            .and(projection_cleanup);
+        self.inspection = self.inspection.clone().cleaned(cleanup);
+        self.cleanup = cleanup;
+        let audited = self.audit_cleanup(cleanup);
+        result = result.and(audited);
+        result
     }
 
     fn inspection(&self) -> &SandboxInspection {
-        self.process.inspection()
+        &self.inspection
     }
 
     fn usage(&self) -> SandboxUsage {
