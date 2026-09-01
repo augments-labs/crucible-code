@@ -107,7 +107,7 @@ impl StatusChannel {
         self.writer.take();
     }
 
-    pub(super) fn release(&mut self) -> io::Result<()> {
+    pub(super) fn attest_ready(&mut self) -> io::Result<()> {
         let mut ready = [0_u8; READY_FRAME.len()];
         self.reader.read_exact(&mut ready)?;
         if ready == REFUSED_FRAME {
@@ -128,6 +128,10 @@ impl StatusChannel {
                 "sandbox broker did not attest readiness before release",
             ));
         }
+        Ok(())
+    }
+
+    pub(super) fn send_go(&mut self) -> io::Result<()> {
         self.reader.write_all(&GO_FRAME)?;
         self.reader.flush()
     }

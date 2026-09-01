@@ -491,6 +491,11 @@ impl Tool for Bash {
             policy,
             SandboxManifest::empty(),
         )
+        .with_invocation_mode(if background {
+            crucible_core::SandboxInvocationMode::Background
+        } else {
+            crucible_core::SandboxInvocationMode::Foreground
+        })
         .with_audit(audit.clone())
         .map_err(|error| sandbox_io("could not bind sandbox audit attribution", error))?;
         let mut session = self
@@ -500,21 +505,13 @@ impl Tool for Bash {
         session
             .materialize()
             .map_err(|error| sandbox_io("could not materialize the sandbox", error))?;
-        let launch = session
+        let mut launch = session
             .stage(sandbox_command)
             .map_err(|error| sandbox_io("could not stage the confined shell", error))?;
         if ownership.is_some() {
-            audit
-                .record(
-                    sandbox,
-                    crucible_core::SandboxFactKind::Lifecycle(
-                        crucible_core::SandboxLifecycle::OwnerTransferred,
-                    ),
-                )
-                .map_err(crucible_core::SandboxError::Audit)
-                .map_err(|error| {
-                    sandbox_io("could not transfer background cleanup ownership", error)
-                })?;
+            launch.transfer_owner().map_err(|error| {
+                sandbox_io("could not transfer background cleanup ownership", error)
+            })?;
         }
         let process = launch
             .release()

@@ -250,6 +250,8 @@ impl SandboxSession for CompatibilitySession {
             inspection: self.inspection.clone(),
             audit: self.request.audit().clone(),
             sandbox: self.request.id(),
+            invocation: self.request.invocation_mode(),
+            owner_transferred: false,
             released: false,
         };
         self.transferred = true;
@@ -263,6 +265,8 @@ struct CompatibilityLaunch {
     inspection: SandboxInspection,
     audit: crucible_core::SandboxAudit,
     sandbox: crucible_core::SandboxId,
+    invocation: crucible_core::SandboxInvocationMode,
+    owner_transferred: bool,
     released: bool,
 }
 
@@ -271,7 +275,30 @@ impl SandboxLaunch for CompatibilityLaunch {
         &self.inspection
     }
 
+    fn transfer_owner(&mut self) -> Result<(), SandboxError> {
+        if self.invocation != crucible_core::SandboxInvocationMode::Background
+            || self.owner_transferred
+        {
+            return Err(SandboxError::Lifecycle(std::io::Error::other(
+                "sandbox background ownership transfer is invalid",
+            )));
+        }
+        self.audit.record(
+            self.sandbox,
+            SandboxFactKind::Lifecycle(SandboxLifecycle::OwnerTransferred),
+        )?;
+        self.owner_transferred = true;
+        Ok(())
+    }
+
     fn release(mut self: Box<Self>) -> Result<Box<dyn SandboxProcess>, SandboxError> {
+        if self.invocation == crucible_core::SandboxInvocationMode::Background
+            && !self.owner_transferred
+        {
+            return Err(SandboxError::Lifecycle(std::io::Error::other(
+                "background sandbox has no application cleanup owner",
+            )));
+        }
         let process = self.process.take().ok_or_else(|| {
             SandboxError::Spawn(std::io::Error::other(
                 "compatibility command was already released",

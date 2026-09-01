@@ -6,6 +6,7 @@ mod fd;
 mod materialize;
 mod probe;
 mod projection;
+mod transaction;
 
 #[cfg(test)]
 mod tests;
@@ -17,8 +18,8 @@ use std::sync::atomic::AtomicUsize;
 use crucible_core::{
     SandboxBackendIdentity, SandboxCapabilities, SandboxCleanup, SandboxCommand,
     SandboxCommandStage, SandboxError, SandboxFactKind, SandboxFailureKind, SandboxFailurePhase,
-    SandboxFilesystemAccess, SandboxGuardrailDecision, SandboxInspection, SandboxLaunch,
-    SandboxLifecycle, SandboxProcess, SandboxRequest, SandboxSession,
+    SandboxFilesystemAccess, SandboxGuardrailDecision, SandboxInspection, SandboxInvocationMode,
+    SandboxLaunch, SandboxLifecycle, SandboxProcess, SandboxRequest, SandboxSession,
 };
 
 use super::process::{MAX_LOCAL_COMMANDS, Reservation};
@@ -52,13 +53,6 @@ pub(super) fn prepare(
     request.negotiate(backend.capabilities())?;
     let view = command::prepare(&request)?;
 
-    let maximum = request
-        .policy()
-        .limits()
-        .concurrent_commands
-        .and_then(|value| usize::try_from(value).ok())
-        .unwrap_or(MAX_LOCAL_COMMANDS);
-    let reservation = Reservation::take(active, maximum)?;
     let inspection = SandboxInspection::confined_for_request(
         backend.identity().clone(),
         backend.capabilities().clone(),
@@ -68,6 +62,15 @@ pub(super) fn prepare(
         request.id(),
         SandboxFactKind::Negotiated(Box::new(inspection.clone())),
     )?;
+    let transaction = transaction::Lease::acquire(&request)?;
+
+    let maximum = request
+        .policy()
+        .limits()
+        .concurrent_commands
+        .and_then(|value| usize::try_from(value).ok())
+        .unwrap_or(MAX_LOCAL_COMMANDS);
+    let reservation = Reservation::take(active, maximum)?;
     request.audit().record(
         request.id(),
         SandboxFactKind::Lifecycle(SandboxLifecycle::Prepared),
@@ -83,6 +86,7 @@ pub(super) fn prepare(
         materialization: None,
         materialized: false,
         transferred: false,
+        transaction,
     }))
 }
 
@@ -96,6 +100,7 @@ struct LinuxSession {
     materialization: Option<materialize::Materialization>,
     materialized: bool,
     transferred: bool,
+    transaction: Option<transaction::Lease>,
 }
 
 impl SandboxSession for LinuxSession {
@@ -169,6 +174,7 @@ impl SandboxSession for LinuxSession {
             &self.request,
             &self.view,
             self.materialization.as_ref(),
+            self.transaction.take(),
         ) {
             Ok(projection) => projection,
             Err(problem) => {
@@ -234,6 +240,8 @@ impl SandboxSession for LinuxSession {
             inspection: self.inspection.clone(),
             audit: self.request.audit().clone(),
             sandbox: self.request.id(),
+            invocation: self.request.invocation_mode(),
+            owner_transferred: false,
             released: false,
         };
         self.transferred = true;
@@ -248,12 +256,28 @@ struct LinuxLaunch {
     inspection: SandboxInspection,
     audit: crucible_core::SandboxAudit,
     sandbox: crucible_core::SandboxId,
+    invocation: SandboxInvocationMode,
+    owner_transferred: bool,
     released: bool,
 }
 
 impl SandboxLaunch for LinuxLaunch {
     fn inspection(&self) -> &SandboxInspection {
         &self.inspection
+    }
+
+    fn transfer_owner(&mut self) -> Result<(), SandboxError> {
+        if self.invocation != SandboxInvocationMode::Background || self.owner_transferred {
+            return Err(SandboxError::Lifecycle(std::io::Error::other(
+                "sandbox background ownership transfer is invalid",
+            )));
+        }
+        self.audit.record(
+            self.sandbox,
+            SandboxFactKind::Lifecycle(SandboxLifecycle::OwnerTransferred),
+        )?;
+        self.owner_transferred = true;
+        Ok(())
     }
 
     fn release(mut self: Box<Self>) -> Result<Box<dyn SandboxProcess>, SandboxError> {
@@ -267,21 +291,44 @@ impl SandboxLaunch for LinuxLaunch {
                 "sandbox release channel is unavailable",
             ))
         })?;
+        if let Some(projection) = self.projection.as_mut()
+            && let Err(source) = projection.record(transaction::Record::ReleaseIntent)
+        {
+            let stopped = process.stop().is_ok();
+            self.record_refusal(stopped);
+            self.released = true;
+            return Err(SandboxError::Lifecycle(source));
+        }
         if let Err(source) = self.audit.record(
             self.sandbox,
             SandboxFactKind::Lifecycle(SandboxLifecycle::ReleaseIntent),
         ) {
-            let _ = process.stop();
+            let stopped = process.stop().is_ok();
+            self.record_refusal(stopped);
             self.released = true;
             return Err(SandboxError::Audit(source));
         }
-        if let Err(source) = status_channel.release() {
-            let _ = process.stop();
+        if self.invocation == SandboxInvocationMode::Background && !self.owner_transferred {
+            let stopped = process.stop().is_ok();
+            self.record_refusal(stopped);
+            self.released = true;
+            return Err(SandboxError::Lifecycle(std::io::Error::other(
+                "background sandbox has no application cleanup owner",
+            )));
+        }
+        if self.invocation == SandboxInvocationMode::Background
+            && let Some(projection) = self.projection.as_mut()
+            && let Err(source) = projection.record(transaction::Record::OwnerTransferred)
+        {
+            let stopped = process.stop().is_ok();
+            self.record_refusal(stopped);
+            self.released = true;
+            return Err(SandboxError::Lifecycle(source));
+        }
+        if let Err(source) = status_channel.attest_ready() {
+            let stopped = process.stop().is_ok();
+            self.record_refusal(stopped);
             let problem = SandboxError::Lifecycle(source);
-            let _ = self.audit.record(
-                self.sandbox,
-                SandboxFactKind::Lifecycle(SandboxLifecycle::Refused),
-            );
             let _ = self.audit.record(
                 self.sandbox,
                 SandboxFactKind::Failed {
@@ -292,6 +339,53 @@ impl SandboxLaunch for LinuxLaunch {
             self.released = true;
             return Err(problem);
         }
+        if let Some(projection) = self.projection.as_mut()
+            && let Err(source) = projection.record(transaction::Record::GoSentOrAmbiguous)
+        {
+            let stopped = process.stop().is_ok();
+            self.record_refusal(stopped);
+            self.released = true;
+            return Err(SandboxError::Lifecycle(source));
+        }
+        if let Err(source) = status_channel.send_go() {
+            let stopped = process.stop().is_ok();
+            let rolled_back = self
+                .projection
+                .as_mut()
+                .is_none_or(|projection| projection.abort(stopped).is_ok());
+            let lifecycle = if stopped && rolled_back {
+                SandboxLifecycle::RolledBack
+            } else {
+                if let Some(projection) = self.projection.as_mut() {
+                    projection.retain_evidence();
+                }
+                SandboxLifecycle::Quarantined
+            };
+            let _ = self
+                .audit
+                .record(self.sandbox, SandboxFactKind::Lifecycle(lifecycle));
+            self.released = true;
+            return Err(SandboxError::Lifecycle(source));
+        }
+        if self.invocation == SandboxInvocationMode::Background
+            && let Some(projection) = self.projection.as_mut()
+        {
+            for record in [
+                transaction::Record::CallAcceptIntent,
+                transaction::Record::CallAccepted,
+            ] {
+                if let Err(source) = projection.record(record) {
+                    let _ = process.stop();
+                    projection.retain_evidence();
+                    let _ = self.audit.record(
+                        self.sandbox,
+                        SandboxFactKind::Lifecycle(SandboxLifecycle::Quarantined),
+                    );
+                    self.released = true;
+                    return Err(SandboxError::Lifecycle(source));
+                }
+            }
+        }
         self.released = true;
         for lifecycle in [
             SandboxLifecycle::CommandReleased,
@@ -301,18 +395,23 @@ impl SandboxLaunch for LinuxLaunch {
                 .audit
                 .record(self.sandbox, SandboxFactKind::Lifecycle(lifecycle))
             {
-                let _ = process.stop();
+                let stopped = process.stop().is_ok();
+                if let Some(projection) = self.projection.as_mut()
+                    && (projection.abort(stopped).is_err() || !stopped)
+                {
+                    projection.retain_evidence();
+                }
                 return Err(SandboxError::Audit(source));
             }
         }
-        projection::wrap(
+        let wrapped = projection::wrap(
             process,
             self.projection.take(),
             status_channel,
             self.audit.clone(),
             self.sandbox,
-        )
-        .map_err(SandboxError::Lifecycle)
+        );
+        wrapped.map_err(SandboxError::Lifecycle)
     }
 }
 
@@ -321,13 +420,31 @@ impl Drop for LinuxLaunch {
         if self.released {
             return;
         }
-        let _ = self.audit.record(
-            self.sandbox,
-            SandboxFactKind::Lifecycle(SandboxLifecycle::Refused),
-        );
-        if let Some(process) = &mut self.process {
-            let _ = process.stop();
-        }
+        let stopped = self
+            .process
+            .as_mut()
+            .is_none_or(|process| process.stop().is_ok());
+        self.record_refusal(stopped);
+    }
+}
+
+impl LinuxLaunch {
+    fn record_refusal(&mut self, stopped: bool) {
+        let journaled = self
+            .projection
+            .as_mut()
+            .is_none_or(|projection| projection.refuse(stopped).is_ok());
+        let lifecycle = if stopped && journaled {
+            SandboxLifecycle::Refused
+        } else {
+            if let Some(projection) = self.projection.as_mut() {
+                projection.retain_evidence();
+            }
+            SandboxLifecycle::Quarantined
+        };
+        let _ = self
+            .audit
+            .record(self.sandbox, SandboxFactKind::Lifecycle(lifecycle));
     }
 }
 

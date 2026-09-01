@@ -71,11 +71,15 @@ impl Drop for Reservation {
 /// A generated staging tree removed on every session/process drop path.
 pub(super) struct Stage {
     root: std::path::PathBuf,
+    retained: bool,
 }
 
 impl Stage {
     pub(super) fn new(root: std::path::PathBuf) -> Self {
-        Self { root }
+        Self {
+            root,
+            retained: false,
+        }
     }
 
     pub(super) fn manifest(&self) -> std::path::PathBuf {
@@ -84,6 +88,11 @@ impl Stage {
 
     pub(super) fn root(&self) -> &std::path::Path {
         &self.root
+    }
+
+    /// Keeps a quarantined tree for bounded startup recovery and inspection.
+    pub(super) fn retain(&mut self) {
+        self.retained = true;
     }
 }
 
@@ -97,7 +106,9 @@ impl std::fmt::Debug for Stage {
 
 impl Drop for Stage {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.root);
+        if !self.retained {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
     }
 }
 

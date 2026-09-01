@@ -144,11 +144,11 @@ pub use sandbox::{
     SandboxEnvironment, SandboxError, SandboxFact, SandboxFactKind, SandboxFailureKind,
     SandboxFailurePhase, SandboxFeature, SandboxFilesystemAccess, SandboxFilesystemProvenance,
     SandboxFilesystemRule, SandboxGuardrailDecision, SandboxGuardrailEffect, SandboxGuardrailError,
-    SandboxInspection, SandboxLaunch, SandboxLifecycle, SandboxManifest, SandboxManifestEntry,
-    SandboxManifestError, SandboxMode, SandboxNetworkEndpoint, SandboxNetworkInspection,
-    SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxOutput, SandboxPlanInspection,
-    SandboxPolicy, SandboxPolicyError, SandboxProcess, SandboxRead, SandboxRequest,
-    SandboxResourceLimits, SandboxRootInspection, SandboxService, SandboxSession,
+    SandboxInspection, SandboxInvocationMode, SandboxLaunch, SandboxLifecycle, SandboxManifest,
+    SandboxManifestEntry, SandboxManifestError, SandboxMode, SandboxNetworkEndpoint,
+    SandboxNetworkInspection, SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxOutput,
+    SandboxPlanInspection, SandboxPolicy, SandboxPolicyError, SandboxProcess, SandboxRead,
+    SandboxRequest, SandboxResourceLimits, SandboxRootInspection, SandboxService, SandboxSession,
     SandboxUnreadablePattern, SandboxUsage, SandboxViolation,
 };
 pub use source::{Fetch, Page, Search, SearchResult, SourceError};

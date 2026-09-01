@@ -52,11 +52,11 @@ persistence request or snapshot request into best-effort behavior.
 | `kernel_surface` | enforced | unsupported |
 | `privilege_isolation` | enforced | unsupported |
 | `materialization` | enforced | unsupported |
-| `cpu_limit` | unsupported | unsupported |
-| `memory_limit` | unsupported | unsupported |
+| `cpu_limit` | enforced | unsupported |
+| `memory_limit` | enforced | unsupported |
 | `disk_limit` | unsupported | unsupported |
 | `process_limit` | unsupported | unsupported |
-| `open_file_limit` | unsupported | unsupported |
+| `open_file_limit` | enforced | unsupported |
 | `command_time_limit` | enforced | enforced |
 | `session_time_limit` | unsupported | unsupported |
 | `outbound_byte_limit` | unsupported | unsupported |

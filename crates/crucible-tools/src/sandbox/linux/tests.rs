@@ -14,10 +14,10 @@ use crucible_core::{
     Ancestry, SandboxCleanup, SandboxCommand, SandboxCredentialHandle, SandboxCredentialProjection,
     SandboxCredentialProvenance, SandboxEnvironment, SandboxFactKind, SandboxFeature,
     SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxId,
-    SandboxLifecycle, SandboxManifest, SandboxManifestEntry, SandboxMode, SandboxNetworkEndpoint,
-    SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxOutput, SandboxPolicy, SandboxProcess,
-    SandboxRead, SandboxRequest, SandboxResourceLimits, SandboxService, SandboxUnreadablePattern,
-    ToolId,
+    SandboxInvocationMode, SandboxLifecycle, SandboxManifest, SandboxManifestEntry, SandboxMode,
+    SandboxNetworkEndpoint, SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxOutput,
+    SandboxPolicy, SandboxProcess, SandboxRead, SandboxRequest, SandboxResourceLimits,
+    SandboxService, SandboxUnreadablePattern, ToolId,
 };
 
 use crate::LocalSandbox;
@@ -656,18 +656,13 @@ fn background_ownership_precedes_release_and_command_start() {
         return;
     }
     let sample = Sample::new("sandbox-background-owner-order");
-    let request = request(&sample, SandboxManifest::empty());
-    let sandbox = request.id();
+    let request = request(&sample, SandboxManifest::empty())
+        .with_invocation_mode(SandboxInvocationMode::Background);
     let audit = request.audit().clone();
     let mut session = service.prepare(request).expect("prepared sandbox");
     session.materialize().expect("materialized workspace");
-    let launch = session.stage(command("exit 0")).expect("staged launch");
-    audit
-        .record(
-            sandbox,
-            SandboxFactKind::Lifecycle(SandboxLifecycle::OwnerTransferred),
-        )
-        .expect("owner transfer audit");
+    let mut launch = session.stage(command("exit 0")).expect("staged launch");
+    launch.transfer_owner().expect("application owner transfer");
     let process = launch.release().expect("released launch");
     let (status, _, _) = finish(process);
     assert!(status.success(), "{status}");
@@ -696,6 +691,62 @@ fn background_ownership_precedes_release_and_command_start() {
     assert!(
         position(SandboxLifecycle::CommandReleased) < position(SandboxLifecycle::CommandStarted)
     );
+}
+
+#[test]
+fn background_release_without_an_application_owner_is_refused_before_go() {
+    let service = LocalSandbox::new();
+    if service.probe().is_err() {
+        return;
+    }
+    let sample = Sample::new("sandbox-background-owner-required");
+    let request = request(&sample, SandboxManifest::empty())
+        .with_invocation_mode(SandboxInvocationMode::Background);
+    let audit = request.audit().clone();
+    let mut session = service.prepare(request).expect("prepared sandbox");
+    session.materialize().expect("materialized workspace");
+    let launch = session
+        .stage(command("printf 'escaped\n' > ownerless.txt"))
+        .expect("staged launch");
+
+    assert!(launch.release().is_err());
+    assert!(!sample.root().join("ownerless.txt").exists());
+    assert!(
+        audit
+            .records()
+            .expect("audit records")
+            .iter()
+            .any(|record| {
+                matches!(
+                    record.fact().kind(),
+                    SandboxFactKind::Lifecycle(
+                        SandboxLifecycle::Refused | SandboxLifecycle::Quarantined
+                    )
+                )
+            })
+    );
+}
+
+#[test]
+fn writable_transactions_are_globally_serialized_across_disjoint_roots() {
+    let service = LocalSandbox::new();
+    if service.probe().is_err() {
+        return;
+    }
+    let first = Sample::new("sandbox-global-writer-first");
+    let second = Sample::new("sandbox-global-writer-second");
+    let held = service
+        .prepare(request(&first, SandboxManifest::empty()))
+        .expect("first writable transaction");
+
+    assert!(matches!(
+        service.prepare(request(&second, SandboxManifest::empty())),
+        Err(crucible_core::SandboxError::Concurrency)
+    ));
+    drop(held);
+    service
+        .prepare(request(&second, SandboxManifest::empty()))
+        .expect("writer admitted after lease release");
 }
 
 #[test]

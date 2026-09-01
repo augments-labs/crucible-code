@@ -418,6 +418,18 @@ pub struct SandboxRequest {
     policy: SandboxPolicy,
     manifest: SandboxManifest,
     audit: SandboxAudit,
+    invocation: SandboxInvocationMode,
+}
+
+/// Which durable effect owns the call's sole provider-projectable result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SandboxInvocationMode {
+    /// The terminal sandbox outcome owns the call result.
+    #[default]
+    Foreground,
+    /// Acceptance after owned release is the sole call result; terminal state
+    /// is application lifecycle status rather than another tool result.
+    Background,
 }
 
 impl SandboxRequest {
@@ -439,7 +451,16 @@ impl SandboxRequest {
             policy,
             manifest,
             audit,
+            invocation: SandboxInvocationMode::Foreground,
         }
+    }
+
+    /// Selects foreground terminal delivery or application-owned background
+    /// acceptance. This changes no filesystem, process, or policy authority.
+    #[must_use]
+    pub const fn with_invocation_mode(mut self, mode: SandboxInvocationMode) -> Self {
+        self.invocation = mode;
+        self
     }
 
     /// Applies a parent ceiling and retains both requested and effective policy.
@@ -507,6 +528,12 @@ impl SandboxRequest {
     #[must_use]
     pub const fn audit(&self) -> &SandboxAudit {
         &self.audit
+    }
+
+    /// Which durable effect owns this call's sole result.
+    #[must_use]
+    pub const fn invocation_mode(&self) -> SandboxInvocationMode {
+        self.invocation
     }
 
     /// Verifies exact support before a service may materialize or spawn.
@@ -1312,6 +1339,18 @@ pub trait SandboxProcess: Send {
 pub trait SandboxLaunch: Send {
     /// Redacted inspection snapshot fixed before release.
     fn inspection(&self) -> &SandboxInspection;
+
+    /// Confirms that an application registry owns cleanup before a background
+    /// launch can cross its one-shot release boundary.
+    ///
+    /// # Errors
+    ///
+    /// Foreground launches and duplicate or failed transfers are refused.
+    fn transfer_owner(&mut self) -> Result<(), SandboxError> {
+        Err(SandboxError::Lifecycle(io::Error::other(
+            "sandbox launch does not support background ownership transfer",
+        )))
+    }
 
     /// Sends the one-shot release and transfers cleanup into a process handle.
     ///

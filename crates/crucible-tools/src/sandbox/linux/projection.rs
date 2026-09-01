@@ -27,6 +27,7 @@ use super::super::process::Stage;
 use super::broker::StatusChannel;
 use super::command::View;
 use super::materialize::Materialization;
+use super::transaction;
 
 const MAX_PROJECTED_ENTRIES: usize = 262_144;
 const MAX_PROJECTED_DEPTH: usize = 64;
@@ -117,6 +118,7 @@ pub(super) struct Projection {
     stage: Stage,
     roots: Vec<Root>,
     published: bool,
+    transaction: transaction::Transaction,
 }
 
 impl Projection {
@@ -124,6 +126,7 @@ impl Projection {
         request: &SandboxRequest,
         view: &View,
         materialization: Option<&Materialization>,
+        lease: Option<transaction::Lease>,
     ) -> Result<Option<Self>, SandboxError> {
         let mut specifications = Vec::new();
         for bind in view.binds().iter().filter(|bind| !bind.read_only()) {
@@ -157,8 +160,15 @@ impl Projection {
             }
         }
         if specifications.is_empty() {
+            if lease.is_some() {
+                return Err(refused(
+                    "writable transaction admission has no projected authority",
+                ));
+            }
             return Ok(None);
         }
+        let lease = lease
+            .ok_or_else(|| refused("writable projection has no global transaction admission"))?;
         specifications.sort_by(|left, right| {
             left.0
                 .components()
@@ -172,6 +182,20 @@ impl Projection {
         create_private_directory(&root)
             .map_err(|source| failed("could not create writable projection", source))?;
         let stage = Stage::new(root);
+        let mut transaction = transaction::Transaction::start(
+            lease,
+            stage.root(),
+            request.id(),
+            match request.invocation_mode() {
+                crucible_core::SandboxInvocationMode::Foreground => {
+                    transaction::InvocationMode::Foreground
+                }
+                crucible_core::SandboxInvocationMode::Background => {
+                    transaction::InvocationMode::Background
+                }
+            },
+        )
+        .map_err(|source| failed("could not initialize writable transaction journal", source))?;
         let roots_directory = stage.root().join("roots");
         create_private_directory(&roots_directory)
             .map_err(|source| failed("could not create projected roots", source))?;
@@ -216,11 +240,66 @@ impl Projection {
                 baseline: before,
             });
         }
+        transaction
+            .append(transaction::Record::Prepared)
+            .map_err(|source| failed("could not durably prepare writable transaction", source))?;
         Ok(Some(Self {
             stage,
             roots,
             published: false,
+            transaction,
         }))
+    }
+
+    pub(super) fn record(&mut self, record: transaction::Record) -> io::Result<()> {
+        self.transaction.append(record)
+    }
+
+    pub(super) fn refuse(&mut self, cleanup_proved: bool) -> io::Result<()> {
+        self.record(transaction::Record::RefusalObserved)?;
+        self.record(transaction::Record::PreparationCleanupIntent)?;
+        self.record(if cleanup_proved {
+            transaction::Record::PreparationCleanupProved
+        } else {
+            transaction::Record::PreparationCleanupUnproved
+        })?;
+        self.record(if cleanup_proved {
+            transaction::Record::Refused
+        } else {
+            transaction::Record::Quarantined
+        })
+    }
+
+    pub(super) fn abort(&mut self, scope_reaped: bool) -> io::Result<()> {
+        self.record(transaction::Record::AbortObserved)?;
+        self.record(transaction::Record::ScopeReapIntent)?;
+        self.record(if scope_reaped {
+            transaction::Record::ScopeReapProved
+        } else {
+            transaction::Record::ScopeReapUnproved
+        })?;
+        self.record(if scope_reaped {
+            transaction::Record::RolledBack
+        } else {
+            transaction::Record::Quarantined
+        })
+    }
+
+    pub(super) fn retain_evidence(&mut self) {
+        self.stage.retain();
+    }
+
+    fn record_terminal_scan(&mut self) -> io::Result<()> {
+        for record in [
+            transaction::Record::CommandExited,
+            transaction::Record::WorkloadReapIntent,
+            transaction::Record::WorkloadReaped,
+            transaction::Record::ScanIntent,
+            transaction::Record::ScanTransferred,
+        ] {
+            self.record(record)?;
+        }
+        Ok(())
     }
 
     pub(super) fn descriptor(&self, destination: &Path) -> Option<RawFd> {
@@ -256,8 +335,33 @@ impl Projection {
         if self.published {
             return Ok(());
         }
-        let canonical = publish::reconcile(&self.roots, broker_baselines, finals)?;
-        publish::apply(&self.roots, self.stage.root(), &canonical)?;
+        let canonical = match publish::reconcile(&self.roots, broker_baselines, finals) {
+            Ok(canonical) => canonical,
+            Err(problem) => {
+                return match self.transaction.finish_abort(false) {
+                    Ok(()) => Err(publish::Failure::rolled_back(problem)),
+                    Err(journal) => {
+                        self.retain_evidence();
+                        Err(publish::Failure::quarantined(io::Error::other(format!(
+                            "terminal reconciliation failed and rollback could not be journaled: {problem}; {journal}"
+                        ))))
+                    }
+                };
+            }
+        };
+        let publication = publish::apply(
+            &self.roots,
+            self.stage.root(),
+            &canonical,
+            &mut self.transaction,
+        );
+        if publication
+            .as_ref()
+            .is_err_and(publish::Failure::requires_quarantine)
+        {
+            self.retain_evidence();
+        }
+        publication?;
         self.published = true;
         Ok(())
     }
@@ -634,12 +738,23 @@ impl SandboxProcess for ProjectedProcess {
         let terminal = match terminal {
             Ok(terminal) => terminal,
             Err(problem) => {
-                let discarded = self.projection.take().is_some() && !self.terminal;
+                let mut projection = self.projection.take();
+                let discarded = projection.is_some() && !self.terminal;
                 self.receiver.take();
                 self.control.take();
                 self.terminal = true;
                 if discarded {
-                    self.lifecycle(SandboxLifecycle::RolledBack)?;
+                    let lifecycle = if let Some(projection) = projection.as_mut()
+                        && projection.abort(true).is_ok()
+                    {
+                        SandboxLifecycle::RolledBack
+                    } else {
+                        if let Some(projection) = projection.as_mut() {
+                            projection.retain_evidence();
+                        }
+                        SandboxLifecycle::Quarantined
+                    };
+                    self.lifecycle(lifecycle)?;
                 }
                 return Err(problem);
             }
@@ -648,6 +763,16 @@ impl SandboxProcess for ProjectedProcess {
         self.control.take();
         let status = terminal.status;
         if !self.terminal {
+            if let Some(projection) = self.projection.as_mut()
+                && let Err(problem) = projection.record_terminal_scan()
+            {
+                let _ = projection.abort(true);
+                projection.retain_evidence();
+                self.lifecycle(SandboxLifecycle::Quarantined)?;
+                self.terminal = true;
+                self.projection.take();
+                return Err(problem);
+            }
             if status.signal().is_none()
                 && self.process.violation().is_none()
                 && self.projection.is_some()
@@ -671,6 +796,15 @@ impl SandboxProcess for ProjectedProcess {
                     }
                 }
             } else if self.projection.is_some() {
+                if let Some(projection) = self.projection.as_mut()
+                    && let Err(problem) = projection.abort(true)
+                {
+                    projection.retain_evidence();
+                    self.lifecycle(SandboxLifecycle::Quarantined)?;
+                    self.terminal = true;
+                    self.projection.take();
+                    return Err(problem);
+                }
                 self.lifecycle(SandboxLifecycle::RolledBack)?;
             } else if self.projection.is_none() && !terminal.roots.is_empty() {
                 return Err(io::Error::other(
@@ -684,12 +818,7 @@ impl SandboxProcess for ProjectedProcess {
     }
 
     fn stop(&mut self) -> io::Result<()> {
-        if self.status.is_none() {
-            if self.projection.is_some() && !self.terminal {
-                self.lifecycle(SandboxLifecycle::RolledBack)?;
-            }
-            self.terminal = true;
-        }
+        let needs_terminal = self.status.is_none() && !self.terminal;
         let cancellation = self.control.as_mut().map_or(Ok(()), |control| {
             control
                 .write_all(&CANCEL_FRAME)
@@ -701,6 +830,18 @@ impl SandboxProcess for ProjectedProcess {
         }
         self.receiver.take();
         self.control.take();
+        if needs_terminal {
+            if let Some(projection) = self.projection.as_mut() {
+                let lifecycle = if result.is_ok() && projection.abort(true).is_ok() {
+                    SandboxLifecycle::RolledBack
+                } else {
+                    projection.retain_evidence();
+                    SandboxLifecycle::Quarantined
+                };
+                self.lifecycle(lifecycle)?;
+            }
+            self.terminal = true;
+        }
         self.projection.take();
         cancellation.and(result)
     }

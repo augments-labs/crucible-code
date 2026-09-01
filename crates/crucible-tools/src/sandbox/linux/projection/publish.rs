@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
-use std::fs;
+use std::fs::{self, File};
 use std::io;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use super::{
     Entry, Root, Snapshot, authority, copy_file, digest_file, snapshot_filtered, sparse_extents,
 };
+use crate::sandbox::linux::transaction::{Record, Transaction};
 
 type ContentKey = (u64, [u8; 32], Vec<(u64, u64)>);
 
@@ -18,15 +19,23 @@ pub(super) struct Failure {
     quarantined: bool,
 }
 
+#[derive(Clone, Copy)]
+struct Recovery<'a> {
+    roots: &'a [Root],
+    stage: &'a Path,
+    publication: &'a Path,
+    prepared: &'a [Prepared],
+}
+
 impl Failure {
-    fn rolled_back(source: io::Error) -> Self {
+    pub(super) fn rolled_back(source: io::Error) -> Self {
         Self {
             source,
             quarantined: false,
         }
     }
 
-    fn quarantined(source: io::Error) -> Self {
+    pub(super) fn quarantined(source: io::Error) -> Self {
         Self {
             source,
             quarantined: true,
@@ -215,48 +224,88 @@ fn merge_entry(host: &Entry, broker: &Entry, final_entry: &Entry) -> Entry {
     }
 }
 
-pub(super) fn apply(roots: &[Root], stage: &Path, finals: &[Snapshot]) -> Result<(), Failure> {
+pub(super) fn apply(
+    roots: &[Root],
+    stage: &Path,
+    finals: &[Snapshot],
+    transaction: &mut Transaction,
+) -> Result<(), Failure> {
     if roots.len() != finals.len() {
-        return Err(invalid(
-            "terminal scan root count does not match the immutable projection plan",
-        )
-        .into());
+        return abort_without_staging(
+            transaction,
+            invalid("terminal scan root count does not match the immutable projection plan"),
+        );
     }
-    if roots
-        .iter()
-        .zip(finals)
-        .all(|(root, final_snapshot)| &root.baseline == final_snapshot)
-    {
-        return Ok(());
-    }
-    for (root, final_snapshot) in roots.iter().zip(finals) {
-        validate_root_shape(root, final_snapshot)?;
-        if snapshot_filtered(&root.publication_path(), &root.exclusions)? != root.baseline {
-            return Err(io::Error::other(format!(
-                "writable root changed outside the sandbox before publication; terminal delta category: {}",
-                difference(&root.baseline, final_snapshot)
-            ))
-            .into());
-        }
+    if let Err(problem) = validate_before_publication(roots, finals) {
+        return abort_without_staging(transaction, problem);
     }
 
     let publication = stage.join("publication");
-    create_private_directory(&publication)?;
+    if let Err(problem) = create_private_directory(&publication) {
+        return abort_without_staging(transaction, problem);
+    }
     let mut prepared = Vec::with_capacity(roots.len());
     for (index, (root, final_snapshot)) in roots.iter().zip(finals).enumerate() {
-        prepared.push(Prepared::new(
-            root,
-            final_snapshot,
-            &publication.join(index.to_string()),
-        )?);
+        let record_index = u32::try_from(index)
+            .map_err(|_| Failure::quarantined(invalid("publication root index overflow")))?;
+        if let Err(problem) = transaction.append(Record::StageIntent(record_index)) {
+            return Err(Failure::quarantined(problem));
+        }
+        let prepared_root =
+            match Prepared::new(root, final_snapshot, &publication.join(index.to_string())) {
+                Ok(prepared) => prepared,
+                Err(problem) => {
+                    return abort_staged(
+                        transaction,
+                        stage,
+                        &publication,
+                        index.saturating_add(1),
+                        problem,
+                    );
+                }
+            };
+        if let Err(problem) = transaction.append(Record::Staged(record_index)) {
+            return abort_staged(
+                transaction,
+                stage,
+                &publication,
+                index.saturating_add(1),
+                problem,
+            );
+        }
+        prepared.push(prepared_root);
+    }
+    for record in [
+        Record::PublicationStaged,
+        Record::ScopeReapIntent,
+        Record::ScopeReapProved,
+    ] {
+        if let Err(problem) = transaction.append(record) {
+            return abort_staged(transaction, stage, &publication, prepared.len(), problem);
+        }
     }
 
     let mut applied = Vec::new();
-    for (index, ((root, final_snapshot), prepared_root)) in
+    let mut apply_index = 0_u32;
+    for (root_index, ((root, final_snapshot), prepared_root)) in
         roots.iter().zip(finals).zip(&prepared).enumerate()
     {
         if &root.baseline == final_snapshot {
             continue;
+        }
+        if let Err(problem) = transaction.append(Record::ApplyIntent(apply_index)) {
+            return abort_applied_prefix(
+                transaction,
+                Recovery {
+                    roots,
+                    stage,
+                    publication: &publication,
+                    prepared: &prepared,
+                },
+                &applied,
+                None,
+                problem,
+            );
         }
         if let Err(problem) = apply_snapshot(
             root,
@@ -264,17 +313,193 @@ pub(super) fn apply(roots: &[Root], stage: &Path, finals: &[Snapshot]) -> Result
             final_snapshot,
             &prepared_root.contents,
         ) {
-            let rollback = rollback(roots, &prepared, &applied, Some(index));
-            return match rollback {
-                Ok(()) => Err(Failure::rolled_back(problem)),
-                Err(rollback_problem) => Err(Failure::quarantined(io::Error::other(format!(
-                    "publication failed and rollback could not be proved: {problem}; {rollback_problem}"
-                )))),
-            };
+            return abort_applied_prefix(
+                transaction,
+                Recovery {
+                    roots,
+                    stage,
+                    publication: &publication,
+                    prepared: &prepared,
+                },
+                &applied,
+                Some(root_index),
+                problem,
+            );
         }
-        applied.push(index);
+        if let Err(problem) = transaction.append(Record::Applied(apply_index)) {
+            return abort_applied_prefix(
+                transaction,
+                Recovery {
+                    roots,
+                    stage,
+                    publication: &publication,
+                    prepared: &prepared,
+                },
+                &applied,
+                Some(root_index),
+                problem,
+            );
+        }
+        applied.push(root_index);
+        apply_index = apply_index.saturating_add(1);
+    }
+    if let Err(problem) = transaction.append(Record::Committed) {
+        return abort_applied_prefix(
+            transaction,
+            Recovery {
+                roots,
+                stage,
+                publication: &publication,
+                prepared: &prepared,
+            },
+            &applied,
+            None,
+            problem,
+        );
     }
     Ok(())
+}
+
+fn validate_before_publication(roots: &[Root], finals: &[Snapshot]) -> io::Result<()> {
+    for (root, final_snapshot) in roots.iter().zip(finals) {
+        validate_root_shape(root, final_snapshot)?;
+        if snapshot_filtered(&root.publication_path(), &root.exclusions)? != root.baseline {
+            return Err(io::Error::other(format!(
+                "writable root changed outside the sandbox before publication; terminal delta category: {}",
+                difference(&root.baseline, final_snapshot)
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn abort_without_staging(transaction: &mut Transaction, problem: io::Error) -> Result<(), Failure> {
+    match transaction.finish_abort(false) {
+        Ok(()) => Err(Failure::rolled_back(problem)),
+        Err(journal) => Err(Failure::quarantined(io::Error::other(format!(
+            "publication preparation failed and rollback could not be journaled: {problem}; {journal}"
+        )))),
+    }
+}
+
+fn abort_staged(
+    transaction: &mut Transaction,
+    stage: &Path,
+    publication: &Path,
+    staged: usize,
+    problem: io::Error,
+) -> Result<(), Failure> {
+    if let Err(journal) = transaction.begin_abort(false) {
+        return Err(Failure::quarantined(io::Error::other(format!(
+            "publication staging failed and its abort could not be journaled: {problem}; {journal}"
+        ))));
+    }
+    if let Err(discard) = discard_staging(transaction, stage, publication, staged) {
+        return quarantine_after_abort(
+            transaction,
+            &problem,
+            &format!("staged publication could not be discarded: {discard}"),
+        );
+    }
+    match transaction.append(Record::RolledBack) {
+        Ok(()) => Err(Failure::rolled_back(problem)),
+        Err(journal) => Err(Failure::quarantined(io::Error::other(format!(
+            "staged publication was discarded but rollback could not be journaled: {problem}; {journal}"
+        )))),
+    }
+}
+
+fn abort_applied_prefix(
+    transaction: &mut Transaction,
+    recovery: Recovery<'_>,
+    applied: &[usize],
+    failed: Option<usize>,
+    problem: io::Error,
+) -> Result<(), Failure> {
+    if let Err(journal) = transaction.begin_abort(false) {
+        return Err(Failure::quarantined(io::Error::other(format!(
+            "publication failed and its abort could not be journaled: {problem}; {journal}"
+        ))));
+    }
+    if let Err(rollback_problem) = rollback(
+        transaction,
+        recovery.roots,
+        recovery.prepared,
+        applied,
+        failed,
+    ) {
+        return quarantine_after_abort(
+            transaction,
+            &problem,
+            &format!("publication rollback could not be proved: {rollback_problem}"),
+        );
+    }
+    if let Err(discard) = discard_staging(
+        transaction,
+        recovery.stage,
+        recovery.publication,
+        recovery.prepared.len(),
+    ) {
+        return quarantine_after_abort(
+            transaction,
+            &problem,
+            &format!("rolled-back staging could not be discarded: {discard}"),
+        );
+    }
+    match transaction.append(Record::RolledBack) {
+        Ok(()) => Err(Failure::rolled_back(problem)),
+        Err(journal) => Err(Failure::quarantined(io::Error::other(format!(
+            "publication rolled back but its terminal could not be journaled: {problem}; {journal}"
+        )))),
+    }
+}
+
+fn discard_staging(
+    transaction: &mut Transaction,
+    stage: &Path,
+    publication: &Path,
+    staged: usize,
+) -> io::Result<()> {
+    for index in (0..staged).rev() {
+        let record_index =
+            u32::try_from(index).map_err(|_| invalid("publication discard index overflow"))?;
+        transaction.append(Record::DiscardIntent(record_index))?;
+        let directory = publication.join(index.to_string());
+        match fs::remove_dir_all(&directory) {
+            Ok(()) => {}
+            Err(problem) if problem.kind() == io::ErrorKind::NotFound => {}
+            Err(problem) => return Err(problem),
+        }
+        if publication.exists() {
+            File::open(publication)?.sync_all()?;
+        } else {
+            File::open(stage)?.sync_all()?;
+        }
+        transaction.append(Record::Discarded(record_index))?;
+    }
+    match fs::remove_dir(publication) {
+        Ok(()) => {}
+        Err(problem) if problem.kind() == io::ErrorKind::NotFound => {}
+        Err(problem) => return Err(problem),
+    }
+    File::open(stage)?.sync_all()
+}
+
+fn quarantine_after_abort(
+    transaction: &mut Transaction,
+    problem: &io::Error,
+    recovery: &str,
+) -> Result<(), Failure> {
+    let journal = transaction
+        .append(Record::QuarantineObserved)
+        .and_then(|()| transaction.append(Record::Quarantined));
+    let suffix = journal.map_or_else(
+        |journal| format!("; quarantine could not be journaled: {journal}"),
+        |()| String::new(),
+    );
+    Err(Failure::quarantined(io::Error::other(format!(
+        "publication failed: {problem}; {recovery}{suffix}"
+    ))))
 }
 
 fn difference(left: &Snapshot, right: &Snapshot) -> &'static str {
@@ -426,17 +651,35 @@ impl ContentStore {
 }
 
 fn rollback(
+    transaction: &mut Transaction,
     roots: &[Root],
     prepared: &[Prepared],
     applied: &[usize],
     failed: Option<usize>,
 ) -> io::Result<()> {
-    for index in failed.into_iter().chain(applied.iter().rev().copied()) {
+    let failed = failed.map(|root_index| {
+        u32::try_from(applied.len())
+            .map(|apply_index| (apply_index, root_index))
+            .map_err(|_| invalid("publication rollback index overflow"))
+    });
+    let applied = applied
+        .iter()
+        .copied()
+        .enumerate()
+        .rev()
+        .map(|(apply_index, root_index)| {
+            u32::try_from(apply_index)
+                .map(|apply_index| (apply_index, root_index))
+                .map_err(|_| invalid("publication rollback index overflow"))
+        });
+    for item in failed.into_iter().chain(applied) {
+        let (apply_index, root_index) = item?;
+        transaction.append(Record::RollbackIntent(apply_index))?;
         let root = roots
-            .get(index)
+            .get(root_index)
             .ok_or_else(|| invalid("rollback root index is unavailable"))?;
         let contents = prepared
-            .get(index)
+            .get(root_index)
             .ok_or_else(|| invalid("rollback content index is unavailable"))?;
         apply_snapshot(root, &root.exclusions, &root.baseline, &contents.contents)?;
         if snapshot_filtered(&root.publication_path(), &root.exclusions)? != root.baseline {
@@ -444,6 +687,7 @@ fn rollback(
                 "rollback did not restore the baseline semantic view",
             ));
         }
+        transaction.append(Record::RollbackApplied(apply_index))?;
     }
     Ok(())
 }
