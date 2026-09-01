@@ -18,7 +18,7 @@ use super::guardrail::SandboxCommandStage;
 use super::manifest::SandboxManifest;
 use super::policy::{
     SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxMode, SandboxNetworkPolicy,
-    SandboxPolicy, SandboxResourceLimits,
+    SandboxPolicy, SandboxPolicyError, SandboxResourceLimits,
 };
 
 /// Maximum environment entries given to one command.
@@ -30,16 +30,124 @@ pub const MAX_SANDBOX_ENVIRONMENT_NAME_BYTES: usize = 128;
 /// Maximum aggregate bytes in explicit environment values.
 pub const MAX_SANDBOX_ENVIRONMENT_BYTES: usize = 128 * 1024;
 
+/// Maximum bytes in one opaque host credential reference.
+pub const MAX_SANDBOX_CREDENTIAL_HANDLE_BYTES: usize = 256;
+
 /// Maximum command arguments passed through one launch.
 pub const MAX_SANDBOX_COMMAND_ARGUMENTS: usize = 512;
 
 /// Maximum aggregate encoded bytes in a command program and arguments.
 pub const MAX_SANDBOX_COMMAND_BYTES: usize = 128 * 1024;
 
+/// Authority that resolved an opaque credential handle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SandboxCredentialProvenance {
+    /// Direct user configuration or an interactive user grant.
+    User,
+    /// A host account/credential store selected by the user.
+    Account,
+}
+
+/// Opaque reference to a host-owned credential.
+#[derive(Clone, PartialEq, Eq)]
+pub struct SandboxCredentialHandle {
+    identity: Box<str>,
+    provenance: SandboxCredentialProvenance,
+}
+
+impl SandboxCredentialHandle {
+    /// Validates one bounded symbolic host credential reference.
+    ///
+    /// # Errors
+    ///
+    /// Empty, oversized, non-ASCII, or structurally unsafe identities are
+    /// rejected before a secret value is projected.
+    pub fn new(
+        identity: impl Into<Box<str>>,
+        provenance: SandboxCredentialProvenance,
+    ) -> Result<Self, SandboxError> {
+        let identity = identity.into();
+        if identity.is_empty()
+            || identity.len() > MAX_SANDBOX_CREDENTIAL_HANDLE_BYTES
+            || !identity.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b':' | b'/')
+            })
+        {
+            return Err(SandboxError::InvalidEnvironment);
+        }
+        Ok(Self {
+            identity,
+            provenance,
+        })
+    }
+
+    /// Authority that resolved this reference.
+    #[must_use]
+    pub const fn provenance(&self) -> SandboxCredentialProvenance {
+        self.provenance
+    }
+}
+
+impl std::fmt::Debug for SandboxCredentialHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SandboxCredentialHandle")
+            .field("identity", &"[credential handle]")
+            .field("provenance", &self.provenance)
+            .finish()
+    }
+}
+
+/// One host-resolved credential value projected under an environment name.
+#[derive(Clone, PartialEq, Eq)]
+pub struct SandboxCredentialProjection {
+    handle: SandboxCredentialHandle,
+    name: Box<str>,
+    value: OsString,
+}
+
+impl SandboxCredentialProjection {
+    /// Binds one resolved value to its opaque handle and destination name.
+    ///
+    /// # Errors
+    ///
+    /// Invalid names or values are rejected with the same rules as literal
+    /// environment projection.
+    pub fn new(
+        handle: SandboxCredentialHandle,
+        name: impl Into<Box<str>>,
+        value: impl Into<OsString>,
+    ) -> Result<Self, SandboxError> {
+        let projection = Self {
+            handle,
+            name: name.into(),
+            value: value.into(),
+        };
+        validate_environment_entry(&projection.name, &projection.value)?;
+        Ok(projection)
+    }
+}
+
+impl std::fmt::Debug for SandboxCredentialProjection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SandboxCredentialProjection")
+            .field("handle", &self.handle)
+            .field("name", &self.name)
+            .field("value", &"[redacted]")
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct SandboxEnvironmentEntry {
+    name: Box<str>,
+    value: OsString,
+    credential: Option<SandboxCredentialHandle>,
+}
+
 /// Minimal explicit command environment.
 #[derive(Clone, PartialEq, Eq)]
 pub struct SandboxEnvironment {
-    entries: Box<[(Box<str>, OsString)]>,
+    entries: Box<[SandboxEnvironmentEntry]>,
 }
 
 impl SandboxEnvironment {
@@ -52,30 +160,57 @@ impl SandboxEnvironment {
     pub fn new<'a>(
         entries: impl IntoIterator<Item = (&'a str, &'a OsStr)>,
     ) -> Result<Self, SandboxError> {
+        Self::with_credentials(entries, std::iter::empty())
+    }
+
+    /// Combines literal values with explicit host-resolved credentials.
+    ///
+    /// # Errors
+    ///
+    /// The combined projection must satisfy the same name, count, uniqueness,
+    /// NUL, and aggregate-byte bounds as an ordinary environment.
+    pub fn with_credentials<'a>(
+        entries: impl IntoIterator<Item = (&'a str, &'a OsStr)>,
+        credentials: impl IntoIterator<Item = SandboxCredentialProjection>,
+    ) -> Result<Self, SandboxError> {
         let mut entries: Vec<_> = entries
             .into_iter()
-            .map(|(name, value)| (Box::<str>::from(name), value.to_owned()))
+            .map(|(name, value)| SandboxEnvironmentEntry {
+                name: Box::<str>::from(name),
+                value: value.to_owned(),
+                credential: None,
+            })
             .collect();
+        entries.extend(
+            credentials
+                .into_iter()
+                .map(|credential| SandboxEnvironmentEntry {
+                    name: credential.name,
+                    value: credential.value,
+                    credential: Some(credential.handle),
+                }),
+        );
         if entries.len() > MAX_SANDBOX_ENVIRONMENT_ENTRIES {
             return Err(SandboxError::InvalidEnvironment);
         }
-        entries.sort_by(|left, right| left.0.cmp(&right.0));
+        entries.sort_by(|left, right| left.name.cmp(&right.name));
         let mut previous: Option<&str> = None;
         let mut bytes = 0_usize;
-        for (name, value) in &entries {
-            if name.is_empty()
-                || name.len() > MAX_SANDBOX_ENVIRONMENT_NAME_BYTES
-                || name.contains('=')
-                || name.chars().any(char::is_control)
-                || previous == Some(name)
-                || value.as_encoded_bytes().contains(&0)
-            {
+        for entry in &entries {
+            validate_environment_entry(&entry.name, &entry.value)?;
+            if previous == Some(&entry.name) {
                 return Err(SandboxError::InvalidEnvironment);
             }
             bytes = bytes
-                .saturating_add(name.len())
-                .saturating_add(value.as_encoded_bytes().len());
-            previous = Some(name);
+                .saturating_add(entry.name.len())
+                .saturating_add(entry.value.as_encoded_bytes().len())
+                .saturating_add(
+                    entry
+                        .credential
+                        .as_ref()
+                        .map_or(0, |handle| handle.identity.len()),
+                );
+            previous = Some(&entry.name);
         }
         if bytes > MAX_SANDBOX_ENVIRONMENT_BYTES {
             return Err(SandboxError::InvalidEnvironment);
@@ -97,7 +232,14 @@ impl SandboxEnvironment {
     pub fn iter(&self) -> impl Iterator<Item = (&str, &OsStr)> {
         self.entries
             .iter()
-            .map(|(name, value)| (name.as_ref(), value.as_os_str()))
+            .map(|entry| (entry.name.as_ref(), entry.value.as_os_str()))
+    }
+
+    /// Opaque credential handles present in this projection.
+    pub fn credentials(&self) -> impl Iterator<Item = &SandboxCredentialHandle> {
+        self.entries
+            .iter()
+            .filter_map(|entry| entry.credential.as_ref())
     }
 
     /// Whether no variable is projected.
@@ -116,9 +258,28 @@ impl Default for SandboxEnvironment {
 impl std::fmt::Debug for SandboxEnvironment {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_map()
-            .entries(self.entries.iter().map(|(name, _)| (name, "[redacted]")))
+            .entries(self.entries.iter().map(|entry| {
+                let value = if entry.credential.is_some() {
+                    "[credential]"
+                } else {
+                    "[redacted]"
+                };
+                (&entry.name, value)
+            }))
             .finish()
     }
+}
+
+fn validate_environment_entry(name: &str, value: &OsStr) -> Result<(), SandboxError> {
+    if name.is_empty()
+        || name.len() > MAX_SANDBOX_ENVIRONMENT_NAME_BYTES
+        || name.contains('=')
+        || name.chars().any(char::is_control)
+        || value.as_encoded_bytes().contains(&0)
+    {
+        return Err(SandboxError::InvalidEnvironment);
+    }
+    Ok(())
 }
 
 /// One command to start inside an already negotiated session.
@@ -253,6 +414,7 @@ pub struct SandboxRequest {
     id: SandboxId,
     ancestry: Ancestry,
     call: ToolId,
+    requested_policy: SandboxPolicy,
     policy: SandboxPolicy,
     manifest: SandboxManifest,
     audit: SandboxAudit,
@@ -273,10 +435,22 @@ impl SandboxRequest {
             id,
             ancestry,
             call,
+            requested_policy: policy.clone(),
             policy,
             manifest,
             audit,
         }
+    }
+
+    /// Applies a parent ceiling and retains both requested and effective policy.
+    ///
+    /// # Errors
+    ///
+    /// A request that widens any parent authority or ceiling is refused before
+    /// a backend can observe it.
+    pub fn restricted_to(mut self, parent: &SandboxPolicy) -> Result<Self, SandboxPolicyError> {
+        self.policy = SandboxPolicy::restrict(parent, self.requested_policy.clone())?;
+        Ok(self)
     }
 
     /// Uses the host-created fixed-attribution audit collector for this call.
@@ -309,6 +483,12 @@ impl SandboxRequest {
     #[must_use]
     pub const fn call(&self) -> &ToolId {
         &self.call
+    }
+
+    /// Immutable policy submitted before parent restrictions were inherited.
+    #[must_use]
+    pub const fn requested_policy(&self) -> &SandboxPolicy {
+        &self.requested_policy
     }
 
     /// Immutable effective policy.
@@ -517,6 +697,7 @@ pub struct SandboxPlanInspection {
     network: SandboxNetworkInspection,
     limits: SandboxResourceLimits,
     command_policy: [u8; 32],
+    unreadable_patterns: usize,
     persistent: bool,
     snapshots: bool,
     manifest_entries: usize,
@@ -549,6 +730,7 @@ impl SandboxPlanInspection {
             network,
             limits: policy.limits(),
             command_policy: policy.commands().digest(),
+            unreadable_patterns: policy.unreadable_patterns().len(),
             persistent: policy.persistent(),
             snapshots: policy.snapshots(),
             manifest_entries: manifest.entries().len(),
@@ -591,6 +773,12 @@ impl SandboxPlanInspection {
         self.command_policy
     }
 
+    /// Number of bounded unreadable wildcard patterns.
+    #[must_use]
+    pub const fn unreadable_patterns(&self) -> usize {
+        self.unreadable_patterns
+    }
+
     /// Whether persistent session state was requested.
     #[must_use]
     pub const fn persistent(&self) -> bool {
@@ -619,6 +807,7 @@ impl std::fmt::Debug for SandboxPlanInspection {
             .field("network", &self.network)
             .field("limits", &self.limits)
             .field("command_policy", &"[sha256]")
+            .field("unreadable_patterns", &self.unreadable_patterns)
             .field("persistent", &self.persistent)
             .field("snapshots", &self.snapshots)
             .field("manifest_entries", &self.manifest_entries)
@@ -652,7 +841,9 @@ pub struct SandboxInspection {
     id: SandboxId,
     backend: SandboxBackendIdentity,
     capabilities: SandboxCapabilities,
+    requested_plan: SandboxPlanInspection,
     plan: SandboxPlanInspection,
+    requested_policy_digest: [u8; 32],
     policy_digest: [u8; 32],
     manifest_digest: [u8; 32],
     confined: bool,
@@ -678,10 +869,83 @@ impl SandboxInspection {
         degradation: Option<impl Into<Box<str>>>,
         cleanup: SandboxCleanup,
     ) -> Result<Self, SandboxError> {
+        Self::build(
+            id,
+            backend,
+            capabilities,
+            policy,
+            policy,
+            manifest,
+            confined,
+            degradation,
+            cleanup,
+        )
+    }
+
+    /// Builds a confined report from one request, preserving policy narrowing.
+    ///
+    /// # Errors
+    ///
+    /// The effective policy's essential kernel boundaries must all be enforced.
+    pub fn confined_for_request(
+        backend: SandboxBackendIdentity,
+        capabilities: SandboxCapabilities,
+        request: &SandboxRequest,
+    ) -> Result<Self, SandboxError> {
+        Self::build(
+            request.id(),
+            backend,
+            capabilities,
+            request.requested_policy(),
+            request.policy(),
+            request.manifest(),
+            true,
+            None::<Box<str>>,
+            SandboxCleanup::Pending,
+        )
+    }
+
+    /// Builds an explicitly unconfined compatibility report for one request.
+    ///
+    /// # Errors
+    ///
+    /// The required degradation reason must be non-empty and bounded.
+    pub fn unconfined_for_request(
+        backend: SandboxBackendIdentity,
+        capabilities: SandboxCapabilities,
+        request: &SandboxRequest,
+        degradation: impl Into<Box<str>>,
+    ) -> Result<Self, SandboxError> {
+        Self::build(
+            request.id(),
+            backend,
+            capabilities,
+            request.requested_policy(),
+            request.policy(),
+            request.manifest(),
+            false,
+            Some(degradation),
+            SandboxCleanup::Pending,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build(
+        id: SandboxId,
+        backend: SandboxBackendIdentity,
+        capabilities: SandboxCapabilities,
+        requested_policy: &SandboxPolicy,
+        policy: &SandboxPolicy,
+        manifest: &SandboxManifest,
+        confined: bool,
+        degradation: Option<impl Into<Box<str>>>,
+        cleanup: SandboxCleanup,
+    ) -> Result<Self, SandboxError> {
         let degradation = degradation.map(Into::into);
         if degradation
             .as_ref()
             .is_some_and(|text| text.is_empty() || text.len() > MAX_SANDBOX_BACKEND_WORD_BYTES)
+            || confined == degradation.is_some()
         {
             return Err(SandboxError::InvalidInspection);
         }
@@ -708,7 +972,9 @@ impl SandboxInspection {
             id,
             backend,
             capabilities,
+            requested_plan: SandboxPlanInspection::new(requested_policy, manifest),
             plan: SandboxPlanInspection::new(policy, manifest),
+            requested_policy_digest: requested_policy.digest(),
             policy_digest: policy.digest(),
             manifest_digest: manifest.digest(),
             confined,
@@ -735,10 +1001,22 @@ impl SandboxInspection {
         &self.capabilities
     }
 
+    /// Bounded redacted plan submitted before parent restrictions were inherited.
+    #[must_use]
+    pub const fn requested_plan(&self) -> &SandboxPlanInspection {
+        &self.requested_plan
+    }
+
     /// Bounded redacted effective plan.
     #[must_use]
     pub const fn plan(&self) -> &SandboxPlanInspection {
         &self.plan
+    }
+
+    /// Requested policy identity before parent restrictions were inherited.
+    #[must_use]
+    pub const fn requested_policy_digest(&self) -> [u8; 32] {
+        self.requested_policy_digest
     }
 
     /// Effective policy identity.
@@ -1223,7 +1501,7 @@ mod tests {
         assert!(
             SandboxInspection::new(
                 SandboxId::new(),
-                identity,
+                identity.clone(),
                 SandboxCapabilities::none(),
                 &policy,
                 &manifest,
@@ -1233,12 +1511,45 @@ mod tests {
             )
             .is_err()
         );
+        assert!(
+            SandboxInspection::new(
+                SandboxId::new(),
+                identity.clone(),
+                SandboxCapabilities::none(),
+                &policy,
+                &manifest,
+                false,
+                None::<Box<str>>,
+                SandboxCleanup::Pending,
+            )
+            .is_err(),
+            "an unconfined report requires an explicit degradation reason"
+        );
+        assert!(
+            SandboxInspection::new(
+                SandboxId::new(),
+                identity,
+                SandboxCapabilities::none(),
+                &policy,
+                &manifest,
+                true,
+                Some("contradictory degradation"),
+                SandboxCleanup::Pending,
+            )
+            .is_err(),
+            "a confined report cannot also claim degradation"
+        );
     }
 
     #[test]
     fn confined_inspection_reports_the_exact_network_feature_and_redacts_reach() {
         let network = SandboxNetworkPolicy::exact(
-            [crate::SandboxNetworkEndpoint::new("private.example", 443).unwrap()],
+            [crate::SandboxNetworkEndpoint::new(
+                "private.example",
+                443,
+                crate::SandboxNetworkProvenance::User,
+            )
+            .unwrap()],
             true,
             false,
         )
@@ -1305,6 +1616,50 @@ mod tests {
         assert_eq!(names, ["A", "Z"]);
         let shown = format!("{environment:?}");
         assert!(!shown.contains("secret"));
+    }
+
+    #[test]
+    fn credential_projections_are_typed_bounded_and_fully_redacted() {
+        let handle = SandboxCredentialHandle::new(
+            "provider/openai/default",
+            SandboxCredentialProvenance::User,
+        )
+        .expect("credential handle");
+        let credential = SandboxCredentialProjection::new(
+            handle.clone(),
+            "OPENAI_API_KEY",
+            OsStr::new("secret-provider-value"),
+        )
+        .expect("credential projection");
+        let environment =
+            SandboxEnvironment::with_credentials([("LANG", OsStr::new("C"))], [credential])
+                .expect("projected environment");
+
+        assert_eq!(
+            environment.iter().map(|(name, _)| name).collect::<Vec<_>>(),
+            ["LANG", "OPENAI_API_KEY"]
+        );
+        assert_eq!(environment.credentials().collect::<Vec<_>>(), [&handle]);
+        let shown = format!("{environment:?} {handle:?}");
+        assert!(!shown.contains("secret-provider-value"));
+        assert!(!shown.contains("provider/openai/default"));
+    }
+
+    #[test]
+    fn credential_names_cannot_collide_with_literal_environment_entries() {
+        let handle = SandboxCredentialHandle::new(
+            "provider/openai/default",
+            SandboxCredentialProvenance::Account,
+        )
+        .expect("credential handle");
+        let credential =
+            SandboxCredentialProjection::new(handle, "TOKEN", OsStr::new("credential"))
+                .expect("credential projection");
+
+        assert!(matches!(
+            SandboxEnvironment::with_credentials([("TOKEN", OsStr::new("literal"))], [credential]),
+            Err(SandboxError::InvalidEnvironment)
+        ));
     }
 
     #[test]
@@ -1416,5 +1771,59 @@ mod tests {
                 crate::SandboxAuditError::AttributionMismatch
             ))
         ));
+    }
+
+    #[test]
+    fn restricted_requests_inspect_requested_and_effective_policy_separately() {
+        let parent_pattern = crate::SandboxUnreadablePattern::new(
+            "/workspace/**/*.env",
+            SandboxFilesystemProvenance::Workspace,
+        )
+        .expect("parent pattern");
+        let parent = policy()
+            .with_unreadable_patterns([parent_pattern])
+            .expect("parent policy");
+        let requested = policy();
+        let request = SandboxRequest::new(
+            SandboxId::new(),
+            Ancestry::new(),
+            ToolId::new("restricted"),
+            requested,
+            SandboxManifest::empty(),
+        )
+        .restricted_to(&parent)
+        .expect("restricted request");
+        assert_eq!(request.requested_policy().unreadable_patterns().len(), 0);
+        assert_eq!(request.policy().unreadable_patterns().len(), 1);
+
+        let capabilities = [
+            SandboxFeature::Filesystem,
+            SandboxFeature::NetworkDeny,
+            SandboxFeature::DescriptorIsolation,
+            SandboxFeature::ProcessIsolation,
+            SandboxFeature::KernelSurface,
+            SandboxFeature::PrivilegeIsolation,
+            SandboxFeature::Audit,
+        ]
+        .into_iter()
+        .fold(SandboxCapabilities::none(), |claims, feature| {
+            claims.with(feature, SandboxCapability::Enforced)
+        })
+        .with(SandboxFeature::Usage, SandboxCapability::Observed);
+        let identity = SandboxBackendIdentity::new(
+            SandboxBackendId::new("restricted").expect("backend id"),
+            "1",
+            SandboxBackendProvenance::System,
+            Some([1; 32]),
+        )
+        .expect("backend identity");
+        let inspection = SandboxInspection::confined_for_request(identity, capabilities, &request)
+            .expect("inspection");
+        assert_eq!(inspection.requested_plan().unreadable_patterns(), 0);
+        assert_eq!(inspection.plan().unreadable_patterns(), 1);
+        assert_ne!(
+            inspection.requested_policy_digest(),
+            inspection.policy_digest()
+        );
     }
 }

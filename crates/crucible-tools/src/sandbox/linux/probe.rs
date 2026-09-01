@@ -20,6 +20,9 @@ const MAX_BACKEND_BYTES: u64 = 64 * 1024 * 1024;
 /// Functional probes cannot hang startup indefinitely.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 
+/// A hostile or accidental PATH cannot make backend discovery unbounded.
+const MAX_BWRAP_CANDIDATES: usize = 128;
+
 /// Required Bubblewrap command-line features.
 const REQUIRED_OPTIONS: &[&str] = &[
     "--as-pid-1",
@@ -57,7 +60,27 @@ pub(super) struct Bwrap {
 
 impl Bwrap {
     pub(super) fn find(excluded: &[&Path]) -> Result<Self, SandboxError> {
-        let path = discover(excluded)?;
+        let search = std::env::var_os("PATH").ok_or_else(|| {
+            unavailable("PATH is unavailable while discovering system Bubblewrap")
+        })?;
+        let current = std::env::current_dir()
+            .ok()
+            .and_then(|path| path.canonicalize().ok());
+        let candidates =
+            discover_candidates(std::env::split_paths(&search), current.as_deref(), excluded);
+        if candidates.is_empty() {
+            return Err(unavailable(
+                "no suitable system Bubblewrap was found outside writable roots; bundled backend unavailable",
+            ));
+        }
+        first_verified(candidates, |path| Self::verify(path).ok()).ok_or_else(|| {
+            unavailable(
+                "discovered system Bubblewrap candidates failed provenance, feature, version, or namespace verification; bundled backend unavailable",
+            )
+        })
+    }
+
+    fn verify(path: PathBuf) -> Result<Self, SandboxError> {
         let metadata = path
             .metadata()
             .map_err(|_| unavailable("could not inspect the system Bubblewrap executable"))?;
@@ -65,9 +88,10 @@ impl Bwrap {
             || metadata.len() > MAX_BACKEND_BYTES
             || metadata.uid() != 0
             || metadata.permissions().mode() & 0o022 != 0
+            || !trusted_parent_chain(&path)
         {
             return Err(unavailable(
-                "system Bubblewrap is not a root-owned, non-writable regular file",
+                "system Bubblewrap or its parent path is not root-owned and non-writable",
             ));
         }
 
@@ -78,11 +102,7 @@ impl Bwrap {
             .map_err(|_| unavailable("could not query system Bubblewrap capabilities"))?;
         let mut help_text = String::from_utf8_lossy(&help.stdout).into_owned();
         help_text.push_str(&String::from_utf8_lossy(&help.stderr));
-        if !help.status.success()
-            || REQUIRED_OPTIONS
-                .iter()
-                .any(|option| !help_text.contains(option))
-        {
+        if !help.status.success() || !help_supports_required_options(&help_text) {
             return Err(unavailable(
                 "system Bubblewrap does not expose the required confinement options",
             ));
@@ -93,10 +113,10 @@ impl Bwrap {
             .env_clear()
             .output()
             .map_err(|_| unavailable("could not query system Bubblewrap version"))?;
-        let version = String::from_utf8_lossy(&version.stdout).trim().to_owned();
-        if !version.starts_with("bubblewrap ") || version.len() > 128 {
+        let version_text = String::from_utf8_lossy(&version.stdout);
+        let Some(version) = parse_version(&version_text) else {
             return Err(unavailable("system Bubblewrap returned an invalid version"));
-        }
+        };
 
         functional_probe(&path)?;
         let digest = digest(&path, metadata.len())?;
@@ -104,7 +124,7 @@ impl Bwrap {
             .map_err(|_| unavailable("invalid built-in Linux backend identity"))?;
         let identity = SandboxBackendIdentity::new(
             id,
-            version,
+            version.to_owned(),
             SandboxBackendProvenance::System,
             Some(digest),
         )
@@ -130,31 +150,82 @@ impl Bwrap {
     }
 }
 
-fn discover(excluded: &[&Path]) -> Result<PathBuf, SandboxError> {
-    let search = std::env::var_os("PATH")
-        .ok_or_else(|| unavailable("PATH is unavailable while discovering system Bubblewrap"))?;
-    let current = std::env::current_dir()
-        .ok()
-        .and_then(|path| path.canonicalize().ok());
-
-    for directory in std::env::split_paths(&search).filter(|path| path.is_absolute()) {
+fn discover_candidates(
+    search: impl IntoIterator<Item = PathBuf>,
+    current: Option<&Path>,
+    excluded: &[&Path],
+) -> Vec<PathBuf> {
+    let hidden_current = current.filter(|root| root.parent().is_some());
+    let mut candidates = Vec::new();
+    for directory in search
+        .into_iter()
+        .filter(|path| path.is_absolute())
+        .take(MAX_BWRAP_CANDIDATES)
+    {
         let candidate = directory.join("bwrap");
         let Ok(candidate) = candidate.canonicalize() else {
             continue;
         };
-        if current
-            .as_ref()
-            .is_some_and(|root| candidate.starts_with(root))
+        if hidden_current.is_some_and(|root| candidate.starts_with(root))
             || excluded.iter().any(|root| candidate.starts_with(root))
         {
             continue;
         }
-        return Ok(candidate);
+        if !candidates.contains(&candidate) {
+            candidates.push(candidate);
+        }
     }
+    candidates
+}
 
-    Err(unavailable(
-        "no suitable system Bubblewrap was found outside writable roots; bundled backend unavailable",
-    ))
+fn first_verified<T>(
+    candidates: impl IntoIterator<Item = PathBuf>,
+    verify: impl FnMut(PathBuf) -> Option<T>,
+) -> Option<T> {
+    candidates.into_iter().find_map(verify)
+}
+
+fn help_supports_required_options(help: &str) -> bool {
+    REQUIRED_OPTIONS
+        .iter()
+        .all(|option| help.split_ascii_whitespace().any(|token| token == *option))
+}
+
+fn parse_version(version: &str) -> Option<&str> {
+    let version = version.trim();
+    let number = version.strip_prefix("bubblewrap ")?;
+    let mut components = number.split('.');
+    let valid = number.len() <= 64
+        && components.by_ref().take(3).all(|component| {
+            !component.is_empty() && component.bytes().all(|byte| byte.is_ascii_digit())
+        })
+        && components.next().is_none()
+        && number.matches('.').count() == 2;
+    valid.then_some(version)
+}
+
+fn trusted_parent_chain(path: &Path) -> bool {
+    trusted_parent_chain_with(path, |directory| {
+        let metadata = directory.symlink_metadata().ok()?;
+        Some((
+            metadata.is_dir(),
+            metadata.uid(),
+            metadata.permissions().mode(),
+        ))
+    })
+}
+
+fn trusted_parent_chain_with(
+    path: &Path,
+    mut inspect: impl FnMut(&Path) -> Option<(bool, u32, u32)>,
+) -> bool {
+    path.parent().is_some_and(|parent| {
+        parent.ancestors().all(|directory| {
+            inspect(directory).is_some_and(|(is_directory, uid, mode)| {
+                is_directory && uid == 0 && mode & 0o022 == 0
+            })
+        })
+    })
 }
 
 fn functional_probe(path: &Path) -> Result<(), SandboxError> {
@@ -270,6 +341,9 @@ fn unavailable(reason: &'static str) -> SandboxError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+
+    use crate::sample::Sample;
 
     #[test]
     fn capability_snapshot_never_claims_unimplemented_limits_or_operations() {
@@ -290,5 +364,90 @@ mod tests {
             capabilities.claim(SandboxFeature::Usage),
             SandboxCapability::Observed
         );
+    }
+
+    #[test]
+    fn candidate_discovery_skips_workspace_and_excluded_roots_but_not_root_cwd() {
+        let sample = Sample::new("sandbox-bwrap-candidates");
+        let workspace_bin = sample.root().join("bin");
+        let excluded = sample.root().join("excluded");
+        let system = sample.root().join("system");
+        for directory in [&workspace_bin, &excluded, &system] {
+            std::fs::create_dir_all(directory).expect("candidate directory");
+            std::fs::write(directory.join("bwrap"), "fixture").expect("candidate");
+        }
+
+        let candidates = discover_candidates(
+            [workspace_bin, excluded.clone(), system.clone()],
+            Some(sample.root()),
+            &[excluded.as_path()],
+        );
+        assert!(candidates.is_empty(), "every candidate is below cwd");
+
+        let candidates = discover_candidates([system.clone()], Some(Path::new("/")), &[]);
+        assert_eq!(candidates, [system.join("bwrap").canonicalize().unwrap()]);
+    }
+
+    #[test]
+    fn verification_falls_through_an_unsuitable_earlier_candidate() {
+        let attempts = Cell::new(0_usize);
+        let selected = first_verified([PathBuf::from("old"), PathBuf::from("suitable")], |path| {
+            attempts.set(attempts.get().saturating_add(1));
+            (path == Path::new("suitable")).then_some(path)
+        });
+
+        assert_eq!(selected, Some(PathBuf::from("suitable")));
+        assert_eq!(attempts.get(), 2);
+    }
+
+    #[test]
+    fn older_bubblewrap_help_and_malformed_versions_are_refused() {
+        let complete = REQUIRED_OPTIONS.join("\n");
+        assert!(help_supports_required_options(&complete));
+        assert!(!help_supports_required_options("--ro-bind\n--unshare-user"));
+        assert!(!help_supports_required_options(
+            &complete.replace("--bind\n", "--bind-fd-only\n")
+        ));
+        assert_eq!(
+            parse_version("bubblewrap 0.11.1\n"),
+            Some("bubblewrap 0.11.1")
+        );
+        assert_eq!(parse_version("bwrap 0.11.1"), None);
+        assert_eq!(parse_version("bubblewrap 0.11"), None);
+        assert_eq!(parse_version("bubblewrap 0.11.x"), None);
+        assert_eq!(parse_version("bubblewrap 0.11.1 extra"), None);
+        assert_eq!(
+            parse_version(&format!("bubblewrap {}", "x".repeat(129))),
+            None
+        );
+    }
+
+    #[test]
+    fn every_backend_parent_must_be_a_root_owned_non_writable_directory() {
+        let executable = Path::new("/usr/local/bin/bwrap");
+        assert!(trusted_parent_chain_with(executable, |_| Some((
+            true, 0, 0o755
+        ))));
+        assert!(!trusted_parent_chain_with(executable, |directory| {
+            Some((
+                true,
+                u32::from(directory == Path::new("/usr/local")) * 1000,
+                0o755,
+            ))
+        }));
+        assert!(!trusted_parent_chain_with(executable, |directory| {
+            Some((
+                true,
+                0,
+                if directory == Path::new("/usr/local") {
+                    0o775
+                } else {
+                    0o755
+                },
+            ))
+        }));
+        assert!(!trusted_parent_chain_with(executable, |directory| {
+            (directory != Path::new("/usr/local")).then_some((true, 0, 0o755))
+        }));
     }
 }

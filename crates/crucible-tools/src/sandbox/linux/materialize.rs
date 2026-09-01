@@ -288,7 +288,10 @@ fn validate_mount_tree(
 }
 
 fn protected_name(name: &OsStr) -> bool {
-    matches!(name.to_str(), Some(".git" | ".agents" | ".codex"))
+    matches!(
+        name.to_str(),
+        Some(".git" | ".agents" | ".codex" | ".crucible")
+    )
 }
 
 fn create_private_tree(path: &Path) -> std::io::Result<()> {

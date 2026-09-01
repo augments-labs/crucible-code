@@ -21,6 +21,12 @@ pub const MAX_SANDBOX_NETWORK_ENDPOINTS: usize = 64;
 /// Maximum bytes in one DNS name.
 pub const MAX_SANDBOX_HOST_BYTES: usize = 253;
 
+/// Maximum unreadable wildcard patterns in one effective plan.
+pub const MAX_SANDBOX_UNREADABLE_PATTERNS: usize = 64;
+
+/// Maximum wildcard/literal components after one pattern's fixed scan root.
+pub const MAX_SANDBOX_PATTERN_COMPONENTS: usize = 64;
+
 /// Whether the host must provide kernel confinement.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum SandboxMode {
@@ -111,6 +117,10 @@ pub enum SandboxFilesystemProvenance {
 }
 
 impl SandboxFilesystemProvenance {
+    const fn permits(self, candidate: Self) -> bool {
+        self as u8 == candidate as u8 || matches!(candidate, Self::Descendant)
+    }
+
     /// Stable redacted inspection spelling.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -181,12 +191,30 @@ impl std::fmt::Debug for SandboxFilesystemRule {
     }
 }
 
+/// Authority that introduced an exact network endpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SandboxNetworkProvenance {
+    /// Direct user authority.
+    User,
+    /// A user-admitted project request.
+    Project,
+    /// A nested extension, tool, agent, or other descendant narrowing.
+    Descendant,
+}
+
+impl SandboxNetworkProvenance {
+    const fn permits(self, candidate: Self) -> bool {
+        candidate as u8 >= self as u8
+    }
+}
+
 /// One exact outbound endpoint.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SandboxNetworkEndpoint {
     host: Box<str>,
     port: u16,
     literal_address: bool,
+    provenance: SandboxNetworkProvenance,
 }
 
 impl SandboxNetworkEndpoint {
@@ -195,7 +223,11 @@ impl SandboxNetworkEndpoint {
     /// # Errors
     ///
     /// Empty/oversized/control-bearing hosts and port zero are rejected.
-    pub fn new(host: impl Into<Box<str>>, port: u16) -> Result<Self, SandboxPolicyError> {
+    pub fn new(
+        host: impl Into<Box<str>>,
+        port: u16,
+        provenance: SandboxNetworkProvenance,
+    ) -> Result<Self, SandboxPolicyError> {
         let host = host.into();
         if host.is_empty() || host.len() > MAX_SANDBOX_HOST_BYTES || port == 0 {
             return Err(SandboxPolicyError::InvalidEndpoint);
@@ -205,6 +237,7 @@ impl SandboxNetworkEndpoint {
                 host: address.to_string().into(),
                 port,
                 literal_address: true,
+                provenance,
             });
         }
 
@@ -236,6 +269,7 @@ impl SandboxNetworkEndpoint {
             host: host.to_ascii_lowercase().into(),
             port,
             literal_address: false,
+            provenance,
         })
     }
 
@@ -251,6 +285,16 @@ impl SandboxNetworkEndpoint {
         self.port
     }
 
+    /// Authority source for this exact host/port request.
+    #[must_use]
+    pub const fn provenance(&self) -> SandboxNetworkProvenance {
+        self.provenance
+    }
+
+    fn same_target(&self, other: &Self) -> bool {
+        self.host == other.host && self.port == other.port
+    }
+
     const fn is_literal_address(&self) -> bool {
         self.literal_address
     }
@@ -262,8 +306,181 @@ impl std::fmt::Debug for SandboxNetworkEndpoint {
             .field("host", &"[host]")
             .field("port", &self.port)
             .field("literal_address", &self.literal_address)
+            .field("provenance", &self.provenance)
             .finish()
     }
+}
+
+/// One bounded unreadable path pattern expanded by a trusted backend.
+#[derive(Clone, PartialEq, Eq)]
+pub struct SandboxUnreadablePattern {
+    pattern: PathBuf,
+    scan_root: PathBuf,
+    components: Box<[Box<[u8]>]>,
+    provenance: SandboxFilesystemProvenance,
+}
+
+impl SandboxUnreadablePattern {
+    /// Validates a small absolute wildcard grammar.
+    ///
+    /// `*` matches bytes within one path component and `**` is accepted only
+    /// as a complete component. `?` and character classes are deliberately
+    /// unsupported. At least one non-root literal component must precede the
+    /// first wildcard so expansion can never scan the host root.
+    ///
+    /// # Errors
+    ///
+    /// Relative, root-wide, traversal-bearing, unsupported, wildcard-free,
+    /// oversized, or excessively deep patterns are rejected.
+    pub fn new(
+        pattern: impl Into<PathBuf>,
+        provenance: SandboxFilesystemProvenance,
+    ) -> Result<Self, SandboxPolicyError> {
+        let pattern = pattern.into();
+        let encoded = pattern.as_os_str().as_encoded_bytes();
+        if !pattern.is_absolute()
+            || encoded.len() > MAX_SANDBOX_PATH_BYTES
+            || encoded.contains(&0)
+            || pattern
+                .components()
+                .any(|part| matches!(part, Component::CurDir | Component::ParentDir))
+        {
+            return Err(SandboxPolicyError::InvalidUnreadablePattern);
+        }
+
+        let mut scan_root = PathBuf::new();
+        let mut components = Vec::new();
+        let mut wildcard = false;
+        let mut recursive = false;
+        for part in pattern.components() {
+            match part {
+                Component::RootDir | Component::Prefix(_) if !wildcard => scan_root.push(part),
+                Component::Normal(name) => {
+                    let bytes = name.as_encoded_bytes();
+                    if bytes.contains(&b'?') || bytes.contains(&b'[') || bytes.contains(&b']') {
+                        return Err(SandboxPolicyError::InvalidUnreadablePattern);
+                    }
+                    if bytes == b"**" {
+                        if recursive {
+                            return Err(SandboxPolicyError::InvalidUnreadablePattern);
+                        }
+                        recursive = true;
+                    }
+                    if !wildcard && !bytes.contains(&b'*') {
+                        scan_root.push(name);
+                    } else {
+                        wildcard = true;
+                        components.push(Box::<[u8]>::from(bytes));
+                    }
+                }
+                Component::RootDir
+                | Component::Prefix(_)
+                | Component::CurDir
+                | Component::ParentDir => {
+                    return Err(SandboxPolicyError::InvalidUnreadablePattern);
+                }
+            }
+        }
+        if !wildcard
+            || scan_root.parent().is_none()
+            || components.is_empty()
+            || components.len() > MAX_SANDBOX_PATTERN_COMPONENTS
+        {
+            return Err(SandboxPolicyError::InvalidUnreadablePattern);
+        }
+        Ok(Self {
+            pattern,
+            scan_root,
+            components: components.into_boxed_slice(),
+            provenance,
+        })
+    }
+
+    /// Fixed non-wildcard directory under which expansion is bounded.
+    #[must_use]
+    pub fn scan_root(&self) -> &Path {
+        &self.scan_root
+    }
+
+    /// Whether one absolute candidate has this exact wildcard shape.
+    #[must_use]
+    pub fn matches(&self, candidate: &Path) -> bool {
+        if validate_absolute_path(candidate).is_err() {
+            return false;
+        }
+        let Ok(relative) = candidate.strip_prefix(&self.scan_root) else {
+            return false;
+        };
+        let target = relative
+            .components()
+            .filter_map(|part| match part {
+                Component::Normal(name) => Some(name.as_encoded_bytes()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        target.len() <= MAX_SANDBOX_PATTERN_COMPONENTS
+            && path_components_match(&self.components, &target)
+    }
+
+    /// Authority source for this removal of visibility.
+    #[must_use]
+    pub const fn provenance(&self) -> SandboxFilesystemProvenance {
+        self.provenance
+    }
+}
+
+impl std::fmt::Debug for SandboxUnreadablePattern {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SandboxUnreadablePattern")
+            .field("pattern", &"[absolute pattern]")
+            .field("scan_root", &"[absolute path]")
+            .field("provenance", &self.provenance)
+            .finish_non_exhaustive()
+    }
+}
+
+fn path_components_match(pattern: &[Box<[u8]>], target: &[&[u8]]) -> bool {
+    let Some((head, tail)) = pattern.split_first() else {
+        return target.is_empty();
+    };
+    if head.as_ref() == b"**" {
+        return path_components_match(tail, target)
+            || target
+                .split_first()
+                .is_some_and(|(_, rest)| path_components_match(pattern, rest));
+    }
+    target.split_first().is_some_and(|(candidate, rest)| {
+        component_matches(head, candidate) && path_components_match(tail, rest)
+    })
+}
+
+fn component_matches(pattern: &[u8], candidate: &[u8]) -> bool {
+    let mut pattern_at = 0_usize;
+    let mut candidate_at = 0_usize;
+    let mut star = None;
+    let mut retry_at = 0_usize;
+    while let Some(&candidate_byte) = candidate.get(candidate_at) {
+        match pattern.get(pattern_at) {
+            Some(&pattern_byte) if pattern_byte == candidate_byte => {
+                pattern_at = pattern_at.saturating_add(1);
+                candidate_at = candidate_at.saturating_add(1);
+            }
+            Some(b'*') => {
+                star = Some(pattern_at);
+                pattern_at = pattern_at.saturating_add(1);
+                retry_at = candidate_at;
+            }
+            _ if star.is_some() => {
+                retry_at = retry_at.saturating_add(1);
+                candidate_at = retry_at;
+                pattern_at = star.unwrap_or_default().saturating_add(1);
+            }
+            _ => return false,
+        }
+    }
+    pattern
+        .get(pattern_at..)
+        .is_some_and(|tail| tail.iter().all(|byte| *byte == b'*'))
 }
 
 /// Immutable outbound-network request.
@@ -304,6 +521,15 @@ impl SandboxNetworkPolicy {
             return Err(SandboxPolicyError::InvalidEndpoint);
         }
         endpoints.sort();
+        if endpoints.windows(2).any(|pair| {
+            pair.first().is_some_and(|left| {
+                pair.get(1).is_some_and(|right| {
+                    left.same_target(right) && left.provenance != right.provenance
+                })
+            })
+        }) {
+            return Err(SandboxPolicyError::InvalidEndpoint);
+        }
         endpoints.dedup();
         if endpoints.is_empty() || endpoints.len() > MAX_SANDBOX_NETWORK_ENDPOINTS {
             return Err(SandboxPolicyError::InvalidEndpointCount);
@@ -333,9 +559,12 @@ impl SandboxNetworkPolicy {
             ) => {
                 (!dns || *parent_dns)
                     && (!forwarding || *parent_forwarding)
-                    && endpoints
-                        .iter()
-                        .all(|endpoint| parent_endpoints.contains(endpoint))
+                    && endpoints.iter().all(|endpoint| {
+                        parent_endpoints.iter().any(|parent| {
+                            endpoint.same_target(parent)
+                                && parent.provenance.permits(endpoint.provenance)
+                        })
+                    })
             }
         }
     }
@@ -445,6 +674,7 @@ fn no_larger<T: PartialOrd>(candidate: Option<T>, parent: Option<T>) -> bool {
 pub struct SandboxPolicy {
     mode: SandboxMode,
     filesystem: Box<[SandboxFilesystemRule]>,
+    unreadable_patterns: Box<[SandboxUnreadablePattern]>,
     working_directory: PathBuf,
     network: SandboxNetworkPolicy,
     limits: SandboxResourceLimits,
@@ -471,7 +701,7 @@ impl SandboxPolicy {
                 SandboxFilesystemAccess::ReadWrite,
                 SandboxFilesystemProvenance::Workspace,
             )?);
-            for protected in [".git", ".agents", ".codex"] {
+            for protected in [".git", ".agents", ".codex", ".crucible"] {
                 let path = root.join(protected);
                 if std::fs::symlink_metadata(&path).is_ok() {
                     filesystem.push(SandboxFilesystemRule::new(
@@ -546,6 +776,7 @@ impl SandboxPolicy {
         Ok(Self {
             mode,
             filesystem: filesystem.into_boxed_slice(),
+            unreadable_patterns: Box::new([]),
             working_directory,
             network,
             limits,
@@ -569,6 +800,12 @@ impl SandboxPolicy {
             .filesystem
             .iter()
             .all(|rule| filesystem_rule_allowed(&parent.filesystem, rule))
+            || parent.filesystem.iter().any(|parent_rule| {
+                effective_rule(&candidate.filesystem, &parent_rule.path).is_some_and(|candidate| {
+                    !filesystem_access_allowed(parent_rule.access, candidate.access)
+                        || !parent_rule.provenance.permits(candidate.provenance)
+                })
+            })
         {
             return Err(SandboxPolicyError::FilesystemWidening);
         }
@@ -585,6 +822,32 @@ impl SandboxPolicy {
         {
             return Err(SandboxPolicyError::SessionWidening);
         }
+        if candidate.unreadable_patterns.iter().any(|pattern| {
+            parent
+                .unreadable_patterns
+                .iter()
+                .find(|inherited| inherited.pattern == pattern.pattern)
+                .map_or(
+                    pattern.provenance != SandboxFilesystemProvenance::Descendant,
+                    |inherited| !inherited.provenance.permits(pattern.provenance),
+                )
+        }) {
+            return Err(SandboxPolicyError::FilesystemWidening);
+        }
+        let mut unreadable_patterns = parent.unreadable_patterns.to_vec();
+        for pattern in &candidate.unreadable_patterns {
+            if !unreadable_patterns
+                .iter()
+                .any(|retained| retained.pattern == pattern.pattern)
+            {
+                unreadable_patterns.push(pattern.clone());
+            }
+        }
+        if unreadable_patterns.len() > MAX_SANDBOX_UNREADABLE_PATTERNS {
+            return Err(SandboxPolicyError::InvalidUnreadablePatternCount);
+        }
+        unreadable_patterns.sort_by(|left, right| left.pattern.cmp(&right.pattern));
+        candidate.unreadable_patterns = unreadable_patterns.into_boxed_slice();
         Ok(candidate)
     }
 
@@ -609,6 +872,38 @@ impl SandboxPolicy {
     pub fn with_command_policy(mut self, commands: SandboxCommandPolicy) -> Self {
         self.commands = commands;
         self
+    }
+
+    /// Returns a copy with a bounded deterministic unreadable-pattern set.
+    ///
+    /// # Errors
+    ///
+    /// Too many patterns, conflicting provenance for one spelling, or a scan
+    /// root outside the effective filesystem view is rejected.
+    pub fn with_unreadable_patterns(
+        mut self,
+        patterns: impl IntoIterator<Item = SandboxUnreadablePattern>,
+    ) -> Result<Self, SandboxPolicyError> {
+        let mut patterns: Vec<_> = patterns.into_iter().collect();
+        if patterns.len() > MAX_SANDBOX_UNREADABLE_PATTERNS {
+            return Err(SandboxPolicyError::InvalidUnreadablePatternCount);
+        }
+        patterns.sort_by(|left, right| left.pattern.cmp(&right.pattern));
+        if patterns.windows(2).any(|pair| {
+            pair.first().is_some_and(|left| {
+                pair.get(1).is_some_and(|right| {
+                    left.pattern == right.pattern && left.provenance != right.provenance
+                })
+            })
+        }) || patterns
+            .iter()
+            .any(|pattern| !readable_by(&self.filesystem, pattern.scan_root()))
+        {
+            return Err(SandboxPolicyError::InvalidUnreadablePattern);
+        }
+        patterns.dedup();
+        self.unreadable_patterns = patterns.into_boxed_slice();
+        Ok(self)
     }
 
     /// Returns a copy under a host-authorized top-level mode.
@@ -638,6 +933,12 @@ impl SandboxPolicy {
     #[must_use]
     pub fn filesystem(&self) -> &[SandboxFilesystemRule] {
         &self.filesystem
+    }
+
+    /// Canonical unreadable wildcard patterns.
+    #[must_use]
+    pub fn unreadable_patterns(&self) -> &[SandboxUnreadablePattern] {
+        &self.unreadable_patterns
     }
 
     /// Working directory inside the granted view.
@@ -710,6 +1011,10 @@ impl SandboxPolicy {
             digest.update(rule.path.as_os_str().as_encoded_bytes());
             digest.update([0, rule.access as u8, rule.provenance as u8]);
         }
+        for pattern in &self.unreadable_patterns {
+            digest.update(pattern.pattern.as_os_str().as_encoded_bytes());
+            digest.update([0, pattern.provenance as u8]);
+        }
         digest.update(self.working_directory.as_os_str().as_encoded_bytes());
         match &self.network {
             SandboxNetworkPolicy::Closed => digest.update(b"\0closed"),
@@ -723,6 +1028,7 @@ impl SandboxPolicy {
                     digest.update(endpoint.host.as_bytes());
                     digest.update([0]);
                     digest.update(endpoint.port.to_be_bytes());
+                    digest.update([endpoint.provenance as u8]);
                 }
                 digest.update([u8::from(*dns), u8::from(*forwarding)]);
             }
@@ -739,6 +1045,7 @@ impl std::fmt::Debug for SandboxPolicy {
         f.debug_struct("SandboxPolicy")
             .field("mode", &self.mode)
             .field("filesystem_rules", &self.filesystem.len())
+            .field("unreadable_patterns", &self.unreadable_patterns.len())
             .field("working_directory", &"[absolute path]")
             .field("network", &self.network)
             .field("limits", &self.limits)
@@ -805,10 +1112,18 @@ fn filesystem_rule_allowed(
     candidate: &SandboxFilesystemRule,
 ) -> bool {
     effective_rule(parent, &candidate.path).is_some_and(|granted| {
-        candidate.access.authority() <= granted.access.authority()
-            && !(candidate.access == SandboxFilesystemAccess::ReadOnly
-                && granted.access == SandboxFilesystemAccess::Protected)
+        filesystem_access_allowed(granted.access, candidate.access)
+            && granted.provenance.permits(candidate.provenance)
     })
+}
+
+fn filesystem_access_allowed(
+    parent: SandboxFilesystemAccess,
+    candidate: SandboxFilesystemAccess,
+) -> bool {
+    candidate.authority() <= parent.authority()
+        && !(candidate == SandboxFilesystemAccess::ReadOnly
+            && parent == SandboxFilesystemAccess::Protected)
 }
 
 /// Why an immutable policy was refused.
@@ -822,6 +1137,14 @@ pub enum SandboxPolicyError {
     /// Every policy has a bounded non-empty filesystem rule set.
     #[error("sandbox filesystem policy must contain 1..={MAX_SANDBOX_FILESYSTEM_RULES} rules")]
     InvalidFilesystemRuleCount,
+    /// Unreadable wildcard expansion has one small, absolute grammar.
+    #[error("sandbox unreadable path pattern is invalid or outside the readable policy")]
+    InvalidUnreadablePattern,
+    /// The wildcard set is bounded independently of ordinary roots.
+    #[error(
+        "sandbox policy contains more than {MAX_SANDBOX_UNREADABLE_PATTERNS} unreadable patterns"
+    )]
+    InvalidUnreadablePatternCount,
     /// One path cannot carry two different effective modes at the same depth.
     #[error("sandbox filesystem policy contains conflicting rules for one path")]
     ConflictingFilesystemRule,
@@ -921,9 +1244,59 @@ mod tests {
     }
 
     #[test]
+    fn descendants_cannot_drop_parent_filesystem_carve_outs_or_relabel_authority() {
+        let parent = policy(
+            SandboxMode::Required,
+            vec![
+                rule("/workspace", SandboxFilesystemAccess::ReadWrite),
+                SandboxFilesystemRule::new(
+                    "/workspace/.git",
+                    SandboxFilesystemAccess::Protected,
+                    SandboxFilesystemProvenance::ProtectedMetadata,
+                )
+                .expect("protected rule"),
+                SandboxFilesystemRule::new(
+                    "/workspace/private",
+                    SandboxFilesystemAccess::Unreadable,
+                    SandboxFilesystemProvenance::Descendant,
+                )
+                .expect("unreadable rule"),
+            ],
+        );
+        let dropped = policy(
+            SandboxMode::Required,
+            vec![rule("/workspace", SandboxFilesystemAccess::ReadWrite)],
+        );
+        assert_eq!(
+            SandboxPolicy::restrict(&parent, dropped),
+            Err(SandboxPolicyError::FilesystemWidening)
+        );
+
+        let relabeled = policy(
+            SandboxMode::Required,
+            vec![
+                SandboxFilesystemRule::new(
+                    "/workspace/src",
+                    SandboxFilesystemAccess::ReadOnly,
+                    SandboxFilesystemProvenance::Runtime,
+                )
+                .expect("relabeled rule"),
+            ],
+        );
+        assert_eq!(
+            SandboxPolicy::restrict(&parent, relabeled),
+            Err(SandboxPolicyError::FilesystemWidening)
+        );
+    }
+
+    #[test]
     fn exact_network_policy_is_canonical_and_closed_is_always_narrower() {
-        let first = SandboxNetworkEndpoint::new("EXAMPLE.COM.", 443).expect("endpoint");
-        let duplicate = SandboxNetworkEndpoint::new("example.com", 443).expect("endpoint");
+        let first =
+            SandboxNetworkEndpoint::new("EXAMPLE.COM.", 443, SandboxNetworkProvenance::User)
+                .expect("endpoint");
+        let duplicate =
+            SandboxNetworkEndpoint::new("example.com", 443, SandboxNetworkProvenance::User)
+                .expect("endpoint");
         let exact =
             SandboxNetworkPolicy::exact([first, duplicate], true, false).expect("exact policy");
         let SandboxNetworkPolicy::Exact { endpoints, .. } = &exact else {
@@ -939,6 +1312,57 @@ mod tests {
     }
 
     #[test]
+    fn endpoint_provenance_is_retained_and_cannot_be_escalated_by_a_descendant() {
+        let parent_endpoint =
+            SandboxNetworkEndpoint::new("192.0.2.1", 443, SandboxNetworkProvenance::Project)
+                .expect("parent endpoint");
+        let child_endpoint =
+            SandboxNetworkEndpoint::new("192.0.2.1", 443, SandboxNetworkProvenance::Descendant)
+                .expect("child endpoint");
+        assert_eq!(
+            child_endpoint.provenance(),
+            SandboxNetworkProvenance::Descendant
+        );
+        let parent =
+            SandboxNetworkPolicy::exact([parent_endpoint], false, false).expect("parent network");
+        let child =
+            SandboxNetworkPolicy::exact([child_endpoint], false, false).expect("child network");
+        assert!(child.is_no_wider_than(&parent));
+        assert_eq!(
+            SandboxNetworkPolicy::exact(
+                [
+                    SandboxNetworkEndpoint::new(
+                        "192.0.2.1",
+                        443,
+                        SandboxNetworkProvenance::Project,
+                    )
+                    .expect("project endpoint"),
+                    SandboxNetworkEndpoint::new(
+                        "192.0.2.1",
+                        443,
+                        SandboxNetworkProvenance::Descendant,
+                    )
+                    .expect("descendant endpoint"),
+                ],
+                false,
+                false,
+            ),
+            Err(SandboxPolicyError::InvalidEndpoint)
+        );
+
+        let escalated = SandboxNetworkPolicy::exact(
+            [
+                SandboxNetworkEndpoint::new("192.0.2.1", 443, SandboxNetworkProvenance::User)
+                    .expect("escalated endpoint"),
+            ],
+            false,
+            false,
+        )
+        .expect("escalated network");
+        assert!(!escalated.is_no_wider_than(&parent));
+    }
+
+    #[test]
     fn endpoint_hosts_are_dns_names_or_literal_addresses_not_url_fragments() {
         for invalid in [
             "https://example.com",
@@ -951,19 +1375,21 @@ mod tests {
             "127.0.0.999",
         ] {
             assert_eq!(
-                SandboxNetworkEndpoint::new(invalid, 443),
+                SandboxNetworkEndpoint::new(invalid, 443, SandboxNetworkProvenance::User),
                 Err(SandboxPolicyError::InvalidEndpoint),
                 "{invalid}"
             );
         }
         assert_eq!(
-            SandboxNetworkEndpoint::new("2001:0db8::1", 443)
+            SandboxNetworkEndpoint::new("2001:0db8::1", 443, SandboxNetworkProvenance::User)
                 .expect("IPv6 literal")
                 .host(),
             "2001:db8::1"
         );
 
-        let endpoint = SandboxNetworkEndpoint::new("private.example", 8443).expect("endpoint");
+        let endpoint =
+            SandboxNetworkEndpoint::new("private.example", 8443, SandboxNetworkProvenance::User)
+                .expect("endpoint");
         let shown = format!("{endpoint:?}");
         assert!(!shown.contains("private.example"), "{shown}");
         assert!(shown.contains("[host]"), "{shown}");
@@ -971,14 +1397,110 @@ mod tests {
 
     #[test]
     fn dns_disabled_exact_policy_accepts_only_literal_addresses() {
-        let hostname = SandboxNetworkEndpoint::new("example.com", 443).expect("hostname");
+        let hostname =
+            SandboxNetworkEndpoint::new("example.com", 443, SandboxNetworkProvenance::User)
+                .expect("hostname");
         assert_eq!(
             SandboxNetworkPolicy::exact([hostname], false, false),
             Err(SandboxPolicyError::InvalidEndpoint)
         );
 
-        let address = SandboxNetworkEndpoint::new("192.0.2.1", 443).expect("address");
+        let address = SandboxNetworkEndpoint::new("192.0.2.1", 443, SandboxNetworkProvenance::User)
+            .expect("address");
         assert!(SandboxNetworkPolicy::exact([address], false, false).is_ok());
+    }
+
+    #[test]
+    fn unreadable_patterns_are_bounded_absolute_and_match_only_their_shape() {
+        let pattern = SandboxUnreadablePattern::new(
+            "/workspace/**/*.pem",
+            SandboxFilesystemProvenance::Descendant,
+        )
+        .expect("pattern");
+        assert_eq!(pattern.scan_root(), Path::new("/workspace"));
+        assert!(pattern.matches(Path::new("/workspace/key.pem")));
+        assert!(pattern.matches(Path::new("/workspace/nested/key.pem")));
+        assert!(!pattern.matches(Path::new("/workspace/key.txt")));
+        assert!(!pattern.matches(Path::new("/other/key.pem")));
+        assert!(!pattern.matches(Path::new("/workspace/../workspace/key.pem")));
+
+        for invalid in [
+            "relative/*.pem",
+            "/**/*.pem",
+            "/workspace/no-wildcard",
+            "/workspace/../*.pem",
+            "/workspace/key?.pem",
+            "/workspace/[ab].pem",
+            "/workspace/**/nested/**/*.pem",
+        ] {
+            assert!(
+                SandboxUnreadablePattern::new(invalid, SandboxFilesystemProvenance::Descendant,)
+                    .is_err(),
+                "{invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn descendant_policy_cannot_drop_a_parent_unreadable_pattern() {
+        let parent = policy(
+            SandboxMode::Required,
+            vec![rule("/workspace", SandboxFilesystemAccess::ReadWrite)],
+        )
+        .with_unreadable_patterns([SandboxUnreadablePattern::new(
+            "/workspace/**/*.env",
+            SandboxFilesystemProvenance::Workspace,
+        )
+        .expect("parent pattern")])
+        .expect("parent policy");
+        let child = policy(
+            SandboxMode::Required,
+            vec![rule("/workspace", SandboxFilesystemAccess::ReadOnly)],
+        );
+
+        let effective = SandboxPolicy::restrict(&parent, child).expect("effective policy");
+        assert_eq!(effective.unreadable_patterns().len(), 1);
+        assert!(
+            effective
+                .unreadable_patterns()
+                .first()
+                .expect("inherited pattern")
+                .matches(Path::new("/workspace/nested/.env"))
+        );
+    }
+
+    #[test]
+    fn descendant_unreadable_patterns_cannot_claim_parent_provenance() {
+        let parent = policy(
+            SandboxMode::Required,
+            vec![rule("/workspace", SandboxFilesystemAccess::ReadWrite)],
+        );
+        let relabeled = policy(
+            SandboxMode::Required,
+            vec![rule("/workspace", SandboxFilesystemAccess::ReadWrite)],
+        )
+        .with_unreadable_patterns([SandboxUnreadablePattern::new(
+            "/workspace/**/*.key",
+            SandboxFilesystemProvenance::Workspace,
+        )
+        .expect("relabeled pattern")])
+        .expect("candidate policy");
+        assert_eq!(
+            SandboxPolicy::restrict(&parent, relabeled),
+            Err(SandboxPolicyError::FilesystemWidening)
+        );
+
+        let descendant = policy(
+            SandboxMode::Required,
+            vec![rule("/workspace", SandboxFilesystemAccess::ReadWrite)],
+        )
+        .with_unreadable_patterns([SandboxUnreadablePattern::new(
+            "/workspace/**/*.key",
+            SandboxFilesystemProvenance::Descendant,
+        )
+        .expect("descendant pattern")])
+        .expect("candidate policy");
+        assert!(SandboxPolicy::restrict(&parent, descendant).is_ok());
     }
 
     #[test]

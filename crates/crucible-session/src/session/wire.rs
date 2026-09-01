@@ -155,8 +155,10 @@ fn sandbox_fact(call: &ToolId, fact: &crucible_core::SandboxFact, ancestry: &Val
                 "feature": feature.as_str(),
                 "claim": claim.as_str(),
             })).collect::<Vec<_>>(),
+            "requested_policy_digest": hex(&inspection.requested_policy_digest()),
             "policy_digest": hex(&inspection.policy_digest()),
             "manifest_digest": hex(&inspection.manifest_digest()),
+            "requested_plan": sandbox_plan(inspection.requested_plan()),
             "effective_plan": sandbox_plan(inspection.plan()),
             "confined": inspection.confined(),
             "degradation": inspection.degradation(),
@@ -231,6 +233,7 @@ fn sandbox_plan(plan: &crucible_core::SandboxPlanInspection) -> Value {
             "cost_micros": limits.cost_micros,
         },
         "command_policy": hex(&plan.command_policy()),
+        "unreadable_patterns": plan.unreadable_patterns(),
         "persistent": plan.persistent(),
         "snapshots": plan.snapshots(),
         "manifest_entries": plan.manifest_entries(),
@@ -1254,7 +1257,8 @@ mod tests {
             SandboxCapabilities, SandboxCapability, SandboxCleanup, SandboxFactKind,
             SandboxFeature, SandboxFilesystemAccess, SandboxFilesystemProvenance,
             SandboxFilesystemRule, SandboxId, SandboxInspection, SandboxManifest, SandboxMode,
-            SandboxNetworkEndpoint, SandboxNetworkPolicy, SandboxPolicy, SandboxResourceLimits,
+            SandboxNetworkEndpoint, SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxPolicy,
+            SandboxResourceLimits,
         };
 
         let ancestry = Ancestry::new();
@@ -1270,7 +1274,12 @@ mod tests {
             .unwrap()],
             "/home/alice/private-workspace",
             SandboxNetworkPolicy::exact(
-                [SandboxNetworkEndpoint::new("secret.internal", 443).unwrap()],
+                [SandboxNetworkEndpoint::new(
+                    "secret.internal",
+                    443,
+                    SandboxNetworkProvenance::User,
+                )
+                .unwrap()],
                 true,
                 false,
             )
@@ -1321,6 +1330,9 @@ mod tests {
         assert!(written.contains(r#""kind":"sandbox""#));
         assert!(written.contains(r#""network":{"dns":true,"endpoints":1"#));
         assert!(written.contains(r#""feature":"network_allowlist""#));
+        assert!(written.contains(r#""requested_policy_digest""#));
+        assert!(written.contains(r#""requested_plan""#));
+        assert!(written.contains(r#""effective_plan""#));
         assert!(!written.contains("alice"), "{written}");
         assert!(!written.contains("private-workspace"), "{written}");
         assert!(!written.contains("secret.internal"), "{written}");

@@ -7,22 +7,27 @@ plan; probes the backend; refuses missing hard capabilities; materializes inert
 inputs; and only then launches the process.
 
 `sandbox.mode` defaults to `required`. The production Linux backend uses a
-canonical, root-owned, non-writable system Bubblewrap executable whose command
-surface, namespace support, version and SHA-256 identity are verified before
-use. This release does not bundle Bubblewrap and does not silently substitute a
-plain subprocess, Landlock, a container, or a worktree. If the system backend
-cannot satisfy the effective policy, preparation fails before materialization
-or spawn.
+canonical, root-owned, non-writable system Bubblewrap executable reached only
+through root-owned, non-writable parent directories. Every bounded `PATH`
+candidate is tried until one passes its exact command-surface, numeric version,
+namespace and SHA-256 identity probes. This release records that the bundled
+choice is unavailable; it does not silently substitute a plain subprocess,
+Landlock, a container, or a worktree. If no system candidate satisfies the
+effective policy, preparation fails before materialization or spawn.
 
 The Linux view starts from an empty temporary root. It exposes only the minimal
 read-only runtime needed to execute the selected absolute program, the exact
 workspace/reached roots at their granted access, protected repository and
-Crucible metadata carve-outs, a minimal `/proc` and `/dev`, and a transactionally
-staged manifest. It creates isolated user, PID, IPC, UTS and network namespaces,
-drops capabilities, sets no-new-privileges through Bubblewrap, disables nested
-user namespaces, clears the environment, and closes every undeclared file
-descriptor. Closed networking has no usable host, loopback, Unix-socket, DNS,
-metadata-service or inherited-socket route.
+Crucible metadata carve-outs (including `.git`, `.agents`, `.codex`, and
+`.crucible`), a minimal `/proc` and `/dev`, and a transactionally staged
+manifest. Bounded unreadable patterns use a deliberately small `*`/single-`**`
+grammar and one deterministic, no-symlink, no-mount-crossing tree scan. It
+creates isolated user, PID, IPC, UTS and network namespaces, drops capabilities,
+sets no-new-privileges through Bubblewrap, disables nested user namespaces,
+clears the environment, and closes every undeclared file descriptor. Closed
+networking has no usable host, loopback, Unix-socket, DNS, metadata-service or
+inherited-socket route. Killing the namespace owner also kills descendants that
+deliberately leave the original process group or session.
 
 The exact endpoint allowlist is deliberately unsupported in this release. It
 requires a policy-bound proxy or equivalent mechanism with redirect, DNS,
@@ -82,9 +87,27 @@ degradation, and retain the exact compatibility capability snapshot.
 
 Compatibility still clears and explicitly rebuilds the command environment,
 checks requested and transformed command guardrails, enforces command deadlines,
-captured-output and concurrency ceilings, supervises the process tree, records
+captured-output and concurrency ceilings, supervises its owned process scope, records
 bounded usage and emits lifecycle audit facts. It does not restrict filesystem
-or network reach and must not be described as a sandbox.
+or network reach and must not be described as a sandbox. Its process-isolation
+capability is explicitly unsupported; unlike the enforcing PID-namespace
+backend, it cannot promise containment of a hostile process that deliberately
+escapes the owned process group.
+
+## Environment and credentials
+
+The command environment is an explicit, bounded map rather than a copy of the
+host environment. Linux supplies only a private `HOME` and `TMPDIR` plus the
+literal variables selected by the host. SSH/GPG agent sockets, inherited
+descriptors, provider keys, cloud configuration and arbitrary host variables
+do not cross the boundary automatically.
+
+A secret projection carries a bounded opaque credential handle and user/account
+provenance alongside the host-resolved value. Handles and values are redacted
+from debugging, inspection, audit, JSONL and diagnostics. Credential variables
+share the ordinary environment count, name, uniqueness, NUL and aggregate-byte
+bounds; a credential cannot silently replace a literal variable with the same
+name.
 
 ## Lifecycle and inspection
 
@@ -95,11 +118,15 @@ written to the framework journal before their live events. Detached commands
 retain the same fixed attribution; facts produced after the starting tool call
 returns are drained at the next runner boundary.
 
-Inspection retains backend ID/version/provenance, capability claims, hashed
-policy/manifest/working-directory/root identities, root access/provenance,
-network shape, requested limits, command-policy digest, degradation and cleanup
-state. It does not retain command arguments, environment values, endpoint names,
-raw approval proofs, credentials, proxy material or raw out-of-scope paths.
+Inspection retains backend ID/version/provenance, capability claims, separate
+hashed requested and effective policies and redacted plans, manifest,
+working-directory and root identities, root access/provenance, network shape,
+requested limits, unreadable-pattern counts, command-policy digest, degradation
+and cleanup state. Parent filesystem carve-outs, command filters, network
+authority, resource ceilings, session grants and unreadable patterns cannot be
+dropped or relabelled by a descendant. It does not retain command arguments,
+environment values, endpoint names, raw approval proofs, credential handles or
+values, proxy material or raw out-of-scope paths.
 
 The local supervisor stops and reaps the complete owned process scope on normal
 exit, deadline, output violation, cancellation, refusal, launch failure, panic,
@@ -107,3 +134,11 @@ explicit stop and ordinary host shutdown. Cleanup is idempotent. An
 uncatchable host/process kill cannot run user-space destructors, so recovery
 must treat a missing final cleanup fact as an interrupted lifecycle rather than
 inventing success.
+
+## Design references
+
+The implementation review was pinned to OpenAI Codex
+`dde85b435b16994f956bce08e5fb796ed94c27fd` and Philharmonica ADK
+`df69de3411e78b61faf7bb4a4d641b02f53d0bc8`. Their mechanisms informed the
+backend and capability seams; the public contracts, policy vocabulary and
+journal behavior remain Crucible-owned.

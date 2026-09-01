@@ -128,16 +128,8 @@ fn compatibility(
         .and_then(|value| usize::try_from(value).ok())
         .unwrap_or(MAX_LOCAL_COMMANDS);
     let reservation = Reservation::take(active, maximum)?;
-    let inspection = SandboxInspection::new(
-        request.id(),
-        backend,
-        capabilities,
-        request.policy(),
-        request.manifest(),
-        false,
-        Some(degradation),
-        SandboxCleanup::Pending,
-    )?;
+    let inspection =
+        SandboxInspection::unconfined_for_request(backend, capabilities, &request, degradation)?;
     request.audit().record(
         request.id(),
         SandboxFactKind::Negotiated(Box::new(inspection.clone())),

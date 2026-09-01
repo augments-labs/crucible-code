@@ -1,6 +1,6 @@
 //! Host-level conformance probes for the Linux backend.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::net::TcpListener;
 use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixListener;
@@ -9,11 +9,12 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    Ancestry, SandboxCommand, SandboxEnvironment, SandboxFeature, SandboxFilesystemAccess,
+    Ancestry, SandboxCommand, SandboxCredentialHandle, SandboxCredentialProjection,
+    SandboxCredentialProvenance, SandboxEnvironment, SandboxFeature, SandboxFilesystemAccess,
     SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxId, SandboxManifest,
-    SandboxManifestEntry, SandboxMode, SandboxNetworkEndpoint, SandboxNetworkPolicy, SandboxOutput,
-    SandboxPolicy, SandboxProcess, SandboxRead, SandboxRequest, SandboxResourceLimits,
-    SandboxService, ToolId,
+    SandboxManifestEntry, SandboxMode, SandboxNetworkEndpoint, SandboxNetworkPolicy,
+    SandboxNetworkProvenance, SandboxOutput, SandboxPolicy, SandboxProcess, SandboxRead,
+    SandboxRequest, SandboxResourceLimits, SandboxService, SandboxUnreadablePattern, ToolId,
 };
 
 use crate::LocalSandbox;
@@ -347,13 +348,14 @@ fn workspace_symlinks_cannot_escape_the_mounted_view() {
 }
 
 #[test]
-fn nested_repository_metadata_stays_read_only_beneath_a_writable_root() {
+fn nested_repository_and_crucible_metadata_stay_read_only_beneath_a_writable_root() {
     let service = LocalSandbox::new();
     if service.probe().is_err() {
         return;
     }
     let sample = Sample::new("sandbox-nested-protected-metadata");
     sample.write("nested/.git/config", "protected\n");
+    sample.write("nested/.crucible/auth.json", "credential\n");
     let mut session = service
         .prepare(request(&sample, SandboxManifest::empty()))
         .expect("prepared sandbox");
@@ -363,7 +365,8 @@ fn nested_repository_metadata_stays_read_only_beneath_a_writable_root() {
         session
             .start(command(
                 "printf 'ordinary\\n' > nested/file.txt; \
-                 printf 'changed\\n' > nested/.git/config",
+                 printf 'changed\\n' > nested/.git/config; \
+                 printf 'changed\\n' > nested/.crucible/auth.json",
             ))
             .expect("started command"),
     );
@@ -379,6 +382,11 @@ fn nested_repository_metadata_stays_read_only_beneath_a_writable_root() {
     assert_eq!(
         std::fs::read_to_string(sample.root().join("nested/.git/config")).expect("metadata"),
         "protected\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(sample.root().join("nested/.crucible/auth.json"))
+            .expect("credential metadata"),
+        "credential\n"
     );
 }
 
@@ -439,6 +447,54 @@ fn unreadable_rules_mask_only_the_selected_path() {
 }
 
 #[test]
+fn unreadable_patterns_expand_deterministically_without_hiding_siblings() {
+    let service = LocalSandbox::new();
+    if service.probe().is_err() {
+        return;
+    }
+    let sample = Sample::new("sandbox-unreadable-patterns");
+    sample.write(".env", "root secret\n");
+    sample.write("nested/secret.pem", "nested secret\n");
+    sample.write("nested/visible.txt", "visible\n");
+    let policy = SandboxPolicy::standard(&sample.workspace())
+        .expect("base policy")
+        .with_unreadable_patterns([
+            SandboxUnreadablePattern::new(
+                sample.root().join("**/*.pem"),
+                SandboxFilesystemProvenance::Descendant,
+            )
+            .expect("pem pattern"),
+            SandboxUnreadablePattern::new(
+                sample.root().join("*.env"),
+                SandboxFilesystemProvenance::Descendant,
+            )
+            .expect("env pattern"),
+        ])
+        .expect("pattern policy");
+    let request = SandboxRequest::new(
+        SandboxId::new(),
+        Ancestry::new(),
+        ToolId::new("unreadable-patterns"),
+        policy,
+        SandboxManifest::empty(),
+    );
+    let mut session = service.prepare(request).expect("prepared sandbox");
+    session.materialize().expect("materialized workspace");
+    let (status, output, errors) = finish(
+        session
+            .start(command(
+                "if cat .env 2>/dev/null; then exit 71; fi; \
+                 if cat nested/secret.pem 2>/dev/null; then exit 72; fi; \
+                 cat nested/visible.txt",
+            ))
+            .expect("started command"),
+    );
+
+    assert!(status.success(), "{}", String::from_utf8_lossy(&errors));
+    assert_eq!(String::from_utf8(output).expect("utf8"), "visible\n");
+}
+
+#[test]
 fn exact_network_requests_fail_before_materialization_or_spawn() {
     let service = LocalSandbox::new();
     if service.probe().is_err() {
@@ -447,7 +503,10 @@ fn exact_network_requests_fail_before_materialization_or_spawn() {
     let sample = Sample::new("sandbox-network-allowlist-refusal");
     let base = SandboxPolicy::standard(&sample.workspace()).expect("base policy");
     let network = SandboxNetworkPolicy::exact(
-        [SandboxNetworkEndpoint::new("example.com", 443).expect("endpoint")],
+        [
+            SandboxNetworkEndpoint::new("example.com", 443, SandboxNetworkProvenance::User)
+                .expect("endpoint"),
+        ],
         true,
         false,
     )
@@ -595,6 +654,55 @@ fn arbitrary_inheritable_host_descriptors_do_not_reach_the_command() {
 }
 
 #[test]
+fn explicit_credential_projection_reaches_only_its_named_environment_slot() {
+    let service = LocalSandbox::new();
+    if service.probe().is_err() {
+        return;
+    }
+    let sample = Sample::new("sandbox-credential-projection");
+    let credential = SandboxCredentialProjection::new(
+        SandboxCredentialHandle::new(
+            "provider/openai/test-account",
+            SandboxCredentialProvenance::Account,
+        )
+        .expect("credential handle"),
+        "SANDBOX_TOKEN",
+        "credential-value-canary",
+    )
+    .expect("credential projection");
+    let environment =
+        SandboxEnvironment::with_credentials([("LANG", OsStr::new("C"))], [credential])
+            .expect("environment");
+    let command = SandboxCommand::new(
+        "/bin/sh",
+        [
+            OsString::from("-c"),
+            OsString::from(
+                "test \"$SANDBOX_TOKEN\" = credential-value-canary && \
+                 test -z \"${SSH_AUTH_SOCK+x}\" && test \"$HOME\" = /crucible-home",
+            ),
+        ],
+        environment,
+    )
+    .expect("command");
+    let shown = format!("{command:?}");
+    assert!(!shown.contains("credential-value-canary"), "{shown}");
+    assert!(!shown.contains("provider/openai/test-account"), "{shown}");
+
+    let mut session = service
+        .prepare(request(&sample, SandboxManifest::empty()))
+        .expect("prepared sandbox");
+    session.materialize().expect("materialized workspace");
+    let (status, _, errors) = finish(session.start(command).expect("started command"));
+
+    assert!(
+        status.success(),
+        "{status}: {}",
+        String::from_utf8_lossy(&errors)
+    );
+}
+
+#[test]
 fn proc_devices_capabilities_and_nested_user_namespaces_are_minimal() {
     let service = LocalSandbox::new();
     if service.probe().is_err() {
@@ -657,7 +765,14 @@ fn command_deadline_kills_the_complete_bubblewrap_process_tree() {
     );
     let mut session = service.prepare(request).expect("prepared sandbox");
     session.materialize().expect("materialized workspace");
-    let script = format!("/bin/sh -c 'sleep 30; :' {marker} & echo ready > descendant.ready; wait");
+    let script = format!(
+        "if command -v setsid >/dev/null 2>&1; then \
+             setsid /bin/sh -c 'sleep 30; :' {marker} & \
+         else \
+             /bin/sh -c 'sleep 30; :' {marker} & \
+         fi; \
+         echo ready > descendant.ready; wait"
+    );
     let mut process = session.start(command(&script)).expect("started command");
     let ready_deadline = Instant::now() + Duration::from_millis(500);
     while !sample.root().join("descendant.ready").exists() {

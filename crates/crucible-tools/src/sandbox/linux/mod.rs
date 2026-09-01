@@ -55,15 +55,10 @@ pub(super) fn prepare(
         .and_then(|value| usize::try_from(value).ok())
         .unwrap_or(MAX_LOCAL_COMMANDS);
     let reservation = Reservation::take(active, maximum)?;
-    let inspection = SandboxInspection::new(
-        request.id(),
+    let inspection = SandboxInspection::confined_for_request(
         backend.identity().clone(),
         backend.capabilities().clone(),
-        request.policy(),
-        request.manifest(),
-        true,
-        None::<Box<str>>,
-        crucible_core::SandboxCleanup::Pending,
+        &request,
     )?;
     request.audit().record(
         request.id(),

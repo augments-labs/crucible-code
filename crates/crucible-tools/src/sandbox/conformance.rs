@@ -11,8 +11,8 @@ use crucible_core::{
     Ancestry, SandboxBackendProvenance, SandboxCapabilities, SandboxCapability, SandboxError,
     SandboxFeature, SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule,
     SandboxId, SandboxManifest, SandboxManifestEntry, SandboxMode, SandboxNetworkEndpoint,
-    SandboxNetworkPolicy, SandboxPolicy, SandboxRequest, SandboxResourceLimits, SandboxService,
-    ToolId,
+    SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxPolicy, SandboxRequest,
+    SandboxResourceLimits, SandboxService, ToolId,
 };
 
 use super::LocalSandbox;
@@ -132,7 +132,8 @@ fn compatibility_refuses_every_explicit_unsupported_policy_before_a_session_exis
 fn unsupported_requests(sample: &Sample) -> Vec<(SandboxFeature, SandboxPolicy, SandboxManifest)> {
     let empty = || SandboxManifest::empty();
     let mut requests = Vec::new();
-    let endpoint = SandboxNetworkEndpoint::new("192.0.2.1", 443).expect("literal endpoint");
+    let endpoint = SandboxNetworkEndpoint::new("192.0.2.1", 443, SandboxNetworkProvenance::User)
+        .expect("literal endpoint");
     requests.push((
         SandboxFeature::NetworkAllowlist,
         policy(

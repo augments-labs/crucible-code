@@ -1,6 +1,6 @@
 //! Exact Bubblewrap filesystem/namespace command planning.
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::os::fd::{AsRawFd, OwnedFd, RawFd};
@@ -11,7 +11,7 @@ use std::process::Command;
 
 use crucible_core::{
     SandboxCommand, SandboxError, SandboxFeature, SandboxFilesystemAccess, SandboxFilesystemRule,
-    SandboxNetworkPolicy, SandboxRequest,
+    SandboxNetworkPolicy, SandboxRequest, SandboxUnreadablePattern,
 };
 
 use super::materialize::Materialization;
@@ -219,14 +219,28 @@ pub(super) fn prepare(request: &SandboxRequest) -> Result<View, SandboxError> {
             }
         }
     }
-    for root in request
-        .policy()
-        .filesystem()
-        .iter()
-        .filter(|rule| rule.access() == SandboxFilesystemAccess::ReadWrite)
-        .map(SandboxFilesystemRule::path)
-    {
-        for protected in nested_protected(root)? {
+    masks.extend(expand_unreadable_patterns(
+        request.policy().unreadable_patterns(),
+    )?);
+    let mut validated_trees: BTreeMap<PathBuf, bool> = BTreeMap::new();
+    for rule in request.policy().filesystem().iter().filter(|rule| {
+        rule.access() != SandboxFilesystemAccess::Unreadable
+            && fs::metadata(rule.path()).is_ok_and(|metadata| metadata.is_dir())
+    }) {
+        if let Some((_, protects_metadata)) = validated_trees
+            .iter_mut()
+            .find(|(root, _)| rule.path().starts_with(root))
+        {
+            *protects_metadata |= rule.access() == SandboxFilesystemAccess::ReadWrite;
+        } else {
+            validated_trees.insert(
+                rule.path().to_path_buf(),
+                rule.access() == SandboxFilesystemAccess::ReadWrite,
+            );
+        }
+    }
+    for (root, protects_metadata) in validated_trees {
+        for protected in validate_granted_tree(&root, protects_metadata)? {
             if !grants.iter().any(|mount| mount.destination == protected) {
                 grants.push(Mount::read_only(&protected));
             }
@@ -289,10 +303,20 @@ pub(super) fn prepare(request: &SandboxRequest) -> Result<View, SandboxError> {
 }
 
 fn validate_host(rules: &[SandboxFilesystemRule]) -> Result<(), SandboxError> {
-    if is_wsl1() {
+    validate_host_for(rules, linux_host())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LinuxHost {
+    Native,
+    Wsl1,
+    Wsl2,
+}
+
+fn validate_host_for(rules: &[SandboxFilesystemRule], host: LinuxHost) -> Result<(), SandboxError> {
+    if host == LinuxHost::Wsl1 {
         return Err(unavailable("Bubblewrap confinement is unsupported on WSL1"));
     }
-    let wsl = is_wsl();
     for rule in rules {
         if rule.path() == Path::new("/") {
             return Err(SandboxError::Materialization {
@@ -300,7 +324,7 @@ fn validate_host(rules: &[SandboxFilesystemRule]) -> Result<(), SandboxError> {
                 source: None,
             });
         }
-        if wsl && rule.path().starts_with("/mnt/") {
+        if host == LinuxHost::Wsl2 && rule.path().starts_with("/mnt/") {
             return Err(unavailable(
                 "Bubblewrap confinement for WSL DrvFS workspace roots is unsupported",
             ));
@@ -328,12 +352,10 @@ fn validate_host(rules: &[SandboxFilesystemRule]) -> Result<(), SandboxError> {
                 }
             }
             Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
-                if rule.access() != SandboxFilesystemAccess::Protected {
-                    return Err(SandboxError::Materialization {
-                        problem: "sandbox policy path disappeared before preparation".into(),
-                        source: Some(source),
-                    });
-                }
+                return Err(SandboxError::Materialization {
+                    problem: "sandbox policy path disappeared before preparation".into(),
+                    source: Some(source),
+                });
             }
             Err(source) => {
                 return Err(SandboxError::Materialization {
@@ -551,7 +573,10 @@ fn add_parents(directories: &mut BTreeSet<PathBuf>, path: &Path) {
     }
 }
 
-fn nested_protected(root: &Path) -> Result<Vec<PathBuf>, SandboxError> {
+fn validate_granted_tree(
+    root: &Path,
+    protects_metadata: bool,
+) -> Result<Vec<PathBuf>, SandboxError> {
     let root_device = fs::metadata(root)
         .map_err(|source| materialization("workspace root could not be inspected", Some(source)))?
         .dev();
@@ -583,7 +608,7 @@ fn nested_protected(root: &Path) -> Result<Vec<PathBuf>, SandboxError> {
                     source: Some(source),
                 })?;
             if metadata.file_type().is_symlink() {
-                if protected_name(&name) {
+                if protects_metadata && protected_name(&name) {
                     return Err(SandboxError::Materialization {
                         problem: "protected workspace metadata is a symbolic link".into(),
                         source: None,
@@ -604,13 +629,13 @@ fn nested_protected(root: &Path) -> Result<Vec<PathBuf>, SandboxError> {
                         None,
                     ));
                 }
-                if protected_name(&name) {
+                if protects_metadata && protected_name(&name) {
                     protected.push(path);
                 }
                 continue;
             }
             if metadata.is_dir() {
-                if protected_name(&name) {
+                if protects_metadata && protected_name(&name) {
                     protected.push(path.clone());
                 }
                 if depth >= MAX_PROTECTED_SCAN_DEPTH {
@@ -631,8 +656,119 @@ fn nested_protected(root: &Path) -> Result<Vec<PathBuf>, SandboxError> {
     Ok(protected)
 }
 
+fn expand_unreadable_patterns(
+    patterns: &[SandboxUnreadablePattern],
+) -> Result<Vec<PathBuf>, SandboxError> {
+    let mut grouped: BTreeMap<PathBuf, Vec<&SandboxUnreadablePattern>> = BTreeMap::new();
+    for pattern in patterns {
+        grouped
+            .entry(pattern.scan_root().to_path_buf())
+            .or_default()
+            .push(pattern);
+    }
+
+    let mut matched = Vec::new();
+    let mut inspected = 0_usize;
+    for (root, patterns) in grouped {
+        let named = fs::symlink_metadata(&root).map_err(|source| {
+            materialization("unreadable pattern scan root is unavailable", Some(source))
+        })?;
+        if named.file_type().is_symlink() || !named.is_dir() {
+            return Err(materialization(
+                "unreadable pattern scan root is not a real directory",
+                None,
+            ));
+        }
+        let canonical = root.canonicalize().map_err(|source| {
+            materialization(
+                "unreadable pattern scan root could not be canonicalized",
+                Some(source),
+            )
+        })?;
+        if canonical != root {
+            return Err(materialization(
+                "unreadable pattern scan root changed after policy resolution",
+                None,
+            ));
+        }
+        let device = named.dev();
+        let mut pending = VecDeque::from([(root, 0_usize)]);
+        while let Some((directory, depth)) = pending.pop_front() {
+            let entries = fs::read_dir(&directory).map_err(|source| {
+                materialization("unreadable pattern scan failed", Some(source))
+            })?;
+            let mut entries = entries.collect::<Result<Vec<_>, _>>().map_err(|source| {
+                materialization("unreadable pattern entry could not be read", Some(source))
+            })?;
+            entries.sort_by_key(std::fs::DirEntry::file_name);
+            for entry in entries {
+                inspected = inspected.saturating_add(1);
+                if inspected > MAX_WORKSPACE_SCAN_ENTRIES {
+                    return Err(materialization(
+                        "unreadable pattern expansion exceeded its bound",
+                        None,
+                    ));
+                }
+                let path = entry.path();
+                let metadata = fs::symlink_metadata(&path).map_err(|source| {
+                    materialization(
+                        "unreadable pattern path changed during expansion",
+                        Some(source),
+                    )
+                })?;
+                let selected = patterns.iter().any(|pattern| pattern.matches(&path));
+                if metadata.file_type().is_symlink() {
+                    if selected {
+                        return Err(materialization(
+                            "unreadable pattern selected a symbolic link",
+                            None,
+                        ));
+                    }
+                    continue;
+                }
+                if metadata.dev() != device {
+                    return Err(materialization(
+                        "unreadable pattern scan crossed a filesystem boundary",
+                        None,
+                    ));
+                }
+                if !metadata.is_dir() && !metadata.is_file() {
+                    return Err(materialization(
+                        "unreadable pattern scan encountered a special file",
+                        None,
+                    ));
+                }
+                if metadata.is_file() && metadata.nlink() != 1 {
+                    return Err(materialization(
+                        "unreadable pattern scan encountered a hard-linked file",
+                        None,
+                    ));
+                }
+                if selected {
+                    matched.push(path.clone());
+                }
+                if metadata.is_dir() {
+                    if depth >= MAX_PROTECTED_SCAN_DEPTH {
+                        return Err(materialization(
+                            "unreadable pattern expansion exceeded its depth bound",
+                            None,
+                        ));
+                    }
+                    pending.push_back((path, depth.saturating_add(1)));
+                }
+            }
+        }
+    }
+    matched.sort();
+    matched.dedup();
+    Ok(matched)
+}
+
 fn protected_name(name: &OsStr) -> bool {
-    matches!(name.to_str(), Some(".git" | ".agents" | ".codex"))
+    matches!(
+        name.to_str(),
+        Some(".git" | ".agents" | ".codex" | ".crucible")
+    )
 }
 
 fn host_mount_points() -> Result<Vec<PathBuf>, SandboxError> {
@@ -810,16 +946,39 @@ fn read_bounded_metadata_file(path: &Path, problem: &'static str) -> Result<Stri
     Ok(text)
 }
 
-fn is_wsl() -> bool {
-    fs::read_to_string("/proc/version")
-        .is_ok_and(|version| version.to_ascii_lowercase().contains("microsoft"))
+fn linux_host() -> LinuxHost {
+    fs::read_to_string("/proc/version").map_or(LinuxHost::Native, |version| {
+        linux_host_from_version(&version)
+    })
 }
 
-fn is_wsl1() -> bool {
-    fs::read_to_string("/proc/version").is_ok_and(|version| {
-        let version = version.to_ascii_lowercase();
-        version.contains("microsoft") && !version.contains("microsoft-standard")
-    })
+fn linux_host_from_version(version: &str) -> LinuxHost {
+    let version = version.to_ascii_lowercase();
+    let mut remaining = version.as_str();
+    while let Some(marker) = remaining.find("wsl") {
+        let version_start = marker.saturating_add("wsl".len());
+        let digits: String = remaining
+            .get(version_start..)
+            .unwrap_or_default()
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        if let Ok(number) = digits.parse::<u32>() {
+            return if number == 1 {
+                LinuxHost::Wsl1
+            } else {
+                LinuxHost::Wsl2
+            };
+        }
+        remaining = remaining.get(version_start..).unwrap_or_default();
+    }
+    if version.contains("microsoft") && !version.contains("microsoft-standard") {
+        LinuxHost::Wsl1
+    } else if version.contains("microsoft") {
+        LinuxHost::Wsl2
+    } else {
+        LinuxHost::Native
+    }
 }
 
 fn unavailable(reason: &'static str) -> SandboxError {
@@ -839,7 +998,7 @@ fn materialization(problem: &'static str, source: Option<std::io::Error>) -> San
 mod tests {
     use super::*;
     use crucible_core::{
-        Ancestry, SandboxId, SandboxManifest, SandboxPolicy, SandboxRequest, ToolId,
+        Ancestry, SandboxId, SandboxManifest, SandboxMode, SandboxPolicy, SandboxRequest, ToolId,
     };
 
     use crate::sample::Sample;
@@ -848,6 +1007,7 @@ mod tests {
     fn protected_names_are_exact_not_suffix_or_prefix_matches() {
         assert!(protected_name(OsStr::new(".git")));
         assert!(protected_name(OsStr::new(".agents")));
+        assert!(protected_name(OsStr::new(".crucible")));
         assert!(!protected_name(OsStr::new(".github")));
         assert!(!protected_name(OsStr::new("repo.git")));
     }
@@ -892,6 +1052,59 @@ mod tests {
             SandboxManifest::empty(),
         );
 
+        assert!(prepare(&request).is_err());
+    }
+
+    #[test]
+    fn preparation_also_refuses_hard_links_and_special_files_in_read_only_trees() {
+        let hard_linked = Sample::new("sandbox-read-only-hard-link");
+        let outside = PathBuf::from(hard_linked.outside("secret.txt", "secret"));
+        std::fs::hard_link(outside, hard_linked.root().join("alias.txt")).expect("hard link");
+        let read_only = SandboxPolicy::new(
+            SandboxMode::Required,
+            [SandboxFilesystemRule::new(
+                hard_linked.root().clone(),
+                SandboxFilesystemAccess::ReadOnly,
+                crucible_core::SandboxFilesystemProvenance::Workspace,
+            )
+            .expect("read-only rule")],
+            hard_linked.root().clone(),
+            SandboxNetworkPolicy::Closed,
+            crucible_core::SandboxResourceLimits::default(),
+        )
+        .expect("read-only policy");
+        let request = SandboxRequest::new(
+            SandboxId::new(),
+            Ancestry::new(),
+            ToolId::new("sandbox"),
+            read_only,
+            SandboxManifest::empty(),
+        );
+        assert!(prepare(&request).is_err());
+
+        let special = Sample::new("sandbox-read-only-special");
+        let _socket = std::os::unix::net::UnixListener::bind(special.root().join("host.sock"))
+            .expect("host socket");
+        let read_only = SandboxPolicy::new(
+            SandboxMode::Required,
+            [SandboxFilesystemRule::new(
+                special.root().clone(),
+                SandboxFilesystemAccess::ReadOnly,
+                crucible_core::SandboxFilesystemProvenance::Workspace,
+            )
+            .expect("read-only rule")],
+            special.root().clone(),
+            SandboxNetworkPolicy::Closed,
+            crucible_core::SandboxResourceLimits::default(),
+        )
+        .expect("read-only policy");
+        let request = SandboxRequest::new(
+            SandboxId::new(),
+            Ancestry::new(),
+            ToolId::new("sandbox"),
+            read_only,
+            SandboxManifest::empty(),
+        );
         assert!(prepare(&request).is_err());
     }
 
@@ -962,5 +1175,85 @@ mod tests {
                 .iter()
                 .any(|bind| { bind.destination == common && bind.read_only })
         );
+    }
+
+    #[test]
+    fn kernel_versions_distinguish_wsl1_wsl2_and_native_linux() {
+        for version in [
+            "Linux version 4.4.0-22621-Microsoft",
+            "Linux version 5.15.0-microsoft-standard-WSL1",
+            "Linux version 5.15.0-wsl-microsoft-standard-WSL1",
+        ] {
+            assert_eq!(
+                linux_host_from_version(version),
+                LinuxHost::Wsl1,
+                "{version}"
+            );
+        }
+        for version in [
+            "Linux version 6.6.87.2-microsoft-standard-WSL2",
+            "Linux version 4.19.104-microsoft-standard",
+        ] {
+            assert_eq!(
+                linux_host_from_version(version),
+                LinuxHost::Wsl2,
+                "{version}"
+            );
+        }
+        assert_eq!(
+            linux_host_from_version("Linux version 6.8.0"),
+            LinuxHost::Native
+        );
+    }
+
+    #[test]
+    fn wsl_drvfs_and_host_root_grants_fail_instead_of_widening() {
+        let root = SandboxFilesystemRule::new(
+            "/",
+            SandboxFilesystemAccess::ReadOnly,
+            crucible_core::SandboxFilesystemProvenance::Workspace,
+        )
+        .expect("root rule");
+        assert!(validate_host_for(&[root], LinuxHost::Native).is_err());
+
+        let drvfs = SandboxFilesystemRule::new(
+            "/mnt/c/workspace",
+            SandboxFilesystemAccess::ReadWrite,
+            crucible_core::SandboxFilesystemProvenance::Workspace,
+        )
+        .expect("DrvFS rule");
+        assert!(validate_host_for(&[drvfs], LinuxHost::Wsl2).is_err());
+    }
+
+    #[test]
+    fn protected_symlinks_and_unreadable_missing_entries_fail_deterministically() {
+        let sample = Sample::new("sandbox-host-entry-fixtures");
+        crate::sample::symlink(
+            sample.outside("target", "secret"),
+            sample.root().join("linked"),
+        );
+        let linked = SandboxFilesystemRule::new(
+            sample.root().join("linked"),
+            SandboxFilesystemAccess::Protected,
+            crucible_core::SandboxFilesystemProvenance::ProtectedMetadata,
+        )
+        .expect("linked rule");
+        assert!(validate_host_for(&[linked], LinuxHost::Native).is_err());
+
+        let missing = SandboxFilesystemRule::new(
+            sample.root().join("missing"),
+            SandboxFilesystemAccess::Unreadable,
+            crucible_core::SandboxFilesystemProvenance::Descendant,
+        )
+        .expect("missing rule");
+        assert!(validate_host_for(&[missing], LinuxHost::Native).is_err());
+
+        let missing_protected = SandboxFilesystemRule::new(
+            sample.root().join("missing-protected"),
+            SandboxFilesystemAccess::Protected,
+            crucible_core::SandboxFilesystemProvenance::ProtectedMetadata,
+        )
+        .expect("missing protected rule");
+        assert!(validate_host_for(&[missing_protected], LinuxHost::Native).is_err());
     }
 }

@@ -40,15 +40,17 @@ pub use manifest::{
 };
 pub use policy::{
     MAX_SANDBOX_FILESYSTEM_RULES, MAX_SANDBOX_HOST_BYTES, MAX_SANDBOX_NETWORK_ENDPOINTS,
-    MAX_SANDBOX_PATH_BYTES, SandboxFilesystemAccess, SandboxFilesystemProvenance,
-    SandboxFilesystemRule, SandboxMode, SandboxNetworkEndpoint, SandboxNetworkPolicy,
-    SandboxPolicy, SandboxPolicyError, SandboxResourceLimits,
+    MAX_SANDBOX_PATH_BYTES, MAX_SANDBOX_PATTERN_COMPONENTS, MAX_SANDBOX_UNREADABLE_PATTERNS,
+    SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxMode,
+    SandboxNetworkEndpoint, SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxPolicy,
+    SandboxPolicyError, SandboxResourceLimits, SandboxUnreadablePattern,
 };
 pub use service::{
-    MAX_SANDBOX_COMMAND_ARGUMENTS, MAX_SANDBOX_COMMAND_BYTES, MAX_SANDBOX_ENVIRONMENT_BYTES,
-    MAX_SANDBOX_ENVIRONMENT_ENTRIES, MAX_SANDBOX_ENVIRONMENT_NAME_BYTES, SandboxCheckpoint,
-    SandboxCleanup, SandboxCommand, SandboxEnvironment, SandboxError, SandboxInspection,
-    SandboxNetworkInspection, SandboxOutput, SandboxPlanInspection, SandboxProcess, SandboxRead,
-    SandboxRequest, SandboxRootInspection, SandboxService, SandboxSession, SandboxUsage,
-    SandboxViolation,
+    MAX_SANDBOX_COMMAND_ARGUMENTS, MAX_SANDBOX_COMMAND_BYTES, MAX_SANDBOX_CREDENTIAL_HANDLE_BYTES,
+    MAX_SANDBOX_ENVIRONMENT_BYTES, MAX_SANDBOX_ENVIRONMENT_ENTRIES,
+    MAX_SANDBOX_ENVIRONMENT_NAME_BYTES, SandboxCheckpoint, SandboxCleanup, SandboxCommand,
+    SandboxCredentialHandle, SandboxCredentialProjection, SandboxCredentialProvenance,
+    SandboxEnvironment, SandboxError, SandboxInspection, SandboxNetworkInspection, SandboxOutput,
+    SandboxPlanInspection, SandboxProcess, SandboxRead, SandboxRequest, SandboxRootInspection,
+    SandboxService, SandboxSession, SandboxUsage, SandboxViolation,
 };
