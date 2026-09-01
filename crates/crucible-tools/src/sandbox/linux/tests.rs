@@ -1333,6 +1333,80 @@ finally:
 }
 
 #[test]
+fn ungranted_sibling_home_and_credential_paths_are_unreachable() {
+    let service = LocalSandbox::new();
+    if service.probe().is_err() {
+        return;
+    }
+    let sample = Sample::new("sandbox-ungranted-paths");
+    // The sample's own ungranted neighbour, one directory over from the
+    // workspace: the nearest path a command could hope to reach by walking up.
+    let sibling = sample
+        .root()
+        .parent()
+        .expect("sample parent")
+        .join("outside");
+    std::fs::write(sibling.join("secret"), b"not for the sandbox").expect("sibling secret");
+    let host_home = std::env::var_os("HOME").expect("host HOME");
+    let mut session = service
+        .prepare(request(&sample, SandboxManifest::empty()))
+        .expect("prepared sandbox");
+    session.materialize().expect("materialized workspace");
+    let script = r#"
+import os
+import sys
+
+sibling, secret, home = sys.argv[1], sys.argv[2], sys.argv[3]
+
+if os.path.exists(secret):
+    raise SystemExit("an ungranted sibling file was visible")
+try:
+    open(secret, "rb").close()
+except OSError:
+    pass
+else:
+    raise SystemExit("an ungranted sibling file was readable")
+try:
+    if os.listdir(sibling):
+        raise SystemExit("an ungranted sibling directory listed its entries")
+except OSError:
+    pass
+
+if os.environ.get("HOME") == home:
+    raise SystemExit("the host home directory was handed in as HOME")
+for hidden in (".ssh", ".gnupg", ".config", ".crucible", ".aws"):
+    path = os.path.join(home, hidden)
+    if os.path.exists(path):
+        raise SystemExit(f"host credential path was visible: {hidden}")
+    try:
+        os.listdir(path)
+    except OSError:
+        continue
+    raise SystemExit(f"host credential path was listable: {hidden}")
+"#;
+    let (status, _, errors) = finish(
+        session
+            .start(direct(
+                "/usr/bin/python3",
+                [
+                    OsString::from("-c"),
+                    OsString::from(script),
+                    sibling.clone().into_os_string(),
+                    sibling.join("secret").into_os_string(),
+                    host_home,
+                ],
+            ))
+            .expect("started command"),
+    );
+
+    assert!(
+        status.success(),
+        "{status}: {}",
+        String::from_utf8_lossy(&errors)
+    );
+}
+
+#[test]
 fn arbitrary_inheritable_host_descriptors_do_not_reach_the_command() {
     let service = LocalSandbox::new();
     if service.probe().is_err() {
