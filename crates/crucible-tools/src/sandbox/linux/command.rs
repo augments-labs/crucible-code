@@ -67,6 +67,23 @@ impl View {
     pub(super) fn binds(&self) -> &[Bind] {
         &self.binds
     }
+
+    pub(super) fn exclusions_beneath(&self, root: &Path) -> Vec<PathBuf> {
+        self.binds
+            .iter()
+            .filter(|bind| {
+                bind.read_only && bind.destination != root && bind.destination.starts_with(root)
+            })
+            .map(|bind| bind.destination.clone())
+            .chain(
+                self.masks
+                    .iter()
+                    .filter(|mask| mask.destination.starts_with(root))
+                    .map(|mask| mask.destination.clone()),
+            )
+            .filter_map(|destination| destination.strip_prefix(root).ok().map(Path::to_path_buf))
+            .collect()
+    }
 }
 
 impl std::fmt::Debug for View {
@@ -84,6 +101,7 @@ pub(super) struct Bind {
     destination: PathBuf,
     read_only: bool,
     directory: bool,
+    mode: u32,
 }
 
 impl Bind {
@@ -145,6 +163,7 @@ impl Bind {
             destination: mount.destination,
             read_only: mount.read_only,
             directory: opened.is_dir(),
+            mode: opened.mode() & 0o777,
         })
     }
 
@@ -166,6 +185,10 @@ impl Bind {
 
     pub(super) const fn directory(&self) -> bool {
         self.directory
+    }
+
+    pub(super) const fn mode(&self) -> u32 {
+        self.mode
     }
 }
 
@@ -483,7 +506,9 @@ pub(super) fn build(plan: Plan<'_>) -> Result<Command, SandboxError> {
         .arg("--sync-fd")
         .arg(status_descriptor.to_string());
     for bind in &view.binds {
-        let descriptor = if bind.read_only {
+        let overlay = !bind.read_only
+            && projection.is_some_and(|projection| projection.uses_overlay(bind.destination()));
+        let descriptor = if bind.read_only || overlay {
             bind.descriptor()
         } else {
             projection
@@ -493,14 +518,25 @@ pub(super) fn build(plan: Plan<'_>) -> Result<Command, SandboxError> {
                 })?
         };
         inherited.push(descriptor);
-        process
-            .arg(if bind.read_only {
-                "--ro-bind-fd"
-            } else {
-                "--bind-fd"
-            })
-            .arg(descriptor.to_string())
-            .arg(&bind.destination);
+        if overlay {
+            process
+                .arg("--overlay-src")
+                .arg(format!("/proc/self/fd/{descriptor}"))
+                .arg("--tmp-overlay")
+                .arg(&bind.destination)
+                .arg("--chmod")
+                .arg(format!("{:04o}", bind.mode()))
+                .arg(&bind.destination);
+        } else {
+            process
+                .arg(if bind.read_only {
+                    "--ro-bind-fd"
+                } else {
+                    "--bind-fd"
+                })
+                .arg(descriptor.to_string())
+                .arg(&bind.destination);
+        }
     }
     if let Some(materialization) = materialization {
         inherited.push(materialization.descriptor());
@@ -509,8 +545,12 @@ pub(super) fn build(plan: Plan<'_>) -> Result<Command, SandboxError> {
             .arg(materialization.descriptor().to_string())
             .arg("/crucible/manifest");
         for mount in materialization.mounts() {
+            let overlay = mount.access() == SandboxFilesystemAccess::ReadWrite
+                && projection
+                    .is_some_and(|projection| projection.uses_overlay(mount.destination()));
             let descriptor = match mount.access() {
                 SandboxFilesystemAccess::ReadOnly => mount.descriptor(),
+                SandboxFilesystemAccess::ReadWrite if overlay => mount.descriptor(),
                 SandboxFilesystemAccess::ReadWrite => projection
                     .and_then(|projection| projection.descriptor(mount.destination()))
                     .ok_or_else(|| {
@@ -523,14 +563,25 @@ pub(super) fn build(plan: Plan<'_>) -> Result<Command, SandboxError> {
                 }
             };
             inherited.push(descriptor);
-            process
-                .arg(if mount.access() == SandboxFilesystemAccess::ReadOnly {
-                    "--ro-bind-fd"
-                } else {
-                    "--bind-fd"
-                })
-                .arg(descriptor.to_string())
-                .arg(mount.destination());
+            if overlay {
+                process
+                    .arg("--overlay-src")
+                    .arg(format!("/proc/self/fd/{descriptor}"))
+                    .arg("--tmp-overlay")
+                    .arg(mount.destination())
+                    .arg("--chmod")
+                    .arg(format!("{:04o}", mount.mode()))
+                    .arg(mount.destination());
+            } else {
+                process
+                    .arg(if mount.access() == SandboxFilesystemAccess::ReadOnly {
+                        "--ro-bind-fd"
+                    } else {
+                        "--bind-fd"
+                    })
+                    .arg(descriptor.to_string())
+                    .arg(mount.destination());
+            }
         }
     }
     for mask in &view.masks {
@@ -563,12 +614,26 @@ pub(super) fn build(plan: Plan<'_>) -> Result<Command, SandboxError> {
         .arg("--")
         .arg("/run/crucible/broker")
         .arg("--status-fd")
-        .arg(status_descriptor.to_string())
+        .arg(status_descriptor.to_string());
+    append_projection_plan(&mut process, projection);
+    process
         .arg("--")
         .arg(command.program())
         .args(command.arguments());
     super::fd::inherit(&mut process, &inherited)?;
     Ok(process)
+}
+
+fn append_projection_plan(process: &mut Command, projection: Option<&Projection>) {
+    let Some(projection) = projection else {
+        return;
+    };
+    for destination in projection.destinations() {
+        process.arg("--project-root").arg(destination);
+    }
+    for destination in projection.excluded_destinations() {
+        process.arg("--project-exclude").arg(destination);
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

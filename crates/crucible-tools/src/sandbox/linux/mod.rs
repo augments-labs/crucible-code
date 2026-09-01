@@ -305,11 +305,8 @@ impl SandboxLaunch for LinuxLaunch {
                 return Err(SandboxError::Audit(source));
             }
         }
-        Ok(projection::wrap(
-            process,
-            self.projection.take(),
-            status_channel,
-        ))
+        projection::wrap(process, self.projection.take(), status_channel)
+            .map_err(SandboxError::Lifecycle)
     }
 }
 

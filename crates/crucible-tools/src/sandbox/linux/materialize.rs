@@ -143,6 +143,7 @@ pub(super) struct PreparedMount {
     destination: std::path::PathBuf,
     access: SandboxFilesystemAccess,
     directory: bool,
+    mode: u32,
 }
 
 impl PreparedMount {
@@ -164,6 +165,10 @@ impl PreparedMount {
 
     pub(super) const fn access(&self) -> SandboxFilesystemAccess {
         self.access
+    }
+
+    pub(super) const fn mode(&self) -> u32 {
+        self.mode
     }
 }
 
@@ -239,6 +244,7 @@ fn prepare_mount(
         destination: Path::new("/crucible/manifest").join(sandbox_destination),
         access,
         directory: opened.is_dir(),
+        mode: opened.mode() & 0o777,
     })
 }
 

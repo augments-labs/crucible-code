@@ -3,8 +3,9 @@
 use std::ffi::{OsStr, OsString};
 use std::net::TcpListener;
 use std::os::fd::AsRawFd;
-use std::os::unix::fs::MetadataExt as _;
+use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 use std::os::unix::net::UnixListener;
+use std::path::PathBuf;
 use std::process::ExitStatus;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -239,6 +240,32 @@ fn writable_effects_stay_private_until_terminal_publication() {
 }
 
 #[test]
+fn staging_a_writable_directory_does_not_copy_its_file_contents() {
+    let service = LocalSandbox::new();
+    service.probe().expect("qualified Linux confinement host");
+    let sample = Sample::new("sandbox-overlay-no-full-copy");
+    let sparse =
+        std::fs::File::create(sample.root().join("large-sparse.bin")).expect("sparse fixture");
+    sparse.set_len(64 * 1024 * 1024).expect("sparse length");
+    let request = request(&sample, SandboxManifest::empty());
+    let sandbox = request.id();
+    let mut session = service.prepare(request).expect("prepared sandbox");
+    session.materialize().expect("materialized workspace");
+
+    let launch = session.stage(command("exit 0")).expect("staged launch");
+    for base in ["/tmp", "/var/tmp"] {
+        assert!(
+            !PathBuf::from(base)
+                .join(format!("crucible-projection-{sandbox}"))
+                .join("roots/0/large-sparse.bin")
+                .exists(),
+            "directory projection copied file contents before GO"
+        );
+    }
+    drop(launch);
+}
+
+#[test]
 fn cancellation_discards_private_workspace_effects() {
     let service = LocalSandbox::new();
     if service.probe().is_err() {
@@ -337,6 +364,103 @@ fn ordinary_high_nonzero_exit_is_not_confused_with_signal_termination() {
         std::fs::read_to_string(sample.root().join("high-nonzero.txt")).expect("published file"),
         "published\n"
     );
+}
+
+#[test]
+fn create_update_delete_rename_and_mode_publish_as_one_terminal_delta() {
+    let service = LocalSandbox::new();
+    if service.probe().is_err() {
+        return;
+    }
+    let sample = Sample::new("sandbox-terminal-delta");
+    sample.write("updated.txt", "before\n");
+    sample.write("deleted.txt", "delete me\n");
+    sample.write("renamed-before.txt", "rename me\n");
+    sample.write("mode.txt", "mode\n");
+    let mut session = service
+        .prepare(request(&sample, SandboxManifest::empty()))
+        .expect("prepared sandbox");
+    session.materialize().expect("materialized workspace");
+    let (status, _, errors) = finish(
+        session
+            .start(command(
+                "printf 'after\\n' > updated.txt; \
+                 printf 'created\\n' > created.txt; \
+                 rm deleted.txt; \
+                 mv renamed-before.txt renamed-after.txt; \
+                 chmod 640 mode.txt",
+            ))
+            .expect("started command"),
+    );
+
+    assert!(status.success(), "{}", String::from_utf8_lossy(&errors));
+    assert_eq!(
+        std::fs::read_to_string(sample.root().join("updated.txt")).expect("updated file"),
+        "after\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(sample.root().join("created.txt")).expect("created file"),
+        "created\n"
+    );
+    assert!(!sample.root().join("deleted.txt").exists());
+    assert!(!sample.root().join("renamed-before.txt").exists());
+    assert_eq!(
+        std::fs::read_to_string(sample.root().join("renamed-after.txt")).expect("renamed file"),
+        "rename me\n"
+    );
+    assert_eq!(
+        std::fs::metadata(sample.root().join("mode.txt"))
+            .expect("mode metadata")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o640
+    );
+}
+
+#[test]
+fn an_external_baseline_conflict_publishes_none_of_the_private_delta() {
+    let service = LocalSandbox::new();
+    if service.probe().is_err() {
+        return;
+    }
+    let sample = Sample::new("sandbox-publication-conflict");
+    sample.write("shared.txt", "baseline\n");
+    let mut session = service
+        .prepare(request(&sample, SandboxManifest::empty()))
+        .expect("prepared sandbox");
+    session.materialize().expect("materialized workspace");
+    let mut process = session
+        .start(command(
+            "printf 'private\\n' > shared.txt; \
+             printf 'private new\\n' > private-new.txt; \
+             printf 'ready\\n'; sleep 0.2",
+        ))
+        .expect("started command");
+    let mut stdout = process.take_stdout();
+    let _ = wait_for_marker(process.as_mut(), &mut stdout, b"ready\n");
+    std::fs::write(sample.root().join("shared.txt"), "external\n")
+        .expect("external writer fixture");
+
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        match process.try_wait() {
+            Err(_) => break,
+            Ok(None) => {}
+            Ok(Some(status)) => panic!("conflicted publication returned {status}"),
+        }
+        assert!(
+            Instant::now() < deadline,
+            "conflicted command did not terminate"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    let _ = process.stop();
+    assert_eq!(
+        std::fs::read_to_string(sample.root().join("shared.txt")).expect("external content"),
+        "external\n"
+    );
+    assert!(!sample.root().join("private-new.txt").exists());
 }
 
 #[test]

@@ -5,13 +5,11 @@ use std::io::{self, Read as _, Write as _};
 use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::fs::PermissionsExt as _;
 use std::os::unix::net::UnixStream;
-use std::os::unix::process::ExitStatusExt as _;
 use std::path::{Path, PathBuf};
-use std::process::ExitStatus;
 
 use crucible_core::SandboxError;
 use crucible_sandbox_broker::{
-    BROKER_FAILURE_STATUS, GO_FRAME, READY_FRAME, WAIT_STATUS_BYTES, decode_wait_status,
+    GO_FRAME, READY_FRAME, REFUSED_DESCRIPTOR_CLOSURE, REFUSED_FRAME, REFUSED_SCAN,
 };
 
 const MAX_BROKER_BYTES: u64 = 16 * 1024 * 1024;
@@ -112,6 +110,19 @@ impl StatusChannel {
     pub(super) fn release(&mut self) -> io::Result<()> {
         let mut ready = [0_u8; READY_FRAME.len()];
         self.reader.read_exact(&mut ready)?;
+        if ready == REFUSED_FRAME {
+            let mut reason = [0_u8; 1];
+            self.reader.read_exact(&mut reason)?;
+            return Err(io::Error::other(match reason.first().copied() {
+                Some(REFUSED_SCAN) => {
+                    "sandbox broker refused the bounded pre-release semantic scan"
+                }
+                Some(REFUSED_DESCRIPTOR_CLOSURE) => {
+                    "sandbox broker could not close undeclared descriptors before release"
+                }
+                _ => "sandbox broker returned an unknown pre-release refusal",
+            }));
+        }
         if ready != READY_FRAME {
             return Err(io::Error::other(
                 "sandbox broker did not attest readiness before release",
@@ -121,22 +132,8 @@ impl StatusChannel {
         self.reader.flush()
     }
 
-    pub(super) fn wait_status(&mut self) -> io::Result<ExitStatus> {
-        let mut frame = [0_u8; WAIT_STATUS_BYTES];
-        self.reader.read_exact(&mut frame)?;
-        let raw = decode_wait_status(frame);
-        if raw == BROKER_FAILURE_STATUS {
-            return Err(io::Error::other(
-                "sandbox broker could not create or reap the workload",
-            ));
-        }
-        let mut trailing = [0_u8; 1];
-        if self.reader.read(&mut trailing)? != 0 {
-            return Err(io::Error::other(
-                "sandbox broker emitted more than one wait-status frame",
-            ));
-        }
-        Ok(ExitStatus::from_raw(raw))
+    pub(super) fn into_stream(self) -> UnixStream {
+        self.reader
     }
 }
 
