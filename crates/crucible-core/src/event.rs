@@ -235,6 +235,18 @@ pub enum Event {
         summary: Summary,
         /// Whether the running call can be left to finish in the background.
         backgroundable: bool,
+        /// Whether this is the only call of its pass.
+        ///
+        /// One response can ask for several tools at once, and they are
+        /// answered as they finish rather than in the order they were asked
+        /// for. A reader is shown a result under the call it answers, and a
+        /// transcript that only ever grows at the end can keep that promise
+        /// for one outstanding call and not for four. So the count is
+        /// reported here, where it is known, rather than guessed at by
+        /// whatever draws the rows: the calls of a pass are all announced
+        /// before any of them runs, so nothing downstream can tell the first
+        /// of four from the only one.
+        alone: bool,
         /// What kind of looking-around this call is, where it is only that —
         /// asked of the tool beside [`Event::ToolRequested::summary`], and for
         /// the same reason: the arguments are opaque to whatever draws the row,
@@ -408,12 +420,14 @@ impl std::fmt::Debug for Event {
                 summary,
                 backgroundable,
                 looking,
+                alone,
             } => f
                 .debug_struct("ToolRequested")
                 .field("call", call)
                 .field("summary", summary)
                 .field("backgroundable", backgroundable)
                 .field("looking", looking)
+                .field("alone", alone)
                 .finish(),
             Self::Wrote { call, text } => f
                 .debug_struct("Wrote")

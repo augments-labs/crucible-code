@@ -21,6 +21,23 @@
 //! this commits it still, so what the transcript keeps is the same words with
 //! the motion gone.
 //!
+//! Not every call is held. One that is the only call of its pass, cannot be
+//! backgrounded and only looks up something elsewhere has nothing to draw
+//! again: no output arrives under it, no key points at it, and its words are
+//! settled the moment it is asked for. [`Turning::saw`] hands that one back
+//! where it was requested, and it is written where every other row of the turn
+//! is. What holding it was buying was the promise that a result is drawn under
+//! the call it answers, and the transcript only grows at the end, so that
+//! promise needs holding exactly when a second call could answer first.
+//!
+//! Which is what a pass of several is, and there the row says how many of what
+//! rather than naming one of them. One response asking for eight fetches used
+//! to put the first of the eight over the box and leave it there until it
+//! answered — one URL in front of the reader for as long as the whole batch
+//! took, and no word about the seven behind it. A call that can be
+//! backgrounded or has started printing is named as it always was: the key
+//! points at a row, and a sample belongs to a call rather than to a number.
+//!
 //! Over that call, where the turn has been looking around rather than doing one
 //! thing, the line counting what it has looked at so far. It is not held here
 //! either — the words are read off the run each frame and handed in, since a
@@ -263,6 +280,10 @@ struct Calling {
     backgroundable: bool,
     /// What kind of looking-around this call is, where it is only that.
     looking: Option<Looking>,
+    /// The tool's name as a row writes it, kept apart from [`Calling::said`]
+    /// so a count of what is out does not have to read it back out of a
+    /// sentence that has already had the arguments put into it.
+    name: String,
 }
 
 /// A call line that has stopped being live and is the transcript's to commit.
@@ -608,12 +629,42 @@ impl Turning {
                 summary,
                 backgroundable,
                 looking,
+                alone,
             } => {
                 let said = draw::called(call, summary);
                 if let Some(calling) = self.calling.iter_mut().find(|one| one.id == call.id) {
                     calling.said = said;
                     calling.backgroundable = *backgroundable;
                     calling.looking = *looking;
+                    Vec::new()
+                } else if *alone && !*backgroundable && looking.is_none() {
+                    // Nothing about this one moves, so the footing has nothing
+                    // to draw again: it prints no output to watch, no key
+                    // points at it, and the words on its row are settled here
+                    // and say the same thing when the tool answers. What the
+                    // footing was buying was the promise that a result is
+                    // drawn under the call it answers, and a transcript that
+                    // only grows at the end can keep that promise for one
+                    // outstanding call by writing the call now and the answer
+                    // after it. So it goes down where it was asked for, and a
+                    // reader watching a fetch that takes half a minute reads
+                    // it in the transcript rather than off the bottom of the
+                    // screen.
+                    //
+                    // Only when it is the only call of its pass. Four calls
+                    // announced together answer in whatever order they
+                    // finish, and four rows written up front would take the
+                    // four results in the wrong order under the wrong calls.
+                    // Those still stand until each is answered.
+                    //
+                    // And never a call that only looked around: that one is
+                    // owed to the run being counted, which counts what has
+                    // come back rather than what has gone out.
+                    vec![Settled {
+                        call: call.id.clone(),
+                        said,
+                        looking: *looking,
+                    }]
                 } else {
                     self.calling.push_back(Calling {
                         id: call.id.clone(),
@@ -621,9 +672,10 @@ impl Turning {
                         printing: Printing::default(),
                         backgroundable: *backgroundable,
                         looking: *looking,
+                        name: draw::pascal(&call.name),
                     });
+                    Vec::new()
                 }
-                Vec::new()
             }
             Event::ToolFinished { call, .. } => self
                 .calling
@@ -737,7 +789,20 @@ impl Turning {
             // frame to be compared against. A tool's name and a path is tens of
             // bytes, taken at most four times a second, and it is freed the
             // moment the tool answers — nothing here grows with the transcript.
-            calling: self.calling.front().map(|calling| calling.said.clone()),
+            //
+            // What the row will say rather than which call is at the front of
+            // the queue. A pass of eight that has had three answered still has
+            // the same call in front and says a different number, and a key
+            // that carried the front call's name would leave that number to
+            // reach the screen on the next beat: right twice a second by
+            // accident, which is not the same as right.
+            calling: self.calling.front().map(|calling| {
+                if self.folds() {
+                    self.outstanding()
+                } else {
+                    calling.said.clone()
+                }
+            }),
             backgroundable: self
                 .calling
                 .front()
@@ -900,23 +965,40 @@ impl Turning {
             if rows.is_empty() {
                 rows.push(Row::new());
             }
-            rows.push(self.call(&calling.said, columns, style));
 
-            // Measured last, against whatever every other row left. It is the one
-            // thing here a second look gets back whatever the window did — the
-            // key that stands a result whole stands this too — so it is the first
-            // to give way and it gives way without saying so.
-            // What is left after every row that never gives way has taken its
-            // own is the sample's, and the sample's alone: the caption under the
-            // call is counted in `standing` above whenever there is one. For a
-            // backgroundable call that is the offer; for any call that printed it
-            // is the bounded count that keeps a sample from reading as the whole.
-            rows.extend(calling.printing.rows(
-                columns,
-                room.saturating_sub(standing),
-                style,
-                calling.backgroundable,
-            ));
+            // One row either way. A pass that asked for one tool names it, and
+            // a pass that asked for eight says how many of what: the first of
+            // the eight would otherwise stand here until it answered, which is
+            // one URL held in front of a reader for as long as the whole batch
+            // takes and no word about the seven behind it.
+            //
+            // Not where anything out can be backgrounded or has printed. The
+            // key points at the row that names a command, and a count is not
+            // something it can act on; the sample under it belongs to a call
+            // rather than to a number.
+            if self.folds() {
+                rows.push(self.counted(&self.outstanding(), columns, style));
+            } else {
+                rows.push(self.call(&calling.said, columns, style));
+
+                // Measured last, against whatever every other row left. It is
+                // the one thing here a second look gets back whatever the
+                // window did — the key that stands a result whole stands this
+                // too — so it is the first to give way and it gives way
+                // without saying so.
+                // What is left after every row that never gives way has taken
+                // its own is the sample's, and the sample's alone: the caption
+                // under the call is counted in `standing` above whenever there
+                // is one. For a backgroundable call that is the offer; for any
+                // call that printed it is the bounded count that keeps a
+                // sample from reading as the whole.
+                rows.extend(calling.printing.rows(
+                    columns,
+                    room.saturating_sub(standing),
+                    style,
+                    calling.backgroundable,
+                ));
+            }
         }
 
         rows.push(Row::new());
@@ -986,6 +1068,54 @@ impl Turning {
     ///
     /// The words go through the same clipping the committed line uses, so no
     /// face can make the terminal wrap a row the renderer counted as one.
+    /// Whether what is out is better said as a count than as one of its rows.
+    ///
+    /// Two or more, and nothing among them the footing is holding for its own
+    /// sake: a command the background key points at, or a call part way
+    /// through printing something worth watching.
+    fn folds(&self) -> bool {
+        self.calling.len() > 1
+            && !self
+                .calling
+                .iter()
+                .any(|calling| calling.backgroundable || calling.printing.lines() > 0)
+    }
+
+    /// What is out right now, counted by tool.
+    ///
+    /// In the order the calls were asked for rather than by how many there are
+    /// of each, because that order is the model's sentence about what it is
+    /// doing and a reader who saw the turn start recognises it.
+    ///
+    /// Tool names rather than a verb for each, unlike the run that settles into
+    /// the transcript. That run counts the four kinds of looking-around the
+    /// tools declare, and this counts whatever is out — a tool added tomorrow
+    /// has a name here and would have no sentence.
+    fn outstanding(&self) -> String {
+        let mut counted: Vec<(&str, usize)> = Vec::new();
+
+        for calling in &self.calling {
+            match counted
+                .iter_mut()
+                .find(|(name, _)| *name == calling.name.as_str())
+            {
+                Some((_, count)) => *count += 1,
+                None => counted.push((calling.name.as_str(), 1)),
+            }
+        }
+
+        let said: Vec<String> = counted
+            .into_iter()
+            .map(|(name, count)| format!("{count} {name}"))
+            .collect();
+
+        match said.split_last() {
+            None => String::new(),
+            Some((last, [])) => last.clone(),
+            Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+        }
+    }
+
     fn call(&self, said: &str, columns: usize, style: Style) -> Row {
         let row = Row::new()
             .then(Slot::Accent, self.mark(style))

@@ -155,6 +155,7 @@ fn announced(name: &str, args: &str, summary: &str) -> String {
             summary: Summary::new(summary),
             backgroundable: false,
             looking: None,
+            alone: true,
         },
         &here(),
         Style::plain(),

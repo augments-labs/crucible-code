@@ -168,10 +168,12 @@ pub(crate) fn event<T: Terminal>(
         }
 
         // Whatever the model was saying is finished; it said it to explain the
-        // call that follows. The line for the call itself is not written here:
-        // it is live until the tool answers, standing in the footing with a
-        // mark that moves, and a line that is still moving is not one the
-        // transcript can hold. It commits through [`returned`].
+        // call that follows. The line for the call itself is not written here
+        // either way. Where the call has something live about it that line is
+        // in the footing until the tool answers, and a line that is still
+        // moving is not one the transcript can hold; where it has not, it is
+        // handed straight back to be written. Both commit through [`returned`],
+        // which is why neither is drawn from this arm.
         Event::ToolRequested { call, summary, .. } => {
             kept.calling(call.id.clone(), called(&call, &summary));
             renderer.settle()

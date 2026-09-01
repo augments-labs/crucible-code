@@ -61,7 +61,200 @@ fn requested_as(name: &str, backgroundable: bool) -> Event {
         summary: Summary::new("src/main.rs"),
         backgroundable,
         looking: None,
+        alone: false,
     }
+}
+
+/// One call of a pass of several, named by `id` so a batch can be built.
+fn requested_of_batch(id: &str, name: &str, about: &str, backgroundable: bool) -> Event {
+    Event::ToolRequested {
+        call: ToolCall {
+            id: ToolId::new(id),
+            name: name.into(),
+            args: ToolArgs::new("{}"),
+        },
+        summary: Summary::new(about),
+        backgroundable,
+        looking: None,
+        alone: false,
+    }
+}
+
+/// Everything the footing says, one string per row.
+fn footing(turning: &Turning) -> Vec<String> {
+    turning
+        .rows(&nothing(), "", 80, Style::plain(), 24)
+        .iter()
+        .map(Row::text)
+        .collect()
+}
+
+#[test]
+fn a_pass_of_calls_out_is_counted_rather_than_named_one_at_a_time() {
+    // Eight fetches asked for at once used to put the first of the eight above
+    // the box and leave it there until it answered, so a reader watched one
+    // URL for as long as the whole batch took. What is out is a count now.
+    let mut turning = Turning::started(None);
+    for at in 0..8 {
+        turning.saw(&requested_of_batch(
+            &format!("f-{at}"),
+            "web_fetch",
+            &format!("https://example.com/{at}"),
+            false,
+        ));
+    }
+
+    let said = footing(&turning).join("\n");
+    assert!(said.contains("8 WebFetch"), "{said}");
+    assert!(!said.contains("https://example.com/0"), "{said}");
+}
+
+#[test]
+fn a_pass_of_mixed_calls_counts_each_kind_in_the_order_it_was_asked_for() {
+    let mut turning = Turning::started(None);
+    for (id, name, about) in [
+        ("f-0", "web_fetch", "https://example.com/0"),
+        ("r-0", "read", "src/main.rs"),
+        ("r-1", "read", "src/lib.rs"),
+        ("f-1", "web_fetch", "https://example.com/1"),
+    ] {
+        turning.saw(&requested_of_batch(id, name, about, false));
+    }
+
+    let said = footing(&turning).join("\n");
+    assert!(said.contains("2 WebFetch and 2 Read"), "{said}");
+}
+
+#[test]
+fn one_call_out_is_still_named_rather_than_counted() {
+    // A count of one says less than the call it counts, and the row a single
+    // call has always had is the one thing that still fits.
+    let mut turning = Turning::started(None);
+    turning.saw(&requested_of_batch(
+        "f-0",
+        "web_fetch",
+        "https://example.com/0",
+        false,
+    ));
+
+    let said = footing(&turning).join("\n");
+    assert!(said.contains("WebFetch(https://example.com/0)"), "{said}");
+    assert!(!said.contains("1 WebFetch and"), "{said}");
+}
+
+#[test]
+fn a_pass_holding_a_command_keeps_the_command_row_it_can_be_backgrounded_from() {
+    // The key that leaves one running points at the row that names it, and a
+    // count is not something `ctrl+b` can act on.
+    let mut turning = Turning::started(None);
+    turning.saw(&requested_of_batch("b-0", "bash", "cargo test", true));
+    turning.saw(&requested_of_batch(
+        "f-0",
+        "web_fetch",
+        "https://example.com",
+        false,
+    ));
+
+    let said = footing(&turning).join("\n");
+    assert!(said.contains("Bash(cargo test)"), "{said}");
+    assert!(turning.can_background());
+}
+
+#[test]
+fn a_call_answered_out_of_a_pass_moves_the_frame_the_count_is_drawn_from() {
+    // The front of the queue is unchanged when the third of eight answers, so
+    // a redraw keyed on which call is at the front would leave the new count
+    // to reach the screen on whatever moved next.
+    let mut turning = Turning::started(None);
+    for at in 0..3 {
+        turning.saw(&requested_of_batch(
+            &format!("f-{at}"),
+            "web_fetch",
+            &format!("https://example.com/{at}"),
+            false,
+        ));
+    }
+
+    assert!(turning.moved());
+    assert!(!turning.moved(), "nothing happened between the two frames");
+
+    turning.saw(&Event::ToolFinished {
+        call: ToolId::new("f-1"),
+        output: ToolOutput::ok("a page"),
+        receipt: None,
+    });
+
+    assert!(turning.moved(), "the count went from 3 to 2 unseen");
+}
+
+/// A call the runner reported as the only one of its pass.
+///
+/// Separate from [`requested_as`] rather than a flag on it, because the two
+/// describe different facts about a turn and the tests below turn on which:
+/// `alone` is what the runner counted in the response, not what a test happened
+/// to send one of.
+fn requested_alone(name: &str, about: &str, backgroundable: bool) -> Event {
+    Event::ToolRequested {
+        call: ToolCall {
+            id: ToolId::new("a"),
+            name: name.into(),
+            args: ToolArgs::new("{}"),
+        },
+        summary: Summary::new(about),
+        backgroundable,
+        looking: None,
+        alone: true,
+    }
+}
+
+#[test]
+fn a_lone_call_with_nothing_live_about_it_is_returned_where_it_is_asked_for() {
+    // A fetch is the case: it prints nothing while it runs, it cannot be
+    // backgrounded, and its row says the same words at the end that it said at
+    // the start. Nothing about it moves, so nothing about it needs the footing,
+    // and holding it there would leave the reader watching the bottom of the
+    // screen for as long as the network takes.
+    let mut turning = Turning::started(None);
+
+    assert_eq!(
+        lines(turning.saw(&requested_alone("web_fetch", "https://example.com", false))),
+        vec![(ToolId::new("a"), "WebFetch(https://example.com)".to_owned())],
+    );
+}
+
+#[test]
+fn a_call_written_where_it_was_asked_for_does_not_stand_in_the_footing() {
+    // And is not handed back a second time when the tool answers: the row is
+    // the transcript's already, and a turn that returned it twice would write
+    // the call once for the asking and once for the answer.
+    let mut turning = Turning::started(None);
+    turning.saw(&requested_alone("web_search", "rust traits", false));
+
+    let rows = turning.rows(&nothing(), "", 80, Style::plain(), 24);
+    assert_eq!(rows.len(), ROWS, "{:?}", rows.iter().map(Row::text));
+
+    assert_eq!(
+        lines(turning.saw(&Event::ToolFinished {
+            call: ToolId::new("a"),
+            output: ToolOutput::ok("four results"),
+            receipt: None,
+        })),
+        Vec::new(),
+    );
+}
+
+#[test]
+fn a_lone_call_that_can_be_backgrounded_stands_in_the_footing_as_before() {
+    // The footing is where the key that leaves it running points and where the
+    // output it prints goes. A command has both, so being the only call of its
+    // pass buys it nothing.
+    let mut turning = Turning::started(None);
+
+    assert_eq!(
+        lines(turning.saw(&requested_alone("bash", "cargo test", true))),
+        Vec::new(),
+    );
+    assert!(turning.can_background());
 }
 
 /// The lines that came back, as the pairs these tests are written about: which
@@ -764,6 +957,7 @@ fn several_requested_calls_return_the_heading_named_by_each_result() {
         summary: Summary::new(about),
         backgroundable: false,
         looking: None,
+        alone: false,
     };
 
     turning.saw(&requested("read", "read", "src/main.rs"));
@@ -850,6 +1044,7 @@ fn a_terminal_event_drains_every_pending_call_in_request_order() {
             summary: Summary::new(path),
             backgroundable: false,
             looking: None,
+            alone: false,
         });
     }
 

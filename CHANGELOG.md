@@ -28,6 +28,19 @@ change in any release with no deprecation period.
   reports itself between rules, as it is documented to, rather than hanging
   under a `└` that belongs to a tool result or a slash command's output.
 
+- **Calls waiting above the box are counted, not one of them named.** A
+  response that asks for eight fetches at once says `8 WebFetch` over the
+  working row, falling as each answers and joins the transcript, rather than
+  holding the first of the eight there until it came back. A command is still
+  named, since `ctrl+b` points at a row.
+
+- **A lone call with nothing live about it is written where it is asked for.**
+  `WebSearch` and `WebFetch` print nothing and cannot be backgrounded, so their
+  row goes into the transcript when the call goes out rather than waiting for
+  the network. Calls that stream output, that `ctrl+b` can leave running, or
+  that share a pass with others still commit when their tool answers, which is
+  what keeps each result under the call it answers.
+
 - **A sent attachment shows its label, not its path.** The transcript row reads
   `[Image #1]`.
 

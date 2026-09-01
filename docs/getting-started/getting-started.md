@@ -430,15 +430,30 @@ each was given rather than as a paragraph. The colour is the row's rather than
 the text's, so it costs no column, and it is there whether the line is still
 waiting above the box or has already been written out.
 
-That line is written when the tool answers rather than when the model asks for
-it, so it and the result under it join the transcript one after the other and
-nothing the turn did in between comes to stand between the two. While the tool
-is out it stands above the working row instead, with its mark pulsing on the
-beat the mark below it turns on, and it commits the moment the tool answers —
-the same words in the same columns, with the motion gone. So a call still
-waiting is told from one that has finished at a glance, and what the transcript
-keeps is the still line. On a window with room for one of the two, the call
+Where the model asked for one tool and nothing about it moves, the line is
+written the moment the call goes out. `WebSearch` and `WebFetch` are the two
+that matter here: they print nothing while they run, no key points at them, and
+their row says the same thing at the end that it said at the start. A fetch can
+be out for half a minute, and reading it in the transcript is better than
+watching the bottom of the screen for it.
+
+The rest wait for their tool. A command that is still printing has its output to
+show and `ctrl+b` pointing at it, and a response that asked for four tools at
+once gets four answers in whatever order they finish — so writing those rows up
+front would take each result under the wrong call. Those stand above the working
+row instead, with the mark pulsing on the beat the mark below it turns on, and
+each commits the moment its own tool answers: the same words in the same
+columns, with the motion gone. So a call still waiting is told from one that has
+finished at a glance, and the result lands under the call it answers with
+nothing between the two. On a window with room for one of the two, the call
 gives way to the row that says the turn is running at all.
+
+Where a response asked for several at once, that row counts them instead of
+naming one — `8 WebFetch`, or `2 WebFetch and 7 Read` — and the count falls as
+each answers and joins the transcript. A model that fetches ten pages in one
+breath would otherwise hold the first of the ten over the box until it came
+back, which says nothing about the nine still out. A command in the batch is
+still named, since `ctrl+b` points at a row rather than at a number.
 
 A tool's output is summarised to its first line and a count of the rest; `read`
 numbers lines the way `cat -n` does, which is why the summary starts with a `1`.
