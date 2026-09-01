@@ -9,6 +9,9 @@
 mod local;
 pub(crate) mod process;
 
+#[cfg(test)]
+mod conformance;
+
 #[cfg(target_os = "linux")]
 mod linux;
 

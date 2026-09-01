@@ -244,7 +244,7 @@ fn digest(path: &Path, length: u64) -> Result<[u8; 32], SandboxError> {
     Ok(digest.finalize().into())
 }
 
-fn capabilities() -> SandboxCapabilities {
+pub(super) fn capabilities() -> SandboxCapabilities {
     let enforced = SandboxCapability::Enforced;
     SandboxCapabilities::none()
         .with(SandboxFeature::Filesystem, enforced)

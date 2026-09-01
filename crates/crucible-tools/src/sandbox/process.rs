@@ -98,15 +98,28 @@ impl Drop for Stage {
 }
 
 /// Spawns `command` inside a platform process-tree scope.
+pub(super) struct SpawnPlan {
+    pub(super) inspection: SandboxInspection,
+    pub(super) reservation: Reservation,
+    pub(super) stage: Option<Stage>,
+    pub(super) limits: SandboxResourceLimits,
+    pub(super) audit: SandboxAudit,
+    pub(super) sandbox: SandboxId,
+}
+
+/// Starts one command under an already negotiated process plan.
 pub(super) fn spawn(
     mut command: Command,
-    inspection: SandboxInspection,
-    reservation: Reservation,
-    stage: Option<Stage>,
-    limits: SandboxResourceLimits,
-    audit: SandboxAudit,
-    sandbox: SandboxId,
+    plan: SpawnPlan,
 ) -> Result<Box<dyn SandboxProcess>, crucible_core::SandboxError> {
+    let SpawnPlan {
+        inspection,
+        reservation,
+        stage,
+        limits,
+        audit,
+        sandbox,
+    } = plan;
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -209,9 +222,7 @@ pub(super) fn spawn(
         scope_stopped: false,
         started,
         stopped: false,
-        finished_audited: false,
-        usage_audited: false,
-        cleanup_audited: false,
+        audit_state: AuditState::default(),
     }))
 }
 
@@ -283,10 +294,9 @@ impl Control {
             .violation
             .compare_exchange(NO_VIOLATION, code, Ordering::AcqRel, Ordering::Acquire)
             .is_ok()
+            && let Err(problem) = self.audit(SandboxFactKind::Violation(violation))
         {
-            if let Err(problem) = self.audit(SandboxFactKind::Violation(violation)) {
-                self.record_failure(&io::Error::other(problem));
-            }
+            self.record_failure(&io::Error::other(problem));
         }
     }
 
@@ -447,38 +457,43 @@ struct LocalProcess {
     scope_stopped: bool,
     started: Instant,
     stopped: bool,
-    finished_audited: bool,
-    usage_audited: bool,
-    cleanup_audited: bool,
+    audit_state: AuditState,
+}
+
+#[derive(Default)]
+struct AuditState {
+    finished: bool,
+    usage: bool,
+    cleanup: bool,
 }
 
 impl LocalProcess {
     fn audit_finished(&mut self) -> io::Result<()> {
-        if !self.finished_audited {
+        if !self.audit_state.finished {
             self.control
                 .audit(SandboxFactKind::Lifecycle(
                     SandboxLifecycle::CommandFinished,
                 ))
                 .map_err(io::Error::other)?;
-            self.finished_audited = true;
+            self.audit_state.finished = true;
         }
-        if !self.usage_audited {
+        if !self.audit_state.usage {
             self.control
                 .audit(SandboxFactKind::Usage(self.usage()))
                 .map_err(io::Error::other)?;
-            self.usage_audited = true;
+            self.audit_state.usage = true;
         }
         Ok(())
     }
 
     fn audit_cleanup(&mut self, cleanup: SandboxCleanup) -> io::Result<()> {
-        if self.cleanup_audited {
+        if self.audit_state.cleanup {
             return Ok(());
         }
         self.control
             .audit(SandboxFactKind::Cleanup(cleanup))
             .map_err(io::Error::other)?;
-        self.cleanup_audited = true;
+        self.audit_state.cleanup = true;
         Ok(())
     }
 }
@@ -588,7 +603,7 @@ impl std::fmt::Debug for LocalProcess {
             .field("running", &!self.stopped)
             .field("reservation", &self.reservation)
             .field("stage", &self.stage)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -682,11 +697,13 @@ pub(crate) fn testing(
     let sandbox = inspection.id();
     spawn(
         command,
-        inspection,
-        reservation,
-        None,
-        SandboxResourceLimits::default(),
-        SandboxAudit::new(Ancestry::new(), ToolId::new("test-process")),
-        sandbox,
+        SpawnPlan {
+            inspection,
+            reservation,
+            stage: None,
+            limits: SandboxResourceLimits::default(),
+            audit: SandboxAudit::new(Ancestry::new(), ToolId::new("test-process")),
+            sandbox,
+        },
     )
 }

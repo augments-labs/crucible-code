@@ -36,7 +36,7 @@ impl SandboxService for LocalSandbox {
     fn probe(&self) -> Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError> {
         #[cfg(target_os = "linux")]
         {
-            return super::linux::probe(&[]);
+            super::linux::probe(&[])
         }
         #[cfg(not(target_os = "linux"))]
         {
@@ -119,12 +119,8 @@ fn compatibility(
     active: Arc<AtomicUsize>,
     degradation: &'static str,
 ) -> Result<Box<dyn SandboxSession>, SandboxError> {
-    if !request.manifest().is_empty() {
-        return Err(SandboxError::Unsupported {
-            feature: SandboxFeature::Materialization,
-        });
-    }
     let (backend, capabilities) = compatibility_capabilities()?;
+    request.negotiate(&capabilities)?;
     let maximum = request
         .policy()
         .limits()
@@ -144,7 +140,7 @@ fn compatibility(
     )?;
     request.audit().record(
         request.id(),
-        SandboxFactKind::Negotiated(inspection.clone()),
+        SandboxFactKind::Negotiated(Box::new(inspection.clone())),
     )?;
     request.audit().record(
         request.id(),
@@ -159,7 +155,7 @@ fn compatibility(
     }))
 }
 
-fn compatibility_capabilities()
+pub(super) fn compatibility_capabilities()
 -> Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError> {
     let id = SandboxBackendId::new("local-compatibility").map_err(|_| {
         SandboxError::BackendUnavailable {
@@ -250,12 +246,14 @@ impl SandboxSession for CompatibilitySession {
         let reservation = self.reservation.take().ok_or(SandboxError::Concurrency)?;
         let spawned = super::process::spawn(
             process,
-            self.inspection.clone(),
-            reservation,
-            None,
-            self.request.policy().limits(),
-            self.request.audit().clone(),
-            self.request.id(),
+            super::process::SpawnPlan {
+                inspection: self.inspection.clone(),
+                reservation,
+                stage: None,
+                limits: self.request.policy().limits(),
+                audit: self.request.audit().clone(),
+                sandbox: self.request.id(),
+            },
         );
         match spawned {
             Ok(process) => {
@@ -311,6 +309,14 @@ mod tests {
     use super::*;
     use crate::sample::Sample;
 
+    fn fact(facts: &[crucible_core::SandboxAuditRecord], index: usize) -> &SandboxFactKind {
+        facts
+            .get(index)
+            .expect("expected ordered sandbox fact")
+            .fact()
+            .kind()
+    }
+
     #[test]
     fn a_denied_command_is_refused_before_compatibility_spawn() {
         let sample = Sample::new("sandbox-command-guardrail");
@@ -335,7 +341,8 @@ mod tests {
             policy,
             SandboxManifest::empty(),
         )
-        .with_audit(audit.clone());
+        .with_audit(audit.clone())
+        .expect("matching audit attribution");
         let service = LocalSandbox::new();
         let mut session = service.prepare(request).expect("session");
         session.materialize().expect("materialized");
@@ -354,21 +361,21 @@ mod tests {
         let facts = audit.records().expect("facts");
         assert_eq!(facts.len(), 7, "{facts:#?}");
         assert!(matches!(
-            facts[4].fact().kind(),
+            fact(&facts, 4),
             SandboxFactKind::Guardrail {
                 stage: SandboxCommandStage::Requested,
                 decision: SandboxGuardrailDecision::Denied,
             }
         ));
         assert!(matches!(
-            facts[5].fact().kind(),
+            fact(&facts, 5),
             SandboxFactKind::Failed {
                 phase: SandboxFailurePhase::Start,
                 kind: crucible_core::SandboxFailureKind::Guardrail,
             }
         ));
         assert!(matches!(
-            facts[6].fact().kind(),
+            fact(&facts, 6),
             SandboxFactKind::Cleanup(SandboxCleanup::Complete)
         ));
     }
@@ -389,7 +396,8 @@ mod tests {
             policy,
             SandboxManifest::empty(),
         )
-        .with_audit(audit.clone());
+        .with_audit(audit.clone())
+        .expect("matching audit attribution");
         let service = LocalSandbox::new();
         let mut session = service.prepare(request).expect("session");
         session.materialize().expect("materialized");
@@ -408,46 +416,43 @@ mod tests {
         let facts = audit.records().expect("facts");
         assert_eq!(facts.len(), 10, "{facts:#?}");
         assert!(matches!(
-            facts[0].fact().kind(),
+            fact(&facts, 0),
             SandboxFactKind::Lifecycle(SandboxLifecycle::PolicyResolved)
         ));
+        assert!(matches!(fact(&facts, 1), SandboxFactKind::Negotiated(_)));
         assert!(matches!(
-            facts[1].fact().kind(),
-            SandboxFactKind::Negotiated(_)
-        ));
-        assert!(matches!(
-            facts[2].fact().kind(),
+            fact(&facts, 2),
             SandboxFactKind::Lifecycle(SandboxLifecycle::Prepared)
         ));
         assert!(matches!(
-            facts[3].fact().kind(),
+            fact(&facts, 3),
             SandboxFactKind::Lifecycle(SandboxLifecycle::Materialized)
         ));
         assert!(matches!(
-            facts[4].fact().kind(),
+            fact(&facts, 4),
             SandboxFactKind::Guardrail {
                 stage: SandboxCommandStage::Requested,
                 decision: SandboxGuardrailDecision::Allowed,
             }
         ));
         assert!(matches!(
-            facts[5].fact().kind(),
+            fact(&facts, 5),
             SandboxFactKind::Guardrail {
                 stage: SandboxCommandStage::Effective,
                 decision: SandboxGuardrailDecision::Allowed,
             }
         ));
         assert!(matches!(
-            facts[6].fact().kind(),
+            fact(&facts, 6),
             SandboxFactKind::Lifecycle(SandboxLifecycle::CommandStarted)
         ));
         assert!(matches!(
-            facts[7].fact().kind(),
+            fact(&facts, 7),
             SandboxFactKind::Lifecycle(SandboxLifecycle::CommandFinished)
         ));
-        assert!(matches!(facts[8].fact().kind(), SandboxFactKind::Usage(_)));
+        assert!(matches!(fact(&facts, 8), SandboxFactKind::Usage(_)));
         assert!(matches!(
-            facts[9].fact().kind(),
+            fact(&facts, 9),
             SandboxFactKind::Cleanup(SandboxCleanup::Complete)
         ));
         assert!(facts.iter().all(|record| record.ancestry() == ancestry));
@@ -520,7 +525,8 @@ mod tests {
             policy,
             SandboxManifest::empty(),
         )
-        .with_audit(audit.clone());
+        .with_audit(audit.clone())
+        .expect("matching audit attribution");
         let service = LocalSandbox::new();
         let mut session = service.prepare(request).expect("session");
         session.materialize().expect("materialized");
@@ -609,10 +615,8 @@ mod tests {
         loop {
             let mut buffer = [0_u8; 128];
             match output.read_ready(&mut buffer).expect("read") {
-                crucible_core::SandboxRead::Bytes(read) => {
-                    retained.extend_from_slice(buffer.get(..read).expect("reported bytes"));
-                }
-                crucible_core::SandboxRead::Limited { retained: read, .. } => {
+                crucible_core::SandboxRead::Bytes(read)
+                | crucible_core::SandboxRead::Limited { retained: read, .. } => {
                     retained.extend_from_slice(buffer.get(..read).expect("reported bytes"));
                 }
                 crucible_core::SandboxRead::Pending => {
@@ -680,10 +684,8 @@ mod tests {
                 };
                 let mut buffer = [0_u8; 64];
                 match output.read_ready(&mut buffer).expect("read") {
-                    crucible_core::SandboxRead::Bytes(read) => {
-                        retained = retained.saturating_add(read);
-                    }
-                    crucible_core::SandboxRead::Limited { retained: read, .. } => {
+                    crucible_core::SandboxRead::Bytes(read)
+                    | crucible_core::SandboxRead::Limited { retained: read, .. } => {
                         retained = retained.saturating_add(read);
                     }
                     crucible_core::SandboxRead::Pending => {}

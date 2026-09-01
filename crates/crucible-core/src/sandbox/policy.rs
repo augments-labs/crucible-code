@@ -1,5 +1,6 @@
 //! Immutable authority and resource policy for one sandbox lifecycle.
 
+use std::net::IpAddr;
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
@@ -21,10 +22,11 @@ pub const MAX_SANDBOX_NETWORK_ENDPOINTS: usize = 64;
 pub const MAX_SANDBOX_HOST_BYTES: usize = 253;
 
 /// Whether the host must provide kernel confinement.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum SandboxMode {
     /// Refuse before materialization or spawn unless every requested hard
     /// feature has an enforcing backend.
+    #[default]
     Required,
     /// Prefer confinement, but permit an explicitly user-selected and clearly
     /// reported compatibility backend when enforcement is unavailable.
@@ -56,12 +58,6 @@ impl SandboxMode {
             Self::Degraded => "degraded",
             Self::Off => "off",
         }
-    }
-}
-
-impl Default for SandboxMode {
-    fn default() -> Self {
-        Self::Required
     }
 }
 
@@ -186,10 +182,11 @@ impl std::fmt::Debug for SandboxFilesystemRule {
 }
 
 /// One exact outbound endpoint.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SandboxNetworkEndpoint {
     host: Box<str>,
     port: u16,
+    literal_address: bool,
 }
 
 impl SandboxNetworkEndpoint {
@@ -200,14 +197,46 @@ impl SandboxNetworkEndpoint {
     /// Empty/oversized/control-bearing hosts and port zero are rejected.
     pub fn new(host: impl Into<Box<str>>, port: u16) -> Result<Self, SandboxPolicyError> {
         let host = host.into();
-        if host.is_empty()
-            || host.len() > MAX_SANDBOX_HOST_BYTES
-            || host.chars().any(char::is_control)
-            || port == 0
-        {
+        if host.is_empty() || host.len() > MAX_SANDBOX_HOST_BYTES || port == 0 {
             return Err(SandboxPolicyError::InvalidEndpoint);
         }
-        Ok(Self { host, port })
+        if let Ok(address) = host.parse::<IpAddr>() {
+            return Ok(Self {
+                host: address.to_string().into(),
+                port,
+                literal_address: true,
+            });
+        }
+
+        let host = host.strip_suffix('.').unwrap_or(&host);
+        let looks_like_invalid_ipv4 = host
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || byte == b'.');
+        let valid_dns_name = !host.is_empty()
+            && host.is_ascii()
+            && !looks_like_invalid_ipv4
+            && host.split('.').all(|label| {
+                (1..=63).contains(&label.len())
+                    && label
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+                    && label
+                        .as_bytes()
+                        .first()
+                        .is_some_and(u8::is_ascii_alphanumeric)
+                    && label
+                        .as_bytes()
+                        .last()
+                        .is_some_and(u8::is_ascii_alphanumeric)
+            });
+        if !valid_dns_name {
+            return Err(SandboxPolicyError::InvalidEndpoint);
+        }
+        Ok(Self {
+            host: host.to_ascii_lowercase().into(),
+            port,
+            literal_address: false,
+        })
     }
 
     /// Requested host spelling.
@@ -220,6 +249,20 @@ impl SandboxNetworkEndpoint {
     #[must_use]
     pub const fn port(&self) -> u16 {
         self.port
+    }
+
+    const fn is_literal_address(&self) -> bool {
+        self.literal_address
+    }
+}
+
+impl std::fmt::Debug for SandboxNetworkEndpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SandboxNetworkEndpoint")
+            .field("host", &"[host]")
+            .field("port", &self.port)
+            .field("literal_address", &self.literal_address)
+            .finish()
     }
 }
 
@@ -253,6 +296,13 @@ impl SandboxNetworkPolicy {
         forwarding: bool,
     ) -> Result<Self, SandboxPolicyError> {
         let mut endpoints: Vec<_> = endpoints.into_iter().collect();
+        if !dns
+            && endpoints
+                .iter()
+                .any(|endpoint| !endpoint.is_literal_address())
+        {
+            return Err(SandboxPolicyError::InvalidEndpoint);
+        }
         endpoints.sort();
         endpoints.dedup();
         if endpoints.is_empty() || endpoints.len() > MAX_SANDBOX_NETWORK_ENDPOINTS {
@@ -385,7 +435,7 @@ impl SandboxResourceLimits {
 fn no_larger<T: PartialOrd>(candidate: Option<T>, parent: Option<T>) -> bool {
     match (candidate, parent) {
         (Some(candidate), Some(parent)) => candidate <= parent,
-        (Some(_), None) | (None, None) => true,
+        (Some(_) | None, None) => true,
         (None, Some(_)) => false,
     }
 }
@@ -461,13 +511,28 @@ impl SandboxPolicy {
         filesystem.sort_by(|left, right| left.path.cmp(&right.path));
         if filesystem.windows(2).any(|pair| {
             pair.first().is_some_and(|left| {
-                pair.get(1)
-                    .is_some_and(|right| left.path == right.path && left.access != right.access)
+                pair.get(1).is_some_and(|right| {
+                    left.path == right.path
+                        && (left.access != right.access || left.provenance != right.provenance)
+                })
             })
         }) {
             return Err(SandboxPolicyError::ConflictingFilesystemRule);
         }
         filesystem.dedup();
+        if filesystem.iter().any(|rule| {
+            filesystem.iter().any(|ancestor| {
+                ancestor.path != rule.path
+                    && rule.path.starts_with(&ancestor.path)
+                    && matches!(
+                        ancestor.access,
+                        SandboxFilesystemAccess::Protected | SandboxFilesystemAccess::Unreadable
+                    )
+                    && rule.access.authority() > ancestor.access.authority()
+            })
+        }) {
+            return Err(SandboxPolicyError::FilesystemWidening);
+        }
 
         let working_directory = working_directory.into();
         validate_absolute_path(&working_directory)?;
@@ -550,6 +615,16 @@ impl SandboxPolicy {
     #[must_use]
     pub const fn with_mode(mut self, mode: SandboxMode) -> Self {
         self.mode = mode;
+        self
+    }
+
+    /// Returns a copy with host-authorized durable-session and snapshot
+    /// operations. Descendants still pass through [`Self::restrict`], which
+    /// may remove either grant but never add one their parent did not hold.
+    #[must_use]
+    pub const fn with_session_state(mut self, persistent: bool, snapshots: bool) -> Self {
+        self.persistent = persistent;
+        self.snapshots = snapshots;
         self
     }
 
@@ -675,15 +750,14 @@ impl std::fmt::Debug for SandboxPolicy {
 }
 
 fn validate_absolute_path(path: &Path) -> Result<(), SandboxPolicyError> {
+    let encoded = path.as_os_str().as_encoded_bytes();
     if !path.is_absolute()
         || path.as_os_str().is_empty()
-        || path.as_os_str().to_string_lossy().len() > MAX_SANDBOX_PATH_BYTES
-        || path.components().any(|component| {
-            matches!(
-                component,
-                Component::CurDir | Component::ParentDir | Component::Prefix(_)
-            )
-        })
+        || encoded.len() > MAX_SANDBOX_PATH_BYTES
+        || encoded.contains(&0)
+        || path
+            .components()
+            .any(|component| matches!(component, Component::CurDir | Component::ParentDir))
     {
         return Err(SandboxPolicyError::InvalidPath);
     }
@@ -795,8 +869,7 @@ mod tests {
     fn policy(mode: SandboxMode, rules: Vec<SandboxFilesystemRule>) -> SandboxPolicy {
         let working_directory = rules
             .first()
-            .map(SandboxFilesystemRule::path)
-            .unwrap_or_else(|| Path::new("/workspace"))
+            .map_or_else(|| Path::new("/workspace"), SandboxFilesystemRule::path)
             .to_path_buf();
         SandboxPolicy::new(
             mode,
@@ -837,19 +910,75 @@ mod tests {
             SandboxPolicy::restrict(&parent, wider),
             Err(SandboxPolicyError::FilesystemWidening)
         );
+        assert_eq!(
+            SandboxFilesystemRule::new(
+                "/workspace/nul\0path",
+                SandboxFilesystemAccess::ReadOnly,
+                SandboxFilesystemProvenance::Workspace,
+            ),
+            Err(SandboxPolicyError::InvalidPath)
+        );
     }
 
     #[test]
     fn exact_network_policy_is_canonical_and_closed_is_always_narrower() {
-        let first = SandboxNetworkEndpoint::new("example.com", 443).expect("endpoint");
+        let first = SandboxNetworkEndpoint::new("EXAMPLE.COM.", 443).expect("endpoint");
+        let duplicate = SandboxNetworkEndpoint::new("example.com", 443).expect("endpoint");
         let exact =
-            SandboxNetworkPolicy::exact([first.clone(), first], true, false).expect("exact policy");
+            SandboxNetworkPolicy::exact([first, duplicate], true, false).expect("exact policy");
         let SandboxNetworkPolicy::Exact { endpoints, .. } = &exact else {
             panic!("expected exact policy");
         };
         assert_eq!(endpoints.len(), 1);
+        assert_eq!(
+            endpoints.first().expect("one canonical endpoint").host(),
+            "example.com"
+        );
         assert!(SandboxNetworkPolicy::Closed.is_no_wider_than(&exact));
         assert!(!exact.is_no_wider_than(&SandboxNetworkPolicy::Closed));
+    }
+
+    #[test]
+    fn endpoint_hosts_are_dns_names_or_literal_addresses_not_url_fragments() {
+        for invalid in [
+            "https://example.com",
+            "example com",
+            "-bad.example",
+            "bad-.example",
+            "bad..example",
+            "exa_mple.com",
+            "métadata.example",
+            "127.0.0.999",
+        ] {
+            assert_eq!(
+                SandboxNetworkEndpoint::new(invalid, 443),
+                Err(SandboxPolicyError::InvalidEndpoint),
+                "{invalid}"
+            );
+        }
+        assert_eq!(
+            SandboxNetworkEndpoint::new("2001:0db8::1", 443)
+                .expect("IPv6 literal")
+                .host(),
+            "2001:db8::1"
+        );
+
+        let endpoint = SandboxNetworkEndpoint::new("private.example", 8443).expect("endpoint");
+        let shown = format!("{endpoint:?}");
+        assert!(!shown.contains("private.example"), "{shown}");
+        assert!(shown.contains("[host]"), "{shown}");
+    }
+
+    #[test]
+    fn dns_disabled_exact_policy_accepts_only_literal_addresses() {
+        let hostname = SandboxNetworkEndpoint::new("example.com", 443).expect("hostname");
+        assert_eq!(
+            SandboxNetworkPolicy::exact([hostname], false, false),
+            Err(SandboxPolicyError::InvalidEndpoint)
+        );
+
+        let address = SandboxNetworkEndpoint::new("192.0.2.1", 443).expect("address");
+        assert!(SandboxNetworkPolicy::exact([address], false, false).is_ok());
     }
 
     #[test]
@@ -866,6 +995,35 @@ mod tests {
         };
         assert!(narrow.is_no_wider_than(parent));
         assert!(!SandboxResourceLimits::default().is_no_wider_than(parent));
+    }
+
+    #[test]
+    fn session_state_authority_can_be_preserved_or_removed_but_not_added() {
+        let parent = policy(
+            SandboxMode::Required,
+            vec![rule("/workspace", SandboxFilesystemAccess::ReadWrite)],
+        )
+        .with_session_state(true, true);
+        let narrower = policy(
+            SandboxMode::Required,
+            vec![rule("/workspace", SandboxFilesystemAccess::ReadWrite)],
+        )
+        .with_session_state(false, false);
+        assert!(SandboxPolicy::restrict(&parent, narrower).is_ok());
+
+        let no_state = policy(
+            SandboxMode::Required,
+            vec![rule("/workspace", SandboxFilesystemAccess::ReadWrite)],
+        );
+        let added = policy(
+            SandboxMode::Required,
+            vec![rule("/workspace", SandboxFilesystemAccess::ReadWrite)],
+        )
+        .with_session_state(true, false);
+        assert_eq!(
+            SandboxPolicy::restrict(&no_state, added),
+            Err(SandboxPolicyError::SessionWidening)
+        );
     }
 
     #[test]
@@ -891,6 +1049,53 @@ mod tests {
         );
         assert!(
             !unreadable.permits_path(Path::new("/workspace"), SandboxFilesystemAccess::ReadOnly)
+        );
+    }
+
+    #[test]
+    fn one_policy_cannot_reopen_a_protected_or_unreadable_subtree() {
+        for protected in [
+            SandboxFilesystemAccess::Protected,
+            SandboxFilesystemAccess::Unreadable,
+        ] {
+            assert_eq!(
+                SandboxPolicy::new(
+                    SandboxMode::Required,
+                    [
+                        rule("/workspace", SandboxFilesystemAccess::ReadWrite),
+                        rule("/workspace/private", protected),
+                        rule(
+                            "/workspace/private/reopened",
+                            SandboxFilesystemAccess::ReadWrite,
+                        ),
+                    ],
+                    "/workspace",
+                    SandboxNetworkPolicy::Closed,
+                    SandboxResourceLimits::default(),
+                ),
+                Err(SandboxPolicyError::FilesystemWidening)
+            );
+        }
+    }
+
+    #[test]
+    fn one_filesystem_path_cannot_claim_two_authority_sources() {
+        let workspace = rule("/workspace", SandboxFilesystemAccess::ReadWrite);
+        let descendant = SandboxFilesystemRule::new(
+            "/workspace",
+            SandboxFilesystemAccess::ReadWrite,
+            SandboxFilesystemProvenance::Descendant,
+        )
+        .expect("descendant rule");
+        assert_eq!(
+            SandboxPolicy::new(
+                SandboxMode::Required,
+                [workspace, descendant],
+                "/workspace",
+                SandboxNetworkPolicy::Closed,
+                SandboxResourceLimits::default(),
+            ),
+            Err(SandboxPolicyError::ConflictingFilesystemRule)
         );
     }
 }

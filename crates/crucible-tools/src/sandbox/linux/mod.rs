@@ -28,6 +28,11 @@ pub(super) fn probe(
     Ok((backend.identity().clone(), backend.capabilities().clone()))
 }
 
+#[cfg(test)]
+pub(super) fn declared_capabilities() -> SandboxCapabilities {
+    probe::capabilities()
+}
+
 pub(super) fn prepare(
     request: SandboxRequest,
     active: Arc<AtomicUsize>,
@@ -62,7 +67,7 @@ pub(super) fn prepare(
     )?;
     request.audit().record(
         request.id(),
-        SandboxFactKind::Negotiated(inspection.clone()),
+        SandboxFactKind::Negotiated(Box::new(inspection.clone())),
     )?;
     request.audit().record(
         request.id(),
@@ -172,13 +177,10 @@ impl SandboxSession for LinuxSession {
                 return Err(problem);
             }
         };
-        let reservation = match self.reservation.take() {
-            Some(reservation) => reservation,
-            None => {
-                let problem = SandboxError::Concurrency;
-                self.record_start_failure(&problem)?;
-                return Err(problem);
-            }
+        let Some(reservation) = self.reservation.take() else {
+            let problem = SandboxError::Concurrency;
+            self.record_start_failure(&problem)?;
+            return Err(problem);
         };
         let mut mount_sources = self.view.sources();
         let (stage, materialization_sources) = self
@@ -191,12 +193,14 @@ impl SandboxSession for LinuxSession {
         mount_sources.extend(materialization_sources);
         let spawned = super::process::spawn(
             process,
-            self.inspection.clone(),
-            reservation,
-            stage,
-            self.request.policy().limits(),
-            self.request.audit().clone(),
-            self.request.id(),
+            super::process::SpawnPlan {
+                inspection: self.inspection.clone(),
+                reservation,
+                stage,
+                limits: self.request.policy().limits(),
+                audit: self.request.audit().clone(),
+                sandbox: self.request.id(),
+            },
         );
         drop(mount_sources);
         match spawned {

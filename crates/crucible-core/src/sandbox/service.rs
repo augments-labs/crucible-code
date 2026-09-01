@@ -206,12 +206,9 @@ fn command_image(
 ) -> Result<(PathBuf, Box<[OsString]>), SandboxError> {
     if !program.is_absolute()
         || program.as_os_str().as_encoded_bytes().contains(&0)
-        || program.components().any(|part| {
-            matches!(
-                part,
-                Component::CurDir | Component::ParentDir | Component::Prefix(_)
-            )
-        })
+        || program
+            .components()
+            .any(|part| matches!(part, Component::CurDir | Component::ParentDir))
     {
         return Err(SandboxError::InvalidCommand);
     }
@@ -283,10 +280,17 @@ impl SandboxRequest {
     }
 
     /// Uses the host-created fixed-attribution audit collector for this call.
-    #[must_use]
-    pub fn with_audit(mut self, audit: SandboxAudit) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// A collector minted for another ancestry or tool call is refused before
+    /// a backend can emit a misattributed lifecycle fact.
+    pub fn with_audit(mut self, audit: SandboxAudit) -> Result<Self, SandboxError> {
+        if !audit.belongs_to(self.ancestry, &self.call) {
+            return Err(super::audit::SandboxAuditError::AttributionMismatch.into());
+        }
         self.audit = audit;
-        self
+        Ok(self)
     }
 
     /// Stable lifecycle identity.
@@ -329,14 +333,12 @@ impl SandboxRequest {
     ///
     /// # Errors
     ///
-    /// Every hard feature selected by a required policy must be reported as
-    /// enforced. Observation is not accepted as a ceiling.
+    /// Every explicit hard feature must be reported as enforced in every mode.
+    /// `degraded` and `off` relax only the documented baseline kernel boundary;
+    /// they do not turn requested limits or session semantics into telemetry.
     pub fn negotiate(&self, capabilities: &SandboxCapabilities) -> Result<(), SandboxError> {
-        if self.policy.mode() != SandboxMode::Required {
-            return Ok(());
-        }
-        for feature in required_features(&self.policy, &self.manifest) {
-            if capabilities.claim(feature) != SandboxCapability::Enforced {
+        for (feature, minimum) in capability_requirements(&self.policy, &self.manifest) {
+            if capabilities.claim(feature) < minimum {
                 return Err(SandboxError::Unsupported { feature });
             }
         }
@@ -344,20 +346,34 @@ impl SandboxRequest {
     }
 }
 
-fn required_features(policy: &SandboxPolicy, manifest: &SandboxManifest) -> Vec<SandboxFeature> {
-    let mut features = vec![
-        SandboxFeature::Filesystem,
-        SandboxFeature::DescriptorIsolation,
-        SandboxFeature::ProcessIsolation,
-        SandboxFeature::KernelSurface,
-        SandboxFeature::PrivilegeIsolation,
-    ];
-    features.push(match policy.network() {
-        SandboxNetworkPolicy::Closed => SandboxFeature::NetworkDeny,
-        SandboxNetworkPolicy::Exact { .. } => SandboxFeature::NetworkAllowlist,
-    });
+fn capability_requirements(
+    policy: &SandboxPolicy,
+    manifest: &SandboxManifest,
+) -> Vec<(SandboxFeature, SandboxCapability)> {
+    let enforced = SandboxCapability::Enforced;
+    let mut features = Vec::with_capacity(SandboxFeature::COUNT);
+    if policy.mode() == SandboxMode::Required {
+        features.extend([
+            (SandboxFeature::Filesystem, enforced),
+            (SandboxFeature::DescriptorIsolation, enforced),
+            (SandboxFeature::ProcessIsolation, enforced),
+            (SandboxFeature::KernelSurface, enforced),
+            (SandboxFeature::PrivilegeIsolation, enforced),
+            (
+                match policy.network() {
+                    SandboxNetworkPolicy::Closed => SandboxFeature::NetworkDeny,
+                    SandboxNetworkPolicy::Exact { .. } => SandboxFeature::NetworkAllowlist,
+                },
+                enforced,
+            ),
+        ]);
+    } else if matches!(policy.network(), SandboxNetworkPolicy::Exact { .. }) {
+        // Compatibility may deliberately expose the ordinary host network, but
+        // it can never pretend that broad reach is an exact endpoint grant.
+        features.push((SandboxFeature::NetworkAllowlist, enforced));
+    }
     if !manifest.is_empty() {
-        features.push(SandboxFeature::Materialization);
+        features.push((SandboxFeature::Materialization, enforced));
     }
     let limits = policy.limits();
     for (present, feature) in [
@@ -386,15 +402,17 @@ fn required_features(policy: &SandboxPolicy, manifest: &SandboxManifest) -> Vec<
         (limits.cost_micros.is_some(), SandboxFeature::CostLimit),
     ] {
         if present {
-            features.push(feature);
+            features.push((feature, enforced));
         }
     }
     if policy.persistent() {
-        features.push(SandboxFeature::Persistence);
+        features.push((SandboxFeature::Persistence, enforced));
     }
     if policy.snapshots() {
-        features.push(SandboxFeature::Snapshot);
+        features.push((SandboxFeature::Snapshot, enforced));
     }
+    features.push((SandboxFeature::Audit, enforced));
+    features.push((SandboxFeature::Usage, SandboxCapability::Observed));
     features
 }
 
@@ -973,6 +991,10 @@ pub enum SandboxRead {
 /// A backend-owned non-blocking output stream.
 pub trait SandboxOutput: Send {
     /// Reads currently available bytes without waiting indefinitely.
+    ///
+    /// # Errors
+    ///
+    /// The backend stream could not be read or inspected.
     fn read_ready(&mut self, buffer: &mut [u8]) -> io::Result<SandboxRead>;
 }
 
@@ -985,9 +1007,17 @@ pub trait SandboxProcess: Send {
     fn take_stderr(&mut self) -> Option<Box<dyn SandboxOutput>>;
 
     /// Non-blocking process status.
+    ///
+    /// # Errors
+    ///
+    /// The backend process could not be inspected or reaped.
     fn try_wait(&mut self) -> io::Result<Option<ExitStatus>>;
 
     /// Stops and reaps the complete process tree. Idempotent.
+    ///
+    /// # Errors
+    ///
+    /// The backend could not confirm that the complete owned scope was reaped.
     fn stop(&mut self) -> io::Result<()>;
 
     /// Redacted inspection snapshot.
@@ -1154,7 +1184,7 @@ mod tests {
             .expect("rule")],
             "/workspace",
             SandboxNetworkPolicy::Closed,
-            Default::default(),
+            SandboxResourceLimits::default(),
         )
         .expect("policy")
     }
@@ -1302,6 +1332,89 @@ mod tests {
         assert!(matches!(
             SandboxEnvironment::new([("TOKEN", OsStr::new("bad\0value"))]),
             Err(SandboxError::InvalidEnvironment)
+        ));
+    }
+
+    #[test]
+    fn compatibility_modes_still_refuse_explicit_features_the_backend_cannot_enforce() {
+        for mode in [SandboxMode::Degraded, SandboxMode::Off] {
+            let policy = policy()
+                .with_mode(mode)
+                .with_limits(SandboxResourceLimits {
+                    memory_bytes: Some(1_024),
+                    ..SandboxResourceLimits::default()
+                })
+                .expect("bounded policy");
+            let request = SandboxRequest::new(
+                SandboxId::new(),
+                Ancestry::new(),
+                ToolId::new("call"),
+                policy,
+                SandboxManifest::empty(),
+            );
+            let capabilities = SandboxCapabilities::none()
+                .with(SandboxFeature::Audit, SandboxCapability::Enforced)
+                .with(SandboxFeature::Usage, SandboxCapability::Observed);
+
+            assert!(matches!(
+                request.negotiate(&capabilities),
+                Err(SandboxError::Unsupported {
+                    feature: SandboxFeature::MemoryLimit
+                })
+            ));
+        }
+    }
+
+    #[test]
+    fn every_mode_requires_auditing_and_at_least_observed_usage() {
+        let request = SandboxRequest::new(
+            SandboxId::new(),
+            Ancestry::new(),
+            ToolId::new("call"),
+            policy().with_mode(SandboxMode::Off),
+            SandboxManifest::empty(),
+        );
+        let no_audit =
+            SandboxCapabilities::none().with(SandboxFeature::Usage, SandboxCapability::Observed);
+        assert!(matches!(
+            request.negotiate(&no_audit),
+            Err(SandboxError::Unsupported {
+                feature: SandboxFeature::Audit
+            })
+        ));
+
+        let observed_audit = SandboxCapabilities::none()
+            .with(SandboxFeature::Audit, SandboxCapability::Observed)
+            .with(SandboxFeature::Usage, SandboxCapability::Observed);
+        assert!(matches!(
+            request.negotiate(&observed_audit),
+            Err(SandboxError::Unsupported {
+                feature: SandboxFeature::Audit
+            })
+        ));
+
+        let exact = SandboxCapabilities::none()
+            .with(SandboxFeature::Audit, SandboxCapability::Enforced)
+            .with(SandboxFeature::Usage, SandboxCapability::Observed);
+        assert!(request.negotiate(&exact).is_ok());
+    }
+
+    #[test]
+    fn request_refuses_an_audit_collector_from_another_call() {
+        let request = SandboxRequest::new(
+            SandboxId::new(),
+            Ancestry::new(),
+            ToolId::new("expected-call"),
+            policy(),
+            SandboxManifest::empty(),
+        );
+        let mismatched = SandboxAudit::new(Ancestry::new(), ToolId::new("other-call"));
+
+        assert!(matches!(
+            request.with_audit(mismatched),
+            Err(SandboxError::Audit(
+                crate::SandboxAuditError::AttributionMismatch
+            ))
         ));
     }
 }

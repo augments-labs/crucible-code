@@ -437,24 +437,14 @@ impl<'a> ToolContext<'a> {
     ///
     /// The collector was created for another ancestry or call.
     pub fn with_sandbox_audit(
-        ancestry: Ancestry,
-        call: ToolId,
-        parent: &Cancel,
-        deadline: Option<Instant>,
-        watch: &'a dyn Watch,
+        mut self,
         sandbox: crate::SandboxAudit,
     ) -> Result<Self, crate::SandboxAuditError> {
-        if !sandbox.belongs_to(ancestry, &call) {
+        if !sandbox.belongs_to(self.ancestry, &self.call) {
             return Err(crate::SandboxAuditError::AttributionMismatch);
         }
-        Ok(Self {
-            ancestry,
-            call,
-            cancel: parent.child_until(deadline),
-            deadline,
-            watch,
-            sandbox,
-        })
+        self.sandbox = sandbox;
+        Ok(self)
     }
 
     /// The run this call belongs to.

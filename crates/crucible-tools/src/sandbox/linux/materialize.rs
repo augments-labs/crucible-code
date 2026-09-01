@@ -131,7 +131,7 @@ impl std::fmt::Debug for Materialization {
         f.debug_struct("Materialization")
             .field("stage", &self.stage)
             .field("mounts", &self.mounts.len())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -349,7 +349,7 @@ mod tests {
     use crucible_core::{
         Ancestry, SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxId, SandboxManifest,
         SandboxManifestEntry, SandboxMode, SandboxNetworkPolicy, SandboxPolicy, SandboxRequest,
-        ToolId,
+        SandboxResourceLimits, ToolId,
     };
 
     use crate::sample::{Sample, symlink};
@@ -423,7 +423,7 @@ mod tests {
             [temporary],
             "/tmp",
             SandboxNetworkPolicy::Closed,
-            Default::default(),
+            SandboxResourceLimits::default(),
         )
         .expect("policy");
         let request = SandboxRequest::new(

@@ -473,7 +473,7 @@ fn asks(sample: &Sample, mode: Mode, line: &str) -> bool {
         }
     }
 
-    let tool = compatible(&sample);
+    let tool = compatible(sample);
     let call = ToolCall {
         id: ToolId::new("one"),
         name: tool.name().into(),
@@ -850,7 +850,10 @@ fn an_explicit_background_command_has_no_foreground_deadline() {
 
     let limits = observed.lock().expect("recorded limits");
     assert_eq!(limits.len(), 1);
-    assert_eq!(limits[0].command_time, None);
+    assert_eq!(
+        limits.first().expect("one recorded limit").command_time,
+        None
+    );
     drop(limits);
     left.stop(1);
 }

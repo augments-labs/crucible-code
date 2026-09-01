@@ -39,6 +39,7 @@ fn call(id: &str) -> ToolCall {
     }
 }
 
+#[allow(clippy::expect_used)]
 fn sandbox_checkpoint() -> SandboxCheckpoint {
     let policy = SandboxPolicy::new(
         SandboxMode::Required,
@@ -47,12 +48,12 @@ fn sandbox_checkpoint() -> SandboxCheckpoint {
             SandboxFilesystemAccess::ReadWrite,
             SandboxFilesystemProvenance::Workspace,
         )
-        .unwrap()],
+        .expect("checkpoint workspace rule")],
         "/workspace",
         SandboxNetworkPolicy::Closed,
         SandboxResourceLimits::default(),
     )
-    .unwrap();
+    .expect("checkpoint sandbox policy");
     let capabilities = [
         SandboxFeature::Filesystem,
         SandboxFeature::NetworkDeny,
@@ -70,12 +71,12 @@ fn sandbox_checkpoint() -> SandboxCheckpoint {
         &SandboxInspection::new(
             SandboxId::new(),
             SandboxBackendIdentity::new(
-                SandboxBackendId::new("checkpoint-backend").unwrap(),
+                SandboxBackendId::new("checkpoint-backend").expect("checkpoint backend id"),
                 "1.0",
                 SandboxBackendProvenance::System,
                 Some([0x44; 32]),
             )
-            .unwrap(),
+            .expect("checkpoint backend identity"),
             capabilities,
             &policy,
             &SandboxManifest::empty(),
@@ -83,7 +84,7 @@ fn sandbox_checkpoint() -> SandboxCheckpoint {
             None::<Box<str>>,
             SandboxCleanup::Pending,
         )
-        .unwrap(),
+        .expect("checkpoint sandbox inspection"),
     )
 }
 
@@ -173,7 +174,7 @@ fn sandbox_identity_round_trips_and_resume_refuses_a_weaker_live_backend() {
     store.save(&checkpoint).unwrap();
 
     let loaded = store.load(id).unwrap().unwrap();
-    assert_eq!(loaded.sandboxes(), [saved.clone()]);
+    assert_eq!(loaded.sandboxes(), std::slice::from_ref(&saved));
     let matching = ResumeEvidence::new(scope(), "policy", "capability", None::<Box<str>>)
         .with_sandbox(saved.clone())
         .unwrap();

@@ -328,9 +328,11 @@ fn digest(entries: &[SandboxManifestEntry]) -> [u8; 32] {
 }
 
 fn validate_destination(path: &Path) -> Result<(), SandboxManifestError> {
+    let encoded = path.as_os_str().as_encoded_bytes();
     if path.as_os_str().is_empty()
         || path.is_absolute()
-        || path.as_os_str().to_string_lossy().len() > MAX_SANDBOX_PATH_BYTES
+        || encoded.len() > MAX_SANDBOX_PATH_BYTES
+        || encoded.contains(&0)
         || path
             .components()
             .any(|part| !matches!(part, Component::Normal(_)))
@@ -341,15 +343,14 @@ fn validate_destination(path: &Path) -> Result<(), SandboxManifestError> {
 }
 
 fn validate_source(path: &Path) -> Result<(), SandboxManifestError> {
+    let encoded = path.as_os_str().as_encoded_bytes();
     if !path.is_absolute()
         || path.parent().is_none()
-        || path.as_os_str().to_string_lossy().len() > MAX_SANDBOX_PATH_BYTES
-        || path.components().any(|part| {
-            matches!(
-                part,
-                Component::CurDir | Component::ParentDir | Component::Prefix(_)
-            )
-        })
+        || encoded.len() > MAX_SANDBOX_PATH_BYTES
+        || encoded.contains(&0)
+        || path
+            .components()
+            .any(|part| matches!(part, Component::CurDir | Component::ParentDir))
     {
         return Err(SandboxManifestError::InvalidSource);
     }
@@ -396,6 +397,16 @@ mod tests {
         assert!(SandboxManifestEntry::directory("/absolute", provenance).is_err());
         assert!(SandboxManifestEntry::directory("../escape", provenance).is_err());
         assert!(SandboxManifestEntry::directory("a/../escape", provenance).is_err());
+        assert!(SandboxManifestEntry::directory("nul\0escape", provenance).is_err());
+        assert!(
+            SandboxManifestEntry::mount(
+                "/workspace/nul\0source",
+                "source",
+                SandboxFilesystemAccess::ReadOnly,
+                provenance,
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -442,6 +453,16 @@ mod tests {
         let child = SandboxManifestEntry::directory("tree/child", provenance).expect("child");
         assert_eq!(
             SandboxManifest::new([file, child]),
+            Err(SandboxManifestError::OverlappingDestination)
+        );
+
+        let file = SandboxManifestEntry::file("tree", Box::<[u8]>::from(&b"file"[..]), provenance)
+            .expect("file");
+        let lexical_sibling =
+            SandboxManifestEntry::directory("tree-sibling", provenance).expect("lexical sibling");
+        let child = SandboxManifestEntry::directory("tree/child", provenance).expect("child");
+        assert_eq!(
+            SandboxManifest::new([file, lexical_sibling, child]),
             Err(SandboxManifestError::OverlappingDestination)
         );
 

@@ -237,14 +237,16 @@ encoded size and the encoded bytes omitted.
 ## When it stops
 
 `timeout` seconds, or <kbd>Esc</kbd>, or the command finishing. The shell and
-its descendants are one scope — a process group on Unix, a kill-on-close job on
-Windows — and that scope is ended on every one of those paths, then given a
-fifth of a second to let go of its pipes.
+its descendants are one backend-owned scope, and that scope is ended and reaped
+on every one of those paths. On Linux, the default `required` mode also places
+that scope behind the verified Bubblewrap boundary described in
+[Operating-system confinement](../security/sandboxing.md). Permission still
+decides whether the command may start; the sandbox separately limits what the
+approved command can reach.
 
-That is resource cleanup rather than a sandbox. A background process does not
-get to keep an output reader or a turn alive, and a Unix program that
-deliberately creates a new session can still leave the group. Nothing here
-confines what an allowed command can reach.
+A background process does not keep an output reader or a turn alive. It remains
+inside the same sandbox/process-tree scope until it exits or is stopped, and its
+late usage and cleanup facts keep the call attribution that started it.
 
 ## Why it is always asked about
 

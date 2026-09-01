@@ -281,7 +281,9 @@ weaken the confinement chosen above it.
 
 The compatibility modes retain command guardrails, deadlines, output bounds,
 usage and audit records, but their inspection report says `confined: false`.
-Permission approval and a worktree are not a sandbox in any mode.
+Permission approval and a worktree are not a sandbox in any mode. See
+[Operating-system confinement](../security/sandboxing.md) for the exact backend
+capability matrix, lifecycle, inspection and failure behavior.
 
 ### `permissions`
 

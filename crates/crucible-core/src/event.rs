@@ -191,6 +191,17 @@ impl<'a> Reporter<'a> {
         self.ancestry
     }
 
+    /// Returns the same destination with attribution fixed to another typed
+    /// execution. Used when a detached lifecycle reports after the runner has
+    /// moved to a later boundary while retaining the original ancestry.
+    #[must_use]
+    pub const fn attributed_to(self, ancestry: Ancestry) -> Self {
+        Self {
+            ancestry,
+            to: self.to,
+        }
+    }
+
     /// Reports one event as this execution's.
     pub fn post(&self, event: Event) {
         self.to.post(EventEnvelope::new(self.ancestry, event));

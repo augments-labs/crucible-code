@@ -1310,9 +1310,10 @@ mod tests {
         .unwrap();
         let audit = SandboxAudit::new(ancestry, call.clone());
         audit
-            .record(sandbox, SandboxFactKind::Negotiated(inspection))
+            .record(sandbox, SandboxFactKind::Negotiated(Box::new(inspection)))
             .unwrap();
-        let fact = audit.records().unwrap()[0].fact().clone();
+        let records = audit.records().expect("negotiated fact");
+        let fact = records.first().expect("one negotiated fact").fact().clone();
         let item = RunItem::sandbox(ancestry, call, fact).unwrap();
 
         let written = journal(&item).expect("bounded sandbox journal line");

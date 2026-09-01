@@ -28,6 +28,7 @@ impl Scope {
     }
 
     /// Captures the process-group identity after spawn.
+    #[allow(clippy::unused_self)]
     pub(crate) fn terminator(&self, child: &Child) -> io::Result<Terminator> {
         let raw = i32::try_from(child.id())
             .map_err(|_| io::Error::other("command process id does not fit this platform"))?;
@@ -38,6 +39,7 @@ impl Scope {
 
     /// Observes leader exit without first releasing its numeric group identity,
     /// then stops descendants before the standard child handle reaps it.
+    #[allow(clippy::unused_self)]
     pub(crate) fn try_wait(
         &self,
         child: &mut Child,
@@ -56,7 +58,7 @@ impl Scope {
                 return Ok(None);
             }
             terminator.stop()?;
-            return child.try_wait();
+            child.try_wait()
         }
 
         #[cfg(not(target_os = "linux"))]
@@ -81,7 +83,7 @@ impl Scope {
                 .ok_or(problem)
         });
 
-        group_result.map_err(io::Error::from).and(child_result)
+        group_result.and(child_result)
     }
 }
 

@@ -662,24 +662,30 @@ fn parse_mount_points(bytes: &[u8]) -> Result<Vec<PathBuf>, SandboxError> {
             .ok_or_else(|| materialization("host mount table is malformed", None))?;
         let mut decoded = Vec::with_capacity(encoded.len());
         let mut index = 0_usize;
-        while index < encoded.len() {
-            if encoded[index] != b'\\' {
-                decoded.push(encoded[index]);
+        while let Some(&byte) = encoded.get(index) {
+            if byte != b'\\' {
+                decoded.push(byte);
                 index = index.saturating_add(1);
                 continue;
             }
             let digits = encoded
                 .get(index.saturating_add(1)..index.saturating_add(4))
                 .ok_or_else(|| materialization("host mount table escape is malformed", None))?;
-            if digits.len() != 3 || digits.iter().any(|digit| !(b'0'..=b'7').contains(digit)) {
+            let [first, second, third] = digits else {
+                return Err(materialization(
+                    "host mount table escape is malformed",
+                    None,
+                ));
+            };
+            if digits.iter().any(|digit| !(b'0'..=b'7').contains(digit)) {
                 return Err(materialization(
                     "host mount table escape is malformed",
                     None,
                 ));
             }
-            let value = u16::from(digits[0] - b'0') * 64
-                + u16::from(digits[1] - b'0') * 8
-                + u16::from(digits[2] - b'0');
+            let value = u16::from(*first - b'0') * 64
+                + u16::from(*second - b'0') * 8
+                + u16::from(*third - b'0');
             let value = u8::try_from(value)
                 .map_err(|_| materialization("host mount table escape is malformed", None))?;
             if value == 0 {

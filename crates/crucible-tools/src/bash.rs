@@ -473,7 +473,8 @@ impl Tool for Bash {
             policy,
             SandboxManifest::empty(),
         )
-        .with_audit(context.sandbox_audit());
+        .with_audit(context.sandbox_audit())
+        .map_err(|error| sandbox_io("could not bind sandbox audit attribution", error))?;
         let mut session = self
             .sandbox
             .prepare(request)

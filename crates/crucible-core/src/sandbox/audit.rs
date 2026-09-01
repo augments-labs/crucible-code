@@ -12,6 +12,10 @@ use super::{
 /// Most sandbox facts one admitted tool call may retain.
 pub const MAX_SANDBOX_AUDIT_FACTS: usize = 128;
 
+/// Most live or detached sandbox lifecycles one runner may retain for late
+/// journal delivery.
+pub const MAX_SANDBOX_AUDIT_LIFECYCLES: usize = 128;
+
 /// A lifecycle transition that contains no backend-controlled prose.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SandboxLifecycle {
@@ -69,7 +73,7 @@ pub enum SandboxFactKind {
     /// A deterministic lifecycle transition.
     Lifecycle(SandboxLifecycle),
     /// The immutable negotiated inspection snapshot.
-    Negotiated(SandboxInspection),
+    Negotiated(Box<SandboxInspection>),
     /// One requested/effective command-filter decision.
     Guardrail {
         /// Image evaluated.
@@ -197,6 +201,10 @@ impl SandboxAudit {
     }
 
     /// Stable snapshot in causal insertion order.
+    ///
+    /// # Errors
+    ///
+    /// The collector became unavailable.
     pub fn records(&self) -> Result<Box<[SandboxAuditRecord]>, SandboxAuditError> {
         self.facts
             .lock()
@@ -232,6 +240,98 @@ impl std::fmt::Debug for SandboxAudit {
     }
 }
 
+/// Bounded owner of audit collectors whose sandbox processes may outlive the
+/// tool call that created them.
+///
+/// Foreground facts can be drained immediately. A detached command keeps a
+/// collector clone, so the registry retains its fixed attribution and drains
+/// facts produced later. Once the lifecycle releases its last clone, the next
+/// drain removes the empty registry entry.
+#[derive(Clone, Default)]
+pub struct SandboxAuditRegistry {
+    audits: Arc<Mutex<Vec<SandboxAudit>>>,
+}
+
+impl SandboxAuditRegistry {
+    /// An empty registry.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Creates and registers one fixed-attribution collector.
+    ///
+    /// # Errors
+    ///
+    /// The registry is unavailable or its live-lifecycle ceiling is reached.
+    pub fn collector(
+        &self,
+        ancestry: Ancestry,
+        call: ToolId,
+    ) -> Result<SandboxAudit, SandboxAuditError> {
+        let mut audits = self
+            .audits
+            .lock()
+            .map_err(|_| SandboxAuditError::Unavailable)?;
+        let mut index = 0_usize;
+        while let Some(audit) = audits.get(index) {
+            let released = !audit.has_lifecycle_holder();
+            let empty = audit
+                .facts
+                .lock()
+                .map_err(|_| SandboxAuditError::Unavailable)?
+                .is_empty();
+            if released && empty {
+                audits.remove(index);
+            } else {
+                index = index.saturating_add(1);
+            }
+        }
+        if audits.len() >= MAX_SANDBOX_AUDIT_LIFECYCLES {
+            return Err(SandboxAuditError::RegistryFull);
+        }
+        let audit = SandboxAudit::new(ancestry, call);
+        audits.push(audit.clone());
+        Ok(audit)
+    }
+
+    /// Takes every fact currently available, preserving collector creation and
+    /// per-lifecycle insertion order, then retires released collectors.
+    ///
+    /// # Errors
+    ///
+    /// The registry or one collector became unavailable.
+    pub fn take_records(&self) -> Result<Box<[SandboxAuditRecord]>, SandboxAuditError> {
+        let mut audits = self
+            .audits
+            .lock()
+            .map_err(|_| SandboxAuditError::Unavailable)?;
+        let mut records = Vec::new();
+        for audit in audits.iter() {
+            records.extend(audit.take_records()?);
+        }
+        audits.retain(SandboxAudit::has_lifecycle_holder);
+        Ok(records.into_boxed_slice())
+    }
+}
+
+impl SandboxAudit {
+    fn has_lifecycle_holder(&self) -> bool {
+        // One holder is the registry entry itself. Anything beyond it is a
+        // request, tool context, session, process, or background lifecycle.
+        Arc::strong_count(&self.facts) > 1
+    }
+}
+
+impl std::fmt::Debug for SandboxAuditRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let retained = self.audits.lock().map_or(0, |audits| audits.len());
+        f.debug_struct("SandboxAuditRegistry")
+            .field("lifecycles", &retained)
+            .finish()
+    }
+}
+
 /// Why a bounded fact could not be retained.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum SandboxAuditError {
@@ -244,6 +344,9 @@ pub enum SandboxAuditError {
     /// A host attempted to attach a collector to another execution or call.
     #[error("sandbox audit attribution does not match its tool context")]
     AttributionMismatch,
+    /// Too many detached or live lifecycles are waiting for delivery.
+    #[error("sandbox audit registry reached its bounded lifecycle ceiling")]
+    RegistryFull,
 }
 
 #[cfg(test)]
@@ -263,8 +366,9 @@ mod tests {
         let records = audit.records().expect("records");
 
         assert_eq!(records.len(), 1);
-        assert_eq!(records[0].ancestry(), ancestry);
-        assert!(!format!("{:?}", records[0]).contains("secret-provider-call"));
+        let record = records.first().expect("one record");
+        assert_eq!(record.ancestry(), ancestry);
+        assert!(!format!("{record:?}").contains("secret-provider-call"));
     }
 
     #[test]
@@ -291,5 +395,61 @@ mod tests {
             audit.records().expect("bounded snapshot").len(),
             MAX_SANDBOX_AUDIT_FACTS
         );
+    }
+
+    #[test]
+    fn registry_retains_late_facts_until_the_detached_lifecycle_releases_them() {
+        let registry = SandboxAuditRegistry::new();
+        let audit = registry
+            .collector(Ancestry::new(), ToolId::new("background-call"))
+            .expect("collector");
+        let detached = audit.clone();
+        drop(audit);
+        assert!(registry.take_records().expect("empty drain").is_empty());
+
+        detached
+            .record(
+                SandboxId::new(),
+                SandboxFactKind::Lifecycle(SandboxLifecycle::CommandFinished),
+            )
+            .expect("late fact");
+        let records = registry.take_records().expect("late drain");
+        assert_eq!(records.len(), 1);
+        assert_eq!(
+            records.first().expect("one late fact").call().as_str(),
+            "background-call"
+        );
+
+        drop(detached);
+        assert!(registry.take_records().expect("retired drain").is_empty());
+    }
+
+    #[test]
+    fn registering_a_new_call_cannot_prune_undelivered_late_facts() {
+        let registry = SandboxAuditRegistry::new();
+        let late = registry
+            .collector(Ancestry::new(), ToolId::new("late-call"))
+            .expect("late collector");
+        late.record(
+            SandboxId::new(),
+            SandboxFactKind::Lifecycle(SandboxLifecycle::CommandFinished),
+        )
+        .expect("late fact");
+        drop(late);
+
+        let current = registry
+            .collector(Ancestry::new(), ToolId::new("current-call"))
+            .expect("current collector");
+        let records = registry.take_records().expect("drain");
+        assert_eq!(records.len(), 1);
+        assert_eq!(
+            records
+                .first()
+                .expect("one undelivered fact")
+                .call()
+                .as_str(),
+            "late-call"
+        );
+        drop(current);
     }
 }

@@ -409,7 +409,7 @@ fn unreadable_rules_mask_only_the_selected_path() {
         ],
         sample.root().clone(),
         SandboxNetworkPolicy::Closed,
-        Default::default(),
+        SandboxResourceLimits::default(),
     )
     .expect("policy");
     let request = SandboxRequest::new(

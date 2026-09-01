@@ -12,9 +12,10 @@ use std::time::Instant;
 
 use crucible_core::{
     Ancestry, Approved, Ask, Cancel, Event, InvocationRecord, JournalStore, Permission, Reporter,
-    RunItem, SandboxAudit, Settled, StopReason, TOOL_RESULT_BYTES, ToolCall, ToolContext,
-    ToolEntry, ToolError, ToolExecutionMode, ToolId, ToolOutcome, ToolOutput, ToolOutputRetention,
-    ToolReceipt, ToolResult, ToolSnapshot, ToolSourceReceipt, Watch, Wrote,
+    RunItem, SandboxAudit, SandboxAuditRecord, SandboxAuditRegistry, Settled, StopReason,
+    TOOL_RESULT_BYTES, ToolCall, ToolContext, ToolEntry, ToolError, ToolExecutionMode, ToolId,
+    ToolOutcome, ToolOutput, ToolOutputRetention, ToolReceipt, ToolResult, ToolSnapshot,
+    ToolSourceReceipt, Watch, Wrote,
 };
 
 /// What a call is answered with when the turn ended before it could run.
@@ -60,6 +61,8 @@ pub(crate) struct Work<'a> {
     pub(crate) ancestry: Ancestry,
     /// Durable framework history, distinct from provider messages.
     pub(crate) journal: &'a dyn JournalStore,
+    /// Bounded owner of collectors retained by detached sandbox processes.
+    pub(crate) audits: &'a SandboxAuditRegistry,
     /// The most opt-in calls that may execute at once.
     pub(crate) concurrency: usize,
 }
@@ -338,6 +341,13 @@ impl Work<'_> {
 
     /// Executes every approved call in one conflict-free scheduler wave.
     fn execute_wave(&self, decisions: Vec<Decision>) -> Vec<Invocation> {
+        let host = ExecutionHost {
+            ancestry: self.ancestry,
+            cancel: self.cancel,
+            events: self.events,
+            journal: self.journal,
+            audits: self.audits,
+        };
         let ready = decisions
             .iter()
             .filter(|decision| matches!(decision, Decision::Ready(_)))
@@ -346,13 +356,7 @@ impl Work<'_> {
             return decisions
                 .into_iter()
                 .map(|decision| match decision {
-                    Decision::Ready(prepared) => execute_contained(
-                        prepared,
-                        self.ancestry,
-                        self.cancel,
-                        self.events,
-                        self.journal,
-                    ),
+                    Decision::Ready(prepared) => execute_contained(prepared, host),
                     Decision::Done(invocation)
                     | Decision::Refused(invocation)
                     | Decision::Stopped(invocation)
@@ -362,22 +366,16 @@ impl Work<'_> {
         }
 
         let mut completed = Vec::with_capacity(decisions.len());
-        let journal = self.journal;
         thread::scope(|scope| {
             let mut running = Vec::with_capacity(ready);
             for (index, decision) in decisions.into_iter().enumerate() {
                 match decision {
                     Decision::Ready(prepared) => {
-                        let ancestry = self.ancestry;
-                        let cancel = self.cancel;
-                        let events = self.events;
                         let fallback = PanicFallback::from(&prepared);
                         running.push((
                             index,
                             fallback,
-                            scope.spawn(move || {
-                                execute_contained(prepared, ancestry, cancel, events, journal)
-                            }),
+                            scope.spawn(move || execute_contained(prepared, host)),
                         ));
                     }
                     Decision::Done(invocation)
@@ -627,34 +625,41 @@ impl Invocation {
     }
 }
 
-fn execute_contained(
-    prepared: Prepared,
+#[derive(Clone, Copy)]
+struct ExecutionHost<'a> {
     ancestry: Ancestry,
-    cancel: &Cancel,
-    events: Reporter<'_>,
-    journal: &dyn JournalStore,
-) -> Invocation {
+    cancel: &'a Cancel,
+    events: Reporter<'a>,
+    journal: &'a dyn JournalStore,
+    audits: &'a SandboxAuditRegistry,
+}
+
+fn execute_contained(prepared: Prepared, host: ExecutionHost<'_>) -> Invocation {
     let fallback = PanicFallback::from(&prepared);
-    let audit = SandboxAudit::new(ancestry, fallback.call.id.clone());
-    match catch_unwind(AssertUnwindSafe(|| {
-        execute(prepared, ancestry, cancel, events, journal, audit.clone())
-    })) {
-        Ok(invocation) => invocation,
-        Err(_) => {
-            let _ = report_sandbox_audit(&audit, ancestry, &fallback.call.id, events, journal);
-            fallback.panicked()
-        }
+    let audit = match host
+        .audits
+        .collector(host.ancestry, fallback.call.id.clone())
+    {
+        Ok(audit) => audit,
+        Err(problem) => return fallback.audit_failed(problem),
+    };
+    if let Ok(invocation) =
+        catch_unwind(AssertUnwindSafe(|| execute(prepared, host, audit.clone())))
+    {
+        invocation
+    } else {
+        let _ = report_sandbox_audit(
+            &audit,
+            host.ancestry,
+            &fallback.call.id,
+            host.events,
+            host.journal,
+        );
+        fallback.panicked()
     }
 }
 
-fn execute(
-    prepared: Prepared,
-    ancestry: Ancestry,
-    cancel: &Cancel,
-    events: Reporter<'_>,
-    journal: &dyn JournalStore,
-    audit: SandboxAudit,
-) -> Invocation {
+fn execute(prepared: Prepared, host: ExecutionHost<'_>, audit: SandboxAudit) -> Invocation {
     let Prepared {
         call,
         entry,
@@ -663,23 +668,25 @@ fn execute(
         mut record,
     } = prepared;
     let _ = record.start();
-    journal.append_run_item(&RunItem::Invocation(record.clone()));
+    host.journal
+        .append_run_item(&RunItem::Invocation(record.clone()));
     let deadline = entry
         .descriptor()
         .timeout()
         .and_then(|timeout| Instant::now().checked_add(timeout));
     let watching = Watching {
         call: call.id.clone(),
-        events,
+        events: host.events,
     };
-    let context = match ToolContext::with_sandbox_audit(
-        ancestry,
+    let context = match ToolContext::new(
+        host.ancestry,
         call.id.clone(),
-        cancel,
+        host.cancel,
         deadline,
         &watching,
-        audit,
-    ) {
+    )
+    .with_sandbox_audit(audit)
+    {
         Ok(context) => context,
         Err(problem) => {
             let problem = ToolError::Io {
@@ -692,12 +699,12 @@ fn execute(
         }
     };
     let ran = entry.tool().run(approved, &context);
-    if let Err(problem) = report_sandbox_facts(&context, events, journal) {
+    if let Err(problem) = report_sandbox_facts(&context, host.events, host.journal) {
         return Invocation::failed(call, &problem, ToolOutcome::Failed, evidence)
             .recovering(record);
     }
 
-    if cancel.requested() {
+    if host.cancel.requested() {
         return Invocation::new(
             call,
             ToolOutput::failed(NOT_RUN),
@@ -783,20 +790,46 @@ fn report_sandbox_audit(
                 source: std::io::Error::other("sandbox audit attribution mismatch"),
             });
         }
-        let fact = record.fact().clone();
-        let item = RunItem::sandbox(ancestry, call.clone(), fact.clone()).map_err(|problem| {
-            ToolError::Io {
-                tool: "sandbox audit".into(),
-                problem: "sandbox fact crossed the framework journal boundary".into(),
-                source: std::io::Error::other(problem),
-            }
-        })?;
-        journal.append_run_item(&item);
-        events.post(Event::Sandbox {
-            call: call.clone(),
-            fact,
-        });
+        report_sandbox_record(&record, events, journal)?;
     }
+    Ok(())
+}
+
+pub(super) fn report_sandbox_registry(
+    audits: &SandboxAuditRegistry,
+    events: Reporter<'_>,
+    journal: &dyn JournalStore,
+) -> Result<(), ToolError> {
+    let records = audits.take_records().map_err(|problem| ToolError::Io {
+        tool: "sandbox audit".into(),
+        problem: "could not drain detached sandbox lifecycle facts".into(),
+        source: std::io::Error::other(problem),
+    })?;
+    for record in records {
+        report_sandbox_record(&record, events, journal)?;
+    }
+    Ok(())
+}
+
+fn report_sandbox_record(
+    record: &SandboxAuditRecord,
+    events: Reporter<'_>,
+    journal: &dyn JournalStore,
+) -> Result<(), ToolError> {
+    let ancestry = record.ancestry();
+    let call = record.call().clone();
+    let fact = record.fact().clone();
+    let item = RunItem::sandbox(ancestry, call.clone(), fact.clone()).map_err(|problem| {
+        ToolError::Io {
+            tool: "sandbox audit".into(),
+            problem: "sandbox fact crossed the framework journal boundary".into(),
+            source: std::io::Error::other(problem),
+        }
+    })?;
+    journal.append_run_item(&item);
+    events
+        .attributed_to(ancestry)
+        .post(Event::Sandbox { call, fact });
     Ok(())
 }
 
@@ -825,6 +858,16 @@ impl PanicFallback {
             self.evidence,
         )
         .recovering(self.record)
+    }
+
+    fn audit_failed(self, problem: crucible_core::SandboxAuditError) -> Invocation {
+        let error = ToolError::Io {
+            tool: "sandbox audit".into(),
+            problem: "could not register the bounded sandbox lifecycle".into(),
+            source: std::io::Error::other(problem),
+        };
+        Invocation::failed(self.call, &error, ToolOutcome::Failed, self.evidence)
+            .recovering(self.record)
     }
 }
 
@@ -1094,6 +1137,7 @@ mod tests {
             cancel: &cancel,
             ancestry,
             journal: &journal,
+            audits: &SandboxAuditRegistry::new(),
             concurrency,
         }
         .pass(calls, 0, maximum);
@@ -1241,6 +1285,7 @@ mod tests {
             cancel: &cancel,
             ancestry,
             journal: &journal,
+            audits: &SandboxAuditRegistry::new(),
             concurrency: 1,
         }
         .pass(&[call("audited-call", "audited")], 0, usize::MAX);
@@ -1338,6 +1383,7 @@ mod tests {
             cancel: &cancel,
             ancestry,
             journal: &journal,
+            audits: &SandboxAuditRegistry::new(),
             concurrency: 1,
         }
         .pass(
@@ -1376,6 +1422,150 @@ mod tests {
             1,
             "{held:#?}"
         );
+    }
+
+    struct DetachedAudited {
+        release: Arc<Barrier>,
+        done: Sender<()>,
+    }
+
+    impl Tool for DetachedAudited {
+        fn validate(&self, _args: &ToolArgs) -> Result<(), ToolError> {
+            Ok(())
+        }
+
+        fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
+            Sensitivity::ReadOnly {
+                target: Target::unresolved(),
+            }
+        }
+
+        fn summary(&self, _args: &ToolArgs) -> Summary {
+            Summary::new("detached audited tool")
+        }
+
+        fn run(
+            &self,
+            _approved: Approved,
+            context: &ToolContext<'_>,
+        ) -> Result<ToolOutput, ToolError> {
+            let sandbox = SandboxId::new();
+            let audit = context.sandbox_audit();
+            audit
+                .record(
+                    sandbox,
+                    SandboxFactKind::Lifecycle(SandboxLifecycle::PolicyResolved),
+                )
+                .unwrap();
+            let release = Arc::clone(&self.release);
+            let done = self.done.clone();
+            thread::spawn(move || {
+                release.wait();
+                audit
+                    .record(
+                        sandbox,
+                        SandboxFactKind::Lifecycle(SandboxLifecycle::CommandFinished),
+                    )
+                    .unwrap();
+                done.send(()).unwrap();
+            });
+            Ok(ToolOutput::ok("detached"))
+        }
+    }
+
+    #[test]
+    fn detached_sandbox_facts_keep_the_original_call_until_the_next_runner_boundary() {
+        let release = Arc::new(Barrier::new(2));
+        let (done, finished) = channel();
+        let descriptor = ToolDescriptor::new(
+            "detached-audited",
+            "{}",
+            ToolProvenance::new(
+                ToolSourceKind::User,
+                "test:detached-audited",
+                "detached audit test",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let mut tools = Tools::new();
+        tools
+            .add(
+                descriptor,
+                Arc::new(DetachedAudited {
+                    release: Arc::clone(&release),
+                    done,
+                }),
+            )
+            .unwrap();
+        let snapshot = tools.snapshot().unwrap();
+        let journal = KeepingJournal::default();
+        let audits = SandboxAuditRegistry::new();
+        let (events, seen) = channel();
+        let keeping = Keeping(events);
+        let ancestry = Ancestry::new();
+        let cancel = Cancel::new();
+        let mut permission = Permission::new();
+        let mut ask = Says::new(Verdict::Allow);
+
+        let (results, went, _) = Work {
+            tools: &snapshot,
+            permission: &mut permission,
+            ask: &mut ask,
+            events: Reporter::new(ancestry, &keeping),
+            cancel: &cancel,
+            ancestry,
+            journal: &journal,
+            audits: &audits,
+            concurrency: 1,
+        }
+        .pass(
+            &[call("detached-audited-call", "detached-audited")],
+            0,
+            usize::MAX,
+        );
+        assert!(matches!(went, Went::On));
+        assert_eq!(results.len(), 1);
+
+        release.wait();
+        finished
+            .recv_timeout(Duration::from_secs(2))
+            .expect("detached fact was recorded");
+        report_sandbox_registry(&audits, Reporter::new(Ancestry::new(), &keeping), &journal)
+            .expect("next runner boundary");
+
+        let events = seen.try_iter().collect::<Vec<_>>();
+        assert!(matches!(
+            events.as_slice(),
+            [
+                Event::Sandbox { call: initial, .. },
+                Event::ToolFinished { call: finished, .. },
+                Event::Sandbox {
+                    call: detached,
+                    fact,
+                },
+            ] if initial == finished
+                && finished == detached
+                && detached.as_str() == "detached-audited-call"
+                && matches!(
+                    fact.kind(),
+                    SandboxFactKind::Lifecycle(SandboxLifecycle::CommandFinished)
+                )
+        ));
+        let held = journal.0.lock().unwrap();
+        assert!(matches!(
+            held.last(),
+            Some(RunItem::Sandbox {
+                ancestry: retained,
+                call,
+                fact,
+            }) if *retained == ancestry
+                && call.as_str() == "detached-audited-call"
+                && matches!(
+                    fact.kind(),
+                    SandboxFactKind::Lifecycle(SandboxLifecycle::CommandFinished)
+                )
+        ));
     }
 
     struct KeyedEffect;
@@ -1436,6 +1626,7 @@ mod tests {
             cancel: &cancel,
             ancestry,
             journal: &journal,
+            audits: &SandboxAuditRegistry::new(),
             concurrency: 1,
         }
         .pass(&[call("keyed-call", "keyed")], 0, usize::MAX);
@@ -1937,6 +2128,7 @@ mod tests {
                 cancel: &self.cancel,
                 ancestry: Ancestry::new(),
                 journal: &journal,
+                audits: &SandboxAuditRegistry::new(),
                 concurrency: 1,
             }
             .pass(calls, held, maximum)

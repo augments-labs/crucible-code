@@ -20,8 +20,9 @@ mod policy;
 mod service;
 
 pub use audit::{
-    MAX_SANDBOX_AUDIT_FACTS, SandboxAudit, SandboxAuditError, SandboxAuditRecord, SandboxFact,
-    SandboxFactKind, SandboxFailureKind, SandboxFailurePhase, SandboxLifecycle,
+    MAX_SANDBOX_AUDIT_FACTS, MAX_SANDBOX_AUDIT_LIFECYCLES, SandboxAudit, SandboxAuditError,
+    SandboxAuditRecord, SandboxAuditRegistry, SandboxFact, SandboxFactKind, SandboxFailureKind,
+    SandboxFailurePhase, SandboxLifecycle,
 };
 pub use capability::{
     MAX_SANDBOX_BACKEND_ID_BYTES, MAX_SANDBOX_BACKEND_WORD_BYTES, SandboxBackendId,
