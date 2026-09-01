@@ -8,7 +8,7 @@ use crucible_core::{
     Ancestry, Ask, Cancel, DescribeTool, Mode, Permission, Remember, Rules, Sensitivity, Settled,
     Tool, ToolArgs, ToolCall, ToolContext, ToolId, Unwatched, Verdict,
 };
-use crucible_tools::{Background, Bash};
+use crucible_tools::{Background, Bash, LocalSandbox};
 
 use crate::cli::sample::Sample;
 
@@ -28,7 +28,16 @@ fn running(case: &str, count: usize) -> (Background, Sample) {
     let here = Sample::new(case);
     let left = Background::new();
     let cancel = Cancel::new();
-    let tool = Bash::new(here.workspace()).leaving(left.clone());
+    // This fixture exercises the real process/background path, but not Linux
+    // namespace availability. Selecting the compatibility backend explicitly
+    // keeps that boundary visible instead of depending on the host running the
+    // test to permit nested user namespaces.
+    let tool = Bash::new(here.workspace())
+        .sandboxing(
+            std::sync::Arc::new(LocalSandbox::new()),
+            crucible_core::SandboxMode::Off,
+        )
+        .leaving(left.clone());
     let mut engine = Permission::with(Mode::FullAccess, Rules::default());
 
     for at in 0..count {
