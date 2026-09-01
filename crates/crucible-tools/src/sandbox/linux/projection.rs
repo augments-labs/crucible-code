@@ -15,9 +15,10 @@ use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 
 use crucible_core::{
-    SandboxAudit, SandboxError, SandboxFactKind, SandboxFilesystemAccess, SandboxId,
-    SandboxInspection, SandboxLifecycle, SandboxOutput, SandboxProcess, SandboxRequest,
-    SandboxUsage, SandboxViolation,
+    CallResultKey, CallResultReceipt, SandboxAudit, SandboxError, SandboxFactKind,
+    SandboxFilesystemAccess, SandboxId, SandboxInspection, SandboxInvocationMode, SandboxLifecycle,
+    SandboxOutput, SandboxProcess, SandboxRequest, SandboxUsage, SandboxViolation, ToolContext,
+    ToolResult,
 };
 use crucible_sandbox_broker::CANCEL_FRAME;
 use crucible_sandbox_broker::MAX_SCAN_EXTENTS;
@@ -194,6 +195,7 @@ impl Projection {
                     transaction::InvocationMode::Background
                 }
             },
+            request.call_result_key(),
         )
         .map_err(|source| failed("could not initialize writable transaction journal", source))?;
         let roots_directory = stage.root().join("roots");
@@ -671,13 +673,27 @@ fn refused(problem: &'static str) -> SandboxError {
 }
 
 /// Adds publication/discard semantics to the ordinary process-tree owner.
+pub(super) struct ProcessPlan {
+    pub(super) projection: Option<Projection>,
+    pub(super) status_channel: StatusChannel,
+    pub(super) audit: SandboxAudit,
+    pub(super) sandbox: SandboxId,
+    pub(super) invocation: SandboxInvocationMode,
+    pub(super) call_result_key: Option<CallResultKey>,
+}
+
 pub(super) fn wrap(
     process: Box<dyn SandboxProcess>,
-    projection: Option<Projection>,
-    status_channel: StatusChannel,
-    audit: SandboxAudit,
-    sandbox: SandboxId,
+    plan: ProcessPlan,
 ) -> io::Result<Box<dyn SandboxProcess>> {
+    let ProcessPlan {
+        projection,
+        status_channel,
+        audit,
+        sandbox,
+        invocation,
+        call_result_key,
+    } = plan;
     let stage = projection
         .as_ref()
         .map(|projection| projection.stage.root().to_path_buf());
@@ -692,6 +708,8 @@ pub(super) fn wrap(
         audit,
         sandbox,
         control: Some(control),
+        invocation,
+        call_result_key,
     }))
 }
 
@@ -704,6 +722,8 @@ struct ProjectedProcess {
     audit: SandboxAudit,
     sandbox: SandboxId,
     control: Option<std::os::unix::net::UnixStream>,
+    invocation: SandboxInvocationMode,
+    call_result_key: Option<CallResultKey>,
 }
 
 impl ProjectedProcess {
@@ -856,6 +876,46 @@ impl SandboxProcess for ProjectedProcess {
 
     fn violation(&self) -> Option<SandboxViolation> {
         self.process.violation()
+    }
+
+    fn accept_background(
+        &mut self,
+        context: &ToolContext<'_>,
+        result: &ToolResult,
+    ) -> Result<CallResultReceipt, SandboxError> {
+        if self.invocation != SandboxInvocationMode::Background
+            || self.call_result_key.is_none()
+            || self.call_result_key != context.call_result_key()
+        {
+            return Err(SandboxError::Lifecycle(io::Error::other(
+                "sandbox background result identity is invalid",
+            )));
+        }
+        let projection = self.projection.as_mut().ok_or_else(|| {
+            SandboxError::Lifecycle(io::Error::other(
+                "background sandbox has no durable transaction",
+            ))
+        })?;
+        projection
+            .record(transaction::Record::CallAcceptIntent)
+            .map_err(SandboxError::Lifecycle)?;
+        let receipt = match context.put_call_result(result) {
+            Ok(receipt) => receipt,
+            Err(problem) => {
+                let _ = self.stop();
+                return Err(SandboxError::Lifecycle(io::Error::other(problem)));
+            }
+        };
+        if projection
+            .record(transaction::Record::CallAccepted(receipt.bytes()))
+            .is_err()
+        {
+            let _ = self.process.stop();
+            projection.retain_evidence();
+            let _ = self.lifecycle(SandboxLifecycle::Quarantined);
+            self.terminal = true;
+        }
+        Ok(receipt)
     }
 }
 

@@ -6,7 +6,9 @@ use std::path::{Component, Path, PathBuf};
 use std::process::ExitStatus;
 use std::time::Duration;
 
-use crate::{Ancestry, SandboxId, ToolId};
+use crate::{
+    Ancestry, CallResultKey, CallResultReceipt, SandboxId, ToolContext, ToolId, ToolResult,
+};
 use sha2::{Digest as _, Sha256};
 
 use super::audit::SandboxAudit;
@@ -419,6 +421,7 @@ pub struct SandboxRequest {
     manifest: SandboxManifest,
     audit: SandboxAudit,
     invocation: SandboxInvocationMode,
+    call_result: Option<CallResultKey>,
 }
 
 /// Which durable effect owns the call's sole provider-projectable result.
@@ -452,6 +455,7 @@ impl SandboxRequest {
             manifest,
             audit,
             invocation: SandboxInvocationMode::Foreground,
+            call_result: None,
         }
     }
 
@@ -460,6 +464,13 @@ impl SandboxRequest {
     #[must_use]
     pub const fn with_invocation_mode(mut self, mode: SandboxInvocationMode) -> Self {
         self.invocation = mode;
+        self
+    }
+
+    /// Fixes the source-qualified result identity used by background release.
+    #[must_use]
+    pub const fn with_call_result_key(mut self, key: CallResultKey) -> Self {
+        self.call_result = Some(key);
         self
     }
 
@@ -536,6 +547,12 @@ impl SandboxRequest {
         self.invocation
     }
 
+    /// Durable result identity, present for an admitted background invocation.
+    #[must_use]
+    pub const fn call_result_key(&self) -> Option<CallResultKey> {
+        self.call_result
+    }
+
     /// Verifies exact support before a service may materialize or spawn.
     ///
     /// # Errors
@@ -544,6 +561,9 @@ impl SandboxRequest {
     /// `degraded` and `off` relax only the documented baseline kernel boundary;
     /// they do not turn requested limits or session semantics into telemetry.
     pub fn negotiate(&self, capabilities: &SandboxCapabilities) -> Result<(), SandboxError> {
+        if self.invocation == SandboxInvocationMode::Background && self.call_result.is_none() {
+            return Err(SandboxError::InvalidInspection);
+        }
         for (feature, minimum) in capability_requirements(&self.policy, &self.manifest) {
             if capabilities.claim(feature) < minimum {
                 return Err(SandboxError::Unsupported { feature });
@@ -1333,6 +1353,24 @@ pub trait SandboxProcess: Send {
 
     /// First hard resource violation observed by the host supervisor.
     fn violation(&self) -> Option<SandboxViolation>;
+
+    /// Commits the sole caller-visible background result between WAL intent
+    /// and acceptance records.
+    ///
+    /// # Errors
+    ///
+    /// Foreground processes and backends without a closed acceptance
+    /// transaction refuse this operation. A persistence failure leaves no
+    /// accepted WAL state.
+    fn accept_background(
+        &mut self,
+        _context: &ToolContext<'_>,
+        _result: &ToolResult,
+    ) -> Result<CallResultReceipt, SandboxError> {
+        Err(SandboxError::Lifecycle(io::Error::other(
+            "sandbox process does not support durable background acceptance",
+        )))
+    }
 }
 
 /// A fully prepared command that cannot execute until its owner releases it.

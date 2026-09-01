@@ -88,15 +88,9 @@ pub(super) fn collect(
     // A child is not one of this program's threads: nothing in it will notice
     // the flag, so the only way to stop it is to kill it.
     let status = loop {
-        match running.taking()?.try_wait() {
-            Ok(Some(status)) => break Some(status),
-            Ok(None) => {}
-            Err(source) => return Err(tool_io("could not wait for the command", source)),
-        }
-
-        // Asked before the deadline and before the cancel, because it is the one
-        // of the three that keeps the command: a press and a timeout landing in
-        // the same tick should leave the command running rather than kill it.
+        // Explicit background mode uses a zero delay and has already reserved
+        // application ownership. Hand it over before observing a fast exit so
+        // acceptance, rather than timing, remains the call's sole result.
         if let Some(why) = leaving.as_ref().and_then(|leaving| leaving.now(started))
             && let Some(process) = running.given()
         {
@@ -109,6 +103,15 @@ pub(super) fn collect(
             }));
         }
 
+        match running.taking()?.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) => {}
+            Err(source) => return Err(tool_io("could not wait for the command", source)),
+        }
+
+        // Asked before the deadline and before the cancel, because it is the one
+        // of the three that keeps the command: a press and a timeout landing in
+        // the same tick should leave the command running rather than kill it.
         if cancel.requested() {
             let _ = running.stop()?;
             return Err(ToolError::Cancelled(NAME.into()));

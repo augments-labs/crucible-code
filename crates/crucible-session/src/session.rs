@@ -19,14 +19,15 @@ use std::fs::File;
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::str::FromStr as _;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{SyncSender, sync_channel};
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
 use crucible_core::{
-    Attachment, Calibration, ContextError, ContextPatch, ContextSnapshot, JournalStore, Message,
-    RunItem, SessionId, SessionStore, ToolOutput, Transcript, Workspace,
+    Attachment, Calibration, CallResultKey, CallResultReceipt, CallResultStoreError, ContextError,
+    ContextPatch, ContextSnapshot, JournalStore, Message, RunItem, SessionId, SessionStore,
+    ToolOutput, ToolResult, Transcript, Workspace,
 };
 
 mod beside;
@@ -38,6 +39,7 @@ mod privacy;
 mod prompts;
 mod recent;
 mod replay;
+mod results;
 mod wire;
 
 pub(crate) fn restored_output(
@@ -49,7 +51,7 @@ pub(crate) fn restored_output(
 
 use claim::{Claim, Claimed, claim};
 pub use glimpse::{Glimpse, glimpse};
-use log::{Trouble, make, open, shorten};
+use log::{Request as LogRequest, Trouble, make, open, shorten};
 pub use prompts::{PROMPTS, prompts, remember};
 pub use recent::{Recorded, recent};
 pub use replay::Pruned;
@@ -189,7 +191,7 @@ pub struct Session {
     /// where there is no log to be named by.
     id: Option<SessionId>,
     /// `None` in a session that records nothing.
-    to: Option<SyncSender<Box<str>>>,
+    to: Option<SyncSender<LogRequest>>,
     /// Taken by whichever of [`Session::finish`] and `drop` comes first, both
     /// of which wait for the queue.
     writer: Option<JoinHandle<()>>,
@@ -222,6 +224,9 @@ pub struct Session {
     /// back onto a screen. Empty in a session that was started rather than
     /// continued, and in one whose log never pruned anything.
     pruned: Pruned,
+    /// Serializes create-once result inserts so an idempotent retry cannot
+    /// observe the first writer's not-yet-synced file.
+    result_lock: Mutex<()>,
     trouble: Trouble,
 }
 
@@ -401,6 +406,8 @@ impl Session {
             calibration,
             context,
             pruned,
+            recovered,
+            settled_results,
         } = replay(path)?;
 
         // Before a single byte is appended, and before the handle that will
@@ -408,7 +415,25 @@ impl Session {
         // the next turn written straight onto the end of it. See [`replay`].
         shorten(path, settled_at)?;
 
-        let mut session = Self::writing(path.to_owned(), open(path)?);
+        let mut file = open(path)?;
+        if let Some(message) = recovered.as_ref() {
+            writeln!(file, "{}", wire::line(message)).map_err(|source| SessionError::Log {
+                at: path.display().to_string().into(),
+                source,
+            })?;
+        }
+        if recovered.is_some() || !settled_results.is_empty() {
+            file.sync_all().map_err(|source| SessionError::Log {
+                at: path.display().to_string().into(),
+                source,
+            })?;
+            results::settle(settled_results).map_err(|source| SessionError::Log {
+                at: path.display().to_string().into(),
+                source,
+            })?;
+        }
+
+        let mut session = Self::writing(path.to_owned(), file);
         session.claim = held;
         session.calibration = calibration;
         session.context = context;
@@ -441,6 +466,7 @@ impl Session {
             context: Some(ContextSnapshot::new()),
             messages: AtomicUsize::new(0),
             pruned: Pruned::default(),
+            result_lock: Mutex::new(()),
             trouble: Trouble::default(),
         }
     }
@@ -482,7 +508,7 @@ impl Session {
     /// which is the whole reason there is one.
     pub fn append(&self, message: &Message) {
         let Some(to) = &self.to else { return };
-        drop(to.send(wire::line(message).into()));
+        drop(to.send(LogRequest::Line(wire::line(message).into())));
         if is_conversation_message(message) {
             self.messages.fetch_add(1, Ordering::Relaxed);
         }
@@ -503,7 +529,7 @@ impl Session {
     pub fn append_journal(&self, item: &RunItem) {
         let Some(to) = &self.to else { return };
         if let Some(line) = wire::journal(item) {
-            drop(to.send(line.into()));
+            drop(to.send(LogRequest::Line(line.into())));
         }
     }
 
@@ -521,7 +547,7 @@ impl Session {
         let prior = self.context.clone().unwrap_or_default();
         let current = patch.apply(&prior)?;
         if let Some(to) = &self.to {
-            drop(to.send(wire::contextual(patch).into()));
+            drop(to.send(LogRequest::Line(wire::contextual(patch).into())));
         }
         self.context = Some(current);
         Ok(())
@@ -545,7 +571,7 @@ impl Session {
     /// record.
     pub fn compacted(&self, replaced: usize, recap: &str) {
         let Some(to) = &self.to else { return };
-        drop(to.send(wire::compacted(replaced, recap).into()));
+        drop(to.send(LogRequest::Line(wire::compacted(replaced, recap).into())));
     }
 
     /// Records that old tool results were cleared, and which.
@@ -556,7 +582,7 @@ impl Session {
     /// continue. Written the way the compaction line is, for the same reason.
     pub fn pruned(&self, freed: usize, results: &[crucible_core::ToolId]) {
         let Some(to) = &self.to else { return };
-        drop(to.send(wire::pruned(freed, results).into()));
+        drop(to.send(LogRequest::Line(wire::pruned(freed, results).into())));
     }
 
     /// Records what the request behind the answer just written carried.
@@ -571,7 +597,7 @@ impl Session {
     /// it is a great deal better than one that comes back sure and wrong.
     pub fn measured(&self, calibration: &Calibration) {
         let Some(to) = &self.to else { return };
-        drop(to.send(wire::measured(calibration).into()));
+        drop(to.send(LogRequest::Line(wire::measured(calibration).into())));
     }
 
     /// What the log this session was picked up from last said it carried.
@@ -593,6 +619,26 @@ impl Session {
             .lock()
             .ok()
             .and_then(|held| held.as_ref().cloned())
+    }
+
+    /// Drains and durably flushes every source line queued before a result
+    /// sidecar. This makes it impossible for a recovered result to outlive the
+    /// assistant call it answers merely because the asynchronous writer was
+    /// behind when the process stopped.
+    fn sync_pending_result_source(&self) -> Result<(), CallResultStoreError> {
+        let to = self.to.as_ref().ok_or(CallResultStoreError::Unavailable)?;
+        let (done, waiting) = sync_channel(1);
+        to.send(LogRequest::Barrier(done))
+            .map_err(|_| CallResultStoreError::Storage)?;
+        waiting.recv().map_err(|_| CallResultStoreError::Storage)?;
+        if self.trouble().is_some() {
+            return Err(CallResultStoreError::Storage);
+        }
+        File::options()
+            .write(true)
+            .open(&self.path)
+            .and_then(|file| file.sync_all())
+            .map_err(|_| CallResultStoreError::Storage)
     }
 
     /// Ends the session and hands back the first write that failed, if one did.
@@ -655,6 +701,7 @@ impl Session {
             context: Some(ContextSnapshot::new()),
             messages: AtomicUsize::new(0),
             pruned: Pruned::default(),
+            result_lock: Mutex::new(()),
             trouble,
         }
     }
@@ -766,6 +813,22 @@ impl SessionStore for Session {
 impl JournalStore for Session {
     fn append_run_item(&self, item: &RunItem) {
         self.append_journal(item);
+    }
+
+    fn put_call_result(
+        &self,
+        key: CallResultKey,
+        result: &ToolResult,
+    ) -> Result<CallResultReceipt, CallResultStoreError> {
+        if self.id.is_none() || !self.path.is_file() {
+            return Err(CallResultStoreError::Unavailable);
+        }
+        let _held = self
+            .result_lock
+            .lock()
+            .map_err(|_| CallResultStoreError::Storage)?;
+        self.sync_pending_result_source()?;
+        results::put(&self.path, key, result)
     }
 }
 

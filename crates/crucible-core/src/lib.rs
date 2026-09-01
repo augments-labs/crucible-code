@@ -67,9 +67,10 @@ pub use interruption::{
     ValidatedResume,
 };
 pub use journal::{
-    CompactionRecord, CustomEntry, CustomProjector, JournalError, JournalStore,
-    MAX_CUSTOM_DATA_BYTES, MAX_JOURNAL_WORD_BYTES, MAX_RUN_HISTORY_BYTES, MAX_RUN_ITEM_BYTES,
-    MAX_RUN_ITEM_RETAINED_BYTES, MAX_RUN_ITEMS, RunHistory, RunItem, SessionStore,
+    CallResultKey, CallResultReceipt, CallResultStoreError, CompactionRecord, CustomEntry,
+    CustomProjector, JournalError, JournalStore, MAX_CUSTOM_DATA_BYTES, MAX_JOURNAL_WORD_BYTES,
+    MAX_RUN_HISTORY_BYTES, MAX_RUN_ITEM_BYTES, MAX_RUN_ITEM_RETAINED_BYTES, MAX_RUN_ITEMS,
+    RunHistory, RunItem, SessionStore,
 };
 pub use modality::{Modalities, Modality, ModalityError};
 pub use permission::{

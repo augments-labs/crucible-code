@@ -6,12 +6,14 @@ use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 
-use crucible_core::{SandboxError, SandboxFilesystemAccess, SandboxId, SandboxRequest};
+use crucible_core::{
+    CallResultKey, SandboxError, SandboxFilesystemAccess, SandboxId, SandboxRequest,
+};
 use rustix::fs::{FlockOperation, Mode, OFlags};
 use sha2::{Digest as _, Sha256};
 
 const WAL_MAGIC: &[u8; 8] = b"CRSBWAL1";
-const WAL_VERSION: u16 = 1;
+const WAL_VERSION: u16 = 2;
 const SANDBOX_ID_BYTES: usize = 36;
 const OWNER_PID_BYTES: usize = 4;
 const OWNER_START_BYTES: usize = 8;
@@ -20,10 +22,20 @@ const IDENTITY_OFFSET: usize = 52;
 const OWNER_PID_OFFSET: usize = IDENTITY_OFFSET + SANDBOX_ID_BYTES;
 const OWNER_START_OFFSET: usize = OWNER_PID_OFFSET + OWNER_PID_BYTES;
 const OWNER_BOOT_OFFSET: usize = OWNER_START_OFFSET + OWNER_START_BYTES;
-const WAL_PREFIX_BYTES: usize =
-    8 + 2 + 2 + 8 + 32 + SANDBOX_ID_BYTES + OWNER_PID_BYTES + OWNER_START_BYTES + OWNER_BOOT_BYTES;
+const CALL_RESULT_KEY_BYTES: usize = 32;
+const CALL_RESULT_KEY_OFFSET: usize = OWNER_BOOT_OFFSET + OWNER_BOOT_BYTES;
+const WAL_PREFIX_BYTES: usize = 8
+    + 2
+    + 2
+    + 8
+    + 32
+    + SANDBOX_ID_BYTES
+    + OWNER_PID_BYTES
+    + OWNER_START_BYTES
+    + OWNER_BOOT_BYTES
+    + CALL_RESULT_KEY_BYTES;
 const WAL_CHECKSUM_BYTES: usize = 32;
-const MAX_WAL_PAYLOAD_BYTES: usize = 5;
+const MAX_WAL_PAYLOAD_BYTES: usize = 1 + 32;
 const MAX_WAL_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_STALE_TRANSACTIONS: usize = 128;
 const STAGE_PREFIX: &str = "crucible-projection-";
@@ -36,6 +48,30 @@ pub(super) enum InvocationMode {
     Background,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Invocation {
+    mode: InvocationMode,
+    call_result_key: [u8; CALL_RESULT_KEY_BYTES],
+}
+
+impl Invocation {
+    fn new(mode: InvocationMode, call_result_key: Option<CallResultKey>) -> io::Result<Self> {
+        let call_result_key = match (mode, call_result_key) {
+            (InvocationMode::Foreground, None) => [0_u8; CALL_RESULT_KEY_BYTES],
+            (InvocationMode::Background, Some(key)) => key.bytes(),
+            _ => {
+                return Err(invalid(
+                    "sandbox transaction result identity does not match invocation mode",
+                ));
+            }
+        };
+        Ok(Self {
+            mode,
+            call_result_key,
+        })
+    }
+}
+
 /// Closed transaction records. Index-bearing records use contiguous indices
 /// beginning at zero; records after a terminal are always invalid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,7 +82,7 @@ pub(super) enum Record {
     OwnerTransferred,
     GoSentOrAmbiguous,
     CallAcceptIntent,
-    CallAccepted,
+    CallAccepted([u8; 32]),
     RefusalObserved,
     PreparationCleanupIntent,
     PreparationCleanupProved,
@@ -97,6 +133,7 @@ struct FrameState {
     previous: [u8; 32],
     identity: [u8; SANDBOX_ID_BYTES],
     owner: OwnerIdentity,
+    call_result_key: [u8; CALL_RESULT_KEY_BYTES],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -112,15 +149,22 @@ impl Transaction {
         directory: &Path,
         sandbox: SandboxId,
         mode: InvocationMode,
+        call_result_key: Option<CallResultKey>,
     ) -> io::Result<Self> {
-        Self::start_owned(lease, directory, sandbox, mode, OwnerIdentity::current()?)
+        Self::start_owned(
+            lease,
+            directory,
+            sandbox,
+            Invocation::new(mode, call_result_key)?,
+            OwnerIdentity::current()?,
+        )
     }
 
     fn start_owned(
         lease: Lease,
         directory: &Path,
         sandbox: SandboxId,
-        mode: InvocationMode,
+        invocation: Invocation,
         owner: OwnerIdentity,
     ) -> io::Result<Self> {
         let path = directory.join("transaction.wal");
@@ -146,9 +190,10 @@ impl Transaction {
                 previous: [0_u8; 32],
                 identity,
                 owner,
+                call_result_key: invocation.call_result_key,
             },
         };
-        transaction.append(Record::Initialized(mode))?;
+        transaction.append(Record::Initialized(invocation.mode))?;
         Ok(transaction)
     }
 
@@ -202,6 +247,7 @@ fn append_frame(journal: &mut File, state: &mut FrameState, record: Record) -> i
             + OWNER_PID_BYTES
             + OWNER_START_BYTES
             + OWNER_BOOT_BYTES
+            + CALL_RESULT_KEY_BYTES
             + payload.len()
             + WAL_CHECKSUM_BYTES,
     );
@@ -214,6 +260,7 @@ fn append_frame(journal: &mut File, state: &mut FrameState, record: Record) -> i
     frame.extend_from_slice(&state.owner.pid.to_le_bytes());
     frame.extend_from_slice(&state.owner.start.to_le_bytes());
     frame.extend_from_slice(&state.owner.boot);
+    frame.extend_from_slice(&state.call_result_key);
     frame.extend_from_slice(&payload);
     let digest: [u8; 32] = Sha256::digest(&frame).into();
     frame.extend_from_slice(&digest);
@@ -286,46 +333,53 @@ fn process_start(pid: u32) -> io::Result<u64> {
 }
 
 fn encode_record(record: Record) -> Vec<u8> {
+    enum Value {
+        Empty,
+        Number(u32),
+        Receipt([u8; 32]),
+    }
     let (kind, value) = match record {
-        Record::Initialized(InvocationMode::Foreground) => (1, Some(0)),
-        Record::Initialized(InvocationMode::Background) => (1, Some(1)),
-        Record::Prepared => (2, None),
-        Record::ReleaseIntent => (3, None),
-        Record::OwnerTransferred => (4, None),
-        Record::GoSentOrAmbiguous => (5, None),
-        Record::CallAcceptIntent => (6, None),
-        Record::CallAccepted => (7, None),
-        Record::RefusalObserved => (8, None),
-        Record::PreparationCleanupIntent => (9, None),
-        Record::PreparationCleanupProved => (10, None),
-        Record::PreparationCleanupUnproved => (11, None),
-        Record::Refused => (12, None),
-        Record::CommandExited => (13, None),
-        Record::WorkloadReapIntent => (14, None),
-        Record::WorkloadReaped => (15, None),
-        Record::ScanIntent => (16, None),
-        Record::ScanTransferred => (17, None),
-        Record::StageIntent(index) => (18, Some(index)),
-        Record::Staged(index) => (19, Some(index)),
-        Record::PublicationStaged => (20, None),
-        Record::ScopeReapIntent => (21, None),
-        Record::ScopeReapProved => (22, None),
-        Record::ScopeReapUnproved => (23, None),
-        Record::ApplyIntent(index) => (24, Some(index)),
-        Record::Applied(index) => (25, Some(index)),
-        Record::AbortObserved => (26, None),
-        Record::QuarantineObserved => (27, None),
-        Record::Committed => (28, None),
-        Record::RolledBack => (29, None),
-        Record::Quarantined => (30, None),
-        Record::RollbackIntent(index) => (31, Some(index)),
-        Record::RollbackApplied(index) => (32, Some(index)),
-        Record::DiscardIntent(index) => (33, Some(index)),
-        Record::Discarded(index) => (34, Some(index)),
+        Record::Initialized(InvocationMode::Foreground) => (1, Value::Number(0)),
+        Record::Initialized(InvocationMode::Background) => (1, Value::Number(1)),
+        Record::Prepared => (2, Value::Empty),
+        Record::ReleaseIntent => (3, Value::Empty),
+        Record::OwnerTransferred => (4, Value::Empty),
+        Record::GoSentOrAmbiguous => (5, Value::Empty),
+        Record::CallAcceptIntent => (6, Value::Empty),
+        Record::CallAccepted(receipt) => (7, Value::Receipt(receipt)),
+        Record::RefusalObserved => (8, Value::Empty),
+        Record::PreparationCleanupIntent => (9, Value::Empty),
+        Record::PreparationCleanupProved => (10, Value::Empty),
+        Record::PreparationCleanupUnproved => (11, Value::Empty),
+        Record::Refused => (12, Value::Empty),
+        Record::CommandExited => (13, Value::Empty),
+        Record::WorkloadReapIntent => (14, Value::Empty),
+        Record::WorkloadReaped => (15, Value::Empty),
+        Record::ScanIntent => (16, Value::Empty),
+        Record::ScanTransferred => (17, Value::Empty),
+        Record::StageIntent(index) => (18, Value::Number(index)),
+        Record::Staged(index) => (19, Value::Number(index)),
+        Record::PublicationStaged => (20, Value::Empty),
+        Record::ScopeReapIntent => (21, Value::Empty),
+        Record::ScopeReapProved => (22, Value::Empty),
+        Record::ScopeReapUnproved => (23, Value::Empty),
+        Record::ApplyIntent(index) => (24, Value::Number(index)),
+        Record::Applied(index) => (25, Value::Number(index)),
+        Record::AbortObserved => (26, Value::Empty),
+        Record::QuarantineObserved => (27, Value::Empty),
+        Record::Committed => (28, Value::Empty),
+        Record::RolledBack => (29, Value::Empty),
+        Record::Quarantined => (30, Value::Empty),
+        Record::RollbackIntent(index) => (31, Value::Number(index)),
+        Record::RollbackApplied(index) => (32, Value::Number(index)),
+        Record::DiscardIntent(index) => (33, Value::Number(index)),
+        Record::Discarded(index) => (34, Value::Number(index)),
     };
     let mut payload = vec![kind];
-    if let Some(value) = value {
-        payload.extend_from_slice(&value.to_le_bytes());
+    match value {
+        Value::Empty => {}
+        Value::Number(value) => payload.extend_from_slice(&value.to_le_bytes()),
+        Value::Receipt(receipt) => payload.extend_from_slice(&receipt),
     }
     payload
 }
@@ -393,6 +447,7 @@ fn recover_wal_file(mut file: File) -> io::Result<Recovered> {
     let mut previous = [0_u8; 32];
     let mut identity: Option<[u8; SANDBOX_ID_BYTES]> = None;
     let mut owner: Option<OwnerIdentity> = None;
+    let mut call_result_key: Option<[u8; CALL_RESULT_KEY_BYTES]> = None;
     let mut machine = Machine::new();
     let mut records = Vec::new();
     let mut torn_tail = false;
@@ -499,7 +554,7 @@ fn recover_wal_file(mut file: File) -> io::Result<Recovered> {
                     .ok_or_else(|| invalid("sandbox transaction owner start is missing"))?,
             ),
             boot: prefix
-                .get(OWNER_BOOT_OFFSET..WAL_PREFIX_BYTES)
+                .get(OWNER_BOOT_OFFSET..CALL_RESULT_KEY_OFFSET)
                 .and_then(|bytes| bytes.try_into().ok())
                 .ok_or_else(|| invalid("sandbox transaction owner boot is missing"))?,
         };
@@ -510,6 +565,14 @@ fn recover_wal_file(mut file: File) -> io::Result<Recovered> {
             return Err(invalid("sandbox transaction owner identity changed"));
         }
         owner = Some(frame_owner);
+        let frame_call_result_key: [u8; CALL_RESULT_KEY_BYTES] = prefix
+            .get(CALL_RESULT_KEY_OFFSET..WAL_PREFIX_BYTES)
+            .and_then(|bytes| bytes.try_into().ok())
+            .ok_or_else(|| invalid("sandbox transaction call-result key is missing"))?;
+        if call_result_key.is_some_and(|known| known != frame_call_result_key) {
+            return Err(invalid("sandbox transaction call-result key changed"));
+        }
+        call_result_key = Some(frame_call_result_key);
 
         let payload = bytes
             .get(prefix_end..checksum_start)
@@ -525,6 +588,17 @@ fn recover_wal_file(mut file: File) -> io::Result<Recovered> {
         return Err(invalid(
             "sandbox transaction journal has no initialized frame",
         ));
+    }
+    let recovered_key = call_result_key
+        .ok_or_else(|| invalid("sandbox transaction call-result key is unavailable"))?;
+    match records.first() {
+        Some(Record::Initialized(InvocationMode::Foreground)) if recovered_key == [0_u8; 32] => {}
+        Some(Record::Initialized(InvocationMode::Background)) => {}
+        _ => {
+            return Err(invalid(
+                "sandbox transaction call-result key does not match invocation mode",
+            ));
+        }
     }
     if torn_tail {
         file.set_len(
@@ -549,6 +623,7 @@ fn recover_wal_file(mut file: File) -> io::Result<Recovered> {
             identity: identity
                 .ok_or_else(|| invalid("sandbox transaction identity is unavailable"))?,
             owner: owner.ok_or_else(|| invalid("sandbox transaction owner is unavailable"))?,
+            call_result_key: recovered_key,
         },
     })
 }
@@ -576,7 +651,12 @@ fn decode_record(payload: &[u8]) -> io::Result<Record> {
         4 if payload.len() == 1 => Record::OwnerTransferred,
         5 if payload.len() == 1 => Record::GoSentOrAmbiguous,
         6 if payload.len() == 1 => Record::CallAcceptIntent,
-        7 if payload.len() == 1 => Record::CallAccepted,
+        7 if payload.len() == 33 => Record::CallAccepted(
+            payload
+                .get(1..33)
+                .and_then(|bytes| bytes.try_into().ok())
+                .ok_or_else(|| invalid("sandbox call-result receipt is missing"))?,
+        ),
         8 if payload.len() == 1 => Record::RefusalObserved,
         9 if payload.len() == 1 => Record::PreparationCleanupIntent,
         10 if payload.len() == 1 => Record::PreparationCleanupProved,
@@ -680,10 +760,12 @@ impl Machine {
                 mode == Some(InvocationMode::Background)
                     && matches!(
                         next,
-                        Record::CallAccepted | Record::AbortObserved | Record::QuarantineObserved
+                        Record::CallAccepted(_)
+                            | Record::AbortObserved
+                            | Record::QuarantineObserved
                     )
             }
-            Record::CallAccepted => matches!(
+            Record::CallAccepted(_) => matches!(
                 next,
                 Record::CommandExited | Record::AbortObserved | Record::QuarantineObserved
             ),
@@ -1312,7 +1394,7 @@ mod tests {
             Record::OwnerTransferred,
             Record::GoSentOrAmbiguous,
             Record::CallAcceptIntent,
-            Record::CallAccepted,
+            Record::CallAccepted([0x5a; 32]),
         ] {
             machine.push(record).expect("valid R8 prefix");
         }
@@ -1466,6 +1548,68 @@ mod tests {
         assert!(recovered.machine.is_terminal());
         assert!(!recovered.torn_tail);
         drop(sample);
+    }
+
+    #[test]
+    fn durable_background_frames_bind_the_result_key_and_acceptance_receipt() {
+        use std::os::unix::fs::DirBuilderExt as _;
+
+        let sample = crate::sample::Sample::new("sandbox-background-transaction-journal");
+        let state_root = sample.root().join("state");
+        let projection_root = sample.root().join("stage");
+        let mut builder = fs::DirBuilder::new();
+        builder.mode(0o700);
+        builder.create(&projection_root).expect("stage directory");
+        let lease = Lease::acquire_at(&state_root).expect("transaction lease");
+        let key = CallResultKey::from_digest([0x3c; 32]);
+        let receipt = [0x5a; 32];
+        let mut transaction = Transaction::start(
+            lease,
+            &projection_root,
+            SandboxId::new(),
+            InvocationMode::Background,
+            Some(key),
+        )
+        .expect("background transaction journal");
+        for record in [
+            Record::Prepared,
+            Record::ReleaseIntent,
+            Record::OwnerTransferred,
+            Record::GoSentOrAmbiguous,
+            Record::CallAcceptIntent,
+            Record::CallAccepted(receipt),
+        ] {
+            transaction.append(record).expect("journal record");
+        }
+        drop(transaction);
+
+        let recovered = recover_wal(&projection_root.join("transaction.wal"))
+            .expect("valid background journal");
+        assert_eq!(recovered.frame.call_result_key, key.bytes());
+        assert_eq!(
+            recovered.records.last(),
+            Some(&Record::CallAccepted(receipt))
+        );
+    }
+
+    #[test]
+    fn invocation_mode_and_durable_result_identity_cannot_disagree() {
+        assert!(Invocation::new(InvocationMode::Foreground, None).is_ok());
+        assert!(
+            Invocation::new(
+                InvocationMode::Background,
+                Some(CallResultKey::from_digest([1; 32]))
+            )
+            .is_ok()
+        );
+        assert!(
+            Invocation::new(
+                InvocationMode::Foreground,
+                Some(CallResultKey::from_digest([2; 32]))
+            )
+            .is_err()
+        );
+        assert!(Invocation::new(InvocationMode::Background, None).is_err());
     }
 
     #[test]
@@ -1682,6 +1826,7 @@ mod tests {
             &projection_root,
             SandboxId::new(),
             InvocationMode::Foreground,
+            None,
         )
         .expect("transaction journal");
         for record in records {
@@ -1720,9 +1865,14 @@ mod tests {
         let stage = base.join(format!("crucible-projection-{sandbox}"));
         create_private_test_directory(&stage);
         let lease = Lease::acquire_at(&sample.root().join("state")).expect("transaction lease");
-        let mut transaction =
-            Transaction::start_owned(lease, &stage, sandbox, InvocationMode::Foreground, owner)
-                .expect("transaction journal");
+        let mut transaction = Transaction::start_owned(
+            lease,
+            &stage,
+            sandbox,
+            Invocation::new(InvocationMode::Foreground, None).expect("foreground identity"),
+            owner,
+        )
+        .expect("transaction journal");
         for record in records {
             transaction.append(*record).expect("transaction record");
         }

@@ -434,6 +434,7 @@ dependencies = [
  "crucible-core",
  "crucible-privacy",
  "serde_json",
+ "sha2",
  "thiserror",
  "windows-sys 0.61.2",
 ]

@@ -8,9 +8,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    SandboxAudit, SandboxCleanup, SandboxFactKind, SandboxId, SandboxInspection, SandboxLifecycle,
-    SandboxOutput, SandboxProcess, SandboxRead, SandboxResourceLimits, SandboxUsage,
-    SandboxViolation,
+    CallResultKey, CallResultReceipt, SandboxAudit, SandboxCleanup, SandboxFactKind, SandboxId,
+    SandboxInspection, SandboxInvocationMode, SandboxLifecycle, SandboxOutput, SandboxProcess,
+    SandboxRead, SandboxResourceLimits, SandboxUsage, SandboxViolation, ToolContext, ToolResult,
 };
 
 use crate::bash::platform::{Output as PlatformOutput, ReadState, Scope, Terminator};
@@ -121,6 +121,8 @@ pub(super) struct SpawnPlan {
     pub(super) audit: SandboxAudit,
     pub(super) sandbox: SandboxId,
     pub(super) audit_started: bool,
+    pub(super) invocation: SandboxInvocationMode,
+    pub(super) call_result_key: Option<CallResultKey>,
 }
 
 /// Starts one command under an already negotiated process plan.
@@ -136,6 +138,8 @@ pub(super) fn spawn(
         audit,
         sandbox,
         audit_started,
+        invocation,
+        call_result_key,
     } = plan;
     command
         .stdin(Stdio::null())
@@ -242,6 +246,8 @@ pub(super) fn spawn(
         started,
         stopped: false,
         audit_state: AuditState::default(),
+        invocation,
+        call_result_key,
     }))
 }
 
@@ -477,6 +483,8 @@ struct LocalProcess {
     started: Instant,
     stopped: bool,
     audit_state: AuditState,
+    invocation: SandboxInvocationMode,
+    call_result_key: Option<CallResultKey>,
 }
 
 #[derive(Default)]
@@ -613,6 +621,24 @@ impl SandboxProcess for LocalProcess {
     fn violation(&self) -> Option<SandboxViolation> {
         self.control.violation()
     }
+
+    fn accept_background(
+        &mut self,
+        context: &ToolContext<'_>,
+        result: &ToolResult,
+    ) -> Result<CallResultReceipt, crucible_core::SandboxError> {
+        if self.invocation != SandboxInvocationMode::Background
+            || self.call_result_key.is_none()
+            || self.call_result_key != context.call_result_key()
+        {
+            return Err(crucible_core::SandboxError::Lifecycle(io::Error::other(
+                "sandbox background result identity is invalid",
+            )));
+        }
+        context
+            .put_call_result(result)
+            .map_err(|problem| crucible_core::SandboxError::Lifecycle(io::Error::other(problem)))
+    }
 }
 
 impl std::fmt::Debug for LocalProcess {
@@ -724,6 +750,8 @@ pub(crate) fn testing(
             audit: SandboxAudit::new(Ancestry::new(), ToolId::new("test-process")),
             sandbox,
             audit_started: true,
+            invocation: SandboxInvocationMode::Foreground,
+            call_result_key: None,
         },
     )
 }

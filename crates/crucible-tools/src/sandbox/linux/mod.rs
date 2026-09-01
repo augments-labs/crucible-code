@@ -222,6 +222,8 @@ impl SandboxSession for LinuxSession {
                 audit: self.request.audit().clone(),
                 sandbox: self.request.id(),
                 audit_started: false,
+                invocation: self.request.invocation_mode(),
+                call_result_key: self.request.call_result_key(),
             },
         );
         status_channel.close_writer();
@@ -241,6 +243,7 @@ impl SandboxSession for LinuxSession {
             audit: self.request.audit().clone(),
             sandbox: self.request.id(),
             invocation: self.request.invocation_mode(),
+            call_result_key: self.request.call_result_key(),
             owner_transferred: false,
             released: false,
         };
@@ -257,6 +260,7 @@ struct LinuxLaunch {
     audit: crucible_core::SandboxAudit,
     sandbox: crucible_core::SandboxId,
     invocation: SandboxInvocationMode,
+    call_result_key: Option<crucible_core::CallResultKey>,
     owner_transferred: bool,
     released: bool,
 }
@@ -367,25 +371,6 @@ impl SandboxLaunch for LinuxLaunch {
             self.released = true;
             return Err(SandboxError::Lifecycle(source));
         }
-        if self.invocation == SandboxInvocationMode::Background
-            && let Some(projection) = self.projection.as_mut()
-        {
-            for record in [
-                transaction::Record::CallAcceptIntent,
-                transaction::Record::CallAccepted,
-            ] {
-                if let Err(source) = projection.record(record) {
-                    let _ = process.stop();
-                    projection.retain_evidence();
-                    let _ = self.audit.record(
-                        self.sandbox,
-                        SandboxFactKind::Lifecycle(SandboxLifecycle::Quarantined),
-                    );
-                    self.released = true;
-                    return Err(SandboxError::Lifecycle(source));
-                }
-            }
-        }
         self.released = true;
         for lifecycle in [
             SandboxLifecycle::CommandReleased,
@@ -406,10 +391,14 @@ impl SandboxLaunch for LinuxLaunch {
         }
         let wrapped = projection::wrap(
             process,
-            self.projection.take(),
-            status_channel,
-            self.audit.clone(),
-            self.sandbox,
+            projection::ProcessPlan {
+                projection: self.projection.take(),
+                status_channel,
+                audit: self.audit.clone(),
+                sandbox: self.sandbox,
+                invocation: self.invocation,
+                call_result_key: self.call_result_key,
+            },
         );
         wrapped.map_err(SandboxError::Lifecycle)
     }

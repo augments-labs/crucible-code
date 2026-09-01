@@ -9,13 +9,21 @@
 use std::fs::File;
 use std::io;
 use std::path::Path;
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc::{Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
 
 use super::SessionError;
 
 /// Where the first write that failed is left for the main thread to find.
 pub(super) type Trouble = Arc<Mutex<Option<Box<str>>>>;
+
+/// One ordered request to the thread that owns the append handle.
+pub(super) enum Request {
+    /// Append one complete JSON line.
+    Line(Box<str>),
+    /// Flush every earlier line before acknowledging the caller.
+    Barrier(SyncSender<()>),
+}
 
 /// Appends every line that arrives until the session is dropped.
 ///
@@ -34,13 +42,22 @@ pub(super) type Trouble = Arc<Mutex<Option<Box<str>>>>;
 /// fragment onward nothing more is written: the file ends at the fragment,
 /// which the replay reads as a log torn at the tail, whole up to its last
 /// line.
-pub(super) fn write<W: io::Write>(mut sink: W, lines: &Receiver<Box<str>>, trouble: &Trouble) {
+pub(super) fn write<W: io::Write>(mut sink: W, lines: &Receiver<Request>, trouble: &Trouble) {
     // A line that landed whole and is still owed the newline that ends it.
     let mut torn = false;
     // A fragment landed mid-line, and the file must end where it ends.
     let mut dead = false;
 
-    for line in lines {
+    for request in lines {
+        let Request::Line(line) = request else {
+            if let Err(problem) = sink.flush() {
+                record(trouble, &problem);
+            }
+            if let Request::Barrier(done) = request {
+                let _ = done.send(());
+            }
+            continue;
+        };
         if dead {
             continue;
         }

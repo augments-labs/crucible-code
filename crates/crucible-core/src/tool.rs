@@ -407,6 +407,7 @@ pub struct ToolContext<'a> {
     deadline: Option<Instant>,
     watch: &'a dyn Watch,
     sandbox: crate::SandboxAudit,
+    call_result: Option<(crate::CallResultKey, &'a dyn crate::JournalStore)>,
 }
 
 impl<'a> ToolContext<'a> {
@@ -427,7 +428,25 @@ impl<'a> ToolContext<'a> {
             deadline,
             watch,
             sandbox,
+            call_result: None,
         }
+    }
+
+    /// Binds the call's source-qualified durable result identity and sink.
+    ///
+    /// The sink remains unreachable as a general journal: the tool can only
+    /// ask this context to store a result for its own fixed call identity.
+    #[must_use]
+    pub fn with_call_result_store(
+        mut self,
+        invocation: crate::InvocationId,
+        store: &'a dyn crate::JournalStore,
+    ) -> Self {
+        self.call_result = Some((
+            crate::CallResultKey::derive(self.ancestry, invocation, &self.call),
+            store,
+        ));
+        self
     }
 
     /// Builds a context around a host-created collector that may outlive a
@@ -463,6 +482,31 @@ impl<'a> ToolContext<'a> {
     #[must_use]
     pub const fn call(&self) -> &ToolId {
         &self.call
+    }
+
+    /// Source-qualified key fixed before this call began.
+    #[must_use]
+    pub fn call_result_key(&self) -> Option<crate::CallResultKey> {
+        self.call_result.map(|(key, _)| key)
+    }
+
+    /// Durably inserts this call's one result under its fixed identity.
+    ///
+    /// # Errors
+    ///
+    /// The context has no durable session, the result answers another call,
+    /// or the protected sink could not complete an idempotent insert.
+    pub fn put_call_result(
+        &self,
+        result: &crate::ToolResult,
+    ) -> Result<crate::CallResultReceipt, crate::CallResultStoreError> {
+        if result.id != self.call {
+            return Err(crate::CallResultStoreError::Invalid);
+        }
+        let (key, store) = self
+            .call_result
+            .ok_or(crate::CallResultStoreError::Unavailable)?;
+        store.put_call_result(key, result)
     }
 
     /// Cancellation local to this call and inherited from its run.

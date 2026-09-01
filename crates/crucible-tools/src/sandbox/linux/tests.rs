@@ -17,7 +17,7 @@ use crucible_core::{
     SandboxInvocationMode, SandboxLifecycle, SandboxManifest, SandboxManifestEntry, SandboxMode,
     SandboxNetworkEndpoint, SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxOutput,
     SandboxPolicy, SandboxProcess, SandboxRead, SandboxRequest, SandboxResourceLimits,
-    SandboxService, SandboxUnreadablePattern, ToolId,
+    SandboxService, SandboxUnreadablePattern, ToolId, ToolOutput, ToolResult,
 };
 
 use crate::LocalSandbox;
@@ -656,14 +656,25 @@ fn background_ownership_precedes_release_and_command_start() {
         return;
     }
     let sample = Sample::new("sandbox-background-owner-order");
+    let context = crate::sample::context_for("manifest");
     let request = request(&sample, SandboxManifest::empty())
-        .with_invocation_mode(SandboxInvocationMode::Background);
+        .with_invocation_mode(SandboxInvocationMode::Background)
+        .with_call_result_key(context.call_result_key().expect("durable result key"));
     let audit = request.audit().clone();
     let mut session = service.prepare(request).expect("prepared sandbox");
     session.materialize().expect("materialized workspace");
     let mut launch = session.stage(command("exit 0")).expect("staged launch");
     launch.transfer_owner().expect("application owner transfer");
-    let process = launch.release().expect("released launch");
+    let mut process = launch.release().expect("released launch");
+    process
+        .accept_background(
+            &context,
+            &ToolResult {
+                id: ToolId::new("manifest"),
+                output: ToolOutput::ok("accepted"),
+            },
+        )
+        .expect("durable acceptance");
     let (status, _, _) = finish(process);
     assert!(status.success(), "{status}");
 
@@ -700,8 +711,10 @@ fn background_release_without_an_application_owner_is_refused_before_go() {
         return;
     }
     let sample = Sample::new("sandbox-background-owner-required");
+    let context = crate::sample::context_for("manifest");
     let request = request(&sample, SandboxManifest::empty())
-        .with_invocation_mode(SandboxInvocationMode::Background);
+        .with_invocation_mode(SandboxInvocationMode::Background)
+        .with_call_result_key(context.call_result_key().expect("durable result key"));
     let audit = request.audit().clone();
     let mut session = service.prepare(request).expect("prepared sandbox");
     session.materialize().expect("materialized workspace");

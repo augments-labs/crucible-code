@@ -20,6 +20,9 @@ crucible-privacy.workspace = true
 # not be the one that wrote it. Hand-rolling that parser would be a second
 # place for a malformed line to become a panic.
 serde_json.workspace = true
+# Call-result receipts bind an idempotency key to the exact canonical result
+# record before a sandbox may report background acceptance.
+sha2.workspace = true
 # `SessionError`, which the wiring turns into something the user reads.
 thiserror.workspace = true
 

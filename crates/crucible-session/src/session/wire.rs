@@ -856,7 +856,7 @@ fn hashed(hash: &[u8; 32]) -> String {
     out
 }
 
-fn hash(value: &Value) -> Option<[u8; 32]> {
+pub(crate) fn hash(value: &Value) -> Option<[u8; 32]> {
     let mut hash = [0; 32];
     let mut written = value.as_str()?.bytes();
 
@@ -963,7 +963,7 @@ fn call(value: &Value) -> Option<ToolCall> {
 /// The count and not the lines. A log is a file on disk that outlives the
 /// session, and a line of a file that held a key is a key; two integers name
 /// nothing and are the whole of what a change header is written from.
-fn answered(result: &ToolResult) -> Value {
+pub(crate) fn answered(result: &ToolResult) -> Value {
     let mut object = serde_json::Map::new();
     object.insert("id".to_owned(), json!(result.id.as_str()));
     object.insert("failed".to_owned(), json!(result.output.is_failed()));
@@ -994,7 +994,7 @@ fn counted(change: &Value, name: &str) -> Option<usize> {
     usize::try_from(change.get(name)?.as_u64()?).ok()
 }
 
-fn result(value: &Value) -> Option<ToolResult> {
+pub(crate) fn result(value: &Value) -> Option<ToolResult> {
     let text = value.get("text")?.as_str()?;
     let failed = value.get("failed")?.as_bool()?;
 

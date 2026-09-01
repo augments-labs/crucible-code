@@ -180,10 +180,13 @@ impl Background {
         if standing.left.len().saturating_add(standing.reserved) >= MOST {
             return None;
         }
+        standing.counted = standing.counted.saturating_add(1);
+        let number = standing.counted;
         standing.reserved = standing.reserved.saturating_add(1);
         Some(Lease {
             standing: Arc::clone(&self.standing),
             held: true,
+            number,
         })
     }
 
@@ -200,22 +203,23 @@ impl Background {
         lease: Option<Lease>,
     ) -> Option<usize> {
         let mut standing = self.standing.lock().ok()?;
-        if let Some(mut lease) = lease {
+        let number = if let Some(mut lease) = lease {
             if !Arc::ptr_eq(&self.standing, &lease.standing) || !lease.consume_locked(&mut standing)
             {
                 let _ = super::output::end(taking.process.as_mut());
                 return None;
             }
+            lease.number
         } else if standing.left.len().saturating_add(standing.reserved) >= MOST {
             // Ended here rather than reported and forgotten. The caller has
             // already let go of it, so this is the last code that could, and a
             // command nobody can see or stop is the outcome the cap exists for.
             let _ = super::output::end(taking.process.as_mut());
             return None;
-        }
-
-        standing.counted = standing.counted.saturating_add(1);
-        let number = standing.counted;
+        } else {
+            standing.counted = standing.counted.saturating_add(1);
+            standing.counted
+        };
 
         standing.left.push(Left {
             called: called.into(),
@@ -365,9 +369,15 @@ impl Background {
 pub(super) struct Lease {
     standing: Arc<Mutex<Held>>,
     held: bool,
+    number: usize,
 }
 
 impl Lease {
+    /// Stable registry number reserved before the workload crosses GO.
+    pub(super) const fn number(&self) -> usize {
+        self.number
+    }
+
     fn consume_locked(&mut self, standing: &mut Held) -> bool {
         if !self.held || standing.reserved == 0 {
             return false;

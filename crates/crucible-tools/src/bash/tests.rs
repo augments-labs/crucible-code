@@ -795,10 +795,10 @@ fn one_press_lets_go_of_one_command_rather_than_every_command_after_it() {
 }
 
 #[test]
-fn a_command_that_fails_on_the_spot_is_reported_rather_than_left_running() {
-    // A command that is over before anybody could watch it is not a background
-    // command, whatever the call asked for — and the model needs the failure now
-    // rather than in a panel it has no way to open.
+fn an_explicit_background_call_keeps_acceptance_as_its_only_result_after_a_fast_exit() {
+    // Invocation mode is fixed before GO. Observing a fast exit must not race
+    // acceptance into a terminal tool result, because recovery would then have
+    // two possible owners for the one provider-projectable result.
     let sample = Sample::new("bash-background-failed");
     let left = Background::new();
     // A window this test can be sure of. The default is a judgement about a
@@ -817,16 +817,21 @@ fn a_command_that_fails_on_the_spot_is_reported_rather_than_left_running() {
         )
         .expect("the command started");
 
-    assert!(output.is_failed(), "{}", output.text());
+    assert!(!output.is_failed(), "{}", output.text());
     assert!(
-        output.text().contains("[exit status 7]"),
+        output.text().contains("left running as #1"),
         "{}",
         output.text()
     );
-    assert!(
-        left.running().is_empty(),
-        "a command that had exited was kept"
-    );
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let ended = loop {
+        let ended = left.reap();
+        if !ended.is_empty() || Instant::now() >= deadline {
+            break ended;
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+    assert_eq!(ended.first().and_then(|ended| ended.code), Some(7));
 }
 
 #[test]

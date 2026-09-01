@@ -12,12 +12,13 @@ use sha2::{Digest as _, Sha256};
 
 use crate::{
     Ancestry, Message, PromptCacheFact, SandboxFact, TOOL_ARGUMENT_BYTES, TOOL_CALL_ID_BYTES,
-    TOOL_NAME_BYTES, TOOL_RESULT_BYTES, ToolId, Transcript,
+    TOOL_NAME_BYTES, TOOL_RESULT_BYTES, ToolId, ToolResult, Transcript,
 };
 
-use crate::interruption::{InvocationRecord, JournalEntryId, PendingAction};
+use crate::interruption::{InvocationId, InvocationRecord, JournalEntryId, PendingAction};
 
 const COMPACTION_DIGEST_DOMAIN: &[u8] = b"crucible:journal-compaction:v1\0";
+const CALL_RESULT_KEY_DOMAIN: &[u8] = b"crucible:call-result-key:v1\0";
 
 /// Most framework records retained in one in-memory history.
 pub const MAX_RUN_ITEMS: usize = 4_096;
@@ -31,6 +32,92 @@ pub const MAX_RUN_HISTORY_BYTES: usize = 64 * 1_024 * 1_024;
 pub const MAX_CUSTOM_DATA_BYTES: usize = 32_768;
 /// Most bytes retained in one extension namespace, source, or response id.
 pub const MAX_JOURNAL_WORD_BYTES: usize = 256;
+
+/// Source-qualified identity under which one recorded call may own one result.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CallResultKey([u8; 32]);
+
+impl CallResultKey {
+    /// Restores a key from a protected persistence codec.
+    #[must_use]
+    pub const fn from_digest(digest: [u8; 32]) -> Self {
+        Self(digest)
+    }
+
+    /// Derives one stable key from the exact invocation, ancestry, and call.
+    #[must_use]
+    pub fn derive(ancestry: Ancestry, invocation: InvocationId, call: &ToolId) -> Self {
+        let mut digest = Sha256::new();
+        digest.update(CALL_RESULT_KEY_DOMAIN);
+        for field in [
+            ancestry.run().to_string(),
+            ancestry
+                .parent()
+                .map_or_else(String::new, |id| id.to_string()),
+            ancestry.root().to_string(),
+            ancestry.depth().to_string(),
+            invocation.to_string(),
+            call.as_str().to_owned(),
+        ] {
+            digest.update(u64::try_from(field.len()).unwrap_or(u64::MAX).to_be_bytes());
+            digest.update(field.as_bytes());
+        }
+        Self(digest.finalize().into())
+    }
+
+    /// Protected bytes used by persistence codecs and transaction journals.
+    #[must_use]
+    pub const fn bytes(self) -> [u8; 32] {
+        self.0
+    }
+}
+
+impl fmt::Debug for CallResultKey {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("CallResultKey([redacted])")
+    }
+}
+
+/// Durable receipt returned for an idempotently stored call result.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CallResultReceipt([u8; 32]);
+
+impl CallResultReceipt {
+    /// Creates a receipt from the sink's canonical payload digest.
+    #[must_use]
+    pub const fn from_digest(digest: [u8; 32]) -> Self {
+        Self(digest)
+    }
+
+    /// Protected digest bytes bound into the sandbox WAL.
+    #[must_use]
+    pub const fn bytes(self) -> [u8; 32] {
+        self.0
+    }
+}
+
+impl fmt::Debug for CallResultReceipt {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("CallResultReceipt([redacted])")
+    }
+}
+
+/// Why the one-result durable sink could not complete an idempotent insert.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum CallResultStoreError {
+    /// This run has no durable result store.
+    #[error("durable call-result storage is unavailable")]
+    Unavailable,
+    /// The key already names a different logical result.
+    #[error("call-result identity is already occupied by different content")]
+    Conflict,
+    /// The supplied key, call, or result crossed a storage invariant.
+    #[error("call-result record is invalid")]
+    Invalid,
+    /// The protected store could not durably complete its operation.
+    #[error("durable call-result storage failed")]
+    Storage,
+}
 
 /// Why framework history could not be retained or projected safely.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -575,6 +662,26 @@ pub trait SessionStore: Send + Sync {
 pub trait JournalStore: Send + Sync {
     /// Appends one already bounded framework record.
     fn append_run_item(&self, item: &RunItem);
+
+    /// Durably inserts one source-qualified result exactly once.
+    ///
+    /// Implementations must return the same receipt when the same key and
+    /// logical result are repeated, and [`CallResultStoreError::Conflict`]
+    /// when the key is already bound to different content. The default keeps
+    /// in-memory and test journals fail closed at a background-acceptance
+    /// boundary instead of pretending they are durable.
+    ///
+    /// # Errors
+    ///
+    /// Storage is unavailable, the key conflicts with different content, the
+    /// result is invalid, or the protected write could not complete durably.
+    fn put_call_result(
+        &self,
+        _key: CallResultKey,
+        _result: &ToolResult,
+    ) -> Result<CallResultReceipt, CallResultStoreError> {
+        Err(CallResultStoreError::Unavailable)
+    }
 }
 
 fn validate_projection(
