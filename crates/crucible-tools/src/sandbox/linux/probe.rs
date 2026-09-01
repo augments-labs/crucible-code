@@ -24,6 +24,7 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 const REQUIRED_OPTIONS: &[&str] = &[
     "--as-pid-1",
     "--bind",
+    "--bind-fd",
     "--cap-drop",
     "--chdir",
     "--chmod",
@@ -36,6 +37,7 @@ const REQUIRED_OPTIONS: &[&str] = &[
     "--proc",
     "--remount-ro",
     "--ro-bind",
+    "--ro-bind-fd",
     "--setenv",
     "--tmpfs",
     "--unshare-ipc",
@@ -246,6 +248,7 @@ fn capabilities() -> SandboxCapabilities {
         .with(SandboxFeature::ProcessIsolation, enforced)
         .with(SandboxFeature::KernelSurface, enforced)
         .with(SandboxFeature::PrivilegeIsolation, enforced)
+        .with(SandboxFeature::Materialization, enforced)
         .with(SandboxFeature::CommandTimeLimit, enforced)
         .with(SandboxFeature::OutputLimit, enforced)
         .with(SandboxFeature::ConcurrencyLimit, enforced)

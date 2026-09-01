@@ -245,6 +245,14 @@ impl SandboxManifest {
         }) {
             return Err(SandboxManifestError::DuplicateDestination);
         }
+        if entries.windows(2).any(|pair| {
+            pair.first().zip(pair.get(1)).is_some_and(|(left, right)| {
+                right.destination().starts_with(left.destination())
+                    && !matches!(left, SandboxManifestEntry::Directory { .. })
+            })
+        }) {
+            return Err(SandboxManifestError::OverlappingDestination);
+        }
         let digest = digest(&entries);
         Ok(Self {
             entries: entries.into_boxed_slice(),
@@ -369,6 +377,9 @@ pub enum SandboxManifestError {
     /// One destination has one owner.
     #[error("sandbox manifest contains a duplicate destination")]
     DuplicateDestination,
+    /// Only a directory entry may own a destination above another entry.
+    #[error("sandbox manifest contains an overlapping non-directory destination")]
+    OverlappingDestination,
     /// Protected/unreadable are policy carve-outs, not mount grants.
     #[error("sandbox manifest mounts must be read-only or read-write")]
     InvalidMountAccess,
@@ -424,6 +435,24 @@ mod tests {
     }
 
     #[test]
+    fn non_directory_destinations_cannot_hide_descendant_entries() {
+        let provenance = SandboxFilesystemProvenance::Manifest;
+        let file = SandboxManifestEntry::file("tree", Box::<[u8]>::from(&b"file"[..]), provenance)
+            .expect("file entry");
+        let child = SandboxManifestEntry::directory("tree/child", provenance).expect("child");
+        assert_eq!(
+            SandboxManifest::new([file, child]),
+            Err(SandboxManifestError::OverlappingDestination)
+        );
+
+        let directory = SandboxManifestEntry::directory("tree", provenance).expect("directory");
+        let child =
+            SandboxManifestEntry::file("tree/child", Box::<[u8]>::from(&b"child"[..]), provenance)
+                .expect("child");
+        assert!(SandboxManifest::new([directory, child]).is_ok());
+    }
+
+    #[test]
     fn manifest_debug_never_contains_inline_bytes_or_mount_sources() {
         let provenance = SandboxFilesystemProvenance::Manifest;
         let entry = SandboxManifestEntry::file(
@@ -433,5 +462,58 @@ mod tests {
         )
         .expect("entry");
         assert!(!format!("{entry:?}").contains("do-not-log-this"));
+
+        let mount = SandboxManifestEntry::mount(
+            "/workspace/private-source",
+            "mounted",
+            SandboxFilesystemAccess::ReadOnly,
+            provenance,
+        )
+        .expect("mount");
+        assert!(!format!("{mount:?}").contains("private-source"));
+    }
+
+    #[test]
+    fn manifest_entry_and_aggregate_bounds_are_enforced() {
+        let provenance = SandboxFilesystemProvenance::Manifest;
+        assert!(matches!(
+            SandboxManifestEntry::file(
+                "large",
+                vec![0_u8; MAX_SANDBOX_MANIFEST_FILE_BYTES + 1],
+                provenance,
+            ),
+            Err(SandboxManifestError::FileTooLarge)
+        ));
+
+        let entries = (0..=MAX_SANDBOX_MANIFEST_ENTRIES).map(|index| {
+            SandboxManifestEntry::directory(format!("directory-{index}"), provenance)
+                .expect("entry")
+        });
+        assert_eq!(
+            SandboxManifest::new(entries),
+            Err(SandboxManifestError::TooManyEntries)
+        );
+
+        let entries =
+            (0..=MAX_SANDBOX_MANIFEST_BYTES / MAX_SANDBOX_MANIFEST_FILE_BYTES).map(|index| {
+                SandboxManifestEntry::file(
+                    format!("file-{index}"),
+                    vec![0_u8; MAX_SANDBOX_MANIFEST_FILE_BYTES],
+                    provenance,
+                )
+                .expect("entry")
+            });
+        assert_eq!(
+            SandboxManifest::new(entries),
+            Err(SandboxManifestError::ManifestTooLarge)
+        );
+
+        assert!(SandboxManifestEntry::mount(
+            "/",
+            "root",
+            SandboxFilesystemAccess::ReadOnly,
+            provenance,
+        )
+        .is_err());
     }
 }

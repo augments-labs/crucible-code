@@ -59,11 +59,41 @@ impl Drop for Reservation {
     }
 }
 
+/// A generated staging tree removed on every session/process drop path.
+pub(super) struct Stage {
+    root: std::path::PathBuf,
+}
+
+impl Stage {
+    pub(super) fn new(root: std::path::PathBuf) -> Self {
+        Self { root }
+    }
+
+    pub(super) fn manifest(&self) -> std::path::PathBuf {
+        self.root.join("manifest")
+    }
+}
+
+impl std::fmt::Debug for Stage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Stage")
+            .field("root", &"[temporary sandbox path]")
+            .finish()
+    }
+}
+
+impl Drop for Stage {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
 /// Spawns `command` inside a platform process-tree scope.
 pub(super) fn spawn(
     mut command: Command,
     inspection: SandboxInspection,
     reservation: Reservation,
+    stage: Option<Stage>,
 ) -> Result<Box<dyn SandboxProcess>, crucible_core::SandboxError> {
     command
         .stdin(Stdio::null())
@@ -106,6 +136,7 @@ pub(super) fn spawn(
         stderr: stderr.map(|pipe| Box::new(pipe) as Box<dyn SandboxOutput>),
         inspection,
         reservation: Some(reservation),
+        stage,
         started: Instant::now(),
         stopped: false,
     }))
@@ -143,6 +174,7 @@ struct LocalProcess {
     stderr: Option<Box<dyn SandboxOutput>>,
     inspection: SandboxInspection,
     reservation: Option<Reservation>,
+    stage: Option<Stage>,
     started: Instant,
     stopped: bool,
 }
@@ -188,6 +220,7 @@ impl std::fmt::Debug for LocalProcess {
             .field("inspection", &self.inspection)
             .field("running", &!self.stopped)
             .field("reservation", &self.reservation)
+            .field("stage", &self.stage)
             .finish()
     }
 }
@@ -205,6 +238,7 @@ impl Drop for LocalProcess {
         }
         self.stdout.take();
         self.stderr.take();
+        self.stage.take();
         self.reservation.take();
     }
 }
@@ -250,5 +284,5 @@ pub(crate) fn testing(
     )?;
     let active = Arc::new(AtomicUsize::new(0));
     let reservation = Reservation::take(active, 1)?;
-    spawn(command, inspection, reservation)
+    spawn(command, inspection, reservation, None)
 }

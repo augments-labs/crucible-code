@@ -192,7 +192,7 @@ impl SandboxSession for CompatibilitySession {
             .env_clear()
             .envs(command.environment().iter());
         let reservation = self.reservation.take().ok_or(SandboxError::Concurrency)?;
-        super::process::spawn(process, self.inspection.clone(), reservation)
+        super::process::spawn(process, self.inspection.clone(), reservation, None)
     }
 }
 

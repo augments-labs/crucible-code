@@ -514,6 +514,26 @@ impl SandboxPolicy {
         self.snapshots
     }
 
+    /// Whether this effective policy grants `access` throughout `path`.
+    ///
+    /// Manifest mounts and descendant requests use this to prove that an alias
+    /// does not introduce a new host source or make an existing source more
+    /// writable than its parent authority.
+    #[must_use]
+    pub fn permits_path(&self, path: &Path, access: SandboxFilesystemAccess) -> bool {
+        validate_absolute_path(path).is_ok()
+            && effective_rule(&self.filesystem, path).is_some_and(|granted| {
+                access.authority() <= granted.access.authority()
+                    && !(access == SandboxFilesystemAccess::ReadOnly
+                        && granted.access == SandboxFilesystemAccess::Protected)
+            })
+            && self
+                .filesystem
+                .iter()
+                .filter(|rule| rule.path.starts_with(path))
+                .all(|rule| access.authority() <= rule.access.authority())
+    }
+
     /// Domain-separated policy identity for bounded inspection/checkpoints.
     ///
     /// Paths and endpoint names contribute only through this digest; callers
@@ -754,5 +774,31 @@ mod tests {
         };
         assert!(narrow.is_no_wider_than(parent));
         assert!(!SandboxResourceLimits::default().is_no_wider_than(parent));
+    }
+
+    #[test]
+    fn mount_aliases_cannot_bypass_narrower_descendant_rules() {
+        let protected = policy(
+            SandboxMode::Required,
+            vec![
+                rule("/workspace", SandboxFilesystemAccess::ReadWrite),
+                rule("/workspace/.git", SandboxFilesystemAccess::Protected),
+            ],
+        );
+        assert!(
+            !protected.permits_path(Path::new("/workspace"), SandboxFilesystemAccess::ReadWrite)
+        );
+        assert!(protected.permits_path(Path::new("/workspace"), SandboxFilesystemAccess::ReadOnly));
+
+        let unreadable = policy(
+            SandboxMode::Required,
+            vec![
+                rule("/workspace", SandboxFilesystemAccess::ReadWrite),
+                rule("/workspace/private", SandboxFilesystemAccess::Unreadable),
+            ],
+        );
+        assert!(
+            !unreadable.permits_path(Path::new("/workspace"), SandboxFilesystemAccess::ReadOnly)
+        );
     }
 }

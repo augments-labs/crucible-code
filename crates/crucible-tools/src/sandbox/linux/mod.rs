@@ -1,7 +1,12 @@
 //! Verified system-Bubblewrap Linux backend.
 
 mod command;
+mod fd;
+mod materialize;
 mod probe;
+
+#[cfg(test)]
+mod tests;
 
 use std::path::Path;
 use std::sync::Arc;
@@ -34,7 +39,7 @@ pub(super) fn prepare(
         .collect();
     let backend = probe::Bwrap::find(&excluded)?;
     request.negotiate(backend.capabilities())?;
-    command::validate(&request)?;
+    let view = command::prepare(&request)?;
 
     let maximum = request
         .policy()
@@ -59,6 +64,8 @@ pub(super) fn prepare(
         backend,
         inspection,
         reservation: Some(reservation),
+        view,
+        materialization: None,
         materialized: false,
     }))
 }
@@ -68,6 +75,8 @@ struct LinuxSession {
     backend: probe::Bwrap,
     inspection: SandboxInspection,
     reservation: Option<Reservation>,
+    view: command::View,
+    materialization: Option<materialize::Materialization>,
     materialized: bool,
 }
 
@@ -77,11 +86,10 @@ impl SandboxSession for LinuxSession {
     }
 
     fn materialize(&mut self) -> Result<(), SandboxError> {
-        if !self.request.manifest().is_empty() {
-            return Err(SandboxError::Unsupported {
-                feature: crucible_core::SandboxFeature::Materialization,
-            });
+        if self.materialized {
+            return Ok(());
         }
+        self.materialization = materialize::commit(&self.request)?;
         self.materialized = true;
         Ok(())
     }
@@ -96,9 +104,26 @@ impl SandboxSession for LinuxSession {
                 source: None,
             });
         }
-        let process = command::build(&self.backend, &self.request, &command)?;
+        let process = command::build(
+            &self.backend,
+            &self.request,
+            &command,
+            &self.view,
+            self.materialization.as_ref(),
+        )?;
         let reservation = self.reservation.take().ok_or(SandboxError::Concurrency)?;
-        super::process::spawn(process, self.inspection.clone(), reservation)
+        let mut mount_sources = self.view.sources();
+        let (stage, materialization_sources) = self
+            .materialization
+            .take()
+            .map(materialize::Materialization::split)
+            .map_or((None, Vec::new()), |(stage, sources)| {
+                (Some(stage), sources)
+            });
+        mount_sources.extend(materialization_sources);
+        let spawned = super::process::spawn(process, self.inspection.clone(), reservation, stage);
+        drop(mount_sources);
+        spawned
     }
 }
 
