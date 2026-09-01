@@ -81,6 +81,10 @@ impl Stage {
     pub(super) fn manifest(&self) -> std::path::PathBuf {
         self.root.join("manifest")
     }
+
+    pub(super) fn root(&self) -> &std::path::Path {
+        &self.root
+    }
 }
 
 impl std::fmt::Debug for Stage {

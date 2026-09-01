@@ -3,6 +3,7 @@
 use std::ffi::{OsStr, OsString};
 use std::net::TcpListener;
 use std::os::fd::AsRawFd;
+use std::os::unix::fs::MetadataExt as _;
 use std::os::unix::net::UnixListener;
 use std::process::ExitStatus;
 use std::thread;
@@ -81,6 +82,22 @@ fn read_ready(stream: &mut Option<Box<dyn SandboxOutput>>, bytes: &mut Vec<u8>) 
         SandboxRead::Pending => {}
         SandboxRead::End => *stream = None,
     }
+}
+
+fn wait_for_marker(
+    process: &mut dyn SandboxProcess,
+    output: &mut Option<Box<dyn SandboxOutput>>,
+    marker: &[u8],
+) -> Vec<u8> {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut bytes = Vec::new();
+    while !bytes.windows(marker.len()).any(|window| window == marker) {
+        read_ready(output, &mut bytes);
+        assert!(process.try_wait().expect("wait").is_none());
+        assert!(Instant::now() < deadline, "marker was not emitted in time");
+        thread::sleep(Duration::from_millis(10));
+    }
+    bytes
 }
 
 #[test]
@@ -178,6 +195,178 @@ fn explicit_writable_directory_mounts_preserve_parent_authority() {
             .expect("generated host file"),
         "after\n"
     );
+}
+
+#[test]
+fn writable_effects_stay_private_until_terminal_publication() {
+    let service = LocalSandbox::new();
+    if service.probe().is_err() {
+        return;
+    }
+    let sample = Sample::new("sandbox-private-writes");
+    let mut session = service
+        .prepare(request(&sample, SandboxManifest::empty()))
+        .expect("prepared sandbox");
+    session.materialize().expect("materialized workspace");
+    let mut process = session
+        .start(command(
+            "printf 'private\n' > delayed.txt; printf 'ready\n'; sleep 0.2",
+        ))
+        .expect("started command");
+    let mut stdout = process.take_stdout();
+    let _ = wait_for_marker(process.as_mut(), &mut stdout, b"ready\n");
+
+    assert!(
+        !sample.root().join("delayed.txt").exists(),
+        "writable effect reached the host before terminal publication"
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let status = loop {
+        if let Some(status) = process.try_wait().expect("wait") {
+            break status;
+        }
+        assert!(Instant::now() < deadline, "command did not terminate");
+        thread::sleep(Duration::from_millis(10));
+    };
+    process.stop().expect("cleanup");
+    assert!(status.success(), "{status}");
+    assert_eq!(
+        std::fs::read_to_string(sample.root().join("delayed.txt")).expect("published file"),
+        "private\n"
+    );
+}
+
+#[test]
+fn cancellation_discards_private_workspace_effects() {
+    let service = LocalSandbox::new();
+    if service.probe().is_err() {
+        return;
+    }
+    let sample = Sample::new("sandbox-cancelled-writes");
+    let mut session = service
+        .prepare(request(&sample, SandboxManifest::empty()))
+        .expect("prepared sandbox");
+    session.materialize().expect("materialized workspace");
+    let mut process = session
+        .start(command(
+            "printf 'discarded\n' > cancelled.txt; printf 'ready\n'; sleep 30",
+        ))
+        .expect("started command");
+    let mut stdout = process.take_stdout();
+    let _ = wait_for_marker(process.as_mut(), &mut stdout, b"ready\n");
+
+    assert!(!sample.root().join("cancelled.txt").exists());
+    process.stop().expect("cancel and clean scope");
+    assert!(
+        !sample.root().join("cancelled.txt").exists(),
+        "cancelled command published a private write"
+    );
+}
+
+#[test]
+fn signal_terminated_leader_discards_private_workspace_effects() {
+    let service = LocalSandbox::new();
+    if service.probe().is_err() {
+        return;
+    }
+    let sample = Sample::new("sandbox-signalled-writes");
+    let mut session = service
+        .prepare(request(&sample, SandboxManifest::empty()))
+        .expect("prepared sandbox");
+    session.materialize().expect("materialized workspace");
+    let (status, _, _) = finish(
+        session
+            .start(command(
+                "printf 'discarded\n' > signalled.txt; kill -TERM $$",
+            ))
+            .expect("started command"),
+    );
+
+    assert!(!status.success(), "leader unexpectedly exited successfully");
+    assert!(
+        !sample.root().join("signalled.txt").exists(),
+        "signal-terminated leader published a private write"
+    );
+}
+
+#[test]
+fn ordinary_nonzero_exit_publishes_valid_workspace_effects() {
+    let service = LocalSandbox::new();
+    if service.probe().is_err() {
+        return;
+    }
+    let sample = Sample::new("sandbox-nonzero-writes");
+    let mut session = service
+        .prepare(request(&sample, SandboxManifest::empty()))
+        .expect("prepared sandbox");
+    session.materialize().expect("materialized workspace");
+    let (status, _, _) = finish(
+        session
+            .start(command("printf 'published\n' > nonzero.txt; exit 17"))
+            .expect("started command"),
+    );
+
+    assert_eq!(status.code(), Some(17));
+    assert_eq!(
+        std::fs::read_to_string(sample.root().join("nonzero.txt")).expect("published file"),
+        "published\n"
+    );
+}
+
+#[test]
+fn ordinary_high_nonzero_exit_is_not_confused_with_signal_termination() {
+    let service = LocalSandbox::new();
+    if service.probe().is_err() {
+        return;
+    }
+    let sample = Sample::new("sandbox-high-nonzero-writes");
+    let mut session = service
+        .prepare(request(&sample, SandboxManifest::empty()))
+        .expect("prepared sandbox");
+    session.materialize().expect("materialized workspace");
+    let (status, _, _) = finish(
+        session
+            .start(command("printf 'published\n' > high-nonzero.txt; exit 143"))
+            .expect("started command"),
+    );
+
+    assert_eq!(status.code(), Some(143));
+    assert_eq!(
+        std::fs::read_to_string(sample.root().join("high-nonzero.txt")).expect("published file"),
+        "published\n"
+    );
+}
+
+#[test]
+fn complete_workspace_hardlink_groups_keep_one_projected_inode() {
+    let service = LocalSandbox::new();
+    if service.probe().is_err() {
+        return;
+    }
+    let sample = Sample::new("sandbox-hardlink-group");
+    sample.write("first.txt", "before\n");
+    std::fs::hard_link(
+        sample.root().join("first.txt"),
+        sample.root().join("second.txt"),
+    )
+    .expect("hardlink fixture");
+    let mut session = service
+        .prepare(request(&sample, SandboxManifest::empty()))
+        .expect("complete hardlink group is admissible");
+    session.materialize().expect("materialized workspace");
+    let (status, output, _) = finish(
+        session
+            .start(command("printf 'after\n' > first.txt; cat second.txt"))
+            .expect("started command"),
+    );
+
+    assert!(status.success(), "{status}");
+    assert_eq!(String::from_utf8(output).expect("utf8"), "after\n");
+    let first = std::fs::metadata(sample.root().join("first.txt")).expect("first metadata");
+    let second = std::fs::metadata(sample.root().join("second.txt")).expect("second metadata");
+    assert_eq!(first.ino(), second.ino());
+    assert_eq!(first.nlink(), 2);
 }
 
 #[test]
@@ -771,14 +960,11 @@ fn command_deadline_kills_the_complete_bubblewrap_process_tree() {
          else \
              /bin/sh -c 'sleep 30; :' {marker} & \
          fi; \
-         echo ready > descendant.ready; wait"
+         printf 'ready\n'; wait"
     );
     let mut process = session.start(command(&script)).expect("started command");
-    let ready_deadline = Instant::now() + Duration::from_millis(500);
-    while !sample.root().join("descendant.ready").exists() {
-        assert!(Instant::now() < ready_deadline, "descendant did not start");
-        thread::sleep(Duration::from_millis(5));
-    }
+    let mut stdout = process.take_stdout();
+    let _ = wait_for_marker(process.as_mut(), &mut stdout, b"ready\n");
     assert!(
         !live_processes_with_marker(&marker).is_empty(),
         "marker did not identify the live host descendant"

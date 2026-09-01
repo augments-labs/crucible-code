@@ -139,8 +139,10 @@ impl std::fmt::Debug for Materialization {
 /// so a later rename cannot retarget the mount.
 pub(super) struct PreparedMount {
     source: OwnedFd,
+    host: PathBuf,
     destination: std::path::PathBuf,
     access: SandboxFilesystemAccess,
+    directory: bool,
 }
 
 impl PreparedMount {
@@ -150,6 +152,14 @@ impl PreparedMount {
 
     pub(super) fn destination(&self) -> &Path {
         &self.destination
+    }
+
+    pub(super) fn host(&self) -> &Path {
+        &self.host
+    }
+
+    pub(super) const fn directory(&self) -> bool {
+        self.directory
     }
 
     pub(super) const fn access(&self) -> SandboxFilesystemAccess {
@@ -225,8 +235,10 @@ fn prepare_mount(
 
     Ok(PreparedMount {
         source,
+        host: canonical,
         destination: Path::new("/crucible/manifest").join(sandbox_destination),
         access,
+        directory: opened.is_dir(),
     })
 }
 

@@ -14,8 +14,10 @@ use crucible_core::{
     SandboxNetworkPolicy, SandboxRequest, SandboxUnreadablePattern,
 };
 
+use super::broker::Broker;
 use super::materialize::Materialization;
 use super::probe::Bwrap;
+use super::projection::Projection;
 
 /// Runtime roots that contain binaries and dynamic libraries, not user state.
 const RUNTIME_DIRECTORIES: &[&str] = &[
@@ -62,11 +64,8 @@ pub(super) struct View {
 }
 
 impl View {
-    pub(super) fn sources(&mut self) -> Vec<OwnedFd> {
-        std::mem::take(&mut self.binds)
-            .into_iter()
-            .map(|bind| bind.source)
-            .collect()
+    pub(super) fn binds(&self) -> &[Bind] {
+        &self.binds
     }
 }
 
@@ -79,8 +78,9 @@ impl std::fmt::Debug for View {
     }
 }
 
-struct Bind {
+pub(super) struct Bind {
     source: OwnedFd,
+    host: PathBuf,
     destination: PathBuf,
     read_only: bool,
     directory: bool,
@@ -141,14 +141,31 @@ impl Bind {
         })?;
         Ok(Self {
             source,
+            host: canonical,
             destination: mount.destination,
             read_only: mount.read_only,
             directory: opened.is_dir(),
         })
     }
 
-    fn descriptor(&self) -> RawFd {
+    pub(super) fn descriptor(&self) -> RawFd {
         self.source.as_raw_fd()
+    }
+
+    pub(super) fn host(&self) -> &Path {
+        &self.host
+    }
+
+    pub(super) fn destination(&self) -> &Path {
+        &self.destination
+    }
+
+    pub(super) const fn read_only(&self) -> bool {
+        self.read_only
+    }
+
+    pub(super) const fn directory(&self) -> bool {
+        self.directory
     }
 }
 
@@ -368,13 +385,29 @@ fn validate_host_for(rules: &[SandboxFilesystemRule], host: LinuxHost) -> Result
     Ok(())
 }
 
-pub(super) fn build(
-    backend: &Bwrap,
-    request: &SandboxRequest,
-    command: &SandboxCommand,
-    view: &View,
-    materialization: Option<&Materialization>,
-) -> Result<Command, SandboxError> {
+#[derive(Clone, Copy)]
+pub(super) struct Plan<'a> {
+    pub(super) backend: &'a Bwrap,
+    pub(super) broker: &'a Broker,
+    pub(super) request: &'a SandboxRequest,
+    pub(super) command: &'a SandboxCommand,
+    pub(super) view: &'a View,
+    pub(super) materialization: Option<&'a Materialization>,
+    pub(super) projection: Option<&'a Projection>,
+    pub(super) status_descriptor: RawFd,
+}
+
+pub(super) fn build(plan: Plan<'_>) -> Result<Command, SandboxError> {
+    let Plan {
+        backend,
+        broker,
+        request,
+        command,
+        view,
+        materialization,
+        projection,
+        status_descriptor,
+    } = plan;
     let runtime = runtime_mounts();
     let mut directories = BTreeSet::new();
     for mount in &runtime {
@@ -398,6 +431,7 @@ pub(super) fn build(
         Path::new("/proc"),
         Path::new("/tmp"),
         Path::new("/crucible-home"),
+        Path::new("/run/crucible"),
     ] {
         directories.insert(fixed.to_path_buf());
     }
@@ -412,6 +446,7 @@ pub(super) fn build(
         "--unshare-net",
         "--unshare-uts",
         "--disable-userns",
+        "--as-pid-1",
         "--tmpfs",
         "/",
     ]);
@@ -440,16 +475,31 @@ pub(super) fn build(
             .arg(&mount.source)
             .arg(&mount.destination);
     }
-    let mut inherited = Vec::new();
+    let mut inherited = vec![broker.descriptor(), status_descriptor];
+    process
+        .arg("--ro-bind-fd")
+        .arg(broker.descriptor().to_string())
+        .arg("/run/crucible/broker")
+        .arg("--sync-fd")
+        .arg(status_descriptor.to_string());
     for bind in &view.binds {
-        inherited.push(bind.descriptor());
+        let descriptor = if bind.read_only {
+            bind.descriptor()
+        } else {
+            projection
+                .and_then(|projection| projection.descriptor(bind.destination()))
+                .ok_or_else(|| {
+                    self::materialization("writable sandbox root was not projected", None)
+                })?
+        };
+        inherited.push(descriptor);
         process
             .arg(if bind.read_only {
                 "--ro-bind-fd"
             } else {
                 "--bind-fd"
             })
-            .arg(bind.descriptor().to_string())
+            .arg(descriptor.to_string())
             .arg(&bind.destination);
     }
     if let Some(materialization) = materialization {
@@ -459,18 +509,27 @@ pub(super) fn build(
             .arg(materialization.descriptor().to_string())
             .arg("/crucible/manifest");
         for mount in materialization.mounts() {
-            inherited.push(mount.descriptor());
+            let descriptor = match mount.access() {
+                SandboxFilesystemAccess::ReadOnly => mount.descriptor(),
+                SandboxFilesystemAccess::ReadWrite => projection
+                    .and_then(|projection| projection.descriptor(mount.destination()))
+                    .ok_or_else(|| {
+                        self::materialization("writable manifest mount was not projected", None)
+                    })?,
+                SandboxFilesystemAccess::Protected | SandboxFilesystemAccess::Unreadable => {
+                    return Err(SandboxError::Unsupported {
+                        feature: SandboxFeature::Materialization,
+                    });
+                }
+            };
+            inherited.push(descriptor);
             process
-                .arg(match mount.access() {
-                    SandboxFilesystemAccess::ReadOnly => "--ro-bind-fd",
-                    SandboxFilesystemAccess::ReadWrite => "--bind-fd",
-                    SandboxFilesystemAccess::Protected | SandboxFilesystemAccess::Unreadable => {
-                        return Err(SandboxError::Unsupported {
-                            feature: SandboxFeature::Materialization,
-                        });
-                    }
+                .arg(if mount.access() == SandboxFilesystemAccess::ReadOnly {
+                    "--ro-bind-fd"
+                } else {
+                    "--bind-fd"
                 })
-                .arg(mount.descriptor().to_string())
+                .arg(descriptor.to_string())
                 .arg(mount.destination());
         }
     }
@@ -501,6 +560,10 @@ pub(super) fn build(
     process
         .arg("--chdir")
         .arg(request.policy().working_directory())
+        .arg("--")
+        .arg("/run/crucible/broker")
+        .arg("--status-fd")
+        .arg(status_descriptor.to_string())
         .arg("--")
         .arg(command.program())
         .args(command.arguments());
@@ -581,6 +644,7 @@ fn validate_granted_tree(
         .map_err(|source| materialization("workspace root could not be inspected", Some(source)))?
         .dev();
     let mut protected = Vec::new();
+    let mut hard_links: BTreeMap<(u64, u64), (u64, usize, bool, bool)> = BTreeMap::new();
     let mut pending = VecDeque::from([(root.to_path_buf(), 0_usize)]);
     let mut inspected = 0_usize;
     while let Some((directory, depth)) = pending.pop_front() {
@@ -623,11 +687,25 @@ fn validate_granted_tree(
                 ));
             }
             if metadata.is_file() {
-                if metadata.nlink() != 1 {
-                    return Err(materialization(
-                        "workspace tree contains a hard-linked file",
-                        None,
-                    ));
+                if metadata.nlink() > 1 {
+                    let is_protected = protects_metadata
+                        && path.strip_prefix(root).is_ok_and(|relative| {
+                            relative
+                                .components()
+                                .any(|component| protected_name(component.as_os_str()))
+                        });
+                    let observation = hard_links
+                        .entry((metadata.dev(), metadata.ino()))
+                        .or_insert((metadata.nlink(), 0, false, false));
+                    if observation.0 != metadata.nlink() {
+                        return Err(materialization(
+                            "workspace hard-link identity changed during preparation",
+                            None,
+                        ));
+                    }
+                    observation.1 = observation.1.saturating_add(1);
+                    observation.2 |= is_protected;
+                    observation.3 |= !is_protected;
                 }
                 if protects_metadata && protected_name(&name) {
                     protected.push(path);
@@ -652,6 +730,17 @@ fn validate_granted_tree(
                 None,
             ));
         }
+    }
+    if hard_links
+        .values()
+        .any(|(links, observed, protected, ordinary)| {
+            usize::try_from(*links) != Ok(*observed) || (*protected && *ordinary)
+        })
+    {
+        return Err(materialization(
+            "workspace hard-link group escapes its projected authority",
+            None,
+        ));
     }
     Ok(protected)
 }

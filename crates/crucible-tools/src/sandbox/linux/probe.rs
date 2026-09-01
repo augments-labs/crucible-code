@@ -42,6 +42,7 @@ const REQUIRED_OPTIONS: &[&str] = &[
     "--ro-bind",
     "--ro-bind-fd",
     "--setenv",
+    "--sync-fd",
     "--tmpfs",
     "--unshare-ipc",
     "--unshare-net",

@@ -1,9 +1,11 @@
 //! Verified system-Bubblewrap Linux backend.
 
+mod broker;
 mod command;
 mod fd;
 mod materialize;
 mod probe;
+mod projection;
 
 #[cfg(test)]
 mod tests;
@@ -25,6 +27,7 @@ pub(super) fn probe(
     excluded: &[&Path],
 ) -> Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError> {
     let backend = probe::Bwrap::find(excluded)?;
+    let _broker = broker::Broker::find(excluded)?;
     Ok((backend.identity().clone(), backend.capabilities().clone()))
 }
 
@@ -45,6 +48,7 @@ pub(super) fn prepare(
         .map(crucible_core::SandboxFilesystemRule::path)
         .collect();
     let backend = probe::Bwrap::find(&excluded)?;
+    let broker = broker::Broker::find(&excluded)?;
     request.negotiate(backend.capabilities())?;
     let view = command::prepare(&request)?;
 
@@ -72,6 +76,7 @@ pub(super) fn prepare(
     Ok(Box::new(LinuxSession {
         request,
         backend,
+        broker,
         inspection,
         reservation: Some(reservation),
         view,
@@ -84,6 +89,7 @@ pub(super) fn prepare(
 struct LinuxSession {
     request: SandboxRequest,
     backend: probe::Bwrap,
+    broker: broker::Broker,
     inspection: SandboxInspection,
     reservation: Option<Reservation>,
     view: command::View,
@@ -159,13 +165,29 @@ impl SandboxSession for LinuxSession {
                 return Err(SandboxError::Guardrail);
             }
         }
-        let process = match command::build(
-            &self.backend,
+        let projection = match projection::Projection::prepare(
             &self.request,
-            &command,
             &self.view,
             self.materialization.as_ref(),
         ) {
+            Ok(projection) => projection,
+            Err(problem) => {
+                self.record_start_failure(&problem)?;
+                return Err(problem);
+            }
+        };
+        let mut status_channel = broker::StatusChannel::pair().map_err(SandboxError::Spawn)?;
+        let status_descriptor = status_channel.descriptor().map_err(SandboxError::Spawn)?;
+        let process = match command::build(command::Plan {
+            backend: &self.backend,
+            broker: &self.broker,
+            request: &self.request,
+            command: &command,
+            view: &self.view,
+            materialization: self.materialization.as_ref(),
+            projection: projection.as_ref(),
+            status_descriptor,
+        }) {
             Ok(process) => process,
             Err(problem) => {
                 self.record_start_failure(&problem)?;
@@ -177,7 +199,6 @@ impl SandboxSession for LinuxSession {
             self.record_start_failure(&problem)?;
             return Err(problem);
         };
-        let mut mount_sources = self.view.sources();
         let (stage, materialization_sources) = self
             .materialization
             .take()
@@ -185,7 +206,6 @@ impl SandboxSession for LinuxSession {
             .map_or((None, Vec::new()), |(stage, sources)| {
                 (Some(stage), sources)
             });
-        mount_sources.extend(materialization_sources);
         let spawned = super::process::spawn(
             process,
             super::process::SpawnPlan {
@@ -197,11 +217,12 @@ impl SandboxSession for LinuxSession {
                 sandbox: self.request.id(),
             },
         );
-        drop(mount_sources);
+        status_channel.close_writer();
+        drop(materialization_sources);
         match spawned {
             Ok(process) => {
                 self.transferred = true;
-                Ok(process)
+                Ok(projection::wrap(process, projection, status_channel))
             }
             Err(problem) => {
                 self.record_start_failure(&problem)?;

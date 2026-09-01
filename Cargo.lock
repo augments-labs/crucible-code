@@ -420,6 +420,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "crucible-sandbox-broker"
+version = "0.33.0"
+dependencies = [
+ "rustix",
+]
+
+[[package]]
 name = "crucible-session"
 version = "0.33.0"
 dependencies = [
@@ -435,6 +442,7 @@ name = "crucible-tools"
 version = "0.33.0"
 dependencies = [
  "crucible-core",
+ "crucible-sandbox-broker",
  "globset",
  "grep-regex",
  "grep-searcher",
