@@ -6,7 +6,7 @@ mod publish;
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, FileTimes, OpenOptions};
-use std::io::{self, Read};
+use std::io::{self, Read, Seek as _, SeekFrom, Write};
 use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _};
 use std::os::unix::process::ExitStatusExt as _;
@@ -17,6 +17,7 @@ use crucible_core::{
     SandboxError, SandboxFilesystemAccess, SandboxInspection, SandboxOutput, SandboxProcess,
     SandboxRequest, SandboxUsage, SandboxViolation,
 };
+use crucible_sandbox_broker::MAX_SCAN_EXTENTS;
 use sha2::{Digest as _, Sha256};
 
 use super::super::process::Stage;
@@ -44,6 +45,7 @@ enum Entry {
         modified: Option<std::time::SystemTime>,
         length: u64,
         digest: [u8; 32],
+        extents: Vec<(u64, u64)>,
         linked_to: Option<PathBuf>,
         payload: Option<PathBuf>,
     },
@@ -69,6 +71,7 @@ impl PartialEq for Entry {
                     modified: left_modified,
                     length: left_length,
                     digest: left_digest,
+                    extents: left_extents,
                     linked_to: left_link,
                     payload: _,
                 },
@@ -77,6 +80,7 @@ impl PartialEq for Entry {
                     modified: right_modified,
                     length: right_length,
                     digest: right_digest,
+                    extents: right_extents,
                     linked_to: right_link,
                     payload: _,
                 },
@@ -85,6 +89,7 @@ impl PartialEq for Entry {
                     && left_modified == right_modified
                     && left_length == right_length
                     && left_digest == right_digest
+                    && left_extents == right_extents
                     && left_link == right_link
             }
             (Self::Symlink(left), Self::Symlink(right)) => left == right,
@@ -331,6 +336,7 @@ impl SnapshotBuilder {
                 modified: metadata.modified().ok(),
                 length: metadata.len(),
                 digest: digest_file(&path)?,
+                extents: sparse_extents(&path, metadata.len())?,
                 linked_to,
                 payload: None,
             }
@@ -393,9 +399,69 @@ fn copy_file(source: &Path, destination: &Path) -> io::Result<()> {
     options.write(true).create_new(true);
     options.mode(0o600);
     let mut output = options.open(destination)?;
+    let metadata = fs::metadata(source)?;
+    let extents = sparse_extents(source, metadata.len())?;
+    output.set_len(metadata.len())?;
     let mut input = File::open(source)?;
-    io::copy(&mut input, &mut output)?;
+    let mut buffer = vec![0_u8; 64 * 1024].into_boxed_slice();
+    for (offset, length) in extents {
+        input.seek(SeekFrom::Start(offset))?;
+        output.seek(SeekFrom::Start(offset))?;
+        copy_exact(&mut input, &mut output, length, &mut buffer)?;
+    }
     output.sync_all()
+}
+
+fn sparse_extents(path: &Path, length: u64) -> io::Result<Vec<(u64, u64)>> {
+    use rustix::fs::SeekFrom as RustixSeekFrom;
+    use rustix::io::Errno;
+
+    let file = File::open(path)?;
+    let mut extents = Vec::new();
+    let mut cursor = 0_u64;
+    while cursor < length {
+        let data = match rustix::fs::seek(&file, RustixSeekFrom::Data(cursor)) {
+            Ok(data) => data,
+            Err(Errno::NXIO) => break,
+            Err(problem) => return Err(problem.into()),
+        };
+        if data >= length {
+            break;
+        }
+        let hole = rustix::fs::seek(&file, RustixSeekFrom::Hole(data))?.min(length);
+        if hole <= data {
+            return Err(io::Error::other("file extent map did not advance"));
+        }
+        extents.push((data, hole.saturating_sub(data)));
+        if extents.len() > MAX_SCAN_EXTENTS {
+            return Err(io::Error::other("file extent count exceeds its bound"));
+        }
+        cursor = hole;
+    }
+    Ok(extents)
+}
+
+fn copy_exact(
+    source: &mut impl Read,
+    destination: &mut impl Write,
+    mut remaining: u64,
+    buffer: &mut [u8],
+) -> io::Result<()> {
+    while remaining > 0 {
+        let maximum = u64::try_from(buffer.len())
+            .map_err(|_| io::Error::other("copy buffer length is invalid"))?;
+        let wanted = usize::try_from(remaining.min(maximum))
+            .map_err(|_| io::Error::other("copy chunk length is invalid"))?;
+        let chunk = buffer
+            .get_mut(..wanted)
+            .ok_or_else(|| io::Error::other("copy chunk exceeded its buffer"))?;
+        source.read_exact(chunk)?;
+        destination.write_all(chunk)?;
+        remaining = remaining.saturating_sub(
+            u64::try_from(wanted).map_err(|_| io::Error::other("copy byte count overflow"))?,
+        );
+    }
+    Ok(())
 }
 
 fn copy_metadata(source: &Path, destination: &Path, directory: bool) -> io::Result<()> {

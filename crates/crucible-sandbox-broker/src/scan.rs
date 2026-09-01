@@ -3,20 +3,22 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, FileTimes, OpenOptions};
-use std::io::{self, Read as _, Write as _};
+use std::io::{self, Read, Seek as _, SeekFrom, Write};
 use std::os::unix::ffi::{OsStrExt as _, OsStringExt as _};
 use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 
 use crucible_sandbox_broker::{
-    ENTRY_DIRECTORY, ENTRY_FILE, ENTRY_SYMLINK, MAX_SCAN_ENTRIES, MAX_SCAN_PATH_BYTES,
-    MAX_SCAN_ROOTS, MAX_SCAN_SYMLINK_BYTES, SCAN_END_FRAME, SCAN_FRAME,
+    ENTRY_DIRECTORY, ENTRY_FILE, ENTRY_SYMLINK, MAX_SCAN_ENTRIES, MAX_SCAN_EXTENTS,
+    MAX_SCAN_PATH_BYTES, MAX_SCAN_ROOTS, MAX_SCAN_SYMLINK_BYTES, SCAN_END_FRAME, SCAN_FRAME,
 };
 use sha2::{Digest as _, Sha256};
 
 const MAX_SCAN_DEPTH: usize = 64;
 const COPY_BUFFER_BYTES: usize = 64 * 1024;
 const RESERVED_PREFIX: &[u8] = b".crucible-sandbox-";
+
+type ContentKey = (u64, [u8; 32], Vec<(u64, u64)>);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Snapshot {
@@ -37,6 +39,7 @@ enum Entry {
         mtime_nanoseconds: u32,
         length: u64,
         digest: [u8; 32],
+        extents: Vec<(u64, u64)>,
         linked_to: Option<Vec<u8>>,
     },
     Symlink(Vec<u8>),
@@ -139,7 +142,7 @@ fn write_snapshot(
     channel: &mut File,
     root: &Path,
     snapshot: &Snapshot,
-    baseline_content: &BTreeSet<(u64, [u8; 32])>,
+    baseline_content: &BTreeSet<ContentKey>,
     payloads: bool,
 ) -> io::Result<()> {
     write_u32(channel, bounded_u32(snapshot.entries.len(), "entry count")?)?;
@@ -160,20 +163,28 @@ fn write_snapshot(
                 mtime_nanoseconds,
                 length,
                 digest,
+                extents,
                 linked_to,
             } => {
                 write_u8(channel, ENTRY_FILE)?;
                 write_metadata(channel, *mode, *mtime_seconds, *mtime_nanoseconds)?;
                 write_u64(channel, *length)?;
                 write_bytes(channel, digest)?;
+                write_extents(channel, extents)?;
                 write_optional_path(channel, linked_to.as_deref())?;
                 let payload = payloads
                     && linked_to.is_none()
-                    && !baseline_content.contains(&(*length, *digest));
+                    && !baseline_content.contains(&(*length, *digest, extents.clone()));
                 write_u8(channel, u8::from(payload))?;
                 if payload {
-                    write_u64(channel, *length)?;
-                    stream_file(channel, &root.join(raw_path(path)), *length, *digest)?;
+                    write_u64(channel, extent_bytes(extents)?)?;
+                    stream_file(
+                        channel,
+                        &root.join(raw_path(path)),
+                        *length,
+                        *digest,
+                        extents,
+                    )?;
                 }
             }
             Entry::Symlink(target) => {
@@ -185,12 +196,17 @@ fn write_snapshot(
     Ok(())
 }
 
-fn baseline_content(snapshot: &Snapshot) -> BTreeSet<(u64, [u8; 32])> {
+fn baseline_content(snapshot: &Snapshot) -> BTreeSet<ContentKey> {
     snapshot
         .entries
         .values()
         .filter_map(|entry| match entry {
-            Entry::File { length, digest, .. } => Some((*length, *digest)),
+            Entry::File {
+                length,
+                digest,
+                extents,
+                ..
+            } => Some((*length, *digest, extents.clone())),
             Entry::Directory { .. } | Entry::Symlink(_) => None,
         })
         .collect()
@@ -285,6 +301,7 @@ impl Builder {
                 mtime_nanoseconds: nanoseconds,
                 length: metadata.len(),
                 digest: digest_file(&path)?,
+                extents: sparse_extents(&path, metadata.len())?,
                 linked_to,
             }
         } else if metadata.file_type().is_symlink() {
@@ -336,9 +353,7 @@ fn normalize_hard_links(root: &Path, snapshot: &Snapshot) -> io::Result<()> {
         let mut options = OpenOptions::new();
         options.write(true).create_new(true).mode(0o600);
         let mut output = options.open(&temporary)?;
-        let mut input = File::open(&source)?;
-        io::copy(&mut input, &mut output)?;
-        output.sync_all()?;
+        copy_sparse(&source, &mut output)?;
         copy_metadata(&source, &temporary)?;
         for relative in paths {
             fs::remove_file(root.join(relative))?;
@@ -370,6 +385,80 @@ fn copy_metadata(source: &Path, destination: &Path) -> io::Result<()> {
         .set_times(times)
 }
 
+fn sparse_extents(path: &Path, length: u64) -> io::Result<Vec<(u64, u64)>> {
+    use rustix::fs::SeekFrom as RustixSeekFrom;
+    use rustix::io::Errno;
+
+    let file = File::open(path)?;
+    let mut extents = Vec::new();
+    let mut cursor = 0_u64;
+    while cursor < length {
+        let data = match rustix::fs::seek(&file, RustixSeekFrom::Data(cursor)) {
+            Ok(data) => data,
+            Err(Errno::NXIO) => break,
+            Err(problem) => return Err(problem.into()),
+        };
+        if data >= length {
+            break;
+        }
+        let hole = rustix::fs::seek(&file, RustixSeekFrom::Hole(data))?.min(length);
+        if hole <= data {
+            return Err(invalid("file extent map did not advance"));
+        }
+        extents.push((data, hole.saturating_sub(data)));
+        if extents.len() > MAX_SCAN_EXTENTS {
+            return Err(invalid("file extent count exceeds its bound"));
+        }
+        cursor = hole;
+    }
+    Ok(extents)
+}
+
+fn copy_sparse(source: &Path, destination: &mut File) -> io::Result<()> {
+    let metadata = fs::metadata(source)?;
+    let extents = sparse_extents(source, metadata.len())?;
+    destination.set_len(metadata.len())?;
+    let mut input = File::open(source)?;
+    let mut buffer = vec![0_u8; COPY_BUFFER_BYTES].into_boxed_slice();
+    for (offset, length) in extents {
+        input.seek(SeekFrom::Start(offset))?;
+        destination.seek(SeekFrom::Start(offset))?;
+        copy_exact(&mut input, destination, length, &mut buffer)?;
+    }
+    destination.sync_all()
+}
+
+fn copy_exact(
+    source: &mut impl Read,
+    destination: &mut impl Write,
+    mut remaining: u64,
+    buffer: &mut [u8],
+) -> io::Result<()> {
+    while remaining > 0 {
+        let wanted = usize::try_from(remaining.min(
+            u64::try_from(buffer.len()).map_err(|_| invalid("copy buffer length is invalid"))?,
+        ))
+        .map_err(|_| invalid("copy chunk length is invalid"))?;
+        let chunk = buffer
+            .get_mut(..wanted)
+            .ok_or_else(|| invalid("copy chunk exceeded its buffer"))?;
+        source.read_exact(chunk)?;
+        destination.write_all(chunk)?;
+        remaining = remaining.saturating_sub(
+            u64::try_from(wanted).map_err(|_| invalid("copy byte count overflow"))?,
+        );
+    }
+    Ok(())
+}
+
+fn extent_bytes(extents: &[(u64, u64)]) -> io::Result<u64> {
+    extents.iter().try_fold(0_u64, |total, (_, length)| {
+        total
+            .checked_add(*length)
+            .ok_or_else(|| invalid("file extent bytes overflow"))
+    })
+}
+
 fn digest_file(path: &Path) -> io::Result<[u8; 32]> {
     let mut file = File::open(path)?;
     let mut digest = Sha256::new();
@@ -392,30 +481,29 @@ fn stream_file(
     path: &Path,
     expected_length: u64,
     expected_digest: [u8; 32],
+    extents: &[(u64, u64)],
 ) -> io::Result<()> {
     let mut file = File::open(path)?;
-    let mut digest = Sha256::new();
-    let mut written = 0_u64;
     let mut buffer = vec![0_u8; COPY_BUFFER_BYTES].into_boxed_slice();
-    loop {
-        let read = file.read(&mut buffer)?;
-        if read == 0 {
-            break;
-        }
-        let bytes = buffer
-            .get(..read)
-            .ok_or_else(|| invalid("payload read exceeded its buffer"))?;
-        digest.update(bytes);
-        channel.write_all(bytes)?;
-        written = written.saturating_add(
-            u64::try_from(read).map_err(|_| invalid("payload byte count overflow"))?,
-        );
-        if written > expected_length {
-            return Err(invalid("payload exceeded its declared length"));
-        }
+    for (offset, length) in extents {
+        file.seek(SeekFrom::Start(*offset))?;
+        copy_exact(&mut file, channel, *length, &mut buffer)?;
     }
-    if written != expected_length || <[u8; 32]>::from(digest.finalize()) != expected_digest {
+    let metadata = file.metadata()?;
+    if metadata.len() != expected_length || digest_file(path)? != expected_digest {
         return Err(invalid("payload changed after the terminal semantic scan"));
+    }
+    Ok(())
+}
+
+fn write_extents(channel: &mut File, extents: &[(u64, u64)]) -> io::Result<()> {
+    if extents.len() > MAX_SCAN_EXTENTS {
+        return Err(invalid("file extent count exceeds its bound"));
+    }
+    write_u32(channel, bounded_u32(extents.len(), "extent count")?)?;
+    for (offset, length) in extents {
+        write_u64(channel, *offset)?;
+        write_u64(channel, *length)?;
     }
     Ok(())
 }

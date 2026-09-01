@@ -7,9 +7,9 @@ use std::io;
 use std::os::unix::fs::{PermissionsExt as _, symlink};
 use std::path::{Path, PathBuf};
 
-use super::{Entry, Root, Snapshot, copy_file, digest_file, snapshot_filtered};
+use super::{Entry, Root, Snapshot, copy_file, digest_file, snapshot_filtered, sparse_extents};
 
-type ContentKey = (u64, [u8; 32]);
+type ContentKey = (u64, [u8; 32], Vec<(u64, u64)>);
 
 pub(super) fn reconcile(
     roots: &[Root],
@@ -108,6 +108,7 @@ fn merge_entry(host: &Entry, broker: &Entry, final_entry: &Entry) -> Entry {
                 modified: host_modified,
                 length: host_length,
                 digest: host_digest,
+                extents: host_extents,
                 linked_to: host_link,
                 payload: _,
             },
@@ -116,6 +117,7 @@ fn merge_entry(host: &Entry, broker: &Entry, final_entry: &Entry) -> Entry {
                 modified: broker_modified,
                 length: broker_length,
                 digest: broker_digest,
+                extents: broker_extents,
                 linked_to: broker_link,
                 payload: _,
             },
@@ -124,37 +126,47 @@ fn merge_entry(host: &Entry, broker: &Entry, final_entry: &Entry) -> Entry {
                 modified: final_modified,
                 length: final_length,
                 digest: final_digest,
+                extents: final_extents,
                 linked_to: final_link,
                 payload,
             },
-        ) => Entry::File {
-            mode: if final_mode == broker_mode {
-                *host_mode
-            } else {
-                *final_mode
-            },
-            modified: if final_modified == broker_modified {
-                *host_modified
-            } else {
-                *final_modified
-            },
-            length: if final_length == broker_length {
-                *host_length
-            } else {
-                *final_length
-            },
-            digest: if final_digest == broker_digest {
-                *host_digest
-            } else {
-                *final_digest
-            },
-            linked_to: if final_link == broker_link {
-                host_link.clone()
-            } else {
-                final_link.clone()
-            },
-            payload: payload.clone(),
-        },
+        ) => {
+            let unchanged_content = (final_length, final_digest, final_extents)
+                == (broker_length, broker_digest, broker_extents);
+            Entry::File {
+                mode: if final_mode == broker_mode {
+                    *host_mode
+                } else {
+                    *final_mode
+                },
+                modified: if final_modified == broker_modified {
+                    *host_modified
+                } else {
+                    *final_modified
+                },
+                length: if unchanged_content {
+                    *host_length
+                } else {
+                    *final_length
+                },
+                digest: if unchanged_content {
+                    *host_digest
+                } else {
+                    *final_digest
+                },
+                extents: if unchanged_content {
+                    host_extents.clone()
+                } else {
+                    final_extents.clone()
+                },
+                linked_to: if final_link == broker_link {
+                    host_link.clone()
+                } else {
+                    final_link.clone()
+                },
+                payload: payload.clone(),
+            }
+        }
         (Entry::Symlink(host), Entry::Symlink(broker), Entry::Symlink(final_target)) => {
             if final_target == broker {
                 Entry::Symlink(host.clone())
@@ -278,23 +290,30 @@ impl Prepared {
         let mut contents = ContentStore::new(directory.to_path_buf());
 
         for path in &changed {
-            if let Some(Entry::File { length, digest, .. }) = root.baseline.entries.get(path) {
+            if let Some(Entry::File {
+                length,
+                digest,
+                extents,
+                ..
+            }) = root.baseline.entries.get(path)
+            {
                 let source = root_path(&root.host, path);
-                contents.retain((*length, *digest), &source)?;
+                contents.retain((*length, *digest, extents.clone()), &source)?;
             }
         }
         for path in &changed {
             let Some(Entry::File {
                 length,
                 digest,
+                extents,
                 payload,
                 ..
             }) = desired.entries.get(path)
             else {
                 continue;
             };
-            let key = (*length, *digest);
-            if contents.contains(key) {
+            let key = (*length, *digest, extents.clone());
+            if contents.contains(&key) {
                 continue;
             }
             if let Some(payload) = payload {
@@ -323,12 +342,12 @@ impl ContentStore {
         }
     }
 
-    fn contains(&self, key: ContentKey) -> bool {
-        self.files.contains_key(&key)
+    fn contains(&self, key: &ContentKey) -> bool {
+        self.files.contains_key(key)
     }
 
     fn retain(&mut self, key: ContentKey, source: &Path) -> io::Result<()> {
-        if self.contains(key) {
+        if self.contains(&key) {
             return Ok(());
         }
         let destination = self.directory.join(self.files.len().to_string());
@@ -339,14 +358,14 @@ impl ContentStore {
             }
             Err(problem) => return Err(problem),
         }
-        verify_content(&destination, key)?;
+        verify_content(&destination, &key)?;
         self.files.insert(key, destination);
         Ok(())
     }
 
-    fn get(&self, key: ContentKey) -> io::Result<&Path> {
+    fn get(&self, key: &ContentKey) -> io::Result<&Path> {
         self.files
-            .get(&key)
+            .get(key)
             .map(PathBuf::as_path)
             .ok_or_else(|| invalid("publication content was not staged"))
     }
@@ -485,6 +504,7 @@ fn apply_file(
     let Entry::File {
         length,
         digest,
+        extents,
         linked_to: None,
         ..
     } = entry
@@ -495,7 +515,8 @@ fn apply_file(
     if current == Some(entry) {
         return apply_metadata(&target, entry, false);
     }
-    let source = contents.get((*length, *digest))?;
+    let key = (*length, *digest, extents.clone());
+    let source = contents.get(&key)?;
     let temporary = temporary_path(&target, "file")?;
     remove_if_present(&temporary)?;
     copy_file(source, &temporary)?;
@@ -553,7 +574,12 @@ fn content_sources(host: &Path, snapshot: &Snapshot) -> BTreeMap<ContentKey, Pat
         .entries
         .iter()
         .filter_map(|(path, entry)| match entry {
-            Entry::File { length, digest, .. } => Some(((*length, *digest), root_path(host, path))),
+            Entry::File {
+                length,
+                digest,
+                extents,
+                ..
+            } => Some(((*length, *digest, extents.clone()), root_path(host, path))),
             Entry::Directory { .. } | Entry::Symlink(_) => None,
         })
         .collect()
@@ -573,9 +599,12 @@ fn validate_root_shape(root: &Root, snapshot: &Snapshot) -> io::Result<()> {
     }
 }
 
-fn verify_content(path: &Path, expected: ContentKey) -> io::Result<()> {
+fn verify_content(path: &Path, expected: &ContentKey) -> io::Result<()> {
     let metadata = fs::metadata(path)?;
-    if metadata.len() != expected.0 || digest_file(path)? != expected.1 {
+    if metadata.len() != expected.0
+        || digest_file(path)? != expected.1
+        || sparse_extents(path, metadata.len())? != expected.2
+    {
         return Err(invalid(
             "staged publication content does not match its seal",
         ));

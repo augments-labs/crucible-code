@@ -495,6 +495,36 @@ fn complete_workspace_hardlink_groups_keep_one_projected_inode() {
 }
 
 #[test]
+fn a_new_sparse_file_keeps_its_holes_after_terminal_publication() {
+    let service = LocalSandbox::new();
+    if service.probe().is_err() {
+        return;
+    }
+    let sample = Sample::new("sandbox-sparse-publication");
+    let mut session = service
+        .prepare(request(&sample, SandboxManifest::empty()))
+        .expect("prepared sandbox");
+    session.materialize().expect("materialized workspace");
+    let (status, _, errors) = finish(
+        session
+            .start(command(
+                "truncate -s 8388608 sparse.bin; \
+                 printf x | dd of=sparse.bin bs=1 seek=8388607 conv=notrunc status=none",
+            ))
+            .expect("started command"),
+    );
+
+    assert!(status.success(), "{}", String::from_utf8_lossy(&errors));
+    let metadata = std::fs::metadata(sample.root().join("sparse.bin")).expect("sparse metadata");
+    assert_eq!(metadata.len(), 8 * 1024 * 1024);
+    assert!(
+        metadata.blocks().saturating_mul(512) < 128 * 1024,
+        "terminal publication expanded sparse holes into {} allocated bytes",
+        metadata.blocks().saturating_mul(512)
+    );
+}
+
+#[test]
 fn dropping_a_staged_launch_refuses_it_before_go_and_completes_cleanup() {
     let service = LocalSandbox::new();
     if service.probe().is_err() {

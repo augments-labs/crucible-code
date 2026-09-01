@@ -42,6 +42,9 @@ pub const MAX_SCAN_PATH_BYTES: usize = 16 * 1024;
 /// Maximum byte length of a retained symbolic-link target.
 pub const MAX_SCAN_SYMLINK_BYTES: usize = 16 * 1024;
 
+/// Maximum ordered data extents retained for one regular file.
+pub const MAX_SCAN_EXTENTS: usize = 131_072;
+
 /// Wire tag for a directory semantic record.
 pub const ENTRY_DIRECTORY: u8 = 1;
 

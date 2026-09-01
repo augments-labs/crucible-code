@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
-use std::io::{self, Read as _, Write as _};
+use std::io::{self, Read as _, Seek as _, SeekFrom, Write as _};
 use std::os::unix::ffi::OsStringExt as _;
 use std::os::unix::fs::OpenOptionsExt as _;
 use std::os::unix::net::UnixStream;
@@ -14,12 +14,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crucible_sandbox_broker::{
     BROKER_FAILURE_STATUS, ENTRY_DIRECTORY, ENTRY_FILE, ENTRY_SYMLINK, MAX_SCAN_ENTRIES,
-    MAX_SCAN_PATH_BYTES, MAX_SCAN_ROOTS, MAX_SCAN_SYMLINK_BYTES, SCAN_END_FRAME, SCAN_FRAME,
-    WAIT_STATUS_BYTES, decode_wait_status,
+    MAX_SCAN_EXTENTS, MAX_SCAN_PATH_BYTES, MAX_SCAN_ROOTS, MAX_SCAN_SYMLINK_BYTES, SCAN_END_FRAME,
+    SCAN_FRAME, WAIT_STATUS_BYTES, decode_wait_status,
 };
-use sha2::{Digest as _, Sha256};
 
-use super::{Entry, Snapshot};
+use super::{Entry, Snapshot, digest_file};
 
 const COPY_BUFFER_BYTES: usize = 64 * 1024;
 const MAX_SCAN_DEPTH: usize = 64;
@@ -164,17 +163,18 @@ fn read_file(
     let length = read_u64(stream)?;
     let mut digest = [0_u8; 32];
     stream.read_exact(&mut digest)?;
+    let extents = read_extents(stream, length)?;
     let linked_to = read_optional_path(stream)?;
     let payload = match read_u8(stream)? {
         0 => None,
         1 if allow_payload && linked_to.is_none() => {
             let payload_length = read_u64(stream)?;
-            if payload_length != length {
+            if payload_length != extent_bytes(&extents)? {
                 return Err(invalid("terminal payload length does not match its record"));
             }
             let path =
                 payload_path.ok_or_else(|| invalid("terminal payload path is unavailable"))?;
-            Some(read_payload(stream, path, length, digest)?)
+            Some(read_payload(stream, path, length, digest, &extents)?)
         }
         1 if !allow_payload => {
             return Err(invalid("pre-release baseline cannot carry file payloads"));
@@ -187,8 +187,42 @@ fn read_file(
         modified,
         length,
         digest,
+        extents,
         linked_to,
         payload,
+    })
+}
+
+fn read_extents(stream: &mut UnixStream, length: u64) -> io::Result<Vec<(u64, u64)>> {
+    let count = bounded_usize(read_u32(stream)?, MAX_SCAN_EXTENTS, "extent count")?;
+    let mut extents = Vec::with_capacity(count);
+    let mut previous_end = 0_u64;
+    for _ in 0..count {
+        let offset = read_u64(stream)?;
+        let extent_length = read_u64(stream)?;
+        if extent_length == 0 {
+            return Err(invalid("terminal file contains an empty data extent"));
+        }
+        let end = offset
+            .checked_add(extent_length)
+            .ok_or_else(|| invalid("terminal file extent overflows its length"))?;
+        if offset < previous_end {
+            return Err(invalid("terminal file extents overlap or are out of order"));
+        }
+        if end > length {
+            return Err(invalid("terminal file extent exceeds its logical length"));
+        }
+        extents.push((offset, extent_length));
+        previous_end = end;
+    }
+    Ok(extents)
+}
+
+fn extent_bytes(extents: &[(u64, u64)]) -> io::Result<u64> {
+    extents.iter().try_fold(0_u64, |total, (_, length)| {
+        total
+            .checked_add(*length)
+            .ok_or_else(|| invalid("terminal file extent bytes overflow"))
     })
 }
 
@@ -229,28 +263,31 @@ fn read_payload(
     path: &Path,
     length: u64,
     expected_digest: [u8; 32],
+    extents: &[(u64, u64)],
 ) -> io::Result<PathBuf> {
     let mut options = OpenOptions::new();
     options.write(true).create_new(true).mode(0o600);
     let mut output = options.open(path)?;
-    let mut digest = Sha256::new();
-    let mut remaining = length;
+    output.set_len(length)?;
     let mut buffer = vec![0_u8; COPY_BUFFER_BYTES].into_boxed_slice();
-    while remaining > 0 {
-        let wanted = usize::try_from(remaining.min(COPY_BUFFER_BYTES as u64))
-            .map_err(|_| invalid("payload chunk length is out of range"))?;
-        let bytes = buffer
-            .get_mut(..wanted)
-            .ok_or_else(|| invalid("payload chunk exceeded its buffer"))?;
-        stream.read_exact(bytes)?;
-        digest.update(&*bytes);
-        output.write_all(bytes)?;
-        remaining = remaining.saturating_sub(
-            u64::try_from(wanted).map_err(|_| invalid("payload byte count overflow"))?,
-        );
+    for (offset, extent_length) in extents {
+        output.seek(SeekFrom::Start(*offset))?;
+        let mut remaining = *extent_length;
+        while remaining > 0 {
+            let wanted = usize::try_from(remaining.min(COPY_BUFFER_BYTES as u64))
+                .map_err(|_| invalid("payload chunk length is out of range"))?;
+            let bytes = buffer
+                .get_mut(..wanted)
+                .ok_or_else(|| invalid("payload chunk exceeded its buffer"))?;
+            stream.read_exact(bytes)?;
+            output.write_all(bytes)?;
+            remaining = remaining.saturating_sub(
+                u64::try_from(wanted).map_err(|_| invalid("payload byte count overflow"))?,
+            );
+        }
     }
     output.sync_all()?;
-    if <[u8; 32]>::from(digest.finalize()) != expected_digest {
+    if digest_file(path)? != expected_digest {
         return Err(invalid("terminal payload digest does not match its record"));
     }
     Ok(path.to_path_buf())
@@ -263,6 +300,7 @@ fn validate_links(entries: &BTreeMap<PathBuf, Entry>) -> io::Result<()> {
             modified,
             length,
             digest,
+            extents,
             linked_to: Some(linked_to),
             payload: _,
         } = entry
@@ -277,14 +315,21 @@ fn validate_links(entries: &BTreeMap<PathBuf, Entry>) -> io::Result<()> {
             modified: anchor_modified,
             length: anchor_length,
             digest: anchor_digest,
+            extents: anchor_extents,
             linked_to: None,
             payload: _,
         }) = entries.get(linked_to)
         else {
             return Err(invalid("hard-link anchor is missing or itself an alias"));
         };
-        if (mode, modified, length, digest)
-            != (anchor_mode, anchor_modified, anchor_length, anchor_digest)
+        if (mode, modified, length, digest, extents)
+            != (
+                anchor_mode,
+                anchor_modified,
+                anchor_length,
+                anchor_digest,
+                anchor_extents,
+            )
         {
             return Err(invalid("hard-link alias metadata differs from its anchor"));
         }
@@ -387,6 +432,7 @@ fn bounded_usize(value: u32, maximum: usize, field: &'static str) -> io::Result<
             "root count" => "terminal root count exceeds its bound",
             "root index" => "terminal root index exceeds its bound",
             "entry count" => "terminal entry count exceeds its bound",
+            "extent count" => "terminal file extent count exceeds its bound",
             _ => "terminal path length exceeds its bound",
         }));
     }
