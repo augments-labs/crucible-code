@@ -424,6 +424,7 @@ name = "crucible-sandbox-broker"
 version = "0.33.0"
 dependencies = [
  "rustix",
+ "sha2",
 ]
 
 [[package]]

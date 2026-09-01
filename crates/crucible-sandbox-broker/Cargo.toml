@@ -10,10 +10,15 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+# Complete pre/post-overlay content seals decide which bounded file payloads
+# cross back to the host. This is the workspace's existing SHA-256 primitive.
+sha2.workspace = true
+
 # The inherited status channel must become close-on-exec before the workload
-# starts. std cannot change descriptor flags; this is the workspace's existing
-# safe Linux system-call boundary.
-rustix.workspace = true
+# starts, and PID 1 must kill/reap the complete workload scope before scanning.
+# std covers neither operation; this is the workspace's existing safe Linux
+# system-call boundary.
+rustix = { workspace = true, features = ["process"] }
 
 [[bin]]
 name = "crucible-sandbox-broker"
