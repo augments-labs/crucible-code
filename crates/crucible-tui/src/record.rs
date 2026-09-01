@@ -270,15 +270,20 @@ impl Record {
     /// A `\n` ends the line it is in rather than being drawn, and text with no
     /// `\n` in it continues whatever line is open — which is what makes a delta
     /// arriving mid-word land in the same line as the word it finishes.
-    pub(crate) fn write(&mut self, slot: Slot, text: &str) {
+    /// `link` is where the run goes when it is clicked, and `None` is the run
+    /// that goes nowhere — which is nearly all of them. Carried alongside
+    /// rather than written into the text, so a run that wraps stays one address
+    /// on both of its rows and a row that is measured is measured in the
+    /// columns a reader can see.
+    pub(crate) fn write(&mut self, slot: Slot, text: &str, link: Option<&str>) {
         let mut rest = text;
         while let Some(at) = rest.find('\n') {
-            self.extend(slot, &rest[..at]);
+            self.extend(slot, &rest[..at], link);
             self.close();
             rest = &rest[at + 1..];
         }
         if !rest.is_empty() {
-            self.extend(slot, rest);
+            self.extend(slot, rest, link);
         }
     }
 
@@ -371,17 +376,25 @@ impl Record {
     }
 
     /// Add `text` to the open line, opening one if none is.
-    fn extend(&mut self, slot: Slot, text: &str) {
+    fn extend(&mut self, slot: Slot, text: &str, link: Option<&str>) {
         if let (true, Some(Line::Flowed(row))) = (self.open, self.lines.back_mut()) {
-            row.push(slot, text);
+            Self::push_run(row, slot, text, link);
             self.remeasure();
             return;
         }
 
         let mut row = Row::new();
-        row.push(slot, text);
+        Self::push_run(&mut row, slot, text, link);
         self.put(Line::Flowed(row));
         self.open = true;
+    }
+
+    /// Appends one run, with or without somewhere for it to go.
+    fn push_run(row: &mut Row, slot: Slot, text: &str, link: Option<&str>) {
+        match link {
+            Some(link) => row.push_linked(slot, text, link),
+            None => row.push(slot, text),
+        }
     }
 
     /// End the open line, so the next text starts a new one.
@@ -1093,7 +1106,7 @@ mod tests {
     fn filled(columns: usize, lines: usize) -> Record {
         let mut record = Record::new(columns);
         for line in 0..lines {
-            record.write(Slot::Plain, &format!("{line}\n"));
+            record.write(Slot::Plain, &format!("{line}\n"), None);
         }
         record
     }
@@ -1119,9 +1132,9 @@ mod tests {
         // showing and the other every row showing that line, so a pointer on
         // any row of a wrapped line is pointing at the whole of it.
         let mut record = Record::new(8);
-        record.write(Slot::Plain, "one\n");
-        record.write(Slot::Plain, "a line that takes several rows\n");
-        record.write(Slot::Plain, "last\n");
+        record.write(Slot::Plain, "one\n", None);
+        record.write(Slot::Plain, "a line that takes several rows\n", None);
+        record.write(Slot::Plain, "last\n", None);
 
         let rows = 12;
         for row in 0..rows {
@@ -1160,7 +1173,7 @@ mod tests {
             }),
         );
         record.landmark();
-        record.write(Slot::Plain, "after\n");
+        record.write(Slot::Plain, "after\n", None);
         let after = record.landmarks.front().copied().expect("a landmark");
         assert_eq!(after, 1, "one responsive block is one logical line");
 
@@ -1178,12 +1191,12 @@ mod tests {
             RETAINED_ROW_BYTES * (MOST - 1),
             Box::new(|_| vec![Row::plain("large retained source")]),
         );
-        record.write(Slot::Plain, "newest\n");
+        record.write(Slot::Plain, "newest\n", None);
 
         assert_eq!(record.weight, MOST);
         assert_eq!(record.lines.len(), 2);
 
-        record.write(Slot::Plain, "one more\n");
+        record.write(Slot::Plain, "one more\n", None);
 
         assert_eq!(record.weight, 2);
         assert_eq!(record.lines.len(), 2);
@@ -1194,7 +1207,7 @@ mod tests {
     fn a_record_that_was_emptied_has_nothing_left_of_what_it_held() {
         let mut record = Record::new(8);
         record.opens(ruler());
-        record.write(Slot::Plain, "said\n");
+        record.write(Slot::Plain, "said\n", None);
 
         record.empties();
 
@@ -1211,7 +1224,7 @@ mod tests {
     fn a_subordinate_block_gets_one_mark_and_aligned_continuations() {
         let mut record = Record::new(80);
         let from = record.lines();
-        record.write(Slot::Plain, "first\nsecond\n");
+        record.write(Slot::Plain, "first\nsecond\n", None);
 
         record.subordinate(from, "⎿");
 
@@ -1267,7 +1280,7 @@ mod tests {
     fn literal_art_at_the_start_of_a_result_still_gets_the_structural_mark() {
         let mut record = Record::new(80);
         let from = record.lines();
-        record.write(Slot::Plain, "⎿ literal\n");
+        record.write(Slot::Plain, "⎿ literal\n", None);
 
         record.subordinate(from, "⎿");
 
@@ -1277,9 +1290,9 @@ mod tests {
     #[test]
     fn a_subordinate_block_that_starts_after_old_rows_leaves_them_alone() {
         let mut record = Record::new(80);
-        record.write(Slot::Plain, "before\n");
+        record.write(Slot::Plain, "before\n", None);
         let from = record.lines();
-        record.write(Slot::Plain, "answer\n");
+        record.write(Slot::Plain, "answer\n", None);
 
         record.subordinate(from, "⎿");
 
@@ -1294,7 +1307,7 @@ mod tests {
             8,
             Box::new(|columns| vec![Row::plain(format!("at {columns}"))]),
         );
-        record.write(Slot::Plain, "after\n");
+        record.write(Slot::Plain, "after\n", None);
         record.subordinate(from, "⎿");
 
         assert_eq!(said(&record, 8), ["⎿ at 8", "  after"]);
@@ -1317,7 +1330,7 @@ mod tests {
         let mut record = Record::new(80);
         let from = record.lines();
         record.empties();
-        record.write(Slot::Plain, "new opening\n");
+        record.write(Slot::Plain, "new opening\n", None);
 
         record.subordinate(from, "⎿");
 
@@ -1336,7 +1349,7 @@ mod tests {
         // it named, and names nothing once that line has gone — rather than
         // quietly naming whatever was written in its place. The extra number is
         // the reset boundary itself.
-        record.write(Slot::Plain, "after\n");
+        record.write(Slot::Plain, "after\n", None);
         assert_eq!(record.lines(), numbered + 2);
         assert_eq!(said(&record, 8), ["after"]);
     }
@@ -1345,7 +1358,7 @@ mod tests {
     fn the_opening_is_laid_out_again_when_the_window_changes() {
         let mut record = Record::new(8);
         record.opens(ruler());
-        record.write(Slot::Plain, "after\n");
+        record.write(Slot::Plain, "after\n", None);
 
         record.resized(5);
 
@@ -1358,7 +1371,7 @@ mod tests {
         let mut record = Record::new(8);
         record.opens(ruler());
         for line in 0..6 {
-            record.write(Slot::Plain, &format!("said {line}\n"));
+            record.write(Slot::Plain, &format!("said {line}\n"), None);
         }
 
         // Above the foot, so the reader's place is a spot rather than a
@@ -1382,7 +1395,7 @@ mod tests {
         let mut record = Record::new(8);
         record.opens(ruler());
         record.landmark();
-        record.write(Slot::Plain, "the prompt\n");
+        record.write(Slot::Plain, "the prompt\n", None);
         let before = record.landmarks.front().copied().expect("a landmark");
 
         record.resized(5);
@@ -1397,7 +1410,7 @@ mod tests {
         let mut record = Record::new(8);
         record.opens(ruler());
         for line in 0..6 {
-            record.write(Slot::Plain, &format!("said {line}\n"));
+            record.write(Slot::Plain, &format!("said {line}\n"), None);
         }
 
         // Four rows into the card, which is a row the shorter card does not
@@ -1432,10 +1445,10 @@ mod tests {
     #[test]
     fn what_the_record_says_it_is_tall_is_what_its_lines_come_to() {
         let mut record = Record::new(10);
-        record.write(Slot::Plain, "a word that will not fit in ten\n");
-        record.write(Slot::Plain, "short\n");
+        record.write(Slot::Plain, "a word that will not fit in ten\n", None);
+        record.write(Slot::Plain, "short\n", None);
         record.lay([set("a set row that is far wider than ten columns")]);
-        record.write(Slot::Accent, "and more");
+        record.write(Slot::Accent, "and more", None);
 
         assert_eq!(record.rows, counted(&record));
         let tall: usize = record.tall.iter().map(|&t| usize::from(t)).sum();
@@ -1445,13 +1458,13 @@ mod tests {
     #[test]
     fn a_line_that_grows_past_the_width_grows_the_record_with_it() {
         let mut record = Record::new(10);
-        record.write(Slot::Plain, "one");
+        record.write(Slot::Plain, "one", None);
         assert_eq!(record.rows, 1);
 
         // The same line, now too long for one row: the height kept beside it
         // has to be worked out again, or the record is a row short for the
         // rest of the session.
-        record.write(Slot::Plain, " two three four five");
+        record.write(Slot::Plain, " two three four five", None);
 
         assert!(record.rows > 1);
         assert_eq!(record.rows, counted(&record));
@@ -1460,9 +1473,9 @@ mod tests {
     #[test]
     fn a_delta_that_stops_mid_word_lands_in_the_line_the_word_is_in() {
         let mut record = Record::new(40);
-        record.write(Slot::Plain, "hel");
-        record.write(Slot::Plain, "lo wor");
-        record.write(Slot::Plain, "ld");
+        record.write(Slot::Plain, "hel", None);
+        record.write(Slot::Plain, "lo wor", None);
+        record.write(Slot::Plain, "ld", None);
 
         assert_eq!(said(&record, 4), ["hello world"]);
     }
@@ -1470,7 +1483,7 @@ mod tests {
     #[test]
     fn a_newline_ends_the_line_it_is_in_and_is_never_drawn() {
         let mut record = Record::new(40);
-        record.write(Slot::Plain, "one\ntwo\n");
+        record.write(Slot::Plain, "one\ntwo\n", None);
 
         // Two, not three. The trailing newline ends the line it is in and
         // opens nothing: on a screen this process owns, the row a cursor sits
@@ -1520,9 +1533,10 @@ mod tests {
         record.write(
             Slot::Plain,
             "one two three four five six seven eight nine ten\n",
+            None,
         );
-        record.write(Slot::Plain, "short\n");
-        record.write(Slot::Plain, "another short\n");
+        record.write(Slot::Plain, "short\n", None);
+        record.write(Slot::Plain, "another short\n", None);
         let span = record.map_span(1).expect("the record to scroll");
 
         assert!(record.map_seek(span, 1, 3, 1));
@@ -1537,7 +1551,7 @@ mod tests {
         let mut record = Record::new(40);
         for line in 0..MOST + MOST_LANDMARKS * 2 {
             record.landmark();
-            record.write(Slot::Plain, &format!("line {line}\n"));
+            record.write(Slot::Plain, &format!("line {line}\n"), None);
         }
 
         assert_eq!(record.landmarks.len(), MOST_LANDMARKS);
@@ -1547,10 +1561,10 @@ mod tests {
     #[test]
     fn cumulative_row_ends_stay_aligned_as_lines_grow_and_spill() {
         let mut record = Record::new(10);
-        record.write(Slot::Plain, "one");
-        record.write(Slot::Plain, " two three four five");
+        record.write(Slot::Plain, "one", None);
+        record.write(Slot::Plain, " two three four five", None);
         for line in 0..MOST + 20 {
-            record.write(Slot::Plain, &format!("line {line}\n"));
+            record.write(Slot::Plain, &format!("line {line}\n"), None);
         }
 
         assert_eq!(record.ends.len(), record.lines.len());
@@ -1576,6 +1590,7 @@ mod tests {
             record.write(
                 Slot::Plain,
                 &format!("line {line} with several words in it\n"),
+                None,
             );
         }
         record.scroll(-6, 2);
@@ -1616,7 +1631,7 @@ mod tests {
         assert_eq!(record.top.line, 0);
 
         for line in 0..MOST + 100 {
-            record.write(Slot::Plain, &format!("more {line}\n"));
+            record.write(Slot::Plain, &format!("more {line}\n"), None);
         }
 
         // The line they were on is gone. The head of what is left is the
@@ -1636,7 +1651,7 @@ mod tests {
         record.scroll(-100, 3);
 
         for line in 0..MOST + 100 {
-            record.write(Slot::Plain, &format!("more {line}\n"));
+            record.write(Slot::Plain, &format!("more {line}\n"), None);
         }
         assert!(record.top.line < record.gone);
 

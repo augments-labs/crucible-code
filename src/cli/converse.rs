@@ -42,10 +42,11 @@ use crucible_core::{
 use crucible_runner::Runner;
 use crucible_tools::{Background, Ledger, Plan};
 use crucible_tui::{
-    Editor, Pasting, Raw, Renderer, Reporting, Screen, Sending, Spelling, Terminal,
+    Editor, Pasting, Raw, Renderer, Reporting, Screen, Sending, Spelling, Terminal, TerminalError,
 };
 
 use super::draw;
+use super::gathering::Gathering;
 use super::kept::Kept;
 use super::seen::{Asking, CAPACITY, Inbox, Putting, Relay, Seen};
 use super::style::Style;
@@ -729,7 +730,11 @@ fn ran<T: Terminal>(
         runner.switch(mode);
     }
 
-    let command = matches!(work, Work::Room(_)).then(|| renderer.lines());
+    // Only a line somebody typed has a reply to hang under it, which is why
+    // this asks who asked rather than what ran: room made because the window
+    // filled, or because a resumed session was picked up as notes, was nobody's
+    // command and has no line above it to hang from.
+    let command = matches!(work, Work::Room(Compacting::Asked)).then(|| renderer.lines());
     let took = take(runner, renderer, terms, work, held)?;
     let style = terms.style();
 
@@ -745,7 +750,11 @@ fn ran<T: Terminal>(
         Did::Stopped => draw::stopped(renderer)?,
     }
 
-    if let Some(from) = command {
+    // And only the two one-line replies are a reply. A compaction that ran
+    // posts the ruled record instead, which is true of the session rather than
+    // of the line that asked for it — a rule is drawn from the first column,
+    // and a mark shoved in front of one reads as a result that lost its start.
+    if let Some(from) = command.filter(|_| !matches!(took.did, Did::Reported)) {
         renderer.subordinate(from, style.glyphs())?;
     }
 
@@ -846,7 +855,32 @@ impl Turn<'_, '_> {
                 // hangs under the call it answers. It goes out through its own
                 // door rather than through `shown`, which is already at the
                 // arguments this project allows one function.
-                for (call, said) in returned {
+                for settled in returned {
+                    let (call, said) = (settled.call, settled.said);
+
+                    // A call that only looked around joins the run being
+                    // counted above it instead of taking a row of its own.
+                    // Never after a terminal event: the reader is being told
+                    // what was out when the turn stopped, and a count is not an
+                    // answer to that.
+                    if let Some(looking) = settled.looking.filter(|_| !terminal) {
+                        if let Some(alone) = self.held.gathering.took(call, looking, said) {
+                            // The run has a second call, so the first one will
+                            // not be a row of its own after all and what it
+                            // came back with belongs where the rest of the
+                            // run's results are.
+                            match alone.output {
+                                Some(output) => {
+                                    self.held
+                                        .kept
+                                        .gathered(&alone.call, output.into_text(), None);
+                                }
+                                None => self.held.kept.abandoned(&alone.call),
+                            }
+                        }
+                        continue;
+                    }
+
                     if terminal {
                         // No result follows a terminal event. Remove the exact
                         // retained live call after committing its heading so it
@@ -854,12 +888,27 @@ impl Turn<'_, '_> {
                         self.held.kept.abandoned(&call);
                     }
                     if self.drawn.is_ok() {
+                        // The run above this row ends here, whatever it came
+                        // to: this call did something, and a line counting what
+                        // was only looked at may not close over it.
                         *self.drawn = stop_if_failed(
-                            draw::returned(renderer, &said, self.terms.style())
+                            settling(renderer, self.held, self.terms.style())
+                                .and_then(|()| draw::returned(renderer, &said, self.terms.style()))
                                 .map_err(Fatal::from),
                             &self.terms.cancel,
                         );
                     }
+                }
+
+                // And it ends here for everything that is not another call: the
+                // model saying something, a question being put, the turn
+                // ending. Each of those is a thing the reader is being shown,
+                // and the count of what was looked at belongs above it.
+                if breaks(&one) && self.drawn.is_ok() {
+                    *self.drawn = stop_if_failed(
+                        settling(renderer, self.held, self.terms.style()).map_err(Fatal::from),
+                        &self.terms.cancel,
+                    );
                 }
 
                 if self.drawn.is_ok() {
@@ -952,9 +1001,15 @@ impl Turn<'_, '_> {
             && self.held.answers.keys
             && matches!(*self.meanwhile, typing::Meanwhile::Nothing)
         {
+            // Read before the box borrows the rest of `held`, and read every
+            // frame: the numbers in it move while the run goes on, and a line
+            // held from the frame before would be saying the run had stalled.
+            let counting = self.held.gathering.doing();
+
             match typing::during(
                 renderer,
                 typing::During {
+                    counting: &counting,
                     background: &self.terms.leaving,
                     editor: &mut self.held.editor,
                     images: &mut self.held.images,
@@ -1167,6 +1222,7 @@ fn take<T: Terminal>(
             typing::Footing {
                 turning: &turning,
                 planning: &mut held.planning,
+                counting: "",
                 opened_list: &held.opened_list,
                 history: held.recalling.place(),
             },
@@ -1494,6 +1550,11 @@ struct Held<'a> {
     /// after the turn that drew it has ended, which is when there is time to
     /// read anything.
     kept: Kept,
+    /// The run of calls that only looked around, counted rather than named.
+    /// For a turn rather than a session — a run is broken by the first thing
+    /// that is not one of them, and the end of a turn is such a thing — but it
+    /// is held beside the rest because the loop that draws it is this one.
+    gathering: Gathering,
     /// Whether the reader is standing that under the turn, and where over it. A
     /// view opened while a turn ran is still open when the turn ends, in the
     /// region the box comes back to, and the reader who opened it is reading.
@@ -1570,6 +1631,7 @@ impl<'a> Held<'a> {
             editor: Editor::new().multiline().sends(sending),
             queued: Prompts::default(),
             kept: Kept::default(),
+            gathering: Gathering::default(),
             opened: Standing::default(),
             opened_list: typing::Opened::default(),
             viewing: queueing::Standing::default(),
@@ -1589,6 +1651,96 @@ impl<'a> Held<'a> {
     }
 }
 
+/// Whether this is a thing the run of counted calls may not close over.
+///
+/// Every variant is named rather than caught by a rest arm, for the reason
+/// [`Turning::saw`](turning::Turning::saw) names its own: an event added later
+/// either belongs inside a run of calls that only looked around or ends one,
+/// and that is a decision to make here rather than one to inherit.
+fn breaks(one: &Seen) -> bool {
+    match one {
+        // Both are the reader being shown something, and a count of what was
+        // looked at belongs above it rather than around it.
+        Seen::Question { .. } | Seen::Asked { .. } => true,
+
+        Seen::Turn(event) => match event {
+            // The calls themselves, and what arrives while they are out. None
+            // of it is a row, so none of it parts one call from the next.
+            //
+            // A result is here as well, and it has to be: the event that folded
+            // a call into the run is the one before this, and breaking on the
+            // result would end every run at one call.
+            Event::ToolRequested { .. }
+            | Event::ToolFinished { .. }
+            | Event::Wrote { .. }
+            | Event::Spent { .. }
+            | Event::PromptCache { .. }
+            | Event::Retrying => false,
+
+            // Everything else is a row, or is about to be one. The model
+            // speaking is the plainest case and the one a reader feels: what
+            // it says next is about what it just looked at, so the looking is
+            // counted and closed first.
+            //
+            // `Carried` is the one that is not a row and breaks anyway. It is
+            // posted once a round trip, when every call of the batch has been
+            // answered and the agent is going back for more, and that is the
+            // smallest part of a turn worth a line. A run held open past it
+            // would be held open for the whole turn — and a turn that only
+            // looks around can go on for minutes, leaving the reader watching
+            // an empty transcript with a number over the box: nothing to
+            // scroll back through, nothing to point at, and the line they were
+            // told they could open not yet a line at all.
+            Event::TurnStarted { .. }
+            | Event::Carried { .. }
+            | Event::Delta { .. }
+            | Event::Compacting { .. }
+            | Event::Compacted { .. }
+            | Event::Steered { .. }
+            | Event::Aged { .. }
+            | Event::Unread { .. }
+            | Event::TurnFinished { .. }
+            | Event::Failed { .. } => true,
+        },
+    }
+}
+
+/// Ends the run of calls being counted, writing whatever it came to.
+///
+/// Nothing where the run is empty, which is most of the time. One row where it
+/// gathered enough to be worth folding. And the call's own row where it did
+/// not: a run of one is not folded, so the row it was always going to have is
+/// written now that it is known no second call was coming.
+fn settling<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    held: &mut Held<'_>,
+    style: Style,
+) -> Result<(), TerminalError> {
+    let mut gathering = held.gathering.taken();
+
+    if gathering.folds() {
+        // Swept rather than pointed one at a time: what the turn gathered and
+        // has not yet offered is exactly this run, because every other result
+        // was pointed at its own row as it went down.
+        let at = draw::gathered(renderer, &gathering.did(), style)?;
+        held.kept.onto(at);
+        return Ok(());
+    }
+
+    let Some(alone) = gathering.alone() else {
+        return Ok(());
+    };
+
+    draw::returned(renderer, &alone.said, style)?;
+
+    let Some(output) = alone.output else {
+        held.kept.abandoned(&alone.call);
+        return Ok(());
+    };
+
+    draw::came_back(renderer, &mut held.kept, &alone.call, output, style)
+}
+
 /// Draws one thing the worker sent, and answers it if it was a question.
 fn shown<T: Terminal>(
     one: Seen,
@@ -1601,6 +1753,14 @@ fn shown<T: Terminal>(
     let style = terms.style();
 
     match one {
+        // A call the run above it is counting. No row is drawn for it — the
+        // count is its row — but what it came back with is kept either way,
+        // because the line counting the run is the door to all of it.
+        Seen::Turn(Event::ToolFinished { call, output, .. }) if held.gathering.holds(&call) => {
+            if let Some(output) = held.gathering.answered(&call, output) {
+                held.kept.gathered(&call, output.into_text(), None);
+            }
+        }
         Seen::Turn(event) => {
             draw::event(renderer, event, &terms.workspace, style, &mut held.kept)?;
         }

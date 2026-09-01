@@ -971,6 +971,7 @@ fn a_running_turn_moves_its_latest_window_reading_into_the_prompt_border() {
         Footing {
             turning: &turning,
             planning: &planning,
+            counting: "",
             opened_list: &Opened::default(),
             history: Recalled::default(),
         },
@@ -1011,6 +1012,7 @@ fn a_running_turn_keeps_its_turn_start_window_reading_before_the_first_event() {
         Footing {
             turning: &turning,
             planning: &planning,
+            counting: "",
             opened_list: &Opened::default(),
             history: Recalled::default(),
         },
@@ -1344,6 +1346,7 @@ fn ended(number: usize, code: Option<i32>) -> Ended {
         tool: "bash",
         number,
         called: "cargo build --release".into(),
+        said: "".into(),
         code,
         lines: 42,
     }

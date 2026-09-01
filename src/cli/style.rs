@@ -46,6 +46,13 @@ const OUTPUT: usize = 96;
 /// set it in the first place.
 const NO_COLOR: &str = "NO_COLOR";
 
+/// The variable naming the terminal's type, read here for the one answer it
+/// gives that colour does not.
+const TERM: &str = "TERM";
+
+/// What that variable says when the terminal is telling you not to try.
+const DUMB: &str = "dumb";
+
 /// Whether a run writes colour at all.
 ///
 /// Named rather than inlined because two callers need the same answer and one
@@ -120,6 +127,13 @@ impl Style {
             Color::Auto => terminal && from(NO_COLOR).is_none_or(|set| set.is_empty()),
         };
 
+        // A different question with a different answer. A reader who set
+        // `NO_COLOR`, or passed `--color never`, asked about hues; they did not
+        // ask for a pull request named in an answer to stop being openable. So
+        // this asks only the two things that actually decide it: whether a
+        // terminal is attached at all, and whether it says it is dumb.
+        let links = terminal && from(TERM).is_none_or(|term| term != DUMB);
+
         // The one place `auto` is answered, because this is the one place that
         // holds both what was configured and what the terminal said. Past here
         // it does not exist.
@@ -160,8 +174,10 @@ impl Style {
             // ladder below it only decides how far up a terminal that is having
             // colour at all can go.
             palette: match code {
-                Some(six) => Palette::resolve(color, theme, exact, from).reading(six),
-                None => Palette::resolve(color, theme, exact, from),
+                Some(six) => Palette::resolve(color, theme, exact, from)
+                    .reading(six)
+                    .addressing(links),
+                None => Palette::resolve(color, theme, exact, from).addressing(links),
             },
             ground,
             glyphs: match glyphs.unwrap_or_default() {

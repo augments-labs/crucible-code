@@ -184,6 +184,12 @@ describe '/home/you/Pictures/Screenshots/Screen Shot.png'
 The copy is content-addressed under crucible's session directory, so moving or
 deleting the original does not change what the transcript sends later.
 
+What the transcript shows of a sent attachment is its label and its number —
+`[Image #1]`, `[Video #1]`, counted per kind in the order they were attached.
+Not the path: where the file came from is a detail of getting it here, the copy
+that was sent lives somewhere you did not choose anyway, and a row of home
+directory is a row of the screen spent on neither.
+
 The row under the box has two ends. At the left is the next key: the permission
 mode in force, the key that steps it, and how many commands are still running
 behind the box. At the right is what the session is talking to — the provider,
@@ -424,15 +430,30 @@ each was given rather than as a paragraph. The colour is the row's rather than
 the text's, so it costs no column, and it is there whether the line is still
 waiting above the box or has already been written out.
 
-That line is written when the tool answers rather than when the model asks for
-it, so it and the result under it join the transcript one after the other and
-nothing the turn did in between comes to stand between the two. While the tool
-is out it stands above the working row instead, with its mark pulsing on the
-beat the mark below it turns on, and it commits the moment the tool answers —
-the same words in the same columns, with the motion gone. So a call still
-waiting is told from one that has finished at a glance, and what the transcript
-keeps is the still line. On a window with room for one of the two, the call
+Where the model asked for one tool and nothing about it moves, the line is
+written the moment the call goes out. `WebSearch` and `WebFetch` are the two
+that matter here: they print nothing while they run, no key points at them, and
+their row says the same thing at the end that it said at the start. A fetch can
+be out for half a minute, and reading it in the transcript is better than
+watching the bottom of the screen for it.
+
+The rest wait for their tool. A command that is still printing has its output to
+show and `ctrl+b` pointing at it, and a response that asked for four tools at
+once gets four answers in whatever order they finish — so writing those rows up
+front would take each result under the wrong call. Those stand above the working
+row instead, with the mark pulsing on the beat the mark below it turns on, and
+each commits the moment its own tool answers: the same words in the same
+columns, with the motion gone. So a call still waiting is told from one that has
+finished at a glance, and the result lands under the call it answers with
+nothing between the two. On a window with room for one of the two, the call
 gives way to the row that says the turn is running at all.
+
+Where a response asked for several at once, that row counts them instead of
+naming one — `8 WebFetch`, or `2 WebFetch and 7 Read` — and the count falls as
+each answers and joins the transcript. A model that fetches ten pages in one
+breath would otherwise hold the first of the ten over the box until it came
+back, which says nothing about the nine still out. A command in the batch is
+still named, since `ctrl+b` points at a row rather than at a number.
 
 A tool's output is summarised to its first line and a count of the rest; `read`
 numbers lines the way `cat -n` does, which is why the summary starts with a `1`.
@@ -444,6 +465,14 @@ is marked `✗` there and only there — the call line stands as it was, since a
 call that was made is a call that was made whatever came back — and that mark is
 the one thing on the row left in your terminal's own foreground, so it is where
 the eye goes.
+
+A result that opens like a record is squeezed onto that line instead of cut to
+it. `gh pr view --json …` comes back pretty-printed over thirty rows whose first
+line of content is whichever key sorts first, and `"assignees": []` spends the
+reader's only line on nothing; squeezed, the row reads as much of the record as
+the window holds, in the order it arrived. Two characters decide it — a brace or
+a bracket, and something a record could hold after it — so `[exit status 3]` and
+a sentence somebody wrote in brackets keep their spaces and their meaning.
 
 A result the row had no room for says how much it left over and names the key
 that gives it back: `(+128 lines · ctrl+o to expand)`. The key is drawn in the
@@ -469,6 +498,46 @@ what brings the newer results in.
 The row names the call you asked about, so what stands is the output of that
 call alone. A click anywhere
 else, on a row that offered nothing, leaves the screen as it was.
+
+A run of calls that only looked around is one row rather than one row each. A
+turn that greps for a pattern, reads four files and lists two directories has
+done one thing, and seven rows saying so are seven rows to scroll past on the
+way to what came of it. So they are counted instead:
+
+```
+● Searched for 1 pattern, read 4 files, listed 2 directories
+```
+
+Only the kinds that happened are named, in that order, and each carries its own
+number — a run that read one file says `read 1 file`. Two calls are enough to
+fold; a single lookup keeps the row it always had, since a count of one is the
+same width as the name it replaced and says less.
+
+What folds is looking and nothing else. `grep` counts a pattern, `read` a file,
+`glob` a directory, and a shell command counts only where the command is one
+that reports rather than changes — `git status`, `gh pr view`, `ls`, `cat`. A
+call that writes a file, or a command that could, ends the run and takes the row
+it always had. The run also ends wherever the turn does something else worth
+reading: a paragraph of the answer, your next prompt, a stop.
+
+And it ends at every round trip — the agent asked for a batch of tools, was
+answered, and is going back to the model for more. So a line joins the
+transcript each time the agent comes back rather than once the whole turn is
+over, and a turn that spends two minutes looking around is two minutes of rows
+appearing instead of two minutes of empty screen.
+
+Nothing is folded away. Clicking the line opens every result in the run at once,
+in the same view a single result opens in, each under the call it answers — so
+the run costs one row and keeps all of it. The whole line lights up under the
+pointer, because the whole line is the door.
+
+While the run is still going the counters are in the present — `Searching for 1
+pattern, reading 4 files` — on its own row over the box, above the call that is
+out. It wears the same mark as that call and blinks on the same beat, since the
+two are one turn doing one thing, and a window with room for only one of them
+shows neither. That row does not light under the pointer and does not open,
+because nothing behind it has finished yet; it settles into the transcript, in
+the past tense and with both, the moment the round trip is answered.
 
 A call that changed a file is the exception, and says so by offering nothing. It
 is shown as the change itself, and a change too long for the block is cut where
@@ -566,6 +635,15 @@ A link is read the same way, and keeps both halves of itself: the words are
 underlined and the address follows them in brackets, quietly, so it can be
 copied — or clicked, in a terminal that finds its own links. A bracket that was
 not a link is left exactly as it was written.
+
+A bare `#487` is read the same way, and points at the repository you are in. The
+address comes out of the `origin` remote in `.git/config`, so a checkout cloned
+from GitHub or GitLab gets a number you can click and every other checkout gets
+the four characters it always had — a link to a repository nobody named would be
+a link somewhere wrong. `owner/repo#12` is counted against the repository it
+names instead. The number goes to the issue page, because prose cannot say
+whether a number is an issue or a pull request, and a forge that files both in
+one series answers either from there.
 
 Where there is no colour to read it into, the markers are left where the model
 put them. That covers a redirected run, `NO_COLOR`, and `--color never` — taking

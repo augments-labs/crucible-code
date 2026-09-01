@@ -5,9 +5,9 @@ use std::io::{self, BufRead, BufReader, ErrorKind, Read as _};
 use std::sync::LazyLock;
 
 use crucible_core::{
-    Approved, Attachment, Cancel, DescribeTool, Kind, Modality, Remembered, Sensitivity, Summary,
-    Tool, ToolArgs, ToolContext, ToolEffect, ToolError, ToolOutput, Workspace, WorkspacePath, kind,
-    written,
+    Approved, Attachment, Cancel, DescribeTool, Kind, Looking, Modality, Remembered, Sensitivity,
+    Summary, Tool, ToolArgs, ToolContext, ToolEffect, ToolError, ToolOutput, Workspace,
+    WorkspacePath, kind, written,
 };
 use sha2::{Digest as _, Sha256};
 
@@ -729,6 +729,10 @@ impl Tool for Read {
         summary::field(NAME, args, PATH)
     }
 
+    fn looking(&self, _args: &ToolArgs) -> Option<Looking> {
+        Some(Looking::File)
+    }
+
     fn remember(&self, args: &ToolArgs) -> Option<Remembered> {
         summary::remembered(NAME, args, false)
     }
@@ -910,6 +914,8 @@ fn finish_utf8(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crucible_core::Looking;
+
     use crate::sample::{Sample, allowed};
 
     fn read(sample: &Sample, args: &str) -> ToolOutput {
@@ -1557,5 +1563,18 @@ mod tests {
         assert!(told.contains(&LINES.to_string()), "{told}");
         assert!(told.contains(&CEILING.to_string()), "{told}");
         assert!(told.contains(&OUTPUT.to_string()), "{told}");
+    }
+
+    /// Reading a file changes nothing, so the transcript may count it rather
+    /// than name it.
+    #[test]
+    fn reading_a_file_is_looking_at_a_file() {
+        let sample = Sample::new("read_is_looking");
+        let tool = Read::new(sample.workspace(), Ledger::new());
+
+        assert_eq!(
+            tool.looking(&ToolArgs::new(r#"{"path": "one.txt"}"#)),
+            Some(Looking::File)
+        );
     }
 }

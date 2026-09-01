@@ -21,6 +21,12 @@
 //! with it. The rule is the same one both ways: what is held here is what a row
 //! somebody can still see has offered.
 //!
+//! One row can be the door to many. A run of calls that only looked around is
+//! counted into a single line, and every result in that run is held against
+//! that line rather than against a row of its own — so opening it opens all of
+//! them. The rule above is unchanged by that: what is held is still what a row
+//! somebody can still see has offered.
+//!
 //! One kind of cut is not here and cannot be. A call that changed a file is
 //! shown as the change itself, and a change too long for the block is cut down
 //! where the change is built rather than where it is drawn — those lines never
@@ -202,15 +208,47 @@ impl Kept {
     /// `at` is the row of the record the offer went onto, which is what a click
     /// on that row is looked up by.
     pub(crate) fn finished(&mut self, call: &ToolId, text: Box<str>, at: usize) {
+        self.keep(call, text, Some(at));
+    }
+
+    /// Keeps the whole of what a call in a folded run came back with.
+    ///
+    /// No row of its own was written, so the row this answers to is the line
+    /// counting the run. A turn hands `None`, because that line is written once
+    /// the run ends and there is nothing to point at yet — [`Kept::onto`] is
+    /// where those find it. A walk putting a session back on the screen knows
+    /// the run before it draws it, so it has the row already and says so.
+    ///
+    /// The whole of it, however short. A result that fitted on a row is dropped
+    /// by [`Kept::finished`] because the row said it all — but this call has no
+    /// row, so dropping it would leave a reader opening the run to find one of
+    /// the calls in it simply missing.
+    pub(crate) fn gathered(&mut self, call: &ToolId, text: Box<str>, at: Option<usize>) {
+        self.keep(call, text, at);
+    }
+
+    /// Points everything gathered but not yet offered at the row that offers
+    /// it.
+    ///
+    /// One row for a run of calls, so several results answer to one line of the
+    /// record — which is the whole of what folding a run means here. Only the
+    /// ones still waiting are touched: a result already pointing somewhere is
+    /// pointing at a row that is still on screen.
+    pub(crate) fn onto(&mut self, at: usize) {
+        for whole in &mut self.whole {
+            if whole.at.is_none() {
+                whole.at = Some(at);
+            }
+        }
+    }
+
+    /// Keeps one result, pointing wherever the caller can point it.
+    fn keep(&mut self, call: &ToolId, text: Box<str>, at: Option<usize>) {
         let called = self.take(call).map_or_else(String::new, |one| one.called);
 
         self.cut = self.cut.saturating_add(1);
         self.held = self.held.saturating_add(text.len());
-        self.whole.push_back(Whole {
-            called,
-            text,
-            at: Some(at),
-        });
+        self.whole.push_back(Whole { called, text, at });
 
         // After the push rather than before it, so that the newest result is
         // held whatever it costs. One longer than the ceiling on its own would

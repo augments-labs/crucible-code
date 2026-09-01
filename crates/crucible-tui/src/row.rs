@@ -30,6 +30,13 @@ struct Span {
     slot: Slot,
     /// Columns to exclude from selection, counted from this span's start.
     structural: Vec<Range<usize>>,
+    /// Where the words go, where they go anywhere.
+    ///
+    /// Beside the text rather than inside it, for the reason the slot is: an
+    /// address written into the string would be measured as columns the reader
+    /// cannot see, and every fold and clip in this file would break in the
+    /// middle of one.
+    link: Option<Box<str>>,
 }
 
 /// One row of a component: its spans, left to right.
@@ -66,7 +73,28 @@ impl Row {
     /// measure nothing, and painted it would be an opening sequence and a reset
     /// around no text at all.
     pub fn push(&mut self, slot: Slot, text: impl Into<String>) {
-        self.push_span(slot, text, Vec::new());
+        self.push_span(slot, text, Vec::new(), None);
+    }
+
+    /// The row with `text` appended in `slot`, opening `link` when clicked.
+    ///
+    /// The address is carried rather than shown. What the reader sees is the
+    /// words — the whole point of writing one is that a sentence keeps reading
+    /// as a sentence — and the terminal is handed the pair.
+    #[must_use]
+    pub fn then_linked(
+        mut self,
+        slot: Slot,
+        text: impl Into<String>,
+        link: impl Into<Box<str>>,
+    ) -> Self {
+        self.push_linked(slot, text, link);
+        self
+    }
+
+    /// Appends `text` in `slot`, opening `link` when clicked.
+    pub fn push_linked(&mut self, slot: Slot, text: impl Into<String>, link: impl Into<Box<str>>) {
+        self.push_span(slot, text, Vec::new(), Some(link.into()));
     }
 
     /// The row with structural art appended in `slot`.
@@ -88,11 +116,18 @@ impl Row {
             slot,
             text,
             (columns > 0).then_some(0..columns).into_iter().collect(),
+            None,
         );
     }
 
     /// Appends one span, dropping an empty one.
-    fn push_span(&mut self, slot: Slot, text: impl Into<String>, structural: Vec<Range<usize>>) {
+    fn push_span(
+        &mut self,
+        slot: Slot,
+        text: impl Into<String>,
+        structural: Vec<Range<usize>>,
+        link: Option<Box<str>>,
+    ) {
         let text = text.into();
         if text.is_empty() {
             return;
@@ -101,6 +136,7 @@ impl Row {
             text,
             slot,
             structural,
+            link,
         });
     }
 
@@ -229,6 +265,7 @@ impl Row {
                 span.slot,
                 &span.text[from - start..to - start],
                 structural_between(span, from - start, to - start),
+                span.link.clone(),
             );
         }
 
@@ -327,12 +364,33 @@ impl Row {
             self.bytes()
         });
 
+        let links = palette.writes_links();
+
         for span in &self.0 {
+            // Outside the colour, so a span that is both is opened as a link
+            // and then coloured within it. A terminal that does not implement
+            // the sequence drops it and is left with exactly the row it would
+            // have had.
+            let link = span.link.as_deref().filter(|_| links);
+            if let Some(link) = link {
+                painted.push_str(OPENS);
+                painted.push_str(link);
+                painted.push_str(ENDS);
+            }
+
             let open = palette.open(span.slot);
             painted.push_str(open.as_str());
             painted.push_str(&span.text);
             if !open.is_empty() {
                 painted.push_str(palette.close());
+            }
+
+            // Closed on every span that opened one, rather than left standing
+            // to the end of the row: an address that outlived its words would
+            // make the rest of the line clickable and wrong.
+            if link.is_some() {
+                painted.push_str(OPENS);
+                painted.push_str(ENDS);
             }
         }
     }
@@ -365,6 +423,16 @@ fn structural_between(span: &Span, from: usize, to: usize) -> Vec<Range<usize>> 
 /// writes is `\x1b[38;2;255;255;255m`, and every one of them is closed.
 const PAINTED: usize = 24;
 
+/// What opens an address, and what the address itself is followed by.
+///
+/// The pair a terminal reads as "the words after this go here", with the
+/// address between them and an empty one closing it again. Written out rather
+/// than assembled per span, because this is on the render path.
+const OPENS: &str = "\x1b]8;;";
+
+/// What closes the opening sequence and the closing one alike.
+const ENDS: &str = "\x1b\\";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -374,6 +442,63 @@ mod tests {
         Palette::resolve(true, crate::color::Theme::Dark, None, &|name| {
             (name == "COLORTERM").then(|| "truecolor".to_owned())
         })
+    }
+
+    /// The same, on a terminal that will take an address as well.
+    fn addressed() -> Palette {
+        colourful().addressing(true)
+    }
+
+    #[test]
+    fn a_span_carrying_an_address_is_painted_as_one() {
+        // The whole of what makes a word in the transcript openable: the text
+        // is unchanged and an address travels beside it, so a terminal that
+        // understands the pair hands the reader the second when they click the
+        // first.
+        let row = Row::new().then_linked(Slot::Link, "the pull request", "https://example.test/1");
+        let painted = row.paint(&addressed());
+
+        assert!(painted.contains("https://example.test/1"), "{painted:?}");
+        assert!(painted.contains("the pull request"), "{painted:?}");
+        assert_eq!(row.text(), "the pull request", "the row said the address");
+    }
+
+    #[test]
+    fn a_terminal_that_takes_no_address_is_sent_the_words_alone() {
+        // A pipe, or a terminal that says it is dumb. An address it cannot open
+        // is bytes in the middle of a sentence somebody is reading.
+        let row = Row::new().then_linked(Slot::Link, "the pull request", "https://example.test/1");
+        let painted = row.paint(&colourful());
+
+        assert!(!painted.contains("https://example.test/1"), "{painted:?}");
+        assert!(painted.contains("the pull request"), "{painted:?}");
+    }
+
+    #[test]
+    fn an_address_survives_the_row_being_folded_and_clipped() {
+        // A link long enough to wrap is still one link. Each part carries the
+        // address, because a terminal reads the pair per row and half a link is
+        // a word that does nothing.
+        let row = Row::plain("see ").then_linked(
+            Slot::Link,
+            "the pull request that changed the renderer",
+            "https://example.test/1",
+        );
+
+        for part in row.fold(12) {
+            let painted = part.paint(&addressed());
+            if part.text().trim().is_empty() || part.text().starts_with("see") {
+                continue;
+            }
+            assert!(
+                painted.contains("https://example.test/1"),
+                "{:?}: {painted:?}",
+                part.text()
+            );
+        }
+
+        let clipped = row.clipped(20).paint(&addressed());
+        assert!(clipped.contains("https://example.test/1"), "{clipped:?}");
     }
 
     #[test]

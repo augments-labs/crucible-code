@@ -43,6 +43,11 @@ pub const MOST: usize = 4;
 struct Left {
     /// What the panel calls it, in the words the call sent.
     called: Box<str>,
+    /// The one line the call gave about what it is for, empty where it gave
+    /// none. Kept beside the command because the row that reports the ending
+    /// is drawn long after the call is gone, and a reader who allowed "watch
+    /// the release run" is owed that back rather than the shell it expanded to.
+    said: Box<str>,
     /// The number the result gave the model, and the panel shows.
     number: usize,
     child: Child,
@@ -92,6 +97,8 @@ pub struct Ended {
     pub number: usize,
     /// The command, as the call sent it.
     pub called: Box<str>,
+    /// What the call said it was for, empty where it said nothing.
+    pub said: Box<str>,
     /// What it exited with, or `None` where a signal ended it.
     pub code: Option<i32>,
     /// How many lines it printed in total.
@@ -172,7 +179,7 @@ impl Background {
     /// `None` where the cap is already met, and then the caller still owns the
     /// child — which it ends, because a command nobody can see or stop is the one
     /// outcome this module exists to prevent.
-    pub(super) fn keep(&self, called: &str, mut taking: Taking) -> Option<usize> {
+    pub(super) fn keep(&self, called: &str, said: &str, mut taking: Taking) -> Option<usize> {
         let mut standing = self.standing.lock().ok()?;
         if standing.left.len() >= MOST {
             // Ended here rather than reported and forgotten. The caller has
@@ -187,6 +194,7 @@ impl Background {
 
         standing.left.push(Left {
             called: called.into(),
+            said: said.into(),
             number,
             child: taking.child,
             scope: taking.scope,
@@ -309,6 +317,7 @@ impl Background {
                         tool: super::NAME,
                         number: left.number,
                         called: left.called.clone(),
+                        said: left.said.clone(),
                         code: status.code(),
                         lines,
                     });

@@ -334,7 +334,6 @@ fn stood<T: Terminal>(
     let uncleared = Pruned::default();
     let against = replaying::Replay {
         runner,
-        workspace: &terms.workspace,
         pruned: &uncleared,
         style,
     };

@@ -29,6 +29,7 @@ mod command;
 mod environment;
 mod output;
 mod platform;
+mod reporting;
 mod shell;
 mod wrapper;
 
@@ -38,7 +39,7 @@ use std::time::Duration;
 
 pub use background::{Background, Ended, MOST, Standing};
 use crucible_core::{
-    Approved, DescribeTool, Sensitivity, Summary, Tool, ToolArgs, ToolContext, ToolError,
+    Approved, DescribeTool, Looking, Sensitivity, Summary, Tool, ToolArgs, ToolContext, ToolError,
     ToolOutput, Workspace,
 };
 
@@ -336,6 +337,20 @@ impl Tool for Bash {
         self.leaving.is_some()
     }
 
+    fn looking(&self, args: &ToolArgs) -> Option<Looking> {
+        let args = Args::parse(NAME, args).ok()?;
+
+        // A command left running is never folded away. Its whole point is that
+        // the turn goes on without it, so the row saying it went out is what a
+        // reader has to go on until the line saying it finished arrives — and
+        // both of those are things that happened rather than things looked at.
+        if args.flag(crate::account::LEFT, false).ok()? {
+            return None;
+        }
+
+        reporting::only(args.text(COMMAND).ok()?).then_some(Looking::Command)
+    }
+
     fn run(&self, approved: Approved, context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
         let args = Args::parse(NAME, approved.args())?;
         let command = args.text(COMMAND)?;
@@ -456,7 +471,14 @@ impl Tool for Bash {
                 let printed = taking.printed();
                 let why = taking.why;
 
-                match left.keep(command, taking) {
+                // What the call said it was for, read the same way the panel
+                // read it a moment ago. The row that reports this command
+                // ending is drawn after the turn that started it has scrolled
+                // away, so it is the only chance to say which command in words
+                // the reader chose rather than in the shell they expanded to.
+                let said = crate::account::of(approved.args());
+
+                match left.keep(command, said.description(), taking) {
                     Some(number) => Ok(ToolOutput::ok(match why {
                         output::Why::Asked => {
                             format!("{printed}\n\n[left running as #{number}; {LEFT_RUNNING}]")

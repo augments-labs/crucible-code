@@ -8,7 +8,7 @@ which names the command rather than a directory.
 | --- | --- |
 | `command` | The command line, as a shell would read it. Required. |
 | `timeout` | Seconds to allow before stopping it. Defaults to 120, and anything over 600 is refused. |
-| `description` | One line saying what the call is for, shown to you on the [question](../permissions/permissions.md#the-question). Optional, and the tool never reads it. |
+| `description` | One line saying what the call is for, shown to you on the [question](../permissions/permissions.md#the-question) and again on the row that reports a backgrounded command ending. Optional, and nothing the command runs reads it. |
 | `explanation` | The long form of the same thing: a list of strings, one per paragraph, shown on the question when you press `ctrl+e`. Optional, and the tool never reads it. |
 
 The command runs through `sh -c` in the workspace root, so the model gets pipes
@@ -152,10 +152,16 @@ It says so, because the count going quietly down would leave you — and the mod
 believing a server is up:
 
 ```
-✗ Bash(npm run dev) ended on its own · exit status 1 · 96 lines
+✗ starting the dev server ended on its own · exit status 1 · 96 lines
 ```
 
-The line is written the moment it happens, even between turns.
+The line is written the moment it happens, even between turns. It names the call
+the way the call described itself, in whatever words the model chose, and falls
+back to `Bash(npm run dev)` where it described itself as nothing — by the time a
+command ends, the turn that started it has usually scrolled away, so this is the
+one chance to say which of the four it was in words you were shown at the time.
+The command gives up columns before the ending does: how it ended and how much
+it printed is the part nobody can go back and ask for.
 
 The model is told the moment there is somewhere to put it. A turn that is
 running takes the ending between one step and the next, so a plan built around a

@@ -127,7 +127,7 @@ pub use run::{Ancestry, AncestryError};
 pub use source::{Fetch, Page, Search, SearchResult, SourceError};
 pub use steer::Steer;
 pub use tool::{
-    Account, Changed, Remembered, Summary, TOOL_RESULT_BYTES, TOOL_RESULT_MIN_BYTES, Tool,
+    Account, Changed, Looking, Remembered, Summary, TOOL_RESULT_BYTES, TOOL_RESULT_MIN_BYTES, Tool,
     ToolArgs, ToolCall, ToolContext, ToolError, ToolOutput, ToolOutputRetention, Unwatched, Watch,
     Wrote,
 };

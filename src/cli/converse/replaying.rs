@@ -40,13 +40,16 @@
 //! What a pruning cleared does come back, and it comes from beside the
 //! transcript rather than out of it. See [`Pruned`].
 
-use crucible_core::{Message, RECAP, Workspace};
+use std::collections::HashMap;
+
+use crucible_core::{Message, RECAP, ToolId};
 use crucible_runner::{Pruned, Runner};
 use crucible_tui::{Recording, Renderer, Row, Slot, Terminal, clip};
 
 use crate::cli::Fatal;
 use crate::cli::converse::Terms;
 use crate::cli::draw;
+use crate::cli::gathering::Gathering;
 use crate::cli::kept::Kept;
 use crate::cli::style::Style;
 
@@ -131,8 +134,12 @@ fn walked<T: Terminal>(
     against: &Replay<'_>,
     kept: &mut Kept,
 ) -> Result<(), Fatal> {
+    // Counted before a row goes down, because the first row of a run is the
+    // one that says how long the run is.
+    let mut folded = Folded::of(messages, against.runner);
+
     for message in messages {
-        said(renderer, against, kept, message)?;
+        said(renderer, against, kept, &mut folded, message)?;
     }
 
     // Whatever the last message left live, ended: a session whose last turn was
@@ -144,20 +151,17 @@ fn walked<T: Terminal>(
 }
 
 /// What a whole replay is drawn against, and what does not change while it
-/// runs: the session being put back, the root a file it named is named
-/// against, what a pruning cleared out of it, and the dress the renderer is
-/// already wearing.
+/// runs: the session being put back, what a pruning cleared out of it, and the
+/// dress the renderer is already wearing.
 ///
-/// One value rather than four parameters carried down the walk — what changes
+/// One value rather than three parameters carried down the walk — what changes
 /// from one call to the next is the message, and this is everything that does
 /// not. It is what [`glimpsed`] is handed too, for the same reason: a caller
 /// drawing a session it is not in still has to say which build's tools are
-/// being named and whose files a path in one is named against.
+/// being named.
 pub(super) struct Replay<'a> {
     /// The session in hand, for what each tool's call line reads as.
     pub(super) runner: &'a Runner,
-    /// The root a file a call named is named against.
-    pub(super) workspace: &'a Workspace,
     /// What the results a pruning cleared said, so a row a reader watched come
     /// back says it again. Empty where nothing was ever cleared, which is every
     /// session short enough not to have needed the room.
@@ -171,12 +175,11 @@ impl<'a> Replay<'a> {
     ///
     /// The two ways into a session — the command line and `/resume` — both put
     /// it back on the screen, and this is what keeps them putting it back
-    /// against the same four things. A preview builds its own, because the
+    /// against the same three things. A preview builds its own, because the
     /// session it draws is not the one this run is in.
     pub(super) fn of(runner: &'a Runner, terms: &'a Terms, pruned: &'a Pruned) -> Self {
         Self {
             runner,
-            workspace: &terms.workspace,
             pruned,
             style: terms.style(),
         }
@@ -192,6 +195,7 @@ fn said<T: Terminal>(
     renderer: &mut Renderer<T>,
     against: &Replay<'_>,
     kept: &mut Kept,
+    folded: &mut Folded,
     message: &Message,
 ) -> Result<(), Fatal> {
     let columns = renderer.columns();
@@ -220,7 +224,7 @@ fn said<T: Terminal>(
             attachments,
         } => {
             draw::queued(renderer, said, style)?;
-            draw::attached(renderer, attachments, against.workspace, style)?;
+            draw::attached(renderer, attachments, style)?;
         }
 
         Message::Agent { text, calls, stop } => {
@@ -246,6 +250,20 @@ fn said<T: Terminal>(
                 // a result whose call was never named would open under a heading
                 // nobody wrote.
                 kept.calling(call.id.clone(), line.clone());
+
+                // A call in a folded run has no row of its own: the line the
+                // run came to stands where the first of those rows would have,
+                // and every call after it adds nothing to the screen. What each
+                // of them said is still reachable, from that one line.
+                if folded.holds(&call.id) {
+                    if let Some(said) = folded.opens(&call.id).map(ToOwned::to_owned) {
+                        let at = draw::gathered(renderer, &said, style)?;
+                        folded.went(&call.id, at);
+                    }
+
+                    continue;
+                }
+
                 draw::returned(renderer, &line, style)?;
             }
 
@@ -281,12 +299,134 @@ fn said<T: Terminal>(
                     None => result.output.clone(),
                 };
 
+                // A call the line above it counted. There is no row of its
+                // own to hang this under, so it is kept whole against the line
+                // that stands for the run — which is the door to all of them.
+                if folded.holds(&result.id) {
+                    kept.gathered(&result.id, output.into_text(), folded.at(&result.id));
+                    continue;
+                }
+
                 draw::came_back(renderer, kept, &result.id, output, style)?;
             }
         }
     }
 
     Ok(())
+}
+
+/// Which calls a walk folds into one line, worked out before it draws a row.
+///
+/// A turn cannot know how long a run of calls is until it ends, so it holds the
+/// first call of one back until a second arrives. A walk has the whole
+/// transcript in front of it and needs no such trick: it counts the runs first,
+/// so by the time a row goes down it already knows whether the call it belongs
+/// to has a row of its own or a share of a line.
+///
+/// Which is what makes a resumed session the session it was. The picture a
+/// reader left is the one they come back to, and a turn that folded three reads
+/// into a line may not put three rows back on the screen a day later.
+#[derive(Default)]
+struct Folded {
+    /// Which run each folded call is in. A call in no run is not in here, and
+    /// a run of one is no run.
+    run: HashMap<ToolId, usize>,
+    /// The call that opens each run, and what that run's line says.
+    opens: Vec<(ToolId, String)>,
+    /// The record row each run's line went down on, once it has.
+    rows: Vec<Option<usize>>,
+}
+
+impl Folded {
+    /// The runs in a transcript, in the order the walk will meet them.
+    ///
+    /// A run ends where the live path would have ended it: at a prompt, at a
+    /// fact put in front of one, at prose between two calls, at a stop worth a
+    /// line of its own, at any call that did more than look around, and at the
+    /// end of a round trip. So a run is one batch of calls at most, which is
+    /// what the reader watched: the line went down when the batch was answered
+    /// rather than when the turn was.
+    fn of(messages: &[Message], runner: &Runner) -> Self {
+        let mut folded = Self::default();
+        let mut run = Gathering::default();
+
+        for message in messages {
+            match message {
+                // A prompt, a fact put in front of one, and the end of a round
+                // trip. The last is where the live path closes a run too:
+                // every call of the batch above has been answered and the
+                // agent is going back for more. Closing there is what keeps
+                // the two paths drawing the same rows — a walk that folded a
+                // whole turn into one line would put back a session nobody
+                // watched.
+                Message::User { .. } | Message::Context(_) | Message::ToolResults(_) => {
+                    folded.close(&mut run);
+                }
+                Message::Agent { text, calls, stop } => {
+                    if !text.trim().is_empty() {
+                        folded.close(&mut run);
+                    }
+
+                    for call in calls {
+                        match runner.folds(call) {
+                            Some(looking) => run.counted(call.id.clone(), looking),
+                            None => folded.close(&mut run),
+                        }
+                    }
+
+                    if stop.and_then(draw::notice).is_some() {
+                        folded.close(&mut run);
+                    }
+                }
+            }
+        }
+
+        folded.close(&mut run);
+        folded
+    }
+
+    /// Ends the run in hand, keeping it where it came to more than one call.
+    fn close(&mut self, run: &mut Gathering) {
+        let run = run.taken();
+        let Some(opening) = run.calls().first().filter(|_| run.folds()).cloned() else {
+            return;
+        };
+
+        let index = self.opens.len();
+        for call in run.calls() {
+            self.run.insert(call.clone(), index);
+        }
+
+        self.opens.push((opening, run.did()));
+        self.rows.push(None);
+    }
+
+    /// Whether this call is one of a run, and so has no row of its own.
+    fn holds(&self, call: &ToolId) -> bool {
+        self.run.contains_key(call)
+    }
+
+    /// What the run this call opens says, or nothing where it opens none.
+    fn opens(&self, call: &ToolId) -> Option<&str> {
+        let (opening, said) = self.opens.get(*self.run.get(call)?)?;
+        (opening == call).then_some(said.as_str())
+    }
+
+    /// Remembers the record row this call's run went down on.
+    fn went(&mut self, call: &ToolId, at: usize) {
+        let Some(&index) = self.run.get(call) else {
+            return;
+        };
+
+        if let Some(row) = self.rows.get_mut(index) {
+            *row = Some(at);
+        }
+    }
+
+    /// The row this call's result answers to, once its run has been drawn.
+    fn at(&self, call: &ToolId) -> Option<usize> {
+        self.rows.get(*self.run.get(call)?).copied().flatten()
+    }
 }
 
 #[cfg(test)]
@@ -303,19 +443,11 @@ mod tests {
 
     use super::*;
 
-    /// The directory the run is in, which is what a replayed path is named
-    /// against. Nothing here attaches a file, so it is only ever the root a
-    /// name is measured from.
-    fn here() -> Workspace {
-        Workspace::open(std::env::current_dir().expect("a directory")).expect("a workspace")
-    }
-
-    /// What a session is drawn against in these tests: this build's tools, this
-    /// directory, and no theme at all.
-    fn against<'a>(runner: &'a Runner, workspace: &'a Workspace, pruned: &'a Pruned) -> Replay<'a> {
+    /// What a session is drawn against in these tests: this build's tools and
+    /// no theme at all.
+    fn against<'a>(runner: &'a Runner, pruned: &'a Pruned) -> Replay<'a> {
         Replay {
             runner,
-            workspace,
             pruned,
             style: Style::plain(),
         }
@@ -395,7 +527,6 @@ mod tests {
             &mut renderer,
             &Replay {
                 runner: &runner,
-                workspace: &here(),
                 pruned: &Pruned::default(),
                 style,
             },
@@ -415,12 +546,94 @@ mod tests {
 
         replayed(
             &mut renderer,
-            &against(&runner, &here(), &Pruned::default()),
+            &against(&runner, &Pruned::default()),
             &mut kept,
         )
         .expect("a recording cannot fail");
 
         (kept, renderer)
+    }
+
+    /// A turn that read `count` files, one call and one result to a message,
+    /// the way a model walking a tree writes them.
+    /// A turn that asked for `count` reads at once and was answered.
+    ///
+    /// One batch rather than one call per exchange, because a run is one round
+    /// trip at most: a model that wants four files asks for all four in one
+    /// response, and a fixture that asked for them one at a time would be
+    /// four runs of one and would fold nothing.
+    fn walked_a_tree(count: usize) -> Transcript {
+        let mut transcript = Transcript::new();
+        transcript.push(Message::said("what is in here?"));
+
+        let ids: Vec<ToolId> = (1..=count)
+            .map(|one| ToolId::new(format!("c-{one}")))
+            .collect();
+
+        transcript.push(Message::Agent {
+            text: String::new().into(),
+            calls: ids
+                .iter()
+                .enumerate()
+                .map(|(at, id)| ToolCall {
+                    id: id.clone(),
+                    name: "read".into(),
+                    args: ToolArgs::new(format!(r#"{{"path":"file-{}.rs"}}"#, at + 1)),
+                })
+                .collect(),
+            stop: Some(StopReason::WantsTools),
+        });
+
+        transcript.push(Message::ToolResults(
+            ids.iter()
+                .enumerate()
+                .map(|(at, id)| ToolResult {
+                    id: id.clone(),
+                    output: ToolOutput::ok(format!(
+                        "line one of {}\nand nine hundred after it",
+                        at + 1
+                    )),
+                })
+                .collect(),
+        ));
+
+        transcript
+    }
+
+    #[test]
+    fn a_run_of_calls_that_only_looked_around_replays_as_the_line_it_settled_into() {
+        // The picture a reader left is the picture they come back to. A turn
+        // that folded three reads into one line while it ran may not put three
+        // rows back on the screen when the session is picked up.
+        let screen = screen(walked_a_tree(3), 80);
+
+        assert!(screen.contains("Read 3 files"), "{screen:?}");
+        assert!(!screen.contains("Read(file-1.rs)"), "{screen:?}");
+    }
+
+    #[test]
+    fn a_call_that_looked_around_alone_replays_as_the_row_it_always_had() {
+        // One call is not a run. It went down as its own row live and it comes
+        // back as its own row, because a count of one says less than the name
+        // it replaced.
+        let screen = screen(walked_a_tree(1), 80);
+
+        assert!(screen.contains("Read(file-1.rs)"), "{screen:?}");
+        assert!(!screen.contains("Read 1 file"), "{screen:?}");
+    }
+
+    #[test]
+    fn every_result_in_a_replayed_run_opens_from_the_line_that_folded_it() {
+        // Folding is about rows scrolled past and never about what is still
+        // reachable, so all three results answer to the one line, and opening
+        // it opens all of them.
+        let (kept, _) = holding(walked_a_tree(3), 80);
+        let rows: Vec<Option<usize>> = kept.newest().map(Whole::at).collect();
+        let first = rows.first().copied().flatten().expect("a row for the run");
+
+        assert_eq!(rows.len(), 3, "{rows:?}");
+        assert!(rows.iter().all(|at| *at == Some(first)), "{rows:?}");
+        assert!(kept.offered(first), "{rows:?}");
     }
 
     #[test]
@@ -455,7 +668,7 @@ mod tests {
         renderer.wears(Style::plain().palette());
         replayed(
             &mut renderer,
-            &against(&runner, &here(), &pruned),
+            &against(&runner, &pruned),
             &mut Kept::default(),
         )
         .expect("a recording cannot fail");
@@ -546,7 +759,7 @@ mod tests {
         renderer.wears(Style::plain().palette());
         replayed(
             &mut renderer,
-            &against(&runner, &here(), &Pruned::default()),
+            &against(&runner, &Pruned::default()),
             &mut Kept::default(),
         )
         .expect("a recording cannot fail");
@@ -555,7 +768,7 @@ mod tests {
         let transcript = everything();
         let shown = glimpsed(
             transcript.messages(),
-            &against(&runner, &here(), &Pruned::default()),
+            &against(&runner, &Pruned::default()),
             60,
             64,
         )
@@ -582,7 +795,7 @@ mod tests {
         for columns in [30, 48, 96] {
             let shown = glimpsed(
                 transcript.messages(),
-                &against(&runner, &here(), &Pruned::default()),
+                &against(&runner, &Pruned::default()),
                 columns,
                 64,
             )
@@ -613,7 +826,7 @@ mod tests {
 
         let shown = glimpsed(
             transcript.messages(),
-            &against(&runner, &here(), &Pruned::default()),
+            &against(&runner, &Pruned::default()),
             60,
             32,
         )

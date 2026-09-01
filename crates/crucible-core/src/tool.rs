@@ -167,6 +167,31 @@ impl fmt::Debug for Summary {
     }
 }
 
+/// What a call that only looked around was looking at.
+///
+/// The transcript folds a run of these into one line, because a reader
+/// scrolling past twelve rows that each say a file was read learns the same
+/// thing from one row saying twelve files were read, and keeps the screen for
+/// the work. A call that changed something is never one of these: a change is
+/// the part of a turn a reader is entitled to see go by.
+///
+/// Four cases rather than a count, because the line names what was done —
+/// searching, reading, listing, running — and a bare number of "lookups" would
+/// name nothing. Closed, because a fifth kind of looking must make every
+/// reader of this decide how to say it rather than fall into a default that
+/// silently spells it wrong.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Looking {
+    /// A search for a pattern through the workspace's text.
+    Pattern,
+    /// A file read.
+    File,
+    /// A walk over what a directory holds.
+    Directory,
+    /// A command run that only reported what it found.
+    Command,
+}
+
 /// A file a call touched, volunteered for a compaction to remember.
 ///
 /// The model's memory of a session is rebuilt from a recap, and the thing a
@@ -978,6 +1003,24 @@ pub trait Tool: Send + Sync {
     /// runs and must agree with the execution path [`Tool::run`] will take.
     fn backgroundable(&self, _args: &ToolArgs) -> bool {
         false
+    }
+
+    /// What kind of looking-around this call is, where it is only that.
+    ///
+    /// `None` by default, and `None` is the honest answer for most tools: a
+    /// call that writes a file, asks the reader a question or edits code is
+    /// part of what happened, and folding it into a count would hide it. A tool
+    /// answers here only when its call leaves the workspace exactly as it found
+    /// it and the reader loses nothing by seeing it counted rather than named.
+    ///
+    /// Takes the arguments for the reason [`Tool::backgroundable`] does, and
+    /// with more force: `bash` is only looking around when the particular
+    /// command line is, so this is a property of the call and never of the
+    /// tool. It is asked before the call runs, so a tool that cannot tell from
+    /// the arguments answers `None` rather than guess — a wrongly folded change
+    /// is a change the reader never saw.
+    fn looking(&self, _args: &ToolArgs) -> Option<Looking> {
+        None
     }
 
     /// What a compaction should remember of this call, where there is anything.

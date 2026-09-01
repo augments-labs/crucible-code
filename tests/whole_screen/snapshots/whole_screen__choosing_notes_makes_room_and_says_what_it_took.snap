@@ -1,6 +1,7 @@
 ---
 source: tests/whole_screen/main.rs
-expression: window.picture()
+assertion_line: 1095
+expression: picture
 ---
 80x24 cursor 20,4 scrolled 0
 |                                                                                |
@@ -16,10 +17,10 @@ expression: window.picture()
 |                                                                                |
 |Notes on everything that came before.                                           |
 |                                                                                |
-|⎿ ──────────────────────────────────────────────────────────────────────────────|
-|   compacted · you chose notes over carrying this session whole                 |
-|   4 messages became a recap · 6k → 6k carried · 2 turns kept whole             |
-|  ──────────────────────────────────────────────────────────────────────────────|
+|────────────────────────────────────────────────────────────────────────────────|
+| compacted · you chose notes over carrying this session whole                   |
+| 4 messages became a recap · 6k → 6k carried · 2 turns kept whole               |
+|────────────────────────────────────────────────────────────────────────────────|
 |                                                                                |
 |                                                                 99% window left|
 |╭──────────────────────────────────────────────────────────────────────────────╮|

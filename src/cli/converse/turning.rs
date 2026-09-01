@@ -21,6 +21,30 @@
 //! this commits it still, so what the transcript keeps is the same words with
 //! the motion gone.
 //!
+//! Not every call is held. One that is the only call of its pass, cannot be
+//! backgrounded and only looks up something elsewhere has nothing to draw
+//! again: no output arrives under it, no key points at it, and its words are
+//! settled the moment it is asked for. [`Turning::saw`] hands that one back
+//! where it was requested, and it is written where every other row of the turn
+//! is. What holding it was buying was the promise that a result is drawn under
+//! the call it answers, and the transcript only grows at the end, so that
+//! promise needs holding exactly when a second call could answer first.
+//!
+//! Which is what a pass of several is, and there the row says how many of what
+//! rather than naming one of them. One response asking for eight fetches used
+//! to put the first of the eight over the box and leave it there until it
+//! answered — one URL in front of the reader for as long as the whole batch
+//! took, and no word about the seven behind it. A call that can be
+//! backgrounded or has started printing is named as it always was: the key
+//! points at a row, and a sample belongs to a call rather than to a number.
+//!
+//! Over that call, where the turn has been looking around rather than doing one
+//! thing, the line counting what it has looked at so far. It is not held here
+//! either — the words are read off the run each frame and handed in, since a
+//! count from the frame before would say the run had stalled — but it wears the
+//! same mark as the call under it, read once for the pair, so the two blink
+//! together and read as one turn doing one thing.
+//!
 //! Under the row, where a prompt was finished while this turn was running, the
 //! line that will be sent once it ends. A line typed into the box mid-turn
 //! leaves the box the moment Return is pressed, and until it is named here the
@@ -37,7 +61,7 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use crucible_core::{Compacting, Event, ToolId};
+use crucible_core::{Compacting, Event, Looking, ToolId};
 use crucible_tui::{Prompt, Row, Slot, Working};
 
 use super::super::draw;
@@ -254,6 +278,37 @@ struct Calling {
     printing: Printing,
     /// Whether the call can be left to finish after its tool answers the turn.
     backgroundable: bool,
+    /// What kind of looking-around this call is, where it is only that.
+    looking: Option<Looking>,
+    /// The tool's name as a row writes it, kept apart from [`Calling::said`]
+    /// so a count of what is out does not have to read it back out of a
+    /// sentence that has already had the arguments put into it.
+    name: String,
+}
+
+/// A call line that has stopped being live and is the transcript's to commit.
+///
+/// Three things rather than a pair, because what the transcript does with the
+/// line depends on the third: a call that only looked around joins the run
+/// being counted above it, and one that did something is named on a row of its
+/// own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Settled {
+    /// Which call it was.
+    pub(super) call: ToolId,
+    /// The words its row says, without the moving mark it wore while it ran.
+    pub(super) said: String,
+    /// What kind of looking-around it was, where it was only that.
+    pub(super) looking: Option<Looking>,
+}
+
+/// The line a call stopped being live on, out of what was held while it ran.
+fn settled(calling: Calling) -> Settled {
+    Settled {
+        call: calling.id,
+        said: calling.said,
+        looking: calling.looking,
+    }
 }
 
 /// The prompts waiting behind a turn, as the panel draws them.
@@ -545,7 +600,7 @@ impl Turning {
     /// Every variant is named rather than caught by a rest arm: an event added
     /// later either changes what the turn is doing or does not, and that is a
     /// decision to make here rather than one to inherit.
-    pub(super) fn saw(&mut self, event: &Event) -> Vec<(ToolId, String)> {
+    pub(super) fn saw(&mut self, event: &Event) -> Vec<Settled> {
         // Before the guard below, because what a turn spent is true whether it
         // is stopping or not — and a turn asked to stop goes on spending until
         // the response in flight has finished arriving. That is the stretch
@@ -573,34 +628,66 @@ impl Turning {
                 call,
                 summary,
                 backgroundable,
+                looking,
+                alone,
             } => {
                 let said = draw::called(call, summary);
                 if let Some(calling) = self.calling.iter_mut().find(|one| one.id == call.id) {
                     calling.said = said;
                     calling.backgroundable = *backgroundable;
+                    calling.looking = *looking;
+                    Vec::new()
+                } else if *alone && !*backgroundable && looking.is_none() {
+                    // Nothing about this one moves, so the footing has nothing
+                    // to draw again: it prints no output to watch, no key
+                    // points at it, and the words on its row are settled here
+                    // and say the same thing when the tool answers. What the
+                    // footing was buying was the promise that a result is
+                    // drawn under the call it answers, and a transcript that
+                    // only grows at the end can keep that promise for one
+                    // outstanding call by writing the call now and the answer
+                    // after it. So it goes down where it was asked for, and a
+                    // reader watching a fetch that takes half a minute reads
+                    // it in the transcript rather than off the bottom of the
+                    // screen.
+                    //
+                    // Only when it is the only call of its pass. Four calls
+                    // announced together answer in whatever order they
+                    // finish, and four rows written up front would take the
+                    // four results in the wrong order under the wrong calls.
+                    // Those still stand until each is answered.
+                    //
+                    // And never a call that only looked around: that one is
+                    // owed to the run being counted, which counts what has
+                    // come back rather than what has gone out.
+                    vec![Settled {
+                        call: call.id.clone(),
+                        said,
+                        looking: *looking,
+                    }]
                 } else {
                     self.calling.push_back(Calling {
                         id: call.id.clone(),
                         said,
                         printing: Printing::default(),
                         backgroundable: *backgroundable,
+                        looking: *looking,
+                        name: draw::pascal(&call.name),
                     });
+                    Vec::new()
                 }
-                Vec::new()
             }
             Event::ToolFinished { call, .. } => self
                 .calling
                 .iter()
                 .position(|one| one.id == *call)
                 .and_then(|at| self.calling.remove(at))
-                .map_or_else(Vec::new, |calling| vec![(calling.id, calling.said)]),
+                .map_or_else(Vec::new, |calling| vec![settled(calling)]),
             // Terminal events cannot leave live rows behind. Drain every call in
             // request order: none has a result to consume another call's line.
-            Event::TurnFinished { .. } | Event::Failed { .. } => self
-                .calling
-                .drain(..)
-                .map(|calling| (calling.id, calling.said))
-                .collect(),
+            Event::TurnFinished { .. } | Event::Failed { .. } => {
+                self.calling.drain(..).map(settled).collect()
+            }
             // A steered line is committed to the transcript by the loop that
             // reads it, not here: this row keeps naming what is still queued.
             Event::TurnStarted { .. }
@@ -702,7 +789,20 @@ impl Turning {
             // frame to be compared against. A tool's name and a path is tens of
             // bytes, taken at most four times a second, and it is freed the
             // moment the tool answers — nothing here grows with the transcript.
-            calling: self.calling.front().map(|calling| calling.said.clone()),
+            //
+            // What the row will say rather than which call is at the front of
+            // the queue. A pass of eight that has had three answered still has
+            // the same call in front and says a different number, and a key
+            // that carried the front call's name would leave that number to
+            // reach the screen on the next beat: right twice a second by
+            // accident, which is not the same as right.
+            calling: self.calling.front().map(|calling| {
+                if self.folds() {
+                    self.outstanding()
+                } else {
+                    calling.said.clone()
+                }
+            }),
             backgroundable: self
                 .calling
                 .front()
@@ -794,9 +894,16 @@ impl Turning {
     /// one function. What it stands under is the turn; what it stands over is
     /// the line being typed while the turn runs — and the panel between them
     /// says which of the plan's tasks that turn is on.
+    // Six is one over clippy's limit, and each is a distinct thing the layout
+    // is measured against: the plan, the run of lookups, the width, the dress
+    // and the rows left. Bundling two of them into a type that exists only to
+    // satisfy the count would name them once here and make every caller build
+    // it, which is more spelling of the same facts rather than less.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn rows(
         &self,
         planning: &Planning,
+        counting: &str,
         columns: usize,
         style: Style,
         room: usize,
@@ -837,27 +944,61 @@ impl Turning {
             CALLING.saturating_sub(1)
         } + panel_rows.len();
 
+        // And taller again by the one row a live run of calls that only looked
+        // around stands in. It is counted with the call rather than measured
+        // against it, because the two are one turn doing one thing: a window
+        // that can hold only one of them holds neither, since the pair is what
+        // says what is going on.
+        let run = (!counting.is_empty()).then(|| self.counted(counting, columns, style));
+        let standing = standing + usize::from(run.is_some());
+
         let mut rows = Vec::new();
 
-        if let Some(calling) = calling.filter(|_| room > standing) {
+        if room > standing
+            && let Some(run) = run
+        {
             rows.push(Row::new());
-            rows.push(self.call(&calling.said, columns, style));
+            rows.push(run);
+        }
 
-            // Measured last, against whatever every other row left. It is the one
-            // thing here a second look gets back whatever the window did — the
-            // key that stands a result whole stands this too — so it is the first
-            // to give way and it gives way without saying so.
-            // What is left after every row that never gives way has taken its
-            // own is the sample's, and the sample's alone: the caption under the
-            // call is counted in `standing` above whenever there is one. For a
-            // backgroundable call that is the offer; for any call that printed it
-            // is the bounded count that keeps a sample from reading as the whole.
-            rows.extend(calling.printing.rows(
-                columns,
-                room.saturating_sub(standing),
-                style,
-                calling.backgroundable,
-            ));
+        if let Some(calling) = calling.filter(|_| room > standing) {
+            if rows.is_empty() {
+                rows.push(Row::new());
+            }
+
+            // One row either way. A pass that asked for one tool names it, and
+            // a pass that asked for eight says how many of what: the first of
+            // the eight would otherwise stand here until it answered, which is
+            // one URL held in front of a reader for as long as the whole batch
+            // takes and no word about the seven behind it.
+            //
+            // Not where anything out can be backgrounded or has printed. The
+            // key points at the row that names a command, and a count is not
+            // something it can act on; the sample under it belongs to a call
+            // rather than to a number.
+            if self.folds() {
+                rows.push(self.counted(&self.outstanding(), columns, style));
+            } else {
+                rows.push(self.call(&calling.said, columns, style));
+
+                // Measured last, against whatever every other row left. It is
+                // the one thing here a second look gets back whatever the
+                // window did — the key that stands a result whole stands this
+                // too — so it is the first to give way and it gives way
+                // without saying so.
+                // What is left after every row that never gives way has taken
+                // its own is the sample's, and the sample's alone: the caption
+                // under the call is counted in `standing` above whenever there
+                // is one. For a backgroundable call that is the offer; for any
+                // call that printed it is the bounded count that keeps a
+                // sample from reading as the whole.
+                rows.extend(calling.printing.rows(
+                    columns,
+                    room.saturating_sub(standing),
+                    style,
+                    calling.backgroundable,
+                ));
+            }
         }
 
         rows.push(Row::new());
@@ -927,15 +1068,102 @@ impl Turning {
     ///
     /// The words go through the same clipping the committed line uses, so no
     /// face can make the terminal wrap a row the renderer counted as one.
+    /// Whether what is out is better said as a count than as one of its rows.
+    ///
+    /// Two or more, and nothing among them the footing is holding for its own
+    /// sake: a command the background key points at, or a call part way
+    /// through printing something worth watching.
+    fn folds(&self) -> bool {
+        self.calling.len() > 1
+            && !self
+                .calling
+                .iter()
+                .any(|calling| calling.backgroundable || calling.printing.lines() > 0)
+    }
+
+    /// What is out right now, counted by tool.
+    ///
+    /// In the order the calls were asked for rather than by how many there are
+    /// of each, because that order is the model's sentence about what it is
+    /// doing and a reader who saw the turn start recognises it.
+    ///
+    /// Tool names rather than a verb for each, unlike the run that settles into
+    /// the transcript. That run counts the four kinds of looking-around the
+    /// tools declare, and this counts whatever is out — a tool added tomorrow
+    /// has a name here and would have no sentence.
+    fn outstanding(&self) -> String {
+        let mut counted: Vec<(&str, usize)> = Vec::new();
+
+        for calling in &self.calling {
+            match counted
+                .iter_mut()
+                .find(|(name, _)| *name == calling.name.as_str())
+            {
+                Some((_, count)) => *count += 1,
+                None => counted.push((calling.name.as_str(), 1)),
+            }
+        }
+
+        let said: Vec<String> = counted
+            .into_iter()
+            .map(|(name, count)| format!("{count} {name}"))
+            .collect();
+
+        match said.split_last() {
+            None => String::new(),
+            Some((last, [])) => last.clone(),
+            Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+        }
+    }
+
     fn call(&self, said: &str, columns: usize, style: Style) -> Row {
-        let glyphs = style.glyphs();
-        let visible = Working::beat(self.running()).is_multiple_of(2);
-        let mark = if visible { glyphs.called() } else { " " };
-        let row = Row::new().then(Slot::Accent, mark).clipped(columns);
+        let row = Row::new()
+            .then(Slot::Accent, self.mark(style))
+            .clipped(columns);
 
         match draw::words(said, columns, style) {
             words if words.is_empty() || row.is_empty() => row,
             words => row.then(Slot::Plain, " ").join(words),
+        }
+    }
+
+    /// The line saying what a live run of calls that only looked around has
+    /// come to so far.
+    ///
+    /// It wears the mark of the call under it, on the same beat, because the
+    /// two are one turn doing one thing: this row says what the run has
+    /// amassed and the row below says which of it is out right now.
+    ///
+    /// The words are the run's own sentence rather than a call's name, so they
+    /// go in the plain slot and not the one [`draw::words`] puts a tool in.
+    /// Nothing is behind this row to open yet — the results it counts are
+    /// still being collected — and the line the transcript writes when the run
+    /// settles is the one that offers them.
+    fn counted(&self, counting: &str, columns: usize, style: Style) -> Row {
+        let glyphs = style.glyphs();
+        let room = columns.saturating_sub(crucible_tui::columns(glyphs.called()) + 1);
+        let row = Row::new()
+            .then(Slot::Accent, self.mark(style))
+            .clipped(columns);
+
+        match draw::clipped(counting, room, glyphs) {
+            words if words.is_empty() || row.is_empty() => row,
+            words => row.then(Slot::Plain, " ").then(Slot::Plain, words),
+        }
+    }
+
+    /// The mark a live row wears this beat, or the one column of space it
+    /// stands in when the beat has it hidden.
+    ///
+    /// Read once per layout and handed to every row that wants it, so the rows
+    /// of one frame are all of one instant. Two rows blinking against each
+    /// other would read as two turns rather than one.
+    fn mark(&self, style: Style) -> &'static str {
+        let visible = Working::beat(self.running()).is_multiple_of(2);
+        if visible {
+            style.glyphs().called()
+        } else {
+            " "
         }
     }
 

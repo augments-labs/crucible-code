@@ -21,6 +21,7 @@
 //! it is on, is handed out as the text it turned out to be.
 
 use crate::color::Slot;
+use crate::forge::Forge;
 use crate::glyphs::Glyphs;
 
 mod table;
@@ -183,6 +184,49 @@ impl Link {
     }
 }
 
+/// A number the answer wrote, while the characters that decide it arrive.
+///
+/// Held for the reason an address is: `#487` is one word to the reader and a
+/// marker followed by digits to a scan reading characters, and whether it is a
+/// reference at all is not known until something that is not a digit turns up.
+#[derive(Debug, Clone, Default)]
+struct Reference {
+    /// The repository the reference named in front of its hash, where it named
+    /// one. Peeled off the run rather than read here, because it arrived
+    /// before the hash that said it was a repository at all.
+    slug: Option<Box<str>>,
+    /// The digits after the hash, as far as they have arrived.
+    number: String,
+}
+
+/// How many digits a number is read as, at most.
+///
+/// A forge counts in the thousands and this is room for a great deal more than
+/// that. The bound is here for the reason every other one in this file is:
+/// what is held comes off a wire, and a run of digits nobody meant to end is
+/// not a reason to grow a string without limit.
+const DIGITS: usize = 12;
+
+/// What a repository is named with, either side of the slash.
+fn named(character: char) -> bool {
+    character.is_alphanumeric() || matches!(character, '.' | '_' | '-')
+}
+
+/// How many bytes at the end of `pending` name a repository, where they do.
+///
+/// `owner/repo` and nothing else: one slash, a name either side of it, and
+/// nothing but a word boundary in front. Two slashes is a path somebody wrote
+/// and a path is not a repository, which is what keeps `src/cli/draw.rs#L20`
+/// out of this.
+fn repository(pending: &str) -> Option<usize> {
+    let back = pending.len() - pending.trim_end_matches(|c| named(c) || c == '/').len();
+    let slug = pending.get(pending.len() - back..)?;
+    let (owner, repo) = slug.split_once('/')?;
+
+    let spelled = |part: &str| !part.is_empty() && part.chars().all(named);
+    (spelled(owner) && spelled(repo)).then_some(back)
+}
+
 /// The schemes an address is recognised by.
 ///
 /// Two, and both of them the web's: an answer about code is full of words with
@@ -231,6 +275,17 @@ pub struct Markdown {
     /// that merely starts like one is held for as long as it could still turn
     /// into one, which is never more than a few characters.
     address: Option<String>,
+    /// A number being read, from the hash that opened it on.
+    reference: Option<Reference>,
+    /// The repository a bare number is counted against, where the session
+    /// knows one.
+    ///
+    /// Optional because a checkout with no forge behind it is an ordinary
+    /// place to work, and because a number pointing at the wrong repository is
+    /// worse than a number pointing nowhere. Held rather than passed with each
+    /// delta, because unlike the room this cannot change while a message is
+    /// arriving: the checkout is the one it was when the session opened.
+    forge: Option<Forge>,
     /// A backslash is standing, waiting to see what it was put in front of.
     ///
     /// Held rather than written, because what it does is decided by the next
@@ -313,6 +368,13 @@ impl Markdown {
         }
     }
 
+    /// The same reader, counting bare numbers against `forge`.
+    #[must_use]
+    pub fn counting(mut self, forge: Option<Forge>) -> Self {
+        self.forge = forge;
+        self
+    }
+
     /// Reads `delta`, handing each run of text to `say` under its slot.
     ///
     /// Runs rather than characters: the text between two markers is one call,
@@ -324,7 +386,12 @@ impl Markdown {
     /// changes without a delta arriving: a window resized between two of them
     /// would leave a field stale, and the caller knows the size at every call
     /// anyway.
-    pub fn read(&mut self, delta: &str, room: usize, say: &mut dyn FnMut(Slot, &str)) {
+    pub fn read(
+        &mut self,
+        delta: &str,
+        room: usize,
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
+    ) {
         // Where the text not yet handed on begins.
         let mut run = 0;
 
@@ -389,6 +456,18 @@ impl Markdown {
                 run = at;
             }
 
+            // Held text, not a run, for the reason an address is.
+            if self.reference.is_some() {
+                if self.referenced(character, say) {
+                    run = next;
+                    continue;
+                }
+                // The number has ended, or there was never one behind the
+                // hash. Either way what was held has been drawn or put back,
+                // and this character starts the run.
+                run = at;
+            }
+
             if std::mem::take(&mut self.escaped) {
                 if Self::escapes(character) {
                     self.say(delta.get(at..next).unwrap_or_default(), say);
@@ -424,6 +503,21 @@ impl Markdown {
             } else if self.opens_address(character) {
                 self.say(delta.get(run..at).unwrap_or_default(), say);
                 self.address = Some(String::from(character));
+                run = next;
+            } else if let Some(back) =
+                self.opens_reference(character, delta.get(run..at).unwrap_or_default())
+            {
+                // What the repository was named with is the reference's, not
+                // the prose's: it goes into the hold rather than out, so the
+                // words the reader clicks are the words the answer wrote.
+                let pending = delta.get(run..at).unwrap_or_default();
+                let (text, slug) = pending.split_at(pending.len() - back);
+                self.say(text, say);
+                self.reference = Some(Reference {
+                    slug: (!slug.is_empty()).then(|| slug.into()),
+                    number: String::new(),
+                });
+                self.started = true;
                 run = next;
             } else if self.escaping(character) {
                 self.say(delta.get(run..at).unwrap_or_default(), say);
@@ -519,7 +613,7 @@ impl Markdown {
         held: Held,
         next: char,
         room: usize,
-        say: &mut dyn FnMut(Slot, &str),
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
     ) -> bool {
         self.held = None;
         self.started = true;
@@ -536,7 +630,7 @@ impl Markdown {
             '-' | '*' | '_' if held.opened && held.count >= 3 && next == '\n' => {
                 self.indent = 0;
                 for _ in 0..room {
-                    say(Slot::Quiet, self.glyphs.horizontal());
+                    say(Slot::Quiet, self.glyphs.horizontal(), None);
                 }
                 false
             }
@@ -588,8 +682,8 @@ impl Markdown {
                 self.opens_block();
                 self.line.quoted = true;
                 self.spend(say);
-                say(Slot::Quiet, self.glyphs.vertical());
-                say(Slot::Quiet, " ");
+                say(Slot::Quiet, self.glyphs.vertical(), None);
+                say(Slot::Quiet, " ", None);
                 true
             }
             // Exactly two, because that is the only run markdown has ever
@@ -697,7 +791,12 @@ impl Markdown {
     /// gone out, and `character` is the caller's again — the first character of
     /// a line that is not part of any table, which is why the line state goes
     /// back to what it is at the start of one.
-    fn tabled(&mut self, character: char, room: usize, say: &mut dyn FnMut(Slot, &str)) -> bool {
+    fn tabled(
+        &mut self,
+        character: char,
+        room: usize,
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
+    ) -> bool {
         let Some(mut table) = self.table.take() else {
             return false;
         };
@@ -735,14 +834,14 @@ impl Markdown {
     /// terminal, whichever path that is — a run of prose, a link that arrived
     /// whole, a bracket that turned out not to be one, or the break of an item
     /// with nothing after its marker at all.
-    fn pay(&mut self, say: &mut dyn FnMut(Slot, &str)) {
+    fn pay(&mut self, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
         if self.line.marked != Marked::Owed {
             return;
         }
 
         self.line.marked = Marked::Drawn;
-        say(Slot::Quiet, self.glyphs.dot());
-        say(Slot::Quiet, " ");
+        say(Slot::Quiet, self.glyphs.dot(), None);
+        say(Slot::Quiet, " ", None);
     }
 
     /// Whether what a bullet is holding is a task's box rather than a link.
@@ -760,16 +859,16 @@ impl Markdown {
 
     /// Draws a task's box in place of the bullet's mark, and says whether the
     /// task is one somebody has finished.
-    fn tick(&mut self, label: &str, say: &mut dyn FnMut(Slot, &str)) {
+    fn tick(&mut self, label: &str, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
         if matches!(label, "x" | "X") {
             self.line.marked = Marked::Done;
-            say(Slot::DoneMark, self.glyphs.done());
+            say(Slot::DoneMark, self.glyphs.done(), None);
         } else {
             self.line.marked = Marked::Drawn;
-            say(Slot::Quiet, self.glyphs.open());
+            say(Slot::Quiet, self.glyphs.open(), None);
         }
 
-        say(Slot::Quiet, " ");
+        say(Slot::Quiet, " ", None);
     }
 
     /// Whether `character` opens a link where the scan stands.
@@ -787,7 +886,7 @@ impl Markdown {
     /// `false` says the shape was not a link: what was held has already gone
     /// back out as the text it turned out to be, and `character` is the
     /// caller's again.
-    fn links(&mut self, character: char, say: &mut dyn FnMut(Slot, &str)) -> bool {
+    fn links(&mut self, character: char, say: &mut dyn FnMut(Slot, &str, Option<&str>)) -> bool {
         let Some(mut link) = self.link.take() else {
             return false;
         };
@@ -839,7 +938,11 @@ impl Markdown {
 
     /// Reads one character into the address being held. Answers whether that
     /// character was part of it.
-    fn addressed(&mut self, character: char, say: &mut dyn FnMut(Slot, &str)) -> bool {
+    fn addressed(
+        &mut self,
+        character: char,
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
+    ) -> bool {
         let Some(mut address) = self.address.take() else {
             return false;
         };
@@ -879,7 +982,7 @@ impl Markdown {
     /// like it can. What ends a sentence is not part of it: a full stop after
     /// an address belongs to the prose, and a reader who copies the row gets
     /// an address that still resolves.
-    fn wrote_address(&mut self, address: &str, say: &mut dyn FnMut(Slot, &str)) {
+    fn wrote_address(&mut self, address: &str, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
         let ends = address.trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '"']);
 
         // A scheme and nothing after it is a word somebody wrote, not somewhere
@@ -892,10 +995,98 @@ impl Markdown {
         }
 
         self.pay(say);
-        say(Slot::Link, ends);
+        say(Slot::Link, ends, Some(ends));
         self.started = true;
         self.previous = ends.chars().next_back().unwrap_or('/');
         self.say(&address[ends.len()..], say);
+    }
+
+    /// How many bytes in front of `character` belong to a reference opening
+    /// here, or `None` where none is.
+    ///
+    /// Prose only, and not inside a span of code, for the reason a link is:
+    /// `#[derive(Debug)]` is an attribute and `#define` is a directive, and
+    /// both are things a coding agent writes far more often than it writes a
+    /// number about a repository. Not where a line has yet to start either --
+    /// there a hash is a heading, and headings were spoken for first.
+    ///
+    /// Nothing at all without a repository in hand, which is the check that
+    /// leaves every other terminal drawing exactly what it drew before.
+    fn opens_reference(&self, character: char, pending: &str) -> Option<usize> {
+        if character != '#'
+            || self.inside != Inside::Prose
+            || self.line.code
+            || !self.started
+            || self.forge.is_none()
+        {
+            return None;
+        }
+
+        // `owner/repo#12` is a number counted somewhere else, and the name in
+        // front of the hash is part of the reference. Where there is no name,
+        // the hash has to start a word: `abc#def` is an identifier, a fragment
+        // or an anchor, and none of those is a number anybody can open.
+        repository(pending).or_else(|| (!self.previous.is_alphanumeric()).then_some(0))
+    }
+
+    /// Reads one character into the reference being held. Answers whether that
+    /// character was part of it.
+    fn referenced(
+        &mut self,
+        character: char,
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
+    ) -> bool {
+        let Some(mut reference) = self.reference.take() else {
+            return false;
+        };
+
+        if character.is_ascii_digit() && reference.number.len() < DIGITS {
+            reference.number.push(character);
+            self.reference = Some(reference);
+            return true;
+        }
+
+        self.wrote_reference(&reference, say);
+        false
+    }
+
+    /// Hands on a number the answer wrote, as the link it is.
+    ///
+    /// What ends a sentence is not part of it and never was: the number ended
+    /// at the first character that was not a digit, so the stop after `#487`
+    /// is prose that has not been read yet rather than something to trim.
+    ///
+    /// A hash with no digits behind it goes back as the characters it was
+    /// written with. So does one the session has nowhere to point -- the same
+    /// answer drawn on a checkout with no forge behind it, which is why this
+    /// asks again rather than trusting the hold to have been opened wisely.
+    fn wrote_reference(
+        &mut self,
+        reference: &Reference,
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
+    ) {
+        let slug = reference.slug.as_deref().unwrap_or_default();
+        let words = format!("{slug}#{}", reference.number);
+        self.previous = words.chars().next_back().unwrap_or('#');
+        self.started = true;
+
+        let address = self
+            .forge
+            .as_ref()
+            .filter(|_| !reference.number.is_empty())
+            .map(|forge| forge.address(reference.slug.as_deref(), &reference.number));
+
+        let Some(address) = address else {
+            self.say(&words, say);
+            return;
+        };
+
+        // The mark the line owes, then the words -- the order every other run
+        // on a line reaches the terminal in. The indentation is not owed here:
+        // a reference only opens once something has been written on the line,
+        // and whatever that was spent it.
+        self.pay(say);
+        say(Slot::Link, &words, Some(&address));
     }
 
     /// Hands on a link that arrived whole.
@@ -907,7 +1098,7 @@ impl Markdown {
     /// cannot reach. Neither is ever written as anything but text: an address
     /// is bytes a model chose, and the rule this file opens with is that none
     /// of them leaves as an instruction.
-    fn wrote_link(&mut self, link: &Link, say: &mut dyn FnMut(Slot, &str)) {
+    fn wrote_link(&mut self, link: &Link, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
         self.pay(say);
 
         let target = target(&link.target);
@@ -917,16 +1108,16 @@ impl Markdown {
             &link.label
         };
 
-        say(Slot::Link, words);
+        say(Slot::Link, words, (!target.is_empty()).then_some(target));
         self.previous = words.chars().next_back().unwrap_or(')');
 
         // Said once. A link written `[https://example.com](https://example.com)`
         // is the address twice, and so is one whose words a model copied out of
         // it.
         if !target.is_empty() && target != words {
-            say(Slot::Quiet, " (");
-            say(Slot::Quiet, target);
-            say(Slot::Quiet, ")");
+            say(Slot::Quiet, " (", None);
+            say(Slot::Quiet, target, None);
+            say(Slot::Quiet, ")", None);
             self.previous = ')';
         }
     }
@@ -939,7 +1130,7 @@ impl Markdown {
     ///
     /// The last moment there is: the reader is dropped between messages, and
     /// text still held when that happens is text the reader never sees.
-    pub fn finish(&mut self, room: usize, say: &mut dyn FnMut(Slot, &str)) {
+    pub fn finish(&mut self, room: usize, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
         // A run of markers is held for the character that says what it was,
         // and the end of a message is that character never arriving. Settled
         // against a line break, because the end of a message ends everything a
@@ -955,6 +1146,12 @@ impl Markdown {
         // of the message ends it exactly as a space would have.
         if let Some(address) = self.address.take() {
             self.wrote_address(&address, say);
+        }
+
+        // The digit that would have carried the number on never arrived, and
+        // the end of the message ends it exactly as a space would have.
+        if let Some(reference) = self.reference.take() {
+            self.wrote_reference(&reference, say);
         }
 
         // The character that would have said what it was in front of never
@@ -977,7 +1174,7 @@ impl Markdown {
     }
 
     /// Ends the line, and with it everything markdown ends at one.
-    fn end_line(&mut self, room: usize, say: &mut dyn FnMut(Slot, &str)) {
+    fn end_line(&mut self, room: usize, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
         let ended = self.inside;
         // Belt and braces: the line break puts a link back before it gets here,
         // and the reset below would drop what one was holding without a sound.
@@ -1027,7 +1224,7 @@ impl Markdown {
         // to each end of it. After the reset otherwise, so the row that ends
         // carries no slot into the row that follows it.
         if !matches!(ended, Inside::Opening | Inside::Closing) {
-            say(self.slot(), "\n");
+            say(self.slot(), "\n", None);
         }
 
         // After the break, so the slot the row ends under is the one it would
@@ -1040,7 +1237,7 @@ impl Markdown {
     /// Inside a block being read, the run is held instead: a highlighter reads
     /// whole lines and this is a piece of one. Everywhere else it goes straight
     /// out, which is every run in every answer that is not code.
-    fn say(&mut self, text: &str, say: &mut dyn FnMut(Slot, &str)) {
+    fn say(&mut self, text: &str, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
         if text.is_empty() {
             return;
         }
@@ -1057,7 +1254,7 @@ impl Markdown {
     /// Called wherever the first thing on a line reaches the terminal, which
     /// is the moment the marker that could have claimed those spaces has
     /// either claimed them or gone. See [`Markdown::indent`].
-    fn spend(&mut self, say: &mut dyn FnMut(Slot, &str)) {
+    fn spend(&mut self, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
         let mut indent = std::mem::take(&mut self.indent);
         while indent > 0 {
             let spaces = indent.min(SPACES.len());
@@ -1068,14 +1265,14 @@ impl Markdown {
 
     /// Hands on a run under the slot the line is wearing, or into the block
     /// being read where one is open.
-    fn wears(&mut self, text: &str, say: &mut dyn FnMut(Slot, &str)) {
+    fn wears(&mut self, text: &str, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
         if self.syntax.is_some() && self.inside == Inside::Fence && self.code.len() < MOST {
             self.code.push_str(text);
             return;
         }
 
         let slot = self.slot();
-        say(slot, text);
+        say(slot, text, None);
     }
 
     /// Hands on the line of code collected so far, read.
@@ -1083,7 +1280,7 @@ impl Markdown {
     /// Every byte comes back exactly once and in order, which is the property
     /// the whole thing rests on — a byte dropped is code that quietly changed
     /// meaning on screen, and a byte doubled is a row wider than it measured.
-    fn read_code(&mut self, say: &mut dyn FnMut(Slot, &str)) {
+    fn read_code(&mut self, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
         if self.code.is_empty() {
             return;
         }
@@ -1098,10 +1295,10 @@ impl Markdown {
                 // The break is the caller's to write, once, below.
                 let text = text.strip_suffix('\n').unwrap_or(text);
                 if !text.is_empty() {
-                    say(slot, text);
+                    say(slot, text, None);
                 }
             }),
-            None => say(Slot::Quiet, code.trim_end_matches('\n')),
+            None => say(Slot::Quiet, code.trim_end_matches('\n'), None),
         }
     }
 
@@ -1136,18 +1333,18 @@ impl Markdown {
 ///
 /// Exactly them, in order, so a bracket that was never a link costs the reader
 /// nothing at all.
-fn spill(link: &Link, say: &mut dyn FnMut(Slot, &str)) {
-    say(Slot::Plain, "[");
+fn spill(link: &Link, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+    say(Slot::Plain, "[", None);
     if !link.label.is_empty() {
-        say(Slot::Plain, &link.label);
+        say(Slot::Plain, &link.label, None);
     }
     if link.part != Part::Label {
-        say(Slot::Plain, "]");
+        say(Slot::Plain, "]", None);
     }
     if link.part == Part::Target {
-        say(Slot::Plain, "(");
+        say(Slot::Plain, "(", None);
         if !link.target.is_empty() {
-            say(Slot::Plain, &link.target);
+            say(Slot::Plain, &link.target, None);
         }
     }
 }

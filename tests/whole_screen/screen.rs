@@ -41,6 +41,13 @@ const ESCAPE: u8 = 0x1b;
 /// What ends a command string.
 const BELL: u8 = 0x07;
 
+/// What else ends one: the string terminator, `ESC \\`.
+///
+/// Both spellings, because a real terminal takes both and crucible writes both
+/// — the tab title ends with a bell and a hyperlink ends with this, which is
+/// the spelling the hyperlink's own definition is written in.
+const TERMINATOR: &str = "\x1b\\";
+
 /// The first half of a row ending, and a whole instruction on its own.
 const RETURN: u8 = b'\r';
 
@@ -71,6 +78,13 @@ pub(crate) struct Screen {
     /// What crucible did that it does not promise to do, in the order it was
     /// first done, each said once.
     refused: Vec<String>,
+    /// The command strings that arrived, in the order they did.
+    ///
+    /// Kept rather than dropped because some of them are the whole point of a
+    /// frame and none of them lands in a column: a hyperlink is an address
+    /// wrapped around words that are drawn either way, so a picture is exactly
+    /// the same whether one was written or not.
+    commanded: Vec<String>,
     /// Whether a frame has asked the screen to be held and not yet asked for it
     /// to be shown.
     holding: bool,
@@ -109,6 +123,7 @@ impl Screen {
             column: 0,
             scrolled: 0,
             refused: Vec::new(),
+            commanded: Vec::new(),
             holding: false,
             pending: Vec::new(),
         }
@@ -160,6 +175,11 @@ impl Screen {
     /// What crucible did that it does not promise to do.
     pub(crate) fn refusals(&self) -> &[String] {
         &self.refused
+    }
+
+    /// The command strings this screen was sent, payloads only.
+    pub(crate) fn commands(&self) -> &[String] {
+        &self.commanded
     }
 
     /// Whether a frame is still being held.
@@ -429,12 +449,18 @@ impl Screen {
 
     /// Reads `ESC ] … BEL`: the tab title, and the one question at startup.
     fn command<'a>(&mut self, after: &'a str) -> &'a str {
-        let Some(at) = after.find(char::from(BELL)) else {
+        // Whichever ending comes first. A payload cannot contain either, so
+        // the first one found is the one that ends this string rather than a
+        // later one belonging to something else.
+        let bell = after.find(char::from(BELL)).map(|at| (at, 1));
+        let terminated = after.find(TERMINATOR).map(|at| (at, TERMINATOR.len()));
+        let Some((at, ends)) = bell.into_iter().chain(terminated).min() else {
             self.refuse("wrote a command string with no end to it".to_owned());
             return "";
         };
 
         let said = after.get(..at).unwrap_or_default();
+        self.commanded.push(said.to_owned());
 
         // `0;` is the tab title, which crucible holds for as long as it runs.
         // `11;?` asks the terminal what colour its own background is, which is
@@ -443,11 +469,16 @@ impl Screen {
         // implement it ignores it, as it ignores any command string it does not
         // know; this window is not a terminal and draws the payload instead,
         // which is why it has to be named here rather than left to be noticed.
-        if !said.starts_with("0;") && said != "11;?" {
+        // `8;;` is a hyperlink: the address the run after it points at, and
+        // the same with nothing after it to close one. A terminal that knows
+        // them makes the words between clickable, and one that does not draws
+        // the words and drops these — which is what this does, since a link
+        // changes nothing about which column anything lands in.
+        if !said.starts_with("0;") && !said.starts_with("8;") && said != "11;?" {
             self.refuse(format!("wrote the command string {said:?}"));
         }
 
-        after.get(at + 1..).unwrap_or_default()
+        after.get(at + ends..).unwrap_or_default()
     }
 }
 
@@ -498,7 +529,9 @@ fn finished(tail: &[u8]) -> bool {
             .iter()
             .skip(2)
             .any(|byte| ENDS.contains(&char::from(*byte))),
-        Some(b']') => tail.contains(&BELL),
+        Some(b']') => {
+            tail.contains(&BELL) || tail.windows(2).any(|pair| pair == TERMINATOR.as_bytes())
+        }
         // Every other sequence is two bytes, and both are here.
         Some(_) => true,
     }

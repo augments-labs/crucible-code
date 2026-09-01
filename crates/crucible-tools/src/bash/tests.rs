@@ -5,8 +5,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    Ask, Cancel, Command, DescribeTool, Mode, Permission, Remember, Rules, ToolCall, ToolId,
-    Verdict,
+    Ask, Cancel, Command, DescribeTool, Looking, Mode, Permission, Remember, Rules, ToolCall,
+    ToolId, Verdict,
 };
 
 use super::background::{Background, MOST};
@@ -794,4 +794,71 @@ fn the_number_of_commands_left_running_is_capped() {
         over.text()
     );
     assert_eq!(left.running().len(), MOST);
+}
+
+/// What the classification is asked of: one command line, as the model sent it.
+fn looking(line: &str) -> Option<Looking> {
+    let sample = Sample::new("bash_is_looking");
+    let tool = Bash::new(sample.workspace());
+    let args = format!(
+        "{{\"command\": {}}}",
+        serde_json::to_string(line).expect("json")
+    );
+
+    tool.looking(&ToolArgs::new(args))
+}
+
+/// A command that only reports leaves the workspace as it found it, so the
+/// transcript may count it rather than name it.
+#[test]
+fn a_command_that_only_reports_is_looking() {
+    assert_eq!(looking("ls -la src"), Some(Looking::Command));
+    assert_eq!(looking("cat Cargo.toml"), Some(Looking::Command));
+    assert_eq!(looking("git status"), Some(Looking::Command));
+}
+
+/// The subcommand says whether the call reports, so the answer is per
+/// subcommand and never per binary: one `gh` reads a pull request and the next
+/// one opens it.
+#[test]
+fn gh_is_read_one_subcommand_at_a_time() {
+    assert_eq!(looking("gh pr view 487"), Some(Looking::Command));
+    assert_eq!(looking("gh pr list"), Some(Looking::Command));
+    assert_eq!(looking("gh pr create --title x"), None);
+    assert_eq!(looking("gh pr merge 487"), None);
+}
+
+/// The same for the other multiplexer a session leans on.
+#[test]
+fn git_is_read_one_subcommand_at_a_time() {
+    assert_eq!(looking("git log --oneline -5"), Some(Looking::Command));
+    assert_eq!(looking("git diff HEAD"), Some(Looking::Command));
+    assert_eq!(looking("git commit -m x"), None);
+    assert_eq!(looking("git push"), None);
+}
+
+/// A line that changes something is named in the transcript, never counted.
+#[test]
+fn a_command_that_changes_something_is_not_looking() {
+    assert_eq!(looking("rm -rf build"), None);
+    assert_eq!(looking("cargo test"), None);
+    assert_eq!(looking("mkdir src/new"), None);
+}
+
+/// Every part of the line has to report, because a reader who is shown a count
+/// has been told nothing about the half of it that wrote.
+#[test]
+fn one_part_that_writes_is_the_whole_line_writing() {
+    assert_eq!(looking("ls src && cat Cargo.toml"), Some(Looking::Command));
+    assert_eq!(looking("ls src && rm -rf build"), None);
+    assert_eq!(looking("git status | wc -l"), Some(Looking::Command));
+}
+
+/// A line whose text does not say what will run says nothing about whether it
+/// only reports, and the honest answer to that is to name it.
+#[test]
+fn a_line_that_does_not_say_what_runs_is_not_looking() {
+    assert_eq!(looking("ls $(cat targets)"), None);
+    assert_eq!(looking("cat one.txt > two.txt"), None);
+    assert_eq!(looking("eval ls"), None);
 }

@@ -15,9 +15,11 @@ mod branching;
 mod browser;
 mod choice;
 mod converse;
+mod counting;
 mod draw;
 #[cfg(test)]
 mod fake;
+mod gathering;
 mod kept;
 mod models;
 mod prompt_cache;
@@ -801,6 +803,14 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     // a bullet and a quote bar are drawn out of the same set as every border
     // and mark on screen, so a font missing one is missing all of them.
     renderer.draws(terms.style().glyphs());
+
+    // And which repository a number in the answer is counted against, so `#487`
+    // is somewhere the reader can go rather than four characters to carry to a
+    // browser by hand. Read here for the reason the branch is: it comes out of
+    // a file in the checkout, the checkout does not change while the session
+    // runs, and a session with no forge behind it simply draws what it drew
+    // before.
+    renderer.counts(counting::forge(workspace.root()));
 
     // And how far one notch of the wheel moves the transcript. Read here rather
     // than where the wheel is answered, because it is answered on the render

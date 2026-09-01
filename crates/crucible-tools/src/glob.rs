@@ -5,7 +5,7 @@ use std::collections::BinaryHeap;
 use std::time::SystemTime;
 
 use crucible_core::{
-    Approved, DescribeTool, Sensitivity, Summary, Tool, ToolArgs, ToolContext, ToolEffect,
+    Approved, DescribeTool, Looking, Sensitivity, Summary, Tool, ToolArgs, ToolContext, ToolEffect,
     ToolError, ToolOutput, Workspace,
 };
 use globset::GlobBuilder;
@@ -276,6 +276,10 @@ impl Tool for Glob {
         summary::field(NAME, args, PATTERN)
     }
 
+    fn looking(&self, _args: &ToolArgs) -> Option<Looking> {
+        Some(Looking::Directory)
+    }
+
     fn run(&self, approved: Approved, context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
         let args = Args::parse(NAME, approved.args())?;
         let pattern = args.text(PATTERN)?;
@@ -407,7 +411,7 @@ fn halted(stopped: bool, sort: Sort) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crucible_core::{Cancel, Disposition};
+    use crucible_core::{Cancel, Disposition, Looking};
 
     use crate::sample::{Sample, allowed, under};
 
@@ -933,5 +937,18 @@ mod tests {
 
         assert!(!output.is_failed(), "{}", output.text());
         assert!(output.text().contains("photo.png"));
+    }
+
+    /// A walk over what a directory holds changes nothing, so the transcript
+    /// may count it rather than name it.
+    #[test]
+    fn a_walk_is_looking_at_a_directory() {
+        let sample = Sample::new("glob_is_looking");
+        let tool = Glob::new(sample.workspace());
+
+        assert_eq!(
+            tool.looking(&ToolArgs::new(r#"{"pattern": "**/*.rs"}"#)),
+            Some(Looking::Directory)
+        );
     }
 }

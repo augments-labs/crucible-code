@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use crucible_core::Disposition;
+use crucible_core::{Disposition, Looking};
 
 use super::{
     CEILING, Cancel, Found, Grep, Hit, MAX_LINE, Mode, NAMED, Partial, REACH, RegexMatcherBuilder,
@@ -883,4 +883,17 @@ fn a_directory_outside_the_workspace_is_searched_once_the_user_says_yes() {
 
     assert!(!output.is_failed(), "{}", output.text());
     assert!(output.text().contains("needle"));
+}
+
+/// A search leaves the workspace as it found it, so the transcript may count
+/// it rather than name it.
+#[test]
+fn a_search_is_looking_for_a_pattern() {
+    let sample = Sample::new("grep_is_looking");
+    let tool = Grep::new(sample.workspace());
+
+    assert_eq!(
+        tool.looking(&ToolArgs::new(r#"{"pattern": "fn main"}"#)),
+        Some(Looking::Pattern)
+    );
 }

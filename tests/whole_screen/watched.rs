@@ -303,6 +303,21 @@ impl Watched {
         fs::create_dir_all(&workspace).expect("a scratch working directory");
         fs::write(home.join("config.json"), document).expect("a configuration file");
 
+        // A checkout, because that is what crucible is run in. Only one fact
+        // about it is read at startup and only one case turns on it -- but a
+        // fixture with no remote is a fixture where a whole seam is switched
+        // off, and switched off is not the state anybody ships in.
+        let git = workspace.join(".git");
+        fs::create_dir_all(&git).expect("a scratch .git directory");
+        fs::write(
+            git.join("config"),
+            concat!(
+                "[remote \"origin\"]\n",
+                "\turl = https://github.com/augments-labs/crucible-code.git\n"
+            ),
+        )
+        .expect("a git configuration file");
+
         let (terminal, inside) = pair(columns, rows);
         let child = start(&scratch, &home, &workspace, keyed, inside);
         let (sender, bytes) = mpsc::channel();
@@ -447,6 +462,11 @@ impl Watched {
     /// asks for it.
     pub(crate) fn workspace(&self) -> PathBuf {
         working(&self.scratch)
+    }
+
+    /// The command strings crucible wrote, which is where a hyperlink is.
+    pub(crate) fn commands(&self) -> &[String] {
+        self.screen.commands()
     }
 
     /// Reads until the screen settles, and fails plainly when it never does.

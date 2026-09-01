@@ -8,6 +8,50 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Added
+
+- **A run of calls that only looked around is one line.** Reading files,
+  searching for patterns, listing directories and running commands that only
+  report now count into a single row — `Searched for 1 pattern, read 4 files` —
+  which lights up under the pointer and opens every result in the run at once.
+  A single lookup keeps the row it always had. A line settles into the
+  transcript each time the agent goes back to the model, so a turn that spends
+  minutes looking around fills the screen as it goes.
+
+- **Bare issue and pull-request numbers are links.** `#487` in an answer points
+  at the repository the checkout was cloned from, read out of the `origin`
+  remote; a checkout with no recognised remote draws the number as before.
+
+### Fixed
+
+- **The result corner no longer appears where there is no result.** Compaction
+  reports itself between rules, as it is documented to, rather than hanging
+  under a `└` that belongs to a tool result or a slash command's output.
+
+- **Calls waiting above the box are counted, not one of them named.** A
+  response that asks for eight fetches at once says `8 WebFetch` over the
+  working row, falling as each answers and joins the transcript, rather than
+  holding the first of the eight there until it came back. A command is still
+  named, since `ctrl+b` points at a row.
+
+- **A lone call with nothing live about it is written where it is asked for.**
+  `WebSearch` and `WebFetch` print nothing and cannot be backgrounded, so their
+  row goes into the transcript when the call goes out rather than waiting for
+  the network. Calls that stream output, that `ctrl+b` can leave running, or
+  that share a pass with others still commit when their tool answers, which is
+  what keeps each result under the call it answers.
+
+- **A sent attachment shows its label, not its path.** The transcript row reads
+  `[Image #1]`.
+
+- **A record-shaped tool result is summarised as a record.** `gh pr view --json`
+  and anything else opening like one is squeezed onto its row in the order it
+  arrived, rather than showing whichever key sorted first.
+
+- **A backgrounded command that ends says which command it was in your words.**
+  The row uses the call's own one-line description where it has one, so a
+  command whose turn has scrolled away is still recognisable.
+
 ## [0.32.0] - 2026-08-31
 
 ### Added

@@ -155,7 +155,7 @@ pub(super) fn beside<T: Terminal>(
     // Before the refusals, because this is the line's own block closing over
     // what went with it, and a refusal is the next thing to read rather than
     // part of it.
-    draw::attached(renderer, &attachments, workspace, style)?;
+    draw::attached(renderer, &attachments, style)?;
 
     for said in &refusals {
         let columns = renderer.columns();

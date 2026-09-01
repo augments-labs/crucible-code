@@ -36,12 +36,19 @@
 //! whole file, and a call that sent no block is one that changed nothing rather
 //! than one nobody could work out.
 //!
-//! One line is drawn twice. A call stands in the footing with a mark that moves
-//! for as long as its tool is out, and commits through [`returned`] once it has
-//! answered — the same words, in the same columns, with the motion gone. So
-//! what joins the transcript is still free of escape sequences, and a pipe and
-//! the session file get the still line rather than a frame of a moving one.
+//! Two lines are drawn twice. A call stands in the footing with a mark that
+//! moves for as long as its tool is out, and commits through [`returned`] once
+//! it has answered — the same words, in the same columns, with the motion gone.
+//! So what joins the transcript is still free of escape sequences, and a pipe
+//! and the session file get the still line rather than a frame of a moving one.
+//!
+//! The other is the line counting a run of calls that only looked around, which
+//! stands over that one while the run goes on and commits through [`gathered`]
+//! when it ends. The tense turns as it settles — a run still going is
+//! *reading*, one that is over *read* — because a line the reader scrolls back
+//! to is a line about something finished.
 
+use std::borrow::Cow;
 use std::fmt;
 use std::path::Path;
 
@@ -161,10 +168,12 @@ pub(crate) fn event<T: Terminal>(
         }
 
         // Whatever the model was saying is finished; it said it to explain the
-        // call that follows. The line for the call itself is not written here:
-        // it is live until the tool answers, standing in the footing with a
-        // mark that moves, and a line that is still moving is not one the
-        // transcript can hold. It commits through [`returned`].
+        // call that follows. The line for the call itself is not written here
+        // either way. Where the call has something live about it that line is
+        // in the footing until the tool answers, and a line that is still
+        // moving is not one the transcript can hold; where it has not, it is
+        // handed straight back to be written. Both commit through [`returned`],
+        // which is why neither is drawn from this arm.
         Event::ToolRequested { call, summary, .. } => {
             kept.calling(call.id.clone(), called(&call, &summary));
             renderer.settle()
@@ -238,6 +247,17 @@ pub(crate) fn event<T: Terminal>(
 /// the reader cannot ask for afterwards, since the command is gone: which one,
 /// how it ended, and how much it had printed.
 ///
+/// Which one, in the words the call accounted for itself in where it gave any.
+/// This row arrives long after the call that started it has scrolled off, and
+/// what somebody agreed to on the panel was that sentence — handing back the
+/// shell line it expanded to asks them to match the two up again. A call that
+/// said nothing about itself is named by its command, because that is what
+/// there is and nothing may be invented in its place.
+///
+/// And the status as a number in every case. The mark already says whether it
+/// went well; the number is the part a reader takes to whatever was waiting on
+/// it, and this is the only line that will mention this command again.
+///
 /// # Errors
 ///
 /// [`TerminalError::Io`] if the terminal could not be written to.
@@ -248,7 +268,7 @@ pub(crate) fn gone<T: Terminal>(
 ) -> Result<(), TerminalError> {
     let glyphs = style.glyphs();
     let (mark, how) = match ended.code {
-        Some(0) => (glyphs.done(), "finished".to_owned()),
+        Some(0) => (glyphs.done(), "exit status 0".to_owned()),
         Some(code) => (glyphs.failed(), format!("exit status {code}")),
         None => (glyphs.failed(), "killed".to_owned()),
     };
@@ -266,12 +286,17 @@ pub(crate) fn gone<T: Terminal>(
         ended.lines
     );
 
+    // The account where there is one, and no brackets around it: `Bash(…)` is
+    // how this program spells a call, and a sentence inside that shape would
+    // read as a command somebody could run.
+    let named = if ended.said.trim().is_empty() {
+        spelled(ended.tool, &ended.called)
+    } else {
+        ended.said.trim().to_owned()
+    };
+
     let room = style.output(renderer.columns()).saturating_sub(2);
-    let called = clipped(
-        spelled(ended.tool, &ended.called),
-        room.saturating_sub(columns(&tail)),
-        glyphs,
-    );
+    let called = clipped(named, room.saturating_sub(columns(&tail)), glyphs);
 
     // Clipped again, because a window narrower than the tail alone has room
     // for neither and the row still may not be wider than the window it is
@@ -338,11 +363,21 @@ fn prompt<T: Terminal>(
     )
 }
 
-/// Names the files a prompt sent, on rows under it.
+/// Counts the files a prompt sent, on rows under it.
 ///
 /// Under rather than beside: what was asked is one block and the files went
 /// with it, so they belong inside that block rather than in one of their own.
 /// Called with the block still open, straight after the line.
+///
+/// Counts rather than names. The marker is the whole row because the marker is
+/// the name — the prompt above uses it to point at the file, and a reader who
+/// chose that file off their own disk a moment ago learns nothing from being
+/// told where it was. Against that, a pasted screen grab is named by whatever
+/// wrote it, so the path is long, shared with nothing else on the screen, and
+/// frequently somebody's home directory read out to whoever is watching.
+///
+/// Files that stayed behind are named in full by [`without`], where which one
+/// is the entire point of the row.
 ///
 /// Reached from both places a committed prompt is drawn, which is why it is
 /// here rather than in either of them. A row a live prompt gets and a replayed
@@ -350,7 +385,6 @@ fn prompt<T: Terminal>(
 pub(crate) fn attached<T: Terminal>(
     renderer: &mut Renderer<T>,
     attachments: &[Attachment],
-    workspace: &Workspace,
     style: Style,
 ) -> Result<(), TerminalError> {
     if attachments.is_empty() {
@@ -362,11 +396,7 @@ pub(crate) fn attached<T: Terminal>(
         .iter()
         .map(|one| {
             let number = numbers.next(one.modality);
-            format!(
-                "[{} #{number}] {}",
-                label(one.modality),
-                names(one, workspace)
-            )
+            format!("[{} #{number}]", label(one.modality))
         })
         .collect();
 
@@ -743,6 +773,50 @@ pub(crate) fn returned<T: Terminal>(
     renderer.present(&[row])
 }
 
+/// Writes the one line a folded run of calls comes to.
+///
+/// The mark a call row wears and, beside it, what the run did — in the slot
+/// that says a row has something behind it, so the whole of the sentence lights
+/// under the pointer and a click opens every call it counted.
+///
+/// No offer of a key. The key stands *everything* that was cut, which is a
+/// different question from this row, and a row that named it would be telling a
+/// reader to press something that answers a wider one. The line itself is the
+/// door, which is what the slot it is written in means everywhere else.
+///
+/// Hands back the record row it went down on. Pointing the run's results at
+/// that row is the caller's, because the two callers reach it differently: a
+/// turn sweeps up everything it gathered without a row, and a walk through a
+/// session already knows which results belong to which run.
+///
+/// # Errors
+///
+/// [`TerminalError::Io`] if the terminal could not be written to.
+pub(crate) fn gathered<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    said: &str,
+    style: Style,
+) -> Result<usize, TerminalError> {
+    let glyphs = style.glyphs();
+    let window = renderer.columns();
+    let mark = glyphs.called();
+    let room = window.saturating_sub(columns(mark) + 1);
+
+    renderer.settle()?;
+    renderer.apart()?;
+
+    let row = Row::new()
+        .then(Slot::Accent, mark)
+        .then(Slot::Plain, " ")
+        .then(Slot::Cut, clipped(said, room, glyphs));
+
+    renderer.present(&[row])?;
+
+    // Read after the row and not before it, because the row a result answers to
+    // is the one that has just gone down.
+    Ok(renderer.lines().saturating_sub(1))
+}
+
 /// A call as a row spells it, from the tool's own name and what the call was
 /// about.
 ///
@@ -865,22 +939,110 @@ fn finished(output: &ToolOutput, beyond: usize, window: usize, style: Style) -> 
 
 /// One human-facing line from a tool's complete result.
 ///
-/// Pretty-printers put braces and brackets on lines of their own. Those lines
-/// describe layout rather than what came back, so an output that starts that way
-/// takes its first non-structural content line. Deliberately narrower than JSON
-/// parsing: a shell command may print fragments, diagnostics and any other text,
-/// and a first line such as `[exit status 3]` remains exactly what it said.
-fn summary(text: &str) -> &str {
+/// A record is summarised by the record. `gh pr view --json …` comes back
+/// pretty-printed over thirty rows, and the first content line of one is
+/// whichever key happens to sort first — `"assignees": []` says nothing about
+/// a pull request, and a row that says it has spent the reader's only line on
+/// nothing. So a result that opens like a record is squeezed back onto one
+/// line and as much of it as the window holds is shown, in the order it
+/// arrived.
+///
+/// Everything else keeps the rule it always had: pretty-printers put braces and
+/// brackets on lines of their own, and an output that starts with one takes its
+/// first line of content instead. Deliberately narrower than JSON parsing: a
+/// shell command may print fragments, diagnostics and any other text, and a
+/// first line such as `[exit status 3]` remains exactly what it said.
+fn summary(text: &str) -> Cow<'_, str> {
+    if structured(text) {
+        return Cow::Owned(squeezed(text));
+    }
+
     let mut lines = text.lines();
     let first = lines.next().unwrap_or_default();
 
     if structural(first) {
-        lines
-            .find(|line| !line.trim().is_empty() && !structural(line))
-            .unwrap_or_default()
+        Cow::Borrowed(
+            lines
+                .find(|line| !line.trim().is_empty() && !structural(line))
+                .unwrap_or_default(),
+        )
     } else {
-        first
+        Cow::Borrowed(first)
     }
+}
+
+/// Whether `text` opens the way a record does.
+///
+/// Two characters, not a parse. A brace or a bracket says a record might be
+/// starting and the character after it says whether one is: a record holds
+/// names, records, lists, numbers or nothing, and `[exit status 3]` and
+/// `{ pattern } matched nothing` hold a word — which is how a sentence
+/// somebody wrote in brackets keeps its spaces.
+fn structured(text: &str) -> bool {
+    let text = text.trim_start();
+    let mut characters = text.chars();
+    let opens = characters.next();
+    let next = characters.as_str().trim_start().chars().next();
+
+    match (opens, next) {
+        (Some('{'), Some('"' | '}'))
+        | (Some('['), Some('{' | '[' | '"' | ']' | '-' | 't' | 'f' | 'n')) => true,
+        (Some('['), Some(digit)) => digit.is_ascii_digit(),
+        _ => false,
+    }
+}
+
+/// How much of a record is worth squeezing onto one line.
+///
+/// Wider than any window, because the row is clipped against the real one a
+/// moment later and a record is not read to its end here. The bound is what
+/// keeps a result the size of a repository from being copied to draw one row.
+const SQUEEZED: usize = 1024;
+
+/// `text` with the layout between its parts dropped and the words inside them
+/// kept.
+///
+/// Whitespace outside a value is a pretty-printer's indentation; whitespace
+/// inside one is somebody's sentence, and `"feat(session): add journal"` has to
+/// come back with its spaces. One space after a comma or a colon, because that
+/// is how a record reads when it is written on one line rather than thirty.
+fn squeezed(text: &str) -> String {
+    let mut squeezed = String::new();
+    let mut inside = false;
+    let mut escaped = false;
+
+    for character in text.chars() {
+        if squeezed.len() >= SQUEEZED {
+            break;
+        }
+
+        if inside {
+            squeezed.push(character);
+            // A quote after a backslash is a quote in the value rather than the
+            // end of it, and a backslash after a backslash is a backslash.
+            inside = character != '"' || escaped;
+            escaped = character == '\\' && !escaped;
+            continue;
+        }
+
+        match character {
+            '"' => {
+                inside = true;
+                escaped = false;
+                squeezed.push(character);
+            }
+            ',' | ':' => {
+                squeezed.push(character);
+                squeezed.push(' ');
+            }
+            // The layout itself, and the space this puts back after a comma or
+            // a colon means the one already there would be a second.
+            _ if character.is_whitespace() => {}
+            _ => squeezed.push(character),
+        }
+    }
+
+    squeezed
 }
 
 /// Whether a line says only the nesting a pretty-printer put around content.
