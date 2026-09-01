@@ -746,24 +746,26 @@ fn a_resumed_session_says_what_the_reader_watched() {
         )
     };
 
-    // One read, then the change, then the rest. The change is what parts them,
-    // and parting them is the point: the first read stands alone and keeps the
-    // row a pruning is measured against, and the four after it are a run and
-    // come to one line. Both shapes are in the one picture, which is the only
-    // place they can be compared.
-    let mut calls: Vec<(&str, String)> = vec![file(1)];
-    calls.push((
-        "edit",
-        serde_json::json!({
-            "path": "notes.md",
-            "find": spelling("was"),
-            "replace": spelling("is now"),
-        })
-        .to_string(),
-    ));
-    calls.extend((2..=READ).map(file));
+    // One read, then the change, then the rest, each its own round trip. The
+    // change is what parts them, and parting them is the point: the first read
+    // stands alone and keeps the row a pruning is measured against, and the
+    // four after it come in one batch and so come to one line. Both shapes are
+    // in the one picture, which is the only place they can be compared.
+    let batches: Vec<Vec<(&str, String)>> = vec![
+        vec![file(1)],
+        vec![(
+            "edit",
+            serde_json::json!({
+                "path": "notes.md",
+                "find": spelling("was"),
+                "replace": spelling("is now"),
+            })
+            .to_string(),
+        )],
+        (2..=READ).map(file).collect(),
+    ];
 
-    let vendor = Vendor::calling_each(&calls, IN_MARKDOWN);
+    let vendor = Vendor::calling_batches(&batches, IN_MARKDOWN);
 
     // Tall enough to hold the whole session at once. The results a pruning
     // clears are the oldest rows on the screen, so a window that scrolled them
@@ -870,6 +872,63 @@ fn glanced(at: usize) -> String {
     format!("{}\nand the second line of it\n", top(at))
 }
 
+/// How many round trips the run in
+/// [`a_run_that_spans_round_trips_settles_once_a_round_trip`] is spread over.
+const TRIPS: usize = 2;
+
+/// How many files each of those round trips reads.
+const EACH: usize = 2;
+
+#[test]
+fn a_run_that_spans_round_trips_settles_once_a_round_trip() {
+    // A turn that only looks around can go on for minutes, and while it does,
+    // the counted line stands over the box rather than in the transcript. If
+    // the run is only closed when the turn is, a reader watching one of those
+    // turns is watching an empty screen with a number on the bottom of it —
+    // nothing to scroll back through, nothing to point at, nothing to open.
+    //
+    // So a round trip closes it. Each is the agent having asked, been answered
+    // and gone back for more, which is the smallest unit of a turn that is
+    // worth a row, and the line for it joins the transcript the moment it is
+    // over.
+    let batches: Vec<Vec<(&str, String)>> = (0..TRIPS)
+        .map(|trip| {
+            (1..=EACH)
+                .map(|at| {
+                    let path = format!("file-{}.txt", trip * EACH + at);
+                    ("read", serde_json::json!({ "path": path }).to_string())
+                })
+                .collect()
+        })
+        .collect();
+
+    let vendor = Vendor::calling_batches(&batches, "Read them all.");
+    let mut window = Watched::allowing("run-per-trip", 80, 40, &vendor, "read(*)");
+
+    for at in 1..=(TRIPS * EACH) {
+        std::fs::write(
+            window.workspace().join(format!("file-{at}.txt")),
+            glanced(at),
+        )
+        .expect("the file is written");
+    }
+
+    window.types_until("read those files\r", "Read them all");
+    let picture = window.picture();
+
+    let counted = picture
+        .lines()
+        .filter(|line| line.contains(&format!("Read {EACH} files")))
+        .count();
+
+    assert_eq!(
+        counted,
+        TRIPS,
+        "one settled line per round trip, not one for the whole turn: {:#?}",
+        picture.lines().collect::<Vec<_>>()
+    );
+}
+
 #[test]
 fn a_run_of_lookups_is_one_line_that_opens_it_all() {
     // Three reads and one row, and the row is the door. The promise the fold is
@@ -885,7 +944,7 @@ fn a_run_of_lookups_is_one_line_that_opens_it_all() {
         })
         .collect();
 
-    let vendor = Vendor::calling_each(&calls, "Read them all.");
+    let vendor = Vendor::calling_batches(&[calls], "Read them all.");
     let mut window = Watched::allowing("run-folded", 80, 40, &vendor, "read(*)");
 
     for at in 1..=GLANCED {

@@ -1674,7 +1674,6 @@ fn breaks(one: &Seen) -> bool {
             | Event::ToolFinished { .. }
             | Event::Wrote { .. }
             | Event::Spent { .. }
-            | Event::Carried { .. }
             | Event::PromptCache { .. }
             | Event::Retrying => false,
 
@@ -1682,7 +1681,18 @@ fn breaks(one: &Seen) -> bool {
             // speaking is the plainest case and the one a reader feels: what
             // it says next is about what it just looked at, so the looking is
             // counted and closed first.
+            //
+            // `Carried` is the one that is not a row and breaks anyway. It is
+            // posted once a round trip, when every call of the batch has been
+            // answered and the agent is going back for more, and that is the
+            // smallest part of a turn worth a line. A run held open past it
+            // would be held open for the whole turn — and a turn that only
+            // looks around can go on for minutes, leaving the reader watching
+            // an empty transcript with a number over the box: nothing to
+            // scroll back through, nothing to point at, and the line they were
+            // told they could open not yet a line at all.
             Event::TurnStarted { .. }
+            | Event::Carried { .. }
             | Event::Delta { .. }
             | Event::Compacting { .. }
             | Event::Compacted { .. }

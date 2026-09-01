@@ -119,17 +119,29 @@ impl Vendor {
         Self::serving(vec![asking(tool, input, ONE), holding(text)])
     }
 
-    /// Starts one that asks for each of `calls` in turn, then answers `text`.
+    /// Starts one that asks for each batch of `batches` at once, then answers
+    /// `text`.
     ///
-    /// One body per call and one for the answer, which is what a turn with
-    /// several calls in it actually costs in requests. Each call is named
-    /// after its place in the sequence, so the results come back told apart.
-    pub(crate) fn calling_each(calls: &[(&str, String)], text: &str) -> Self {
-        let mut bodies: Vec<Vec<String>> = calls
-            .iter()
-            .enumerate()
-            .map(|(at, (tool, input))| asking(tool, input, &format!("toolu_{}", at + 1)))
-            .collect();
+    /// One body per batch rather than per call, which is how a model that asks
+    /// for four files actually asks: one response holding four blocks, and one
+    /// round trip answering all four, which is the unit a run of lookups is
+    /// counted over.
+    pub(crate) fn calling_batches(batches: &[Vec<(&str, String)>], text: &str) -> Self {
+        let mut named = 0;
+        let mut bodies: Vec<Vec<String>> = Vec::new();
+
+        for batch in batches {
+            let called: Vec<(&str, String, String)> = batch
+                .iter()
+                .map(|(tool, input)| {
+                    named += 1;
+                    (*tool, input.clone(), format!("toolu_{named}"))
+                })
+                .collect();
+
+            bodies.push(asking_all(&called));
+        }
+
         bodies.push(stream(text));
 
         Self::serving(bodies)
@@ -345,6 +357,37 @@ fn asking(tool: &str, input: &str, id: &str) -> Vec<String> {
         stopped("tool_use"),
         STOPPED.to_owned(),
     ]
+}
+
+/// One response asking for every call in `called` at once.
+///
+/// Each block carries its own index, which is what tells one call's arguments
+/// from the next on this wire: the deltas of two blocks are interleaved by
+/// index rather than by order, so a body that gave them all index zero would be
+/// one call assembled out of four sets of arguments.
+fn asking_all(called: &[(&str, String, String)]) -> Vec<String> {
+    let mut body = vec![STARTED.to_owned()];
+
+    for (index, (tool, input, id)) in called.iter().enumerate() {
+        body.push(format!(
+            "event: content_block_start\ndata: {{\"index\":{index},\"content_block\":{{\"type\":\
+             \"tool_use\",\"id\":{},\"name\":{},\"input\":{{}}}}}}\n\n",
+            serde_json::Value::from(id.as_str()),
+            serde_json::Value::from(*tool)
+        ));
+        body.push(format!(
+            "event: content_block_delta\ndata: {{\"index\":{index},\"delta\":{{\"type\":\
+             \"input_json_delta\",\"partial_json\":{}}}}}\n\n",
+            serde_json::Value::from(input.as_str())
+        ));
+        body.push(format!(
+            "event: content_block_stop\ndata: {{\"index\":{index}}}\n\n"
+        ));
+    }
+
+    body.push(stopped("tool_use"));
+    body.push(STOPPED.to_owned());
+    body
 }
 
 /// The event saying why the model stopped, and what it spent getting there.

@@ -14,7 +14,9 @@ change in any release with no deprecation period.
   searching for patterns, listing directories and running commands that only
   report now count into a single row — `Searched for 1 pattern, read 4 files` —
   which lights up under the pointer and opens every result in the run at once.
-  A single lookup keeps the row it always had.
+  A single lookup keeps the row it always had. A line settles into the
+  transcript each time the agent goes back to the model, so a turn that spends
+  minutes looking around fills the screen as it goes.
 
 - **Bare issue and pull-request numbers are links.** `#487` in an answer points
   at the repository the checkout was cloned from, read out of the `origin`

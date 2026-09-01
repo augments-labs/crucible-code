@@ -505,6 +505,12 @@ call that writes a file, or a command that could, ends the run and takes the row
 it always had. The run also ends wherever the turn does something else worth
 reading: a paragraph of the answer, your next prompt, a stop.
 
+And it ends at every round trip — the agent asked for a batch of tools, was
+answered, and is going back to the model for more. So a line joins the
+transcript each time the agent comes back rather than once the whole turn is
+over, and a turn that spends two minutes looking around is two minutes of rows
+appearing instead of two minutes of empty screen.
+
 Nothing is folded away. Clicking the line opens every result in the run at once,
 in the same view a single result opens in, each under the call it answers — so
 the run costs one row and keeps all of it. The whole line lights up under the
@@ -514,7 +520,9 @@ While the run is still going the counters are in the present — `Searching for 
 pattern, reading 4 files` — on its own row over the box, above the call that is
 out. It wears the same mark as that call and blinks on the same beat, since the
 two are one turn doing one thing, and a window with room for only one of them
-shows neither.
+shows neither. That row does not light under the pointer and does not open,
+because nothing behind it has finished yet; it settles into the transcript, in
+the past tense and with both, the moment the round trip is answered.
 
 A call that changed a file is the exception, and says so by offering nothing. It
 is shown as the change itself, and a change too long for the block is cut where

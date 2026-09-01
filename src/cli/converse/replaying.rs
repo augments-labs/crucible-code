@@ -342,17 +342,26 @@ impl Folded {
     ///
     /// A run ends where the live path would have ended it: at a prompt, at a
     /// fact put in front of one, at prose between two calls, at a stop worth a
-    /// line of its own, and at any call that did more than look around. What
-    /// does not end one is a message of results — the calls either side of it
-    /// are the same run, which is what lets a run outlast one exchange.
+    /// line of its own, at any call that did more than look around, and at the
+    /// end of a round trip. So a run is one batch of calls at most, which is
+    /// what the reader watched: the line went down when the batch was answered
+    /// rather than when the turn was.
     fn of(messages: &[Message], runner: &Runner) -> Self {
         let mut folded = Self::default();
         let mut run = Gathering::default();
 
         for message in messages {
             match message {
-                Message::User { .. } | Message::Context(_) => folded.close(&mut run),
-                Message::ToolResults(_) => {}
+                // A prompt, a fact put in front of one, and the end of a round
+                // trip. The last is where the live path closes a run too:
+                // every call of the batch above has been answered and the
+                // agent is going back for more. Closing there is what keeps
+                // the two paths drawing the same rows — a walk that folded a
+                // whole turn into one line would put back a session nobody
+                // watched.
+                Message::User { .. } | Message::Context(_) | Message::ToolResults(_) => {
+                    folded.close(&mut run);
+                }
                 Message::Agent { text, calls, stop } => {
                     if !text.trim().is_empty() {
                         folded.close(&mut run);
@@ -547,26 +556,46 @@ mod tests {
 
     /// A turn that read `count` files, one call and one result to a message,
     /// the way a model walking a tree writes them.
+    /// A turn that asked for `count` reads at once and was answered.
+    ///
+    /// One batch rather than one call per exchange, because a run is one round
+    /// trip at most: a model that wants four files asks for all four in one
+    /// response, and a fixture that asked for them one at a time would be
+    /// four runs of one and would fold nothing.
     fn walked_a_tree(count: usize) -> Transcript {
         let mut transcript = Transcript::new();
         transcript.push(Message::said("what is in here?"));
 
-        for one in 1..=count {
-            let id = ToolId::new(format!("c-{one}"));
-            transcript.push(Message::Agent {
-                text: String::new().into(),
-                calls: vec![ToolCall {
+        let ids: Vec<ToolId> = (1..=count)
+            .map(|one| ToolId::new(format!("c-{one}")))
+            .collect();
+
+        transcript.push(Message::Agent {
+            text: String::new().into(),
+            calls: ids
+                .iter()
+                .enumerate()
+                .map(|(at, id)| ToolCall {
                     id: id.clone(),
                     name: "read".into(),
-                    args: ToolArgs::new(format!(r#"{{"path":"file-{one}.rs"}}"#)),
-                }],
-                stop: Some(StopReason::WantsTools),
-            });
-            transcript.push(Message::ToolResults(vec![ToolResult {
-                id,
-                output: ToolOutput::ok(format!("line one of {one}\nand nine hundred after it")),
-            }]));
-        }
+                    args: ToolArgs::new(format!(r#"{{"path":"file-{}.rs"}}"#, at + 1)),
+                })
+                .collect(),
+            stop: Some(StopReason::WantsTools),
+        });
+
+        transcript.push(Message::ToolResults(
+            ids.iter()
+                .enumerate()
+                .map(|(at, id)| ToolResult {
+                    id: id.clone(),
+                    output: ToolOutput::ok(format!(
+                        "line one of {}\nand nine hundred after it",
+                        at + 1
+                    )),
+                })
+                .collect(),
+        ));
 
         transcript
     }
