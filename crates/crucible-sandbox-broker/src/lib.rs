@@ -1,4 +1,4 @@
-//! Fixed protocol shared by the host launcher and the minimal PID-1 broker.
+//! Fixed protocol shared by the host launcher and the minimal PID 1 broker.
 
 /// Bytes in one native-endian Linux wait status.
 pub const WAIT_STATUS_BYTES: usize = size_of::<i32>();

@@ -29,6 +29,7 @@ crates/crucible-config/  configuration documents and settings
 crates/crucible-privacy/ protected local-file primitives
 crates/crucible-provider/ provider wire protocols
 crates/crucible-runner/  turn execution over traits
+crates/crucible-sandbox-broker/ frozen child-status protocol and PID 1 broker
 crates/crucible-session/ append-only session storage and replay
 crates/crucible-tools/   built-in tool implementations
 crates/crucible-tui/     terminal rendering and interaction

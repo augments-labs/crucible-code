@@ -40,6 +40,23 @@ use std::fmt::Write as _;
 use vendor::Vendor;
 use watched::Watched;
 
+/// `picture` with the mark on the running turn's row turned back to its first
+/// face.
+///
+/// The mark turns on the wall clock, a face every quarter second from the
+/// moment the turn began, and a case that catches the screen mid-turn reaches
+/// it however long starting the call took on this machine today. What such a
+/// case is about is the rows around that mark, so the mark is steadied rather
+/// than the timing. Every face is one column wide, so nothing else on the row
+/// moves.
+fn on_the_first_beat(picture: &str) -> String {
+    let mut steadied = picture.to_owned();
+    for face in ["\u{273b}", "\u{273a}", "\u{2731}"] {
+        steadied = steadied.replace(face, "\u{2733}");
+    }
+    steadied
+}
+
 /// A line long enough to need more rows than the box is allowed to grow to.
 ///
 /// Built rather than written out so the arithmetic is visible: the box shows
@@ -406,7 +423,7 @@ fn a_shift_tab_mid_turn_steps_the_mode_the_next_turn_runs_under() {
     // Shift+Tab: from the running mode one step on.
     window.types_and_catches("\x1b[Z", "allow edits on");
 
-    insta::assert_snapshot!(window.picture());
+    insta::assert_snapshot!(on_the_first_beat(&window.picture()));
 }
 
 #[test]
@@ -446,7 +463,7 @@ fn a_slash_typed_mid_turn_opens_the_command_list() {
     // `/` typed into the box opens the list above it.
     window.types_and_catches("/", "/clear");
 
-    insta::assert_snapshot!(window.picture());
+    insta::assert_snapshot!(on_the_first_beat(&window.picture()));
 }
 
 #[test]

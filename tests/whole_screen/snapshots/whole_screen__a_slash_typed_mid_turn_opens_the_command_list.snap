@@ -6,7 +6,7 @@ expression: window.picture()
 |                                                                                |
 |the quick brown fox jumps                                                       |
 |                                                                                |
-|✻ writing (0s · ↓ 4 · esc to interrupt)                                         |
+|✳ writing (0s · ↓ 4 · esc to interrupt)                                         |
 |                                                                                |
 |› /help      what these are                                                     |
 |  /model     pick which model answers                                           |

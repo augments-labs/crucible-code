@@ -5,10 +5,12 @@
 //! the decision actually lives.
 
 use crucible_core::{
-    Ancestry, Ask, Cancel, DescribeTool, Mode, Permission, Remember, Rules, Sensitivity, Settled,
-    Tool, ToolArgs, ToolCall, ToolContext, ToolId, Unwatched, Verdict,
+    Ancestry, Ask, CallResultKey, CallResultReceipt, CallResultStoreError, Cancel, DescribeTool,
+    InvocationId, JournalStore, Mode, Permission, Remember, Rules, RunItem, Sensitivity, Settled,
+    Tool, ToolArgs, ToolCall, ToolContext, ToolId, ToolResult, Unwatched, Verdict,
 };
 use crucible_tools::{Background, Bash, LocalSandbox};
+use sha2::{Digest, Sha256};
 
 use crate::cli::sample::Sample;
 
@@ -53,13 +55,32 @@ fn running(case: &str, count: usize) -> (Background, Sample) {
             panic!("full access asked about a command");
         };
 
-        let context = ToolContext::new(Ancestry::new(), call.id.clone(), &cancel, None, &Unwatched);
-        let output = tool.run(approved, &context).expect("the command started");
+        let context = ToolContext::new(Ancestry::new(), call.id.clone(), &cancel, None, &Unwatched)
+            .with_call_result_store(InvocationId::new(), &JOURNAL);
+        let mut output = tool.run(approved, &context).expect("the command started");
         assert!(
             !output.is_failed(),
             "a command this test needs running was refused: {}",
             output.text()
         );
+
+        // A detached command stays in the registry only once its start result is
+        // durably accepted; an abandoned acceptance ends the process instead.
+        let pending = context
+            .take_call_result()
+            .expect("the pending result slot")
+            .expect("a detached command leaves a result to accept");
+        output.forget_diff();
+        let result = ToolResult {
+            id: call.id.clone(),
+            output,
+        };
+        let receipt = JOURNAL
+            .put_call_result(pending.key(), &result)
+            .expect("the test journal stores the result");
+        pending
+            .accept(receipt)
+            .expect("the detached command accepts its receipt");
     }
 
     // Asserted rather than assumed. What these tests are about is what a key does
@@ -76,6 +97,30 @@ fn running(case: &str, count: usize) -> (Background, Sample) {
 
 /// Answers nothing, because in this mode nothing is asked.
 struct Nobody;
+
+/// A journal that keeps nothing but can still receipt a start result, which is
+/// all a detached command needs before the registry may keep it.
+struct Journal;
+
+static JOURNAL: Journal = Journal;
+
+impl JournalStore for Journal {
+    fn append_run_item(&self, _item: &RunItem) {}
+
+    fn put_call_result(
+        &self,
+        key: CallResultKey,
+        result: &ToolResult,
+    ) -> Result<CallResultReceipt, CallResultStoreError> {
+        let mut digest = Sha256::new();
+        digest.update(b"crucible:leaving-test-call-result:v1\0");
+        digest.update(key.bytes());
+        digest.update(result.id.as_str().as_bytes());
+        digest.update(result.output.text().as_bytes());
+        digest.update([u8::from(result.output.is_failed())]);
+        Ok(CallResultReceipt::from_digest(digest.finalize().into()))
+    }
+}
 
 impl Ask for Nobody {
     fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {

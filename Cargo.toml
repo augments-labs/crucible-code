@@ -21,7 +21,7 @@ publish = false
 #   config     -> core            where crucible's files are and what they say
 #   provider   -> core
 #   session    -> core, privacy   one append-only log per session
-#   sandbox-broker -> (nothing)   frozen child-status protocol and PID-1 binary
+#   sandbox-broker -> (nothing)   frozen child-status protocol and PID 1 binary
 #   tools      -> core, sandbox-broker
 #   runner     -> core, session   drives turns through traits only
 #   tui        -> core
@@ -50,7 +50,7 @@ crucible-core = { path = "crates/crucible-core" }
 crucible-privacy = { path = "crates/crucible-privacy" }
 crucible-provider = { path = "crates/crucible-provider" }
 crucible-runner = { path = "crates/crucible-runner" }
-# Static PID-1 executable and its four-byte raw-wait-status protocol. The
+# Static PID 1 executable and its four-byte raw-wait-status protocol. The
 # library side contains no launcher or application authority; tools uses only
 # the protocol constants while the separately built binary supervises one
 # confined command.
