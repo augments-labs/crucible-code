@@ -12,6 +12,9 @@ pub const READY_FRAME: [u8; 8] = *b"CRREADY1";
 /// The sole host-to-broker authority to create the workload.
 pub const GO_FRAME: [u8; 8] = *b"CRGO0001";
 
+/// Host-to-broker request to kill and reap the released workload scope.
+pub const CANCEL_FRAME: [u8; 8] = *b"CRCANCEL";
+
 /// Broker-to-host typed refusal before the one-shot release boundary.
 pub const REFUSED_FRAME: [u8; 8] = *b"CRREFU01";
 

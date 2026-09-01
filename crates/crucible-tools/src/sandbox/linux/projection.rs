@@ -15,9 +15,11 @@ use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 
 use crucible_core::{
-    SandboxError, SandboxFilesystemAccess, SandboxInspection, SandboxOutput, SandboxProcess,
-    SandboxRequest, SandboxUsage, SandboxViolation,
+    SandboxAudit, SandboxError, SandboxFactKind, SandboxFilesystemAccess, SandboxId,
+    SandboxInspection, SandboxLifecycle, SandboxOutput, SandboxProcess, SandboxRequest,
+    SandboxUsage, SandboxViolation,
 };
+use crucible_sandbox_broker::CANCEL_FRAME;
 use crucible_sandbox_broker::MAX_SCAN_EXTENTS;
 use sha2::{Digest as _, Sha256};
 
@@ -246,7 +248,11 @@ impl Projection {
         })
     }
 
-    fn publish(&mut self, broker_baselines: &[Snapshot], finals: &[Snapshot]) -> io::Result<()> {
+    fn publish(
+        &mut self,
+        broker_baselines: &[Snapshot],
+        finals: &[Snapshot],
+    ) -> Result<(), publish::Failure> {
         if self.published {
             return Ok(());
         }
@@ -539,17 +545,23 @@ pub(super) fn wrap(
     process: Box<dyn SandboxProcess>,
     projection: Option<Projection>,
     status_channel: StatusChannel,
+    audit: SandboxAudit,
+    sandbox: SandboxId,
 ) -> io::Result<Box<dyn SandboxProcess>> {
     let stage = projection
         .as_ref()
         .map(|projection| projection.stage.root().to_path_buf());
-    let receiver = protocol::Receiver::spawn(status_channel.into_stream(), stage)?;
+    let control = status_channel.into_stream();
+    let receiver = protocol::Receiver::spawn(control.try_clone()?, stage)?;
     Ok(Box::new(ProjectedProcess {
         process,
         projection,
         receiver: Some(receiver),
         status: None,
         terminal: false,
+        audit,
+        sandbox,
+        control: Some(control),
     }))
 }
 
@@ -559,6 +571,17 @@ struct ProjectedProcess {
     receiver: Option<protocol::Receiver>,
     status: Option<ExitStatus>,
     terminal: bool,
+    audit: SandboxAudit,
+    sandbox: SandboxId,
+    control: Option<std::os::unix::net::UnixStream>,
+}
+
+impl ProjectedProcess {
+    fn lifecycle(&self, lifecycle: SandboxLifecycle) -> io::Result<()> {
+        self.audit
+            .record(self.sandbox, SandboxFactKind::Lifecycle(lifecycle))
+            .map_err(io::Error::other)
+    }
 }
 
 impl SandboxProcess for ProjectedProcess {
@@ -583,13 +606,33 @@ impl SandboxProcess for ProjectedProcess {
             .ok_or_else(|| io::Error::other("sandbox terminal scan receiver is unavailable"))?
             .finish()?;
         self.receiver.take();
+        self.control.take();
         let status = terminal.status;
         if !self.terminal {
             if status.signal().is_none()
                 && self.process.violation().is_none()
-                && let Some(projection) = &mut self.projection
+                && self.projection.is_some()
             {
-                projection.publish(&terminal.baselines, &terminal.roots)?;
+                self.lifecycle(SandboxLifecycle::PublicationStarted)?;
+                let publication = self
+                    .projection
+                    .as_mut()
+                    .ok_or_else(|| io::Error::other("sandbox projection disappeared"))?
+                    .publish(&terminal.baselines, &terminal.roots);
+                match publication {
+                    Ok(()) => self.lifecycle(SandboxLifecycle::Published)?,
+                    Err(problem) => {
+                        let lifecycle = if problem.requires_quarantine() {
+                            SandboxLifecycle::Quarantined
+                        } else {
+                            SandboxLifecycle::RolledBack
+                        };
+                        self.lifecycle(lifecycle)?;
+                        return Err(problem.into_io());
+                    }
+                }
+            } else if self.projection.is_some() {
+                self.lifecycle(SandboxLifecycle::RolledBack)?;
             } else if self.projection.is_none() && !terminal.roots.is_empty() {
                 return Err(io::Error::other(
                     "sandbox broker reported roots outside the immutable projection plan",
@@ -603,15 +646,24 @@ impl SandboxProcess for ProjectedProcess {
 
     fn stop(&mut self) -> io::Result<()> {
         if self.status.is_none() {
+            if self.projection.is_some() && !self.terminal {
+                self.lifecycle(SandboxLifecycle::RolledBack)?;
+            }
             self.terminal = true;
         }
+        let cancellation = self.control.as_mut().map_or(Ok(()), |control| {
+            control
+                .write_all(&CANCEL_FRAME)
+                .and_then(|()| control.flush())
+        });
         let result = self.process.stop();
         if let Some(receiver) = &mut self.receiver {
             let _ = receiver.finish();
         }
         self.receiver.take();
+        self.control.take();
         self.projection.take();
-        result
+        cancellation.and(result)
     }
 
     fn inspection(&self) -> &SandboxInspection {

@@ -272,9 +272,9 @@ fn cancellation_discards_private_workspace_effects() {
         return;
     }
     let sample = Sample::new("sandbox-cancelled-writes");
-    let mut session = service
-        .prepare(request(&sample, SandboxManifest::empty()))
-        .expect("prepared sandbox");
+    let request = request(&sample, SandboxManifest::empty());
+    let audit = request.audit().clone();
+    let mut session = service.prepare(request).expect("prepared sandbox");
     session.materialize().expect("materialized workspace");
     let mut process = session
         .start(command(
@@ -285,10 +285,27 @@ fn cancellation_discards_private_workspace_effects() {
     let _ = wait_for_marker(process.as_mut(), &mut stdout, b"ready\n");
 
     assert!(!sample.root().join("cancelled.txt").exists());
+    let stopping = Instant::now();
     process.stop().expect("cancel and clean scope");
+    assert!(
+        stopping.elapsed() < Duration::from_secs(2),
+        "cancellation did not promptly stop the complete sandbox scope"
+    );
     assert!(
         !sample.root().join("cancelled.txt").exists(),
         "cancelled command published a private write"
+    );
+    assert!(
+        audit
+            .records()
+            .expect("audit records")
+            .iter()
+            .any(|record| {
+                matches!(
+                    record.fact().kind(),
+                    SandboxFactKind::Lifecycle(SandboxLifecycle::RolledBack)
+                )
+            })
     );
 }
 
@@ -377,9 +394,9 @@ fn create_update_delete_rename_and_mode_publish_as_one_terminal_delta() {
     sample.write("deleted.txt", "delete me\n");
     sample.write("renamed-before.txt", "rename me\n");
     sample.write("mode.txt", "mode\n");
-    let mut session = service
-        .prepare(request(&sample, SandboxManifest::empty()))
-        .expect("prepared sandbox");
+    let request = request(&sample, SandboxManifest::empty());
+    let audit = request.audit().clone();
+    let mut session = service.prepare(request).expect("prepared sandbox");
     session.materialize().expect("materialized workspace");
     let (status, _, errors) = finish(
         session
@@ -416,6 +433,24 @@ fn create_update_delete_rename_and_mode_publish_as_one_terminal_delta() {
             & 0o777,
         0o640
     );
+    let lifecycles = audit
+        .records()
+        .expect("audit records")
+        .iter()
+        .filter_map(|record| match record.fact().kind() {
+            SandboxFactKind::Lifecycle(lifecycle) => Some(*lifecycle),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let publication_started = lifecycles
+        .iter()
+        .position(|state| *state == SandboxLifecycle::PublicationStarted)
+        .expect("publication started");
+    let published = lifecycles
+        .iter()
+        .position(|state| *state == SandboxLifecycle::Published)
+        .expect("published");
+    assert!(publication_started < published);
 }
 
 #[test]

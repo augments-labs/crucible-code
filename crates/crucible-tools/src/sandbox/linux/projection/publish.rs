@@ -13,6 +13,41 @@ use super::{
 
 type ContentKey = (u64, [u8; 32], Vec<(u64, u64)>);
 
+pub(super) struct Failure {
+    source: io::Error,
+    quarantined: bool,
+}
+
+impl Failure {
+    fn rolled_back(source: io::Error) -> Self {
+        Self {
+            source,
+            quarantined: false,
+        }
+    }
+
+    fn quarantined(source: io::Error) -> Self {
+        Self {
+            source,
+            quarantined: true,
+        }
+    }
+
+    pub(super) const fn requires_quarantine(&self) -> bool {
+        self.quarantined
+    }
+
+    pub(super) fn into_io(self) -> io::Error {
+        self.source
+    }
+}
+
+impl From<io::Error> for Failure {
+    fn from(source: io::Error) -> Self {
+        Self::rolled_back(source)
+    }
+}
+
 pub(super) fn reconcile(
     roots: &[Root],
     broker_baselines: &[Snapshot],
@@ -180,11 +215,12 @@ fn merge_entry(host: &Entry, broker: &Entry, final_entry: &Entry) -> Entry {
     }
 }
 
-pub(super) fn apply(roots: &[Root], stage: &Path, finals: &[Snapshot]) -> io::Result<()> {
+pub(super) fn apply(roots: &[Root], stage: &Path, finals: &[Snapshot]) -> Result<(), Failure> {
     if roots.len() != finals.len() {
         return Err(invalid(
             "terminal scan root count does not match the immutable projection plan",
-        ));
+        )
+        .into());
     }
     if roots
         .iter()
@@ -199,7 +235,8 @@ pub(super) fn apply(roots: &[Root], stage: &Path, finals: &[Snapshot]) -> io::Re
             return Err(io::Error::other(format!(
                 "writable root changed outside the sandbox before publication; terminal delta category: {}",
                 difference(&root.baseline, final_snapshot)
-            )));
+            ))
+            .into());
         }
     }
 
@@ -229,10 +266,10 @@ pub(super) fn apply(roots: &[Root], stage: &Path, finals: &[Snapshot]) -> io::Re
         ) {
             let rollback = rollback(roots, &prepared, &applied, Some(index));
             return match rollback {
-                Ok(()) => Err(problem),
-                Err(rollback_problem) => Err(io::Error::other(format!(
+                Ok(()) => Err(Failure::rolled_back(problem)),
+                Err(rollback_problem) => Err(Failure::quarantined(io::Error::other(format!(
                     "publication failed and rollback could not be proved: {problem}; {rollback_problem}"
-                ))),
+                )))),
             };
         }
         applied.push(index);

@@ -14,12 +14,16 @@ use std::os::fd::{FromRawFd as _, RawFd};
 use std::os::unix::process::CommandExt as _;
 use std::os::unix::process::ExitStatusExt as _;
 use std::path::PathBuf;
-use std::process::{Command, ExitCode};
+use std::process::{Child, Command, ExitCode, ExitStatus};
+use std::thread;
+use std::time::Duration;
 
 use crucible_sandbox_broker::{
-    BROKER_FAILURE_STATUS, GO_FRAME, READY_FRAME, REFUSED_DESCRIPTOR_CLOSURE, REFUSED_FRAME,
-    REFUSED_SCAN, encode_wait_status,
+    BROKER_FAILURE_STATUS, CANCEL_FRAME, GO_FRAME, READY_FRAME, REFUSED_DESCRIPTOR_CLOSURE,
+    REFUSED_FRAME, REFUSED_SCAN, encode_wait_status,
 };
+use rustix::fs::OFlags;
+use rustix::io::Errno;
 use rustix::io::FdFlags;
 
 const BROKER_ERROR_EXIT: u8 = 125;
@@ -64,16 +68,13 @@ fn run() -> Option<u8> {
         return None;
     }
 
-    let status = match Command::new(program)
+    let Ok(status) = Command::new(program)
         .args(workload_arguments)
         .process_group(0)
         .spawn()
-    {
-        Ok(mut child) => match child.wait() {
-            Ok(status) => status,
-            Err(_) => return write_failure(&mut status_channel),
-        },
-        Err(_) => return write_failure(&mut status_channel),
+        .and_then(|mut child| wait_workload(&mut child, &mut status_channel))
+    else {
+        return write_failure(&mut status_channel);
     };
     if scope::empty().is_err() {
         return write_failure(&mut status_channel);
@@ -86,6 +87,61 @@ fn run() -> Option<u8> {
         return None;
     }
     Some(exit_code(status.code(), status.signal()))
+}
+
+fn wait_workload(child: &mut Child, channel: &mut File) -> std::io::Result<ExitStatus> {
+    let flags = rustix::fs::fcntl_getfl(&*channel)?;
+    rustix::fs::fcntl_setfl(&*channel, flags | OFlags::NONBLOCK)?;
+    let waited = wait_or_cancel(child, channel);
+    rustix::fs::fcntl_setfl(&*channel, flags)?;
+    waited?.ok_or_else(|| std::io::Error::other("sandbox workload status is unavailable"))
+}
+
+fn wait_or_cancel(child: &mut Child, channel: &mut File) -> std::io::Result<Option<ExitStatus>> {
+    let mut cancellation = [0_u8; CANCEL_FRAME.len()];
+    let mut received = 0_usize;
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(Some(status));
+        }
+        match channel.read(cancellation.get_mut(received..).ok_or_else(|| {
+            std::io::Error::other("sandbox cancellation frame exceeded its bound")
+        })?) {
+            Ok(0) => return stop_workload(child).map(Some),
+            Ok(read) => {
+                received = received.saturating_add(read);
+                if received == cancellation.len() {
+                    if cancellation != CANCEL_FRAME {
+                        return Err(std::io::Error::other(
+                            "sandbox cancellation frame is invalid",
+                        ));
+                    }
+                    return stop_workload(child).map(Some);
+                }
+            }
+            Err(problem) if problem.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(problem) if problem.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(problem) => return Err(problem),
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
+fn stop_workload(child: &mut Child) -> std::io::Result<ExitStatus> {
+    let group = i32::try_from(child.id())
+        .ok()
+        .and_then(rustix::process::Pid::from_raw)
+        .ok_or_else(|| std::io::Error::other("sandbox workload process group is invalid"))?;
+    let group_result = rustix::process::kill_process_group(group, rustix::process::Signal::KILL)
+        .or_else(|problem| (problem == Errno::SRCH).then_some(()).ok_or(problem))
+        .map_err(std::io::Error::from);
+    let child_result = child.kill().or_else(|problem| {
+        (problem.kind() == std::io::ErrorKind::InvalidInput)
+            .then_some(())
+            .ok_or(problem)
+    });
+    group_result.and(child_result)?;
+    child.wait()
 }
 
 fn close_inherited_except(status: RawFd) -> std::io::Result<()> {
