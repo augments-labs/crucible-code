@@ -1,7 +1,7 @@
 //! Durable writable-transaction admission and the closed R8 lifecycle grammar.
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read as _, Write as _};
+use std::io::{self, Read as _, Seek as _, SeekFrom, Write as _};
 use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
@@ -13,7 +13,15 @@ use sha2::{Digest as _, Sha256};
 const WAL_MAGIC: &[u8; 8] = b"CRSBWAL1";
 const WAL_VERSION: u16 = 1;
 const SANDBOX_ID_BYTES: usize = 36;
-const WAL_PREFIX_BYTES: usize = 8 + 2 + 2 + 8 + 32 + SANDBOX_ID_BYTES;
+const OWNER_PID_BYTES: usize = 4;
+const OWNER_START_BYTES: usize = 8;
+const OWNER_BOOT_BYTES: usize = 32;
+const IDENTITY_OFFSET: usize = 52;
+const OWNER_PID_OFFSET: usize = IDENTITY_OFFSET + SANDBOX_ID_BYTES;
+const OWNER_START_OFFSET: usize = OWNER_PID_OFFSET + OWNER_PID_BYTES;
+const OWNER_BOOT_OFFSET: usize = OWNER_START_OFFSET + OWNER_START_BYTES;
+const WAL_PREFIX_BYTES: usize =
+    8 + 2 + 2 + 8 + 32 + SANDBOX_ID_BYTES + OWNER_PID_BYTES + OWNER_START_BYTES + OWNER_BOOT_BYTES;
 const WAL_CHECKSUM_BYTES: usize = 32;
 const MAX_WAL_PAYLOAD_BYTES: usize = 5;
 const MAX_WAL_BYTES: u64 = 4 * 1024 * 1024;
@@ -80,9 +88,22 @@ pub(super) struct Transaction {
     _lease: Lease,
     journal: File,
     machine: Machine,
+    frame: FrameState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FrameState {
     sequence: u64,
     previous: [u8; 32],
     identity: [u8; SANDBOX_ID_BYTES],
+    owner: OwnerIdentity,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct OwnerIdentity {
+    pid: u32,
+    start: u64,
+    boot: [u8; OWNER_BOOT_BYTES],
 }
 
 impl Transaction {
@@ -91,6 +112,16 @@ impl Transaction {
         directory: &Path,
         sandbox: SandboxId,
         mode: InvocationMode,
+    ) -> io::Result<Self> {
+        Self::start_owned(lease, directory, sandbox, mode, OwnerIdentity::current()?)
+    }
+
+    fn start_owned(
+        lease: Lease,
+        directory: &Path,
+        sandbox: SandboxId,
+        mode: InvocationMode,
+        owner: OwnerIdentity,
     ) -> io::Result<Self> {
         let path = directory.join("transaction.wal");
         let journal = OpenOptions::new()
@@ -110,9 +141,12 @@ impl Transaction {
             _lease: lease,
             journal,
             machine: Machine::new(),
-            sequence: 0,
-            previous: [0_u8; 32],
-            identity,
+            frame: FrameState {
+                sequence: 0,
+                previous: [0_u8; 32],
+                identity,
+                owner,
+            },
         };
         transaction.append(Record::Initialized(mode))?;
         Ok(transaction)
@@ -121,37 +155,8 @@ impl Transaction {
     pub(super) fn append(&mut self, record: Record) -> io::Result<()> {
         let mut next = self.machine.clone();
         next.push(record)?;
-        let payload = encode_record(record);
-        let sequence = self
-            .sequence
-            .checked_add(1)
-            .ok_or_else(|| invalid("sandbox transaction sequence overflow"))?;
-        let payload_length = u16::try_from(payload.len())
-            .map_err(|_| invalid("sandbox transaction frame exceeds its bound"))?;
-        let mut frame = Vec::with_capacity(
-            WAL_MAGIC.len()
-                + 2
-                + 2
-                + 8
-                + self.previous.len()
-                + self.identity.len()
-                + payload.len()
-                + 32,
-        );
-        frame.extend_from_slice(WAL_MAGIC);
-        frame.extend_from_slice(&WAL_VERSION.to_le_bytes());
-        frame.extend_from_slice(&payload_length.to_le_bytes());
-        frame.extend_from_slice(&sequence.to_le_bytes());
-        frame.extend_from_slice(&self.previous);
-        frame.extend_from_slice(&self.identity);
-        frame.extend_from_slice(&payload);
-        let digest: [u8; 32] = Sha256::digest(&frame).into();
-        frame.extend_from_slice(&digest);
-        self.journal.write_all(&frame)?;
-        self.journal.sync_all()?;
+        append_frame(&mut self.journal, &mut self.frame, record)?;
         self.machine = next;
-        self.sequence = sequence;
-        self.previous = digest;
         Ok(())
     }
 
@@ -179,14 +184,105 @@ impl Transaction {
     }
 }
 
+fn append_frame(journal: &mut File, state: &mut FrameState, record: Record) -> io::Result<()> {
+    let payload = encode_record(record);
+    let next_sequence = state
+        .sequence
+        .checked_add(1)
+        .ok_or_else(|| invalid("sandbox transaction sequence overflow"))?;
+    let payload_length = u16::try_from(payload.len())
+        .map_err(|_| invalid("sandbox transaction frame exceeds its bound"))?;
+    let mut frame = Vec::with_capacity(
+        WAL_MAGIC.len()
+            + 2
+            + 2
+            + 8
+            + state.previous.len()
+            + state.identity.len()
+            + OWNER_PID_BYTES
+            + OWNER_START_BYTES
+            + OWNER_BOOT_BYTES
+            + payload.len()
+            + WAL_CHECKSUM_BYTES,
+    );
+    frame.extend_from_slice(WAL_MAGIC);
+    frame.extend_from_slice(&WAL_VERSION.to_le_bytes());
+    frame.extend_from_slice(&payload_length.to_le_bytes());
+    frame.extend_from_slice(&next_sequence.to_le_bytes());
+    frame.extend_from_slice(&state.previous);
+    frame.extend_from_slice(&state.identity);
+    frame.extend_from_slice(&state.owner.pid.to_le_bytes());
+    frame.extend_from_slice(&state.owner.start.to_le_bytes());
+    frame.extend_from_slice(&state.owner.boot);
+    frame.extend_from_slice(&payload);
+    let digest: [u8; 32] = Sha256::digest(&frame).into();
+    frame.extend_from_slice(&digest);
+    journal.write_all(&frame)?;
+    journal.sync_all()?;
+    state.sequence = next_sequence;
+    state.previous = digest;
+    Ok(())
+}
+
 impl std::fmt::Debug for Transaction {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("Transaction")
-            .field("sequence", &self.sequence)
+            .field("sequence", &self.frame.sequence)
             .field("terminal", &self.machine.is_terminal())
             .finish_non_exhaustive()
     }
+}
+
+impl OwnerIdentity {
+    fn current() -> io::Result<Self> {
+        let pid = std::process::id();
+        Ok(Self {
+            pid,
+            start: process_start(pid)?,
+            boot: boot_identity()?,
+        })
+    }
+
+    fn owner_is_dead(self) -> io::Result<bool> {
+        if self.boot != boot_identity()? {
+            return Ok(true);
+        }
+        match process_start(self.pid) {
+            Ok(start) => Ok(start != self.start),
+            Err(problem) if problem.kind() == io::ErrorKind::NotFound => Ok(true),
+            Err(problem) => Err(problem),
+        }
+    }
+}
+
+fn boot_identity() -> io::Result<[u8; OWNER_BOOT_BYTES]> {
+    let boot = fs::read("/proc/sys/kernel/random/boot_id")?;
+    let boot = boot.strip_suffix(b"\n").unwrap_or(&boot);
+    let boot = boot.strip_suffix(b"\r").unwrap_or(boot);
+    if boot.len() != SANDBOX_ID_BYTES
+        || !boot.iter().enumerate().all(|(index, byte)| {
+            matches!(index, 8 | 13 | 18 | 23) && *byte == b'-'
+                || !matches!(index, 8 | 13 | 18 | 23) && byte.is_ascii_hexdigit()
+        })
+    {
+        return Err(invalid("host boot identity is invalid"));
+    }
+    let mut digest = Sha256::new();
+    digest.update(b"crucible-sandbox-owner-boot-v1\0");
+    digest.update(boot);
+    Ok(digest.finalize().into())
+}
+
+fn process_start(pid: u32) -> io::Result<u64> {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat"))?;
+    let close = stat
+        .rfind(')')
+        .ok_or_else(|| invalid("host process identity record is invalid"))?;
+    stat.get(close.saturating_add(1)..)
+        .and_then(|fields| fields.split_whitespace().nth(19))
+        .and_then(|field| field.parse::<u64>().ok())
+        .ok_or_else(|| invalid("host process start identity is invalid"))
 }
 
 fn encode_record(record: Record) -> Vec<u8> {
@@ -240,7 +336,20 @@ struct Recovered {
     records: Vec<Record>,
     #[cfg(test)]
     torn_tail: bool,
-    identity: [u8; SANDBOX_ID_BYTES],
+    journal: File,
+    frame: FrameState,
+}
+
+impl Recovered {
+    fn append(&mut self, record: Record) -> io::Result<()> {
+        let mut next = self.machine.clone();
+        next.push(record)?;
+        append_frame(&mut self.journal, &mut self.frame, record)?;
+        self.machine = next;
+        #[cfg(test)]
+        self.records.push(record);
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -283,6 +392,7 @@ fn recover_wal_file(mut file: File) -> io::Result<Recovered> {
     let mut sequence = 0_u64;
     let mut previous = [0_u8; 32];
     let mut identity: Option<[u8; SANDBOX_ID_BYTES]> = None;
+    let mut owner: Option<OwnerIdentity> = None;
     let mut machine = Machine::new();
     let mut records = Vec::new();
     let mut torn_tail = false;
@@ -364,7 +474,7 @@ fn recover_wal_file(mut file: File) -> io::Result<Recovered> {
             return Err(invalid("sandbox transaction digest chain is invalid"));
         }
         let frame_identity: [u8; SANDBOX_ID_BYTES] = prefix
-            .get(52..WAL_PREFIX_BYTES)
+            .get(IDENTITY_OFFSET..OWNER_PID_OFFSET)
             .and_then(|bytes| bytes.try_into().ok())
             .ok_or_else(|| invalid("sandbox transaction identity is missing"))?;
         let identity_text = std::str::from_utf8(&frame_identity)
@@ -375,6 +485,31 @@ fn recover_wal_file(mut file: File) -> io::Result<Recovered> {
             return Err(invalid("sandbox transaction identity changed"));
         }
         identity = Some(frame_identity);
+        let frame_owner = OwnerIdentity {
+            pid: u32::from_le_bytes(
+                prefix
+                    .get(OWNER_PID_OFFSET..OWNER_START_OFFSET)
+                    .and_then(|bytes| bytes.try_into().ok())
+                    .ok_or_else(|| invalid("sandbox transaction owner PID is missing"))?,
+            ),
+            start: u64::from_le_bytes(
+                prefix
+                    .get(OWNER_START_OFFSET..OWNER_BOOT_OFFSET)
+                    .and_then(|bytes| bytes.try_into().ok())
+                    .ok_or_else(|| invalid("sandbox transaction owner start is missing"))?,
+            ),
+            boot: prefix
+                .get(OWNER_BOOT_OFFSET..WAL_PREFIX_BYTES)
+                .and_then(|bytes| bytes.try_into().ok())
+                .ok_or_else(|| invalid("sandbox transaction owner boot is missing"))?,
+        };
+        if frame_owner.pid == 0 || frame_owner.start == 0 {
+            return Err(invalid("sandbox transaction owner identity is invalid"));
+        }
+        if owner.is_some_and(|known| known != frame_owner) {
+            return Err(invalid("sandbox transaction owner identity changed"));
+        }
+        owner = Some(frame_owner);
 
         let payload = bytes
             .get(prefix_end..checksum_start)
@@ -398,13 +533,23 @@ fn recover_wal_file(mut file: File) -> io::Result<Recovered> {
         )?;
         file.sync_all()?;
     }
+    file.seek(SeekFrom::Start(u64::try_from(offset).map_err(|_| {
+        invalid("sandbox transaction verified length overflow")
+    })?))?;
     Ok(Recovered {
         machine,
         #[cfg(test)]
         records,
         #[cfg(test)]
         torn_tail,
-        identity: identity.ok_or_else(|| invalid("sandbox transaction identity is unavailable"))?,
+        journal: file,
+        frame: FrameState {
+            sequence,
+            previous,
+            identity: identity
+                .ok_or_else(|| invalid("sandbox transaction identity is unavailable"))?,
+            owner: owner.ok_or_else(|| invalid("sandbox transaction owner is unavailable"))?,
+        },
     })
 }
 
@@ -532,7 +677,11 @@ impl Machine {
                 None => false,
             },
             Record::CallAcceptIntent => {
-                mode == Some(InvocationMode::Background) && matches!(next, Record::CallAccepted)
+                mode == Some(InvocationMode::Background)
+                    && matches!(
+                        next,
+                        Record::CallAccepted | Record::AbortObserved | Record::QuarantineObserved
+                    )
             }
             Record::CallAccepted => matches!(
                 next,
@@ -971,9 +1120,12 @@ fn reconcile_stale_transactions(base: &Path) -> io::Result<()> {
         if opened.dev() != named.dev() || opened.ino() != named.ino() {
             return Err(invalid("stale sandbox transaction identity changed"));
         }
-        let recovered = recover_wal_at(&directory)?;
-        if recovered.identity.as_slice() != sandbox.to_string().as_bytes() {
+        let mut recovered = recover_wal_at(&directory)?;
+        if recovered.frame.identity.as_slice() != sandbox.to_string().as_bytes() {
             return Err(invalid("stale sandbox journal names another transaction"));
+        }
+        if !recovered.machine.is_terminal() {
+            recover_stale_transaction(&candidate, &mut recovered)?;
         }
         if !matches!(
             recovered.machine.terminal(),
@@ -999,6 +1151,117 @@ fn reconcile_stale_transactions(base: &Path) -> io::Result<()> {
         File::open(base)?.sync_all()?;
     }
     Ok(())
+}
+
+fn recover_stale_transaction(candidate: &Path, recovered: &mut Recovered) -> io::Result<()> {
+    if !recovered.frame.owner.owner_is_dead()? {
+        return Err(invalid(
+            "nonterminal sandbox transaction owner is still alive",
+        ));
+    }
+    if !recovered
+        .machine
+        .records
+        .contains(&Record::GoSentOrAmbiguous)
+    {
+        return recover_pre_release(recovered);
+    }
+    recover_post_release(candidate, recovered)
+}
+
+fn recover_pre_release(recovered: &mut Recovered) -> io::Result<()> {
+    loop {
+        let next = match recovered.machine.records.last().copied() {
+            Some(
+                Record::Initialized(_)
+                | Record::Prepared
+                | Record::ReleaseIntent
+                | Record::OwnerTransferred,
+            ) => Record::RefusalObserved,
+            Some(Record::RefusalObserved) => Record::PreparationCleanupIntent,
+            Some(Record::PreparationCleanupIntent) => Record::PreparationCleanupProved,
+            Some(Record::PreparationCleanupProved) => Record::Refused,
+            Some(Record::PreparationCleanupUnproved) => Record::Quarantined,
+            Some(Record::Refused | Record::Quarantined) => return Ok(()),
+            _ => {
+                return Err(invalid(
+                    "pre-release sandbox transaction has an impossible recovery state",
+                ));
+            }
+        };
+        recovered.append(next)?;
+    }
+}
+
+fn recover_post_release(candidate: &Path, recovered: &mut Recovered) -> io::Result<()> {
+    if matches!(
+        recovered.machine.records.last(),
+        Some(Record::ScopeReapUnproved)
+    ) {
+        return recovered.append(Record::Quarantined);
+    }
+    if recovered
+        .machine
+        .records
+        .contains(&Record::QuarantineObserved)
+    {
+        prove_recovered_scope(recovered)?;
+        return recovered.append(Record::Quarantined);
+    }
+    if !recovered.machine.failure_observed() {
+        recovered.append(Record::AbortObserved)?;
+    }
+    prove_recovered_scope(recovered)?;
+
+    if recovered.machine.pending_rollback().is_some() {
+        recovered.append(Record::QuarantineObserved)?;
+        return recovered.append(Record::Quarantined);
+    }
+    if let Err(problem) = discard_recovered_staging(candidate, recovered) {
+        let _ = recovered.append(Record::QuarantineObserved);
+        let _ = recovered.append(Record::Quarantined);
+        return Err(problem);
+    }
+    recovered.append(Record::RolledBack)
+}
+
+fn prove_recovered_scope(recovered: &mut Recovered) -> io::Result<()> {
+    if recovered.machine.scope_reaped() {
+        return Ok(());
+    }
+    if !recovered.machine.scope_reap_started() {
+        recovered.append(Record::ScopeReapIntent)?;
+    }
+    recovered.append(Record::ScopeReapProved)
+}
+
+fn discard_recovered_staging(candidate: &Path, recovered: &mut Recovered) -> io::Result<()> {
+    let publication = candidate.join("publication");
+    while let Some(index) = recovered.machine.pending_discard() {
+        if !matches!(
+            recovered.machine.records.last(),
+            Some(Record::DiscardIntent(current)) if *current == index
+        ) {
+            recovered.append(Record::DiscardIntent(index))?;
+        }
+        let directory = publication.join(index.to_string());
+        match fs::remove_dir_all(&directory) {
+            Ok(()) => {}
+            Err(problem) if problem.kind() == io::ErrorKind::NotFound => {}
+            Err(problem) => return Err(problem),
+        }
+        if publication.exists() {
+            File::open(&publication)?.sync_all()?;
+        } else {
+            File::open(candidate)?.sync_all()?;
+        }
+        recovered.append(Record::Discarded(index))?;
+    }
+    match fs::remove_dir(&publication) {
+        Ok(()) => File::open(candidate)?.sync_all(),
+        Err(problem) if problem.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(problem) => Err(problem),
+    }
 }
 
 fn state_directory(request: &SandboxRequest) -> Result<PathBuf, SandboxError> {
@@ -1037,7 +1300,7 @@ fn invalid(problem: &'static str) -> io::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{Seek as _, SeekFrom};
+    use std::io::SeekFrom;
 
     #[test]
     fn r8_background_acceptance_follows_owner_transfer_and_go() {
@@ -1226,6 +1489,41 @@ mod tests {
     }
 
     #[test]
+    fn recovery_appends_after_the_verified_boundary_of_a_torn_tail() {
+        let (sample, journal) = journal_with(&[]);
+        OpenOptions::new()
+            .append(true)
+            .open(&journal)
+            .expect("append journal")
+            .write_all(b"partial")
+            .expect("torn tail fixture");
+
+        let mut recovered = recover_wal(&journal).expect("recover torn tail");
+        recovered.append(Record::Prepared).expect("recovery frame");
+        drop(recovered);
+        let replayed = recover_wal(&journal).expect("replay recovered WAL");
+        assert_eq!(
+            replayed.records,
+            vec![
+                Record::Initialized(InvocationMode::Foreground),
+                Record::Prepared
+            ]
+        );
+        drop(sample);
+    }
+
+    #[test]
+    fn boot_pid_and_start_time_distinguish_live_and_dead_owners() {
+        assert!(
+            !OwnerIdentity::current()
+                .expect("current identity")
+                .owner_is_dead()
+                .expect("live owner check")
+        );
+        assert!(dead_owner().owner_is_dead().expect("dead owner check"));
+    }
+
+    #[test]
     fn checksum_corruption_is_never_treated_as_a_torn_tail() {
         let (sample, journal) = journal_with(&[Record::Prepared]);
         let mut file = OpenOptions::new()
@@ -1268,6 +1566,107 @@ mod tests {
         assert!(stage.join("transaction.wal").exists());
     }
 
+    #[test]
+    fn dead_pre_release_owners_are_refused_and_cleaned() {
+        let sample = crate::sample::Sample::new("sandbox-dead-pre-release-recovery");
+        let base = sample.root().join("recovery");
+        create_private_test_directory(&base);
+        let stage = stale_journal_with(&sample, &base, dead_owner(), &[Record::Prepared]);
+
+        reconcile_stale_transactions(&base).expect("pre-release recovery");
+        assert!(!stage.exists());
+    }
+
+    #[test]
+    fn dead_post_release_owners_roll_back_when_no_apply_was_authorized() {
+        let sample = crate::sample::Sample::new("sandbox-dead-post-release-recovery");
+        let base = sample.root().join("recovery");
+        create_private_test_directory(&base);
+        let stage = stale_journal_with(
+            &sample,
+            &base,
+            dead_owner(),
+            &[
+                Record::Prepared,
+                Record::ReleaseIntent,
+                Record::GoSentOrAmbiguous,
+            ],
+        );
+
+        reconcile_stale_transactions(&base).expect("post-release rollback");
+        assert!(!stage.exists());
+    }
+
+    #[test]
+    fn dead_owners_discard_durable_staging_in_reverse_before_rollback() {
+        let sample = crate::sample::Sample::new("sandbox-dead-staging-recovery");
+        let base = sample.root().join("recovery");
+        create_private_test_directory(&base);
+        let stage = stale_journal_with(
+            &sample,
+            &base,
+            dead_owner(),
+            &[
+                Record::Prepared,
+                Record::ReleaseIntent,
+                Record::GoSentOrAmbiguous,
+                Record::CommandExited,
+                Record::WorkloadReapIntent,
+                Record::WorkloadReaped,
+                Record::ScanIntent,
+                Record::ScanTransferred,
+                Record::StageIntent(0),
+                Record::Staged(0),
+                Record::StageIntent(1),
+                Record::Staged(1),
+                Record::PublicationStaged,
+                Record::ScopeReapIntent,
+                Record::ScopeReapProved,
+            ],
+        );
+        create_private_test_directory(&stage.join("publication"));
+        create_private_test_directory(&stage.join("publication/0"));
+        create_private_test_directory(&stage.join("publication/1"));
+
+        reconcile_stale_transactions(&base).expect("staging recovery");
+        assert!(!stage.exists());
+    }
+
+    #[test]
+    fn dead_owners_with_an_ambiguous_apply_are_quarantined() {
+        let sample = crate::sample::Sample::new("sandbox-dead-apply-recovery");
+        let base = sample.root().join("recovery");
+        create_private_test_directory(&base);
+        let stage = stale_journal_with(
+            &sample,
+            &base,
+            dead_owner(),
+            &[
+                Record::Prepared,
+                Record::ReleaseIntent,
+                Record::GoSentOrAmbiguous,
+                Record::CommandExited,
+                Record::WorkloadReapIntent,
+                Record::WorkloadReaped,
+                Record::ScanIntent,
+                Record::ScanTransferred,
+                Record::StageIntent(0),
+                Record::Staged(0),
+                Record::PublicationStaged,
+                Record::ScopeReapIntent,
+                Record::ScopeReapProved,
+                Record::ApplyIntent(0),
+            ],
+        );
+        create_private_test_directory(&stage.join("publication"));
+        create_private_test_directory(&stage.join("publication/0"));
+
+        assert!(reconcile_stale_transactions(&base).is_err());
+        let recovered = recover_wal(&stage.join("transaction.wal")).expect("quarantine WAL");
+        assert_eq!(recovered.machine.terminal(), Some(Record::Quarantined));
+        assert!(stage.join("publication/0").exists());
+    }
+
     fn journal_with(records: &[Record]) -> (crate::sample::Sample, PathBuf) {
         use std::os::unix::fs::DirBuilderExt as _;
 
@@ -1294,26 +1693,49 @@ mod tests {
     }
 
     fn stale_journal(sample: &crate::sample::Sample, base: &Path, terminal: bool) -> PathBuf {
+        let mut records = vec![Record::Prepared];
+        if terminal {
+            records.extend([
+                Record::RefusalObserved,
+                Record::PreparationCleanupIntent,
+                Record::PreparationCleanupProved,
+                Record::Refused,
+            ]);
+        }
+        stale_journal_with(
+            sample,
+            base,
+            OwnerIdentity::current().expect("current owner"),
+            &records,
+        )
+    }
+
+    fn stale_journal_with(
+        sample: &crate::sample::Sample,
+        base: &Path,
+        owner: OwnerIdentity,
+        records: &[Record],
+    ) -> PathBuf {
         let sandbox = SandboxId::new();
         let stage = base.join(format!("crucible-projection-{sandbox}"));
         create_private_test_directory(&stage);
         let lease = Lease::acquire_at(&sample.root().join("state")).expect("transaction lease");
         let mut transaction =
-            Transaction::start(lease, &stage, sandbox, InvocationMode::Foreground)
+            Transaction::start_owned(lease, &stage, sandbox, InvocationMode::Foreground, owner)
                 .expect("transaction journal");
-        transaction.append(Record::Prepared).expect("prepared");
-        if terminal {
-            for record in [
-                Record::RefusalObserved,
-                Record::PreparationCleanupIntent,
-                Record::PreparationCleanupProved,
-                Record::Refused,
-            ] {
-                transaction.append(record).expect("terminal record");
-            }
+        for record in records {
+            transaction.append(*record).expect("transaction record");
         }
         drop(transaction);
         stage
+    }
+
+    fn dead_owner() -> OwnerIdentity {
+        OwnerIdentity {
+            pid: u32::MAX,
+            start: 1,
+            boot: boot_identity().expect("boot identity"),
+        }
     }
 
     fn create_private_test_directory(path: &Path) {
