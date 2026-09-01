@@ -45,6 +45,7 @@ const STAGE_PREFIX: &str = "crucible-projection-";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum InvocationMode {
     Foreground,
+    Detachable,
     Background,
 }
 
@@ -58,7 +59,7 @@ impl Invocation {
     fn new(mode: InvocationMode, call_result_key: Option<CallResultKey>) -> io::Result<Self> {
         let call_result_key = match (mode, call_result_key) {
             (InvocationMode::Foreground, None) => [0_u8; CALL_RESULT_KEY_BYTES],
-            (InvocationMode::Background, Some(key)) => key.bytes(),
+            (InvocationMode::Detachable | InvocationMode::Background, Some(key)) => key.bytes(),
             _ => {
                 return Err(invalid(
                     "sandbox transaction result identity does not match invocation mode",
@@ -341,6 +342,7 @@ fn encode_record(record: Record) -> Vec<u8> {
     let (kind, value) = match record {
         Record::Initialized(InvocationMode::Foreground) => (1, Value::Number(0)),
         Record::Initialized(InvocationMode::Background) => (1, Value::Number(1)),
+        Record::Initialized(InvocationMode::Detachable) => (1, Value::Number(2)),
         Record::Prepared => (2, Value::Empty),
         Record::ReleaseIntent => (3, Value::Empty),
         Record::OwnerTransferred => (4, Value::Empty),
@@ -593,7 +595,7 @@ fn recover_wal_file(mut file: File) -> io::Result<Recovered> {
         .ok_or_else(|| invalid("sandbox transaction call-result key is unavailable"))?;
     match records.first() {
         Some(Record::Initialized(InvocationMode::Foreground)) if recovered_key == [0_u8; 32] => {}
-        Some(Record::Initialized(InvocationMode::Background)) => {}
+        Some(Record::Initialized(InvocationMode::Detachable | InvocationMode::Background)) => {}
         _ => {
             return Err(invalid(
                 "sandbox transaction call-result key does not match invocation mode",
@@ -644,6 +646,7 @@ fn decode_record(payload: &[u8]) -> io::Result<Record> {
         1 if payload.len() == 5 => match value()? {
             0 => Record::Initialized(InvocationMode::Foreground),
             1 => Record::Initialized(InvocationMode::Background),
+            2 => Record::Initialized(InvocationMode::Detachable),
             _ => return Err(invalid("sandbox transaction invocation mode is invalid")),
         },
         2 if payload.len() == 1 => Record::Prepared,
@@ -739,31 +742,42 @@ impl Machine {
                 Some(InvocationMode::Foreground) => {
                     matches!(next, Record::GoSentOrAmbiguous | Record::RefusalObserved)
                 }
-                Some(InvocationMode::Background) => {
+                Some(InvocationMode::Detachable | InvocationMode::Background) => {
                     matches!(next, Record::OwnerTransferred | Record::RefusalObserved)
                 }
                 None => false,
             },
             Record::OwnerTransferred => {
-                mode == Some(InvocationMode::Background)
-                    && matches!(next, Record::GoSentOrAmbiguous | Record::RefusalObserved)
+                matches!(
+                    mode,
+                    Some(InvocationMode::Detachable | InvocationMode::Background)
+                ) && matches!(next, Record::GoSentOrAmbiguous | Record::RefusalObserved)
             }
             Record::GoSentOrAmbiguous => match mode {
                 Some(InvocationMode::Foreground) => matches!(
                     next,
                     Record::CommandExited | Record::AbortObserved | Record::QuarantineObserved
                 ),
-                Some(InvocationMode::Background) => matches!(next, Record::CallAcceptIntent),
+                Some(InvocationMode::Background) => {
+                    matches!(next, Record::CallAcceptIntent | Record::AbortObserved)
+                }
+                Some(InvocationMode::Detachable) => matches!(
+                    next,
+                    Record::CommandExited
+                        | Record::CallAcceptIntent
+                        | Record::AbortObserved
+                        | Record::QuarantineObserved
+                ),
                 None => false,
             },
             Record::CallAcceptIntent => {
-                mode == Some(InvocationMode::Background)
-                    && matches!(
-                        next,
-                        Record::CallAccepted(_)
-                            | Record::AbortObserved
-                            | Record::QuarantineObserved
-                    )
+                matches!(
+                    mode,
+                    Some(InvocationMode::Detachable | InvocationMode::Background)
+                ) && matches!(
+                    next,
+                    Record::CallAccepted(_) | Record::AbortObserved | Record::QuarantineObserved
+                )
             }
             Record::CallAccepted(_) => matches!(
                 next,
@@ -1004,7 +1018,7 @@ impl Lease {
 }
 
 #[cfg(test)]
-struct TestSerialLease {
+pub(super) struct TestSerialLease {
     held: bool,
 }
 
@@ -1016,7 +1030,7 @@ static TEST_SERIAL_OWNER: std::sync::LazyLock<(
 
 #[cfg(test)]
 impl TestSerialLease {
-    fn acquire() -> io::Result<Self> {
+    pub(super) fn acquire() -> io::Result<Self> {
         let current = std::thread::current().id();
         let (owner, available) = &*TEST_SERIAL_OWNER;
         let mut owner = owner
@@ -1418,6 +1432,20 @@ mod tests {
             machine.push(record).expect("valid R8 prefix");
         }
         assert!(!machine.is_terminal());
+
+        let mut interrupted = Machine::new();
+        for record in [
+            Record::Initialized(InvocationMode::Background),
+            Record::Prepared,
+            Record::ReleaseIntent,
+            Record::OwnerTransferred,
+            Record::GoSentOrAmbiguous,
+            Record::AbortObserved,
+        ] {
+            interrupted
+                .push(record)
+                .expect("post-GO background recovery edge");
+        }
     }
 
     #[test]
@@ -1442,6 +1470,37 @@ mod tests {
             no_owner.push(record).expect("valid prefix");
         }
         assert!(no_owner.push(Record::GoSentOrAmbiguous).is_err());
+    }
+
+    #[test]
+    fn detachable_lifecycles_choose_exactly_one_terminal_or_acceptance_path_after_go() {
+        let prefix = [
+            Record::Initialized(InvocationMode::Detachable),
+            Record::Prepared,
+            Record::ReleaseIntent,
+            Record::OwnerTransferred,
+            Record::GoSentOrAmbiguous,
+        ];
+        let mut terminal = Machine::new();
+        for record in prefix {
+            terminal.push(record).expect("detachable prefix");
+        }
+        terminal
+            .push(Record::CommandExited)
+            .expect("foreground terminal path");
+        assert!(terminal.push(Record::CallAcceptIntent).is_err());
+
+        let mut accepted = Machine::new();
+        for record in prefix {
+            accepted.push(record).expect("detachable prefix");
+        }
+        accepted
+            .push(Record::CallAcceptIntent)
+            .expect("detach intent");
+        accepted
+            .push(Record::CallAccepted([0x6b; 32]))
+            .expect("detach acceptance");
+        assert!(accepted.push(Record::CommandExited).is_ok());
     }
 
     #[test]
@@ -1623,12 +1682,20 @@ mod tests {
         );
         assert!(
             Invocation::new(
+                InvocationMode::Detachable,
+                Some(CallResultKey::from_digest([3; 32]))
+            )
+            .is_ok()
+        );
+        assert!(
+            Invocation::new(
                 InvocationMode::Foreground,
                 Some(CallResultKey::from_digest([2; 32]))
             )
             .is_err()
         );
         assert!(Invocation::new(InvocationMode::Background, None).is_err());
+        assert!(Invocation::new(InvocationMode::Detachable, None).is_err());
     }
 
     #[test]
@@ -1793,6 +1860,32 @@ mod tests {
     }
 
     #[test]
+    fn dead_background_owner_between_go_and_acceptance_rolls_back() {
+        let sample = crate::sample::Sample::new("sandbox-dead-background-acceptance-gap");
+        let base = sample.root().join("recovery");
+        create_private_test_directory(&base);
+        let stage = stale_journal_with_invocation(
+            &sample,
+            &base,
+            dead_owner(),
+            Invocation::new(
+                InvocationMode::Background,
+                Some(CallResultKey::from_digest([0x4a; 32])),
+            )
+            .expect("background identity"),
+            &[
+                Record::Prepared,
+                Record::ReleaseIntent,
+                Record::OwnerTransferred,
+                Record::GoSentOrAmbiguous,
+            ],
+        );
+
+        reconcile_stale_transactions(&base).expect("background acceptance-gap recovery");
+        assert!(!stage.exists());
+    }
+
+    #[test]
     fn dead_owners_discard_durable_staging_in_reverse_before_rollback() {
         let sample = crate::sample::Sample::new("sandbox-dead-staging-recovery");
         let base = sample.root().join("recovery");
@@ -1912,18 +2005,29 @@ mod tests {
         owner: OwnerIdentity,
         records: &[Record],
     ) -> PathBuf {
+        stale_journal_with_invocation(
+            sample,
+            base,
+            owner,
+            Invocation::new(InvocationMode::Foreground, None).expect("foreground identity"),
+            records,
+        )
+    }
+
+    fn stale_journal_with_invocation(
+        sample: &crate::sample::Sample,
+        base: &Path,
+        owner: OwnerIdentity,
+        invocation: Invocation,
+        records: &[Record],
+    ) -> PathBuf {
         let sandbox = SandboxId::new();
         let stage = base.join(format!("crucible-projection-{sandbox}"));
         create_private_test_directory(&stage);
         let lease = Lease::acquire_at(&sample.root().join("state")).expect("transaction lease");
-        let mut transaction = Transaction::start_owned(
-            Some(lease),
-            &stage,
-            sandbox,
-            Invocation::new(InvocationMode::Foreground, None).expect("foreground identity"),
-            owner,
-        )
-        .expect("transaction journal");
+        let mut transaction =
+            Transaction::start_owned(Some(lease), &stage, sandbox, invocation, owner)
+                .expect("transaction journal");
         for record in records {
             transaction.append(*record).expect("transaction record");
         }

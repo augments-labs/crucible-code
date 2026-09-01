@@ -635,7 +635,7 @@ impl SandboxProcess for LocalProcess {
         &mut self,
         key: CallResultKey,
     ) -> Result<(), crucible_core::SandboxError> {
-        if self.invocation != SandboxInvocationMode::Background
+        if self.invocation == SandboxInvocationMode::Foreground
             || self.call_result_key.is_none()
             || self.call_result_key != Some(key)
             || self.background_acceptance != BackgroundAcceptance::None

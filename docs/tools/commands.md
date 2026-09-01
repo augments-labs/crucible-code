@@ -186,9 +186,11 @@ resumed. <kbd>Esc</kbd> does not either: it stops the turn, and a command you
 deliberately let go of is not part of the turn that started it.
 
 What does: <kbd>x</kbd> in the list, and crucible exiting — every process group
-goes with it, however the process leaves, including a panic. The one case it cannot
-cover is a signal that kills crucible outright, which runs no cleanup at all; the
-commands survive that, and your own shell is what ends them then.
+goes with it, however the process leaves, including a panic. Under required Linux
+confinement, the descriptor broker and PID namespace also end the complete
+workload if crucible is killed before user-space cleanup can run. Degraded and
+off modes have no equivalent kernel boundary: after an uncatchable kill, an
+escaped compatibility-mode command may need to be ended from your own shell.
 
 ## What comes back
 
@@ -233,6 +235,11 @@ than filling it with bytes that were always going to be thrown away. The final
 tool result is capped at 30,000 encoded JSON-string bytes, including escaping;
 if that removes more of an escape-heavy result, a second note gives its original
 encoded size and the encoded bytes omitted.
+
+The retained head/tail budget is separate from the raw-stream safety ceiling.
+A command that emits more than 4 MiB across standard output and standard error
+is stopped with an explicit captured-output-ceiling result instead of consuming
+host I/O indefinitely.
 
 ## When it stops
 

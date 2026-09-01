@@ -6,18 +6,19 @@ use std::os::fd::AsRawFd;
 use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 use std::os::unix::net::UnixListener;
 use std::path::PathBuf;
-use std::process::ExitStatus;
+use std::process::{Command, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    Ancestry, CallResultReceipt, SandboxCleanup, SandboxCommand, SandboxCredentialHandle,
-    SandboxCredentialProjection, SandboxCredentialProvenance, SandboxEnvironment, SandboxFactKind,
-    SandboxFeature, SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule,
-    SandboxId, SandboxInvocationMode, SandboxLifecycle, SandboxManifest, SandboxManifestEntry,
-    SandboxMode, SandboxNetworkEndpoint, SandboxNetworkPolicy, SandboxNetworkProvenance,
-    SandboxOutput, SandboxPolicy, SandboxProcess, SandboxRead, SandboxRequest,
-    SandboxResourceLimits, SandboxService, SandboxUnreadablePattern, ToolId,
+    Ancestry, CallResultKey, CallResultReceipt, SandboxCleanup, SandboxCommand,
+    SandboxCredentialHandle, SandboxCredentialProjection, SandboxCredentialProvenance,
+    SandboxEnvironment, SandboxFactKind, SandboxFeature, SandboxFilesystemAccess,
+    SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxId, SandboxInvocationMode,
+    SandboxLifecycle, SandboxManifest, SandboxManifestEntry, SandboxMode, SandboxNetworkEndpoint,
+    SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxOutput, SandboxPolicy, SandboxProcess,
+    SandboxRead, SandboxRequest, SandboxResourceLimits, SandboxService, SandboxUnreadablePattern,
+    ToolId,
 };
 
 use crate::LocalSandbox;
@@ -1627,6 +1628,122 @@ fn requested_cpu_limit_terminates_the_workload_scope() {
         started.elapsed() < Duration::from_secs(3),
         "CPU ceiling did not terminate the workload promptly"
     );
+}
+
+const CRASH_HELPER_ROOT: &str = "CRUCIBLE_TEST_CRASH_HELPER_ROOT";
+const CRASH_HELPER_SANDBOX: &str = "CRUCIBLE_TEST_CRASH_HELPER_SANDBOX";
+const CRASH_HELPER_MARKER: &str = "CRUCIBLE_TEST_CRASH_HELPER_MARKER";
+const CRASH_HELPER_READY: &str = "CRUCIBLE_TEST_CRASH_HELPER_READY";
+
+#[test]
+fn sandbox_crash_helper_process() {
+    let (Ok(root), Ok(sandbox), Ok(marker), Ok(ready)) = (
+        std::env::var(CRASH_HELPER_ROOT),
+        std::env::var(CRASH_HELPER_SANDBOX),
+        std::env::var(CRASH_HELPER_MARKER),
+        std::env::var(CRASH_HELPER_READY),
+    ) else {
+        return;
+    };
+    let workspace = crucible_core::Workspace::open(root).expect("helper workspace");
+    let sandbox = SandboxId::parse(&sandbox).expect("helper sandbox identity");
+    let policy = SandboxPolicy::standard(&workspace).expect("helper policy");
+    let key = CallResultKey::from_digest([0x7c; 32]);
+    let request = SandboxRequest::new(
+        sandbox,
+        Ancestry::new(),
+        ToolId::new("crash-helper"),
+        policy,
+        SandboxManifest::empty(),
+    )
+    .with_invocation_mode(SandboxInvocationMode::Background)
+    .with_call_result_key(key);
+    let service = LocalSandbox::new();
+    let mut session = service.prepare(request).expect("helper prepare");
+    session.materialize().expect("helper materialize");
+    let mut launch = session
+        .stage(command(&format!(": {marker}; exec sleep 300")))
+        .expect("helper stage");
+    launch.transfer_owner().expect("helper ownership");
+    let mut process = launch.release().expect("helper release");
+    process
+        .begin_background_acceptance(key)
+        .expect("helper acceptance intent");
+    process
+        .complete_background_acceptance(CallResultReceipt::from_digest([0x7d; 32]))
+        .expect("helper acceptance");
+    std::fs::write(ready, b"accepted\n").expect("announce durable acceptance");
+
+    loop {
+        assert!(
+            process.try_wait().expect("helper wait").is_none(),
+            "helper workload ended before its host"
+        );
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[test]
+fn abrupt_host_loss_kills_the_scope_and_the_next_prepare_reconciles_its_wal() {
+    let service = LocalSandbox::new();
+    if service.probe().is_err() {
+        return;
+    }
+    let _serial = super::transaction::TestSerialLease::acquire()
+        .expect("serialize the cross-process writer lifecycle");
+    let sample = Sample::new("sandbox-host-loss");
+    let sandbox = SandboxId::new();
+    let marker = format!("crucible-host-loss-{sandbox}");
+    let ready = sample.root().join("host-loss-accepted");
+    let stage = PathBuf::from(format!("/var/tmp/crucible-projection-{sandbox}"));
+    let executable = std::env::current_exe().expect("test executable");
+    let mut helper = Command::new(executable)
+        .args([
+            "--exact",
+            "sandbox::linux::tests::sandbox_crash_helper_process",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env(CRASH_HELPER_ROOT, sample.root())
+        .env(CRASH_HELPER_SANDBOX, sandbox.to_string())
+        .env(CRASH_HELPER_MARKER, &marker)
+        .env(CRASH_HELPER_READY, &ready)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .spawn()
+        .expect("spawn crash helper");
+
+    let ready_deadline = Instant::now() + Duration::from_secs(5);
+    while (!ready.exists() || !stage.exists() || live_processes_with_marker(&marker).is_empty())
+        && Instant::now() < ready_deadline
+    {
+        if helper.try_wait().expect("helper status").is_some() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    if !ready.exists() || !stage.exists() || live_processes_with_marker(&marker).is_empty() {
+        let _ = helper.kill();
+        let _ = helper.wait();
+        panic!("crash helper did not reach its released lifecycle");
+    }
+
+    helper.kill().expect("abrupt helper loss");
+    helper.wait().expect("reap crash helper");
+    let reap_deadline = Instant::now() + Duration::from_secs(3);
+    while !live_processes_with_marker(&marker).is_empty() && Instant::now() < reap_deadline {
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        live_processes_with_marker(&marker).is_empty(),
+        "a confined workload survived abrupt host loss"
+    );
+
+    let recovered = service
+        .prepare(request(&sample, SandboxManifest::empty()))
+        .expect("next prepare reconciles the abandoned WAL");
+    assert!(!stage.exists(), "the abandoned lifecycle was not settled");
+    drop(recovered);
 }
 
 fn live_processes_with_marker(marker: &str) -> Vec<u32> {

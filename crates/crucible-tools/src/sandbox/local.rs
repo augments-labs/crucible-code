@@ -278,7 +278,7 @@ impl SandboxLaunch for CompatibilityLaunch {
     }
 
     fn transfer_owner(&mut self) -> Result<(), SandboxError> {
-        if self.invocation != crucible_core::SandboxInvocationMode::Background
+        if self.invocation == crucible_core::SandboxInvocationMode::Foreground
             || self.owner_transferred
         {
             return Err(SandboxError::Lifecycle(std::io::Error::other(
@@ -294,7 +294,7 @@ impl SandboxLaunch for CompatibilityLaunch {
     }
 
     fn release(mut self: Box<Self>) -> Result<Box<dyn SandboxProcess>, SandboxError> {
-        if self.invocation == crucible_core::SandboxInvocationMode::Background
+        if self.invocation != crucible_core::SandboxInvocationMode::Foreground
             && !self.owner_transferred
         {
             return Err(SandboxError::Lifecycle(std::io::Error::other(

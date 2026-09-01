@@ -198,6 +198,9 @@ impl Projection {
                 crucible_core::SandboxInvocationMode::Foreground => {
                     transaction::InvocationMode::Foreground
                 }
+                crucible_core::SandboxInvocationMode::Detachable => {
+                    transaction::InvocationMode::Detachable
+                }
                 crucible_core::SandboxInvocationMode::Background => {
                     transaction::InvocationMode::Background
                 }
@@ -888,7 +891,7 @@ impl SandboxProcess for ProjectedProcess {
     }
 
     fn begin_background_acceptance(&mut self, key: CallResultKey) -> Result<(), SandboxError> {
-        if self.invocation != SandboxInvocationMode::Background
+        if self.invocation == SandboxInvocationMode::Foreground
             || self.call_result_key.is_none()
             || self.call_result_key != Some(key)
             || self.acceptance_pending

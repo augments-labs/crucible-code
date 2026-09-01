@@ -18,10 +18,11 @@
 //! command somebody deliberately let go of is not part of the turn that started
 //! it. The only things that end one are being asked to, and the process leaving.
 //!
-//! What it cannot promise: a signal that kills crucible outright runs no
-//! destructor, so the commands survive it. Catching a signal needs `unsafe`,
-//! which this workspace denies, and the shipped documentation says so rather than
-//! implying otherwise.
+//! What it cannot promise by itself: a signal that kills crucible outright runs
+//! no destructor. The enforcing Linux backend binds its broker and PID namespace
+//! to the host process so that loss still ends the workload; compatibility mode
+//! has no equivalent kernel boundary, and the shipped documentation says so
+//! rather than implying otherwise.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -198,6 +199,13 @@ impl Background {
             held: true,
             number,
         })
+    }
+
+    /// Whether a command could reserve ownership before its release boundary.
+    pub(super) fn available(&self) -> bool {
+        self.standing
+            .lock()
+            .is_ok_and(|standing| standing.left.len().saturating_add(standing.reserved) < MOST)
     }
 
     /// Takes a running command, answering with the number it is now known by.

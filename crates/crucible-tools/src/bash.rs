@@ -66,6 +66,13 @@ const SECONDS: usize = 120;
 /// than this wants a different tool, not a bigger number.
 const CEILING: usize = 600;
 
+/// Raw bytes a command may emit before its complete process scope is stopped.
+///
+/// This is deliberately wider than the retained tool result: [`output`] keeps
+/// a bounded head and tail from ordinary build logs, while this separate hard
+/// ceiling prevents an infinite producer from consuming host I/O indefinitely.
+const PROCESS_OUTPUT_BYTES: u64 = 4 * 1024 * 1024;
+
 /// How long a command asked to be left running is watched for before the call
 /// answers, unless [`Bash::watching`] was told otherwise.
 ///
@@ -335,84 +342,64 @@ impl Bash {
         // starting turn has scrolled away, so keep the caller's description.
         let said = crate::account::of(approved.args());
 
-        if why == output::Why::Asked {
-            let number = ownership
-                .as_ref()
-                .map(background::Lease::number)
-                .ok_or_else(|| {
-                    io(
-                        "background cleanup ownership disappeared before acceptance",
-                        std::io::Error::other("reserved background identity is unavailable"),
-                    )
-                })?;
-            let accepted = ToolOutput::ok(format!(
-                "{printed}\n\n[left running as #{number}; {LEFT_RUNNING}]"
-            ));
-            let key = context.call_result_key().ok_or_else(|| {
+        let number = ownership
+            .as_ref()
+            .map(background::Lease::number)
+            .ok_or_else(|| {
                 io(
-                    "cannot finalize a background command without durable result storage",
-                    std::io::Error::other("durable call-result identity is unavailable"),
+                    "background cleanup ownership disappeared before acceptance",
+                    std::io::Error::other("reserved background identity is unavailable"),
                 )
             })?;
-            taking
-                .process
-                .begin_background_acceptance(key)
-                .map_err(|error| {
-                    sandbox_io("could not begin background result acceptance", error)
-                })?;
-            let Some(kept) = left.keep(
-                taking,
-                background::Keep {
-                    called: command,
-                    said: said.description(),
-                    lease: ownership.take(),
-                    accepting: true,
-                },
-            ) else {
-                return Ok(ToolOutput::failed(
-                    "background ownership was lost before result finalization",
-                ));
-            };
-            if kept.number() != number {
-                return Ok(ToolOutput::failed(
-                    "background invocation identity changed before result finalization",
-                ));
+        let accepted = ToolOutput::ok(match why {
+            output::Why::Asked => {
+                format!("{printed}\n\n[left running as #{number}; {LEFT_RUNNING}]")
             }
-            let acceptance = kept.acceptance().ok_or_else(|| {
-                io(
-                    "background result ownership disappeared before finalization",
-                    std::io::Error::other("background acceptance handle is unavailable"),
-                )
-            })?;
-            context.defer_call_result(acceptance).map_err(|problem| {
-                io(
-                    "could not transfer background result finalization",
-                    std::io::Error::other(problem),
-                )
-            })?;
-            return Ok(accepted);
-        }
-
-        match left.keep(
+            output::Why::Pressed => {
+                format!("{printed}\n\n[left running as #{number}; {PRESSED}; {LEFT_RUNNING}]")
+            }
+        });
+        let key = context.call_result_key().ok_or_else(|| {
+            io(
+                "cannot finalize a background command without durable result storage",
+                std::io::Error::other("durable call-result identity is unavailable"),
+            )
+        })?;
+        taking
+            .process
+            .begin_background_acceptance(key)
+            .map_err(|error| sandbox_io("could not begin background result acceptance", error))?;
+        let Some(kept) = left.keep(
             taking,
             background::Keep {
                 called: command,
                 said: said.description(),
                 lease: ownership.take(),
-                accepting: false,
+                accepting: true,
             },
-        ) {
-            Some(kept) if why == output::Why::Pressed => Ok(ToolOutput::ok(format!(
-                "{printed}\n\n[left running as #{}; {PRESSED}; {LEFT_RUNNING}]",
-                kept.number()
-            ))),
-            Some(_) => Ok(ToolOutput::failed(
-                "background invocation mode changed after release",
-            )),
-            None => Ok(ToolOutput::failed(format!(
-                "{MOST} commands are already running; stop one before leaving another"
-            ))),
+        ) else {
+            return Ok(ToolOutput::failed(
+                "background ownership was lost before result finalization",
+            ));
+        };
+        if kept.number() != number {
+            return Ok(ToolOutput::failed(
+                "background invocation identity changed before result finalization",
+            ));
         }
+        let acceptance = kept.acceptance().ok_or_else(|| {
+            io(
+                "background result ownership disappeared before finalization",
+                std::io::Error::other("background acceptance handle is unavailable"),
+            )
+        })?;
+        context.defer_call_result(acceptance).map_err(|problem| {
+            io(
+                "could not transfer background result finalization",
+                std::io::Error::other(problem),
+            )
+        })?;
+        Ok(accepted)
     }
 }
 
@@ -460,8 +447,11 @@ impl Tool for Bash {
         summary::field(NAME, args, COMMAND)
     }
 
-    fn backgroundable(&self, _args: &ToolArgs) -> bool {
-        self.leaving.is_some()
+    fn backgroundable(&self, args: &ToolArgs) -> bool {
+        let explicitly_backgrounded = Args::parse(NAME, args)
+            .and_then(|args| args.flag(crate::account::LEFT, false))
+            .unwrap_or(false);
+        !explicitly_backgrounded && self.leaving.as_ref().is_some_and(Background::available)
     }
 
     fn looking(&self, args: &ToolArgs) -> Option<Looking> {
@@ -500,45 +490,46 @@ impl Tool for Bash {
             ));
         }
 
-        // What decides whether this call ends up waiting. A run with nothing
-        // holding the other end cannot leave a command running and must not
-        // quietly wait for a dev server instead, so it says so.
-        let leaving = match (background, self.leaving.as_ref()) {
+        if context.cancel().requested() {
+            return Err(ToolError::Cancelled(NAME.into()));
+        }
+
+        let mut ownership = match (background, self.leaving.as_ref()) {
             (true, None) => {
                 return Ok(ToolOutput::failed(
                     "this run cannot leave a command running",
                 ));
             }
-            // Let go of once it has had a moment to fail on the spot. A command
-            // that is already over by then was never a background command, and
-            // the model gets its failure now rather than in a panel.
-            (true, Some(left)) => Some(output::Leaving {
-                left,
-                after: Some(Duration::ZERO),
-            }),
-            // Nothing asked for, and the key can still ask.
-            (false, Some(left)) => Some(output::Leaving { left, after: None }),
-            (false, None) => None,
+            (true, Some(left)) => match left.reserve() {
+                Some(lease) => Some(lease),
+                None => {
+                    return Ok(ToolOutput::failed(format!(
+                        "{MOST} commands are already running; stop one before leaving another"
+                    )));
+                }
+            },
+            (false, Some(left)) if context.call_result_key().is_some() => left.reserve(),
+            (false, _) => None,
         };
-
-        if context.cancel().requested() {
-            return Err(ToolError::Cancelled(NAME.into()));
-        }
-
-        let mut ownership = if background {
-            let Some(left) = self.leaving.as_ref() else {
-                return Ok(ToolOutput::failed(
-                    "this run cannot leave a command running",
-                ));
-            };
-            let Some(lease) = left.reserve() else {
-                return Ok(ToolOutput::failed(format!(
-                    "{MOST} commands are already running; stop one before leaving another"
-                )));
-            };
-            Some(lease)
+        let invocation = if background {
+            crucible_core::SandboxInvocationMode::Background
+        } else if ownership.is_some() {
+            crucible_core::SandboxInvocationMode::Detachable
         } else {
-            None
+            crucible_core::SandboxInvocationMode::Foreground
+        };
+        let leaving = match invocation {
+            crucible_core::SandboxInvocationMode::Background => {
+                self.leaving.as_ref().map(|left| output::Leaving {
+                    left,
+                    after: Some(Duration::ZERO),
+                })
+            }
+            crucible_core::SandboxInvocationMode::Detachable => self
+                .leaving
+                .as_ref()
+                .map(|left| output::Leaving { left, after: None }),
+            crucible_core::SandboxInvocationMode::Foreground => None,
         };
 
         let shell = self.shell.as_ref().ok_or_else(|| {
@@ -573,7 +564,7 @@ impl Tool for Bash {
         })?;
         let limits = SandboxResourceLimits {
             command_time: (!background).then_some(allowed),
-            output_bytes: Some(u64::try_from(crate::bound::OUTPUT).unwrap_or(u64::MAX)),
+            output_bytes: Some(PROCESS_OUTPUT_BYTES),
             concurrent_commands: Some(16),
             ..SandboxResourceLimits::default()
         };
@@ -592,21 +583,17 @@ impl Tool for Bash {
             policy,
             SandboxManifest::empty(),
         )
-        .with_invocation_mode(if background {
-            crucible_core::SandboxInvocationMode::Background
+        .with_invocation_mode(invocation);
+        let request = if invocation == crucible_core::SandboxInvocationMode::Foreground {
+            request
         } else {
-            crucible_core::SandboxInvocationMode::Foreground
-        });
-        let request = if background {
             let key = context.call_result_key().ok_or_else(|| {
                 io(
-                    "cannot accept a background command without durable result storage",
+                    "cannot detach a command without durable result storage",
                     std::io::Error::other("durable call-result identity is unavailable"),
                 )
             })?;
             request.with_call_result_key(key)
-        } else {
-            request
         }
         .with_audit(audit.clone())
         .map_err(|error| sandbox_io("could not bind sandbox audit attribution", error))?;

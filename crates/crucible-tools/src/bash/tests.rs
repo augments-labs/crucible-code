@@ -752,12 +752,8 @@ fn a_command_the_developer_let_go_of_says_who_let_go_of_it() {
     left.ask();
 
     let started = Instant::now();
-    let output = tool
-        .run(
-            allowed(&tool, r#"{"command":"printf 'up\n'; sleep 30"}"#),
-            &crate::sample::context(),
-        )
-        .expect("the command started");
+    let output =
+        finalized(&tool, r#"{"command":"printf 'up\n'; sleep 30"}"#).expect("the command started");
 
     assert!(
         started.elapsed() < Duration::from_secs(5),
@@ -783,6 +779,27 @@ fn a_command_the_developer_let_go_of_says_who_let_go_of_it() {
     );
 
     left.stop(1);
+}
+
+#[test]
+fn linux_ctrl_b_uses_owned_durable_detachment_before_go() {
+    let service = crate::LocalSandbox::new();
+    if service.probe().is_err() {
+        return;
+    }
+    let sample = Sample::new("bash-linux-detachable");
+    let left = Background::new();
+    let tool = Bash::new(sample.workspace()).leaving(left.clone());
+    left.ask();
+
+    let output = finalized(&tool, r#"{"command":"printf 'up\n'; sleep 30"}"#)
+        .expect("the detachable command started");
+
+    assert!(!output.is_failed(), "{}", output.text());
+    assert!(output.text().contains("ctrl+b"), "{}", output.text());
+    assert_eq!(left.running().len(), 1);
+    left.stop(1);
+    assert!(left.running().is_empty());
 }
 
 #[test]
@@ -853,6 +870,10 @@ fn an_explicit_background_command_has_no_foreground_deadline() {
     assert_eq!(
         limits.first().expect("one recorded limit").command_time,
         None
+    );
+    assert_eq!(
+        limits.first().expect("one recorded limit").output_bytes,
+        Some(super::PROCESS_OUTPUT_BYTES)
     );
     drop(limits);
     left.stop(1);

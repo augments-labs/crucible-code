@@ -428,6 +428,10 @@ pub enum SandboxInvocationMode {
     /// The terminal sandbox outcome owns the call result.
     #[default]
     Foreground,
+    /// An application owner is reserved before release; a normal terminal
+    /// result remains valid unless the caller explicitly detaches, at which
+    /// point durable acceptance becomes the sole result.
+    Detachable,
     /// Acceptance after owned release is the sole call result; terminal state
     /// is application lifecycle status rather than another tool result.
     Background,
@@ -559,7 +563,7 @@ impl SandboxRequest {
     /// `degraded` and `off` relax only the documented baseline kernel boundary;
     /// they do not turn requested limits or session semantics into telemetry.
     pub fn negotiate(&self, capabilities: &SandboxCapabilities) -> Result<(), SandboxError> {
-        if self.invocation == SandboxInvocationMode::Background && self.call_result.is_none() {
+        if self.invocation != SandboxInvocationMode::Foreground && self.call_result.is_none() {
             return Err(SandboxError::InvalidInspection);
         }
         for (feature, minimum) in capability_requirements(&self.policy, &self.manifest) {

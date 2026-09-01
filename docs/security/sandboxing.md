@@ -131,9 +131,11 @@ values, proxy material or raw out-of-scope paths.
 The local supervisor stops and reaps the complete owned process scope on normal
 exit, deadline, output violation, cancellation, refusal, launch failure, panic,
 explicit stop and ordinary host shutdown. Cleanup is idempotent. An
-uncatchable host/process kill cannot run user-space destructors, so recovery
-must treat a missing final cleanup fact as an interrupted lifecycle rather than
-inventing success.
+uncatchable host/process kill cannot run user-space destructors. On enforcing
+Linux, loss of the broker status channel and Bubblewrap's parent-death boundary
+still terminate the PID-namespace workload. The next preparation replays the
+checksummed lifecycle WAL, rolls back an unambiguous interrupted transaction,
+and quarantines ambiguous publication instead of inventing cleanup or success.
 
 ## Design references
 

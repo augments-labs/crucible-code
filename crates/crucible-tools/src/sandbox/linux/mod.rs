@@ -271,7 +271,7 @@ impl SandboxLaunch for LinuxLaunch {
     }
 
     fn transfer_owner(&mut self) -> Result<(), SandboxError> {
-        if self.invocation != SandboxInvocationMode::Background || self.owner_transferred {
+        if self.invocation == SandboxInvocationMode::Foreground || self.owner_transferred {
             return Err(SandboxError::Lifecycle(std::io::Error::other(
                 "sandbox background ownership transfer is invalid",
             )));
@@ -312,7 +312,7 @@ impl SandboxLaunch for LinuxLaunch {
             self.released = true;
             return Err(SandboxError::Audit(source));
         }
-        if self.invocation == SandboxInvocationMode::Background && !self.owner_transferred {
+        if self.invocation != SandboxInvocationMode::Foreground && !self.owner_transferred {
             let stopped = process.stop().is_ok();
             self.record_refusal(stopped);
             self.released = true;
@@ -320,7 +320,7 @@ impl SandboxLaunch for LinuxLaunch {
                 "background sandbox has no application cleanup owner",
             )));
         }
-        if self.invocation == SandboxInvocationMode::Background
+        if self.invocation != SandboxInvocationMode::Foreground
             && let Some(projection) = self.projection.as_mut()
             && let Err(source) = projection.record(transaction::Record::OwnerTransferred)
         {
