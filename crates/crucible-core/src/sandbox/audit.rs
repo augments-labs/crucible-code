@@ -25,10 +25,26 @@ pub enum SandboxLifecycle {
     Prepared,
     /// The manifest transaction committed.
     Materialized,
+    /// The exact command and release channel were fixed before `GO`.
+    ReleaseIntent,
+    /// The authenticated one-shot `GO` was sent or became ambiguous.
+    CommandReleased,
+    /// Application background ownership was durable before `GO`.
+    OwnerTransferred,
     /// The governed command started.
     CommandStarted,
     /// The command leader exited and its descendant scope was emptied.
     CommandFinished,
+    /// Terminal publication began after proved scope death.
+    PublicationStarted,
+    /// Valid workspace effects were durably published.
+    Published,
+    /// Private effects were discarded or publication was reversed.
+    RolledBack,
+    /// Preparation ended before any possible command release.
+    Refused,
+    /// Cleanup or recovery could not safely select publish or rollback.
+    Quarantined,
 }
 
 /// Stable failure category retained without OS errors, paths, or command text.

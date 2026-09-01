@@ -6,12 +6,12 @@
 
 use std::ffi::OsStr;
 use std::fs::File;
-use std::io::Write as _;
+use std::io::{Read as _, Write as _};
 use std::os::fd::{FromRawFd as _, RawFd};
 use std::os::unix::process::ExitStatusExt as _;
 use std::process::{Command, ExitCode};
 
-use crucible_sandbox_broker::{BROKER_FAILURE_STATUS, encode_wait_status};
+use crucible_sandbox_broker::{BROKER_FAILURE_STATUS, GO_FRAME, READY_FRAME, encode_wait_status};
 use rustix::io::FdFlags;
 
 const BROKER_ERROR_EXIT: u8 = 125;
@@ -39,6 +39,17 @@ fn run() -> Option<u8> {
     let mut status_channel = unsafe { File::from_raw_fd(descriptor) };
     if rustix::io::fcntl_setfd(&status_channel, FdFlags::CLOEXEC).is_err() {
         return write_failure(&mut status_channel);
+    }
+    if status_channel
+        .write_all(&READY_FRAME)
+        .and_then(|()| status_channel.flush())
+        .is_err()
+    {
+        return None;
+    }
+    let mut release = [0_u8; GO_FRAME.len()];
+    if status_channel.read_exact(&mut release).is_err() || release != GO_FRAME {
+        return None;
     }
 
     let status = match Command::new(program).args(workload_arguments).spawn() {

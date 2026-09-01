@@ -8,8 +8,8 @@ use crucible_core::{
     SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities,
     SandboxCapability, SandboxCleanup, SandboxCommand, SandboxCommandStage, SandboxError,
     SandboxFactKind, SandboxFailurePhase, SandboxFeature, SandboxGuardrailDecision,
-    SandboxInspection, SandboxLifecycle, SandboxMode, SandboxProcess, SandboxRequest,
-    SandboxService, SandboxSession,
+    SandboxInspection, SandboxLaunch, SandboxLifecycle, SandboxMode, SandboxProcess,
+    SandboxRequest, SandboxService, SandboxSession,
 };
 
 use super::process::{MAX_LOCAL_COMMANDS, Reservation};
@@ -199,10 +199,10 @@ impl SandboxSession for CompatibilitySession {
         Ok(())
     }
 
-    fn start(
+    fn stage(
         mut self: Box<Self>,
         command: SandboxCommand,
-    ) -> Result<Box<dyn SandboxProcess>, SandboxError> {
+    ) -> Result<Box<dyn SandboxLaunch>, SandboxError> {
         if !self.materialized {
             return Err(SandboxError::Materialization {
                 problem: "session was not materialized before start".into(),
@@ -236,32 +236,82 @@ impl SandboxSession for CompatibilitySession {
             .env_clear()
             .envs(command.environment().iter());
         let reservation = self.reservation.take().ok_or(SandboxError::Concurrency)?;
-        let spawned = super::process::spawn(
-            process,
-            super::process::SpawnPlan {
+        let launch = CompatibilityLaunch {
+            process: Some(process),
+            plan: Some(super::process::SpawnPlan {
                 inspection: self.inspection.clone(),
                 reservation,
                 stage: None,
                 limits: self.request.policy().limits(),
                 audit: self.request.audit().clone(),
                 sandbox: self.request.id(),
-            },
-        );
-        match spawned {
-            Ok(process) => {
-                self.transferred = true;
-                Ok(process)
-            }
-            Err(problem) => {
-                self.request.audit().record(
-                    self.request.id(),
-                    SandboxFactKind::Failed {
-                        phase: SandboxFailurePhase::Start,
-                        kind: problem.failure_kind(),
-                    },
-                )?;
-                Err(problem)
-            }
+                audit_started: true,
+            }),
+            inspection: self.inspection.clone(),
+            audit: self.request.audit().clone(),
+            sandbox: self.request.id(),
+            released: false,
+        };
+        self.transferred = true;
+        Ok(Box::new(launch))
+    }
+}
+
+struct CompatibilityLaunch {
+    process: Option<Command>,
+    plan: Option<super::process::SpawnPlan>,
+    inspection: SandboxInspection,
+    audit: crucible_core::SandboxAudit,
+    sandbox: crucible_core::SandboxId,
+    released: bool,
+}
+
+impl SandboxLaunch for CompatibilityLaunch {
+    fn inspection(&self) -> &SandboxInspection {
+        &self.inspection
+    }
+
+    fn release(mut self: Box<Self>) -> Result<Box<dyn SandboxProcess>, SandboxError> {
+        let process = self.process.take().ok_or_else(|| {
+            SandboxError::Spawn(std::io::Error::other(
+                "compatibility command was already released",
+            ))
+        })?;
+        let plan = self.plan.take().ok_or_else(|| {
+            SandboxError::Spawn(std::io::Error::other(
+                "compatibility launch plan is unavailable",
+            ))
+        })?;
+        self.released = true;
+        let spawned = super::process::spawn(process, plan);
+        if let Err(problem) = &spawned {
+            self.audit.record(
+                self.sandbox,
+                SandboxFactKind::Failed {
+                    phase: SandboxFailurePhase::Start,
+                    kind: problem.failure_kind(),
+                },
+            )?;
+            self.audit.record(
+                self.sandbox,
+                SandboxFactKind::Cleanup(SandboxCleanup::Complete),
+            )?;
+        }
+        spawned
+    }
+}
+
+impl Drop for CompatibilityLaunch {
+    fn drop(&mut self) {
+        if !self.released {
+            let _ = self.audit.record(
+                self.sandbox,
+                SandboxFactKind::Lifecycle(SandboxLifecycle::Refused),
+            );
+            let _ = self.audit.record(
+                self.sandbox,
+                SandboxFactKind::Cleanup(SandboxCleanup::Complete),
+            );
         }
     }
 }

@@ -109,6 +109,7 @@ pub(super) struct SpawnPlan {
     pub(super) limits: SandboxResourceLimits,
     pub(super) audit: SandboxAudit,
     pub(super) sandbox: SandboxId,
+    pub(super) audit_started: bool,
 }
 
 /// Starts one command under an already negotiated process plan.
@@ -123,6 +124,7 @@ pub(super) fn spawn(
         limits,
         audit,
         sandbox,
+        audit_started,
     } = plan;
     command
         .stdin(Stdio::null())
@@ -203,7 +205,9 @@ pub(super) fn spawn(
         None
     };
 
-    if let Err(source) = control.audit(SandboxFactKind::Lifecycle(SandboxLifecycle::CommandStarted))
+    if audit_started
+        && let Err(source) =
+            control.audit(SandboxFactKind::Lifecycle(SandboxLifecycle::CommandStarted))
     {
         control.done.store(true, Ordering::Release);
         let _ = stop_scope(&scope, &mut child);
@@ -708,6 +712,7 @@ pub(crate) fn testing(
             limits: SandboxResourceLimits::default(),
             audit: SandboxAudit::new(Ancestry::new(), ToolId::new("test-process")),
             sandbox,
+            audit_started: true,
         },
     )
 }

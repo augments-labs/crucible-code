@@ -249,8 +249,16 @@ const fn sandbox_lifecycle(value: crucible_core::SandboxLifecycle) -> &'static s
         crucible_core::SandboxLifecycle::PolicyResolved => "policy_resolved",
         crucible_core::SandboxLifecycle::Prepared => "prepared",
         crucible_core::SandboxLifecycle::Materialized => "materialized",
+        crucible_core::SandboxLifecycle::ReleaseIntent => "release_intent",
+        crucible_core::SandboxLifecycle::CommandReleased => "command_released",
+        crucible_core::SandboxLifecycle::OwnerTransferred => "owner_transferred",
         crucible_core::SandboxLifecycle::CommandStarted => "command_started",
         crucible_core::SandboxLifecycle::CommandFinished => "command_finished",
+        crucible_core::SandboxLifecycle::PublicationStarted => "publication_started",
+        crucible_core::SandboxLifecycle::Published => "published",
+        crucible_core::SandboxLifecycle::RolledBack => "rolled_back",
+        crucible_core::SandboxLifecycle::Refused => "refused",
+        crucible_core::SandboxLifecycle::Quarantined => "quarantined",
     }
 }
 

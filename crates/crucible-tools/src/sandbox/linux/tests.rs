@@ -10,12 +10,13 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    Ancestry, SandboxCommand, SandboxCredentialHandle, SandboxCredentialProjection,
-    SandboxCredentialProvenance, SandboxEnvironment, SandboxFeature, SandboxFilesystemAccess,
-    SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxId, SandboxManifest,
-    SandboxManifestEntry, SandboxMode, SandboxNetworkEndpoint, SandboxNetworkPolicy,
-    SandboxNetworkProvenance, SandboxOutput, SandboxPolicy, SandboxProcess, SandboxRead,
-    SandboxRequest, SandboxResourceLimits, SandboxService, SandboxUnreadablePattern, ToolId,
+    Ancestry, SandboxCleanup, SandboxCommand, SandboxCredentialHandle, SandboxCredentialProjection,
+    SandboxCredentialProvenance, SandboxEnvironment, SandboxFactKind, SandboxFeature,
+    SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxId,
+    SandboxLifecycle, SandboxManifest, SandboxManifestEntry, SandboxMode, SandboxNetworkEndpoint,
+    SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxOutput, SandboxPolicy, SandboxProcess,
+    SandboxRead, SandboxRequest, SandboxResourceLimits, SandboxService, SandboxUnreadablePattern,
+    ToolId,
 };
 
 use crate::LocalSandbox;
@@ -367,6 +368,96 @@ fn complete_workspace_hardlink_groups_keep_one_projected_inode() {
     let second = std::fs::metadata(sample.root().join("second.txt")).expect("second metadata");
     assert_eq!(first.ino(), second.ino());
     assert_eq!(first.nlink(), 2);
+}
+
+#[test]
+fn dropping_a_staged_launch_refuses_it_before_go_and_completes_cleanup() {
+    let service = LocalSandbox::new();
+    if service.probe().is_err() {
+        return;
+    }
+    let sample = Sample::new("sandbox-pre-release-refusal");
+    let request = request(&sample, SandboxManifest::empty());
+    let audit = request.audit().clone();
+    let mut session = service.prepare(request).expect("prepared sandbox");
+    session.materialize().expect("materialized workspace");
+
+    let launch = session
+        .stage(command("printf 'must-not-run\\n' > refused.txt"))
+        .expect("staged launch");
+    drop(launch);
+
+    assert!(!sample.root().join("refused.txt").exists());
+    let facts = audit.records().expect("audit records");
+    assert!(facts.iter().any(|record| {
+        matches!(
+            record.fact().kind(),
+            SandboxFactKind::Lifecycle(SandboxLifecycle::Refused)
+        )
+    }));
+    assert!(facts.iter().any(|record| {
+        matches!(
+            record.fact().kind(),
+            SandboxFactKind::Cleanup(SandboxCleanup::Complete)
+        )
+    }));
+    assert!(!facts.iter().any(|record| {
+        matches!(
+            record.fact().kind(),
+            SandboxFactKind::Lifecycle(
+                SandboxLifecycle::CommandReleased | SandboxLifecycle::CommandStarted
+            )
+        )
+    }));
+}
+
+#[test]
+fn background_ownership_precedes_release_and_command_start() {
+    let service = LocalSandbox::new();
+    if service.probe().is_err() {
+        return;
+    }
+    let sample = Sample::new("sandbox-background-owner-order");
+    let request = request(&sample, SandboxManifest::empty());
+    let sandbox = request.id();
+    let audit = request.audit().clone();
+    let mut session = service.prepare(request).expect("prepared sandbox");
+    session.materialize().expect("materialized workspace");
+    let launch = session.stage(command("exit 0")).expect("staged launch");
+    audit
+        .record(
+            sandbox,
+            SandboxFactKind::Lifecycle(SandboxLifecycle::OwnerTransferred),
+        )
+        .expect("owner transfer audit");
+    let process = launch.release().expect("released launch");
+    let (status, _, _) = finish(process);
+    assert!(status.success(), "{status}");
+
+    let lifecycles = audit
+        .records()
+        .expect("audit records")
+        .iter()
+        .filter_map(|record| match record.fact().kind() {
+            SandboxFactKind::Lifecycle(lifecycle) => Some(*lifecycle),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let position = |lifecycle| {
+        lifecycles
+            .iter()
+            .position(|candidate| *candidate == lifecycle)
+            .expect("lifecycle fact")
+    };
+    assert!(
+        position(SandboxLifecycle::OwnerTransferred) < position(SandboxLifecycle::ReleaseIntent)
+    );
+    assert!(
+        position(SandboxLifecycle::ReleaseIntent) < position(SandboxLifecycle::CommandReleased)
+    );
+    assert!(
+        position(SandboxLifecycle::CommandReleased) < position(SandboxLifecycle::CommandStarted)
+    );
 }
 
 #[test]

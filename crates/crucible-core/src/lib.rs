@@ -144,7 +144,7 @@ pub use sandbox::{
     SandboxEnvironment, SandboxError, SandboxFact, SandboxFactKind, SandboxFailureKind,
     SandboxFailurePhase, SandboxFeature, SandboxFilesystemAccess, SandboxFilesystemProvenance,
     SandboxFilesystemRule, SandboxGuardrailDecision, SandboxGuardrailEffect, SandboxGuardrailError,
-    SandboxInspection, SandboxLifecycle, SandboxManifest, SandboxManifestEntry,
+    SandboxInspection, SandboxLaunch, SandboxLifecycle, SandboxManifest, SandboxManifestEntry,
     SandboxManifestError, SandboxMode, SandboxNetworkEndpoint, SandboxNetworkInspection,
     SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxOutput, SandboxPlanInspection,
     SandboxPolicy, SandboxPolicyError, SandboxProcess, SandboxRead, SandboxRequest,

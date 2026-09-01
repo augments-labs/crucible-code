@@ -859,6 +859,26 @@ fn an_explicit_background_command_has_no_foreground_deadline() {
 }
 
 #[test]
+fn background_capacity_is_owned_before_any_workload_release() {
+    let left = Background::new();
+    let mut leases = Vec::new();
+    for _ in 0..MOST {
+        leases.push(left.reserve().expect("reserved application owner"));
+    }
+
+    assert_eq!(left.count(), 0, "a reservation is not a running command");
+    assert!(
+        left.reserve().is_none(),
+        "a fifth command could cross GO without application ownership"
+    );
+    leases.pop();
+    assert!(
+        left.reserve().is_some(),
+        "dropping a lease releases its slot"
+    );
+}
+
+#[test]
 fn the_number_of_commands_left_running_is_capped() {
     let sample = Sample::new("bash-background-cap");
     let left = Background::new();

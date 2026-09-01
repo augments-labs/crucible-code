@@ -50,7 +50,7 @@ pub use service::{
     MAX_SANDBOX_ENVIRONMENT_BYTES, MAX_SANDBOX_ENVIRONMENT_ENTRIES,
     MAX_SANDBOX_ENVIRONMENT_NAME_BYTES, SandboxCheckpoint, SandboxCleanup, SandboxCommand,
     SandboxCredentialHandle, SandboxCredentialProjection, SandboxCredentialProvenance,
-    SandboxEnvironment, SandboxError, SandboxInspection, SandboxNetworkInspection, SandboxOutput,
-    SandboxPlanInspection, SandboxProcess, SandboxRead, SandboxRequest, SandboxRootInspection,
-    SandboxService, SandboxSession, SandboxUsage, SandboxViolation,
+    SandboxEnvironment, SandboxError, SandboxInspection, SandboxLaunch, SandboxNetworkInspection,
+    SandboxOutput, SandboxPlanInspection, SandboxProcess, SandboxRead, SandboxRequest,
+    SandboxRootInspection, SandboxService, SandboxSession, SandboxUsage, SandboxViolation,
 };

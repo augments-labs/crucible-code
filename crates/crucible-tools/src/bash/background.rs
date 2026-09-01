@@ -109,6 +109,7 @@ struct Held {
     left: Vec<Left>,
     ended: Vec<Ended>,
     counted: usize,
+    reserved: usize,
 }
 
 impl Drop for Held {
@@ -172,14 +173,40 @@ impl Background {
         self.asked.swap(false, Ordering::Relaxed)
     }
 
+    /// Reserves application cleanup ownership before a background command's
+    /// one-shot release boundary is crossed.
+    pub(super) fn reserve(&self) -> Option<Lease> {
+        let mut standing = self.standing.lock().ok()?;
+        if standing.left.len().saturating_add(standing.reserved) >= MOST {
+            return None;
+        }
+        standing.reserved = standing.reserved.saturating_add(1);
+        Some(Lease {
+            standing: Arc::clone(&self.standing),
+            held: true,
+        })
+    }
+
     /// Takes a running command, answering with the number it is now known by.
     ///
     /// `None` where the cap is already met, and then the caller still owns the
     /// child — which it ends, because a command nobody can see or stop is the one
     /// outcome this module exists to prevent.
-    pub(super) fn keep(&self, called: &str, said: &str, mut taking: Taking) -> Option<usize> {
+    pub(super) fn keep(
+        &self,
+        called: &str,
+        said: &str,
+        mut taking: Taking,
+        lease: Option<Lease>,
+    ) -> Option<usize> {
         let mut standing = self.standing.lock().ok()?;
-        if standing.left.len() >= MOST {
+        if let Some(mut lease) = lease {
+            if !Arc::ptr_eq(&self.standing, &lease.standing) || !lease.consume_locked(&mut standing)
+            {
+                let _ = super::output::end(taking.process.as_mut());
+                return None;
+            }
+        } else if standing.left.len().saturating_add(standing.reserved) >= MOST {
             // Ended here rather than reported and forgotten. The caller has
             // already let go of it, so this is the last code that could, and a
             // command nobody can see or stop is the outcome the cap exists for.
@@ -331,6 +358,35 @@ impl Background {
         standing.ended.append(&mut ended.clone());
 
         ended
+    }
+}
+
+/// One slot owned by the application registry before the workload can start.
+pub(super) struct Lease {
+    standing: Arc<Mutex<Held>>,
+    held: bool,
+}
+
+impl Lease {
+    fn consume_locked(&mut self, standing: &mut Held) -> bool {
+        if !self.held || standing.reserved == 0 {
+            return false;
+        }
+        standing.reserved = standing.reserved.saturating_sub(1);
+        self.held = false;
+        true
+    }
+}
+
+impl Drop for Lease {
+    fn drop(&mut self) {
+        if !self.held {
+            return;
+        }
+        if let Ok(mut standing) = self.standing.lock() {
+            standing.reserved = standing.reserved.saturating_sub(1);
+            self.held = false;
+        }
     }
 }
 

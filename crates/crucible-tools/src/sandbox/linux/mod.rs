@@ -17,8 +17,8 @@ use std::sync::atomic::AtomicUsize;
 use crucible_core::{
     SandboxBackendIdentity, SandboxCapabilities, SandboxCleanup, SandboxCommand,
     SandboxCommandStage, SandboxError, SandboxFactKind, SandboxFailureKind, SandboxFailurePhase,
-    SandboxFilesystemAccess, SandboxGuardrailDecision, SandboxInspection, SandboxLifecycle,
-    SandboxProcess, SandboxRequest, SandboxSession,
+    SandboxFilesystemAccess, SandboxGuardrailDecision, SandboxInspection, SandboxLaunch,
+    SandboxLifecycle, SandboxProcess, SandboxRequest, SandboxSession,
 };
 
 use super::process::{MAX_LOCAL_COMMANDS, Reservation};
@@ -128,10 +128,10 @@ impl SandboxSession for LinuxSession {
         Ok(())
     }
 
-    fn start(
+    fn stage(
         mut self: Box<Self>,
         command: SandboxCommand,
-    ) -> Result<Box<dyn SandboxProcess>, SandboxError> {
+    ) -> Result<Box<dyn SandboxLaunch>, SandboxError> {
         if !self.materialized {
             self.request.audit().record(
                 self.request.id(),
@@ -215,19 +215,115 @@ impl SandboxSession for LinuxSession {
                 limits: self.request.policy().limits(),
                 audit: self.request.audit().clone(),
                 sandbox: self.request.id(),
+                audit_started: false,
             },
         );
         status_channel.close_writer();
         drop(materialization_sources);
-        match spawned {
-            Ok(process) => {
-                self.transferred = true;
-                Ok(projection::wrap(process, projection, status_channel))
-            }
+        let process = match spawned {
+            Ok(process) => process,
             Err(problem) => {
                 self.record_start_failure(&problem)?;
-                Err(problem)
+                return Err(problem);
             }
+        };
+        let launch = LinuxLaunch {
+            process: Some(process),
+            projection,
+            status_channel: Some(status_channel),
+            inspection: self.inspection.clone(),
+            audit: self.request.audit().clone(),
+            sandbox: self.request.id(),
+            released: false,
+        };
+        self.transferred = true;
+        Ok(Box::new(launch))
+    }
+}
+
+struct LinuxLaunch {
+    process: Option<Box<dyn SandboxProcess>>,
+    projection: Option<projection::Projection>,
+    status_channel: Option<broker::StatusChannel>,
+    inspection: SandboxInspection,
+    audit: crucible_core::SandboxAudit,
+    sandbox: crucible_core::SandboxId,
+    released: bool,
+}
+
+impl SandboxLaunch for LinuxLaunch {
+    fn inspection(&self) -> &SandboxInspection {
+        &self.inspection
+    }
+
+    fn release(mut self: Box<Self>) -> Result<Box<dyn SandboxProcess>, SandboxError> {
+        let mut process = self.process.take().ok_or_else(|| {
+            SandboxError::Lifecycle(std::io::Error::other(
+                "sandbox process scope is unavailable before release",
+            ))
+        })?;
+        let mut status_channel = self.status_channel.take().ok_or_else(|| {
+            SandboxError::Lifecycle(std::io::Error::other(
+                "sandbox release channel is unavailable",
+            ))
+        })?;
+        if let Err(source) = self.audit.record(
+            self.sandbox,
+            SandboxFactKind::Lifecycle(SandboxLifecycle::ReleaseIntent),
+        ) {
+            let _ = process.stop();
+            self.released = true;
+            return Err(SandboxError::Audit(source));
+        }
+        if let Err(source) = status_channel.release() {
+            let _ = process.stop();
+            let problem = SandboxError::Lifecycle(source);
+            let _ = self.audit.record(
+                self.sandbox,
+                SandboxFactKind::Lifecycle(SandboxLifecycle::Refused),
+            );
+            let _ = self.audit.record(
+                self.sandbox,
+                SandboxFactKind::Failed {
+                    phase: SandboxFailurePhase::Start,
+                    kind: problem.failure_kind(),
+                },
+            );
+            self.released = true;
+            return Err(problem);
+        }
+        self.released = true;
+        for lifecycle in [
+            SandboxLifecycle::CommandReleased,
+            SandboxLifecycle::CommandStarted,
+        ] {
+            if let Err(source) = self
+                .audit
+                .record(self.sandbox, SandboxFactKind::Lifecycle(lifecycle))
+            {
+                let _ = process.stop();
+                return Err(SandboxError::Audit(source));
+            }
+        }
+        Ok(projection::wrap(
+            process,
+            self.projection.take(),
+            status_channel,
+        ))
+    }
+}
+
+impl Drop for LinuxLaunch {
+    fn drop(&mut self) {
+        if self.released {
+            return;
+        }
+        let _ = self.audit.record(
+            self.sandbox,
+            SandboxFactKind::Lifecycle(SandboxLifecycle::Refused),
+        );
+        if let Some(process) = &mut self.process {
+            let _ = process.stop();
         }
     }
 }

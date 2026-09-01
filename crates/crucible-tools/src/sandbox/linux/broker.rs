@@ -1,7 +1,7 @@
 //! Descriptor-pinned broker discovery and authenticated wait-status channel.
 
 use std::fs::File;
-use std::io::{self, Read as _};
+use std::io::{self, Read as _, Write as _};
 use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::fs::PermissionsExt as _;
 use std::os::unix::net::UnixStream;
@@ -10,7 +10,9 @@ use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 
 use crucible_core::SandboxError;
-use crucible_sandbox_broker::{BROKER_FAILURE_STATUS, WAIT_STATUS_BYTES, decode_wait_status};
+use crucible_sandbox_broker::{
+    BROKER_FAILURE_STATUS, GO_FRAME, READY_FRAME, WAIT_STATUS_BYTES, decode_wait_status,
+};
 
 const MAX_BROKER_BYTES: u64 = 16 * 1024 * 1024;
 
@@ -105,6 +107,18 @@ impl StatusChannel {
 
     pub(super) fn close_writer(&mut self) {
         self.writer.take();
+    }
+
+    pub(super) fn release(&mut self) -> io::Result<()> {
+        let mut ready = [0_u8; READY_FRAME.len()];
+        self.reader.read_exact(&mut ready)?;
+        if ready != READY_FRAME {
+            return Err(io::Error::other(
+                "sandbox broker did not attest readiness before release",
+            ));
+        }
+        self.reader.write_all(&GO_FRAME)?;
+        self.reader.flush()
     }
 
     pub(super) fn wait_status(&mut self) -> io::Result<ExitStatus> {

@@ -1308,6 +1308,19 @@ pub trait SandboxProcess: Send {
     fn violation(&self) -> Option<SandboxViolation>;
 }
 
+/// A fully prepared command that cannot execute until its owner releases it.
+pub trait SandboxLaunch: Send {
+    /// Redacted inspection snapshot fixed before release.
+    fn inspection(&self) -> &SandboxInspection;
+
+    /// Sends the one-shot release and transfers cleanup into a process handle.
+    ///
+    /// # Errors
+    ///
+    /// A failed or ambiguous release is contained and never retried.
+    fn release(self: Box<Self>) -> Result<Box<dyn SandboxProcess>, SandboxError>;
+}
+
 /// A prepared session. Dropping one must clean any completed staging.
 pub trait SandboxSession: Send {
     /// Redacted negotiated state.
@@ -1320,16 +1333,27 @@ pub trait SandboxSession: Send {
     /// No command may start after a partial or failed materialization.
     fn materialize(&mut self) -> Result<(), SandboxError>;
 
-    /// Starts one governed command and transfers all cleanup ownership into the
-    /// returned process handle.
+    /// Stages one governed command without allowing untrusted code to run.
     ///
     /// # Errors
     ///
-    /// Refusal or launch failure occurs before untrusted code runs.
+    /// Refusal or launch failure occurs before the release boundary.
+    fn stage(
+        self: Box<Self>,
+        command: SandboxCommand,
+    ) -> Result<Box<dyn SandboxLaunch>, SandboxError>;
+
+    /// Stages and immediately releases one foreground command.
+    ///
+    /// # Errors
+    ///
+    /// Preparation or release failed and the complete owned scope was cleaned.
     fn start(
         self: Box<Self>,
         command: SandboxCommand,
-    ) -> Result<Box<dyn SandboxProcess>, SandboxError>;
+    ) -> Result<Box<dyn SandboxProcess>, SandboxError> {
+        self.stage(command)?.release()
+    }
 }
 
 /// Backend-neutral confinement service.
@@ -1369,6 +1393,14 @@ impl std::fmt::Debug for dyn SandboxProcess {
         f.debug_struct("SandboxProcess")
             .field("inspection", self.inspection())
             .field("usage", &self.usage())
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for dyn SandboxLaunch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SandboxLaunch")
+            .field("inspection", self.inspection())
             .finish()
     }
 }

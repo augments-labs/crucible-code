@@ -424,6 +424,22 @@ impl Tool for Bash {
             return Err(ToolError::Cancelled(NAME.into()));
         }
 
+        let mut ownership = if background {
+            let Some(left) = self.leaving.as_ref() else {
+                return Ok(ToolOutput::failed(
+                    "this run cannot leave a command running",
+                ));
+            };
+            let Some(lease) = left.reserve() else {
+                return Ok(ToolOutput::failed(format!(
+                    "{MOST} commands are already running; stop one before leaving another"
+                )));
+            };
+            Some(lease)
+        } else {
+            None
+        };
+
         let shell = self.shell.as_ref().ok_or_else(|| {
             io(
                 "no POSIX shell to run it with",
@@ -466,14 +482,16 @@ impl Tool for Bash {
                 std::io::Error::other(error),
             )
         })?;
+        let sandbox = crucible_core::SandboxId::new();
+        let audit = context.sandbox_audit();
         let request = SandboxRequest::new(
-            crucible_core::SandboxId::new(),
+            sandbox,
             context.ancestry(),
             context.call().clone(),
             policy,
             SandboxManifest::empty(),
         )
-        .with_audit(context.sandbox_audit())
+        .with_audit(audit.clone())
         .map_err(|error| sandbox_io("could not bind sandbox audit attribution", error))?;
         let mut session = self
             .sandbox
@@ -482,8 +500,24 @@ impl Tool for Bash {
         session
             .materialize()
             .map_err(|error| sandbox_io("could not materialize the sandbox", error))?;
-        let process = session
-            .start(sandbox_command)
+        let launch = session
+            .stage(sandbox_command)
+            .map_err(|error| sandbox_io("could not stage the confined shell", error))?;
+        if ownership.is_some() {
+            audit
+                .record(
+                    sandbox,
+                    crucible_core::SandboxFactKind::Lifecycle(
+                        crucible_core::SandboxLifecycle::OwnerTransferred,
+                    ),
+                )
+                .map_err(crucible_core::SandboxError::Audit)
+                .map_err(|error| {
+                    sandbox_io("could not transfer background cleanup ownership", error)
+                })?;
+        }
+        let process = launch
+            .release()
             .map_err(|error| sandbox_io("could not start the confined shell", error))?;
 
         let waiting = output::Waiting {
@@ -514,7 +548,7 @@ impl Tool for Bash {
                 // the reader chose rather than in the shell they expanded to.
                 let said = crate::account::of(approved.args());
 
-                match left.keep(command, said.description(), taking) {
+                match left.keep(command, said.description(), taking, ownership.take()) {
                     Some(number) => Ok(ToolOutput::ok(match why {
                         output::Why::Asked => {
                             format!("{printed}\n\n[left running as #{number}; {LEFT_RUNNING}]")
