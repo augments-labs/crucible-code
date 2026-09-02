@@ -1,7 +1,10 @@
 //! What the command line and the files together decide.
 
 use clap::CommandFactory;
-use crucible_core::Modality;
+use crucible_core::{Modality, PricingDate, PromptCacheRetentionClass, PromptCacheSupport};
+
+/// A date every compiled pricing record is already effective on.
+const REVIEWED: PricingDate = PricingDate::new(2026, 9, 1);
 #[cfg(unix)]
 use std::ffi::OsString;
 
@@ -1037,4 +1040,208 @@ fn an_offer_list_that_describes_a_model_wrongly_stops_the_run() {
     let said = refused.to_string();
     assert!(said.contains("claude-opus-5"), "{said}");
     assert!(said.contains("max, low"), "{said}");
+}
+
+/// The provider one built-in record builds, with a key exported for it.
+///
+/// The arm's own factory rather than the vendor module's constructor: what
+/// these tests are about is what survives the trip through the registry, so
+/// the trip has to be taken.
+fn built(serving: Served, settings: &Settings) -> Box<dyn Provider> {
+    let stored = StoredCredentials::default();
+    let subscriptions = Subscriptions::production();
+    let key = [serving.key];
+    let from = holding(&key);
+
+    startup::provider(
+        Some(serving),
+        NOTHING_TO_ASK,
+        authenticating(settings, &from, &stored, &subscriptions),
+    )
+    .expect("a key is exported for it")
+}
+
+#[test]
+fn every_offered_model_keeps_its_own_reviewed_cache_record_through_the_registry() {
+    // The offer list and the reviewed cache records are written in different
+    // files by different hands, and a model in one and not the other is silent:
+    // the run works, the caching stops, and the bill is the only place it
+    // shows. Asserting each record names the model it was asked about is what
+    // makes a provider-wide answer — one arm, one booleanish record for every
+    // model under it — fail here rather than in a month's usage. The revision
+    // is the vendor's own, which is dated where the wire name is not, so it is
+    // required to begin with the name asked about rather than to equal it.
+    let settings = Settings::default();
+
+    for serving in every() {
+        let provider = built(serving, &settings);
+
+        for model in serving.models {
+            let record = provider.prompt_cache_capabilities(model.name);
+
+            assert_eq!(
+                record.support(),
+                PromptCacheSupport::Supported,
+                "{}/{} is offered with no reviewed cache record",
+                serving.name,
+                model.name
+            );
+            let revision = record
+                .model_revision()
+                .expect("a supported record names the revision it was reviewed against");
+            assert!(
+                revision.starts_with(model.name),
+                "{}/{} answers with {revision}, which is another model's revision",
+                serving.name,
+                model.name
+            );
+            assert!(
+                !record.mechanisms().is_empty(),
+                "{}/{} claims support with no mechanism",
+                serving.name,
+                model.name
+            );
+            let provenance = record
+                .provenance()
+                .expect("a supported record names the documentation it was read from");
+            assert_eq!(
+                record.record_version(),
+                provenance.record_version(),
+                "{}/{} was re-reviewed on one side and not the other",
+                serving.name,
+                model.name
+            );
+            assert!(
+                !provenance.source_url().is_empty() && !provenance.reviewed_on().is_empty(),
+                "{}/{} names no documentation and no date",
+                serving.name,
+                model.name
+            );
+
+            // The threshold and the content it applies to are the two figures
+            // a mechanism is useless without. A mechanism kept and its figures
+            // dropped is the same collapse one level down: support survives
+            // the migration and what to send with it does not. The retentions
+            // are deliberately not asserted here — every constructor supplies
+            // a non-empty default, so a check on them could not go red and
+            // would say nothing about what it covered.
+            for mechanism in record.mechanisms() {
+                assert!(
+                    mechanism.minimum_prefix_tokens() > 0,
+                    "{}/{} offers {} with no threshold",
+                    serving.name,
+                    model.name,
+                    mechanism.mechanism().as_str()
+                );
+                assert!(
+                    !mechanism.content().is_empty(),
+                    "{}/{} offers {} over nothing",
+                    serving.name,
+                    model.name,
+                    mechanism.mechanism().as_str()
+                );
+            }
+
+            // Pricing is deliberately not a claim every arm makes: a
+            // subscription product has no published per-token price, and
+            // `None` is the fail-closed answer rather than free usage. What
+            // must hold either way is that asking never errors and that a
+            // price that is quoted says which reviewed record it came from.
+            let priced = provider
+                .prompt_cache_pricing(
+                    model.name,
+                    revision.into(),
+                    Some(64_000),
+                    PromptCacheRetentionClass::ProviderDefault,
+                    REVIEWED,
+                )
+                .expect("a compiled record is never ambiguous");
+            if let Some(pricing) = priced {
+                assert!(
+                    !pricing.version().is_empty() && !pricing.source_url().is_empty(),
+                    "{}/{} quotes a price with no reviewed record behind it",
+                    serving.name,
+                    model.name
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_configured_address_leaves_every_offered_models_cache_record_unknown() {
+    // A gateway is somebody else's software wearing the vendor's shape. It may
+    // cache, it may not, and the reviewed record is about the vendor's
+    // endpoint rather than about whatever is answering here — so the honest
+    // answer is that nothing is known, and no cache field may be inferred from
+    // it. This is the half of the migration that a registry is most likely to
+    // lose, because an arm is registered once and the address is read later.
+    let sample = Sample::new("cache-record-custom-address");
+
+    for serving in every() {
+        let settings = sample.user(&format!(
+            r#"{{"providers":{{"{}":{{"baseUrl":"https://gateway.example/v1"}}}}}}"#,
+            serving.name
+        ));
+        let provider = built(serving, &settings);
+
+        for model in serving.models {
+            assert_eq!(
+                provider.prompt_cache_capabilities(model.name).support(),
+                PromptCacheSupport::Unknown,
+                "{}/{} answered for an address nobody reviewed",
+                serving.name,
+                model.name
+            );
+            assert_eq!(
+                provider
+                    .prompt_cache_pricing(
+                        model.name,
+                        Some(model.name),
+                        Some(64_000),
+                        PromptCacheRetentionClass::ProviderDefault,
+                        REVIEWED,
+                    )
+                    .expect("a compiled record is never ambiguous"),
+                None,
+                "{}/{} quoted the vendor's price for somebody else's gateway",
+                serving.name,
+                model.name
+            );
+        }
+    }
+}
+
+#[test]
+fn one_arm_answers_differently_for_the_models_under_it() {
+    // The failure this exists for is a record collapsed to the arm: one cache
+    // answer for a provider, handed back for every model it serves. That
+    // reads correctly at every call site and is wrong for all but one model,
+    // so nothing on screen says so. These two figures are where the vendors'
+    // own tables currently disagree between their models — a threshold on one
+    // side, what usage is reported on the other — and both are per-model in
+    // the record. Where a vendor levels its own table this moves with it;
+    // where the record is collapsed, it fails.
+    let settings = Settings::default();
+    let anthropic = built(serving("anthropic"), &settings);
+    let openai = built(serving("openai"), &settings);
+
+    let thresholds: Vec<_> = ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"]
+        .into_iter()
+        .map(|model| {
+            anthropic
+                .prompt_cache_capabilities(model)
+                .mechanisms()
+                .first()
+                .expect("a reviewed mechanism")
+                .minimum_prefix_tokens()
+        })
+        .collect();
+    assert_eq!(thresholds, [512, 1_024, 4_096]);
+
+    assert_ne!(
+        openai.prompt_cache_capabilities("gpt-5.6-sol").usage(),
+        openai.prompt_cache_capabilities("gpt-5.5").usage(),
+        "one generation reports what the other does not"
+    );
 }
