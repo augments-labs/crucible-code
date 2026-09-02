@@ -9,15 +9,19 @@
 use std::sync::{Arc, Mutex};
 
 use crucible_core::{
-    DescribeTool, Revealed, Tool, ToolDescriptor, ToolEntry, ToolHooks, ToolProvenance, ToolSchema,
-    ToolSnapshot, Toolset, ToolsetContext, ToolsetError,
+    Collision, DescribeTool, Provenance, Registered, Registry, RegistryGeneration,
+    RegistrySnapshot, Revealed, Tool, ToolDescriptor, ToolEntry, ToolHooks, ToolProvenance,
+    ToolSchema, ToolSnapshot, Toolset, ToolsetContext, ToolsetError,
 };
 
 /// Every tool the model may call.
 ///
-/// A list rather than a map. A session offers a handful of tools, and walking
-/// six names costs less than hashing one; it also keeps the order they were
-/// added, which is the order they are advertised in.
+/// A registry generation rather than a map. A session offers a handful of
+/// tools, and walking six names costs less than hashing one; the generation
+/// also keeps the order they were added, which is the order they are advertised
+/// in. Two registrations of one name are refused outright: a tool name is
+/// something the model acts on, so no source may take it over by arriving later
+/// or from nearer.
 ///
 /// Registered and advertised are two different things. A **deferred** tool is
 /// here and callable, and is left out of what the model is shown until it looks
@@ -25,9 +29,9 @@ use crucible_core::{
 /// request of every turn, and most sessions never touch most tools.
 #[derive(Debug)]
 pub struct Tools {
-    offered: Vec<Offered>,
+    registry: Registry<Offered>,
+    roster: RegistrySnapshot<Offered>,
     revealed: Revealed,
-    revision: u64,
     cached: Mutex<Option<Cached>>,
 }
 
@@ -42,21 +46,37 @@ struct Offered {
     deferred: bool,
 }
 
+impl Registered for Offered {
+    fn id(&self) -> &str {
+        self.entry.descriptor().name()
+    }
+
+    fn provenance(&self) -> &Provenance {
+        self.entry.descriptor().provenance()
+    }
+
+    fn retained_bytes(&self) -> usize {
+        self.entry.descriptor().retained_bytes()
+    }
+}
+
 /// The last materialization, reusable while neither registration nor reveal
 /// state has changed.
 #[derive(Debug)]
 struct Cached {
-    roster: u64,
+    roster: RegistryGeneration,
     revealed: u64,
     snapshot: ToolSnapshot,
 }
 
 impl Default for Tools {
     fn default() -> Self {
+        let registry = Registry::new(Collision::Refuse);
+        let roster = registry.snapshot();
         Self {
-            offered: Vec::new(),
+            registry,
+            roster,
             revealed: Revealed::new(),
-            revision: 0,
             cached: Mutex::new(None),
         }
     }
@@ -171,25 +191,18 @@ impl Tools {
     }
 
     fn offer(&mut self, entry: ToolEntry, deferred: bool) -> Result<(), ToolsetError> {
-        if let Some(present) = self
-            .offered
-            .iter()
-            .find(|present| present.entry.descriptor().name() == entry.descriptor().name())
-        {
-            return Err(ToolsetError::Duplicate {
-                name: entry.descriptor().name().into(),
-                first: present.entry.descriptor().provenance().clone(),
-                second: entry.descriptor().provenance().clone(),
-            });
-        }
-
-        self.offered.push(Offered { entry, deferred });
-        self.revision = self.revision.wrapping_add(1);
+        let mut staged = self.registry.stage();
+        staged.register(Offered { entry, deferred })?;
+        self.roster = self.registry.commit(staged)?;
         *self
             .cached
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
         Ok(())
+    }
+
+    fn offered(&self) -> impl Iterator<Item = &Offered> {
+        self.roster.entries().iter().map(Arc::as_ref)
     }
 
     /// The tool the model named, if there is one it may call.
@@ -202,8 +215,7 @@ impl Tools {
     /// rather than only in what is advertised.
     #[must_use]
     pub fn find(&self, name: &str) -> Option<&ToolEntry> {
-        self.offered
-            .iter()
+        self.offered()
             .find(|offered| offered.entry.descriptor().name() == name)
             .filter(|offered| !offered.deferred || self.revealed.holds(name))
             .map(|offered| &offered.entry)
@@ -217,8 +229,7 @@ impl Tools {
     /// a roster of under a dozen.
     #[must_use]
     pub fn advertised(&self) -> Vec<ToolSchema<'_>> {
-        self.offered
-            .iter()
+        self.offered()
             .filter(|offered| {
                 !offered.deferred || self.revealed.holds(offered.entry.descriptor().name())
             })
@@ -242,22 +253,21 @@ impl Tools {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(present) = cached.as_ref()
-            && present.roster == self.revision
+            && present.roster == *self.roster.generation()
             && present.revealed == revealed
         {
             return Ok(present.snapshot.clone());
         }
 
         let snapshot = ToolSnapshot::new(
-            self.offered
-                .iter()
+            self.offered()
                 .filter(|offered| {
                     !offered.deferred || self.revealed.holds(offered.entry.descriptor().name())
                 })
                 .map(|offered| offered.entry.clone()),
         )?;
         *cached = Some(Cached {
-            roster: self.revision,
+            roster: self.roster.generation().clone(),
             revealed,
             snapshot: snapshot.clone(),
         });
@@ -285,8 +295,7 @@ impl Tools {
     /// because it is now offered reads as the tool having gone away.
     #[must_use]
     pub fn deferred(&self) -> Vec<&ToolDescriptor> {
-        self.offered
-            .iter()
+        self.offered()
             .filter(|offered| offered.deferred)
             .map(|offered| offered.entry.descriptor())
             .collect()
