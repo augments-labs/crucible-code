@@ -17,6 +17,7 @@ mod choice;
 mod converse;
 mod counting;
 mod draw;
+mod extensions;
 #[cfg(test)]
 mod fake;
 mod gathering;
@@ -625,6 +626,11 @@ recent one for this directory. --resume picks up the exact session an id \
 names instead; a quitting session prints its own id on the way out, and \
 /resume inside a session lists the rest.
 
+--extensions lists what is installed in ~/.crucible/extensions, with what each \
+manifest asks to be allowed to do and the digest crucible took over its bytes, \
+and stops. Nothing installed is run to produce that list, which is the point of \
+being able to read it.
+
 Flags, session files and config are unstable for the whole 0.x line."
 )]
 struct Cli {
@@ -647,6 +653,14 @@ struct Cli {
     /// says, the vendor's own default for the model.
     #[arg(short, long, value_name = "RUNG")]
     effort: Option<Effort>,
+
+    /// List what is installed in crucible's extensions directory and stop,
+    /// without running any of it.
+    #[arg(
+        long,
+        conflicts_with_all = ["continue", "resume", "model", "effort"]
+    )]
+    extensions: bool,
 }
 
 /// Why crucible could not run, or could not carry on.
@@ -797,10 +811,31 @@ pub(crate) enum Fatal {
 pub(crate) fn start() -> ExitCode {
     let cli = Cli::parse();
 
-    match run(&cli) {
+    let done = if cli.extensions { listed() } else { run(&cli) };
+
+    match done {
         Ok(()) => ExitCode::SUCCESS,
         Err(problem) => fail(&problem),
     }
+}
+
+/// Writes what is installed to standard output, and stops.
+///
+/// Answered here rather than inside [`run`] so that it is answered before
+/// anything is built: the flag exists so somebody can read what crucible found
+/// *before* deciding whether any of it should ever run, and a listing that had
+/// opened a workspace, read a credential or started a session on the way would
+/// be a poor thing to reach for when an extension is the suspect.
+///
+/// A write that fails is dropped the way [`fail`] drops one. Standard output
+/// closing early is a `head` on the other end of a pipe, and there is nothing
+/// left of this run to report it to.
+fn listed() -> Result<(), Fatal> {
+    let home = Home::find(&|name| std::env::var_os(name))?;
+    let found = extensions::listing(&crucible_config::Extensions::discover(&home));
+
+    let _ = io::stdout().write_all(found.as_bytes());
+    Ok(())
 }
 
 /// What the terminal says its background is, where the answer would be used.
