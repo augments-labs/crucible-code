@@ -333,7 +333,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-auth"
-version = "0.34.2"
+version = "0.34.0"
 dependencies = [
  "base64 0.23.1",
  "crucible-core",
@@ -347,7 +347,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-code"
-version = "0.34.2"
+version = "0.34.0"
 dependencies = [
  "arboard",
  "clap",
@@ -370,7 +370,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-config"
-version = "0.34.2"
+version = "0.34.0"
 dependencies = [
  "crucible-core",
  "serde_json",
@@ -379,7 +379,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-core"
-version = "0.34.2"
+version = "0.34.0"
 dependencies = [
  "globset",
  "rustix",
@@ -392,7 +392,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-privacy"
-version = "0.34.2"
+version = "0.34.0"
 dependencies = [
  "rustix",
  "thiserror",
@@ -401,7 +401,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-provider"
-version = "0.34.2"
+version = "0.34.0"
 dependencies = [
  "base64 0.23.1",
  "crucible-core",
@@ -412,7 +412,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-runner"
-version = "0.34.2"
+version = "0.34.0"
 dependencies = [
  "crucible-core",
  "crucible-session",
@@ -421,7 +421,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-sandbox-broker"
-version = "0.34.2"
+version = "0.34.0"
 dependencies = [
  "rustix",
  "sha2",
@@ -429,7 +429,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-session"
-version = "0.34.2"
+version = "0.34.0"
 dependencies = [
  "crucible-core",
  "crucible-privacy",
@@ -441,7 +441,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-tools"
-version = "0.34.2"
+version = "0.34.0"
 dependencies = [
  "crucible-core",
  "crucible-sandbox-broker",
@@ -457,7 +457,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-tui"
-version = "0.34.2"
+version = "0.34.0"
 dependencies = [
  "base64 0.23.1",
  "crossterm",
