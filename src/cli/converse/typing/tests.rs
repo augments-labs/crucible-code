@@ -11,6 +11,13 @@ use crucible_tui::{Aimed, Key, Recording};
 
 use super::drawing::writing;
 use super::*;
+
+/// The built-in registry, as a session starts with it.
+fn commands() -> command::Commands {
+    command::builtins()
+        .expect("the built-in commands register")
+        .snapshot()
+}
 use crate::cli::fake::Script;
 
 /// An engine that holds one mode and would run nothing.
@@ -204,7 +211,7 @@ fn planned(count: usize) -> Planning {
 /// The list `said` opens, pointing where it points before an arrow has moved
 /// anything.
 fn listing(said: &str) -> Opened {
-    Opened::filtered(said, Glyphs::Unicode)
+    Opened::filtered(&commands(), said, Glyphs::Unicode)
 }
 
 /// An editor with `said` typed into it and the cursor left at the end.
@@ -243,6 +250,7 @@ fn a_run_with_nothing_to_type_into_says_so_rather_than_reading_keys() {
         &mut renderer,
         Style::plain(),
         Between {
+            commands: &commands(),
             runner: &mut runner,
             editor: &mut editor,
             planning: &mut nothing(),
@@ -732,7 +740,7 @@ fn a_second_interrupt_leaves_only_while_the_first_is_still_recent() {
 fn a_list_with_no_room_left_for_it_is_not_opened_at_all() {
     // Cut off at the top it would read as the whole list, which is a worse
     // answer than no list at all: nothing is what a reader can tell is nothing.
-    let every = command::filtering("/", Glyphs::Unicode).len();
+    let every = command::filtering(&commands(), "/", Glyphs::Unicode).len();
 
     for room in 0..every {
         assert!(
@@ -789,7 +797,7 @@ fn the_row_return_takes_is_the_same_rule_for_every_command_there_is() {
     // field on it, and both are built by walking the array every command is
     // declared in — so one added later is filtered, marked and runnable
     // without anybody coming back here.
-    for one in command::filtering("/", Glyphs::Unicode) {
+    for one in command::filtering(&commands(), "/", Glyphs::Unicode) {
         // Typed in full it is that command, however many longer names begin
         // with the same letters.
         assert_eq!(listing(one.name).chosen(), Some(one.name), "{}", one.name);
@@ -1250,7 +1258,7 @@ fn a_hidden_leading_command_is_committed_and_sent_but_not_selected_locally() {
     let source = format!("/help {}", "x".repeat(1_001));
     let mut editor = Editor::new().multiline();
     assert_eq!(editor.paste(&source), Typed::Changed);
-    let open = Opened::filtered(editor.projection().text(), Glyphs::Unicode);
+    let open = Opened::filtered(&commands(), editor.projection().text(), Glyphs::Unicode);
     let mut renderer = roomy();
 
     let asked = said(
@@ -1280,7 +1288,7 @@ fn a_visible_command_prefix_cannot_authorize_a_compact_pasted_argument() {
     let argument = "x".repeat(1_001);
     assert_eq!(editor.paste(&argument), Typed::Changed);
     let source = format!("/mode {argument}");
-    let open = Opened::filtered(editor.projection().text(), Glyphs::Unicode);
+    let open = Opened::filtered(&commands(), editor.projection().text(), Glyphs::Unicode);
     let mut renderer = roomy();
 
     let asked = said(
@@ -1306,7 +1314,7 @@ fn padded_compact_source_cannot_hide_a_full_access_local_command() {
     let argument = format!("{}fullAccess", "\t".repeat(251));
     assert_eq!(editor.paste(&argument), Typed::Changed);
     let source = format!("/mode{argument}");
-    let open = Opened::filtered(editor.projection().text(), Glyphs::Unicode);
+    let open = Opened::filtered(&commands(), editor.projection().text(), Glyphs::Unicode);
     let mut renderer = roomy();
 
     let asked = said(
