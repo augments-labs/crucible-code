@@ -57,9 +57,9 @@ pub use credential::{
 pub use diff::{Change, Diff, Line};
 pub use event::{Event, EventEnvelope, Post, Reporter, TurnError};
 pub use extension::{
-    EXTENSION_ID_BYTES, EXTENSION_REQUESTS, EXTENSION_TEXT_BYTES, ExtensionCapability,
-    ExtensionContribution, ExtensionError, ExtensionIdentity, ExtensionManifest, ExtensionProtocol,
-    ExtensionRequests,
+    EXTENSION_ID_BYTES, EXTENSION_MANIFEST_BYTES, EXTENSION_REQUESTS, EXTENSION_TEXT_BYTES,
+    ExtensionCapability, ExtensionContribution, ExtensionError, ExtensionIdentity,
+    ExtensionManifest, ExtensionProtocol, ExtensionRequests,
 };
 pub use ids::{
     AgentId, CredentialScopeId, IdError, ProviderAttemptId, RunId, SandboxId, SessionId, ToolId,

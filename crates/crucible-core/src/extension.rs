@@ -29,6 +29,14 @@ pub const EXTENSION_TEXT_BYTES: usize = 512;
 /// The most capabilities or contributions one manifest may name.
 pub const EXTENSION_REQUESTS: usize = 16;
 
+/// The most bytes one manifest file may hold.
+///
+/// Checked before the text is parsed rather than after, because a parser handed
+/// an arbitrarily large document has already done the work by the time anything
+/// could refuse it — and a manifest is a file whoever published the extension
+/// wrote.
+pub const EXTENSION_MANIFEST_BYTES: usize = 16 * 1024;
+
 /// Why a manifest could not be read.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ExtensionError {
@@ -74,6 +82,52 @@ pub enum ExtensionError {
         /// What was repeated.
         what: &'static str,
     },
+    /// The text was not JSON.
+    #[error("line {line} column {column}: {problem}")]
+    Malformed {
+        /// Where the parser stopped.
+        line: usize,
+        /// Where in that line.
+        column: usize,
+        /// What it said, without the position stated again.
+        problem: Box<str>,
+    },
+    /// A required key was not written.
+    #[error("{field} must be written")]
+    Missing {
+        /// Which key.
+        field: &'static str,
+    },
+    /// A key held the wrong kind of value.
+    #[error("{field} must be {wanted}")]
+    WrongType {
+        /// Which key.
+        field: &'static str,
+        /// What it accepts.
+        wanted: &'static str,
+    },
+    /// A key crucible does not have.
+    #[error("{key} is not a manifest key; accepted: {}", .accepted.join(", "))]
+    UnknownKey {
+        /// What was written.
+        key: Box<str>,
+        /// What is accepted instead.
+        accepted: &'static [&'static str],
+    },
+    /// A spelling whose meaning this build does not fix.
+    #[error("{field} names {name}, which this crucible does not know")]
+    Unrecognised {
+        /// Which list it was in.
+        field: &'static str,
+        /// What was written.
+        name: Box<str>,
+    },
+    /// A protocol version that is not two numbers.
+    #[error("{found} is not a protocol version such as 1.3")]
+    BadProtocol {
+        /// What was written.
+        found: Box<str>,
+    },
     /// A contribution was promised without the capability that permits it.
     #[error("{id} contributes {what} without requesting {needs}")]
     Unasked {
@@ -110,6 +164,35 @@ pub enum ExtensionCapability {
 }
 
 impl ExtensionCapability {
+    /// Every capability there is.
+    ///
+    /// Read by the lookup below, so the spellings a manifest may write are
+    /// exactly the ones [`Self::as_str`] produces and the two cannot disagree.
+    ///
+    /// Whether this list is *complete* is the one thing nothing here checks:
+    /// Rust cannot enumerate a variant, and a capability added to the enum but
+    /// not to this list is one no manifest can ask for. The exhaustive match in
+    /// [`Self::as_str`] is what puts the author in this file; adding the line
+    /// below it is theirs to remember.
+    pub const EVERY: &'static [Self] = &[
+        Self::RegisterTools,
+        Self::RegisterCommands,
+        Self::ObserveLifecycle,
+        Self::ReadRunContext,
+        Self::WriteSessionState,
+        Self::ContributeSkills,
+        Self::AskTheOperator,
+    ];
+
+    /// The capability this spelling names, where it names one.
+    #[must_use]
+    pub fn named(spelling: &str) -> Option<Self> {
+        Self::EVERY
+            .iter()
+            .copied()
+            .find(|one| one.as_str() == spelling)
+    }
+
     /// The configuration spelling.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -145,6 +228,21 @@ pub enum ExtensionContribution {
 }
 
 impl ExtensionContribution {
+    /// Every kind of contribution there is.
+    ///
+    /// Listed for the reason [`ExtensionCapability::EVERY`] is, with the same
+    /// unchecked completeness.
+    pub const EVERY: &'static [Self] = &[Self::Tools, Self::Commands, Self::Skills, Self::Policy];
+
+    /// The contribution this spelling names, where it names one.
+    #[must_use]
+    pub fn named(spelling: &str) -> Option<Self> {
+        Self::EVERY
+            .iter()
+            .copied()
+            .find(|one| one.as_str() == spelling)
+    }
+
     /// The configuration spelling.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -317,6 +415,27 @@ impl ExtensionManifest {
         Ok(Self { identity, requests })
     }
 
+    /// Reads one manifest from the text of a manifest file.
+    ///
+    /// `found` is where the file was, which the file itself cannot say. The
+    /// digest is taken over `text` for the same reason: a manifest stating its
+    /// own would be a file asserting it had not changed since somebody trusted
+    /// it.
+    ///
+    /// Nothing here opens a file, resolves the entrypoint or starts anything.
+    ///
+    /// # Errors
+    ///
+    /// [`ExtensionError`] for text over [`EXTENSION_MANIFEST_BYTES`], for text
+    /// that is not a JSON object, for a key crucible does not have, for a
+    /// required key that is missing or holds the wrong kind of value, for a
+    /// capability or contribution spelling this build does not know, for a
+    /// protocol version that is not two numbers — and for everything
+    /// [`Self::read`] refuses.
+    pub fn parse(text: &str, found: SourceKind) -> Result<Self, ExtensionError> {
+        parse::manifest(text, found)
+    }
+
     /// What it is, and where its bytes came from.
     #[must_use]
     pub const fn identity(&self) -> &ExtensionIdentity {
@@ -421,6 +540,8 @@ fn repeated<T: Copy + PartialEq>(
             .then(|| spelled(*one))
     })
 }
+
+mod parse;
 
 #[cfg(test)]
 mod tests;
