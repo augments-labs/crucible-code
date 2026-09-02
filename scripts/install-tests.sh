@@ -205,6 +205,23 @@ warned=$(install_from "$asset" "$loose" 2>&1 >/dev/null)
 }
 [[ -x $loose/crucible-sandbox-broker ]]
 
+echo '==> a directory owned by another user is reported as untrusted'
+# Mapping this user to another id inside a user namespace makes every directory
+# root really owns, `/` included, show up as somebody else's.
+if unshare -U --map-user=1001 --map-group=1001 true 2>/dev/null; then
+    foreign_owner=$scratch/foreign-owner
+    warned=$(unshare -U --map-user=1001 --map-group=1001 \
+        "$INSTALL" --version "$version" --dir "$foreign_owner" \
+        --archive "$asset/$stem.tar.gz" --checksums "$asset/SHA256SUMS" 2>&1 >/dev/null)
+    [[ $warned == *'install: / belongs to another user'* ]] || {
+        printf 'installer did not warn about a directory owned by another user: %s\n' "$warned" >&2
+        exit 1
+    }
+    [[ -x $foreign_owner/crucible-sandbox-broker ]]
+else
+    echo '    skipped: this host cannot map another user id into a user namespace'
+fi
+
 echo '==> uninstall preserves data by default'
 data=$scratch/home/.crucible
 mkdir -p "$data"

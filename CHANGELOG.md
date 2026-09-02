@@ -22,8 +22,9 @@ change in any release with no deprecation period.
 - **Linux release archives ship the sandbox broker.** `crucible-sandbox-broker`
   is PID 1 of every confined command, and the installer now places it beside
   `crucible`, restores both together if an upgrade fails, and points out a
-  group- or world-writable directory that would make Crucible refuse to trust
-  it. `uninstall.sh` removes it with the executable.
+  directory owned by another user or writable by group or others, which would
+  make Crucible refuse to trust it. `uninstall.sh` removes it with the
+  executable.
 
 - **Sandbox policy is now a reusable, inspectable host contract.** Backends
   negotiate exact capabilities before effects; bounded manifests,

@@ -230,14 +230,20 @@ if ((dry_run)); then
     exit 0
 fi
 
-# Crucible trusts the broker only below directories that neither group nor
-# others can write, so a loose directory is named here with its remedy rather
-# than discovered when the first confined command refuses to start.
+# Crucible trusts the broker only below directories that belong to root or to
+# the user running it and that neither group nor others can write, so a loose
+# directory is named here with its remedy rather than discovered when the first
+# confined command refuses to start.
 warn_where_broker_is_untrusted() {
-    local dir=$destination mode
+    local dir=$destination owner mode me
+    me=$(id -u)
     while :; do
+        owner=$(stat -c '%u' -- "$dir" 2>/dev/null || stat -f '%u' -- "$dir")
         mode=$(stat -c '%a' -- "$dir" 2>/dev/null || stat -f '%Lp' -- "$dir")
-        if ((8#${mode: -3} & 8#022)); then
+        if [[ $owner != 0 && $owner != "$me" ]]; then
+            printf 'install: %s belongs to another user, so confined commands will not trust %s\n' \
+                "$dir" "$broker_path" >&2
+        elif ((8#${mode: -3} & 8#022)); then
             printf 'install: %s is writable by group or others, so confined commands will not trust %s; run chmod go-w %s\n' \
                 "$dir" "$broker_path" "$dir" >&2
         fi

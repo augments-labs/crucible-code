@@ -55,8 +55,9 @@ exactly the archive it downloads
 against the release's `SHA256SUMS`, and atomically installs `crucible` plus a
 `cru` alias in `~/.local/bin`. On Linux it also installs
 `crucible-sandbox-broker` beside `crucible`; confined commands run it as their
-PID 1, and it is trusted only when no directory above it is writable by group
-or others, which the installer points out with the `chmod` that fixes it. It
+PID 1, and it is trusted only when every directory above it belongs to root
+or to you and is writable by neither group nor others; the installer points out
+a directory that breaks that rule, with the `chmod` that fixes it. It
 never asks for `sudo` or edits a shell profile. Use `--version`, `--dir` or
 `--dry-run` when the defaults are not the ones you want. The matching
 `uninstall.sh` removes only those executables and preserves `~/.crucible`;
