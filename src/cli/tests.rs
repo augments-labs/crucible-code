@@ -11,7 +11,7 @@ use super::*;
 fn startup_distinguishes_no_credential_from_an_unselected_provider() {
     assert_eq!(opening_unasked(None, false), NOTHING_TO_ASK);
     assert_eq!(opening_unasked(None, true), NO_PROVIDER_CHOSEN);
-    assert_eq!(opening_unasked(Some(PROVIDERS[0]), true), NO_MODEL_CHOSEN);
+    assert_eq!(opening_unasked(Some(first()), true), NO_MODEL_CHOSEN);
 }
 
 use crate::cli::sample::Sample;
@@ -48,9 +48,41 @@ fn existing_user_configuration_is_private_before_settings_can_read_it() {
     );
 }
 
-/// The entry `run` resolves before it asks for a model.
+/// The built-in providers, as one generation the tests read against.
+fn catalogue() -> Providers {
+    providers()
+        .expect("the built-in providers register")
+        .snapshot()
+}
+
+/// Every record the registry holds, in the order it holds them.
+fn every() -> Vec<Served> {
+    offered(&catalogue()).collect()
+}
+
+/// The first of them, which is the one a fresh build opens the panels on.
+fn first() -> Served {
+    every().first().copied().expect("a provider is registered")
+}
+
+/// The record `run` resolves before it asks for a model.
 fn serving(named: &str) -> Served {
-    served(named).expect("a provider this build has")
+    served(&catalogue(), named).expect("a provider this build has")
+}
+
+/// The credential sources a test resolves a provider against.
+fn authenticating<'a>(
+    settings: &'a Settings,
+    from: &'a dyn Fn(&str) -> Option<String>,
+    stored: &'a StoredCredentials,
+    subscriptions: &'a Subscriptions,
+) -> startup::ProviderAuth<'a> {
+    startup::ProviderAuth {
+        settings,
+        from,
+        stored,
+        subscriptions,
+    }
 }
 
 /// A machine holding these variables and no others.
@@ -87,7 +119,10 @@ fn landing(
     from: &dyn Fn(&str) -> Option<String>,
     keys: &StoredCredentials,
 ) -> Result<Option<Served>, Fatal> {
-    chosen(settings, from, keys, &Subscriptions::production())
+    chosen(
+        &catalogue(),
+        authenticating(settings, from, keys, &Subscriptions::production()),
+    )
 }
 
 #[test]
@@ -165,7 +200,7 @@ fn kimi_product_names_keep_their_wire_identifiers_and_effort_sets() {
         "kimi-for-coding-highspeed",
     ] {
         assert_eq!(
-            rungs("moonshot", model),
+            rungs(&catalogue(), "moonshot", model),
             [Effort::Low, Effort::High, Effort::Max]
         );
     }
@@ -212,19 +247,23 @@ fn the_source_a_credential_came_from_is_the_one_construction_would_use() {
     let stored = sample.subscribed("openai");
     let source = credential_source(
         serving("openai"),
-        &Settings::default(),
-        &holding(&["OPENAI_API_KEY"]),
-        &stored,
-        &subscriptions,
+        authenticating(
+            &Settings::default(),
+            &holding(&["OPENAI_API_KEY"]),
+            &stored,
+            &subscriptions,
+        ),
     );
     assert_eq!(source, Some(CredentialSource::Subscription));
 
     let source = credential_source(
         serving("anthropic"),
-        &Settings::default(),
-        &holding(&["ANTHROPIC_API_KEY"]),
-        &StoredCredentials::default(),
-        &subscriptions,
+        authenticating(
+            &Settings::default(),
+            &holding(&["ANTHROPIC_API_KEY"]),
+            &StoredCredentials::default(),
+            &subscriptions,
+        ),
     );
     assert_eq!(
         source,
@@ -235,10 +274,7 @@ fn the_source_a_credential_came_from_is_the_one_construction_would_use() {
     let stored = sample.stored("openai");
     let source = credential_source(
         serving("openai"),
-        &Settings::default(),
-        &holding(&[]),
-        &stored,
-        &subscriptions,
+        authenticating(&Settings::default(), &holding(&[]), &stored, &subscriptions),
     );
     assert_eq!(source, Some(CredentialSource::StoredKey));
 
@@ -249,10 +285,7 @@ fn the_source_a_credential_came_from_is_the_one_construction_would_use() {
     let stored = sample.subscribed("openai");
     let source = credential_source(
         serving("openai"),
-        &settings,
-        &holding(&[]),
-        &stored,
-        &subscriptions,
+        authenticating(&settings, &holding(&[]), &stored, &subscriptions),
     );
     assert_eq!(source, None);
 }
@@ -300,7 +333,7 @@ fn a_model_named_nowhere_at_all_is_no_model() {
     // model this binary was compiled with to whichever provider the key
     // belonged to, which is the pairing nobody asked for. There is no such rung
     // now, and the session says so rather than guessing.
-    for one in PROVIDERS {
+    for one in every() {
         let asked = wanted(
             &choice(&format!("{}/", one.name)),
             &Settings::default(),
@@ -395,7 +428,7 @@ fn a_run_that_named_no_provider_goes_to_the_one_whose_key_is_set() {
     // The defect: `crucible` on a machine holding only OPENAI_API_KEY opened on
     // an Anthropic model, so the provider the session ran against was the one
     // there was nothing to authenticate with.
-    for one in PROVIDERS {
+    for one in every() {
         let found = lands(&Settings::default(), &holding(&[one.key])).expect("one key, no doubt");
 
         assert_eq!(found.map(|found| found.name), Some(one.name), "{}", one.key);
@@ -420,8 +453,8 @@ fn a_machine_holding_every_key_starts_with_the_provider_open() {
     // declaration order. `/model` is the interactive place that chooses both
     // halves, and a launch that refuses to start would strand a machine one
     // command away from that choice.
-    let every = PROVIDERS.map(|one| one.key);
-    let found = lands(&Settings::default(), &holding(&every)).expect("several keys are usable");
+    let keys: Vec<&str> = every().iter().map(|one| one.key).collect();
+    let found = lands(&Settings::default(), &holding(&keys)).expect("several keys are usable");
 
     assert!(found.is_none());
 }
@@ -432,9 +465,9 @@ fn a_machine_holding_every_key_asks_the_provider_it_was_told_to() {
     // machine set up for two.
     let sample = Sample::new("provider-decides");
     let settings = sample.user(r#"{"provider": "openai"}"#);
-    let every = PROVIDERS.map(|one| one.key);
+    let keys: Vec<&str> = every().iter().map(|one| one.key).collect();
 
-    let found = lands(&settings, &holding(&every)).expect("the file chose");
+    let found = lands(&settings, &holding(&keys)).expect("the file chose");
 
     assert_eq!(found.map(|found| found.name), Some("openai"));
 }
@@ -462,10 +495,13 @@ fn a_remembered_provider_without_any_credential_does_not_stop_startup() {
 
     let launch = launch(
         &Cli::try_parse_from(["crucible"]).unwrap(),
-        &settings,
-        &|_| None,
-        &sample.store().read(),
-        &Subscriptions::production(),
+        &catalogue(),
+        authenticating(
+            &settings,
+            &|_| None,
+            &sample.store().read(),
+            &Subscriptions::production(),
+        ),
     )
     .expect("an unavailable remembered provider is an interactive setup state");
 
@@ -483,10 +519,10 @@ fn a_model_written_under_a_provider_never_chooses_that_provider() {
     // picked for weeks earlier, with nothing on screen saying so.
     let sample = Sample::new("model-is-not-a-provider");
     let settings = sample.settings(r#"{"providers": {"openai": {"model": "gpt-5.6"}}}"#);
-    let every = PROVIDERS.map(|one| one.key);
+    let keys: Vec<&str> = every().iter().map(|one| one.key).collect();
 
     assert!(
-        lands(&settings, &holding(&every)).unwrap().is_none(),
+        lands(&settings, &holding(&keys)).unwrap().is_none(),
         "a model is what to ask a provider for, not which provider to ask"
     );
 }
@@ -511,8 +547,8 @@ fn a_variable_exported_blank_holds_no_key() {
     // nothing is being tilted towards either provider, and every spelling of
     // blank.
     for blank in ["", " ", "\n"] {
-        for one in PROVIDERS {
-            let machine: Vec<(&str, &str)> = PROVIDERS
+        for one in every() {
+            let machine: Vec<(&str, &str)> = every()
                 .iter()
                 .map(|other| {
                     (
@@ -540,7 +576,7 @@ fn a_variable_exported_blank_holds_no_key() {
 
 #[test]
 fn a_machine_whose_every_variable_is_blank_has_nothing_set_up() {
-    let machine: Vec<(&str, &str)> = PROVIDERS.iter().map(|one| (one.key, "")).collect();
+    let machine: Vec<(&str, &str)> = every().iter().map(|one| (one.key, "")).collect();
 
     assert!(
         lands(&Settings::default(), &exported(&machine))
@@ -575,13 +611,13 @@ fn a_model_configured_for_another_provider_is_not_configured_for_this_one() {
 
 #[test]
 fn the_help_text_names_every_provider_this_build_serves_and_its_variable() {
-    // The pair `PROVIDERS` and `long_about` can disagree, and a user meets
+    // The registry and `long_about` can disagree, and a user meets
     // whichever of them is wrong: a provider the parser accepts and the help
     // text never mentions is one nobody finds, and a variable named in the help
     // text with no entry behind it is one they export and watch do nothing.
     let help = Cli::command().render_long_help().to_string();
 
-    for one in PROVIDERS {
+    for one in every() {
         assert!(
             help.contains(one.key),
             "the help text never says where {}'s key is read from",
@@ -597,7 +633,7 @@ fn a_display_name_is_the_typed_name_under_the_vendor_s_own_capitals() {
     // offering `OpenAl` writes its key down under `openai` and reads correctly
     // to everybody except the person deciding which vendor they are logging in
     // to.
-    for one in PROVIDERS {
+    for one in every() {
         assert!(
             one.shown.to_lowercase().starts_with(one.name),
             "{} is offered as {}",
@@ -613,7 +649,7 @@ fn every_provider_offers_a_few_models_and_never_a_list_to_scroll() {
     // list stops being read and starts being searched — and a name that is not
     // on it is still typed, which is what keeps the ceiling a ceiling rather
     // than a claim about what the vendor serves.
-    for one in PROVIDERS {
+    for one in every() {
         assert!(!one.models.is_empty(), "{}", one.name);
         assert!(one.models.len() <= 5, "{}: {}", one.name, one.models.len());
     }
@@ -625,7 +661,7 @@ fn every_model_serves_its_rungs_weakest_first_and_names_none_of_them_twice() {
     // right — and those ends are a claim about the order of what is between
     // them. A set written down out of order draws a track whose ends are wrong,
     // which is worse than a missing rung: nothing on screen says so.
-    for one in PROVIDERS {
+    for one in every() {
         for model in one.models {
             let ladder: Vec<usize> = model
                 .rungs
@@ -659,16 +695,22 @@ fn a_model_nobody_wrote_down_is_offered_every_rung_rather_than_none() {
     // offering a rung its vendor may refuse and withholding one it serves. The
     // first is a sentence back from the vendor; the second is crucible deciding
     // what a model it has never heard of can do.
-    assert_eq!(rungs("anthropic", "claude-opus-9"), Effort::LADDER);
+    assert_eq!(
+        rungs(&catalogue(), "anthropic", "claude-opus-9"),
+        Effort::LADDER
+    );
 
     // Including under a provider this build does not serve, which is the same
     // ignorance arrived at from the other side.
-    assert_eq!(rungs("ollama", "llama-4"), Effort::LADDER);
+    assert_eq!(rungs(&catalogue(), "ollama", "llama-4"), Effort::LADDER);
 
     // And a name is only known under the provider it was written down for: two
     // vendors serving one name serve it on their own terms.
-    assert_eq!(rungs("openai", "claude-haiku-4-5"), Effort::LADDER);
-    assert!(rungs("anthropic", "claude-haiku-4-5").is_empty());
+    assert_eq!(
+        rungs(&catalogue(), "openai", "claude-haiku-4-5"),
+        Effort::LADDER
+    );
+    assert!(rungs(&catalogue(), "anthropic", "claude-haiku-4-5").is_empty());
 }
 
 /// Every model crucible offers, and what the generated table says it reads.
@@ -693,7 +735,7 @@ fn the_models_table_has_a_row_for_every_model_crucible_offers_and_no_others() {
     // read from the database is one crucible offers and knows no window for,
     // and a row left behind by a model that was withdrawn is a limit nothing
     // will ever be held to.
-    let offered: Vec<(&str, &str)> = PROVIDERS
+    let offered: Vec<(&str, &str)> = every()
         .iter()
         .flat_map(|one| one.models.iter().map(move |model| (one.name, model.name)))
         .collect();
@@ -814,5 +856,104 @@ fn resume_round_trip() {
     assert_eq!(
         refused.to_string(),
         format!("no session {} in this workspace", stranger.as_str())
+    );
+}
+
+#[test]
+fn the_registry_holds_every_built_in_provider_as_a_built_in_source() {
+    // What a provider from somewhere else will be read beside. A row whose
+    // provenance said anything but "built in" would be one this build compiled
+    // in and then reported as somebody else's.
+    let providers = catalogue();
+
+    for one in providers.entries() {
+        assert_eq!(
+            one.provenance().id(),
+            format!("crucible:{}", one.id()),
+            "{}",
+            one.id()
+        );
+        assert_eq!(one.provenance().kind(), SourceKind::Builtin, "{}", one.id());
+    }
+
+    assert_eq!(
+        providers.entries().len(),
+        every().len(),
+        "every built-in record is registered exactly once"
+    );
+}
+
+#[test]
+fn two_records_answering_to_one_name_are_refused_and_both_sources_are_named() {
+    // A provider is named on a flag, in a file and on a panel. Two arms under
+    // one name is a key sent to whichever of them registered last, decided by
+    // load order and visible nowhere — so the second one is refused instead.
+    let registry = providers().expect("the built-in providers register");
+    let mut staged = registry.stage();
+    let again = Arm::builtin(serving("anthropic")).expect("a record of the same name");
+
+    let problem = staged
+        .register(again)
+        .expect_err("a second arm under a registered name");
+
+    let said = problem.to_string();
+    assert!(said.contains("anthropic"), "{said}");
+    assert!(
+        said.contains("crucible:anthropic"),
+        "{said} names neither source"
+    );
+}
+
+#[test]
+fn the_names_a_refusal_offers_are_the_ones_the_registry_holds_now() {
+    // The sentence is built from the generation in force rather than from the
+    // list this build was compiled with, so a provider registered later is one
+    // a mistyped name is told about.
+    let providers = catalogue();
+    let said = names(&providers);
+
+    assert_eq!(
+        said,
+        every()
+            .iter()
+            .map(|one| one.name)
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+}
+
+#[test]
+fn a_provider_built_from_its_record_is_the_one_the_vendor_module_makes() {
+    // The registry moved which arm builds a provider; it did not move what the
+    // arm builds. Prompt caching is the fact a session's spend is decided by,
+    // and it is read off the provider object rather than off the name, so a
+    // record wired to the wrong factory would be silently cheap or silently
+    // expensive rather than wrong on screen.
+    let stored = StoredCredentials::default();
+    let subscriptions = Subscriptions::production();
+    let settings = Settings::default();
+    let from = holding(&["ANTHROPIC_API_KEY"]);
+
+    let built = startup::provider(
+        Some(serving("anthropic")),
+        NOTHING_TO_ASK,
+        authenticating(&settings, &from, &stored, &subscriptions),
+    )
+    .expect("a key is exported for it");
+
+    let direct = crucible_provider::Anthropic::at(
+        crucible_provider::Anthropic::VENDOR,
+        Box::new(crucible_core::HeaderKey::new(
+            crucible_core::ApiKey::from_lookup("ANTHROPIC_API_KEY", &from).expect("the key"),
+            crucible_core::Header::bare("x-api-key"),
+        )),
+        Box::new(crucible_provider::Https::new()),
+    );
+
+    assert_eq!(built.name(), direct.name());
+    assert_eq!(
+        built.prompt_cache_capabilities("claude-opus-5"),
+        direct.prompt_cache_capabilities("claude-opus-5"),
+        "the record builds the vendor's own arm"
     );
 }

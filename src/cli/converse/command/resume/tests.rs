@@ -117,6 +117,7 @@ fn terms(sample: &Sample) -> Terms {
         serving: Box::new(|named, _| {
             Err(Fatal::Provider {
                 named: named.name.into(),
+                has: named.name.into(),
             })
         }),
         sessions: sample.logs(),
@@ -124,6 +125,7 @@ fn terms(sample: &Sample) -> Terms {
         sending: crucible_tui::Sending::default(),
         commands: crate::cli::converse::command::builtins()
             .expect("the built-in commands register"),
+        providers: crate::cli::providers().expect("the built-in providers register"),
     }
 }
 

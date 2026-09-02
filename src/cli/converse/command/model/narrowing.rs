@@ -11,14 +11,13 @@
 //! reaching for the same shelf, and nothing on screen says which of the four
 //! they are looking at.
 
-use crate::cli::{PROVIDERS, Served};
+use crate::cli::{Providers, Served, offered};
 
 use super::Selected;
 
 /// Every model the catalogue serves, in the order the panel walks them.
-pub(super) fn every() -> Vec<Selected> {
-    PROVIDERS
-        .into_iter()
+pub(super) fn every(providers: &Providers) -> Vec<Selected> {
+    offered(providers)
         .flat_map(|provider| {
             provider.models.iter().map(move |model| Selected {
                 provider,
@@ -68,9 +67,12 @@ pub(super) fn shelved(all: &[Selected], query: &str, only: Option<&str>) -> Vec<
 ///
 /// Every provider, always. The count is what says a provider is empty, and a
 /// row that is not there says nothing at all.
-pub(super) fn counted(all: &[Selected], query: &str) -> Vec<(Served, Option<usize>)> {
-    PROVIDERS
-        .into_iter()
+pub(super) fn counted(
+    providers: &Providers,
+    all: &[Selected],
+    query: &str,
+) -> Vec<(Served, Option<usize>)> {
+    offered(providers)
         .map(|provider| {
             let left = all
                 .iter()

@@ -42,8 +42,9 @@ use clap::Parser;
 use crucible_auth::{Store, StoredCredentials};
 use crucible_config::{ConfigError, Home, Settings};
 use crucible_core::{
-    Cancel, CredentialError, Effort, Modalities, PathError, Provider, RegistryError, Revealed,
-    SessionId, ToolsetError, Workspace,
+    Cancel, Collision, CredentialError, Effort, Modalities, PathError, Provenance, Provider,
+    Registered, Registry, RegistryError, RegistrySnapshot, Revealed, SessionId, SourceKind,
+    ToolsetError, Workspace,
 };
 use crucible_provider::EndpointError;
 use crucible_runner::SessionError;
@@ -108,6 +109,9 @@ const PROVIDERS: [Served; 3] = [
         name: "anthropic",
         shown: "Anthropic",
         key: "ANTHROPIC_API_KEY",
+        build: startup::anthropic,
+        reach: startup::anthropic_web,
+        window: 200_000,
         models: &[
             Model::new("claude-fable-5", EVERY),
             Model::new("claude-opus-5", EVERY),
@@ -123,6 +127,9 @@ const PROVIDERS: [Served; 3] = [
         name: "moonshot",
         shown: "MoonshotAI",
         key: "MOONSHOT_API_KEY",
+        build: startup::moonshot,
+        reach: startup::moonshot_web,
+        window: 262_144,
         // Spelled the way the coding console spells them, that being the one
         // crucible asks. The open platform serves the same models under longer
         // names and does not serve the second of these at all, so a key from
@@ -143,6 +150,9 @@ const PROVIDERS: [Served; 3] = [
         name: "openai",
         shown: "OpenAI",
         key: "OPENAI_API_KEY",
+        build: startup::openai,
+        reach: startup::openai_web,
+        window: 272_000,
         // The `-pro` variants are left off: they answer in one piece rather
         // than streaming, and every turn here is drawn as it arrives.
         models: &[
@@ -244,6 +254,11 @@ impl Model {
 }
 
 /// A provider this build has an arm for, and where its key is read from.
+///
+/// The arm is on the record. What builds the provider, what builds its web
+/// sources and what window it manages against travel with the name rather than
+/// being matched against it somewhere else, so a record registered under a new
+/// name is a provider without anything downstream learning that it exists.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Served {
     /// What `--model provider/…` and `providers.<name>` call it.
@@ -272,6 +287,86 @@ pub(crate) struct Served {
     /// `--effort` and `/effort <rung>` both go straight to the vendor, which is
     /// the path that was there before any of this was written down.
     pub(crate) models: &'static [Model],
+    /// Builds the provider from a resolved credential and address.
+    ///
+    /// The one place a name becomes a type. A fresh transport every call, and a
+    /// credential read once inside it; nothing in any crate below has to learn
+    /// that this provider exists.
+    pub(crate) build: startup::Factory,
+    /// Builds what answers the two web tools, or nothing where this provider
+    /// serves neither. Never fails a start: a session without web tools is
+    /// still the coding agent that was asked for.
+    pub(crate) reach: startup::Reach,
+    /// The context window a session manages against unless a setting says
+    /// otherwise. Conservative on purpose: long context is available, and
+    /// using it is a choice rather than the starting behavior.
+    pub(crate) window: u32,
+}
+
+/// One provider as the registry holds it: the arm, and where it came from.
+#[derive(Debug)]
+pub(crate) struct Arm {
+    served: Served,
+    provenance: Provenance,
+}
+
+impl Arm {
+    /// A provider compiled into this build.
+    ///
+    /// [`RegistryError`] where the name does not fit a source identity, which a
+    /// constant name cannot fail to.
+    fn builtin(served: Served) -> Result<Self, RegistryError> {
+        let provenance = Provenance::new(
+            SourceKind::Builtin,
+            format!("crucible:{}", served.name),
+            format!("built-in {} provider", served.name),
+        )?;
+        Ok(Self { served, provenance })
+    }
+}
+
+impl Registered for Arm {
+    fn id(&self) -> &str {
+        self.served.name
+    }
+
+    fn provenance(&self) -> &Provenance {
+        &self.provenance
+    }
+
+    fn retained_bytes(&self) -> usize {
+        size_of::<Self>() + self.provenance.retained_bytes()
+    }
+}
+
+/// The providers a name is read against: one generation of the registry.
+pub(crate) type Providers = RegistrySnapshot<Arm>;
+
+/// The provider registry with every built-in provider in it, in the order the
+/// panels list them.
+///
+/// Refusing collisions rather than ranking them: a provider is named in a flag,
+/// a file and a picker, and two arms answering to one name is a key sent to
+/// whichever of them registered last.
+///
+/// # Errors
+///
+/// [`RegistryError`] where a built-in could not be registered — a name written
+/// twice in [`PROVIDERS`], or one too long for a source identity. Both are
+/// wiring defects, and the sentence names the provider.
+pub(crate) fn providers() -> Result<Registry<Arm>, RegistryError> {
+    let registry = Registry::new(Collision::Refuse);
+    let mut staged = registry.stage();
+    for served in PROVIDERS {
+        staged.register(Arm::builtin(served)?)?;
+    }
+    registry.commit(staged)?;
+    Ok(registry)
+}
+
+/// Every provider of one generation, in the order they were registered.
+pub(crate) fn offered(providers: &Providers) -> impl Iterator<Item = Served> + '_ {
+    providers.entries().iter().map(|arm| arm.served)
 }
 
 /// What one provider is set up with, once it has a credential.
@@ -363,8 +458,11 @@ const fn opening_unasked(provider: Option<Served>, any_credential: bool) -> &'st
 }
 
 /// The provider names, for the sentence a name outside them gets back.
-fn names() -> String {
-    PROVIDERS.map(|one| one.name).join(", ")
+pub(crate) fn names(providers: &Providers) -> String {
+    offered(providers)
+        .map(|one| one.name)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// The rungs `model` serves, as far as this build knows.
@@ -375,9 +473,8 @@ fn names() -> String {
 /// rung its vendor may refuse and withholding one it serves — the first is a
 /// sentence back from the vendor, the second is crucible deciding what a model
 /// it has never heard of can do.
-pub(crate) fn rungs(provider: &str, model: &str) -> &'static [Effort] {
-    PROVIDERS
-        .into_iter()
+pub(crate) fn rungs(providers: &Providers, provider: &str, model: &str) -> &'static [Effort] {
+    offered(providers)
         .filter(|one| one.name == provider)
         .flat_map(|one| one.models)
         .find(|one| one.name == model)
@@ -482,8 +579,8 @@ pub(crate) enum Fatal {
     /// The built-in commands could not be registered: two under one name, or
     /// one whose name will not fit a source identity. A wiring defect rather
     /// than anything the user did, and the sentence names the command.
-    #[error("the command list could not be assembled: {0}")]
-    Commands(#[from] RegistryError),
+    #[error("a built-in registry could not be assembled: {0}")]
+    Registry(#[from] RegistryError),
 
     /// `--resume` named a session this workspace has no record of.
     ///
@@ -527,10 +624,12 @@ pub(crate) enum Fatal {
     },
 
     /// The command line named a provider this is not built with.
-    #[error("no provider called {named}; this build has {}", names())]
+    #[error("no provider called {named}; this build has {has}")]
     Provider {
         /// What was asked for.
         named: Box<str>,
+        /// The names the registry held when it was asked, comma-separated.
+        has: Box<str>,
     },
 
     /// `providers.<name>.baseUrl` is not an address requests can be sent to.
@@ -706,7 +805,17 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     // a provider chosen without a credential is one whose refusal arrives after
     // the first prompt, and a model chosen without being asked for is one
     // vendor's name sent to whichever vendor the credential belongs to.
-    let launch = launch(cli, &settings, &from, &keys, &subscriptions)?;
+    let providers = providers()?;
+    let launch = launch(
+        cli,
+        &providers.snapshot(),
+        startup::ProviderAuth {
+            settings: &settings,
+            from: &from,
+            stored: &keys,
+            subscriptions: &subscriptions,
+        },
+    )?;
 
     // Set before the session is started, because a session writes a file and
     // this does not: a failure here leaves the disk as it found it. The guard
@@ -758,6 +867,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         // have read, and the reader is the one who can see that happening.
         sending: sends(&settings),
         commands: converse::command::builtins()?,
+        providers,
         reading: RefCell::new(settings.syntax_theme().map(str::to_owned)),
         cancel: cancel.clone(),
         steer: crucible_core::Steer::new(),
@@ -937,30 +1047,22 @@ struct Launch {
 /// Reads the flags, the files and the usable credential set into one answer.
 fn launch(
     cli: &Cli,
-    settings: &Settings,
-    from: &dyn Fn(&str) -> Option<String>,
-    credentials: &StoredCredentials,
-    subscriptions: &Subscriptions,
+    providers: &Providers,
+    auth: startup::ProviderAuth<'_>,
 ) -> Result<Launch, Fatal> {
     let choice = match cli.model.as_deref() {
         Some(named) => Choice::parse(named).ok_or(Fatal::Providerless)?,
         None => Choice::default(),
     };
     let serving = match &choice.provider {
-        Some(named) => Some(served(named)?),
-        None => chosen(settings, from, credentials, subscriptions)?,
+        Some(named) => Some(served(providers, named)?),
+        None => chosen(providers, auth)?,
     };
     Ok(Launch {
-        model: wanted(&choice, settings, serving),
-        effort: thinking(cli.effort, settings, serving),
-        credential: serving
-            .and_then(|named| credential_source(named, settings, from, credentials, subscriptions)),
-        unasked: opening_unasked(
-            serving,
-            available(settings, from, credentials, subscriptions)
-                .next()
-                .is_some(),
-        ),
+        model: wanted(&choice, auth.settings, serving),
+        effort: thinking(cli.effort, auth.settings, serving),
+        credential: serving.and_then(|named| credential_source(named, auth)),
+        unasked: opening_unasked(serving, available(providers, auth).next().is_some()),
         serving,
     })
 }
@@ -973,14 +1075,13 @@ fn launch(
 /// them grows with the transcript.
 fn re_serving(settings: Settings, subscriptions: Subscriptions) -> Serving {
     Box::new(move |named: Served, stored: &StoredCredentials| {
-        let source = credential_source(
-            named,
-            &settings,
-            &|name| std::env::var(name).ok(),
+        let auth = startup::ProviderAuth {
+            settings: &settings,
+            from: &|name| std::env::var(name).ok(),
             stored,
-            &subscriptions,
-        )
-        .ok_or_else(|| Fatal::Authentication {
+            subscriptions: &subscriptions,
+        };
+        let source = credential_source(named, auth).ok_or_else(|| Fatal::Authentication {
             provider: named.name.into(),
         })?;
 
@@ -988,16 +1089,7 @@ fn re_serving(settings: Settings, subscriptions: Subscriptions) -> Serving {
         // the sentence the `None` arm refuses with is never reached; it is
         // spelled the way the launch would spell it for this provider anyway.
         Ok(Resolved {
-            provider: startup::provider(
-                Some(named),
-                unasked(Some(named.name)),
-                startup::ProviderAuth {
-                    settings: &settings,
-                    from: &|name| std::env::var(name).ok(),
-                    stored,
-                    subscriptions: &subscriptions,
-                },
-            )?,
+            provider: startup::provider(Some(named), unasked(Some(named.name)), auth)?,
             source,
         })
     })
@@ -1027,25 +1119,16 @@ fn re_serving(settings: Settings, subscriptions: Subscriptions) -> Serving {
 /// explicitly; picking one here would send a turn to a vendor over the
 /// declaration order, and refusing to start would strand a machine that is one
 /// command away from a choice.
-fn chosen(
-    settings: &Settings,
-    from: &dyn Fn(&str) -> Option<String>,
-    credentials: &StoredCredentials,
-    subscriptions: &Subscriptions,
-) -> Result<Option<Served>, Fatal> {
+fn chosen(providers: &Providers, auth: startup::ProviderAuth<'_>) -> Result<Option<Served>, Fatal> {
     // Refused here where a name this build has nothing for is a sentence naming
     // the ones it has, rather than carried as "nobody chose" into a session that
     // would then look set up by a credential nobody named.
-    if let Some(named) = settings.provider() {
-        let one = served(named)?;
-        return Ok(
-            credential_source(one, settings, from, credentials, subscriptions)
-                .is_some()
-                .then_some(one),
-        );
+    if let Some(named) = auth.settings.provider() {
+        let one = served(providers, named)?;
+        return Ok(credential_source(one, auth).is_some().then_some(one));
     }
 
-    let mut holding = available(settings, from, credentials, subscriptions);
+    let mut holding = available(providers, auth);
     let (Some(first), second) = (holding.next(), holding.next()) else {
         return Ok(None);
     };
@@ -1059,14 +1142,10 @@ fn chosen(
 /// to the question above, and somebody who exported the key they had already
 /// logged in with would be asked to choose between a provider and itself.
 fn available<'a>(
-    settings: &'a Settings,
-    from: &'a dyn Fn(&str) -> Option<String>,
-    stored: &'a StoredCredentials,
-    subscriptions: &'a Subscriptions,
+    providers: &'a Providers,
+    auth: startup::ProviderAuth<'a>,
 ) -> impl Iterator<Item = Served> + 'a {
-    PROVIDERS
-        .into_iter()
-        .filter(move |one| credential_source(*one, settings, from, stored, subscriptions).is_some())
+    offered(providers).filter(move |one| credential_source(*one, auth).is_some())
 }
 
 /// The source provider construction will select, without reading a secret out.
@@ -1075,13 +1154,13 @@ fn available<'a>(
 /// agree: `/logout` names what remains after a stored credential is removed,
 /// and a source this computes that construction would not select is a sentence
 /// that lies.
-fn credential_source(
-    one: Served,
-    settings: &Settings,
-    from: &dyn Fn(&str) -> Option<String>,
-    stored: &StoredCredentials,
-    subscriptions: &Subscriptions,
-) -> Option<CredentialSource> {
+fn credential_source(one: Served, auth: startup::ProviderAuth<'_>) -> Option<CredentialSource> {
+    let startup::ProviderAuth {
+        settings,
+        from,
+        stored,
+        subscriptions,
+    } = auth;
     if settings.base_url(one.name).is_none()
         && subscriptions.supports(one.name)
         && stored.has_subscription(one.name)
