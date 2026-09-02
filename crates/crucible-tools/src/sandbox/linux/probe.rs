@@ -23,7 +23,14 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 /// A hostile or accidental PATH cannot make backend discovery unbounded.
 const MAX_BWRAP_CANDIDATES: usize = 128;
 
-/// Required Bubblewrap command-line features.
+/// Required Bubblewrap command-line features: every option the launcher hands
+/// to Bubblewrap before its `--` separator.
+///
+/// The probe asks for options rather than a version because distributions
+/// backport some of them. Ubuntu 24.04's 0.9.0 gained the descriptor binds
+/// from a security fix, yet the temporary overlays that build a writable view
+/// arrived only in upstream 0.11.0, so the version alone would misjudge it in
+/// either direction.
 const REQUIRED_OPTIONS: &[&str] = &[
     "--as-pid-1",
     "--bind",
@@ -37,6 +44,7 @@ const REQUIRED_OPTIONS: &[&str] = &[
     "--dir",
     "--disable-userns",
     "--new-session",
+    "--overlay-src",
     "--proc",
     "--remount-ro",
     "--ro-bind",
@@ -44,6 +52,7 @@ const REQUIRED_OPTIONS: &[&str] = &[
     "--setenv",
     "--sync-fd",
     "--tmpfs",
+    "--tmp-overlay",
     "--unshare-ipc",
     "--unshare-net",
     "--unshare-pid",
@@ -117,7 +126,7 @@ impl Bwrap {
         help_text.push_str(&String::from_utf8_lossy(&help.stderr));
         if !help.status.success() || !help_supports_required_options(&help_text) {
             return Err(unavailable(
-                "system Bubblewrap does not expose the required confinement options",
+                "system Bubblewrap does not expose the required confinement options; descriptor binds and temporary overlays need Bubblewrap 0.11.0 or newer",
             ));
         }
 
@@ -447,6 +456,17 @@ mod tests {
         assert!(!help_supports_required_options(
             &complete.replace("--bind\n", "--bind-fd-only\n")
         ));
+        // Ubuntu 24.04 ships 0.9.0 with the descriptor binds backported for a
+        // security fix, but without the temporary overlays the launcher uses.
+        let ubuntu_24_04: Vec<&str> = REQUIRED_OPTIONS
+            .iter()
+            .copied()
+            .filter(|option| !matches!(*option, "--overlay-src" | "--tmp-overlay"))
+            .collect();
+        assert!(
+            !help_supports_required_options(&ubuntu_24_04.join("\n")),
+            "a Bubblewrap without temporary overlays cannot build the view"
+        );
         assert_eq!(
             parse_version("bubblewrap 0.11.1\n"),
             Some("bubblewrap 0.11.1")

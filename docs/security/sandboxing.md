@@ -15,6 +15,14 @@ choice is unavailable; it does not silently substitute a plain subprocess,
 Landlock, a container, or a worktree. If no system candidate satisfies the
 effective policy, preparation fails before materialization or spawn.
 
+Bubblewrap 0.11.0 or newer is needed: the view is built from descriptor binds
+and temporary overlays, which older releases do not offer. The probe checks the
+options themselves rather than the version, because distributions backport some
+of them. Ubuntu 24.04's 0.9.0 has the descriptor binds but not the overlays, so
+there `required` confinement reports an unavailable backend until a newer
+Bubblewrap is installed. Should a launch still be refused by the system
+Bubblewrap, its own message is quoted in the error.
+
 Inside the namespace, PID 1 is Crucible's own `crucible-sandbox-broker`
 executable, found beside the Crucible binary and pinned by open descriptor
 before the namespace starts. It is accepted only when it and every directory

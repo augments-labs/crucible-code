@@ -268,7 +268,7 @@ extension adapters launch:
 ```
 
 `required` is the default. On Linux it requires a verified Bubblewrap backend
-and fails before spawning when the effective filesystem, network, descriptor,
+(Bubblewrap 0.11.0 or newer) and fails before spawning when the effective filesystem, network, descriptor,
 process, privilege, materialization, audit, or requested resource boundary
 cannot be enforced. It never falls back to an ordinary subprocess silently.
 

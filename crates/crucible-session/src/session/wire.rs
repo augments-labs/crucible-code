@@ -1258,6 +1258,9 @@ mod tests {
         assert!(message(&written).is_none());
     }
 
+    // The fixtures are POSIX absolute paths, which no Windows path type accepts;
+    // Windows has no confinement backend to give them a native shape.
+    #[cfg(unix)]
     #[test]
     fn sandbox_journal_keeps_typed_identity_and_plan_without_raw_reach() {
         use crucible_core::{

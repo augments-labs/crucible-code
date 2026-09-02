@@ -1866,3 +1866,34 @@ fn live_processes_with_marker(marker: &str) -> Vec<u32> {
         })
         .collect()
 }
+
+#[test]
+fn a_launch_that_dies_before_ready_is_explained_by_the_launcher_stderr() {
+    let eof = || {
+        std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "failed to fill whole buffer",
+        )
+    };
+
+    let explained = super::explain_launch_failure(eof(), b"bwrap: Unknown option --overlay-src\n");
+    assert_eq!(explained.kind(), std::io::ErrorKind::UnexpectedEof);
+    assert_eq!(
+        explained.to_string(),
+        "failed to fill whole buffer; the sandbox launcher said: bwrap: Unknown option --overlay-src"
+    );
+
+    let silent = super::explain_launch_failure(eof(), b" \n");
+    assert_eq!(silent.to_string(), "failed to fill whole buffer");
+
+    let noisy = "x".repeat(super::MAX_LAUNCHER_DIAGNOSTIC_BYTES + 100);
+    let bounded = super::explain_launch_failure(eof(), noisy.as_bytes()).to_string();
+    assert!(bounded.ends_with(" (truncated)"), "{bounded}");
+    assert!(bounded.len() < noisy.len(), "{}", bounded.len());
+
+    let multiline = super::explain_launch_failure(eof(), b"first\nsecond line\n\n").to_string();
+    assert!(
+        multiline.ends_with("said: first second line"),
+        "{multiline}"
+    );
+}

@@ -210,7 +210,7 @@ mod tests {
         let refused = Broker::first_trusted(vec![image], &[]);
         assert!(
             matches!(refused, Err(SandboxError::BackendUnavailable { .. })),
-            "a broker anyone can replace was accepted: {refused:?}"
+            "a broker anyone can replace was accepted"
         );
     }
 }

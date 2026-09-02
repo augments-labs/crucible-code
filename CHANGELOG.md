@@ -16,6 +16,8 @@ change in any release with no deprecation period.
   closes undeclared descriptors, protects repository and Crucible metadata,
   limits time/output/concurrency, and kills the complete sandbox process tree.
   If that boundary cannot be prepared, the command fails before it starts.
+  Bubblewrap 0.11.0 or newer is required; an older one is reported as an
+  unavailable backend, and a launch it refuses quotes its message.
 
 - **Sandbox policy is now a reusable, inspectable host contract.** Backends
   negotiate exact capabilities before effects; bounded manifests,

@@ -20,14 +20,20 @@ jobs:
 
       # The enforcing sandbox tests skip themselves where Bubblewrap is missing,
       # which on a runner would mean the kernel boundary is never exercised by
-      # this gate. Install it as the release smoke test does, and tell the
-      # tests that here a missing backend is a failure rather than a skip.
-      - name: bubblewrap, for the enforcing sandbox tests
+      # this gate; here a missing backend is a failure rather than a skip. The
+      # backend needs Bubblewrap 0.11.0 for temporary overlays, and Ubuntu
+      # 24.04 packages 0.9.0, so the Ubuntu 25.04 package is installed from
+      # Launchpad's permanent archive and checked against a pinned digest. It
+      # depends only on glibc 2.38, libcap2 and libselinux1, all present here.
+      - name: bubblewrap 0.11, for the enforcing sandbox tests
         env:
-          APT: -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15
+          DEB_URL: https://launchpad.net/ubuntu/+archive/primary/+files/bubblewrap_0.11.0-2_amd64.deb
+          DEB_SHA256: 2d9dbcd473771ce18448f1d45e9107cdb28bb3325d171bb4145d79b0df6f3df6
         run: |
-          sudo apt-get $APT update
-          sudo apt-get $APT install -y bubblewrap
+          deb="$RUNNER_TEMP/bubblewrap.deb"
+          curl --fail --silent --show-error --location --retry 3 --output "$deb" "$DEB_URL"
+          echo "$DEB_SHA256  $deb" | sha256sum --check
+          sudo dpkg --install "$deb"
           bwrap --version
       # Ubuntu 24.04 runners restrict unprivileged user namespaces through
       # AppArmor, which is the one thing the Linux backend needs from the

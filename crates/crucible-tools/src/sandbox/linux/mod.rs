@@ -20,7 +20,7 @@ use crucible_core::{
     SandboxBackendIdentity, SandboxCapabilities, SandboxCleanup, SandboxCommand,
     SandboxCommandStage, SandboxError, SandboxFactKind, SandboxFailureKind, SandboxFailurePhase,
     SandboxFilesystemAccess, SandboxGuardrailDecision, SandboxInspection, SandboxInvocationMode,
-    SandboxLaunch, SandboxLifecycle, SandboxProcess, SandboxRequest, SandboxSession,
+    SandboxLaunch, SandboxLifecycle, SandboxProcess, SandboxRead, SandboxRequest, SandboxSession,
 };
 
 use super::process::{MAX_LOCAL_COMMANDS, Reservation};
@@ -344,7 +344,8 @@ impl SandboxLaunch for LinuxLaunch {
         );
         if let Err(source) = ready {
             self.refuse_and_cleanup(process.as_mut());
-            let problem = SandboxError::Lifecycle(source);
+            let said = drain_launcher_stderr(process.as_mut());
+            let problem = SandboxError::Lifecycle(explain_launch_failure(source, &said));
             let _ = self.audit.record(
                 self.sandbox,
                 SandboxFactKind::Failed {
@@ -533,4 +534,52 @@ impl std::fmt::Debug for LinuxSession {
             .field("materialized", &self.materialized)
             .finish_non_exhaustive()
     }
+}
+
+/// How much of the launcher's stderr a refused launch may quote.
+const MAX_LAUNCHER_DIAGNOSTIC_BYTES: usize = 512;
+
+/// Bubblewrap and the broker explain a refused launch only on stderr, which
+/// would otherwise die unread with the process. A status channel that closes
+/// before READY is reported with that explanation, bounded and on one line, so
+/// a system Bubblewrap that rejects an option names the option.
+fn explain_launch_failure(source: io::Error, launcher_said: &[u8]) -> io::Error {
+    let truncated = launcher_said.len() > MAX_LAUNCHER_DIAGNOSTIC_BYTES;
+    let quoted = launcher_said
+        .get(..MAX_LAUNCHER_DIAGNOSTIC_BYTES)
+        .unwrap_or(launcher_said);
+    let one_line = String::from_utf8_lossy(quoted)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if one_line.is_empty() {
+        return source;
+    }
+    let suffix = if truncated { " (truncated)" } else { "" };
+    io::Error::new(
+        source.kind(),
+        format!("{source}; the sandbox launcher said: {one_line}{suffix}"),
+    )
+}
+
+/// What a stopped launcher left on stderr, up to the quotable bound.
+fn drain_launcher_stderr(process: &mut dyn SandboxProcess) -> Vec<u8> {
+    let Some(mut stderr) = process.take_stderr() else {
+        return Vec::new();
+    };
+    let mut said = Vec::new();
+    let mut buffer = [0_u8; MAX_LAUNCHER_DIAGNOSTIC_BYTES];
+    while said.len() <= MAX_LAUNCHER_DIAGNOSTIC_BYTES {
+        let count = match stderr.read_ready(&mut buffer) {
+            Ok(
+                SandboxRead::Bytes(count)
+                | SandboxRead::Limited {
+                    retained: count, ..
+                },
+            ) if count > 0 => count,
+            _ => break,
+        };
+        said.extend_from_slice(buffer.get(..count).unwrap_or(&buffer));
+    }
+    said
 }
