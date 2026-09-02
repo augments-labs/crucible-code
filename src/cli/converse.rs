@@ -64,7 +64,7 @@ use typing::{Asked, Says};
 mod answering;
 mod asking;
 mod attaching;
-mod command;
+pub(crate) mod command;
 mod expanding;
 mod finding;
 mod leaving;
@@ -241,6 +241,13 @@ pub(crate) struct Terms {
     /// reason, and not part of the style either — it is about what arrives from
     /// the terminal rather than about what is drawn to it.
     pub(crate) sending: Sending,
+    /// The commands a `/` line is read against.
+    ///
+    /// A registry rather than the list itself, because what is in it is a
+    /// generation: the built-ins at startup, and whatever is committed beside
+    /// them later. A line is read against the snapshot taken as it is read, so
+    /// a name it resolves is one that was in force when it was typed.
+    pub(crate) commands: crucible_core::Registry<command::Slash>,
 }
 
 impl Terms {
@@ -517,7 +524,9 @@ pub(crate) fn converse<T: Terminal>(
             continue;
         }
 
+        let commands = terms.commands.snapshot();
         let between = typing::Between {
+            commands: &commands,
             runner: &mut runner,
             editor: &mut held.editor,
             planning: &mut held.planning,
@@ -558,7 +567,7 @@ pub(crate) fn converse<T: Terminal>(
         // on this thread, and costs the provider nothing. Nothing of it reaches
         // the transcript either — what the model is told about a session is
         // what was said to it, and `/help` was not.
-        if local && let Some(wanted) = command::wanted(&prompt) {
+        if local && let Some(wanted) = command::wanted(&terms.commands.snapshot(), &prompt) {
             let ran = command::run(wanted, renderer, &mut runner, &mut held, terms)?;
             attaching::refresh_store(&mut held, &runner);
             match ran {

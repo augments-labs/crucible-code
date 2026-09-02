@@ -205,6 +205,8 @@ mod tests {
             sessions: sample.logs(),
             workspace: sample.workspace(),
             sending: crucible_tui::Sending::default(),
+            commands: crate::cli::converse::command::builtins()
+                .expect("the built-in commands register"),
         }
     }
 

@@ -306,6 +306,9 @@ fn insert(editor: &mut Editor, first: char) -> Result<Inserted, Fatal> {
 /// one of them can be changed by a key pressed at it: Shift+Tab steps the mode
 /// the runner holds, Ctrl+T opens the plan, and the rest go into the line.
 pub(crate) struct Between<'a> {
+    /// The commands a `/` line is read against, as they stood when the prompt
+    /// was opened.
+    pub(crate) commands: &'a command::Commands,
     /// Holds the mode, which is the one thing a key at the prompt changes about
     /// the session rather than about the screen.
     pub(crate) runner: &'a mut Runner,
@@ -438,6 +441,7 @@ pub(crate) fn ask<T: Terminal>(
     between: Between<'_>,
 ) -> Result<Asked, Fatal> {
     let Between {
+        commands,
         runner,
         editor,
         planning,
@@ -486,7 +490,7 @@ pub(crate) fn ask<T: Terminal>(
         return Ok(woke);
     }
 
-    let mut open = Opened::filtered(editor.projection().text(), glyphs);
+    let mut open = Opened::filtered(commands, editor.projection().text(), glyphs);
     draw(
         renderer,
         editor,
@@ -573,7 +577,7 @@ pub(crate) fn ask<T: Terminal>(
                 )
             }) {
                 Ok(Typed::Changed) => {
-                    open = Opened::filtered(editor.projection().text(), glyphs);
+                    open = Opened::filtered(commands, editor.projection().text(), glyphs);
                     true
                 }
                 Ok(Typed::Refused) => {
@@ -661,7 +665,7 @@ pub(crate) fn ask<T: Terminal>(
                 following = inserted.following;
 
                 if inserted.changed {
-                    open = Opened::filtered(editor.projection().text(), glyphs);
+                    open = Opened::filtered(commands, editor.projection().text(), glyphs);
                 }
                 if inserted.refused {
                     says.asking = Some(Cow::Borrowed(LIMITED));
@@ -675,7 +679,7 @@ pub(crate) fn ask<T: Terminal>(
             Pressed::Pasted(text) => {
                 let moved = pasted(editor, &text, &mut says);
                 if moved {
-                    open = Opened::filtered(editor.projection().text(), glyphs);
+                    open = Opened::filtered(commands, editor.projection().text(), glyphs);
                 }
                 moved || offered.is_some()
             }
@@ -686,7 +690,7 @@ pub(crate) fn ask<T: Terminal>(
                 // the end of a line is what the first half of that saves.
                 Typed::Ignored => offered.is_some(),
                 Typed::Changed => {
-                    open = Opened::filtered(editor.projection().text(), glyphs);
+                    open = Opened::filtered(commands, editor.projection().text(), glyphs);
                     true
                 }
                 Typed::Refused => {
@@ -960,6 +964,7 @@ pub(super) fn during<T: Terminal>(
         terms,
         leaving,
     } = during;
+    let commands = terms.commands.snapshot();
     let mut moved = false;
     let mut notice = None;
 
@@ -1100,7 +1105,8 @@ pub(super) fn during<T: Terminal>(
                     // The list a `/`-started line has open is of what the line
                     // now says, so it is filtered again on the change — a line
                     // that stopped being one closes the list with it.
-                    *opened_list = Opened::filtered(editor.projection().text(), style.glyphs());
+                    *opened_list =
+                        Opened::filtered(&commands, editor.projection().text(), style.glyphs());
                 }
             }
 
@@ -1120,7 +1126,8 @@ pub(super) fn during<T: Terminal>(
                 Typed::Changed => {
                     moved = true;
                     notice = None;
-                    *opened_list = Opened::filtered(editor.projection().text(), style.glyphs());
+                    *opened_list =
+                        Opened::filtered(&commands, editor.projection().text(), style.glyphs());
                 }
                 Typed::Refused => {
                     moved = true;
@@ -1175,8 +1182,8 @@ pub(super) fn during<T: Terminal>(
                         None
                     } else {
                         marked
-                            .and_then(command::owned)
-                            .or_else(|| command::owned(editor.text()))
+                            .and_then(|line| command::owned(&commands, line))
+                            .or_else(|| command::owned(&commands, editor.text()))
                     };
                     if let Some(owned) = owned {
                         // The line as it was sent, which is the command where
@@ -1247,6 +1254,7 @@ pub(super) fn during<T: Terminal>(
 
             Meant::PasteImage => {
                 moved |= pasted_during(
+                    &commands,
                     attachment_store,
                     board,
                     editor,
@@ -1368,6 +1376,7 @@ pub(super) enum Meanwhile {
 
 /// Everything one Ctrl+V during a turn reads or may change.
 struct PasteImageDuring<'a> {
+    commands: &'a command::Commands,
     store: Option<(&'a std::path::Path, &'a crucible_core::SessionId)>,
     board: &'a mut Option<arboard::Clipboard>,
     editor: &'a mut Editor,
@@ -1381,6 +1390,7 @@ struct PasteImageDuring<'a> {
 /// Reads and applies one mid-turn image paste, saying whether the box moved.
 #[allow(clippy::too_many_arguments)]
 fn pasted_during<'a>(
+    commands: &'a command::Commands,
     store: Option<(&'a std::path::Path, &'a crucible_core::SessionId)>,
     board: &'a mut Option<arboard::Clipboard>,
     editor: &'a mut Editor,
@@ -1394,6 +1404,7 @@ fn pasted_during<'a>(
     // parameters callers can combine: the bundle gives the branches below
     // names and keeps the key loop itself readable.
     let pasted = PasteImageDuring {
+        commands,
         store,
         board,
         editor,
@@ -1404,6 +1415,7 @@ fn pasted_during<'a>(
         notice,
     };
     let PasteImageDuring {
+        commands,
         store,
         board,
         editor,
@@ -1417,7 +1429,7 @@ fn pasted_during<'a>(
     match result {
         Ok(Typed::Changed) => {
             *notice = None;
-            *opened = Opened::filtered(editor.projection().text(), style.glyphs());
+            *opened = Opened::filtered(commands, editor.projection().text(), style.glyphs());
             true
         }
         Ok(Typed::Refused) => {
@@ -1751,8 +1763,8 @@ impl Opened {
     /// rather than the first of them. `/mode` is a prefix of `/model`, so a
     /// line naming a command outright would otherwise point at a different
     /// command that merely starts the same way.
-    pub(super) fn filtered(said: &str, glyphs: Glyphs) -> Self {
-        let shown = command::filtering(said, glyphs);
+    pub(super) fn filtered(commands: &command::Commands, said: &str, glyphs: Glyphs) -> Self {
+        let shown = command::filtering(commands, said, glyphs);
         let at = shown
             .iter()
             .position(|one| one.name == said)
@@ -1886,13 +1898,13 @@ fn local(editor: &Editor, chosen: bool) -> bool {
     if editor.projection().text() != editor.text() {
         return false;
     }
-    if command::wanted(source).is_none() {
-        return false;
-    }
 
     let word = source
         .split_once(char::is_whitespace)
         .map_or(source, |(word, _)| word);
+    if !command::shaped(word) {
+        return false;
+    }
     editor.projection().text().trim_start().starts_with(word)
 }
 
