@@ -23,7 +23,6 @@ rustix = { workspace = true, features = ["process"] }
 [[bin]]
 name = "crucible-sandbox-broker"
 path = "src/main.rs"
-test = false
 bench = false
 
 [lints]

@@ -95,6 +95,10 @@ impl Stage {
         self.retained = true;
     }
 
+    pub(super) fn retained(&self) -> bool {
+        self.retained
+    }
+
     /// Removes the complete stage and proves that its pathname is absent.
     ///
     /// Retained quarantine evidence deliberately fails cleanup instead of

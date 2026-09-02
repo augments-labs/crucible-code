@@ -605,15 +605,17 @@ pub(super) fn build(plan: Plan<'_>) -> Result<Command, SandboxError> {
         }
     }
 
-    process
-        .args(["--cap-drop", "ALL", "--clearenv"])
-        .args(["--setenv", "HOME", "/crucible-home"])
-        .args(["--setenv", "TMPDIR", "/tmp"]);
+    // The environment travels in the backend's own, already cleared, process
+    // environment, which it hands on unchanged to the command. It must not travel
+    // as arguments: a process's argument list is readable by every local user
+    // through /proc for as long as it runs, and this map can carry credentials.
+    process.args(["--cap-drop", "ALL"]);
     for (name, value) in command.environment().iter() {
         if !matches!(name, "HOME" | "TMPDIR" | "SSH_AUTH_SOCK" | "GPG_AGENT_INFO") {
-            process.arg("--setenv").arg(name).arg(value);
+            process.env(name, value);
         }
     }
+    process.env("HOME", "/crucible-home").env("TMPDIR", "/tmp");
     process
         .arg("--chdir")
         .arg(request.policy().working_directory())

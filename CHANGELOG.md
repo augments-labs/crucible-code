@@ -38,6 +38,9 @@ change in any release with no deprecation period.
   deliberately select documented `degraded` or `off` compatibility behavior;
   workspace configuration and descendants cannot weaken the user's effective
   requirement, and compatibility execution is always reported as unconfined.
+  There is no enforcing backend on macOS, Windows or FreeBSD, so a `bash`
+  command there fails before it starts until a home configuration selects
+  `degraded` or `off`.
 
 ## [0.33.0] - 2026-09-01
 

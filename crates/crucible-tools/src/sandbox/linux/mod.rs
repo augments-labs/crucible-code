@@ -64,9 +64,12 @@ pub(super) fn prepare(
         SandboxFactKind::Negotiated(Box::new(inspection.clone())),
     )?;
     let registry = transaction::RegistryLease::acquire(&request)?;
-    transaction::RegistryLease::reconcile(&registry).map_err(|_| {
+    transaction::RegistryLease::reconcile(&registry).map_err(|source| {
         SandboxError::BackendUnavailable {
-            reason: "stale sandbox lifecycle requires recovery or quarantine review".into(),
+            reason: format!(
+                "stale sandbox lifecycle requires recovery or quarantine review: {source}"
+            )
+            .into(),
         }
     })?;
     drop(registry);

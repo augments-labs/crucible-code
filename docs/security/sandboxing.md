@@ -15,6 +15,12 @@ choice is unavailable; it does not silently substitute a plain subprocess,
 Landlock, a container, or a worktree. If no system candidate satisfies the
 effective policy, preparation fails before materialization or spawn.
 
+Inside the namespace, PID 1 is Crucible's own `crucible-sandbox-broker`
+executable, found beside the Crucible binary and pinned by open descriptor
+before the namespace starts. It is accepted only when it and every directory
+above it belong to root or to the user running Crucible and cannot be written by
+any other user; a copy under `/tmp` or in another user's directory is ignored.
+
 The Linux view starts from an empty temporary root. It exposes only the minimal
 read-only runtime needed to execute the selected absolute program, the exact
 workspace/reached roots at their granted access, protected repository and
@@ -85,6 +91,12 @@ backend only when enforcement is unavailable. `off` selects compatibility
 directly. Both inspection and audit records say `confined: false`, name the
 degradation, and retain the exact compatibility capability snapshot.
 
+There is no enforcing backend on macOS, Windows or FreeBSD. Because the default
+is `required`, a `bash` command on those systems fails before it starts, and the
+failure names the remedy: a home configuration must set `sandbox.mode` to
+`degraded` or `off` before commands run there, and every command that then runs
+is reported as unconfined.
+
 Compatibility still clears and explicitly rebuilds the command environment,
 checks requested and transformed command guardrails, enforces command deadlines,
 captured-output and concurrency ceilings, supervises its owned process scope, records
@@ -100,7 +112,9 @@ The command environment is an explicit, bounded map rather than a copy of the
 host environment. Linux supplies only a private `HOME` and `TMPDIR` plus the
 literal variables selected by the host. SSH/GPG agent sockets, inherited
 descriptors, provider keys, cloud configuration and arbitrary host variables
-do not cross the boundary automatically.
+do not cross the boundary automatically. Values reach the command through the
+backend's cleared process environment, never through its argument list, which
+every local user can read under `/proc` while a command runs.
 
 A secret projection carries a bounded opaque credential handle and user/account
 provenance alongside the host-resolved value. Handles and values are redacted
@@ -155,8 +169,11 @@ Publication is decided by how the command ended:
   is not published. The delta is discarded rather than merged, and the result
   says so.
 
-Publication itself is transactional. The changed paths are staged beside the
-root, journaled in a checksummed write-ahead log, applied, and verified; a
+Publication itself is transactional. The changed paths are staged in this
+user's private sandbox state directory under `/var/tmp`, which no other user can
+read or enter, journaled in a checksummed write-ahead log, applied, and
+verified. A projected file larger than 8 GiB is refused rather than digested, so
+a sparse file cannot make publication read through the whole of it. A
 failure between those steps rolls the root back to its pinned baseline. Where a
 rollback cannot itself be proved, the staged content is retained as quarantine
 evidence and the cleanup outcome reports it, rather than deleting what cannot be

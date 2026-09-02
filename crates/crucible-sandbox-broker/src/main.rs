@@ -107,7 +107,7 @@ fn wait_or_cancel(child: &mut Child, channel: &mut File) -> std::io::Result<Opti
     let mut cancellation = [0_u8; CANCEL_FRAME.len()];
     let mut received = 0_usize;
     loop {
-        if let Some(status) = child.try_wait()? {
+        if let Some(status) = scope::reap_until_workload(child.id())? {
             return Ok(Some(status));
         }
         match channel.read(cancellation.get_mut(received..).ok_or_else(|| {

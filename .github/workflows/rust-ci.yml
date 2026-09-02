@@ -17,7 +17,21 @@ jobs:
         with:
           persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      # The enforcing sandbox tests skip themselves where Bubblewrap is missing,
+      # which on a runner would mean the kernel boundary is never exercised by
+      # this gate. Install it as the release smoke test does, and tell the
+      # tests that here a missing backend is a failure rather than a skip.
+      - name: bubblewrap, for the enforcing sandbox tests
+        env:
+          APT: -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15
+        run: |
+          sudo apt-get $APT update
+          sudo apt-get $APT install -y bubblewrap
+          bwrap --version
       - run: scripts/rust-checks.sh
+        env:
+          CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX: 1
       - uses: ./.github/actions/check-clean-worktree
 
   platforms:

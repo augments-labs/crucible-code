@@ -19,8 +19,7 @@ use crucible_core::{
     SandboxFilesystemAccess, SandboxId, SandboxInspection, SandboxInvocationMode, SandboxLifecycle,
     SandboxOutput, SandboxProcess, SandboxRequest, SandboxUsage, SandboxViolation,
 };
-use crucible_sandbox_broker::CANCEL_FRAME;
-use crucible_sandbox_broker::MAX_SCAN_EXTENTS;
+use crucible_sandbox_broker::{CANCEL_FRAME, MAX_SCAN_EXTENTS, MAX_SCAN_FILE_BYTES};
 use sha2::{Digest as _, Sha256};
 
 use super::super::process::Stage;
@@ -303,7 +302,16 @@ impl Projection {
         self.stage.retain();
     }
 
+    /// Removes the stage with its journal last.
+    ///
+    /// The journal stays open and locked here, so a concurrent reconcile
+    /// finds it busy and skips this stage until only the journal remains. The
+    /// other order leaves a journal-less stage full of roots for as long as
+    /// their removal takes, which a reconcile can only read as damage.
     pub(super) fn cleanup(&mut self) -> io::Result<()> {
+        if !self.stage.retained() {
+            transaction::clear_stage_before_journal(self.stage.root())?;
+        }
         self.stage.cleanup()
     }
 
@@ -395,27 +403,28 @@ fn descriptor_path(descriptor: RawFd) -> PathBuf {
     PathBuf::from(format!("/proc/self/fd/{descriptor}"))
 }
 
+/// The stage lives inside this user's private transaction state directory.
+///
+/// That directory is owner-only, so stale-stage reconciliation reads only
+/// entries this user created: a shared temporary directory would let any local
+/// user pad the scan with look-alike names. The state directory already refuses
+/// to overlap the requested filesystem view.
 fn staging_root(request: &SandboxRequest) -> Result<PathBuf, SandboxError> {
-    for base in [Path::new("/var/tmp"), Path::new("/tmp")] {
-        let Ok(canonical) = base.canonicalize() else {
-            continue;
-        };
-        if canonical != base {
-            continue;
+    Ok(transaction::state_directory(request)?.join(transaction::stage_name(request.id())))
+}
+
+/// Reads one directory's children in name order without buffering more of them
+/// than the entry bound still allows.
+fn bounded_children(path: &Path, retained: usize) -> io::Result<Vec<fs::DirEntry>> {
+    let mut children = Vec::new();
+    for child in fs::read_dir(path)? {
+        if retained.saturating_add(children.len()) >= MAX_PROJECTED_ENTRIES {
+            return Err(io::Error::other("projected tree exceeds its entry bound"));
         }
-        let candidate = base.join(format!("crucible-projection-{}", request.id()));
-        if request
-            .policy()
-            .filesystem()
-            .iter()
-            .all(|rule| !candidate.starts_with(rule.path()))
-        {
-            return Ok(candidate);
-        }
+        children.push(child?);
     }
-    Err(refused(
-        "no host-owned projection root is outside the sandbox filesystem view",
-    ))
+    children.sort_by_key(fs::DirEntry::file_name);
+    Ok(children)
 }
 
 fn snapshot_filtered(root: &Path, exclusions: &[PathBuf]) -> io::Result<Snapshot> {
@@ -463,6 +472,9 @@ impl SnapshotBuilder {
                 modified: metadata.modified().ok(),
             }
         } else if metadata.is_file() {
+            if metadata.len() > MAX_SCAN_FILE_BYTES {
+                return Err(io::Error::other("projected file exceeds its byte bound"));
+            }
             let linked_to = if metadata.nlink() > 1 {
                 let identity = (metadata.dev(), metadata.ino());
                 if let Some(first) = self.hard_links.get(&identity) {
@@ -493,8 +505,7 @@ impl SnapshotBuilder {
         self.entries.insert(relative.to_path_buf(), entry);
 
         if metadata.is_dir() {
-            let mut children = fs::read_dir(&path)?.collect::<Result<Vec<_>, _>>()?;
-            children.sort_by_key(fs::DirEntry::file_name);
+            let children = bounded_children(&path, self.retained)?;
             for child in children {
                 let name = child.file_name();
                 if protected_name(&name) {

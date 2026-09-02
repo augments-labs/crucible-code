@@ -14,8 +14,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crucible_sandbox_broker::{
     BROKER_FAILURE_STATUS, ENTRY_DIRECTORY, ENTRY_FILE, ENTRY_SYMLINK, MAX_SCAN_ENTRIES,
-    MAX_SCAN_EXTENTS, MAX_SCAN_PATH_BYTES, MAX_SCAN_ROOTS, MAX_SCAN_SYMLINK_BYTES, SCAN_END_FRAME,
-    SCAN_FRAME, WAIT_STATUS_BYTES, decode_wait_status,
+    MAX_SCAN_EXTENTS, MAX_SCAN_FILE_BYTES, MAX_SCAN_PATH_BYTES, MAX_SCAN_ROOTS,
+    MAX_SCAN_SYMLINK_BYTES, SCAN_END_FRAME, SCAN_FRAME, WAIT_STATUS_BYTES, decode_wait_status,
 };
 
 use super::{Entry, Snapshot, digest_file};
@@ -161,6 +161,9 @@ fn read_file(
 ) -> io::Result<Entry> {
     let (mode, modified) = read_metadata(stream)?;
     let length = read_u64(stream)?;
+    if length > MAX_SCAN_FILE_BYTES {
+        return Err(invalid("terminal file length exceeds its bound"));
+    }
     let mut digest = [0_u8; 32];
     stream.read_exact(&mut digest)?;
     let extents = read_extents(stream, length)?;
@@ -448,4 +451,27 @@ fn create_private_directory(path: &Path) -> io::Result<()> {
 
 fn invalid(problem: &'static str) -> io::Error {
     io::Error::other(problem)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_terminal_file_beyond_the_byte_bound_is_refused_before_its_extents() {
+        let (mut sender, mut receiver) = UnixStream::pair().expect("stream pair");
+        let mut frame = Vec::new();
+        frame.extend_from_slice(&0o644_u32.to_le_bytes());
+        frame.extend_from_slice(&0_i64.to_le_bytes());
+        frame.extend_from_slice(&0_u32.to_le_bytes());
+        frame.extend_from_slice(&(MAX_SCAN_FILE_BYTES + 1).to_le_bytes());
+        sender.write_all(&frame).expect("file header");
+        drop(sender);
+
+        let refused = read_file(&mut receiver, None, false).expect_err("an oversized file");
+        assert!(
+            refused.to_string().contains("length exceeds its bound"),
+            "unexpected refusal: {refused}"
+        );
+    }
 }

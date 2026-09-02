@@ -74,10 +74,22 @@ impl Bwrap {
                 "no suitable system Bubblewrap was found outside writable roots; bundled backend unavailable",
             ));
         }
-        first_verified(candidates, |path| Self::verify(path).ok()).ok_or_else(|| {
-            unavailable(
-                "discovered system Bubblewrap candidates failed provenance, feature, version, or namespace verification; bundled backend unavailable",
-            )
+        // The last candidate's verification failure is the reason worth
+        // reporting: a summary that names every possible cause explains none.
+        let mut last_failure = None;
+        first_verified(candidates, |path| match Self::verify(path) {
+            Ok(backend) => Some(backend),
+            Err(problem) => {
+                last_failure = Some(problem);
+                None
+            }
+        })
+        .ok_or_else(|| {
+            last_failure.unwrap_or_else(|| {
+                unavailable(
+                    "discovered system Bubblewrap candidates failed provenance, feature, version, or namespace verification; bundled backend unavailable",
+                )
+            })
         })
     }
 
@@ -206,24 +218,39 @@ fn parse_version(version: &str) -> Option<&str> {
 }
 
 fn trusted_parent_chain(path: &Path) -> bool {
-    trusted_parent_chain_with(path, |directory| {
-        let metadata = directory.symlink_metadata().ok()?;
-        Some((
-            metadata.is_dir(),
-            metadata.uid(),
-            metadata.permissions().mode(),
-        ))
-    })
+    trusted_parent_chain_owned_by(path, |uid, _, mode| uid == 0 && mode & 0o022 == 0)
+}
+
+/// Whether every directory above `path` satisfies `trusted`, given its owner,
+/// group and permission bits.
+pub(super) fn trusted_parent_chain_owned_by(
+    path: &Path,
+    trusted: impl Fn(u32, u32, u32) -> bool,
+) -> bool {
+    trusted_parent_chain_with(
+        path,
+        |directory| {
+            let metadata = directory.symlink_metadata().ok()?;
+            Some((
+                metadata.is_dir(),
+                metadata.uid(),
+                metadata.gid(),
+                metadata.permissions().mode(),
+            ))
+        },
+        trusted,
+    )
 }
 
 fn trusted_parent_chain_with(
     path: &Path,
-    mut inspect: impl FnMut(&Path) -> Option<(bool, u32, u32)>,
+    mut inspect: impl FnMut(&Path) -> Option<(bool, u32, u32, u32)>,
+    trusted: impl Fn(u32, u32, u32) -> bool,
 ) -> bool {
     path.parent().is_some_and(|parent| {
         parent.ancestors().all(|directory| {
-            inspect(directory).is_some_and(|(is_directory, uid, mode)| {
-                is_directory && uid == 0 && mode & 0o022 == 0
+            inspect(directory).is_some_and(|(is_directory, uid, gid, mode)| {
+                is_directory && trusted(uid, gid, mode)
             })
         })
     })
@@ -437,29 +464,46 @@ mod tests {
     #[test]
     fn every_backend_parent_must_be_a_root_owned_non_writable_directory() {
         let executable = Path::new("/usr/local/bin/bwrap");
-        assert!(trusted_parent_chain_with(executable, |_| Some((
-            true, 0, 0o755
-        ))));
-        assert!(!trusted_parent_chain_with(executable, |directory| {
-            Some((
-                true,
-                u32::from(directory == Path::new("/usr/local")) * 1000,
-                0o755,
-            ))
-        }));
-        assert!(!trusted_parent_chain_with(executable, |directory| {
-            Some((
-                true,
-                0,
-                if directory == Path::new("/usr/local") {
-                    0o775
-                } else {
-                    0o755
-                },
-            ))
-        }));
-        assert!(!trusted_parent_chain_with(executable, |directory| {
-            (directory != Path::new("/usr/local")).then_some((true, 0, 0o755))
-        }));
+        let root_only = |uid: u32, _: u32, mode: u32| uid == 0 && mode & 0o022 == 0;
+        let owner_of = |directory: &Path| u32::from(directory == Path::new("/usr/local")) * 1000;
+        assert!(trusted_parent_chain_with(
+            executable,
+            |_| Some((true, 0, 0, 0o755)),
+            root_only
+        ));
+        assert!(!trusted_parent_chain_with(
+            executable,
+            |directory| Some((true, owner_of(directory), 0, 0o755)),
+            root_only
+        ));
+        assert!(
+            trusted_parent_chain_with(
+                executable,
+                |directory| Some((true, owner_of(directory), 0, 0o755)),
+                |uid, _, mode| (uid == 0 || uid == 1000) && mode & 0o022 == 0
+            ),
+            "a chain owned by the trusted user was refused"
+        );
+        assert!(!trusted_parent_chain_with(
+            executable,
+            |directory| {
+                Some((
+                    true,
+                    0,
+                    0,
+                    if directory == Path::new("/usr/local") {
+                        0o775
+                    } else {
+                        0o755
+                    },
+                ))
+            },
+            root_only
+        ));
+        assert!(!trusted_parent_chain_with(
+            executable,
+            |directory| (directory != Path::new("/usr/local")).then_some((true, 0, 0, 0o755)),
+            root_only
+        ));
     }
 }

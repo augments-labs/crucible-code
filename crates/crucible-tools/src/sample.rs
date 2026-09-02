@@ -72,6 +72,30 @@ pub(crate) fn finalize_call_result(context: &ToolContext<'_>, output: &ToolOutpu
     pending.accept(receipt).expect("test result acceptance");
 }
 
+/// The variable a continuous-integration job sets so that a test needing the
+/// enforcing Linux backend fails when that backend is unavailable, instead of
+/// quietly passing over nothing.
+pub(crate) const REQUIRE_ENFORCING_SANDBOX: &str = "CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX";
+
+/// Whether a test that needs the enforcing backend has to stop here.
+///
+/// On a developer machine without a usable Bubblewrap the test is skipped, which
+/// is the honest answer for a boundary nobody can exercise there. Where the job
+/// has declared that the backend must exist, an unavailable backend is a failure
+/// naming the reason, so a suite that measured nothing cannot report green.
+pub(crate) fn skipped_without_enforcement(service: &crate::LocalSandbox) -> bool {
+    match crucible_core::SandboxService::probe(service) {
+        Ok(_) => false,
+        Err(problem) => {
+            assert!(
+                std::env::var_os(REQUIRE_ENFORCING_SANDBOX).is_none(),
+                "the enforcing sandbox backend is required by this job but unavailable: {problem}"
+            );
+            true
+        }
+    }
+}
+
 /// A direct-test context stopped by `cancel` and otherwise unwatched.
 pub(crate) fn cancelled_by(cancel: &Cancel) -> ToolContext<'static> {
     ToolContext::new(

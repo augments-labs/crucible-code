@@ -12,7 +12,7 @@ use crucible_core::{
 
 use super::background::{Background, MOST};
 use super::{Bash, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, environment};
-use crate::sample::{Sample, allowed};
+use crate::sample::{Sample, allowed, skipped_without_enforcement};
 
 fn compatibility(tool: Bash) -> Bash {
     tool.sandboxing(
@@ -784,7 +784,7 @@ fn a_command_the_developer_let_go_of_says_who_let_go_of_it() {
 #[test]
 fn linux_ctrl_b_uses_owned_durable_detachment_before_go() {
     let service = crate::LocalSandbox::new();
-    if service.probe().is_err() {
+    if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("bash-linux-detachable");

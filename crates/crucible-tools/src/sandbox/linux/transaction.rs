@@ -40,6 +40,16 @@ const MAX_WAL_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_STALE_TRANSACTIONS: usize = 128;
 const STAGE_PREFIX: &str = "crucible-projection-";
 const WRITABLE_LOCK: &str = "writable.lock";
+/// How long a nonblocking lock is retried when its holder cannot be a live owner.
+///
+/// A forked child carries a copy of its parent's descriptor table until it
+/// execs, and a lock stays held while any copy of its descriptor is open. So a
+/// lock the parent has already released can look held for the length of an
+/// unrelated spawn. That phantom holder is never a live owner: a journal whose
+/// recorded owner is dead, and a writable lease whose previous writer has let
+/// go, are retried across this budget before they are reported busy.
+const TRANSIENT_LOCK_RETRIES: u32 = 40;
+const TRANSIENT_LOCK_PAUSE: std::time::Duration = std::time::Duration::from_millis(5);
 const REGISTRY_LOCK: &str = "registry.lock";
 
 /// Whether the original call waits for the terminal result or receives one
@@ -442,7 +452,11 @@ fn recover_wal_at(directory: &File) -> io::Result<RecoveryProbe> {
     let file = File::from(descriptor);
     match rustix::fs::flock(&file, FlockOperation::NonBlockingLockExclusive) {
         Ok(()) => {}
-        Err(rustix::io::Errno::WOULDBLOCK) => return Ok(RecoveryProbe::Busy),
+        Err(rustix::io::Errno::WOULDBLOCK) => {
+            if !journal_owner_is_dead(directory) || !lock_after_transient_holder(&file)? {
+                return Ok(RecoveryProbe::Busy);
+            }
+        }
         Err(problem) => return Err(problem.into()),
     }
     let metadata = validate_journal(&file)?;
@@ -452,6 +466,43 @@ fn recover_wal_at(directory: &File) -> io::Result<RecoveryProbe> {
     recover_wal_file(file)
         .map(Box::new)
         .map(RecoveryProbe::Recovered)
+}
+
+/// Whether a locked journal's recorded owner is dead, read without the lock.
+///
+/// A live owner may be appending, so a journal that is empty, torn or otherwise
+/// unreadable is treated as live: the lock is then respected and the journal is
+/// left for a later reconcile. The read-only descriptor is what keeps a torn
+/// tail from being repaired here, before the lock is held.
+fn journal_owner_is_dead(directory: &File) -> bool {
+    let Ok(descriptor) = rustix::fs::openat(
+        directory,
+        "transaction.wal",
+        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    ) else {
+        return false;
+    };
+    match recover_wal_file(File::from(descriptor)) {
+        Ok(recovered) => recovered.frame.owner.owner_is_dead().unwrap_or(false),
+        Err(_) => false,
+    }
+}
+
+/// Retries a nonblocking exclusive lock across the transient-holder budget.
+///
+/// Returns whether the lock was taken; a holder that outlives the budget is a
+/// real one.
+fn lock_after_transient_holder(lock: &File) -> io::Result<bool> {
+    for _ in 0..TRANSIENT_LOCK_RETRIES {
+        std::thread::sleep(TRANSIENT_LOCK_PAUSE);
+        match rustix::fs::flock(lock, FlockOperation::NonBlockingLockExclusive) {
+            Ok(()) => return Ok(true),
+            Err(rustix::io::Errno::WOULDBLOCK) => {}
+            Err(problem) => return Err(problem.into()),
+        }
+    }
+    Ok(false)
 }
 
 fn validate_journal(file: &File) -> io::Result<fs::Metadata> {
@@ -1023,6 +1074,18 @@ pub(super) struct Lease {
     test_serial: Option<TestSerialLease>,
 }
 
+#[cfg(test)]
+impl Lease {
+    /// The held lock descriptor, for tests that lend it to another process.
+    #[expect(
+        clippy::used_underscore_binding,
+        reason = "the lease holds the descriptor only for its flock; a test borrows it to lend"
+    )]
+    pub(super) fn lock(&self) -> &File {
+        &self._lock
+    }
+}
+
 impl Lease {
     pub(super) fn acquire(request: &SandboxRequest) -> Result<Option<Self>, SandboxError> {
         let writable = request
@@ -1066,7 +1129,11 @@ impl Lease {
         create_state_directory(path)?;
         let state = open_state_directory(path)?;
         let lock = open_lock(&state, WRITABLE_LOCK)?;
-        rustix::fs::flock(&lock, FlockOperation::NonBlockingLockExclusive)?;
+        match rustix::fs::flock(&lock, FlockOperation::NonBlockingLockExclusive) {
+            Ok(()) => {}
+            Err(rustix::io::Errno::WOULDBLOCK) if lock_after_transient_holder(&lock)? => {}
+            Err(problem) => return Err(problem.into()),
+        }
         validate_state(path, &state)?;
         validate_lock(path, WRITABLE_LOCK, &lock)?;
         Ok(Self {
@@ -1159,7 +1226,10 @@ fn open_state_directory(path: &Path) -> io::Result<File> {
         || metadata.gid() != rustix::process::getgid().as_raw()
         || metadata.mode() & 0o7777 != 0o700
     {
-        return Err(invalid("sandbox state directory authority is invalid"));
+        return Err(io::Error::other(format!(
+            "sandbox state directory {} is not this user's private directory",
+            path.display()
+        )));
     }
     state.sync_all()?;
     Ok(state)
@@ -1227,13 +1297,52 @@ fn validate_lock(state_path: &Path, name: &str, lock: &File) -> io::Result<()> {
     Ok(())
 }
 
+/// Reconciles every stale stage of this user, which all live in the private
+/// state directory the registry lease has already validated.
 pub(super) fn reconcile_host_transactions() -> io::Result<()> {
-    for base in [Path::new("/var/tmp"), Path::new("/tmp")] {
-        let Ok(canonical) = base.canonicalize() else {
+    let Ok(state) = state_base() else {
+        return Ok(());
+    };
+    reconcile_stale_transactions(&state)
+}
+
+/// The stage directory name of one transaction.
+pub(super) fn stage_name(sandbox: SandboxId) -> String {
+    format!("{STAGE_PREFIX}{sandbox}")
+}
+
+/// Where the stage of `sandbox` lives, before any overlap check against a
+/// request.
+#[cfg(test)]
+pub(super) fn stage_root(sandbox: SandboxId) -> Result<PathBuf, SandboxError> {
+    Ok(state_base()?.join(stage_name(sandbox)))
+}
+
+/// Removes everything in a finished stage except its journal.
+///
+/// The owner calls this while its journal is still open and locked, then
+/// removes the remainder. A reconcile that meets the stage part-way therefore
+/// finds a busy journal, or a bare journal, never roots without one.
+pub(super) fn clear_stage_before_journal(root: &Path) -> io::Result<()> {
+    let entries = match fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(problem) if problem.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(problem) => return Err(problem),
+    };
+    for entry in entries {
+        let entry = entry?;
+        if entry.file_name() == "transaction.wal" {
             continue;
+        }
+        let removal = if entry.file_type()?.is_dir() {
+            fs::remove_dir_all(entry.path())
+        } else {
+            fs::remove_file(entry.path())
         };
-        if canonical == base {
-            reconcile_stale_transactions(base)?;
+        match removal {
+            Ok(()) => {}
+            Err(problem) if problem.kind() == io::ErrorKind::NotFound => {}
+            Err(problem) => return Err(problem),
         }
     }
     Ok(())
@@ -1241,7 +1350,12 @@ pub(super) fn reconcile_host_transactions() -> io::Result<()> {
 
 fn reconcile_stale_transactions(base: &Path) -> io::Result<()> {
     let mut candidates = Vec::new();
-    for entry in fs::read_dir(base)? {
+    let entries = match fs::read_dir(base) {
+        Ok(entries) => entries,
+        Err(problem) if problem.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(problem) => return Err(problem),
+    };
+    for entry in entries {
         let entry = entry?;
         if !entry
             .file_name()
@@ -1268,6 +1382,23 @@ fn reconcile_stale_transactions(base: &Path) -> io::Result<()> {
     candidates.sort();
     let mut removed = false;
     for candidate in candidates {
+        removed |= reconcile_candidate(&candidate).map_err(|source| {
+            io::Error::new(source.kind(), format!("{}: {source}", candidate.display()))
+        })?;
+    }
+    if removed {
+        File::open(base)?.sync_all()?;
+    }
+    Ok(())
+}
+
+/// Settles one stale stage and reports whether it was removed.
+///
+/// A stage whose owner is alive, or whose journal another process holds, is
+/// left alone; a terminal or dead one is completed and removed; an ambiguous
+/// one is quarantined and reported as an error that names the stage.
+fn reconcile_candidate(candidate: &Path) -> io::Result<bool> {
+    {
         let name = candidate
             .file_name()
             .and_then(|name| name.to_str())
@@ -1279,9 +1410,9 @@ fn reconcile_stale_transactions(base: &Path) -> io::Result<()> {
                 SandboxId::parse(identity)
                     .map_err(|_| invalid("stale sandbox transaction identity is invalid"))
             })?;
-        let named = match fs::symlink_metadata(&candidate) {
+        let named = match fs::symlink_metadata(candidate) {
             Ok(named) => named,
-            Err(problem) if problem.kind() == io::ErrorKind::NotFound => continue,
+            Err(problem) if problem.kind() == io::ErrorKind::NotFound => return Ok(false),
             Err(problem) => return Err(problem),
         };
         if !named.is_dir()
@@ -1292,12 +1423,12 @@ fn reconcile_stale_transactions(base: &Path) -> io::Result<()> {
             return Err(invalid("stale sandbox transaction authority is invalid"));
         }
         let descriptor = match rustix::fs::open(
-            &candidate,
+            candidate,
             OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
             Mode::empty(),
         ) {
             Ok(descriptor) => descriptor,
-            Err(rustix::io::Errno::NOENT) => continue,
+            Err(rustix::io::Errno::NOENT) => return Ok(false),
             Err(problem) => return Err(problem.into()),
         };
         let directory = File::from(descriptor);
@@ -1306,14 +1437,12 @@ fn reconcile_stale_transactions(base: &Path) -> io::Result<()> {
             return Err(invalid("stale sandbox transaction identity changed"));
         }
         let mut recovered = match recover_wal_at(&directory)? {
-            RecoveryProbe::Busy => continue,
+            RecoveryProbe::Busy => return Ok(false),
             RecoveryProbe::Missing => {
-                removed |= remove_uninitialized(&candidate, directory, &named, None)?;
-                continue;
+                return remove_uninitialized(candidate, directory, &named, None);
             }
             RecoveryProbe::Empty(journal) => {
-                removed |= remove_uninitialized(&candidate, directory, &named, Some(journal))?;
-                continue;
+                return remove_uninitialized(candidate, directory, &named, Some(journal));
             }
             RecoveryProbe::Recovered(recovered) => *recovered,
         };
@@ -1321,10 +1450,10 @@ fn reconcile_stale_transactions(base: &Path) -> io::Result<()> {
             return Err(invalid("stale sandbox journal names another transaction"));
         }
         if !recovered.machine.is_terminal() && !recovered.frame.owner.owner_is_dead()? {
-            continue;
+            return Ok(false);
         }
         if !recovered.machine.is_terminal() {
-            recover_stale_transaction(&candidate, &mut recovered)?;
+            recover_stale_transaction(candidate, &mut recovered)?;
         }
         if !matches!(
             recovered.machine.terminal(),
@@ -1336,12 +1465,8 @@ fn reconcile_stale_transactions(base: &Path) -> io::Result<()> {
         }
         drop(recovered);
         drop(directory);
-        removed |= remove_candidate(&candidate, &named)?;
+        remove_candidate(candidate, &named)
     }
-    if removed {
-        File::open(base)?.sync_all()?;
-    }
-    Ok(())
 }
 
 fn remove_uninitialized(
@@ -1511,17 +1636,25 @@ fn discard_recovered_staging(candidate: &Path, recovered: &mut Recovered) -> io:
     }
 }
 
-fn state_directory(request: &SandboxRequest) -> Result<PathBuf, SandboxError> {
+/// This user's private transaction state directory, which also holds every
+/// writable projection stage.
+fn state_base() -> Result<PathBuf, SandboxError> {
     let base = Path::new("/var/tmp");
     if base.canonicalize().ok().as_deref() != Some(base) {
         return Err(SandboxError::BackendUnavailable {
             reason: "canonical host transaction state base is unavailable".into(),
         });
     }
-    let state = base.join(format!(
+    Ok(base.join(format!(
         "crucible-code-sandbox-{}-v1",
         rustix::process::getuid().as_raw()
-    ));
+    )))
+}
+
+/// The state directory for `request`, refused when it overlaps the requested
+/// filesystem view.
+pub(super) fn state_directory(request: &SandboxRequest) -> Result<PathBuf, SandboxError> {
+    let state = state_base()?;
     let overlaps_policy = request
         .policy()
         .filesystem()

@@ -687,3 +687,73 @@ fn create_private_test_directory(path: &Path) {
     builder.mode(0o700);
     builder.create(path).expect("private directory");
 }
+
+#[test]
+fn a_stale_journal_lock_lent_to_a_departing_child_is_recovered_not_skipped() {
+    let sample = crate::sample::Sample::new("sandbox-lent-journal-lock");
+    let base = sample.root().join("recovery");
+    create_private_test_directory(&base);
+    let stage = stale_journal_with(&sample, &base, dead_owner(), &[Record::Prepared]);
+    let journal = File::options()
+        .read(true)
+        .write(true)
+        .open(stage.join("transaction.wal"))
+        .expect("stale journal");
+    rustix::fs::flock(&journal, FlockOperation::NonBlockingLockExclusive).expect("journal lock");
+    let mut child = lend_to_departing_child(&journal);
+    drop(journal);
+
+    reconcile_stale_transactions(&base).expect("pre-release recovery");
+    assert!(
+        !stage.exists(),
+        "a stale journal whose lock only a departing child still holds was skipped"
+    );
+    child.wait().expect("departing child");
+}
+
+#[test]
+fn a_writable_lease_lent_to_a_departing_child_does_not_refuse_the_next_writer() {
+    let sample = crate::sample::Sample::new("sandbox-lent-writable-lease");
+    let state = sample.root().join("state");
+    let first = Lease::acquire_at(&state).expect("first lease");
+    let mut child = lend_to_departing_child(first.lock());
+    drop(first);
+
+    Lease::acquire_at(&state).expect("lease once only a departing child holds the old one");
+    child.wait().expect("departing child");
+}
+
+/// Hands a copy of `held` to a child that keeps it open briefly, as a forked
+/// child does between `fork` and `exec` while it still carries the parent's
+/// descriptor table.
+fn lend_to_departing_child(held: &File) -> std::process::Child {
+    let copy = held.try_clone().expect("descriptor copy");
+    std::process::Command::new("sleep")
+        .arg("0.05")
+        .stdin(std::process::Stdio::from(copy))
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("departing child")
+}
+
+#[test]
+fn clearing_a_stage_before_its_journal_leaves_only_the_journal() {
+    let sample = crate::sample::Sample::new("sandbox-clear-stage-before-journal");
+    let stage = sample.root().join("stage");
+    fs::create_dir_all(stage.join("roots/0/nested")).expect("stage roots");
+    fs::write(stage.join("roots/0/nested/file"), b"written").expect("stage file");
+    fs::write(stage.join("payloads"), b"loose").expect("stage payload");
+    fs::write(stage.join("transaction.wal"), b"journal").expect("stage journal");
+
+    clear_stage_before_journal(&stage).expect("stage cleared");
+
+    let remaining: Vec<_> = fs::read_dir(&stage)
+        .expect("stage remains")
+        .map(|entry| entry.expect("entry").file_name())
+        .collect();
+    assert_eq!(remaining, ["transaction.wal"]);
+
+    clear_stage_before_journal(&sample.root().join("absent"))
+        .expect("an absent stage is already clear");
+}

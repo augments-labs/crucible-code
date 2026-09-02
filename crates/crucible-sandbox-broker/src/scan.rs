@@ -10,7 +10,8 @@ use std::path::{Path, PathBuf};
 
 use crucible_sandbox_broker::{
     ENTRY_DIRECTORY, ENTRY_FILE, ENTRY_SYMLINK, MAX_SCAN_ENTRIES, MAX_SCAN_EXTENTS,
-    MAX_SCAN_PATH_BYTES, MAX_SCAN_ROOTS, MAX_SCAN_SYMLINK_BYTES, SCAN_END_FRAME, SCAN_FRAME,
+    MAX_SCAN_FILE_BYTES, MAX_SCAN_PATH_BYTES, MAX_SCAN_ROOTS, MAX_SCAN_SYMLINK_BYTES,
+    SCAN_END_FRAME, SCAN_FRAME,
 };
 use sha2::{Digest as _, Sha256};
 
@@ -270,6 +271,9 @@ impl Builder {
                 mtime_nanoseconds: nanoseconds,
             }
         } else if metadata.is_file() {
+            if metadata.len() > MAX_SCAN_FILE_BYTES {
+                return Err(invalid("projected file exceeds its byte bound"));
+            }
             let identity = (metadata.dev(), metadata.ino());
             let linked_to = if metadata.nlink() > 1 {
                 let group = self
@@ -313,8 +317,7 @@ impl Builder {
         }
 
         if metadata.is_dir() {
-            let mut children = fs::read_dir(&path)?.collect::<Result<Vec<_>, _>>()?;
-            children.sort_by_key(fs::DirEntry::file_name);
+            let children = bounded_children(&path, self.retained, MAX_SCAN_ENTRIES)?;
             for child in children {
                 let name = child.file_name();
                 if protected_name(&name) {
@@ -452,6 +455,21 @@ fn extent_bytes(extents: &[(u64, u64)]) -> io::Result<u64> {
             .checked_add(*length)
             .ok_or_else(|| invalid("file extent bytes overflow"))
     })
+}
+
+/// Reads one directory's children in name order without buffering more of them
+/// than the entry bound still allows: a workload chooses how many names one
+/// directory holds, and the bound must apply before they are all in memory.
+fn bounded_children(path: &Path, retained: usize, bound: usize) -> io::Result<Vec<fs::DirEntry>> {
+    let mut children = Vec::new();
+    for child in fs::read_dir(path)? {
+        if retained.saturating_add(children.len()) >= bound {
+            return Err(invalid("projected tree exceeds its entry bound"));
+        }
+        children.push(child?);
+    }
+    children.sort_by_key(fs::DirEntry::file_name);
+    Ok(children)
 }
 
 fn digest_file(path: &Path) -> io::Result<[u8; 32]> {
@@ -628,4 +646,29 @@ fn reserved_name(name: &OsStr) -> bool {
 
 fn invalid(problem: &'static str) -> io::Error {
     io::Error::other(problem)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_file_beyond_the_byte_bound_is_refused_before_it_is_digested() {
+        let root =
+            std::env::temp_dir().join(format!("crucible-scan-byte-bound-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("scan root");
+        let sparse = fs::File::create(root.join("sparse.bin")).expect("sparse fixture");
+        sparse
+            .set_len(MAX_SCAN_FILE_BYTES + 1)
+            .expect("a sparse file beyond the bound");
+        drop(sparse);
+
+        let refused = scan(&root, &[]).expect_err("an oversized file was scanned");
+        assert!(
+            refused.to_string().contains("byte bound"),
+            "unexpected refusal: {refused}"
+        );
+        fs::remove_dir_all(&root).expect("fixture removed");
+    }
 }

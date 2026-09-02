@@ -22,7 +22,7 @@ use crucible_core::{
 };
 
 use crate::LocalSandbox;
-use crate::sample::{Sample, symlink};
+use crate::sample::{Sample, skipped_without_enforcement, symlink};
 
 fn request(sample: &Sample, manifest: SandboxManifest) -> SandboxRequest {
     SandboxRequest::new(
@@ -106,7 +106,7 @@ fn wait_for_marker(
 #[test]
 fn inline_manifest_files_are_committed_before_the_command_starts() {
     let service = LocalSandbox::new();
-    if service.probe().is_err() {
+    if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-manifest-file");
@@ -134,7 +134,7 @@ fn inline_manifest_files_are_committed_before_the_command_starts() {
 #[test]
 fn explicit_read_only_mounts_are_descriptor_backed() {
     let service = LocalSandbox::new();
-    if service.probe().is_err() {
+    if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-manifest-read-only-mount");
@@ -167,7 +167,7 @@ fn explicit_read_only_mounts_are_descriptor_backed() {
 #[test]
 fn explicit_writable_directory_mounts_preserve_parent_authority() {
     let service = LocalSandbox::new();
-    if service.probe().is_err() {
+    if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-manifest-writable-mount");
@@ -203,7 +203,7 @@ fn explicit_writable_directory_mounts_preserve_parent_authority() {
 #[test]
 fn writable_effects_stay_private_until_terminal_publication() {
     let service = LocalSandbox::new();
-    if service.probe().is_err() {
+    if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-private-writes");
@@ -254,22 +254,18 @@ fn staging_a_writable_directory_does_not_copy_its_file_contents() {
     session.materialize().expect("materialized workspace");
 
     let launch = session.stage(command("exit 0")).expect("staged launch");
-    for base in ["/tmp", "/var/tmp"] {
-        assert!(
-            !PathBuf::from(base)
-                .join(format!("crucible-projection-{sandbox}"))
-                .join("roots/0/large-sparse.bin")
-                .exists(),
-            "directory projection copied file contents before GO"
-        );
-    }
+    let stage = super::transaction::stage_root(sandbox).expect("stage location");
+    assert!(
+        !stage.join("roots/0/large-sparse.bin").exists(),
+        "directory projection copied file contents before GO"
+    );
     drop(launch);
 }
 
 #[test]
 fn cancellation_discards_private_workspace_effects() {
     let service = LocalSandbox::new();
-    if service.probe().is_err() {
+    if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-cancelled-writes");
@@ -313,7 +309,7 @@ fn cancellation_discards_private_workspace_effects() {
 #[test]
 fn signal_terminated_leader_discards_private_workspace_effects() {
     let service = LocalSandbox::new();
-    if service.probe().is_err() {
+    if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-signalled-writes");
@@ -339,7 +335,7 @@ fn signal_terminated_leader_discards_private_workspace_effects() {
 #[test]
 fn ordinary_nonzero_exit_publishes_valid_workspace_effects() {
     let service = LocalSandbox::new();
-    if service.probe().is_err() {
+    if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-nonzero-writes");
@@ -363,7 +359,7 @@ fn ordinary_nonzero_exit_publishes_valid_workspace_effects() {
 #[test]
 fn ordinary_high_nonzero_exit_is_not_confused_with_signal_termination() {
     let service = LocalSandbox::new();
-    if service.probe().is_err() {
+    if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-high-nonzero-writes");
@@ -387,7 +383,7 @@ fn ordinary_high_nonzero_exit_is_not_confused_with_signal_termination() {
 #[test]
 fn create_update_delete_rename_and_mode_publish_as_one_terminal_delta() {
     let service = LocalSandbox::new();
-    if service.probe().is_err() {
+    if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-terminal-delta");
@@ -457,7 +453,7 @@ fn create_update_delete_rename_and_mode_publish_as_one_terminal_delta() {
 #[test]
 fn unsupported_terminal_metadata_refuses_the_complete_private_delta() {
     let service = LocalSandbox::new();
-    if service.probe().is_err() {
+    if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-terminal-metadata-refusal");
@@ -506,7 +502,7 @@ fn unsupported_terminal_metadata_refuses_the_complete_private_delta() {
 #[test]
 fn an_external_baseline_conflict_publishes_none_of_the_private_delta() {
     let service = LocalSandbox::new();
-    if service.probe().is_err() {
+    if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-publication-conflict");
@@ -551,7 +547,7 @@ fn an_external_baseline_conflict_publishes_none_of_the_private_delta() {
 #[test]
 fn complete_workspace_hardlink_groups_keep_one_projected_inode() {
     let service = LocalSandbox::new();
-    if service.probe().is_err() {
+    if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-hardlink-group");
@@ -582,7 +578,7 @@ fn complete_workspace_hardlink_groups_keep_one_projected_inode() {
 #[test]
 fn a_new_sparse_file_keeps_its_holes_after_terminal_publication() {
     let service = LocalSandbox::new();
-    if service.probe().is_err() {
+    if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-sparse-publication");
@@ -612,7 +608,7 @@ fn a_new_sparse_file_keeps_its_holes_after_terminal_publication() {
 #[test]
 fn dropping_a_staged_launch_refuses_it_before_go_and_completes_cleanup() {
     let service = LocalSandbox::new();
-    if service.probe().is_err() {
+    if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-pre-release-refusal");
@@ -663,7 +659,7 @@ fn dropping_a_staged_launch_refuses_it_before_go_and_completes_cleanup() {
 #[test]
 fn background_ownership_precedes_release_and_command_start() {
     let service = LocalSandbox::new();
-    if service.probe().is_err() {
+    if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-background-owner-order");
@@ -716,7 +712,7 @@ fn background_ownership_precedes_release_and_command_start() {
 #[test]
 fn read_only_background_commands_have_a_durable_lifecycle() {
     let service = LocalSandbox::new();
-    if service.probe().is_err() {
+    if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-read-only-background-lifecycle");
@@ -768,7 +764,7 @@ fn read_only_background_commands_have_a_durable_lifecycle() {
 #[test]
 fn background_release_without_an_application_owner_is_refused_before_go() {
     let service = LocalSandbox::new();
-    if service.probe().is_err() {
+    if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-background-owner-required");
@@ -804,7 +800,7 @@ fn background_release_without_an_application_owner_is_refused_before_go() {
 #[test]
 fn writable_transactions_are_globally_serialized_across_disjoint_roots() {
     let service = LocalSandbox::new();
-    if service.probe().is_err() {
+    if skipped_without_enforcement(&service) {
         return;
     }
     let first = Sample::new("sandbox-global-writer-first");
@@ -826,7 +822,7 @@ fn writable_transactions_are_globally_serialized_across_disjoint_roots() {
 #[test]
 fn read_only_mounts_cannot_be_mutated() {
     let service = LocalSandbox::new();
-    if service.probe().is_err() {
+    if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-manifest-read-only-refusal");
@@ -861,7 +857,7 @@ fn read_only_mounts_cannot_be_mutated() {
 #[test]
 fn replacing_a_writable_file_after_stage_cannot_retarget_publication() {
     let service = LocalSandbox::new();
-    if service.probe().is_err() {
+    if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-writable-file-authority");
@@ -927,7 +923,7 @@ fn replacing_a_writable_file_after_stage_cannot_retarget_publication() {
 #[test]
 fn a_replaced_mount_source_cannot_retarget_the_prepared_descriptor() {
     let service = LocalSandbox::new();
-    if service.probe().is_err() {
+    if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-manifest-source-replacement");
@@ -964,7 +960,7 @@ fn a_replaced_mount_source_cannot_retarget_the_prepared_descriptor() {
 #[test]
 fn mount_source_descriptors_do_not_reach_the_untrusted_command() {
     let service = LocalSandbox::new();
-    if service.probe().is_err() {
+    if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-manifest-descriptor-closure");
@@ -998,7 +994,7 @@ fn mount_source_descriptors_do_not_reach_the_untrusted_command() {
 #[test]
 fn replacing_a_workspace_root_after_prepare_cannot_retarget_it() {
     let service = LocalSandbox::new();
-    if service.probe().is_err() {
+    if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-workspace-source-replacement");
@@ -1042,7 +1038,7 @@ fn replacing_a_workspace_root_after_prepare_cannot_retarget_it() {
 #[test]
 fn workspace_symlinks_cannot_escape_the_mounted_view() {
     let service = LocalSandbox::new();
-    if service.probe().is_err() {
+    if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-workspace-symlink-escape");
@@ -1066,7 +1062,7 @@ fn workspace_symlinks_cannot_escape_the_mounted_view() {
 #[test]
 fn nested_repository_and_crucible_metadata_stay_read_only_beneath_a_writable_root() {
     let service = LocalSandbox::new();
-    if service.probe().is_err() {
+    if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-nested-protected-metadata");
@@ -1109,7 +1105,7 @@ fn nested_repository_and_crucible_metadata_stay_read_only_beneath_a_writable_roo
 #[test]
 fn unreadable_rules_mask_only_the_selected_path() {
     let service = LocalSandbox::new();
-    if service.probe().is_err() {
+    if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-unreadable-path");
@@ -1165,7 +1161,7 @@ fn unreadable_rules_mask_only_the_selected_path() {
 #[test]
 fn unreadable_patterns_expand_deterministically_without_hiding_siblings() {
     let service = LocalSandbox::new();
-    if service.probe().is_err() {
+    if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-unreadable-patterns");
@@ -1213,7 +1209,7 @@ fn unreadable_patterns_expand_deterministically_without_hiding_siblings() {
 #[test]
 fn exact_network_requests_fail_before_materialization_or_spawn() {
     let service = LocalSandbox::new();
-    if service.probe().is_err() {
+    if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-network-allowlist-refusal");
@@ -1254,7 +1250,7 @@ fn exact_network_requests_fail_before_materialization_or_spawn() {
 #[test]
 fn closed_network_cannot_reach_host_loopback_unix_sockets_dns_or_metadata() {
     let service = LocalSandbox::new();
-    if service.probe().is_err() {
+    if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-network-closed");
@@ -1335,7 +1331,7 @@ finally:
 #[test]
 fn ungranted_sibling_home_and_credential_paths_are_unreachable() {
     let service = LocalSandbox::new();
-    if service.probe().is_err() {
+    if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-ungranted-paths");
@@ -1409,7 +1405,7 @@ for hidden in (".ssh", ".gnupg", ".config", ".crucible", ".aws"):
 #[test]
 fn arbitrary_inheritable_host_descriptors_do_not_reach_the_command() {
     let service = LocalSandbox::new();
-    if service.probe().is_err() {
+    if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-inherited-descriptor");
@@ -1446,10 +1442,15 @@ fn arbitrary_inheritable_host_descriptors_do_not_reach_the_command() {
 #[test]
 fn explicit_credential_projection_reaches_only_its_named_environment_slot() {
     let service = LocalSandbox::new();
-    if service.probe().is_err() {
+    if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-credential-projection");
+    // The expected value reaches the script through a file, never through its
+    // text, so the only place the canary can appear on the host is a leak.
+    let canary = "credential-value-canary";
+    std::fs::write(sample.root().join("expected-token"), canary).expect("expected token");
+    let marker = format!("crucible-credential-projection-{}", std::process::id());
     let credential = SandboxCredentialProjection::new(
         SandboxCredentialHandle::new(
             "provider/openai/test-account",
@@ -1457,7 +1458,7 @@ fn explicit_credential_projection_reaches_only_its_named_environment_slot() {
         )
         .expect("credential handle"),
         "SANDBOX_TOKEN",
-        "credential-value-canary",
+        canary,
     )
     .expect("credential projection");
     let environment =
@@ -1467,24 +1468,42 @@ fn explicit_credential_projection_reaches_only_its_named_environment_slot() {
         "/bin/sh",
         [
             OsString::from("-c"),
-            OsString::from(
-                "test \"$SANDBOX_TOKEN\" = credential-value-canary && \
-                 test -z \"${SSH_AUTH_SOCK+x}\" && test \"$HOME\" = /crucible-home",
-            ),
+            OsString::from(format!(
+                "test \"$SANDBOX_TOKEN\" = \"$(cat expected-token)\" && \
+                 test -z \"${{SSH_AUTH_SOCK+x}}\" && test \"$HOME\" = /crucible-home && \
+                 : {marker} && sleep 1"
+            )),
         ],
         environment,
     )
     .expect("command");
     let shown = format!("{command:?}");
-    assert!(!shown.contains("credential-value-canary"), "{shown}");
+    assert!(!shown.contains(canary), "{shown}");
     assert!(!shown.contains("provider/openai/test-account"), "{shown}");
 
     let mut session = service
         .prepare(request(&sample, SandboxManifest::empty()))
         .expect("prepared sandbox");
     session.materialize().expect("materialized workspace");
-    let (status, _, errors) = finish(session.start(command).expect("started command"));
+    let process = session.start(command).expect("started command");
 
+    // Every process's command line is world-readable under /proc, so a value
+    // that is projected as an argument of the backend is a value any local
+    // user can read for as long as the command runs.
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while live_processes_with_marker(&marker).is_empty() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        !live_processes_with_marker(&marker).is_empty(),
+        "the confined command did not start"
+    );
+    assert!(
+        live_processes_with_marker(canary).is_empty(),
+        "a projected credential value is readable on a host command line"
+    );
+
+    let (status, _, errors) = finish(process);
     assert!(
         status.success(),
         "{status}: {}",
@@ -1495,7 +1514,7 @@ fn explicit_credential_projection_reaches_only_its_named_environment_slot() {
 #[test]
 fn proc_devices_capabilities_and_nested_user_namespaces_are_minimal() {
     let service = LocalSandbox::new();
-    if service.probe().is_err() {
+    if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-kernel-surface");
@@ -1524,7 +1543,7 @@ fn proc_devices_capabilities_and_nested_user_namespaces_are_minimal() {
 #[test]
 fn command_deadline_kills_the_complete_bubblewrap_process_tree() {
     let service = LocalSandbox::new();
-    if service.probe().is_err() {
+    if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-deadline-process-tree");
@@ -1596,7 +1615,7 @@ fn command_deadline_kills_the_complete_bubblewrap_process_tree() {
 #[test]
 fn requested_open_file_limit_is_hard_before_workload_exec() {
     let service = LocalSandbox::new();
-    if service.probe().is_err() {
+    if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-open-file-limit");
@@ -1635,7 +1654,7 @@ fn requested_open_file_limit_is_hard_before_workload_exec() {
 #[test]
 fn requested_address_space_limit_is_hard_before_workload_exec() {
     let service = LocalSandbox::new();
-    if service.probe().is_err() {
+    if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-address-space-limit");
@@ -1674,7 +1693,7 @@ fn requested_address_space_limit_is_hard_before_workload_exec() {
 #[test]
 fn requested_cpu_limit_terminates_the_workload_scope() {
     let service = LocalSandbox::new();
-    if service.probe().is_err() {
+    if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-cpu-limit");
@@ -1770,7 +1789,7 @@ fn sandbox_crash_helper_process() {
 #[test]
 fn abrupt_host_loss_kills_the_scope_and_the_next_prepare_reconciles_its_wal() {
     let service = LocalSandbox::new();
-    if service.probe().is_err() {
+    if skipped_without_enforcement(&service) {
         return;
     }
     let _serial = super::transaction::TestSerialLease::acquire()
@@ -1779,7 +1798,7 @@ fn abrupt_host_loss_kills_the_scope_and_the_next_prepare_reconciles_its_wal() {
     let sandbox = SandboxId::new();
     let marker = format!("crucible-host-loss-{sandbox}");
     let ready = sample.root().join("host-loss-accepted");
-    let stage = PathBuf::from(format!("/var/tmp/crucible-projection-{sandbox}"));
+    let stage = super::transaction::stage_root(sandbox).expect("stage location");
     let executable = std::env::current_exe().expect("test executable");
     let mut helper = Command::new(executable)
         .args([

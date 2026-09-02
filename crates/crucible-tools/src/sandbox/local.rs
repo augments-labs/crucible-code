@@ -109,7 +109,9 @@ fn enforcing(
     {
         let _ = (request, active);
         Err(SandboxError::BackendUnavailable {
-            reason: "required confinement is unsupported on this operating system".into(),
+            reason: "required confinement is unsupported on this operating system; a home \
+                     configuration may set sandbox.mode = \"degraded\" to run commands unconfined"
+                .into(),
         })
     }
 }

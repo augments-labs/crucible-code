@@ -48,6 +48,13 @@ pub const MAX_SCAN_SYMLINK_BYTES: usize = 16 * 1024;
 /// Maximum ordered data extents retained for one regular file.
 pub const MAX_SCAN_EXTENTS: usize = 131_072;
 
+/// Maximum declared byte length of one regular file in a projected tree.
+///
+/// A sparse file costs its creator nothing, but every digest of it costs its
+/// declared length. The bound is checked before any file is read on either
+/// side, so a workload cannot buy hours of host hashing with one `truncate`.
+pub const MAX_SCAN_FILE_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+
 /// Wire tag for a directory semantic record.
 pub const ENTRY_DIRECTORY: u8 = 1;
 
