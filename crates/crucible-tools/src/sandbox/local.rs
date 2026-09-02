@@ -369,7 +369,10 @@ impl std::fmt::Debug for CompatibilitySession {
     }
 }
 
+// Every test drives the compatibility backend through `/bin/sh`, which Windows
+// has no equivalent of and does not even accept as an absolute path.
 #[cfg(test)]
+#[cfg(unix)]
 mod tests {
     use std::ffi::OsString;
     use std::thread;
