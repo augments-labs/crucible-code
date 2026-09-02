@@ -8,6 +8,18 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.34.1] - 2026-09-02
+
+### Fixed
+
+- **The release gate now runs on the enforcing sandbox host.** 0.34.0 was
+  tagged but never published: its release gate failed because one sandbox test
+  demanded an enforcing backend that the release runner did not have, while
+  every other sandbox test there silently skipped. That test now skips like its
+  neighbours, and the release gate installs Bubblewrap 0.11 and requires the
+  backend, so the sandbox tests are exercised at release time rather than
+  skipped. This release ships everything the 0.34.0 section below describes.
+
 ## [0.34.0] - 2026-09-02
 
 ### Added
@@ -3235,7 +3247,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.34.0...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.34.1...HEAD
+[0.34.1]: https://github.com/augments-labs/crucible-code/compare/v0.34.0...v0.34.1
 [0.34.0]: https://github.com/augments-labs/crucible-code/compare/v0.33.0...v0.34.0
 [0.33.0]: https://github.com/augments-labs/crucible-code/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/augments-labs/crucible-code/compare/v0.31.0...v0.32.0

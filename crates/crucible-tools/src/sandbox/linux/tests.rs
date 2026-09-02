@@ -244,7 +244,9 @@ fn writable_effects_stay_private_until_terminal_publication() {
 #[test]
 fn staging_a_writable_directory_does_not_copy_its_file_contents() {
     let service = LocalSandbox::new();
-    service.probe().expect("qualified Linux confinement host");
+    if skipped_without_enforcement(&service) {
+        return;
+    }
     let sample = Sample::new("sandbox-overlay-no-full-copy");
     let sparse =
         std::fs::File::create(sample.root().join("large-sparse.bin")).expect("sparse fixture");
