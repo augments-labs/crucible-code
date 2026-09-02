@@ -8,6 +8,17 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.34.2] - 2026-09-02
+
+### Fixed
+
+- **Linux release builds pin a build container that still exists.** 0.34.1 was
+  tagged but never published: both Linux build jobs failed to start because the
+  CentOS Stream 9 image digest they were pinned to had been removed upstream.
+  The pin now names the digest currently published for that tag, and the glibc
+  floor it promises is unchanged. This release ships everything the 0.34.1 and
+  0.34.0 sections below describe.
+
 ## [0.34.1] - 2026-09-02
 
 ### Fixed
@@ -3247,7 +3258,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.34.1...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.34.2...HEAD
+[0.34.2]: https://github.com/augments-labs/crucible-code/compare/v0.34.1...v0.34.2
 [0.34.1]: https://github.com/augments-labs/crucible-code/compare/v0.34.0...v0.34.1
 [0.34.0]: https://github.com/augments-labs/crucible-code/compare/v0.33.0...v0.34.0
 [0.33.0]: https://github.com/augments-labs/crucible-code/compare/v0.32.0...v0.33.0
