@@ -852,6 +852,21 @@ impl Runner {
         self.spec.model.window
     }
 
+    /// What the model in force reads, where the caller said.
+    ///
+    /// The model's half alone: what may actually be put in front of it is this
+    /// met with what the provider can spell, and the two are asked separately
+    /// so a refusal can say which side of it said no.
+    ///
+    /// `None` is the caller never having said, which is a different thing from
+    /// a model that reads nothing. It travels with the name through
+    /// [`Runner::ask`], so this is the same answer the next request carries
+    /// rather than a second lookup that could disagree with it.
+    #[must_use]
+    pub fn reads(&self) -> Option<Modalities> {
+        self.spec.model.accepts
+    }
+
     /// The provider this runner is asking, for the questions only it can answer.
     ///
     /// Handed out rather than answered here because what a caller wants of it

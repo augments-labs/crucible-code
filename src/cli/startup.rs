@@ -17,8 +17,8 @@ use crucible_auth::StoredCredentials;
 use crucible_config::Settings;
 use crucible_core::{
     AgentId, ApiKey, Credential, DescribeTool, Effort, Fetch, Header, HeaderKey, Message,
-    Modalities, Mode, Provider, Revealed, Search, SessionId, Tool, ToolsetError, Transcript,
-    Workspace,
+    Modalities, Mode, ModelCapabilities, Provider, Revealed, Search, SessionId, Tool, ToolsetError,
+    Transcript, Workspace,
 };
 use crucible_provider::{
     Anthropic, AnthropicWeb, Endpoint, Https, Moonshot, MoonshotWeb, OpenAi, OpenAiWeb, Unavailable,
@@ -86,6 +86,11 @@ pub(super) enum Resuming {
 /// let a startup be pointed somewhere disposable and failed either way it can
 /// fail, and eight of those in a row is a call nobody can read.
 pub(super) struct Startup<'a> {
+    /// The generation of the provider registry every name here was read
+    /// against, and the one a model's limits are read out of. Taken by the
+    /// caller rather than here, so the provider that was resolved and the
+    /// record its limits come from are the same generation.
+    pub(super) providers: &'a Providers,
     /// Which provider, after the command line and the files have both spoken.
     /// `None` where this machine holds no usable credential for any of them.
     pub(super) provider: Option<Served>,
@@ -862,11 +867,11 @@ fn coding(startup: &Startup<'_>, provider: &str, name: &str, asked: &str) -> Age
         AgentId::new("coding"),
         Model {
             name: name.into(),
-            max_tokens: ceiling(provider, name),
+            max_tokens: ceiling(startup.providers, provider, name),
             window: startup
                 .provider
-                .map(|serving| window(serving, name, startup.settings)),
-            accepts: accepts(provider, name),
+                .map(|serving| window(startup.providers, serving, name, startup.settings)),
+            accepts: accepts(startup.providers, provider, name),
             effort: startup.effort,
         },
     );
@@ -919,12 +924,17 @@ fn policy(settings: &Settings) -> RunPolicy {
 /// using it is a choice rather than the starting behavior. The record's cap
 /// also covers names released after this build. A provider this build has no
 /// record for never reaches here: the name was refused at the registry.
-pub(super) fn window(serving: Served, model: &str, settings: &Settings) -> u32 {
+pub(super) fn window(
+    providers: &Providers,
+    serving: Served,
+    model: &str,
+    settings: &Settings,
+) -> u32 {
     settings
         .context_window(serving.name, model)
         .unwrap_or_else(|| {
-            let native =
-                super::facts(serving.name, model).map_or(serving.window, |facts| facts.window);
+            let native = super::capabilities(providers, serving.name, model)
+                .map_or(serving.window, ModelCapabilities::window);
             native.min(serving.window)
         })
 }
@@ -935,8 +945,8 @@ pub(super) fn window(serving: Served, model: &str, settings: &Settings) -> u32 {
 /// the provider itself rather than being handed an answer resolved here: what a
 /// wire module can write today and what a vendor's table says are two facts
 /// that drift apart, and only one of them is in this table.
-pub(super) fn accepts(provider: &str, model: &str) -> Option<Modalities> {
-    super::facts(provider, model).map(|facts| facts.accepts)
+pub(super) fn accepts(providers: &Providers, provider: &str, model: &str) -> Option<Modalities> {
+    super::capabilities(providers, provider, model).map(ModelCapabilities::accepts)
 }
 
 /// How long an answer to ask this model for.
@@ -946,8 +956,9 @@ pub(super) fn accepts(provider: &str, model: &str) -> Option<Modalities> {
 /// for — a name one word from a listed one is a name nothing is known about,
 /// and borrowing the neighbour's figure is how a request comes to be refused
 /// for a reason nobody can see.
-pub(super) fn ceiling(provider: &str, model: &str) -> u32 {
-    super::facts(provider, model).map_or(UNKNOWN_CEILING, |facts| facts.output.min(CEILING))
+pub(super) fn ceiling(providers: &Providers, provider: &str, model: &str) -> u32 {
+    super::capabilities(providers, provider, model)
+        .map_or(UNKNOWN_CEILING, |one| one.output().min(CEILING))
 }
 
 #[cfg(test)]

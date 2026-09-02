@@ -114,7 +114,7 @@ pub(super) fn run<T: Terminal>(
     if !said.is_empty() {
         return match said.parse() {
             Ok(effort) => taken(effort, provider, renderer, runner, terms),
-            Err(refused) => mistyped(&refused, renderer, rungs),
+            Err(refused) => mistyped(&refused, renderer, &rungs),
         };
     }
 
@@ -123,7 +123,7 @@ pub(super) fn run<T: Terminal>(
     }
 
     if keys {
-        match chosen(renderer, runner, terms, rungs)? {
+        match chosen(renderer, runner, terms, &rungs)? {
             Taken::Took(effort) => return taken(effort, provider, renderer, runner, terms),
             // Escape asked for the screen that was there before the panel. A
             // listing under it would be the same question put a second time.
@@ -132,7 +132,7 @@ pub(super) fn run<T: Terminal>(
         }
     }
 
-    listed(renderer, runner, rungs)
+    listed(renderer, runner, &rungs)
 }
 
 /// Stands the ladder where the prompt box was, and says which rung came off it.

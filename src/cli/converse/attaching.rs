@@ -10,12 +10,13 @@ use std::fs;
 use std::io::{Cursor, Write as _};
 use std::path::{Path, PathBuf};
 
-use crucible_core::{Attachment, CEILING, Provider, SessionId, Workspace, kind, written};
+use crucible_core::{
+    Attachment, CEILING, Modalities, Provider, SessionId, Workspace, kind, written,
+};
 use crucible_runner::Runner;
 use crucible_tui::{Renderer, Row, Terminal, TerminalError, fold};
 use sha2::{Digest as _, Sha256};
 
-use crate::cli::attachable;
 use crate::cli::draw;
 use crate::cli::style::Style;
 
@@ -59,16 +60,43 @@ pub(super) struct Sent<'a> {
     pub(super) images: &'a [Box<str>],
 }
 
+/// Who the prompt is going to, and what this session says they can be given.
+///
+/// The two halves of "can this file be sent" travel together because a refusal
+/// has to name which of them said no. `reads` is the model's half as the
+/// session itself holds it — the same answer the next request carries — and
+/// `None` there is nobody having said what the model reads rather than a model
+/// that reads nothing.
+#[derive(Clone, Copy)]
+pub(super) struct Asking<'a> {
+    /// The protocol a request is written to.
+    pub(super) provider: &'a dyn Provider,
+    /// The model it names, as that provider spells it.
+    pub(super) model: &'a str,
+    /// What the model reads, where the session was told.
+    pub(super) reads: Option<Modalities>,
+}
+
+impl<'a> Asking<'a> {
+    /// What the session in hand is asking, read off the runner driving it.
+    pub(super) fn of(runner: &'a Runner) -> Self {
+        Self {
+            provider: runner.provider(),
+            model: runner.model(),
+            reads: runner.reads(),
+        }
+    }
+}
+
 /// Reads the prompt for files, and decides about each one.
 #[cfg(test)]
 pub(super) fn attaching(
     workspace: &Workspace,
-    provider: &dyn Provider,
-    model: &str,
+    asking: Asking<'_>,
     sent: Sent<'_>,
     imported: Option<&Path>,
 ) -> Attaching {
-    let (attachments, refusals) = gathered(workspace, provider, model, sent, imported);
+    let (attachments, refusals) = gathered(workspace, asking, sent, imported);
 
     Attaching {
         attachments: attachments.into_boxed_slice(),
@@ -85,8 +113,7 @@ pub(super) fn attaching(
 /// would be handed the same bytes beside themselves.
 fn gathered(
     workspace: &Workspace,
-    provider: &dyn Provider,
-    model: &str,
+    asking: Asking<'_>,
     sent: Sent<'_>,
     imported: Option<&Path>,
 ) -> (Vec<Attachment>, Vec<String>) {
@@ -104,19 +131,13 @@ fn gathered(
     };
 
     for word in names(prompt) {
-        one(
-            decide(workspace, provider, model, &word, imported),
-            &mut attachments,
-        );
+        one(decide(workspace, asking, &word, imported), &mut attachments);
     }
     for mark in marked(prompt) {
         let Some(path) = mark.checked_sub(1).and_then(|at| images.get(at)) else {
             continue;
         };
-        one(
-            decide(workspace, provider, model, path, imported),
-            &mut attachments,
-        );
+        one(decide(workspace, asking, path, imported), &mut attachments);
     }
 
     (attachments, refusals)
@@ -143,13 +164,8 @@ pub(super) fn beside<T: Terminal>(
             .with_file_name("attachments")
             .join(id.as_str())
     });
-    let (attachments, refusals) = gathered(
-        workspace,
-        runner.provider(),
-        runner.model(),
-        sent,
-        imported.as_deref(),
-    );
+    let (attachments, refusals) =
+        gathered(workspace, Asking::of(runner), sent, imported.as_deref());
     let attachments = attachments.into_boxed_slice();
 
     // Before the refusals, because this is the line's own block closing over
@@ -249,13 +265,12 @@ enum Named {
 /// is nothing they can do anything about; what the model cannot read they fix
 /// with `/model`; what is too large they fix with a smaller copy. Reading the
 /// file comes last, because the three answers above it cost nothing.
-fn decide(
-    workspace: &Workspace,
-    provider: &dyn Provider,
-    model: &str,
-    word: &str,
-    imported: Option<&Path>,
-) -> Named {
+fn decide(workspace: &Workspace, asking: Asking<'_>, word: &str, imported: Option<&Path>) -> Named {
+    let Asking {
+        provider,
+        model,
+        reads,
+    } = asking;
     let Some(kind) = kind(word) else {
         return Named::Nothing;
     };
@@ -273,10 +288,9 @@ fn decide(
         return Named::Nothing;
     };
 
-    // The intersection, taken in halves. `attachable` is the whole of it, and
-    // asking the provider first is the only thing that lets a refusal say
-    // which side of it said no — which is the difference between a sentence
-    // somebody can act on and one they cannot.
+    // The two halves, asked in order. Asking the provider first is the only
+    // thing that lets a refusal say which side of it said no — which is the
+    // difference between a sentence somebody can act on and one they cannot.
     if !provider.spells().contains(kind.modality) {
         return Named::Refused(format!(
             "{word} is not attached: crucible's {} requests have no shape for {}. Nothing you \
@@ -285,7 +299,7 @@ fn decide(
             kind.spoken(),
         ));
     }
-    let Some(accepts) = attachable(provider, model) else {
+    let Some(accepts) = reads else {
         return Named::Refused(format!(
             "{word} is not attached: this build has no entry for {model}, so it does not know \
              what that model reads. That is not a refusal. /model names one it knows.",
