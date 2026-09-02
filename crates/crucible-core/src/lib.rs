@@ -32,6 +32,7 @@ mod permission;
 mod prompt;
 mod prompt_cache;
 mod provider;
+mod registry;
 mod revealed;
 mod run;
 mod sandbox;
@@ -125,6 +126,12 @@ pub use prompt_cache::{
 pub use provider::{
     Attached, Calibration, Carried, Content, Delta, DeltaStream, Effort, EffortError, Provider,
     ProviderError, ProviderLimit, Request, Spend, ToolSchema,
+};
+pub use registry::{
+    Collision, Provenance, ProvenanceError, REGISTRY_BYTES, REGISTRY_ENTRIES, Registered, Registry,
+    RegistryError, RegistryGeneration, RegistryHandle, RegistryReport, RegistryRow,
+    RegistrySnapshot, SOURCE_ID_BYTES, SOURCE_LABEL_BYTES, Shadow, SourceKind, SourceReceipt,
+    Staged,
 };
 pub use revealed::Revealed;
 pub use run::{Ancestry, AncestryError};

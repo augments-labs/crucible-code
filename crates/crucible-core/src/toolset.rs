@@ -39,10 +39,10 @@ pub const TOOL_ARGUMENT_BYTES: usize = 1024 * 1024;
 pub const TOOL_SCHEMA_BYTES: usize = 1024 * 1024;
 
 /// The most bytes in a stable, receipt-safe source identifier.
-pub const TOOL_SOURCE_ID_BYTES: usize = 256;
+pub const TOOL_SOURCE_ID_BYTES: usize = crate::registry::SOURCE_ID_BYTES;
 
 /// The most bytes in the diagnostic spelling of a source.
-pub const TOOL_SOURCE_LABEL_BYTES: usize = 4 * 1024;
+pub const TOOL_SOURCE_LABEL_BYTES: usize = crate::registry::SOURCE_LABEL_BYTES;
 
 /// The most bytes in one resource-exclusion key.
 pub const TOOL_RESOURCE_KEY_BYTES: usize = 4 * 1024;
@@ -161,158 +161,18 @@ impl fmt::Debug for dyn Toolset {
     }
 }
 
-/// Where a tool registration came from.
+/// Where a tool registration came from: the registry's shared source kind.
+pub type ToolSourceKind = crate::registry::SourceKind;
+
+/// The receipt-safe projection of a tool registration source.
+pub type ToolSourceReceipt = crate::registry::SourceReceipt;
+
+/// A tool registration's bounded source identity and diagnostic spelling.
 ///
-/// This is deliberately a closed, coarse set. A receipt may name the kind
-/// without disclosing the path or package text kept for collision diagnostics.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ToolSourceKind {
-    /// Compiled into this Crucible binary.
-    Builtin,
-    /// Supplied directly by the user.
-    User,
-    /// Supplied by a trusted project.
-    Project,
-    /// Contributed by an extension.
-    Extension,
-    /// Materialized from an MCP server.
-    Mcp,
-    /// Contributed by a skill.
-    Skill,
-    /// Local to an agent definition.
-    Agent,
-    /// A bounded source kind not covered above.
-    Other,
-}
-
-/// The receipt-safe projection of a registration source.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ToolSourceReceipt {
-    kind: ToolSourceKind,
-    id: Box<str>,
-}
-
-impl ToolSourceReceipt {
-    /// The coarse source family.
-    #[must_use]
-    pub const fn kind(&self) -> ToolSourceKind {
-        self.kind
-    }
-
-    /// The bounded, non-sensitive source identifier.
-    #[must_use]
-    pub fn id(&self) -> &str {
-        &self.id
-    }
-}
-
-impl ToolSourceKind {
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::Builtin => "builtin",
-            Self::User => "user",
-            Self::Project => "project",
-            Self::Extension => "extension",
-            Self::Mcp => "mcp",
-            Self::Skill => "skill",
-            Self::Agent => "agent",
-            Self::Other => "other",
-        }
-    }
-}
-
-/// A registration's bounded source identity and its diagnostic spelling.
-#[derive(Clone, PartialEq, Eq)]
-pub struct ToolProvenance {
-    kind: ToolSourceKind,
-    id: Box<str>,
-    label: Box<str>,
-}
-
-impl ToolProvenance {
-    /// Builds one source record.
-    ///
-    /// `id` is the non-sensitive stable spelling allowed into audit receipts;
-    /// `label` is the fuller text shown only in an explicit wiring diagnostic.
-    ///
-    /// # Errors
-    ///
-    /// [`ToolDescriptorError`] when either spelling is empty or over its
-    /// retained boundary.
-    pub fn new(
-        kind: ToolSourceKind,
-        id: impl Into<Box<str>>,
-        label: impl Into<Box<str>>,
-    ) -> Result<Self, ToolDescriptorError> {
-        let id = id.into();
-        bounded("tool source id", &id, TOOL_SOURCE_ID_BYTES)?;
-        let label = label.into();
-        bounded("tool source label", &label, TOOL_SOURCE_LABEL_BYTES)?;
-
-        Ok(Self { kind, id, label })
-    }
-
-    /// A source compiled into this binary.
-    ///
-    /// # Errors
-    ///
-    /// [`ToolDescriptorError`] if `name` cannot fit in a source identity or
-    /// diagnostic. Built-in names are constants, so that is a wiring defect.
-    pub fn builtin(name: &str) -> Result<Self, ToolDescriptorError> {
-        Self::new(
-            ToolSourceKind::Builtin,
-            format!("crucible:{name}"),
-            format!("built-in {name} tool"),
-        )
-    }
-
-    /// The coarse source kind safe to retain in a receipt.
-    #[must_use]
-    pub const fn kind(&self) -> ToolSourceKind {
-        self.kind
-    }
-
-    /// The bounded non-sensitive identifier safe to retain in a receipt.
-    #[must_use]
-    pub fn id(&self) -> &str {
-        &self.id
-    }
-
-    /// The full diagnostic spelling.
-    #[must_use]
-    pub fn label(&self) -> &str {
-        &self.label
-    }
-
-    /// The part of this source safe to retain with an invocation event.
-    #[must_use]
-    pub fn receipt(&self) -> ToolSourceReceipt {
-        ToolSourceReceipt {
-            kind: self.kind,
-            id: self.id.clone(),
-        }
-    }
-
-    fn retained_bytes(&self) -> usize {
-        self.id.len().saturating_add(self.label.len())
-    }
-}
-
-impl fmt::Debug for ToolProvenance {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ToolProvenance")
-            .field("kind", &self.kind)
-            .field("id", &self.id)
-            .field("label", &"[redacted]")
-            .finish()
-    }
-}
-
-impl fmt::Display for ToolProvenance {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} [{}:{}]", self.label, self.kind.as_str(), self.id)
-    }
-}
+/// Tools were the first registry; every later contribution kind shares this
+/// record, so it is the registry's [`Provenance`](crate::Provenance) and keeps
+/// its tool name here.
+pub type ToolProvenance = crate::registry::Provenance;
 
 /// A bounded key whose calls may not overlap.
 #[derive(Clone, PartialEq, Eq)]
@@ -489,7 +349,9 @@ impl ToolDescriptor {
         }
     }
 
-    fn retained_bytes(&self) -> usize {
+    /// The bytes this descriptor keeps alive, for a roster's ceiling.
+    #[must_use]
+    pub fn retained_bytes(&self) -> usize {
         self.name
             .len()
             .saturating_add(self.schema.len())
@@ -1047,6 +909,9 @@ impl Default for ToolSnapshot {
 /// Why owned tool metadata or one of its controls was refused.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ToolDescriptorError {
+    /// The tool's source could not be described.
+    #[error(transparent)]
+    Provenance(#[from] crate::registry::ProvenanceError),
     /// A retained string was empty.
     #[error("{field} must not be empty")]
     Empty {
@@ -1082,6 +947,9 @@ pub enum ToolsetError {
     /// One descriptor was not bounded or usable.
     #[error(transparent)]
     Descriptor(#[from] ToolDescriptorError),
+    /// One registration's source could not be described.
+    #[error(transparent)]
+    Provenance(#[from] crate::registry::ProvenanceError),
     /// Two distinct registrations answer to one provider-visible name.
     #[error("tool {name} is registered by both {first} and {second}")]
     Duplicate {
@@ -1108,6 +976,28 @@ pub enum ToolsetError {
         /// The requested bytes.
         actual: usize,
     },
+    /// The tool registry refused a transaction for a reason of its own.
+    #[error("the tool registry refused the change: {0}")]
+    Registry(#[source] crate::registry::RegistryError),
+}
+
+impl From<crate::registry::RegistryError> for ToolsetError {
+    fn from(error: crate::registry::RegistryError) -> Self {
+        use crate::registry::RegistryError;
+        match error {
+            RegistryError::Provenance(error) => Self::Provenance(error),
+            RegistryError::Duplicate { id, first, second } => Self::Duplicate {
+                name: id,
+                first,
+                second,
+            },
+            RegistryError::Entries { maximum, actual } => Self::Entries { maximum, actual },
+            RegistryError::Bytes { maximum, actual } => Self::Bytes { maximum, actual },
+            other @ (RegistryError::Unknown { .. }
+            | RegistryError::Superseded
+            | RegistryError::Stale) => Self::Registry(other),
+        }
+    }
 }
 
 fn bounded(field: &'static str, value: &str, maximum: usize) -> Result<(), ToolDescriptorError> {
