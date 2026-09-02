@@ -445,6 +445,7 @@ fn a_startup_with_nothing_to_authenticate_with_leaves_no_session_behind() {
     // key — and the lookup says there is none regardless of what the shell
     // running this test happens to export.
     let Err(problem) = assemble(&Startup {
+        providers: &catalogue(),
         provider: Some(serving("openai")),
         unasked: NO_MODEL_CHOSEN,
         model: Some("gpt-5.6-terra"),
@@ -482,6 +483,7 @@ fn a_session_with_nothing_chosen_starts_and_asks_for_no_model() {
     let (logs, workspace) = (sample.logs(), sample.workspace());
 
     let runner = assemble(&Startup {
+        providers: &catalogue(),
         provider: None,
         unasked: NOTHING_TO_ASK,
         model: None,
@@ -515,7 +517,9 @@ fn a_session_with_nothing_chosen_starts_and_asks_for_no_model() {
 fn specified(model: &str, effort: Option<Effort>, settings: &Settings, told: &str) -> AgentSpec {
     let sample = Sample::new(&format!("specified-{model}"));
     let (logs, workspace) = (sample.logs(), sample.workspace());
+    let catalogue = catalogue();
     let startup = Startup {
+        providers: &catalogue,
         provider: Some(serving("anthropic")),
         unasked: NOTHING_TO_ASK,
         model: Some(model),
@@ -573,7 +577,7 @@ fn operational_windows_use_conservative_provider_defaults() {
         ("moonshot", "kimi-for-coding-highspeed", 262_144),
     ] {
         assert_eq!(
-            window(serving(provider), model, &settings),
+            window(&catalogue(), serving(provider), model, &settings),
             held,
             "{provider}/{model}"
         );
@@ -585,12 +589,20 @@ fn unknown_models_do_not_bypass_the_providers_default_operational_window() {
     let settings = Settings::default();
 
     assert_eq!(
-        window(serving("anthropic"), "claude-future", &settings),
+        window(
+            &catalogue(),
+            serving("anthropic"),
+            "claude-future",
+            &settings
+        ),
         200_000
     );
-    assert_eq!(window(serving("openai"), "gpt-future", &settings), 272_000);
     assert_eq!(
-        window(serving("moonshot"), "kimi-future", &settings),
+        window(&catalogue(), serving("openai"), "gpt-future", &settings),
+        272_000
+    );
+    assert_eq!(
+        window(&catalogue(), serving("moonshot"), "kimi-future", &settings),
         262_144
     );
 }
@@ -603,12 +615,26 @@ fn an_explicit_context_window_can_opt_back_into_a_larger_window() {
     );
 
     assert_eq!(
-        window(serving("anthropic"), "claude-sonnet-5", &settings),
+        window(
+            &catalogue(),
+            serving("anthropic"),
+            "claude-sonnet-5",
+            &settings
+        ),
         1_000_000
     );
-    assert_eq!(window(serving("openai"), "gpt-5.6-sol", &settings), 872_000);
-    assert_eq!(window(serving("openai"), "gpt-future", &settings), 872_000);
-    assert_eq!(window(serving("moonshot"), "k3", &settings), 1_048_576);
+    assert_eq!(
+        window(&catalogue(), serving("openai"), "gpt-5.6-sol", &settings),
+        872_000
+    );
+    assert_eq!(
+        window(&catalogue(), serving("openai"), "gpt-future", &settings),
+        872_000
+    );
+    assert_eq!(
+        window(&catalogue(), serving("moonshot"), "k3", &settings),
+        1_048_576
+    );
 }
 
 #[test]
@@ -631,6 +657,7 @@ fn reaching_for(named: &str, model: Option<&'static str>) -> Reaching {
 
     web(
         &Startup {
+            providers: &catalogue(),
             provider: Some(serving(named)),
             unasked: NO_MODEL_CHOSEN,
             model,
@@ -701,6 +728,7 @@ fn offered(terminal: bool) -> crucible_runner::Tools {
 
     tools(
         &Startup {
+            providers: &catalogue(),
             provider: None,
             unasked: NOTHING_TO_ASK,
             model: None,
@@ -839,6 +867,7 @@ fn a_session_is_assembled_with_stable_instructions_and_workspace_context() {
     let configured = sample.settings(r#"{"compaction":{"spendCeiling":500000}}"#);
 
     let mut runner = assemble(&Startup {
+        providers: &catalogue(),
         provider: None,
         unasked: NOTHING_TO_ASK,
         model: None,

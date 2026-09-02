@@ -28,6 +28,7 @@ mod ids;
 mod interruption;
 mod journal;
 mod modality;
+mod model;
 mod permission;
 mod prompt;
 mod prompt_cache;
@@ -74,6 +75,7 @@ pub use journal::{
     RunHistory, RunItem, SessionStore,
 };
 pub use modality::{Modalities, Modality, ModalityError};
+pub use model::{MODEL_NAME_BYTES, ModelCapabilities, ModelError, ModelLimits};
 pub use permission::{
     Approved, Ask, Command, Disposition, Grant, Host, Minted, Mode, Permission, Remember,
     RuleError, Rules, Sensitivity, Settled, Target, Verdict, narrowest,

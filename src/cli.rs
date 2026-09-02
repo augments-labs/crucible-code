@@ -42,9 +42,9 @@ use clap::Parser;
 use crucible_auth::{Store, StoredCredentials};
 use crucible_config::{ConfigError, Home, Settings};
 use crucible_core::{
-    Cancel, Collision, CredentialError, Effort, Modalities, PathError, Provenance, Provider,
-    Registered, Registry, RegistryError, RegistrySnapshot, Revealed, SessionId, SourceKind,
-    ToolsetError, Workspace,
+    Cancel, Collision, CredentialError, Effort, ModelCapabilities, ModelError, ModelLimits,
+    PathError, Provenance, Provider, Registered, Registry, RegistryError, RegistrySnapshot,
+    Revealed, SessionId, SourceKind, ToolsetError, Workspace,
 };
 use crucible_provider::EndpointError;
 use crucible_runner::SessionError;
@@ -168,28 +168,19 @@ const PROVIDERS: [Served; 3] = [
     },
 ];
 
-/// What may be put in front of this model, on this provider.
+/// What the generated table knows about a model's limits, if it knows anything.
 ///
-/// Two halves, and neither is the answer alone: a model reads what it reads
-/// whichever protocol carries it, and a protocol carries what it has a shape
-/// for whatever the model would do with it. Offering the union would send a
-/// video to a request with no word for one.
-///
-/// `None` is not the empty set. It is the table never having heard of this
-/// model, which is a different thing from the model reading nothing, and the
-/// caller says so in different words.
-pub(crate) fn attachable(provider: &dyn Provider, model: &str) -> Option<Modalities> {
-    facts(provider.name(), model).map(|facts| facts.accepts.intersection(provider.spells()))
-}
-
-/// What this build knows about a model's limits, if it knows anything.
+/// The one reader is [`Arm::builtin`], which joins this with the offer list
+/// above into a record the registry then holds. Nothing else reads it: a limit
+/// asked about after startup is asked of the registry, because a provider
+/// registered at run time has limits and no row here.
 ///
 /// Keyed on the name exactly as it was asked for. A name this build has never
 /// heard of answers `None` rather than the nearest thing it resembles: two
 /// models one word apart can differ five-fold in what they accept, and a
 /// session run against the wrong one of them throws away most of itself before
 /// anybody notices.
-pub(crate) fn facts(provider: &str, model: &str) -> Option<models::Facts> {
+fn facts(provider: &str, model: &str) -> Option<models::Facts> {
     models::FACTS
         .iter()
         .find(|facts| facts.provider == provider && facts.model == model)
@@ -303,25 +294,112 @@ pub(crate) struct Served {
     pub(crate) window: u32,
 }
 
-/// One provider as the registry holds it: the arm, and where it came from.
+/// Why the built-in providers could not be assembled.
+///
+/// Every variant is a wiring defect rather than anything a user did, so each
+/// one names the provider and the model it is about: this is read at a terminal
+/// by whoever wrote the row, and the run stops before the first frame.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum ArmError {
+    /// The registry refused the record.
+    #[error(transparent)]
+    Registry(#[from] RegistryError),
+    /// A model is offered and the generated table has no row for it.
+    #[error("{provider} offers {model} and the model table has no row for it; run generate-models")]
+    Unlisted {
+        /// The provider offering it.
+        provider: &'static str,
+        /// The model with no row.
+        model: &'static str,
+    },
+    /// A model's record could not be described from the row it has.
+    #[error("{provider} cannot describe {model}: {why}")]
+    Model {
+        /// The provider offering it.
+        provider: &'static str,
+        /// The model that could not be described.
+        model: &'static str,
+        /// What the record refused.
+        why: ModelError,
+    },
+}
+
+/// One provider as the registry holds it: the arm, where it came from, and what
+/// it can be asked for.
 #[derive(Debug)]
 pub(crate) struct Arm {
     served: Served,
     provenance: Provenance,
+    models: Box<[ModelCapabilities]>,
 }
 
 impl Arm {
     /// A provider compiled into this build.
     ///
-    /// [`RegistryError`] where the name does not fit a source identity, which a
-    /// constant name cannot fail to.
-    fn builtin(served: Served) -> Result<Self, RegistryError> {
+    /// The one place the offer list and the generated table of limits are
+    /// joined. A model offered with no row stops the run here rather than
+    /// answering "nothing known" at a reader: the two lists are written by hand
+    /// and by a generator, and the whole point of a record is that a name on the
+    /// panel has one.
+    ///
+    /// # Errors
+    ///
+    /// [`ArmError`] where the name does not fit a source identity, where a
+    /// model is offered with no row, or where a row does not describe a model.
+    fn builtin(served: Served) -> Result<Self, ArmError> {
         let provenance = Provenance::new(
             SourceKind::Builtin,
             format!("crucible:{}", served.name),
             format!("built-in {} provider", served.name),
-        )?;
-        Ok(Self { served, provenance })
+        )
+        .map_err(RegistryError::from)?;
+
+        let mut models = Vec::with_capacity(served.models.len());
+        for model in served.models {
+            let Some(facts) = facts(served.name, model.name) else {
+                return Err(ArmError::Unlisted {
+                    provider: served.name,
+                    model: model.name,
+                });
+            };
+            let described = ModelCapabilities::new(
+                model.name,
+                model.shown,
+                ModelLimits {
+                    window: facts.window,
+                    output: facts.output,
+                    accepts: facts.accepts,
+                },
+                model.rungs,
+            )
+            .map_err(|why| ArmError::Model {
+                provider: served.name,
+                model: model.name,
+                why,
+            })?;
+            models.push(described);
+        }
+
+        Ok(Self {
+            served,
+            provenance,
+            models: models.into_boxed_slice(),
+        })
+    }
+
+    /// The arm itself: what builds it, and what it is called.
+    pub(crate) const fn served(&self) -> Served {
+        self.served
+    }
+
+    /// What is known about one of them, or nothing where this build has never
+    /// heard of the name.
+    ///
+    /// Matched exactly as it was asked for. A name one word from an offered one
+    /// is a name nothing is known about, and borrowing the neighbour's figures
+    /// is how a session comes to throw away half of itself.
+    pub(crate) fn model(&self, named: &str) -> Option<&ModelCapabilities> {
+        self.models.iter().find(|one| one.name() == named)
     }
 }
 
@@ -335,7 +413,10 @@ impl Registered for Arm {
     }
 
     fn retained_bytes(&self) -> usize {
-        size_of::<Self>() + self.provenance.retained_bytes()
+        self.models.iter().fold(
+            size_of::<Self>() + self.provenance.retained_bytes(),
+            |so_far, model| so_far.saturating_add(model.retained_bytes()),
+        )
     }
 }
 
@@ -351,10 +432,11 @@ pub(crate) type Providers = RegistrySnapshot<Arm>;
 ///
 /// # Errors
 ///
-/// [`RegistryError`] where a built-in could not be registered — a name written
-/// twice in [`PROVIDERS`], or one too long for a source identity. Both are
-/// wiring defects, and the sentence names the provider.
-pub(crate) fn providers() -> Result<Registry<Arm>, RegistryError> {
+/// [`ArmError`] where a built-in could not be registered — a name written twice
+/// in [`PROVIDERS`], one too long for a source identity, or a model offered
+/// with no row in the generated table. All are wiring defects, and the sentence
+/// names the provider.
+pub(crate) fn providers() -> Result<Registry<Arm>, ArmError> {
     let registry = Registry::new(Collision::Refuse);
     let mut staged = registry.stage();
     for served in PROVIDERS {
@@ -366,7 +448,7 @@ pub(crate) fn providers() -> Result<Registry<Arm>, RegistryError> {
 
 /// Every provider of one generation, in the order they were registered.
 pub(crate) fn offered(providers: &Providers) -> impl Iterator<Item = Served> + '_ {
-    providers.entries().iter().map(|arm| arm.served)
+    providers.entries().iter().map(|arm| arm.served())
 }
 
 /// What one provider is set up with, once it has a credential.
@@ -473,12 +555,22 @@ pub(crate) fn names(providers: &Providers) -> String {
 /// rung its vendor may refuse and withholding one it serves — the first is a
 /// sentence back from the vendor, the second is crucible deciding what a model
 /// it has never heard of can do.
-pub(crate) fn rungs(providers: &Providers, provider: &str, model: &str) -> &'static [Effort] {
-    offered(providers)
-        .filter(|one| one.name == provider)
-        .flat_map(|one| one.models)
-        .find(|one| one.name == model)
-        .map_or(EVERY, |one| one.rungs)
+pub(crate) fn rungs(providers: &Providers, provider: &str, model: &str) -> Vec<Effort> {
+    capabilities(providers, provider, model)
+        .map_or_else(|| EVERY.to_vec(), |one| one.rungs().to_vec())
+}
+
+/// What one generation knows about `model` on `provider`, if it knows anything.
+///
+/// Read off the registry rather than off the table this build was compiled
+/// with, which is what lets a provider registered at run time describe models
+/// this build has never heard of in the same words the built-in ones use.
+pub(crate) fn capabilities<'a>(
+    providers: &'a Providers,
+    provider: &str,
+    model: &str,
+) -> Option<&'a ModelCapabilities> {
+    providers.find(provider).and_then(|arm| arm.model(model))
 }
 
 /// The command-line surface.
@@ -581,6 +673,13 @@ pub(crate) enum Fatal {
     /// than anything the user did, and the sentence names the command.
     #[error("a built-in registry could not be assembled: {0}")]
     Registry(#[from] RegistryError),
+
+    /// The built-in providers could not be assembled: two under one name, one
+    /// whose name will not fit a source identity, or a model offered with no
+    /// row in the generated table. A wiring defect rather than anything the
+    /// user did, and the sentence names the provider.
+    #[error("the built-in providers could not be assembled: {0}")]
+    Providers(#[from] ArmError),
 
     /// `--resume` named a session this workspace has no record of.
     ///
@@ -973,8 +1072,14 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         release::refresh(home.path());
     }
 
+    // The generation the launch above read its provider out of, taken once so
+    // the arm that was resolved and the model record its limits come from are
+    // the same generation. A registration committed after this point is for the
+    // next reader to see, not for a runner already built.
+    let catalogue = terms.providers.snapshot();
     let runner = assemble(&Startup {
         leaving: &leaving,
+        providers: &catalogue,
         provider: launch.serving,
         unasked: launch.unasked,
         model: launch.model.as_deref(),

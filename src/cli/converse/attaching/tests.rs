@@ -18,7 +18,7 @@ use crate::cli::sample::Sample;
 use crate::cli::style::Style;
 
 use super::super::replaying::{Replay, replayed};
-use super::{Attaching, Named, Sent, attaching, beside, decide, marked, names, pictured};
+use super::{Asking, Attaching, Named, Sent, attaching, beside, decide, marked, names, pictured};
 
 /// The eight bytes every PNG starts with.
 const PNG: &[u8] = &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
@@ -86,6 +86,27 @@ fn spelling(named: &'static str) -> Spelling {
     }
 }
 
+/// What a session asking the Anthropic model these tests name holds for it.
+///
+/// Stated here rather than read out of the shipped table, because what `decide`
+/// weighs is the two reading sets meeting — and the session's half arrives from
+/// whichever registry generation named the model, which after a registered
+/// provider is not this build's table at all.
+fn opus() -> Modalities {
+    Modalities::empty()
+        .insert(Modality::Text)
+        .insert(Modality::Image)
+        .insert(Modality::Pdf)
+}
+
+/// The same, for the Moonshot model these tests name.
+fn kimi() -> Modalities {
+    Modalities::empty()
+        .insert(Modality::Text)
+        .insert(Modality::Image)
+        .insert(Modality::Video)
+}
+
 /// A Moonshot-shaped provider that can carry named MP4 videos.
 fn videos() -> Spelling {
     Spelling {
@@ -140,8 +161,11 @@ fn an_external_picture_is_imported_for_the_session() {
 
     let Named::Attached(one) = decide(
         &workspace,
-        &spelling("anthropic"),
-        "claude-opus-5",
+        Asking {
+            provider: &spelling("anthropic"),
+            model: "claude-opus-5",
+            reads: Some(opus()),
+        },
         outside.to_str().expect("a text path"),
         Some(&imported),
     ) else {
@@ -174,8 +198,11 @@ fn a_picture_named_at_the_prompt_is_attached() {
         refusals,
     } = attaching(
         &workspace,
-        &spelling("anthropic"),
-        "claude-opus-5",
+        Asking {
+            provider: &spelling("anthropic"),
+            model: "claude-opus-5",
+            reads: Some(opus()),
+        },
         Sent {
             prompt: "what is in holiday.png",
             images: &[],
@@ -210,8 +237,11 @@ fn an_mp4_is_attached_only_when_provider_and_model_both_accept_video() {
         refusals,
     } = attaching(
         &workspace,
-        &videos(),
-        "k3",
+        Asking {
+            provider: &videos(),
+            model: "k3",
+            reads: Some(kimi()),
+        },
         Sent {
             prompt: "describe demo.MP4",
             images: &[],
@@ -235,8 +265,11 @@ fn an_mp4_is_refused_when_the_provider_has_no_video_shape() {
         refusals,
     } = attaching(
         &workspace,
-        &spelling("moonshot"),
-        "k3",
+        Asking {
+            provider: &spelling("moonshot"),
+            model: "k3",
+            reads: Some(kimi()),
+        },
         Sent {
             prompt: "describe demo.mp4",
             images: &[],
@@ -263,8 +296,11 @@ fn an_mp4_name_with_non_mp4_bytes_is_refused() {
         refusals,
     } = attaching(
         &workspace,
-        &videos(),
-        "k3",
+        Asking {
+            provider: &videos(),
+            model: "k3",
+            reads: Some(kimi()),
+        },
         Sent {
             prompt: "describe demo.mp4",
             images: &[],
@@ -291,8 +327,11 @@ fn a_prompt_naming_no_file_attaches_nothing_and_says_nothing() {
         refusals,
     } = attaching(
         &workspace,
-        &spelling("anthropic"),
-        "claude-opus-5",
+        Asking {
+            provider: &spelling("anthropic"),
+            model: "claude-opus-5",
+            reads: Some(opus()),
+        },
         Sent {
             prompt: "rename the field and run the tests",
             images: &[],
@@ -314,8 +353,11 @@ fn a_source_file_named_at_the_prompt_is_still_only_text() {
         refusals,
     } = attaching(
         &workspace,
-        &spelling("anthropic"),
-        "claude-opus-5",
+        Asking {
+            provider: &spelling("anthropic"),
+            model: "claude-opus-5",
+            reads: Some(opus()),
+        },
         Sent {
             prompt: "have a look at main.rs",
             images: &[],
@@ -345,8 +387,11 @@ fn the_provider_half_of_the_intersection_names_the_protocol() {
         refusals,
     } = attaching(
         &workspace,
-        &spelling("anthropic"),
-        "claude-opus-5",
+        Asking {
+            provider: &spelling("anthropic"),
+            model: "claude-opus-5",
+            reads: Some(opus()),
+        },
         Sent {
             prompt: "read invoice.pdf",
             images: &[],
@@ -380,8 +425,11 @@ fn a_pdf_on_moonshot_is_refused_by_the_protocol_and_never_sent() {
         refusals,
     } = attaching(
         &workspace,
-        &spelling("moonshot"),
-        "k3",
+        Asking {
+            provider: &spelling("moonshot"),
+            model: "k3",
+            reads: Some(kimi()),
+        },
         Sent {
             prompt: "read invoice.pdf",
             images: &[],
@@ -420,8 +468,11 @@ fn the_model_half_of_the_intersection_names_the_model() {
         refusals,
     } = attaching(
         &workspace,
-        &spelling,
-        "k3",
+        Asking {
+            provider: &spelling,
+            model: "k3",
+            reads: Some(kimi()),
+        },
         Sent {
             prompt: "read invoice.pdf",
             images: &[],
@@ -449,8 +500,11 @@ fn a_model_outside_the_table_neither_offers_the_file_nor_refuses_it() {
         refusals,
     } = attaching(
         &workspace,
-        &spelling("anthropic"),
-        "claude-opus-9",
+        Asking {
+            provider: &spelling("anthropic"),
+            model: "claude-opus-9",
+            reads: None,
+        },
         Sent {
             prompt: "what is in holiday.png",
             images: &[],
@@ -481,8 +535,11 @@ fn a_file_over_the_ceiling_is_refused_where_the_user_can_still_hear_it() {
         refusals,
     } = attaching(
         &workspace,
-        &spelling("anthropic"),
-        "claude-opus-5",
+        Asking {
+            provider: &spelling("anthropic"),
+            model: "claude-opus-5",
+            reads: Some(opus()),
+        },
         Sent {
             prompt: "what is in huge.png",
             images: &[],
@@ -511,8 +568,11 @@ fn a_png_that_is_not_a_png_is_refused_before_any_request() {
         refusals,
     } = attaching(
         &workspace,
-        &spelling("anthropic"),
-        "claude-opus-5",
+        Asking {
+            provider: &spelling("anthropic"),
+            model: "claude-opus-5",
+            reads: Some(opus()),
+        },
         Sent {
             prompt: "what is in holiday.png",
             images: &[],
@@ -582,8 +642,11 @@ fn what_the_prompt_attached_reaches_the_transcript() {
 
     let Attaching { attachments, .. } = attaching(
         &workspace,
-        &spelling("anthropic"),
-        "claude-opus-5",
+        Asking {
+            provider: &spelling("anthropic"),
+            model: "claude-opus-5",
+            reads: Some(opus()),
+        },
         Sent {
             prompt,
             images: &[],
@@ -618,8 +681,11 @@ fn a_prompt_naming_no_file_records_the_message_it_always_did() {
 
     let Attaching { attachments, .. } = attaching(
         &workspace,
-        &spelling("anthropic"),
-        "claude-opus-5",
+        Asking {
+            provider: &spelling("anthropic"),
+            model: "claude-opus-5",
+            reads: Some(opus()),
+        },
         Sent {
             prompt,
             images: &[],
@@ -641,8 +707,9 @@ fn a_prompt_naming_no_file_records_the_message_it_always_did() {
     );
 }
 
-/// A runner whose provider answers to a real name and can spell a picture, so
-/// the intersection lets one through. Nothing here sends a request.
+/// A runner whose provider answers to a real name and can spell a picture, and
+/// whose model is said to read one, so the intersection lets one through.
+/// Nothing here sends a request.
 fn sending() -> Runner {
     Runner::new(
         Box::new(spelling("anthropic")),
@@ -653,7 +720,7 @@ fn sending() -> Runner {
                 name: "claude-opus-5".into(),
                 max_tokens: 64,
                 window: None,
-                accepts: None,
+                accepts: Some(opus()),
                 effort: None,
             },
         ),
@@ -753,8 +820,11 @@ fn a_marker_names_the_image_pasted_before_it() {
         refusals,
     } = attaching(
         &workspace,
-        &spelling("anthropic"),
-        "claude-opus-5",
+        Asking {
+            provider: &spelling("anthropic"),
+            model: "claude-opus-5",
+            reads: Some(opus()),
+        },
         Sent {
             prompt: "what is in [Image #1]",
             images: &pasted,
@@ -782,8 +852,11 @@ fn a_marker_with_nothing_pasted_behind_it_is_a_word() {
         refusals,
     } = attaching(
         &workspace,
-        &spelling("anthropic"),
-        "claude-opus-5",
+        Asking {
+            provider: &spelling("anthropic"),
+            model: "claude-opus-5",
+            reads: Some(opus()),
+        },
         Sent {
             prompt: "the plan in [Image #3] step one",
             images: &[],
@@ -813,8 +886,11 @@ fn a_marker_said_twice_attaches_the_image_once() {
         refusals,
     } = attaching(
         &workspace,
-        &spelling("anthropic"),
-        "claude-opus-5",
+        Asking {
+            provider: &spelling("anthropic"),
+            model: "claude-opus-5",
+            reads: Some(opus()),
+        },
         Sent {
             prompt: "compare [Image #1] with [Image #1]",
             images: &pasted,

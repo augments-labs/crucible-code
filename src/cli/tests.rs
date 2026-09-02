@@ -957,3 +957,84 @@ fn a_provider_built_from_its_record_is_the_one_the_vendor_module_makes() {
         "the record builds the vendor's own arm"
     );
 }
+
+/// Anthropic's record with a different offer list under it.
+///
+/// The offer list and the generated table are written by different hands, and
+/// what these tests are about is what happens where the two disagree — so the
+/// list is the half that moves.
+fn offering(models: &'static [Model]) -> Served {
+    Served {
+        models,
+        ..serving("anthropic")
+    }
+}
+
+#[test]
+fn a_models_record_is_the_offer_list_and_the_generated_table_joined() {
+    // The two halves a limit is read from used to be read separately: the rungs
+    // off the offer list, the window and the ceiling off the table. One record
+    // holding both is what lets a reader ask once, and what lets a provider
+    // registered at run time answer the same question without a row here.
+    let providers = catalogue();
+    let described =
+        capabilities(&providers, "anthropic", "claude-opus-5").expect("a model this build offers");
+
+    assert_eq!(described.name(), "claude-opus-5");
+    assert_eq!(described.window(), 1_000_000, "the table's half");
+    assert_eq!(described.output(), 128_000, "the table's half");
+    assert!(
+        described.accepts().contains(Modality::Pdf),
+        "the table's half"
+    );
+
+    let offered = serving("anthropic")
+        .models
+        .iter()
+        .find(|model| model.name == "claude-opus-5")
+        .expect("the offer list names it");
+    assert_eq!(described.rungs(), offered.rungs, "the offer list's half");
+    assert_eq!(described.shown(), offered.shown, "the offer list's half");
+}
+
+#[test]
+fn a_model_no_arm_offers_is_nothing_known_rather_than_a_record_of_zeroes() {
+    // A name one word from an offered one, and a provider nobody registered.
+    // Both answer nothing, which is what leaves the caller free to fall back to
+    // a configured figure — where a record of zeroes would be a session that
+    // threw itself away on the first turn.
+    let providers = catalogue();
+
+    assert!(capabilities(&providers, "anthropic", "claude-opus-9").is_none());
+    assert!(capabilities(&providers, "nobody", "claude-opus-5").is_none());
+}
+
+#[test]
+fn a_model_offered_with_no_row_in_the_table_stops_the_run() {
+    // The offer list is written by hand and the table is generated, so a model
+    // added to one and never read into the other is the way these two come
+    // apart. Caught where the arm is built, because the alternative is a name
+    // on the panel that answers "nothing known" to every question about it.
+    const UNLISTED: &[Model] = &[Model::new("claude-from-the-future", &[])];
+
+    let refused = Arm::builtin(offering(UNLISTED)).expect_err("a model with no row");
+
+    let said = refused.to_string();
+    assert!(said.contains("claude-from-the-future"), "{said}");
+    assert!(said.contains("generate-models"), "{said}");
+}
+
+#[test]
+fn an_offer_list_that_describes_a_model_wrongly_stops_the_run() {
+    // The rungs travel with the offer list, and the panel draws them faster on
+    // the left and smarter on the right. A set written down backwards draws a
+    // track whose ends are wrong and says so nowhere, so the arm refuses to
+    // hold the record rather than the panel refusing to draw it.
+    const BACKWARDS: &[Model] = &[Model::new("claude-opus-5", &[Effort::Max, Effort::Low])];
+
+    let refused = Arm::builtin(offering(BACKWARDS)).expect_err("a backwards ladder");
+
+    let said = refused.to_string();
+    assert!(said.contains("claude-opus-5"), "{said}");
+    assert!(said.contains("max, low"), "{said}");
+}

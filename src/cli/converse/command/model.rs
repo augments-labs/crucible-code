@@ -412,8 +412,12 @@ fn stood<T: Terminal>(
                 .models
                 .iter()
                 .map(|one| {
-                    let window =
-                        crate::cli::startup::window(one.provider, one.model.name, &terms.settings);
+                    let window = crate::cli::startup::window(
+                        &providers,
+                        one.provider,
+                        one.model.name,
+                        &terms.settings,
+                    );
                     crate::cli::draw::tokens(u64::from(window))
                 })
                 .collect();
@@ -573,11 +577,20 @@ fn taken<T: Terminal>(
     } else if runner.model() != name && !super::cache::retire(renderer, runner)? {
         return Ok(false);
     }
+    // One generation, read once: the ceiling, the window and what the model
+    // reads are three answers about the same model, and three separate reads
+    // could take them from three different generations of the registry.
+    let catalogue = terms.providers.snapshot();
     runner.ask(
         name,
-        crate::cli::startup::ceiling(provider, name),
-        Some(crate::cli::startup::window(selected, name, &terms.settings)),
-        crate::cli::startup::accepts(provider, name),
+        crate::cli::startup::ceiling(&catalogue, provider, name),
+        Some(crate::cli::startup::window(
+            &catalogue,
+            selected,
+            name,
+            &terms.settings,
+        )),
+        crate::cli::startup::accepts(&catalogue, provider, name),
     );
 
     // The word may have come off the line and was never shape-checked — anything
