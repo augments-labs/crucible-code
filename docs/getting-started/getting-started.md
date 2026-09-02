@@ -53,17 +53,22 @@ FreeBSD keeps it in the `bash` package rather than the base system. Without
 Bash, use the manual path below. The script detects the platform, verifies
 exactly the archive it downloads
 against the release's `SHA256SUMS`, and atomically installs `crucible` plus a
-`cru` alias in `~/.local/bin`. It never asks for `sudo` or edits a shell
-profile. Use `--version`, `--dir` or `--dry-run` when the defaults are not the
-ones you want. The matching `uninstall.sh` removes only those executables and
-preserves `~/.crucible`; deleting configuration, credentials and sessions
-requires the explicit `--purge --yes` pair.
+`cru` alias in `~/.local/bin`. On Linux it also installs
+`crucible-sandbox-broker` beside `crucible`; confined commands run it as their
+PID 1, and it is trusted only when no directory above it is writable by group
+or others, which the installer points out with the `chmod` that fixes it. It
+never asks for `sudo` or edits a shell profile. Use `--version`, `--dir` or
+`--dry-run` when the defaults are not the ones you want. The matching
+`uninstall.sh` removes only those executables and preserves `~/.crucible`;
+deleting configuration, credentials and sessions requires the explicit
+`--purge --yes` pair.
 
 For a manual Unix install, download the archive and `SHA256SUMS` from the
 [releases page](https://github.com/augments-labs/crucible-code/releases). On
 Linux use `sha256sum -c`, on macOS use `shasum -a 256 -c`, and on FreeBSD use
 `sha256 -c`, with a checksum file narrowed to the downloaded archive. Then
-unpack it with `tar xzf` and copy `crucible` into a directory on `PATH`.
+unpack it with `tar xzf` and copy `crucible` into a directory on `PATH`. On
+Linux copy `crucible-sandbox-broker` into the same directory.
 
 Each Windows target also ships the executable on its own, beside the archive and
 named the same way — `crucible-<version>-windows-x86_64.exe` — so there is

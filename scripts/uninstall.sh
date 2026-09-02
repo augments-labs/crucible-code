@@ -11,8 +11,9 @@ usage() {
     cat <<'USAGE'
 Usage: scripts/uninstall.sh [--dir DIRECTORY] [--dry-run] [--purge --yes]
 
-Removes `crucible` and its owned `cru` alias. Configuration, credentials and
-sessions are preserved unless both --purge and --yes are supplied.
+Removes `crucible`, its sandbox broker and its owned `cru` alias.
+Configuration, credentials and sessions are preserved unless both --purge and
+--yes are supplied.
 USAGE
 }
 
@@ -74,10 +75,17 @@ if ((purge)); then
 fi
 
 binary=$destination/crucible
+broker=$destination/crucible-sandbox-broker
 alias_path=$destination/cru
 if [[ -e $binary || -L $binary ]]; then
     [[ -f $binary && ! -L $binary ]] || {
         printf 'uninstall: refusing to remove non-regular %s\n' "$binary" >&2
+        exit 1
+    }
+fi
+if [[ -e $broker || -L $broker ]]; then
+    [[ -f $broker && ! -L $broker ]] || {
+        printf 'uninstall: refusing to remove non-regular %s\n' "$broker" >&2
         exit 1
     }
 fi
@@ -95,6 +103,13 @@ if [[ -e $binary ]]; then
         printf 'Would remove %s\n' "$binary"
     else
         rm -f -- "$binary"
+    fi
+fi
+if [[ -e $broker ]]; then
+    if ((dry_run)); then
+        printf 'Would remove %s\n' "$broker"
+    else
+        rm -f -- "$broker"
     fi
 fi
 

@@ -24,8 +24,9 @@ Bubblewrap is installed. Should a launch still be refused by the system
 Bubblewrap, its own message is quoted in the error.
 
 Inside the namespace, PID 1 is Crucible's own `crucible-sandbox-broker`
-executable, found beside the Crucible binary and pinned by open descriptor
-before the namespace starts. It is accepted only when it and every directory
+executable, shipped in every Linux release archive and installed beside the
+Crucible binary, where it is found and pinned by open descriptor before the
+namespace starts. It is accepted only when it and every directory
 above it belong to root or to the user running Crucible and are writable by
 neither group nor others; a copy under `/tmp`, in another user's directory or
 below a group-writable directory is ignored, and `chmod g-w` on the offending

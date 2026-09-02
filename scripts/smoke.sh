@@ -168,9 +168,14 @@ root=$work/root
 mkdir -p "$root"
 tar -xzf "$tarball" -C "$root" --strip-components=1
 binary=$root/crucible
-readonly root binary
+broker=$root/crucible-sandbox-broker
+readonly root binary broker
 [[ -x $binary ]] || {
     echo "    FAIL the tarball holds no executable named crucible"
+    exit 1
+}
+[[ -f $broker && -x $broker ]] || {
+    echo "    FAIL the tarball holds no executable named crucible-sandbox-broker"
     exit 1
 }
 
@@ -248,6 +253,20 @@ sandbox /opt/crucible/crucible --help >/dev/null || {
     echo '    FAIL --help did not run'
     failed=1
 }
+
+echo "==> the broker refuses to run outside a sandbox"
+# The broker is PID 1 of every confined command. Started any other way it
+# exits 125 without a word on stdout, which is also proof that the shipped
+# file is the broker and loads on this machine.
+broker_status=0
+broker_said=$(sandbox /opt/crucible/crucible-sandbox-broker 2>/dev/null) || broker_status=$?
+if [[ $broker_status == 125 && -z $broker_said ]]; then
+    echo '    exits 125 and says nothing'
+else
+    printf '    FAIL the broker exited %s and said %q, expected 125 and nothing\n' \
+        "$broker_status" "$broker_said"
+    failed=1
+fi
 
 echo "==> a machine with no key"
 # The first thing a new user meets if they miss a step in the README. A key is
