@@ -24,6 +24,7 @@ mod context;
 mod credential;
 mod diff;
 mod event;
+mod extension;
 mod ids;
 mod interruption;
 mod journal;
@@ -55,6 +56,11 @@ pub use credential::{
 };
 pub use diff::{Change, Diff, Line};
 pub use event::{Event, EventEnvelope, Post, Reporter, TurnError};
+pub use extension::{
+    EXTENSION_ID_BYTES, EXTENSION_REQUESTS, EXTENSION_TEXT_BYTES, ExtensionCapability,
+    ExtensionContribution, ExtensionError, ExtensionIdentity, ExtensionManifest, ExtensionProtocol,
+    ExtensionRequests,
+};
 pub use ids::{
     AgentId, CredentialScopeId, IdError, ProviderAttemptId, RunId, SandboxId, SessionId, ToolId,
     TurnId,
