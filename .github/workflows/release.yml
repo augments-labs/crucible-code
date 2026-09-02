@@ -42,9 +42,14 @@ jobs:
             exit 1
           fi
 
-      # Re-run the deterministic local aggregate. Blocking CI already checked
-      # dependency policy and performance before this commit reached main.
+      # Re-run the deterministic local aggregate on the same enforcing sandbox
+      # host CI proved it on, so the sandbox tests run here rather than skip.
+      # Blocking CI already checked dependency policy and performance before
+      # this commit reached main.
+      - uses: ./.github/actions/enforcing-sandbox
       - run: scripts/check.sh
+        env:
+          CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX: 1
 
       - name: Release notes from the changelog
         run: |

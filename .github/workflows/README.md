@@ -21,5 +21,11 @@ Successful read-only jobs finish with
 `.github/actions/check-clean-worktree`, which rejects tracked edits or untracked
 files left by a check. Ignored build output is outside that invariant.
 
+Every Linux job that runs the Rust gate first runs
+`.github/actions/enforcing-sandbox` and sets
+`CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX`, so the enforcing sandbox tests are
+exercised there rather than skipped. The release gate and `rust-ci.yml` share
+that one action so they cannot drift apart.
+
 Actions are pinned to full commit SHAs. A trailing comment records the release
 name for maintainers; the SHA is what executes.
