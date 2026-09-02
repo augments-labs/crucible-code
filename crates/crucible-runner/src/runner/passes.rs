@@ -87,6 +87,8 @@ impl<'a> AgentLoop<'a> {
         let mut fruitless = 0;
 
         loop {
+            self.runner.flush_sandbox_audits(events)?;
+
             // A line typed while the turn ran is worked in here, between one
             // pass and the next: recorded as a prompt the same way the turn's
             // own first one was, so the request below carries it and the agent
@@ -332,6 +334,7 @@ impl<'a> AgentLoop<'a> {
                 cancel,
                 ancestry: run.ancestry(),
                 journal: &self.runner.session,
+                audits: &self.runner.sandbox_audits,
                 concurrency: run.policy().tools.maximum_concurrency(),
             }
             .pass(&calls, bounds.tool_output, tool_output_maximum);

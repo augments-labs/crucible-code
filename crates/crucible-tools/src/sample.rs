@@ -9,14 +9,92 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crucible_core::{
-    Ancestry, Approved, Ask, Cancel, DescribeTool, Disposition, Permission, Remember, Rules,
-    Sensitivity, Settled, Tool, ToolArgs, ToolCall, ToolContext, ToolId, Unwatched, Verdict, Watch,
-    Workspace,
+    Ancestry, Approved, Ask, CallResultKey, CallResultReceipt, CallResultStoreError, Cancel,
+    DescribeTool, Disposition, InvocationId, JournalStore, Permission, Remember, Rules, RunItem,
+    Sensitivity, Settled, Tool, ToolArgs, ToolCall, ToolContext, ToolId, ToolOutput, ToolResult,
+    Unwatched, Verdict, Watch, Workspace,
 };
+use sha2::{Digest as _, Sha256};
+
+struct TestJournal;
+
+impl JournalStore for TestJournal {
+    fn append_run_item(&self, _item: &RunItem) {}
+
+    fn put_call_result(
+        &self,
+        key: CallResultKey,
+        result: &ToolResult,
+    ) -> Result<CallResultReceipt, CallResultStoreError> {
+        let mut digest = Sha256::new();
+        digest.update(b"crucible:test-call-result:v1\0");
+        digest.update(key.bytes());
+        digest.update(result.id.as_str().as_bytes());
+        digest.update(result.output.text().as_bytes());
+        digest.update([u8::from(result.output.is_failed())]);
+        Ok(CallResultReceipt::from_digest(digest.finalize().into()))
+    }
+}
+
+static TEST_JOURNAL: TestJournal = TestJournal;
 
 /// A fresh run context for a direct tool test that watches nothing.
 pub(crate) fn context() -> ToolContext<'static> {
     cancelled_by(&Cancel::new())
+}
+
+/// A durable direct-test context attributed to a chosen call.
+#[cfg(target_os = "linux")]
+pub(crate) fn context_for(call: &str) -> ToolContext<'static> {
+    ToolContext::new(
+        Ancestry::new(),
+        ToolId::new(call),
+        &Cancel::new(),
+        None,
+        &Unwatched,
+    )
+    .with_call_result_store(InvocationId::new(), &TEST_JOURNAL)
+}
+
+/// Completes the runner-owned result seam for direct tool tests.
+pub(crate) fn finalize_call_result(context: &ToolContext<'_>, output: &ToolOutput) {
+    let Some(pending) = context.take_call_result().expect("pending result slot") else {
+        return;
+    };
+    let mut output = output.clone();
+    output.forget_diff();
+    let result = ToolResult {
+        id: context.call().clone(),
+        output,
+    };
+    let receipt = TEST_JOURNAL
+        .put_call_result(pending.key(), &result)
+        .expect("test result receipt");
+    pending.accept(receipt).expect("test result acceptance");
+}
+
+/// The variable a continuous-integration job sets so that a test needing the
+/// enforcing Linux backend fails when that backend is unavailable, instead of
+/// quietly passing over nothing.
+pub(crate) const REQUIRE_ENFORCING_SANDBOX: &str = "CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX";
+
+/// Whether a test that needs the enforcing backend has to stop here.
+///
+/// On a developer machine without a usable Bubblewrap the test is skipped, which
+/// is the honest answer for a boundary nobody can exercise there. Where the job
+/// has declared that the backend must exist, an unavailable backend is a failure
+/// naming the reason, so a suite that measured nothing cannot report green.
+pub(crate) fn skipped_without_enforcement(service: &crate::LocalSandbox) -> bool {
+    match crucible_core::SandboxService::probe(service) {
+        Ok(_) => false,
+        Err(problem) => {
+            assert!(
+                std::env::var_os(REQUIRE_ENFORCING_SANDBOX).is_none(),
+                "the enforcing sandbox backend is required by this job but unavailable: {problem}"
+            );
+            true
+        }
+    }
 }
 
 /// A direct-test context stopped by `cancel` and otherwise unwatched.
@@ -28,6 +106,7 @@ pub(crate) fn cancelled_by(cancel: &Cancel) -> ToolContext<'static> {
         None,
         &Unwatched,
     )
+    .with_call_result_store(InvocationId::new(), &TEST_JOURNAL)
 }
 
 /// A direct-test context that forwards incremental output to `watch`.
@@ -39,6 +118,7 @@ pub(crate) fn watching(watch: &dyn Watch) -> ToolContext<'_> {
         None,
         watch,
     )
+    .with_call_result_store(InvocationId::new(), &TEST_JOURNAL)
 }
 
 /// A workspace with a directory beside it that is deliberately outside.

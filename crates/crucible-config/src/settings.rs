@@ -24,6 +24,7 @@ mod output;
 mod permissions;
 mod prompt;
 pub(crate) mod prompt_cache;
+pub(crate) mod sandbox;
 mod updates;
 mod variables;
 
@@ -49,6 +50,10 @@ pub struct Settings {
     /// intersection this security boundary requires.
     prompt_cache: PromptCachePolicy,
 
+    /// Host confinement mode, defaulting to required and weakened only by a
+    /// user-originated layer.
+    sandbox: crucible_core::SandboxMode,
+
     /// Every layer's rules together. Held apart from the value because a rule
     /// is read where it is written — see [`Document::parse`] — and what survives
     /// the layering is the rule rather than its text.
@@ -65,6 +70,7 @@ impl fmt::Debug for Settings {
             .field("value", &env::Redacted(&self.value))
             .field("rules", &self.rules)
             .field("prompt_cache", &self.prompt_cache)
+            .field("sandbox", &self.sandbox)
             .finish()
     }
 }
@@ -91,6 +97,7 @@ impl Settings {
         documents.sort_by_key(|document| document.origin().nearness());
 
         let prompt_cache = prompt_cache::resolve(&documents)?;
+        let sandbox = sandbox::resolve(&documents);
 
         let mut value = Value::Object(Map::new());
         for document in &documents {
@@ -108,6 +115,7 @@ impl Settings {
         Ok(Self {
             value,
             prompt_cache,
+            sandbox,
             rules,
         })
     }
@@ -199,6 +207,12 @@ impl Settings {
                 vars.iter()
                     .filter_map(|(name, value)| Some((name.as_str(), value.as_str()?)))
             })
+    }
+
+    /// Effective operating-system confinement mode.
+    #[must_use]
+    pub const fn sandbox_mode(&self) -> crucible_core::SandboxMode {
+        self.sandbox
     }
 }
 
@@ -337,6 +351,40 @@ mod tests {
         // where it already lives, and the wiring lays the command line over
         // this.
         assert_eq!(Settings::resolve(Vec::new()).model("anthropic"), None);
+    }
+
+    #[test]
+    fn confinement_defaults_to_required_and_only_the_user_can_weaken_it() {
+        assert_eq!(
+            Settings::resolve(Vec::new()).sandbox_mode(),
+            crucible_core::SandboxMode::Required
+        );
+        let user = Document::sample(r#"{"sandbox":{"mode":"off"}}"#, Origin::User);
+        assert_eq!(
+            Settings::resolve(vec![user]).sandbox_mode(),
+            crucible_core::SandboxMode::Off
+        );
+
+        for origin in [Origin::Project, Origin::ProjectLocal] {
+            let error = Document::parse(
+                r#"{"sandbox":{"mode":"degraded"}}"#,
+                ".crucible/config.json",
+                origin,
+            )
+            .unwrap_err();
+            assert!(matches!(error, crate::ConfigError::Widening { .. }));
+        }
+    }
+
+    #[test]
+    fn a_project_may_strengthen_a_users_confinement_choice() {
+        let user = Document::sample(r#"{"sandbox":{"mode":"off"}}"#, Origin::User);
+        let project = Document::sample(r#"{"sandbox":{"mode":"required"}}"#, Origin::Project);
+
+        assert_eq!(
+            Settings::resolve(vec![project, user]).sandbox_mode(),
+            crucible_core::SandboxMode::Required
+        );
     }
 
     #[test]

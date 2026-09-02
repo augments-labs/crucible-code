@@ -32,9 +32,9 @@ use crucible_core::{
     PromptCacheResourceError, PromptCacheResourceOperation, PromptCacheResourceRecord,
     PromptCacheResourceState, PromptCacheRetentionClass, PromptCacheScopeDigest,
     PromptCacheUsageFact, PromptCacheUsageReporting, Provider, ProviderError, ProviderUsage,
-    Reporter, Request, Room, RunItem, SessionStore, Spend, Steer, StopReason, Summary, ToolCall,
-    ToolGeneration, ToolSchema, ToolSnapshot, Toolset, ToolsetContext, Transcript, TurnError,
-    TurnId, UsageCost,
+    Reporter, Request, Room, RunItem, SandboxAuditRegistry, SessionStore, Spend, Steer, StopReason,
+    Summary, ToolCall, ToolGeneration, ToolSchema, ToolSnapshot, Toolset, ToolsetContext,
+    Transcript, TurnError, TurnId, UsageCost,
 };
 
 use crucible_session::{Pruned, Session};
@@ -217,6 +217,7 @@ pub struct Runner {
     prompt_cache_store: Option<Box<dyn crucible_core::PromptCacheResourceStore>>,
     prompt_cache_attempt: Option<PromptCacheAttempt>,
     prompt_cache_owner_scope: Option<PromptCacheScopeDigest>,
+    sandbox_audits: SandboxAuditRegistry,
 }
 
 struct Tooling {
@@ -301,6 +302,7 @@ impl Runner {
             prompt_cache_store: None,
             prompt_cache_attempt: None,
             prompt_cache_owner_scope: None,
+            sandbox_audits: SandboxAuditRegistry::new(),
         };
         runner
             .load
@@ -982,6 +984,7 @@ impl Runner {
     /// that could be made separately would eventually be made separately, and
     /// a log that is missing one message is a session that cannot be continued.
     fn record(&mut self, ancestry: Ancestry, message: Message) {
+        let settles_call_results = matches!(&message, Message::ToolResults(_));
         match RunItem::message(ancestry, message.clone()) {
             Ok(item) => {
                 SessionStore::append_message(&self.session, &message);
@@ -1002,6 +1005,14 @@ impl Runner {
         if let Some(calibration) = self.load.calibrated() {
             self.session.measured(&calibration);
         }
+        if settles_call_results {
+            JournalStore::settle_call_results(&self.session);
+        }
+    }
+
+    fn flush_sandbox_audits(&self, events: Reporter<'_>) -> Result<(), TurnError> {
+        work::report_sandbox_registry(&self.sandbox_audits, events, &self.session)
+            .map_err(TurnError::from)
     }
 
     /// Writes one normalized cache fact to the durable framework journal and

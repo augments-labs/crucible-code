@@ -310,6 +310,7 @@ crucible-code provider
 crucible-code runner
 crucible-code session
 crucible-code tools
+crucible-code sandbox-broker
 crucible-code tui
 auth core
 auth privacy
@@ -319,7 +320,8 @@ runner core
 runner session
 session core
 session privacy
-tools core'
+tools core
+tools sandbox-broker'
 while IFS= read -r edge; do
     [[ -z "$edge" ]] && continue
     if ! grep -Fxq "$edge" <<<"$allowed"; then
@@ -327,7 +329,7 @@ while IFS= read -r edge; do
         failed=1
     fi
 done <<<"$edges"
-for crate in core privacy tui; do
+for crate in core privacy sandbox-broker tui; do
     if grep -qE "^$crate " <<<"$edges"; then
         printf '    FAIL crucible-%s must not depend on another workspace crate\n' "$crate"
         failed=1

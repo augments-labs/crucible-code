@@ -15,10 +15,11 @@ use std::path::{Path, PathBuf};
 use std::str::{self, FromStr as _};
 
 use crucible_core::{
-    Calibration, ContextSnapshot, Message, SessionId, ToolId, Transcript, Workspace,
+    Calibration, ContextSnapshot, Message, SessionId, ToolId, ToolOutput, ToolResult, Transcript,
+    Workspace,
 };
 
-use super::{SUFFIX, SessionError, wire};
+use super::{SUFFIX, SessionError, results, wire};
 
 /// Every session log in `directory`, oldest first.
 ///
@@ -152,6 +153,8 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
     };
 
     let mut log = BufReader::new(File::open(path).map_err(trouble)?);
+    let mut pending_results = results::load(path).map_err(trouble)?;
+    let mut settled_results = Vec::new();
     let mut raw = Vec::new();
 
     // The header is not a message, but its bytes are where the messages start.
@@ -298,6 +301,19 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
             )));
         };
 
+        if let Message::ToolResults(recorded) = &message {
+            let mut index = 0;
+            while index < pending_results.len() {
+                if pending_results
+                    .get(index)
+                    .is_some_and(|pending| recorded.contains(&pending.result))
+                {
+                    settled_results.push(pending_results.swap_remove(index));
+                } else {
+                    index += 1;
+                }
+            }
+        }
         transcript.push(message);
         calibration = None;
         before = through;
@@ -305,6 +321,20 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
     }
 
     if outstanding(&transcript) {
+        if !pending_results.is_empty() {
+            let recovered = recovered_results(&transcript, &pending_results).map_err(trouble)?;
+            transcript.push(recovered.clone());
+            settled_results.append(&mut pending_results);
+            return Ok(Replayed {
+                transcript,
+                pruned,
+                settled_at: through,
+                calibration: None,
+                context,
+                recovered: Some(recovered),
+                settled_results,
+            });
+        }
         // The message being cut off is the one the reading covered, so what is
         // left is a shorter transcript than the number describes.
         return Ok(Replayed {
@@ -313,7 +343,16 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
             settled_at: before,
             calibration: None,
             context,
+            recovered: None,
+            settled_results,
         });
+    }
+
+    if !pending_results.is_empty() {
+        return Err(trouble(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "a durable call result has no outstanding source call",
+        )));
     }
 
     Ok(Replayed {
@@ -322,7 +361,51 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
         settled_at: through,
         calibration,
         context,
+        recovered: None,
+        settled_results,
     })
+}
+
+fn recovered_results(
+    transcript: &Transcript,
+    stored: &[results::StoredResult],
+) -> Result<Message, io::Error> {
+    let Some(Message::Agent { calls, .. }) = transcript.messages().last() else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "durable call results have no source message",
+        ));
+    };
+    let mut recovered = Vec::with_capacity(calls.len());
+    for call in calls {
+        let mut matching = stored.iter().filter(|record| record.result.id == call.id);
+        let result = match (matching.next(), matching.next()) {
+            (Some(record), None) => record.result.clone(),
+            (None, None) => ToolResult {
+                id: call.id.clone(),
+                output: ToolOutput::failed(
+                    "tool execution was interrupted before a durable result was recorded",
+                ),
+            },
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "more than one durable result answers one source call",
+                ));
+            }
+        };
+        recovered.push(result);
+    }
+    if stored
+        .iter()
+        .any(|record| !calls.iter().any(|call| call.id == record.result.id))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "a durable call result does not match its source message",
+        ));
+    }
+    Ok(Message::ToolResults(recovered))
 }
 
 /// What a log read back comes to.
@@ -339,6 +422,10 @@ pub(super) struct Replayed {
     pub(super) settled_at: u64,
     pub(super) calibration: Option<Calibration>,
     pub(super) context: Option<ContextSnapshot>,
+    /// One result line reconstructed from create-once sidecars.
+    pub(super) recovered: Option<Message>,
+    /// Sidecars represented by a durable ordinary transcript line.
+    pub(super) settled_results: Vec<results::StoredResult>,
 }
 
 /// What results said before a pruning cleared them.

@@ -16,13 +16,16 @@ use crucible_core::{
     InvocationRecord, InvocationState, MAX_HUMAN_INPUT_BYTES, Modality, PendingAction,
     PendingActions, PendingApproval, PendingExternalTool, PendingHumanInput,
     PromptCacheFingerprint, PromptCacheResourceId, PromptCacheScopeDigest, ProviderAttemptId,
-    ResumeDigest, ResumeScope, RunId, TOOL_RESULT_BYTES, ToolArgs, ToolCall, ToolEffect, ToolId,
-    ToolOutcome, ToolOutput,
+    ResumeDigest, ResumeScope, RunId, SandboxBackendId, SandboxBackendIdentity,
+    SandboxBackendProvenance, SandboxCapabilities, SandboxCapability, SandboxCheckpoint,
+    SandboxFeature, SandboxId, SandboxMode, SandboxNetworkInspection, TOOL_RESULT_BYTES, ToolArgs,
+    ToolCall, ToolEffect, ToolId, ToolOutcome, ToolOutput,
 };
 use serde_json::{Value, json};
 
 /// Current execution-checkpoint document format.
-pub const CHECKPOINT_FORMAT: u64 = 1;
+pub const CHECKPOINT_FORMAT: u64 = 2;
+const READABLE_CHECKPOINT_FORMATS: &[u64] = &[2, 1];
 /// Maximum encoded bytes in one checkpoint document.
 pub const MAX_CHECKPOINT_BYTES: usize = 2 * 1024 * 1024;
 
@@ -174,6 +177,11 @@ fn encode(checkpoint: &ExecutionCheckpoint) -> Result<Vec<u8>, CheckpointError> 
         .iter()
         .map(encode_invocation)
         .collect::<Vec<_>>();
+    let sandboxes = checkpoint
+        .sandboxes()
+        .iter()
+        .map(encode_sandbox)
+        .collect::<Vec<_>>();
     let document = json!({
         "format": CHECKPOINT_FORMAT,
         "checkpoint": checkpoint.id().to_string(),
@@ -184,6 +192,7 @@ fn encode(checkpoint: &ExecutionCheckpoint) -> Result<Vec<u8>, CheckpointError> 
         "expires_at": checkpoint.expires_at(),
         "pending": pending,
         "invocations": invocations,
+        "sandboxes": sandboxes,
     });
     let mut encoded = BoundedDocument::new();
     serde_json::to_writer(&mut encoded, &document).map_err(|problem| {
@@ -239,6 +248,7 @@ fn retained_checkpoint_bytes(checkpoint: &ExecutionCheckpoint) -> usize {
             bytes = bytes.saturating_add(retained_output_bytes(output));
         }
     }
+    bytes = bytes.saturating_add(checkpoint.sandboxes().len().saturating_mul(4_096));
     bytes
 }
 
@@ -296,7 +306,11 @@ impl io::Write for BoundedDocument {
 
 fn decode(bytes: &[u8]) -> Result<ExecutionCheckpoint, CheckpointError> {
     let value: Value = serde_json::from_slice(bytes).map_err(|_| CheckpointError::Unreadable)?;
-    if value.get("format").and_then(Value::as_u64) != Some(CHECKPOINT_FORMAT) {
+    let format = value
+        .get("format")
+        .and_then(Value::as_u64)
+        .ok_or(CheckpointError::Unreadable)?;
+    if !READABLE_CHECKPOINT_FORMATS.contains(&format) {
         return Err(CheckpointError::Unreadable);
     }
     let id = text(&value, "checkpoint")?.parse::<CheckpointId>()?;
@@ -323,6 +337,11 @@ fn decode(bytes: &[u8]) -> Result<ExecutionCheckpoint, CheckpointError> {
     checkpoint.set_pending(pending);
     for invocation in array(&value, "invocations")? {
         checkpoint.add_invocation(decode_invocation(invocation)?)?;
+    }
+    if format >= 2 {
+        for sandbox in array(&value, "sandboxes")? {
+            checkpoint.add_sandbox(decode_sandbox(sandbox)?)?;
+        }
     }
     Ok(checkpoint)
 }
@@ -426,6 +445,120 @@ fn decode_resolution(value: &Value) -> Result<ActionResolution, CheckpointError>
         "cancelled" => Ok(ActionResolution::Cancelled),
         _ => Err(CheckpointError::Unreadable),
     }
+}
+
+fn encode_sandbox(sandbox: &SandboxCheckpoint) -> Value {
+    json!({
+        "id": sandbox.id().to_string(),
+        "backend": {
+            "id": sandbox.backend().id().as_str(),
+            "version": sandbox.backend().version(),
+            "provenance": sandbox.backend().provenance().as_str(),
+            "digest": sandbox.backend().digest().map(|digest| hex(&digest)),
+        },
+        "capabilities": sandbox.capabilities().iter().map(|(feature, claim)| json!({
+            "feature": feature.as_str(),
+            "claim": claim.as_str(),
+        })).collect::<Vec<_>>(),
+        "mode": sandbox.mode().as_str(),
+        "network": {
+            "state": sandbox.network().as_str(),
+            "endpoints": sandbox.network().endpoints(),
+            "dns": sandbox.network().dns(),
+            "forwarding": sandbox.network().forwarding(),
+        },
+        "policy_digest": hex(&sandbox.policy_digest()),
+        "manifest_digest": hex(&sandbox.manifest_digest()),
+        "confined": sandbox.confined(),
+    })
+}
+
+fn decode_sandbox(value: &Value) -> Result<SandboxCheckpoint, CheckpointError> {
+    let backend = field(value, "backend")?;
+    let digest = nullable_text(backend, "digest")?
+        .map(parse_hex)
+        .transpose()?;
+    let backend = SandboxBackendIdentity::new(
+        SandboxBackendId::new(text(backend, "id")?).map_err(|_| CheckpointError::Unreadable)?,
+        text(backend, "version")?,
+        match text(backend, "provenance")? {
+            "system" => SandboxBackendProvenance::System,
+            "bundled" => SandboxBackendProvenance::Bundled,
+            "remote" => SandboxBackendProvenance::Remote,
+            "compatibility" => SandboxBackendProvenance::Compatibility,
+            _ => return Err(CheckpointError::Unreadable),
+        },
+        digest,
+    )
+    .map_err(|_| CheckpointError::Unreadable)?;
+    let claims = array(value, "capabilities")?;
+    if claims.len() != SandboxFeature::COUNT {
+        return Err(CheckpointError::Unreadable);
+    }
+    let mut capabilities = SandboxCapabilities::none();
+    let mut seen = Vec::with_capacity(SandboxFeature::COUNT);
+    for record in claims {
+        let written_feature = text(record, "feature")?;
+        let feature = SandboxFeature::ALL
+            .into_iter()
+            .find(|feature| feature.as_str() == written_feature)
+            .ok_or(CheckpointError::Unreadable)?;
+        if seen.contains(&feature) {
+            return Err(CheckpointError::Unreadable);
+        }
+        seen.push(feature);
+        let claim = match text(record, "claim")? {
+            "unsupported" => SandboxCapability::Unsupported,
+            "observed" => SandboxCapability::Observed,
+            "enforced" => SandboxCapability::Enforced,
+            _ => return Err(CheckpointError::Unreadable),
+        };
+        capabilities = capabilities.with(feature, claim);
+    }
+    let mode = match text(value, "mode")? {
+        "required" => SandboxMode::Required,
+        "degraded" => SandboxMode::Degraded,
+        "off" => SandboxMode::Off,
+        _ => return Err(CheckpointError::Unreadable),
+    };
+    let network = field(value, "network")?;
+    let network = match text(network, "state")? {
+        "closed" => {
+            if number(network, "endpoints")? != 0
+                || boolean(network, "dns")?
+                || boolean(network, "forwarding")?
+            {
+                return Err(CheckpointError::Unreadable);
+            }
+            SandboxNetworkInspection::Closed
+        }
+        "exact" => {
+            let endpoints = usize::try_from(number(network, "endpoints")?)
+                .map_err(|_| CheckpointError::Unreadable)?;
+            if !(1..=crucible_core::MAX_SANDBOX_NETWORK_ENDPOINTS).contains(&endpoints) {
+                return Err(CheckpointError::Unreadable);
+            }
+            SandboxNetworkInspection::Exact {
+                endpoints,
+                dns: boolean(network, "dns")?,
+                forwarding: boolean(network, "forwarding")?,
+            }
+        }
+        _ => return Err(CheckpointError::Unreadable),
+    };
+    SandboxCheckpoint::restore(
+        text(value, "id")?
+            .parse::<SandboxId>()
+            .map_err(|_| CheckpointError::Unreadable)?,
+        backend,
+        capabilities,
+        mode,
+        network,
+        parse_hex(text(value, "policy_digest")?)?,
+        parse_hex(text(value, "manifest_digest")?)?,
+        boolean(value, "confined")?,
+    )
+    .map_err(|_| CheckpointError::Unreadable)
 }
 
 fn encode_invocation(invocation: &InvocationRecord) -> Value {

@@ -191,6 +191,17 @@ impl<'a> Reporter<'a> {
         self.ancestry
     }
 
+    /// Returns the same destination with attribution fixed to another typed
+    /// execution. Used when a detached lifecycle reports after the runner has
+    /// moved to a later boundary while retaining the original ancestry.
+    #[must_use]
+    pub const fn attributed_to(self, ancestry: Ancestry) -> Self {
+        Self {
+            ancestry,
+            to: self.to,
+        }
+    }
+
     /// Reports one event as this execution's.
     pub fn post(&self, event: Event) {
         self.to.post(EventEnvelope::new(self.ancestry, event));
@@ -217,6 +228,14 @@ pub enum Event {
     PromptCache {
         /// The typed fact; ancestry is supplied by the surrounding envelope.
         fact: crate::PromptCacheFact,
+    },
+
+    /// One bounded sandbox lifecycle fact for a tool invocation.
+    Sandbox {
+        /// The fixed provider call identity that owns the sandbox.
+        call: ToolId,
+        /// Redacted typed fact; ancestry is supplied by the envelope.
+        fact: crate::SandboxFact,
     },
 
     /// Prose arrived from the model.
@@ -414,6 +433,11 @@ impl std::fmt::Debug for Event {
             Self::PromptCache { fact } => {
                 f.debug_struct("PromptCache").field("fact", fact).finish()
             }
+            Self::Sandbox { call: _, fact } => f
+                .debug_struct("Sandbox")
+                .field("call", &"[redacted]")
+                .field("fact", fact)
+                .finish(),
             Self::Delta { text } => f.debug_struct("Delta").field("text", text).finish(),
             Self::ToolRequested {
                 call,

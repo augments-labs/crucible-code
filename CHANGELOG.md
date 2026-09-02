@@ -8,6 +8,42 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Added
+
+- **Approved commands now run behind operating-system confinement on Linux.**
+  Crucible starts `bash` in a verified Bubblewrap boundary that exposes only
+  the selected workspace and minimum read-only runtime, denies network access,
+  closes undeclared descriptors, protects repository and Crucible metadata,
+  limits time/output/concurrency, and kills the complete sandbox process tree.
+  If that boundary cannot be prepared, the command fails before it starts.
+  Bubblewrap 0.11.0 or newer is required; an older one is reported as an
+  unavailable backend, and a launch it refuses quotes its message.
+
+- **Sandbox policy is now a reusable, inspectable host contract.** Backends
+  negotiate exact capabilities before effects; bounded manifests,
+  requested/effective policy identities, credential projections, command
+  guardrails, usage, cleanup and ancestry-aware lifecycle facts give later MCP
+  and extension processes the same boundary without changing tool arguments.
+
+- **Writable roots are published transactionally on Linux.** A confined
+  command writes into a private projection of each writable root. An ordinary
+  exit, zero or nonzero, publishes the changed paths through a checksummed
+  write-ahead log; a signal, deadline, interrupt or output violation discards
+  them; a root changed outside the sandbox is left untouched. Publication is
+  serialized across commands, an abandoned transaction is recovered or
+  quarantined at the next preparation, and a detached command's start result is
+  accepted only once it is durably stored.
+
+### Changed
+
+- **`sandbox.mode` defaults to `required`.** A home configuration may
+  deliberately select documented `degraded` or `off` compatibility behavior;
+  workspace configuration and descendants cannot weaken the user's effective
+  requirement, and compatibility execution is always reported as unconfined.
+  There is no enforcing backend on macOS, Windows or FreeBSD, so a `bash`
+  command there fails before it starts until a home configuration selects
+  `degraded` or `off`.
+
 ## [0.33.0] - 2026-09-01
 
 ### Added

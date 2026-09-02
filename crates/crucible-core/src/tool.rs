@@ -9,6 +9,7 @@
 //! knows what it means.
 
 use std::fmt;
+use std::sync::Mutex;
 use std::time::Instant;
 
 use crate::diff::Diff;
@@ -395,6 +396,55 @@ impl Watch for Unwatched {
     fn wrote(&self, _text: Wrote) {}
 }
 
+/// Owned completion half of one runner-finalized durable call result.
+///
+/// A background executor registers this only after an application registry owns
+/// its cleanup scope. The runner calls it after output hooks and both encoded
+/// output bounds have selected the exact result written to durable storage.
+pub trait CallResultAcceptance: Send {
+    /// Binds the durable result receipt into the executor's lifecycle record.
+    ///
+    /// # Errors
+    ///
+    /// The executor could not durably close its acceptance transition.
+    fn accept(
+        self: Box<Self>,
+        receipt: crate::CallResultReceipt,
+    ) -> Result<(), crate::SandboxError>;
+}
+
+/// One source-qualified result waiting for runner-owned finalization.
+pub struct PendingCallResult {
+    key: crate::CallResultKey,
+    acceptance: Box<dyn CallResultAcceptance>,
+}
+
+impl PendingCallResult {
+    /// The fixed durable identity derived before the tool ran.
+    #[must_use]
+    pub const fn key(&self) -> crate::CallResultKey {
+        self.key
+    }
+
+    /// Completes the executor lifecycle after the result sink returned a receipt.
+    ///
+    /// # Errors
+    ///
+    /// The executor could not durably close its acceptance transition.
+    pub fn accept(self, receipt: crate::CallResultReceipt) -> Result<(), crate::SandboxError> {
+        self.acceptance.accept(receipt)
+    }
+}
+
+impl fmt::Debug for PendingCallResult {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PendingCallResult")
+            .field("key", &"[redacted]")
+            .finish_non_exhaustive()
+    }
+}
+
 /// The run-scoped capabilities one admitted tool call receives.
 ///
 /// Narrow by design: a tool can identify its run and call, observe its own
@@ -406,6 +456,9 @@ pub struct ToolContext<'a> {
     cancel: Cancel,
     deadline: Option<Instant>,
     watch: &'a dyn Watch,
+    sandbox: crate::SandboxAudit,
+    call_result: Option<(crate::CallResultKey, &'a dyn crate::JournalStore)>,
+    pending_result: Mutex<Option<PendingCallResult>>,
 }
 
 impl<'a> ToolContext<'a> {
@@ -418,13 +471,51 @@ impl<'a> ToolContext<'a> {
         deadline: Option<Instant>,
         watch: &'a dyn Watch,
     ) -> Self {
+        let sandbox = crate::SandboxAudit::new(ancestry, call.clone());
         Self {
             ancestry,
             call,
             cancel: parent.child_until(deadline),
             deadline,
             watch,
+            sandbox,
+            call_result: None,
+            pending_result: Mutex::new(None),
         }
+    }
+
+    /// Binds the call's source-qualified durable result identity and sink.
+    ///
+    /// The sink remains unreachable as a general journal: the tool can only
+    /// ask this context to store a result for its own fixed call identity.
+    #[must_use]
+    pub fn with_call_result_store(
+        mut self,
+        invocation: crate::InvocationId,
+        store: &'a dyn crate::JournalStore,
+    ) -> Self {
+        self.call_result = Some((
+            crate::CallResultKey::derive(self.ancestry, invocation, &self.call),
+            store,
+        ));
+        self
+    }
+
+    /// Builds a context around a host-created collector that may outlive a
+    /// panicking tool frame.
+    ///
+    /// # Errors
+    ///
+    /// The collector was created for another ancestry or call.
+    pub fn with_sandbox_audit(
+        mut self,
+        sandbox: crate::SandboxAudit,
+    ) -> Result<Self, crate::SandboxAuditError> {
+        if !sandbox.belongs_to(self.ancestry, &self.call) {
+            return Err(crate::SandboxAuditError::AttributionMismatch);
+        }
+        self.sandbox = sandbox;
+        Ok(self)
     }
 
     /// The run this call belongs to.
@@ -443,6 +534,50 @@ impl<'a> ToolContext<'a> {
     #[must_use]
     pub const fn call(&self) -> &ToolId {
         &self.call
+    }
+
+    /// Source-qualified key fixed before this call began.
+    #[must_use]
+    pub fn call_result_key(&self) -> Option<crate::CallResultKey> {
+        self.call_result.map(|(key, _)| key)
+    }
+
+    /// Transfers one background executor into runner-owned result finalization.
+    ///
+    /// # Errors
+    ///
+    /// The context has no durable result capability, already owns a pending
+    /// result, or its bounded ownership slot became unavailable.
+    pub fn defer_call_result(
+        &self,
+        acceptance: Box<dyn CallResultAcceptance>,
+    ) -> Result<(), crate::CallResultStoreError> {
+        let (key, _) = self
+            .call_result
+            .ok_or(crate::CallResultStoreError::Unavailable)?;
+        let mut pending = self
+            .pending_result
+            .lock()
+            .map_err(|_| crate::CallResultStoreError::Storage)?;
+        if pending.is_some() {
+            return Err(crate::CallResultStoreError::Conflict);
+        }
+        *pending = Some(PendingCallResult { key, acceptance });
+        Ok(())
+    }
+
+    /// Takes the executor half of a result for runner-owned finalization.
+    ///
+    /// # Errors
+    ///
+    /// The bounded ownership slot became unavailable.
+    pub fn take_call_result(
+        &self,
+    ) -> Result<Option<PendingCallResult>, crate::CallResultStoreError> {
+        self.pending_result
+            .lock()
+            .map(|mut pending| pending.take())
+            .map_err(|_| crate::CallResultStoreError::Storage)
     }
 
     /// Cancellation local to this call and inherited from its run.
@@ -467,6 +602,34 @@ impl<'a> ToolContext<'a> {
     /// Reports incremental output under this call's identity.
     pub fn wrote(&self, text: Wrote) {
         self.watch.wrote(text);
+    }
+
+    /// Fixed-attribution collector for host-owned sandbox services.
+    #[must_use]
+    pub fn sandbox_audit(&self) -> crate::SandboxAudit {
+        self.sandbox.clone()
+    }
+
+    /// Facts accumulated by sandbox lifecycles in this call.
+    ///
+    /// # Errors
+    ///
+    /// The bounded collector became unavailable.
+    pub fn sandbox_facts(
+        &self,
+    ) -> Result<Box<[crate::SandboxAuditRecord]>, crate::SandboxAuditError> {
+        self.sandbox.records()
+    }
+
+    /// Takes accumulated sandbox facts exactly once for event/journal delivery.
+    ///
+    /// # Errors
+    ///
+    /// The bounded collector became unavailable.
+    pub fn take_sandbox_facts(
+        &self,
+    ) -> Result<Box<[crate::SandboxAuditRecord]>, crate::SandboxAuditError> {
+        self.sandbox.take_records()
     }
 }
 
@@ -1071,6 +1234,8 @@ impl fmt::Debug for dyn Tool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
+
     use crate::diff::{Change, Line};
     use crate::modality::Modality;
     use crate::permission::{Ask, Permission, Remember, Settled, Target, Verdict};
@@ -1171,6 +1336,53 @@ mod tests {
         context.cancel().request();
         assert!(context.cancel().requested());
         assert!(!parent.requested());
+    }
+
+    struct Accepted(Arc<Mutex<Option<crate::CallResultReceipt>>>);
+
+    impl CallResultAcceptance for Accepted {
+        fn accept(
+            self: Box<Self>,
+            receipt: crate::CallResultReceipt,
+        ) -> Result<(), crate::SandboxError> {
+            *self.0.lock().unwrap() = Some(receipt);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_tool_context_transfers_one_pending_result_to_runner_finalization() {
+        struct Journal;
+
+        impl crate::JournalStore for Journal {
+            fn append_run_item(&self, _item: &crate::RunItem) {}
+        }
+
+        let accepted = Arc::new(Mutex::new(None));
+        let context = ToolContext::new(
+            Ancestry::new(),
+            ToolId::new("call-context"),
+            &Cancel::new(),
+            None,
+            &Unwatched,
+        )
+        .with_call_result_store(crate::InvocationId::new(), &Journal);
+        context
+            .defer_call_result(Box::new(Accepted(Arc::clone(&accepted))))
+            .unwrap();
+        assert!(
+            context
+                .defer_call_result(Box::new(Accepted(Arc::clone(&accepted))))
+                .is_err(),
+            "a second owner replaced the pending result"
+        );
+
+        let pending = context.take_call_result().unwrap().expect("pending result");
+        let receipt = crate::CallResultReceipt::from_digest([0x5a; 32]);
+        pending.accept(receipt).unwrap();
+
+        assert_eq!(*accepted.lock().unwrap(), Some(receipt));
+        assert!(context.take_call_result().unwrap().is_none());
     }
 
     /// The lines a call changed, whose text nothing outside the reader may see.

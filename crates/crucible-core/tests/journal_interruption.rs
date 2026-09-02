@@ -1,15 +1,59 @@
 //! Cross-module contracts for framework history and durable interruption.
 
 use crucible_core::{
-    ActionResolution, Ancestry, ApprovalDecision, CacheCheckpoint, CheckpointId, CompactionRecord,
-    CustomEntry, CustomProjector, ExecutionCheckpoint, IdempotencyKey, InputTokenUsage,
-    InterruptionError, InvocationId, InvocationRecord, InvocationState, JournalError,
-    MAX_RUN_ITEM_RETAINED_BYTES, Message, PendingAction, PendingActions, PendingApproval,
-    PendingExternalTool, PendingHumanInput, PromptCacheFingerprint, PromptCachePolicyVersion,
-    PromptCacheResourceId, PromptCacheScopeDigest, RecoveryAction, ResumeDigest, ResumeEvidence,
-    ResumeScope, RunHistory, RunItem, StopReason, TOOL_RESULT_BYTES, ToolArgs, ToolCall,
-    ToolEffect, ToolId, ToolOutcome, ToolOutput, ToolResult,
+    ActionResolution, Ancestry, ApprovalDecision, CacheCheckpoint, CallResultKey,
+    CallResultStoreError, CheckpointId, CompactionRecord, CustomEntry, CustomProjector,
+    ExecutionCheckpoint, IdempotencyKey, InputTokenUsage, InterruptionError, InvocationId,
+    InvocationRecord, InvocationState, JournalError, JournalStore, MAX_RUN_ITEM_RETAINED_BYTES,
+    Message, PendingAction, PendingActions, PendingApproval, PendingExternalTool,
+    PendingHumanInput, PromptCacheFingerprint, PromptCachePolicyVersion, PromptCacheResourceId,
+    PromptCacheScopeDigest, RecoveryAction, ResumeDigest, ResumeEvidence, ResumeScope, RunHistory,
+    RunItem, StopReason, TOOL_RESULT_BYTES, ToolArgs, ToolCall, ToolEffect, ToolId, ToolOutcome,
+    ToolOutput, ToolResult,
 };
+
+struct MemoryOnlyJournal;
+
+impl JournalStore for MemoryOnlyJournal {
+    fn append_run_item(&self, _item: &RunItem) {}
+}
+
+#[test]
+fn call_result_keys_bind_invocation_ancestry_and_call_without_disclosure() {
+    let ancestry = Ancestry::new();
+    let invocation = InvocationId::new();
+    let call = ToolId::new("call-secret");
+    let key = CallResultKey::derive(ancestry, invocation, &call);
+
+    assert_eq!(key, CallResultKey::derive(ancestry, invocation, &call));
+    assert_ne!(
+        key,
+        CallResultKey::derive(ancestry, InvocationId::new(), &call)
+    );
+    assert_ne!(
+        key,
+        CallResultKey::derive(ancestry.child(), invocation, &call)
+    );
+    assert_ne!(
+        key,
+        CallResultKey::derive(ancestry, invocation, &ToolId::new("other"))
+    );
+    assert_eq!(format!("{key:?}"), "CallResultKey([redacted])");
+}
+
+#[test]
+fn journals_without_a_durable_result_sink_fail_closed() {
+    let key = CallResultKey::derive(Ancestry::new(), InvocationId::new(), &ToolId::new("call"));
+    let result = ToolResult {
+        id: ToolId::new("call"),
+        output: ToolOutput::ok("accepted"),
+    };
+
+    assert_eq!(
+        MemoryOnlyJournal.put_call_result(key, &result),
+        Err(CallResultStoreError::Unavailable)
+    );
+}
 
 fn call(id: &str) -> ToolCall {
     ToolCall {

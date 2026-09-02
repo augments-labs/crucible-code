@@ -18,18 +18,18 @@
 //! command somebody deliberately let go of is not part of the turn that started
 //! it. The only things that end one are being asked to, and the process leaving.
 //!
-//! What it cannot promise: a signal that kills crucible outright runs no
-//! destructor, so the commands survive it. Catching a signal needs `unsafe`,
-//! which this workspace denies, and the shipped documentation says so rather than
-//! implying otherwise.
+//! What it cannot promise by itself: a signal that kills crucible outright runs
+//! no destructor. The enforcing Linux backend binds its broker and PID namespace
+//! to the host process so that loss still ends the workload; compatibility mode
+//! has no equivalent kernel boundary, and the shipped documentation says so
+//! rather than implying otherwise.
 
-use std::process::Child;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use super::output::Pipe;
-use super::platform::Scope;
+use crucible_core::{CallResultAcceptance, CallResultReceipt, SandboxError, SandboxProcess};
 
 /// How many commands may be left running at once.
 ///
@@ -50,12 +50,13 @@ struct Left {
     said: Box<str>,
     /// The number the result gave the model, and the panel shows.
     number: usize,
-    child: Child,
-    scope: Scope,
+    process: Box<dyn SandboxProcess>,
     /// Still draining, so what it prints goes on being kept and bounded.
     out: Pipe,
     err: Pipe,
     since: Instant,
+    /// Runner finalization has not yet bound the durable result receipt.
+    accepting: bool,
 }
 
 /// One row of what is running, for whatever is drawing it.
@@ -111,6 +112,7 @@ struct Held {
     left: Vec<Left>,
     ended: Vec<Ended>,
     counted: usize,
+    reserved: usize,
 }
 
 impl Drop for Held {
@@ -119,7 +121,7 @@ impl Drop for Held {
         // makes, and the reason the panic strategy for this workspace is unwind:
         // an abort would run none of it and leave the commands behind.
         for left in &mut self.left {
-            let _ = super::output::end(&left.scope, &mut left.child);
+            let _ = super::output::end(left.process.as_mut());
         }
     }
 }
@@ -134,6 +136,14 @@ pub struct Background {
     /// cancel is one: it is asked about between two twenty-millisecond ticks, and
     /// nothing needs to be delivered.
     asked: Arc<AtomicBool>,
+}
+
+/// Registry metadata that travels with one owned process insertion.
+pub(super) struct Keep<'a> {
+    pub(super) called: &'a str,
+    pub(super) said: &'a str,
+    pub(super) lease: Option<Lease>,
+    pub(super) accepting: bool,
 }
 
 // The lint asking a hand-written `Debug` for every field is asking for the one
@@ -174,36 +184,77 @@ impl Background {
         self.asked.swap(false, Ordering::Relaxed)
     }
 
+    /// Reserves application cleanup ownership before a background command's
+    /// one-shot release boundary is crossed.
+    pub(super) fn reserve(&self) -> Option<Lease> {
+        let mut standing = self.standing.lock().ok()?;
+        if standing.left.len().saturating_add(standing.reserved) >= MOST {
+            return None;
+        }
+        standing.counted = standing.counted.saturating_add(1);
+        let number = standing.counted;
+        standing.reserved = standing.reserved.saturating_add(1);
+        Some(Lease {
+            standing: Arc::clone(&self.standing),
+            held: true,
+            number,
+        })
+    }
+
+    /// Whether a command could reserve ownership before its release boundary.
+    pub(super) fn available(&self) -> bool {
+        self.standing
+            .lock()
+            .is_ok_and(|standing| standing.left.len().saturating_add(standing.reserved) < MOST)
+    }
+
     /// Takes a running command, answering with the number it is now known by.
     ///
     /// `None` where the cap is already met, and then the caller still owns the
     /// child — which it ends, because a command nobody can see or stop is the one
     /// outcome this module exists to prevent.
-    pub(super) fn keep(&self, called: &str, said: &str, mut taking: Taking) -> Option<usize> {
+    pub(super) fn keep(&self, mut taking: Taking, plan: Keep<'_>) -> Option<Kept> {
+        let Keep {
+            called,
+            said,
+            lease,
+            accepting,
+        } = plan;
         let mut standing = self.standing.lock().ok()?;
-        if standing.left.len() >= MOST {
+        let number = if let Some(mut lease) = lease {
+            if !Arc::ptr_eq(&self.standing, &lease.standing) || !lease.consume_locked(&mut standing)
+            {
+                let _ = super::output::end(taking.process.as_mut());
+                return None;
+            }
+            lease.number
+        } else if standing.left.len().saturating_add(standing.reserved) >= MOST {
             // Ended here rather than reported and forgotten. The caller has
             // already let go of it, so this is the last code that could, and a
             // command nobody can see or stop is the outcome the cap exists for.
-            let _ = super::output::end(&taking.scope, &mut taking.child);
+            let _ = super::output::end(taking.process.as_mut());
             return None;
-        }
-
-        standing.counted = standing.counted.saturating_add(1);
-        let number = standing.counted;
+        } else {
+            standing.counted = standing.counted.saturating_add(1);
+            standing.counted
+        };
 
         standing.left.push(Left {
             called: called.into(),
             said: said.into(),
             number,
-            child: taking.child,
-            scope: taking.scope,
+            process: taking.process,
             out: taking.out,
             err: taking.err,
             since: taking.since,
+            accepting,
         });
 
-        Some(number)
+        Some(Kept {
+            standing: Arc::clone(&self.standing),
+            number,
+            accepting,
+        })
     }
 
     /// How many commands are still running.
@@ -268,7 +319,7 @@ impl Background {
 
         if let Some(at) = standing.left.iter().position(|left| left.number == number) {
             let mut left = standing.left.remove(at);
-            let _ = super::output::end(&left.scope, &mut left.child);
+            let _ = super::output::end(left.process.as_mut());
         }
     }
 
@@ -306,11 +357,15 @@ impl Background {
         let mut still = Vec::with_capacity(standing.left.len());
 
         for mut left in standing.left.drain(..) {
-            match left.child.try_wait() {
+            if left.accepting {
+                still.push(left);
+                continue;
+            }
+            match left.process.try_wait() {
                 Ok(Some(status)) => {
                     // The shell has gone; its descendants have not necessarily,
                     // and this is the one path where nothing else will end them.
-                    let _ = super::output::end(&left.scope, &mut left.child);
+                    let _ = super::output::end(left.process.as_mut());
                     let (lines, _) = left.counted();
 
                     ended.push(Ended {
@@ -337,6 +392,142 @@ impl Background {
     }
 }
 
+/// A command installed under its stable application-owned identity.
+pub(super) struct Kept {
+    standing: Arc<Mutex<Held>>,
+    number: usize,
+    accepting: bool,
+}
+
+impl Kept {
+    /// Stable number already reported by the application registry.
+    pub(super) const fn number(&self) -> usize {
+        self.number
+    }
+
+    /// Transfers cleanup into runner-owned durable result finalization.
+    pub(super) fn acceptance(mut self) -> Option<Box<dyn CallResultAcceptance>> {
+        if !self.accepting {
+            return None;
+        }
+        self.accepting = false;
+        Some(Box::new(Acceptance {
+            standing: Arc::clone(&self.standing),
+            number: self.number,
+            armed: true,
+        }))
+    }
+}
+
+impl Drop for Kept {
+    fn drop(&mut self) {
+        if !self.accepting {
+            return;
+        }
+        let Ok(mut standing) = self.standing.lock() else {
+            return;
+        };
+        let Some(at) = standing
+            .left
+            .iter()
+            .position(|left| left.number == self.number && left.accepting)
+        else {
+            return;
+        };
+        let mut left = standing.left.remove(at);
+        drop(standing);
+        let _ = super::output::end(left.process.as_mut());
+        self.accepting = false;
+    }
+}
+
+/// Removes and stops a command unless runner finalization binds its receipt.
+struct Acceptance {
+    standing: Arc<Mutex<Held>>,
+    number: usize,
+    armed: bool,
+}
+
+impl CallResultAcceptance for Acceptance {
+    fn accept(mut self: Box<Self>, receipt: CallResultReceipt) -> Result<(), SandboxError> {
+        let mut standing = self.standing.lock().map_err(|_| {
+            SandboxError::Lifecycle(std::io::Error::other(
+                "background registry ownership is unavailable",
+            ))
+        })?;
+        let left = standing
+            .left
+            .iter_mut()
+            .find(|left| left.number == self.number && left.accepting)
+            .ok_or_else(|| {
+                SandboxError::Lifecycle(std::io::Error::other(
+                    "background result owner is unavailable",
+                ))
+            })?;
+        let completed = left.process.complete_background_acceptance(receipt);
+        left.accepting = false;
+        self.armed = false;
+        completed
+    }
+}
+
+impl Drop for Acceptance {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let Ok(mut standing) = self.standing.lock() else {
+            return;
+        };
+        let Some(at) = standing
+            .left
+            .iter()
+            .position(|left| left.number == self.number && left.accepting)
+        else {
+            return;
+        };
+        let mut left = standing.left.remove(at);
+        drop(standing);
+        let _ = super::output::end(left.process.as_mut());
+        self.armed = false;
+    }
+}
+
+/// One slot owned by the application registry before the workload can start.
+pub(super) struct Lease {
+    standing: Arc<Mutex<Held>>,
+    held: bool,
+    number: usize,
+}
+
+impl Lease {
+    /// Stable registry number reserved before the workload crosses GO.
+    pub(super) const fn number(&self) -> usize {
+        self.number
+    }
+
+    fn consume_locked(&mut self, standing: &mut Held) -> bool {
+        if !self.held || standing.reserved == 0 {
+            return false;
+        }
+        standing.reserved = standing.reserved.saturating_sub(1);
+        self.held = false;
+        true
+    }
+}
+
+impl Drop for Lease {
+    fn drop(&mut self) {
+        if !self.held {
+            return;
+        }
+        if let Ok(mut standing) = self.standing.lock() {
+            standing.reserved = standing.reserved.saturating_sub(1);
+            self.held = false;
+        }
+    }
+}
+
 /// A running command, on its way into the registry.
 ///
 /// Named rather than passed as five arguments, because the ceiling on how many a
@@ -344,8 +535,7 @@ impl Background {
 /// because they belong together: they are one command's lifetime, and how it
 /// came to have one.
 pub(super) struct Taking {
-    pub(super) child: Child,
-    pub(super) scope: Scope,
+    pub(super) process: Box<dyn SandboxProcess>,
     pub(super) out: Pipe,
     pub(super) err: Pipe,
     pub(super) since: Instant,

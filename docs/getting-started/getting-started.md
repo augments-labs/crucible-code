@@ -1046,9 +1046,11 @@ is named in [`env`](../configuration/configuration.md#env).
 The shell and its descendants are one command scope. When the command exits,
 times out, is cancelled, or cannot be collected, crucible stops that scope and
 waits only for a bounded interval: a background process does not keep an output
-reader or a turn alive. Windows uses a kill-on-close job and Unix a process
-group. A Unix program that deliberately creates a new session can leave that
-group; this is resource cleanup, not a sandbox around an allowed command.
+reader or a turn alive. On Linux the default `required` mode launches the scope
+through a verified Bubblewrap boundary with closed networking and only the
+declared filesystem view. See
+[Operating-system confinement](../security/sandboxing.md) for the exact
+capability matrix and the explicitly unconfined compatibility modes.
 
 `todo_write` is the one that reaches nothing at all. It puts down the plan the
 agent is working to — a list of at most 64 tasks, each of them a line, each one

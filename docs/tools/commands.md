@@ -186,9 +186,11 @@ resumed. <kbd>Esc</kbd> does not either: it stops the turn, and a command you
 deliberately let go of is not part of the turn that started it.
 
 What does: <kbd>x</kbd> in the list, and crucible exiting — every process group
-goes with it, however the process leaves, including a panic. The one case it cannot
-cover is a signal that kills crucible outright, which runs no cleanup at all; the
-commands survive that, and your own shell is what ends them then.
+goes with it, however the process leaves, including a panic. Under required Linux
+confinement, the descriptor broker and PID namespace also end the complete
+workload if crucible is killed before user-space cleanup can run. Degraded and
+off modes have no equivalent kernel boundary: after an uncatchable kill, an
+escaped compatibility-mode command may need to be ended from your own shell.
 
 ## What comes back
 
@@ -234,17 +236,31 @@ tool result is capped at 30,000 encoded JSON-string bytes, including escaping;
 if that removes more of an escape-heavy result, a second note gives its original
 encoded size and the encoded bytes omitted.
 
+The retained head/tail budget is separate from the raw-stream safety ceiling.
+A command that emits more than 4 MiB across standard output and standard error
+is stopped with an explicit captured-output-ceiling result instead of consuming
+host I/O indefinitely.
+
 ## When it stops
 
 `timeout` seconds, or <kbd>Esc</kbd>, or the command finishing. The shell and
-its descendants are one scope — a process group on Unix, a kill-on-close job on
-Windows — and that scope is ended on every one of those paths, then given a
-fifth of a second to let go of its pipes.
+its descendants are one backend-owned scope, and that scope is ended and reaped
+on every one of those paths. On Linux, the default `required` mode also places
+that scope behind the verified Bubblewrap boundary described in
+[Operating-system confinement](../security/sandboxing.md). Permission still
+decides whether the command may start; the sandbox separately limits what the
+approved command can reach.
 
-That is resource cleanup rather than a sandbox. A background process does not
-get to keep an output reader or a turn alive, and a Unix program that
-deliberately creates a new session can still leave the group. Nothing here
-confines what an allowed command can reach.
+A background process does not keep an output reader or a turn alive. It remains
+inside the same sandbox/process-tree scope until it exits or is stopped, and its
+late usage and cleanup facts keep the call attribution that started it.
+
+Under the Linux boundary, what a command writes inside a writable root stays
+private to it until it ends. An ordinary exit, whether zero or nonzero, publishes
+those writes to the workspace; a command that is stopped, times out or is killed
+by a signal leaves the workspace as it found it. A background command's writes
+therefore land when it finishes, not while it runs. The rules are described in
+[Writable roots and publication](../security/sandboxing.md#writable-roots-and-publication).
 
 ## Why it is always asked about
 

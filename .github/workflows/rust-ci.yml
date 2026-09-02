@@ -17,7 +17,49 @@ jobs:
         with:
           persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      # The enforcing sandbox tests skip themselves where Bubblewrap is missing,
+      # which on a runner would mean the kernel boundary is never exercised by
+      # this gate; here a missing backend is a failure rather than a skip. The
+      # backend needs Bubblewrap 0.11.0 for temporary overlays, and Ubuntu
+      # 24.04 packages 0.9.0, so the Ubuntu 25.04 package is installed from
+      # Launchpad's permanent archive and checked against a pinned digest. It
+      # depends only on glibc 2.38, libcap2 and libselinux1, all present here.
+      - name: bubblewrap 0.11, for the enforcing sandbox tests
+        env:
+          DEB_URL: https://launchpad.net/ubuntu/+archive/primary/+files/bubblewrap_0.11.0-2_amd64.deb
+          DEB_SHA256: 2d9dbcd473771ce18448f1d45e9107cdb28bb3325d171bb4145d79b0df6f3df6
+        run: |
+          deb="$RUNNER_TEMP/bubblewrap.deb"
+          curl --fail --silent --show-error --location --retry 3 --output "$deb" "$DEB_URL"
+          echo "$DEB_SHA256  $deb" | sha256sum --check
+          sudo dpkg --install "$deb"
+          bwrap --version
+      # Ubuntu 24.04 runners restrict unprivileged user namespaces through
+      # AppArmor, which is the one thing the Linux backend needs from the
+      # kernel. Record what the runner permits by default, then lift the
+      # restriction on this ephemeral machine so the boundary is exercised
+      # rather than skipped. The final probe is the command the backend probe
+      # runs, with its error visible. The broker beside the test binary is
+      # accepted only below directories no group can write, so those are
+      # listed too.
+      - name: user namespaces, for the sandbox the tests build
+        run: |
+          sysctl kernel.apparmor_restrict_unprivileged_userns || true
+          ls /etc/apparmor.d | grep -i bwrap || echo 'no bwrap AppArmor profile'
+          d="$PWD"; while [ "$d" != / ]; do stat -c '%a %U:%G %n' "$d"; d=$(dirname "$d"); done
+          probe() {
+            bwrap --die-with-parent --new-session --unshare-user --unshare-pid \
+              --unshare-ipc --unshare-net --unshare-uts --disable-userns \
+              --ro-bind / / --dev /dev --proc /proc --cap-drop ALL --clearenv \
+              -- /bin/true
+          }
+          if probe; then echo 'default runner: probe ok'; else echo "default runner: probe failed ($?)"; fi
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          probe
       - run: scripts/rust-checks.sh
+        env:
+          CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX: 1
       - uses: ./.github/actions/check-clean-worktree
 
   platforms:

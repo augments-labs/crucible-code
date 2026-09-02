@@ -5,21 +5,59 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    Ask, Cancel, Command, DescribeTool, Looking, Mode, Permission, Remember, Rules, ToolCall,
-    ToolId, Verdict,
+    Ask, Cancel, Command, DescribeTool, Looking, Mode, Permission, Remember, Rules,
+    SandboxBackendIdentity, SandboxCapabilities, SandboxError, SandboxRequest,
+    SandboxResourceLimits, SandboxService, SandboxSession, ToolCall, ToolId, Verdict,
 };
 
 use super::background::{Background, MOST};
 use super::{Bash, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, environment};
-use crate::sample::{Sample, allowed};
+use crate::sample::{Sample, allowed, skipped_without_enforcement};
+
+fn compatibility(tool: Bash) -> Bash {
+    tool.sandboxing(
+        std::sync::Arc::new(crate::LocalSandbox::new()),
+        crucible_core::SandboxMode::Off,
+    )
+}
+
+fn compatible(sample: &Sample) -> Bash {
+    compatibility(Bash::new(sample.workspace()))
+}
 
 fn bash(sample: &Sample, args: &str) -> Result<ToolOutput, ToolError> {
-    let tool = Bash::new(sample.workspace());
+    let tool = compatible(sample);
     tool.run(allowed(&tool, args), &crate::sample::context())
 }
 
 fn ran(sample: &Sample, args: &str) -> ToolOutput {
     bash(sample, args).expect("the command ran")
+}
+
+fn finalized(tool: &Bash, args: &str) -> Result<ToolOutput, ToolError> {
+    let context = crate::sample::context();
+    let output = tool.run(allowed(tool, args), &context)?;
+    crate::sample::finalize_call_result(&context, &output);
+    Ok(output)
+}
+
+#[derive(Clone, Default)]
+struct RecordingSandbox {
+    inner: crate::LocalSandbox,
+    limits: std::sync::Arc<std::sync::Mutex<Vec<SandboxResourceLimits>>>,
+}
+
+impl SandboxService for RecordingSandbox {
+    fn probe(&self) -> Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError> {
+        self.inner.probe()
+    }
+
+    fn prepare(&self, request: SandboxRequest) -> Result<Box<dyn SandboxSession>, SandboxError> {
+        if let Ok(mut limits) = self.limits.lock() {
+            limits.push(request.policy().limits());
+        }
+        self.inner.prepare(request)
+    }
 }
 
 /// A watcher that keeps what it was told, in the order it was told.
@@ -47,7 +85,7 @@ fn what_a_command_prints_is_handed_over_while_it_is_still_running() {
     // one tick has nothing to watch. That is not a gap — a result nobody had to
     // wait for is a result, and this is the surface for the other kind.
     let sample = Sample::new("bash-watched");
-    let tool = Bash::new(sample.workspace());
+    let tool = compatible(&sample);
     let watched = Watched::default();
 
     let args = r#"{"command":"printf 'Compiling one\nCompiling two\n'; sleep 1"}"#;
@@ -114,6 +152,38 @@ fn the_command_runs_in_the_workspace_root() {
         ran(&sample, r#"{"command":"cat marker.txt"}"#).text(),
         "found me"
     );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn the_default_linux_backend_cannot_read_an_undeclared_sibling() {
+    // Approval settles whether Crucible may ask for the command. It does not
+    // grant the command the rest of the host: the workspace is the writable
+    // reach of the standard Linux sandbox, and its sibling is outside it.
+    let sample = Sample::new("bash-sibling-confined");
+    let outside = sample.outside("credential", "not-for-the-command\n");
+    let tool = Bash::new(sample.workspace());
+    let backend_available =
+        crucible_core::SandboxService::probe(&crate::LocalSandbox::new()).is_ok();
+    let args = format!(r#"{{"command":"cat {outside}"}}"#);
+
+    match tool.run(allowed(&tool, &args), &crate::sample::context()) {
+        Ok(output) => {
+            assert!(output.is_failed(), "{}", output.text());
+            assert!(
+                !output.text().contains("not-for-the-command"),
+                "the command read an undeclared sibling: {}",
+                output.text()
+            );
+        }
+        Err(error) => {
+            assert!(!backend_available, "a suitable backend was probed: {error}");
+            assert!(
+                error.to_string().contains("sandbox backend unavailable"),
+                "required mode failed for an unrelated reason: {error}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -276,7 +346,7 @@ fn a_turn_the_user_stopped_ends_the_command_with_it() {
     });
 
     let started = Instant::now();
-    let tool = Bash::new(sample.workspace());
+    let tool = compatible(&sample);
     let problem = tool
         .run(
             allowed(&tool, r#"{"command":"sleep 30"}"#),
@@ -297,7 +367,7 @@ fn a_turn_already_stopped_never_starts_the_command() {
     let cancel = Cancel::new();
     cancel.request();
 
-    let tool = Bash::new(sample.workspace());
+    let tool = compatible(&sample);
     let problem = tool
         .run(
             allowed(&tool, r#"{"command":"touch should-not-exist"}"#),
@@ -333,7 +403,7 @@ fn the_shell_is_not_something_the_workspace_can_supply() {
         other => std::env::var_os(other),
     };
 
-    let tool = Bash::inheriting(sample.workspace(), empty_element_first);
+    let tool = compatibility(Bash::inheriting(sample.workspace(), empty_element_first));
     let output = tool
         .run(
             allowed(&tool, r#"{"command":"echo hello"}"#),
@@ -379,7 +449,7 @@ fn a_command_that_floods_its_pipe_reports_everything_that_went() {
 #[test]
 fn the_sensitivity_carries_what_the_call_will_run() {
     let sample = Sample::new("bash-sensitivity");
-    let tool = Bash::new(sample.workspace());
+    let tool = compatible(&sample);
 
     let sensitivity = tool.sensitivity(&ToolArgs::new(r#"{"command":"/usr/bin/git status"}"#));
 
@@ -410,7 +480,7 @@ fn asks(sample: &Sample, mode: Mode, line: &str) -> bool {
         }
     }
 
-    let tool = Bash::new(sample.workspace());
+    let tool = compatible(sample);
     let call = ToolCall {
         id: ToolId::new("one"),
         name: tool.name().into(),
@@ -489,7 +559,7 @@ fn a_call_too_malformed_to_read_reports_the_whole_of_what_was_sent() {
     // `run` will refuse it, but a sensitivity is needed first, and the safe
     // answer to "what will this run" when the answer is unknown is everything.
     let sample = Sample::new("bash-malformed");
-    let tool = Bash::new(sample.workspace());
+    let tool = compatible(&sample);
 
     assert_eq!(
         tool.sensitivity(&ToolArgs::new("not json at all")),
@@ -507,7 +577,7 @@ fn the_variables_the_tool_was_given_reach_the_command() {
     // model's commands get them and nothing else on the machine does.
     let sample = Sample::new("bash-env");
 
-    let tool = Bash::new(sample.workspace()).exporting([("CRUCIBLE_TEST_PAGER", "cat")]);
+    let tool = compatible(&sample).exporting([("CRUCIBLE_TEST_PAGER", "cat")]);
     let args = r#"{"command":"echo $CRUCIBLE_TEST_PAGER"}"#;
     let output = tool
         .run(allowed(&tool, args), &crate::sample::context())
@@ -524,7 +594,7 @@ fn a_variable_the_tool_was_given_never_reaches_a_debug_line() {
     // there. Which name is set is what a reader needs; the value never is.
     let sample = Sample::new("bash-debug");
 
-    let tool = Bash::new(sample.workspace()).exporting([("SECRET", "hunter2")]);
+    let tool = compatible(&sample).exporting([("SECRET", "hunter2")]);
     let shown = format!("{tool:?}");
 
     assert!(shown.contains("SECRET"), "{shown}");
@@ -541,7 +611,7 @@ fn a_variable_the_tool_was_given_wins_over_the_one_crucible_was_started_with() {
     // only one side ever sets.
     let sample = Sample::new("bash-env-over");
 
-    let tool = Bash::new(sample.workspace()).exporting([("HOME", "/nowhere-in-particular")]);
+    let tool = compatible(&sample).exporting([("HOME", "/nowhere-in-particular")]);
     let args = r#"{"command":"echo $HOME"}"#;
     let output = tool
         .run(allowed(&tool, args), &crate::sample::context())
@@ -580,7 +650,7 @@ fn a_key_under_a_name_nothing_could_have_guessed_never_reaches_a_command() {
         _ => std::env::var_os(name),
     };
 
-    let tool = Bash::inheriting(sample.workspace(), crucibles_own);
+    let tool = compatibility(Bash::inheriting(sample.workspace(), crucibles_own));
     let args = r#"{"command":"echo \"[$WORK_KEY]\"; env"}"#;
     let output = tool
         .run(allowed(&tool, args), &crate::sample::context())
@@ -626,18 +696,14 @@ fn a_command_left_running_answers_at_once_and_keeps_running() {
     // command failed on the spot, and the process is still there afterwards.
     let sample = Sample::new("bash-background");
     let left = Background::new();
-    let tool = Bash::new(sample.workspace()).leaving(left.clone());
+    let tool = compatible(&sample).leaving(left.clone());
 
     let started = Instant::now();
-    let output = tool
-        .run(
-            allowed(
-                &tool,
-                r#"{"command":"printf 'up\n'; sleep 30","background":true}"#,
-            ),
-            &crate::sample::context(),
-        )
-        .expect("the command started");
+    let output = finalized(
+        &tool,
+        r#"{"command":"printf 'up\n'; sleep 30","background":true}"#,
+    )
+    .expect("the command started");
 
     assert!(
         started.elapsed() < Duration::from_secs(5),
@@ -678,7 +744,7 @@ fn a_command_the_developer_let_go_of_says_who_let_go_of_it() {
     // on with whatever does not depend on it.
     let sample = Sample::new("bash-pressed");
     let left = Background::new();
-    let tool = Bash::new(sample.workspace()).leaving(left.clone());
+    let tool = compatible(&sample).leaving(left.clone());
 
     // Asked for before the command starts rather than raced with it: the wait
     // loop reads the request every pass, so the first pass takes it, and the
@@ -686,12 +752,8 @@ fn a_command_the_developer_let_go_of_says_who_let_go_of_it() {
     left.ask();
 
     let started = Instant::now();
-    let output = tool
-        .run(
-            allowed(&tool, r#"{"command":"printf 'up\n'; sleep 30"}"#),
-            &crate::sample::context(),
-        )
-        .expect("the command started");
+    let output =
+        finalized(&tool, r#"{"command":"printf 'up\n'; sleep 30"}"#).expect("the command started");
 
     assert!(
         started.elapsed() < Duration::from_secs(5),
@@ -720,6 +782,27 @@ fn a_command_the_developer_let_go_of_says_who_let_go_of_it() {
 }
 
 #[test]
+fn linux_ctrl_b_uses_owned_durable_detachment_before_go() {
+    let service = crate::LocalSandbox::new();
+    if skipped_without_enforcement(&service) {
+        return;
+    }
+    let sample = Sample::new("bash-linux-detachable");
+    let left = Background::new();
+    let tool = Bash::new(sample.workspace()).leaving(left.clone());
+    left.ask();
+
+    let output = finalized(&tool, r#"{"command":"printf 'up\n'; sleep 30"}"#)
+        .expect("the detachable command started");
+
+    assert!(!output.is_failed(), "{}", output.text());
+    assert!(output.text().contains("ctrl+b"), "{}", output.text());
+    assert_eq!(left.running().len(), 1);
+    left.stop(1);
+    assert!(left.running().is_empty());
+}
+
+#[test]
 fn one_press_lets_go_of_one_command_rather_than_every_command_after_it() {
     // The request is spent when it is read. Without that, a press meant for a
     // slow build would leave every command after it running too, and the model
@@ -732,10 +815,10 @@ fn one_press_lets_go_of_one_command_rather_than_every_command_after_it() {
 }
 
 #[test]
-fn a_command_that_fails_on_the_spot_is_reported_rather_than_left_running() {
-    // A command that is over before anybody could watch it is not a background
-    // command, whatever the call asked for — and the model needs the failure now
-    // rather than in a panel it has no way to open.
+fn an_explicit_background_call_keeps_acceptance_as_its_only_result_after_a_fast_exit() {
+    // Invocation mode is fixed before GO. Observing a fast exit must not race
+    // acceptance into a terminal tool result, because recovery would then have
+    // two possible owners for the one provider-projectable result.
     let sample = Sample::new("bash-background-failed");
     let left = Background::new();
     // A window this test can be sure of. The default is a judgement about a
@@ -743,26 +826,76 @@ fn a_command_that_fails_on_the_spot_is_reported_rather_than_left_running() {
     // at all — which would leave this asserting how quickly the machine
     // running it happened to be able to spawn `sh`, rather than what the tool
     // does about a command that is already over.
-    let tool = Bash::new(sample.workspace())
+    let tool = compatible(&sample)
         .leaving(left.clone())
         .watching(Duration::from_secs(20));
 
-    let output = tool
-        .run(
-            allowed(&tool, r#"{"command":"exit 7","background":true}"#),
-            &crate::sample::context(),
-        )
-        .expect("the command started");
+    let output =
+        finalized(&tool, r#"{"command":"exit 7","background":true}"#).expect("the command started");
 
-    assert!(output.is_failed(), "{}", output.text());
+    assert!(!output.is_failed(), "{}", output.text());
     assert!(
-        output.text().contains("[exit status 7]"),
+        output.text().contains("left running as #1"),
         "{}",
         output.text()
     );
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let ended = loop {
+        let ended = left.reap();
+        if !ended.is_empty() || Instant::now() >= deadline {
+            break ended;
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+    assert_eq!(ended.first().and_then(|ended| ended.code), Some(7));
+}
+
+#[test]
+fn an_explicit_background_command_has_no_foreground_deadline() {
+    let sample = Sample::new("bash-background-no-deadline");
+    let left = Background::new();
+    let recording = RecordingSandbox::default();
+    let observed = std::sync::Arc::clone(&recording.limits);
+    let tool = Bash::new(sample.workspace())
+        .sandboxing(
+            std::sync::Arc::new(recording),
+            crucible_core::SandboxMode::Off,
+        )
+        .leaving(left.clone());
+
+    finalized(&tool, r#"{"command":"sleep 30","background":true}"#).expect("the command started");
+
+    let limits = observed.lock().expect("recorded limits");
+    assert_eq!(limits.len(), 1);
+    assert_eq!(
+        limits.first().expect("one recorded limit").command_time,
+        None
+    );
+    assert_eq!(
+        limits.first().expect("one recorded limit").output_bytes,
+        Some(super::PROCESS_OUTPUT_BYTES)
+    );
+    drop(limits);
+    left.stop(1);
+}
+
+#[test]
+fn background_capacity_is_owned_before_any_workload_release() {
+    let left = Background::new();
+    let mut leases = Vec::new();
+    for _ in 0..MOST {
+        leases.push(left.reserve().expect("reserved application owner"));
+    }
+
+    assert_eq!(left.count(), 0, "a reservation is not a running command");
     assert!(
-        left.running().is_empty(),
-        "a command that had exited was kept"
+        left.reserve().is_none(),
+        "a fifth command could cross GO without application ownership"
+    );
+    leases.pop();
+    assert!(
+        left.reserve().is_some(),
+        "dropping a lease releases its slot"
     );
 }
 
@@ -770,21 +903,14 @@ fn a_command_that_fails_on_the_spot_is_reported_rather_than_left_running() {
 fn the_number_of_commands_left_running_is_capped() {
     let sample = Sample::new("bash-background-cap");
     let left = Background::new();
-    let tool = Bash::new(sample.workspace()).leaving(left.clone());
+    let tool = compatible(&sample).leaving(left.clone());
 
     for _ in 0..MOST {
-        tool.run(
-            allowed(&tool, r#"{"command":"sleep 30","background":true}"#),
-            &crate::sample::context(),
-        )
-        .expect("the command started");
+        finalized(&tool, r#"{"command":"sleep 30","background":true}"#)
+            .expect("the command started");
     }
 
-    let over = tool
-        .run(
-            allowed(&tool, r#"{"command":"sleep 30","background":true}"#),
-            &crate::sample::context(),
-        )
+    let over = finalized(&tool, r#"{"command":"sleep 30","background":true}"#)
         .expect("the call was answered");
 
     assert!(over.is_failed(), "{}", over.text());
@@ -799,7 +925,7 @@ fn the_number_of_commands_left_running_is_capped() {
 /// What the classification is asked of: one command line, as the model sent it.
 fn looking(line: &str) -> Option<Looking> {
     let sample = Sample::new("bash_is_looking");
-    let tool = Bash::new(sample.workspace());
+    let tool = compatible(&sample);
     let args = format!(
         "{{\"command\": {}}}",
         serde_json::to_string(line).expect("json")

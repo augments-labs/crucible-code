@@ -34,6 +34,7 @@ mod prompt_cache;
 mod provider;
 mod revealed;
 mod run;
+mod sandbox;
 mod source;
 mod steer;
 mod tool;
@@ -53,20 +54,23 @@ pub use credential::{
 pub use diff::{Change, Diff, Line};
 pub use event::{Event, EventEnvelope, Post, Reporter, TurnError};
 pub use ids::{
-    AgentId, CredentialScopeId, IdError, ProviderAttemptId, RunId, SessionId, ToolId, TurnId,
+    AgentId, CredentialScopeId, IdError, ProviderAttemptId, RunId, SandboxId, SessionId, ToolId,
+    TurnId,
 };
 pub use interruption::{
     ActionId, ActionResolution, ApprovalDecision, CacheCheckpoint, CheckpointId, CheckpointStore,
     ExecutionCheckpoint, IdempotencyKey, InterruptionError, InvocationId, InvocationRecord,
-    InvocationState, JournalEntryId, MAX_CHECKPOINT_INVOCATIONS, MAX_CHECKPOINT_WORD_BYTES,
-    MAX_HUMAN_INPUT_BYTES, MAX_PENDING_ACTIONS, PendingAction, PendingActions, PendingApproval,
-    PendingExternalTool, PendingHumanInput, RecoveryAction, ResolutionChange, ResumeDigest,
-    ResumeEvidence, ResumeScope, ResumedAction, ToolEffect, ValidatedResume,
+    InvocationState, JournalEntryId, MAX_CHECKPOINT_INVOCATIONS, MAX_CHECKPOINT_SANDBOXES,
+    MAX_CHECKPOINT_WORD_BYTES, MAX_HUMAN_INPUT_BYTES, MAX_PENDING_ACTIONS, PendingAction,
+    PendingActions, PendingApproval, PendingExternalTool, PendingHumanInput, RecoveryAction,
+    ResolutionChange, ResumeDigest, ResumeEvidence, ResumeScope, ResumedAction, ToolEffect,
+    ValidatedResume,
 };
 pub use journal::{
-    CompactionRecord, CustomEntry, CustomProjector, JournalError, JournalStore,
-    MAX_CUSTOM_DATA_BYTES, MAX_JOURNAL_WORD_BYTES, MAX_RUN_HISTORY_BYTES, MAX_RUN_ITEM_BYTES,
-    MAX_RUN_ITEM_RETAINED_BYTES, MAX_RUN_ITEMS, RunHistory, RunItem, SessionStore,
+    CallResultKey, CallResultReceipt, CallResultStoreError, CompactionRecord, CustomEntry,
+    CustomProjector, JournalError, JournalStore, MAX_CUSTOM_DATA_BYTES, MAX_JOURNAL_WORD_BYTES,
+    MAX_RUN_HISTORY_BYTES, MAX_RUN_ITEM_BYTES, MAX_RUN_ITEM_RETAINED_BYTES, MAX_RUN_ITEMS,
+    RunHistory, RunItem, SessionStore,
 };
 pub use modality::{Modalities, Modality, ModalityError};
 pub use permission::{
@@ -124,12 +128,36 @@ pub use provider::{
 };
 pub use revealed::Revealed;
 pub use run::{Ancestry, AncestryError};
+pub use sandbox::{
+    MAX_SANDBOX_AUDIT_FACTS, MAX_SANDBOX_AUDIT_LIFECYCLES, MAX_SANDBOX_BACKEND_ID_BYTES,
+    MAX_SANDBOX_BACKEND_WORD_BYTES, MAX_SANDBOX_COMMAND_ARGUMENTS, MAX_SANDBOX_COMMAND_BYTES,
+    MAX_SANDBOX_CREDENTIAL_HANDLE_BYTES, MAX_SANDBOX_ENVIRONMENT_BYTES,
+    MAX_SANDBOX_ENVIRONMENT_ENTRIES, MAX_SANDBOX_ENVIRONMENT_NAME_BYTES,
+    MAX_SANDBOX_FILESYSTEM_RULES, MAX_SANDBOX_GUARDRAIL_BYTES, MAX_SANDBOX_GUARDRAIL_LAYERS,
+    MAX_SANDBOX_GUARDRAIL_RULES, MAX_SANDBOX_GUARDRAIL_WORDS, MAX_SANDBOX_HOST_BYTES,
+    MAX_SANDBOX_MANIFEST_BYTES, MAX_SANDBOX_MANIFEST_ENTRIES, MAX_SANDBOX_MANIFEST_FILE_BYTES,
+    MAX_SANDBOX_NETWORK_ENDPOINTS, MAX_SANDBOX_PATH_BYTES, MAX_SANDBOX_PATTERN_COMPONENTS,
+    MAX_SANDBOX_UNREADABLE_PATTERNS, SandboxAudit, SandboxAuditError, SandboxAuditRecord,
+    SandboxAuditRegistry, SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance,
+    SandboxCapabilities, SandboxCapability, SandboxCapabilityError, SandboxCheckpoint,
+    SandboxCleanup, SandboxCommand, SandboxCommandPolicy, SandboxCommandRule, SandboxCommandStage,
+    SandboxCredentialHandle, SandboxCredentialProjection, SandboxCredentialProvenance,
+    SandboxEnvironment, SandboxError, SandboxFact, SandboxFactKind, SandboxFailureKind,
+    SandboxFailurePhase, SandboxFeature, SandboxFilesystemAccess, SandboxFilesystemProvenance,
+    SandboxFilesystemRule, SandboxGuardrailDecision, SandboxGuardrailEffect, SandboxGuardrailError,
+    SandboxInspection, SandboxInvocationMode, SandboxLaunch, SandboxLifecycle, SandboxManifest,
+    SandboxManifestEntry, SandboxManifestError, SandboxMode, SandboxNetworkEndpoint,
+    SandboxNetworkInspection, SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxOutput,
+    SandboxPlanInspection, SandboxPolicy, SandboxPolicyError, SandboxProcess, SandboxRead,
+    SandboxRequest, SandboxResourceLimits, SandboxRootInspection, SandboxService, SandboxSession,
+    SandboxUnreadablePattern, SandboxUsage, SandboxViolation,
+};
 pub use source::{Fetch, Page, Search, SearchResult, SourceError};
 pub use steer::Steer;
 pub use tool::{
-    Account, Changed, Looking, Remembered, Summary, TOOL_RESULT_BYTES, TOOL_RESULT_MIN_BYTES, Tool,
-    ToolArgs, ToolCall, ToolContext, ToolError, ToolOutput, ToolOutputRetention, Unwatched, Watch,
-    Wrote,
+    Account, CallResultAcceptance, Changed, Looking, PendingCallResult, Remembered, Summary,
+    TOOL_RESULT_BYTES, TOOL_RESULT_MIN_BYTES, Tool, ToolArgs, ToolCall, ToolContext, ToolError,
+    ToolOutput, ToolOutputRetention, Unwatched, Watch, Wrote,
 };
 pub use toolset::{
     ArgumentTransform, DescribeTool, InputGuard, OutputGuard, TOOL_ARGUMENT_BYTES,

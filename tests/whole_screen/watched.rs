@@ -92,6 +92,19 @@ fn document(vendor: Option<&Vendor>, allowed: Option<&str>) -> String {
     format!("{{\n  \"updates\": {{\n    \"check\": \"never\"\n  }}{providers}{rules}\n}}\n")
 }
 
+/// Adds the one host-dependent choice every screen fixture makes.
+///
+/// These cases exercise terminal composition through real child processes, not
+/// Linux namespace support. The setting is written into the disposable
+/// user-owned document so production still defaults to required confinement
+/// and no project layer is allowed to weaken it.
+fn fixture_document(document: &str) -> String {
+    let rest = document
+        .strip_prefix("{\n")
+        .expect("a whole-screen configuration object");
+    format!("{{\n  \"sandbox\": {{\"mode\": \"off\"}},\n{rest}")
+}
+
 /// A kept tail no session started by a case here can reach past, in tokens.
 ///
 /// `keep` is how many tokens of recent turns survive a recap word for word.
@@ -301,7 +314,8 @@ impl Watched {
         let workspace = working(&scratch);
         fs::create_dir_all(&home).expect("a scratch home directory");
         fs::create_dir_all(&workspace).expect("a scratch working directory");
-        fs::write(home.join("config.json"), document).expect("a configuration file");
+        fs::write(home.join("config.json"), fixture_document(document))
+            .expect("a configuration file");
 
         // A checkout, because that is what crucible is run in. Only one fact
         // about it is read at startup and only one case turns on it -- but a

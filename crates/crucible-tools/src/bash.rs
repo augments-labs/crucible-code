@@ -1,10 +1,10 @@
 //! Running a shell command.
 //!
 //! The command runs in the workspace root through `sh -c`, so the model gets
-//! pipes and redirection without this file growing a shell of its own. Nothing
-//! here confines what runs: a shell can reach anything the user can, which is
-//! why every call comes through the permission engine and why the question the
-//! user is asked names the command.
+//! pipes and redirection without this file growing a shell of its own. The
+//! permission engine still decides whether Crucible may invoke it; an injected
+//! [`crucible_core::SandboxService`] separately owns the operating-system view,
+//! spawn, descendants, limits, and cleanup.
 //!
 //! What a command is *started with* is confined. crucible's own environment
 //! holds the provider credential, so a child is given a chosen set of variables
@@ -28,19 +28,20 @@ mod background;
 mod command;
 mod environment;
 mod output;
-mod platform;
+pub(crate) mod platform;
 mod reporting;
 mod shell;
 mod wrapper;
 
 use std::ffi::OsString;
-use std::process::Stdio;
+use std::sync::Arc;
 use std::time::Duration;
 
 pub use background::{Background, Ended, MOST, Standing};
 use crucible_core::{
-    Approved, DescribeTool, Looking, Sensitivity, Summary, Tool, ToolArgs, ToolContext, ToolError,
-    ToolOutput, Workspace,
+    Approved, DescribeTool, Looking, SandboxCommand, SandboxEnvironment, SandboxManifest,
+    SandboxMode, SandboxPolicy, SandboxRequest, SandboxResourceLimits, SandboxService, Sensitivity,
+    Summary, Tool, ToolArgs, ToolContext, ToolError, ToolOutput, Workspace,
 };
 
 use std::sync::LazyLock;
@@ -64,6 +65,13 @@ const SECONDS: usize = 120;
 /// The longest a call may ask for, in seconds. A command that needs longer
 /// than this wants a different tool, not a bigger number.
 const CEILING: usize = 600;
+
+/// Raw bytes a command may emit before its complete process scope is stopped.
+///
+/// This is deliberately wider than the retained tool result: [`output`] keeps
+/// a bounded head and tail from ordinary build logs, while this separate hard
+/// ceiling prevents an infinite producer from consuming host I/O indefinitely.
+const PROCESS_OUTPUT_BYTES: u64 = 4 * 1024 * 1024;
 
 /// How long a command asked to be left running is watched for before the call
 /// answers, unless [`Bash::watching`] was told otherwise.
@@ -170,6 +178,12 @@ pub struct Bash {
     /// The whole of what a command is started with: the names [`environment`]
     /// inherits, with the `env` block laid over them by [`Bash::exporting`].
     env: Vec<(Box<str>, OsString)>,
+    /// Host-owned process boundary. A tool can request one lifecycle but never
+    /// receives backend mechanics or a direct-spawn escape hatch.
+    sandbox: Arc<dyn SandboxService>,
+    /// Resolved once with the workspace. `Err` is retained so an unusually
+    /// long host path fails before spawn without making construction panic.
+    policy: Result<SandboxPolicy, Box<str>>,
     /// How long a command asked to be left running is watched before the call
     /// answers. [`FIRST`] unless [`Bash::watching`] says otherwise.
     first: Duration,
@@ -188,6 +202,8 @@ impl std::fmt::Debug for Bash {
             .field("leaving", &self.leaving)
             .field("shell", &self.shell)
             .field("env", &Exported(&self.env))
+            .field("sandbox", &self.sandbox)
+            .field("policy", &self.policy)
             .field("first", &self.first)
             .finish()
     }
@@ -224,13 +240,30 @@ impl Bash {
     /// resolved wherever it is spawned, and a command here is spawned in the
     /// workspace. [`shell`] says what that costs.
     fn inheriting(workspace: Workspace, lookup: impl Fn(&str) -> Option<OsString>) -> Self {
+        let policy = SandboxPolicy::standard(&workspace).map_err(|error| error.to_string().into());
         Self {
             workspace,
             leaving: None,
             shell: shell::find(&lookup),
             env: environment::inherited(lookup),
+            sandbox: Arc::new(crate::LocalSandbox::new()),
+            policy,
             first: FIRST,
         }
+    }
+
+    /// Replaces the local service and applies a host-authorized top-level mode.
+    ///
+    /// The binary composition root uses this after configuration provenance has
+    /// established that only a user layer may select `degraded` or `off`.
+    /// Descendant/project narrowing happens before a policy reaches this tool.
+    #[must_use]
+    pub fn sandboxing(mut self, service: Arc<dyn SandboxService>, mode: SandboxMode) -> Self {
+        self.sandbox = service;
+        if let Ok(policy) = &mut self.policy {
+            *policy = policy.clone().with_mode(mode);
+        }
+        self
     }
 
     /// Where commands this tool is asked to leave running are kept.
@@ -287,6 +320,87 @@ impl Bash {
         }
         self
     }
+
+    fn keep_running(
+        &self,
+        approved: &Approved,
+        context: &ToolContext<'_>,
+        mut taking: background::Taking,
+        mut ownership: Option<background::Lease>,
+    ) -> Result<ToolOutput, ToolError> {
+        let args = Args::parse(NAME, approved.args())?;
+        let command = args.text(COMMAND)?;
+        let Some(left) = self.leaving.as_ref() else {
+            return Ok(ToolOutput::failed(
+                "this run cannot leave a command running",
+            ));
+        };
+        let printed = taking.printed();
+        let why = taking.why;
+
+        // The row reporting this command's eventual end is drawn after the
+        // starting turn has scrolled away, so keep the caller's description.
+        let said = crate::account::of(approved.args());
+
+        let number = ownership
+            .as_ref()
+            .map(background::Lease::number)
+            .ok_or_else(|| {
+                io(
+                    "background cleanup ownership disappeared before acceptance",
+                    std::io::Error::other("reserved background identity is unavailable"),
+                )
+            })?;
+        let accepted = ToolOutput::ok(match why {
+            output::Why::Asked => {
+                format!("{printed}\n\n[left running as #{number}; {LEFT_RUNNING}]")
+            }
+            output::Why::Pressed => {
+                format!("{printed}\n\n[left running as #{number}; {PRESSED}; {LEFT_RUNNING}]")
+            }
+        });
+        let key = context.call_result_key().ok_or_else(|| {
+            io(
+                "cannot finalize a background command without durable result storage",
+                std::io::Error::other("durable call-result identity is unavailable"),
+            )
+        })?;
+        taking
+            .process
+            .begin_background_acceptance(key)
+            .map_err(|error| sandbox_io("could not begin background result acceptance", error))?;
+        let Some(kept) = left.keep(
+            taking,
+            background::Keep {
+                called: command,
+                said: said.description(),
+                lease: ownership.take(),
+                accepting: true,
+            },
+        ) else {
+            return Ok(ToolOutput::failed(
+                "background ownership was lost before result finalization",
+            ));
+        };
+        if kept.number() != number {
+            return Ok(ToolOutput::failed(
+                "background invocation identity changed before result finalization",
+            ));
+        }
+        let acceptance = kept.acceptance().ok_or_else(|| {
+            io(
+                "background result ownership disappeared before finalization",
+                std::io::Error::other("background acceptance handle is unavailable"),
+            )
+        })?;
+        context.defer_call_result(acceptance).map_err(|problem| {
+            io(
+                "could not transfer background result finalization",
+                std::io::Error::other(problem),
+            )
+        })?;
+        Ok(accepted)
+    }
 }
 
 impl DescribeTool for Bash {
@@ -333,8 +447,11 @@ impl Tool for Bash {
         summary::field(NAME, args, COMMAND)
     }
 
-    fn backgroundable(&self, _args: &ToolArgs) -> bool {
-        self.leaving.is_some()
+    fn backgroundable(&self, args: &ToolArgs) -> bool {
+        let explicitly_backgrounded = Args::parse(NAME, args)
+            .and_then(|args| args.flag(crate::account::LEFT, false))
+            .unwrap_or(false);
+        !explicitly_backgrounded && self.leaving.as_ref().is_some_and(Background::available)
     }
 
     fn looking(&self, args: &ToolArgs) -> Option<Looking> {
@@ -373,30 +490,47 @@ impl Tool for Bash {
             ));
         }
 
-        // What decides whether this call ends up waiting. A run with nothing
-        // holding the other end cannot leave a command running and must not
-        // quietly wait for a dev server instead, so it says so.
-        let leaving = match (background, self.leaving.as_ref()) {
+        if context.cancel().requested() {
+            return Err(ToolError::Cancelled(NAME.into()));
+        }
+
+        let mut ownership = match (background, self.leaving.as_ref()) {
             (true, None) => {
                 return Ok(ToolOutput::failed(
                     "this run cannot leave a command running",
                 ));
             }
-            // Let go of once it has had a moment to fail on the spot. A command
-            // that is already over by then was never a background command, and
-            // the model gets its failure now rather than in a panel.
-            (true, Some(left)) => Some(output::Leaving {
-                left,
-                after: Some(self.first),
-            }),
-            // Nothing asked for, and the key can still ask.
-            (false, Some(left)) => Some(output::Leaving { left, after: None }),
-            (false, None) => None,
+            (true, Some(left)) => match left.reserve() {
+                Some(lease) => Some(lease),
+                None => {
+                    return Ok(ToolOutput::failed(format!(
+                        "{MOST} commands are already running; stop one before leaving another"
+                    )));
+                }
+            },
+            (false, Some(left)) if context.call_result_key().is_some() => left.reserve(),
+            (false, _) => None,
         };
-
-        if context.cancel().requested() {
-            return Err(ToolError::Cancelled(NAME.into()));
-        }
+        let invocation = if background {
+            crucible_core::SandboxInvocationMode::Background
+        } else if ownership.is_some() {
+            crucible_core::SandboxInvocationMode::Detachable
+        } else {
+            crucible_core::SandboxInvocationMode::Foreground
+        };
+        let leaving = match invocation {
+            crucible_core::SandboxInvocationMode::Background => {
+                self.leaving.as_ref().map(|left| output::Leaving {
+                    left,
+                    after: Some(Duration::ZERO),
+                })
+            }
+            crucible_core::SandboxInvocationMode::Detachable => self
+                .leaving
+                .as_ref()
+                .map(|left| output::Leaving { left, after: None }),
+            crucible_core::SandboxInvocationMode::Foreground => None,
+        };
 
         let shell = self.shell.as_ref().ok_or_else(|| {
             io(
@@ -405,50 +539,82 @@ impl Tool for Bash {
             )
         })?;
 
-        let mut spawning = std::process::Command::new(shell);
-        spawning
-            .arg("-c")
-            .arg(command)
-            .current_dir(self.workspace.root())
-            // The child's environment is built rather than inherited: what
-            // crucible was started with holds the provider credential, and
-            // `env` is a command a model runs for ordinary reasons. The
-            // `environment` module says what a child gets instead.
-            .env_clear()
-            .envs(
-                self.env
-                    .iter()
-                    .map(|(name, value)| (name.as_ref(), value.as_os_str())),
-            )
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-
-        #[cfg(unix)]
-        let scope = platform::Scope::new(&mut spawning);
-        #[cfg(windows)]
-        let scope = platform::Scope::new(&mut spawning)
-            .map_err(|source| io("could not prepare command containment", source))?;
-
-        let child = spawning
-            .spawn()
-            .map_err(|source| io("could not start a shell", source))?;
-        #[cfg(windows)]
-        let child = {
-            if let Err(source) = scope.attach(&child) {
-                // Consumed, because the job handle goes with the command it was
-                // holding: closing it is what ends anything the shell managed to
-                // start before the assignment failed.
-                output::discard(child, scope);
-                return Err(io("could not contain the command", source));
-            }
-            child
-        };
-
         // `count` already refused anything but a positive number, and the
         // ceiling above bounds it, so the fallback is unreachable arithmetic
         // rather than a decision.
         let allowed = Duration::from_secs(u64::try_from(seconds).unwrap_or(60));
+
+        let environment = SandboxEnvironment::new(
+            self.env
+                .iter()
+                .map(|(name, value)| (name.as_ref(), value.as_os_str())),
+        )
+        .map_err(|error| sandbox_io("could not prepare the command environment", error))?;
+        let sandbox_command = SandboxCommand::new(
+            shell,
+            [OsString::from("-c"), OsString::from(command)],
+            environment,
+        )
+        .map_err(|error| sandbox_io("could not prepare the sandbox command", error))?;
+        let base = self.policy.as_ref().map_err(|problem| {
+            io(
+                "could not resolve the sandbox policy",
+                std::io::Error::other(problem.to_string()),
+            )
+        })?;
+        let limits = SandboxResourceLimits {
+            command_time: (!background).then_some(allowed),
+            output_bytes: Some(PROCESS_OUTPUT_BYTES),
+            concurrent_commands: Some(16),
+            ..SandboxResourceLimits::default()
+        };
+        let policy = base.clone().with_limits(limits).map_err(|error| {
+            io(
+                "could not resolve command limits",
+                std::io::Error::other(error),
+            )
+        })?;
+        let sandbox = crucible_core::SandboxId::new();
+        let audit = context.sandbox_audit();
+        let request = SandboxRequest::new(
+            sandbox,
+            context.ancestry(),
+            context.call().clone(),
+            policy,
+            SandboxManifest::empty(),
+        )
+        .with_invocation_mode(invocation);
+        let request = if invocation == crucible_core::SandboxInvocationMode::Foreground {
+            request
+        } else {
+            let key = context.call_result_key().ok_or_else(|| {
+                io(
+                    "cannot detach a command without durable result storage",
+                    std::io::Error::other("durable call-result identity is unavailable"),
+                )
+            })?;
+            request.with_call_result_key(key)
+        }
+        .with_audit(audit.clone())
+        .map_err(|error| sandbox_io("could not bind sandbox audit attribution", error))?;
+        let mut session = self
+            .sandbox
+            .prepare(request)
+            .map_err(|error| sandbox_io("could not prepare operating-system confinement", error))?;
+        session
+            .materialize()
+            .map_err(|error| sandbox_io("could not materialize the sandbox", error))?;
+        let mut launch = session
+            .stage(sandbox_command)
+            .map_err(|error| sandbox_io("could not stage the confined shell", error))?;
+        if ownership.is_some() {
+            launch.transfer_owner().map_err(|error| {
+                sandbox_io("could not transfer background cleanup ownership", error)
+            })?;
+        }
+        let process = launch
+            .release()
+            .map_err(|error| sandbox_io("could not start the confined shell", error))?;
 
         let waiting = output::Waiting {
             allowed,
@@ -457,40 +623,13 @@ impl Tool for Bash {
             leaving,
         };
 
-        match output::collect(child, scope, &waiting)? {
+        match output::collect(process, &waiting)? {
             output::Left::Answered(output) => Ok(output),
 
-            // Kept, or refused and ended — the registry owns both, because it is
-            // what knows the cap and what would have to end the command anyway.
+            // Kept, or refused and ended — the registry owns both, because it
+            // knows the cap and is the owner that can end the command later.
             output::Left::Running(taking) => {
-                let Some(left) = self.leaving.as_ref() else {
-                    return Ok(ToolOutput::failed(
-                        "this run cannot leave a command running",
-                    ));
-                };
-                let printed = taking.printed();
-                let why = taking.why;
-
-                // What the call said it was for, read the same way the panel
-                // read it a moment ago. The row that reports this command
-                // ending is drawn after the turn that started it has scrolled
-                // away, so it is the only chance to say which command in words
-                // the reader chose rather than in the shell they expanded to.
-                let said = crate::account::of(approved.args());
-
-                match left.keep(command, said.description(), taking) {
-                    Some(number) => Ok(ToolOutput::ok(match why {
-                        output::Why::Asked => {
-                            format!("{printed}\n\n[left running as #{number}; {LEFT_RUNNING}]")
-                        }
-                        output::Why::Pressed => format!(
-                            "{printed}\n\n[left running as #{number}; {PRESSED}; {LEFT_RUNNING}]"
-                        ),
-                    })),
-                    None => Ok(ToolOutput::failed(format!(
-                        "{MOST} commands are already running; stop one before leaving another"
-                    ))),
-                }
+                self.keep_running(&approved, context, taking, ownership.take())
             }
         }
     }
@@ -502,6 +641,17 @@ fn io(problem: &'static str, source: std::io::Error) -> ToolError {
         tool: NAME.into(),
         problem: problem.into(),
         source,
+    }
+}
+
+/// A sandbox failure, kept typed until the tool boundary and redacted by its
+/// module-owned display implementation.
+fn sandbox_io(problem: &'static str, source: crucible_core::SandboxError) -> ToolError {
+    let detail = source.to_string();
+    ToolError::Io {
+        tool: NAME.into(),
+        problem: format!("{problem}: {detail}").into(),
+        source: std::io::Error::other(source),
     }
 }
 

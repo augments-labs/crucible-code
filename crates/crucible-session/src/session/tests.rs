@@ -7,9 +7,9 @@ use std::str::FromStr as _;
 use std::sync::{Arc, Mutex};
 
 use crucible_core::{
-    Ancestry, Calibration, Carried, ContextPatch, ContextSnapshot, CustomEntry, Fragment,
-    JournalEntryId, Message, RunItem, SessionId, Spend, StopReason, ToolArgs, ToolCall, ToolId,
-    ToolOutput, ToolResult,
+    Ancestry, Calibration, CallResultKey, CallResultStoreError, Carried, ContextPatch,
+    ContextSnapshot, CustomEntry, Fragment, InvocationId, JournalEntryId, JournalStore, Message,
+    RunItem, SessionId, Spend, StopReason, ToolArgs, ToolCall, ToolId, ToolOutput, ToolResult,
 };
 use serde_json::Value;
 
@@ -60,6 +60,156 @@ fn record(sample: &Sample, messages: &[Message]) -> PathBuf {
     // Dropping is what waits for the queue, so the file is complete after it.
     drop(session);
     path
+}
+
+#[test]
+fn durable_call_results_are_idempotent_and_content_bound() {
+    let sample = Sample::new("durable-call-result");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();
+    session.append(&calling("call-1", "bash", "{}"));
+    let key = CallResultKey::derive(Ancestry::new(), InvocationId::new(), &ToolId::new("call-1"));
+    let result = ToolResult {
+        id: ToolId::new("call-1"),
+        output: ToolOutput::ok("background job #1 accepted"),
+    };
+
+    let first = session.put_call_result(key, &result).unwrap();
+    let repeated = session.put_call_result(key, &result).unwrap();
+    assert_eq!(first, repeated);
+
+    let conflict = ToolResult {
+        id: ToolId::new("call-1"),
+        output: ToolOutput::failed("different"),
+    };
+    assert_eq!(
+        session.put_call_result(key, &conflict),
+        Err(CallResultStoreError::Conflict)
+    );
+
+    let stored = super::results::load(session.path()).unwrap();
+    assert_eq!(stored.len(), 1);
+    let stored = stored.first().expect("one stored result");
+    assert_eq!(stored.key, key);
+    assert_eq!(stored.receipt, first);
+    assert_eq!(stored.result, result);
+}
+
+#[test]
+fn ordinary_tool_results_settle_accepted_sidecars_after_the_log_barrier() {
+    let sample = Sample::new("settle-live-call-result");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();
+    let path = session.path().to_owned();
+    session.append(&calling("call-1", "bash", "{}"));
+    let key = CallResultKey::derive(Ancestry::new(), InvocationId::new(), &ToolId::new("call-1"));
+    let result = ToolResult {
+        id: ToolId::new("call-1"),
+        output: ToolOutput::ok("background job #1 accepted"),
+    };
+    session.put_call_result(key, &result).unwrap();
+    session.append(&Message::ToolResults(vec![result.clone()]));
+
+    session.settle_call_results();
+
+    assert!(
+        !path.with_extension("results").exists(),
+        "a sidecar survived its synced ordinary result"
+    );
+    drop(session);
+    let (_resumed, transcript) = Session::resume(&sample.logs(), &sample.workspace()).unwrap();
+    assert_eq!(
+        transcript.messages().last(),
+        Some(&Message::ToolResults(vec![result]))
+    );
+}
+
+#[test]
+fn resume_commits_an_accepted_result_before_removing_its_sidecar() {
+    let sample = Sample::new("recover-durable-call-result");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();
+    let path = session.path().to_owned();
+    session.append(&said("start it"));
+    session.append(&calling("call-1", "bash", "{}"));
+    let key = CallResultKey::derive(Ancestry::new(), InvocationId::new(), &ToolId::new("call-1"));
+    let result = ToolResult {
+        id: ToolId::new("call-1"),
+        output: ToolOutput::ok("background job #1 accepted"),
+    };
+    session.put_call_result(key, &result).unwrap();
+    drop(session);
+
+    let (resumed, transcript) = Session::resume(&sample.logs(), &sample.workspace()).unwrap();
+    assert_eq!(
+        transcript.messages(),
+        &[
+            said("start it"),
+            calling("call-1", "bash", "{}"),
+            Message::ToolResults(vec![result.clone()]),
+        ]
+    );
+    assert!(
+        !path.with_extension("results").exists(),
+        "a sidecar survived after its transcript line was synced"
+    );
+    drop(resumed);
+
+    let (_resumed_again, transcript_again) =
+        Session::resume(&sample.logs(), &sample.workspace()).unwrap();
+    assert_eq!(transcript_again.messages(), transcript.messages());
+}
+
+#[test]
+fn recovery_settles_every_call_when_only_one_result_reached_acceptance() {
+    let sample = Sample::new("recover-partial-call-results");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();
+    let calls = Message::Agent {
+        text: "on it".into(),
+        calls: vec![
+            ToolCall {
+                id: ToolId::new("call-1"),
+                name: "bash".into(),
+                args: ToolArgs::new("{}"),
+            },
+            ToolCall {
+                id: ToolId::new("call-2"),
+                name: "bash".into(),
+                args: ToolArgs::new("{}"),
+            },
+        ],
+        stop: Some(StopReason::WantsTools),
+    };
+    session.append(&calls);
+    let result = ToolResult {
+        id: ToolId::new("call-1"),
+        output: ToolOutput::ok("background job #1 accepted"),
+    };
+    let key = CallResultKey::derive(Ancestry::new(), InvocationId::new(), &result.id);
+    session.put_call_result(key, &result).unwrap();
+    drop(session);
+
+    let (_resumed, transcript) = Session::resume(&sample.logs(), &sample.workspace()).unwrap();
+    let Some(Message::ToolResults(results)) = transcript.messages().last() else {
+        panic!("recovery did not settle the source calls")
+    };
+    assert_eq!(results.len(), 2);
+    assert_eq!(results.first(), Some(&result));
+    let interrupted = results.get(1).expect("the interrupted second result");
+    assert!(interrupted.output.is_failed());
+    assert!(interrupted.output.text().contains("interrupted"));
+}
+
+#[test]
+fn a_non_recording_session_cannot_accept_a_durable_result() {
+    let session = Session::nowhere();
+    let key = CallResultKey::derive(Ancestry::new(), InvocationId::new(), &ToolId::new("call-1"));
+    let result = ToolResult {
+        id: ToolId::new("call-1"),
+        output: ToolOutput::ok("accepted"),
+    };
+
+    assert_eq!(
+        session.put_call_result(key, &result),
+        Err(CallResultStoreError::Unavailable)
+    );
 }
 
 #[test]
