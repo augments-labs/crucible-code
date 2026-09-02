@@ -44,6 +44,7 @@ pub(crate) fn context() -> ToolContext<'static> {
 }
 
 /// A durable direct-test context attributed to a chosen call.
+#[cfg(target_os = "linux")]
 pub(crate) fn context_for(call: &str) -> ToolContext<'static> {
     ToolContext::new(
         Ancestry::new(),

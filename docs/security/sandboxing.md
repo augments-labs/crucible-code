@@ -18,8 +18,10 @@ effective policy, preparation fails before materialization or spawn.
 Inside the namespace, PID 1 is Crucible's own `crucible-sandbox-broker`
 executable, found beside the Crucible binary and pinned by open descriptor
 before the namespace starts. It is accepted only when it and every directory
-above it belong to root or to the user running Crucible and cannot be written by
-any other user; a copy under `/tmp` or in another user's directory is ignored.
+above it belong to root or to the user running Crucible and are writable by
+neither group nor others; a copy under `/tmp`, in another user's directory or
+below a group-writable directory is ignored, and `chmod g-w` on the offending
+directory is the remedy.
 
 The Linux view starts from an empty temporary root. It exposes only the minimal
 read-only runtime needed to execute the selected absolute program, the exact

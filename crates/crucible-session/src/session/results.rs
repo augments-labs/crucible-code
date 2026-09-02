@@ -246,16 +246,20 @@ fn entries(path: &Path) -> Result<usize, io::Error> {
     Ok(count)
 }
 
+#[cfg(unix)]
 fn sync_directory(path: &Path) -> Result<(), io::Error> {
-    #[cfg(unix)]
-    {
-        File::open(path)?.sync_all()
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-        Ok(())
-    }
+    File::open(path)?.sync_all()
+}
+
+/// Windows offers no directory durability call, so the entry rename itself is
+/// the strongest ordering this store can obtain there.
+#[cfg(not(unix))]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "the Unix implementation can fail, and both share one call shape"
+)]
+fn sync_directory(_path: &Path) -> Result<(), io::Error> {
+    Ok(())
 }
 
 fn hex(bytes: &[u8]) -> String {

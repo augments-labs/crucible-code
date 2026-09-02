@@ -17,14 +17,12 @@ const MAX_BROKER_BYTES: u64 = 16 * 1024 * 1024;
 /// Whether a broker image, or a directory above it, can be rewritten only by
 /// root or by the user running Crucible.
 ///
-/// A path under the user's home is the normal case, and a user private group
-/// makes group-writable directories the default there, so the group bit is
-/// accepted only for this process's own effective group. Anyone else's
-/// directory, and anything world-writable such as `/tmp`, is refused.
-fn trusted_owner(uid: u32, gid: u32, mode: u32) -> bool {
-    (uid == 0 || uid == rustix::process::getuid().as_raw())
-        && mode & 0o002 == 0
-        && (mode & 0o020 == 0 || gid == rustix::process::getegid().as_raw())
+/// Unlike a system package the image may belong to the user, since a path
+/// under their home is the normal case. Group write is refused even for the
+/// user's own group: nothing here can prove that group is private to them, and
+/// a shared group would let any member rewrite namespace PID 1 in place.
+fn trusted_owner(uid: u32, mode: u32) -> bool {
+    (uid == 0 || uid == rustix::process::getuid().as_raw()) && mode & 0o022 == 0
 }
 
 /// One opened broker image whose descriptor is mounted into the namespace.
@@ -63,17 +61,14 @@ impl Broker {
             // The broker is namespace PID 1: it applies the resource limits,
             // ends the process tree and drives the scan that decides what is
             // published back. Like Bubblewrap it may only come from a path no
-            // other unprivileged user can rewrite, though unlike a system
-            // package it may belong to the user running Crucible.
+            // other unprivileged user can rewrite.
             if !metadata.is_file()
                 || metadata.len() == 0
                 || metadata.len() > MAX_BROKER_BYTES
-                || !trusted_owner(
-                    metadata.uid(),
-                    metadata.gid(),
-                    metadata.permissions().mode(),
-                )
-                || !super::probe::trusted_parent_chain_owned_by(&path, trusted_owner)
+                || !trusted_owner(metadata.uid(), metadata.permissions().mode())
+                || !super::probe::trusted_parent_chain_owned_by(&path, |uid, _, mode| {
+                    trusted_owner(uid, mode)
+                })
             {
                 continue;
             }
@@ -86,7 +81,7 @@ impl Broker {
             if opened.len() != metadata.len()
                 || opened.ino() != metadata.ino()
                 || opened.dev() != metadata.dev()
-                || !trusted_owner(opened.uid(), opened.gid(), opened.permissions().mode())
+                || !trusted_owner(opened.uid(), opened.permissions().mode())
             {
                 continue;
             }
@@ -184,17 +179,23 @@ mod tests {
     #[test]
     fn a_broker_image_is_trusted_only_where_no_other_user_can_rewrite_it() {
         let me = rustix::process::getuid().as_raw();
-        let my_group = rustix::process::getegid().as_raw();
-        assert!(trusted_owner(0, 0, 0o755));
-        assert!(trusted_owner(me, my_group, 0o755));
-        assert!(trusted_owner(me, my_group, 0o775), "the user's own group");
-        assert!(!trusted_owner(me, my_group.wrapping_add(1), 0o775));
-        assert!(!trusted_owner(me, my_group, 0o777));
+        assert!(trusted_owner(0, 0o755));
+        assert!(trusted_owner(me, 0o755));
+        assert!(trusted_owner(me, 0o700));
         assert!(
-            !trusted_owner(0, 0, 0o1777),
+            !trusted_owner(me, 0o775),
+            "the user's own group cannot be proven private"
+        );
+        assert!(
+            !trusted_owner(0, 0o775),
+            "root's file, but any group member"
+        );
+        assert!(!trusted_owner(me, 0o777));
+        assert!(
+            !trusted_owner(0, 0o1777),
             "a sticky world-writable directory"
         );
-        assert!(!trusted_owner(me.wrapping_add(1), my_group, 0o755));
+        assert!(!trusted_owner(me.wrapping_add(1), 0o755));
     }
 
     #[test]

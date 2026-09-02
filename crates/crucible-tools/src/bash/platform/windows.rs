@@ -106,11 +106,19 @@ impl Scope {
     }
 
     /// Borrows the job handle for the lifetime of the joined supervisor.
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "the Unix scope can fail to name its process group; both share one call shape"
+    )]
     pub(crate) fn terminator(&self, _child: &Child) -> io::Result<Terminator> {
         Ok(Terminator(self.0))
     }
 
     /// Reaps a finished leader only after its stable job has been emptied.
+    #[expect(
+        clippy::unused_self,
+        reason = "the Unix scope observes its group through `self`; both share one call shape"
+    )]
     pub(crate) fn try_wait(
         &self,
         child: &mut Child,

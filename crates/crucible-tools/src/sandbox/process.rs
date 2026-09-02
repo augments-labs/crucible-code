@@ -74,6 +74,8 @@ pub(super) struct Stage {
     retained: bool,
 }
 
+/// Only the Linux backend builds a stage; every platform can still clean one up.
+#[cfg(target_os = "linux")]
 impl Stage {
     pub(super) fn new(root: std::path::PathBuf) -> Self {
         Self {
@@ -98,7 +100,9 @@ impl Stage {
     pub(super) fn retained(&self) -> bool {
         self.retained
     }
+}
 
+impl Stage {
     /// Removes the complete stage and proves that its pathname is absent.
     ///
     /// Retained quarantine evidence deliberately fails cleanup instead of
@@ -744,7 +748,7 @@ fn stop_scope(scope: &Scope, child: &mut Child) -> io::Result<()> {
 
 /// Production process wrapper with a synthetic unconfined inspection record,
 /// for lifetime tests that exercise the wrapper itself.
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) fn testing(
     command: Command,
 ) -> Result<Box<dyn SandboxProcess>, crucible_core::SandboxError> {
@@ -811,7 +815,7 @@ pub(crate) fn testing(
     )
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::Stage;
 
