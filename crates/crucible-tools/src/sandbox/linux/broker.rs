@@ -166,6 +166,11 @@ impl StatusChannel {
     /// cancellation frame makes the broker kill the workload and write its wait
     /// status, and the wait keeps the launcher alive until that report has
     /// left, or until the budget ends and the kill proceeds regardless.
+    ///
+    /// An explicit stop writes the same frame on its own clone of this socket.
+    /// The two writers share no lock: a stream socket delivers each eight-byte
+    /// frame whole, and the broker acts on the first frame it reads, so a
+    /// second one changes nothing.
     pub(super) fn canceller(&self) -> io::Result<Canceller> {
         let channel = self.reader.try_clone()?;
         Ok(Box::new(move |leader| {
@@ -191,11 +196,12 @@ fn unavailable(reason: &'static str) -> SandboxError {
     }
 }
 
-/// How long a cancelled broker may take to end its workload and report.
+/// How long a cancelled broker may take to end its workload and exit.
 ///
 /// The supervisor holds the process lifecycle lock meanwhile, so this also
-/// bounds how long a wait on the process can stall behind a deadline or an
-/// output ceiling.
+/// bounds how long a wait on the process can stall before the launcher's exit
+/// is known. Reading the broker's report, which includes its scan of the
+/// projection, is bounded separately by the protocol's own ceilings.
 const CANCEL_GRACE: Duration = Duration::from_secs(5);
 /// How often the cancelling supervisor looks for the launcher's exit.
 const CANCEL_POLL: Duration = Duration::from_millis(5);
