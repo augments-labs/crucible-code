@@ -473,6 +473,9 @@ mod tests {
         assert!(SandboxManifest::new([directory, child]).is_ok());
     }
 
+    // The mount fixtures are POSIX absolute paths, which no Windows path type
+    // accepts.
+    #[cfg(unix)]
     #[test]
     fn manifest_debug_never_contains_inline_bytes_or_mount_sources() {
         let provenance = SandboxFilesystemProvenance::Manifest;

@@ -89,11 +89,22 @@ impl Scope {
 
 impl Terminator {
     /// Sends an uncatchable signal to every process still in the command group.
+    ///
+    /// A group whose members have all exited is already stopped. Linux and the
+    /// BSDs report that as `ESRCH`; XNU reports `EPERM` when the only members
+    /// left are zombies waiting to be reaped, so macOS accepts that too. It
+    /// cannot tell that case from a live member the caller may not signal, and
+    /// a command group here holds only the user's own descendants.
     pub(crate) fn stop(self) -> io::Result<()> {
         rustix::process::kill_process_group(self.0, rustix::process::Signal::KILL)
-            .or_else(|problem| (problem == Errno::SRCH).then_some(()).ok_or(problem))
+            .or_else(|problem| already_stopped(problem).then_some(()).ok_or(problem))
             .map_err(io::Error::from)
     }
+}
+
+/// Whether a group kill failed only because nothing living was left in it.
+fn already_stopped(problem: Errno) -> bool {
+    problem == Errno::SRCH || (cfg!(target_os = "macos") && problem == Errno::PERM)
 }
 
 /// Makes a pipe return `WouldBlock` while its writer is merely quiet.

@@ -475,9 +475,12 @@ mod tests {
         let service = LocalSandbox::new();
         let mut session = service.prepare(request).expect("session");
         session.materialize().expect("materialized");
-        let command =
-            SandboxCommand::new("/bin/true", std::iter::empty(), SandboxEnvironment::empty())
-                .expect("command");
+        let command = SandboxCommand::new(
+            "/bin/sh",
+            [OsString::from("-c"), OsString::from("exit 0")],
+            SandboxEnvironment::empty(),
+        )
+        .expect("command");
         let mut process = session.start(command).expect("process");
         let deadline = Instant::now() + Duration::from_secs(2);
         while process.try_wait().expect("wait").is_none() {

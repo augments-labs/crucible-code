@@ -1565,7 +1565,10 @@ impl SandboxError {
     }
 }
 
+// The fixtures are POSIX absolute paths, which no Windows path type accepts;
+// Windows has no confinement backend to give them a native shape.
 #[cfg(test)]
+#[cfg(unix)]
 mod tests {
     use super::*;
     use crate::sandbox::policy::{SandboxFilesystemProvenance, SandboxFilesystemRule};
