@@ -130,8 +130,12 @@ jobs:
           rm rustup-init
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
+      # The broker is PID 1 of every confined command and is found beside the
+      # executable, so Linux archives carry both.
       - name: Build
-        run: cargo build --release --locked --target ${{ matrix.target }}
+        run: |
+          cargo build --release --locked --target ${{ matrix.target }} \
+            -p crucible-code -p crucible-sandbox-broker
 
       - name: It runs, and says the version the tag claims
         run: |
@@ -141,11 +145,23 @@ jobs:
             exit 1
           fi
 
+      # Started anywhere but as PID 1 of a sandbox, the broker refuses with
+      # status 125 and says nothing on stdout; anything else is the wrong binary.
+      - name: The broker refuses to run outside a sandbox
+        run: |
+          status=0
+          said=$(./target/${{ matrix.target }}/release/crucible-sandbox-broker) || status=$?
+          if [[ $status != 125 || -n $said ]]; then
+            echo "the broker exited $status and said '$said', expected 125 and nothing"
+            exit 1
+          fi
+
       - name: Package
         run: |
           name=crucible-${GITHUB_REF_NAME#v}-${{ matrix.stem }}
           mkdir -p "$name"
           cp ./target/${{ matrix.target }}/release/crucible "$name/"
+          cp ./target/${{ matrix.target }}/release/crucible-sandbox-broker "$name/"
           cp README.md LICENSE "$name/"
           cp scripts/install.sh scripts/uninstall.sh "$name/"
           tar czf "$name.tar.gz" "$name"

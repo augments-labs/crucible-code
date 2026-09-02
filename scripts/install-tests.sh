@@ -39,11 +39,18 @@ checksum() {
     fi
 }
 
+# A release archive. Linux archives also carry the sandbox broker, a program
+# that only ever runs as PID 1 inside a confined command and exits 125 when
+# started any other way; the fixture broker records which release it came from.
 release() {
-    local at=$1 said=${2:-"crucible $version"}
+    local at=$1 said=${2:-"crucible $version"} broker=${3:-broker}
     mkdir -p "$at/$stem"
     printf '#!/usr/bin/env sh\nprintf "%%s\\n" %q\n' "$said" >"$at/$stem/crucible"
     chmod +x "$at/$stem/crucible"
+    if [[ $broker == broker ]]; then
+        printf '#!/usr/bin/env sh\n# %s\nexit 125\n' "$said" >"$at/$stem/crucible-sandbox-broker"
+        chmod +x "$at/$stem/crucible-sandbox-broker"
+    fi
     printf 'readme\n' >"$at/$stem/README.md"
     printf 'licence\n' >"$at/$stem/LICENSE"
     printf '#!/usr/bin/env bash\n' >"$at/$stem/install.sh"
@@ -58,6 +65,12 @@ install_from() {
         --archive "$asset/$stem.tar.gz" --checksums "$asset/SHA256SUMS"
 }
 
+broker_exit() {
+    local status=0
+    "$1" >/dev/null 2>&1 || status=$?
+    printf '%s\n' "$status"
+}
+
 echo '==> verified local install and idempotent update'
 asset=$scratch/good
 release "$asset"
@@ -65,7 +78,17 @@ destination=$scratch/bin
 install_from "$asset" "$destination"
 [[ $($destination/crucible --version) == "crucible $version" ]]
 [[ -L $destination/cru && $(readlink "$destination/cru") == crucible ]]
+[[ -f $destination/crucible-sandbox-broker && -x $destination/crucible-sandbox-broker ]]
+[[ $(broker_exit "$destination/crucible-sandbox-broker") == 125 ]]
 install_from "$asset" "$destination"
+
+echo '==> an archive without a sandbox broker still installs the executable'
+brokerless=$scratch/brokerless
+release "$brokerless" "crucible $version" none
+brokerless_bin=$scratch/brokerless-bin
+install_from "$brokerless" "$brokerless_bin"
+[[ $($brokerless_bin/crucible --version) == "crucible $version" ]]
+[[ ! -e $brokerless_bin/crucible-sandbox-broker ]]
 
 echo '==> dry run makes no destination'
 dry=$scratch/dry
@@ -137,6 +160,10 @@ if install_from "$bad_binary" "$destination" 2>/dev/null; then
     exit 1
 fi
 [[ $($destination/crucible --version) == "crucible $version" ]]
+grep -q "crucible $version" "$destination/crucible-sandbox-broker" || {
+    echo 'a failed replacement left the wrong sandbox broker installed' >&2
+    exit 1
+}
 
 echo '==> an unrelated alias is never overwritten'
 foreign=$scratch/foreign
@@ -158,12 +185,50 @@ if install_from "$asset" "$occupied" 2>/dev/null; then
 fi
 [[ $(cat "$occupied/crucible/sentinel") == kept ]]
 
+echo '==> a non-regular sandbox broker path is never replaced'
+occupied_broker=$scratch/occupied-broker
+mkdir -p "$occupied_broker/crucible-sandbox-broker"
+if install_from "$asset" "$occupied_broker" 2>/dev/null; then
+    echo 'installer replaced a non-regular sandbox broker path' >&2
+    exit 1
+fi
+[[ -d $occupied_broker/crucible-sandbox-broker && ! -e $occupied_broker/crucible ]]
+
+echo '==> a group-writable installation directory is reported as untrusted'
+loose=$scratch/loose
+mkdir -p "$loose"
+chmod g+w "$loose"
+warned=$(install_from "$asset" "$loose" 2>&1 >/dev/null)
+[[ $warned == *"$loose is writable by group or others"* && $warned == *'chmod go-w'* ]] || {
+    printf 'installer did not warn about a group-writable directory: %s\n' "$warned" >&2
+    exit 1
+}
+[[ -x $loose/crucible-sandbox-broker ]]
+
+echo '==> a directory owned by another user is reported as untrusted'
+# Mapping this user to another id inside a user namespace makes every directory
+# root really owns, `/` included, show up as somebody else's.
+if unshare -U --map-user=1001 --map-group=1001 true 2>/dev/null; then
+    foreign_owner=$scratch/foreign-owner
+    warned=$(unshare -U --map-user=1001 --map-group=1001 \
+        "$INSTALL" --version "$version" --dir "$foreign_owner" \
+        --archive "$asset/$stem.tar.gz" --checksums "$asset/SHA256SUMS" 2>&1 >/dev/null)
+    [[ $warned == *'install: / belongs to another user'* ]] || {
+        printf 'installer did not warn about a directory owned by another user: %s\n' "$warned" >&2
+        exit 1
+    }
+    [[ -x $foreign_owner/crucible-sandbox-broker ]]
+else
+    echo '    skipped: this host cannot map another user id into a user namespace'
+fi
+
 echo '==> uninstall preserves data by default'
 data=$scratch/home/.crucible
 mkdir -p "$data"
 printf 'secret\n' >"$data/auth.json"
 CRUCIBLE_CODE_HOME=$data "$UNINSTALL" --dir "$destination" >/dev/null
 [[ ! -e $destination/crucible && ! -e $destination/cru && -e $data/auth.json ]]
+[[ ! -e $destination/crucible-sandbox-broker ]]
 
 echo '==> purge is explicit and confirmed'
 if CRUCIBLE_CODE_HOME=$data "$UNINSTALL" --dir "$destination" --purge 2>/dev/null; then

@@ -53,6 +53,7 @@ the workspace ships as one unit and there is no per-crate version to drift.
    VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
    name=crucible-$VERSION-linux-x86_64
    install -Dm755 target/release/crucible "$name/crucible"
+   install -Dm755 target/release/crucible-sandbox-broker "$name/crucible-sandbox-broker"
    install -Dm644 README.md LICENSE -t "$name/"
    install -Dm755 scripts/install.sh scripts/uninstall.sh -t "$name/"
    tar czf "$name.tar.gz" "$name"
