@@ -8,7 +8,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use crucible_auth::{Store, StoredCredentials};
-use crucible_config::{Home, Settings};
+use crucible_config::{Extensions, Home, Settings};
 use crucible_core::{Ask, Mode, Remember, Sensitivity, Settled, ToolCall, Verdict, Workspace};
 
 /// The key [`Sample::stored`] writes down.
@@ -114,6 +114,30 @@ impl Sample {
         .expect("a writable store");
 
         self.store().read()
+    }
+
+    /// Writes one extension's manifest into this tree's home directory.
+    ///
+    /// A real file in a real directory, because discovery's whole job is what
+    /// is on disk and where: a fixture that handed the listing a manifest it
+    /// had built in memory would be testing the fixture's answer to the
+    /// question the sweep exists to ask.
+    pub(super) fn installed(&self, directory: &str, manifest: &str) {
+        let at = self.base.join("home").join("extensions").join(directory);
+        fs::create_dir_all(&at).expect("a temporary directory");
+        fs::write(at.join("manifest.json"), manifest).expect("a temporary directory");
+    }
+
+    /// What a sweep of this tree's home directory finds.
+    pub(super) fn discovered(&self) -> Extensions {
+        // Pointed at this disposable tree rather than whatever the machine
+        // running the test has installed.
+        let home = Home::find(&|name: &str| {
+            (name == crucible_config::HOME).then(|| OsString::from(self.base.join("home")))
+        })
+        .expect("an absolute path was given");
+
+        Extensions::discover(&home)
     }
 
     /// The store this tree keeps, which is the file `/login` writes and

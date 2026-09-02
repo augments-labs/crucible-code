@@ -8,6 +8,16 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Added
+
+- **`crucible --extensions` lists what is installed in
+  `~/.crucible/extensions` and stops.** Each directory's `manifest.json` is
+  read for what the extension calls itself, what it asks to be allowed to do
+  and the digest crucible takes over the file's own bytes; nothing installed is
+  run to produce the list. A manifest that will not parse is listed with its
+  reason rather than hiding the ones that will. Crucible does not yet run
+  extensions.
+
 ## [0.34.0] - 2026-09-02
 
 ### Added

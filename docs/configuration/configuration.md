@@ -531,6 +531,60 @@ The refusal is structural rather than a warning, and there is no "trusted
 project" setting that switches it off. The guarantee holds only because there is
 no such path.
 
+## Extensions
+
+`~/.crucible/extensions` is where extensions are installed, one directory each,
+with a `manifest.json` saying what that extension is and what it would like to
+be allowed to do:
+
+```json
+{
+  "id": "acme.reviewer",
+  "version": "1.4.0",
+  "protocol": "1.3",
+  "entrypoint": "bin/reviewer",
+  "minimumCrucible": "0.35.0",
+  "capabilities": ["registerTools", "readRunContext"],
+  "contributions": ["tools"]
+}
+```
+
+`crucible --extensions` lists what is there and stops:
+
+```
+1 extension in /home/you/.crucible/extensions
+
+acme.reviewer 1.4.0
+  from      /home/you/.crucible/extensions/reviewer/manifest.json
+  protocol  1.3, needs crucible 0.35.0
+  asks for  registerTools, readRunContext
+  gives     tools
+  digest    sha256:701bc6c828b804c37a762243dcc082b81a226cd286664367b4660dc446e3cc20
+```
+
+Nothing installed is run to produce that list, which is the point of being able
+to read it: the entrypoint is a string in a file crucible has not opened, and
+the digest is taken over the manifest's own bytes rather than read out of it, so
+two listings a week apart tell you whether the file changed.
+
+**Crucible does not yet run extensions.** This release reads the manifests and
+shows you them; there is no configuration key that enables one and no host that
+starts one.
+
+A directory that cannot be read does not hide the ones that can. Each is listed
+under its own heading with the reason:
+
+```
+1 directory could not be read:
+  /home/you/.crucible/extensions/broken/manifest.json: line 2 column 0: EOF while parsing a value
+```
+
+Crucible looks at 64 directories. Past that the listing says the answer is
+short rather than presenting a truncated one as complete. Two directories
+claiming one `id` are not both kept — the first in sorted order keeps the
+identifier and the second is listed as refused, because the identifier is what
+everything else would key on.
+
 ## `CRUCIBLE_CODE_HOME`
 
 Moves crucible's whole directory — the configuration file and the session logs
