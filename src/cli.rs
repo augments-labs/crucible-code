@@ -42,8 +42,8 @@ use clap::Parser;
 use crucible_auth::{Store, StoredCredentials};
 use crucible_config::{ConfigError, Home, Settings};
 use crucible_core::{
-    Cancel, CredentialError, Effort, Modalities, PathError, Provider, Revealed, SessionId,
-    ToolsetError, Workspace,
+    Cancel, CredentialError, Effort, Modalities, PathError, Provider, RegistryError, Revealed,
+    SessionId, ToolsetError, Workspace,
 };
 use crucible_provider::EndpointError;
 use crucible_runner::SessionError;
@@ -479,6 +479,12 @@ pub(crate) enum Fatal {
     #[error(transparent)]
     Toolset(#[from] ToolsetError),
 
+    /// The built-in commands could not be registered: two under one name, or
+    /// one whose name will not fit a source identity. A wiring defect rather
+    /// than anything the user did, and the sentence names the command.
+    #[error("the command list could not be assembled: {0}")]
+    Commands(#[from] RegistryError),
+
     /// `--resume` named a session this workspace has no record of.
     ///
     /// Its own sentence rather than the session crate's, because the id came
@@ -751,6 +757,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         // keeps Shift and Return for itself reports nothing this program could
         // have read, and the reader is the one who can see that happening.
         sending: sends(&settings),
+        commands: converse::command::builtins()?,
         reading: RefCell::new(settings.syntax_theme().map(str::to_owned)),
         cancel: cancel.clone(),
         steer: crucible_core::Steer::new(),

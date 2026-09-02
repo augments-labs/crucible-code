@@ -3,9 +3,14 @@
 //!
 //! One list, read three ways — the menu that filters as a command is typed,
 //! `/help`'s answer, and the match that decides what a finished line does. That
-//! is what [`EVERY`] is for: a command that was listed and did nothing, or did
-//! something and was never listed, is not a case anybody has to remember to
-//! check, because all three walk the same array.
+//! is what the registry [`builtins`] fills is for: a command that was listed
+//! and did nothing, or did something and was never listed, is not a case
+//! anybody has to remember to check, because all three walk the same snapshot.
+//! [`EVERY`] is what fills it, in the order `/help` lists them, and each entry
+//! is registered with the built-in provenance a wiring diagnostic reports. The
+//! registry refuses a second command under a taken name and says which two
+//! sources claimed it, so a contribution registered later cannot quietly take
+//! `/help` from under the reader.
 //!
 //! An answer is committed rows, the same as everything else that has happened
 //! here. Nothing is entered and there is nothing to dismiss: what a command
@@ -19,7 +24,10 @@
 //! the path that wraps and drops escape sequences, and it is the one every
 //! other `!` line in this program already takes.
 
-use crucible_core::{Compacting, Mode};
+use crucible_core::{
+    Collision, Compacting, Mode, Provenance, Registered, Registry, RegistryError, RegistrySnapshot,
+    SourceKind,
+};
 use crucible_runner::Runner;
 use crucible_tui::{Glyphs, Key, Listed, Menu, Pressed, Renderer, Row, Slot, Terminal, clip, fold};
 
@@ -90,6 +98,80 @@ const EVERY: [Command; 12] = [
     Command::Clear,
     Command::Exit,
 ];
+
+/// One slash command as the registry holds it.
+///
+/// The built-in ones wrap a [`Command`]; the provenance says so, and is what a
+/// collision diagnostic names. There is nothing else here yet on purpose: what
+/// a command does is still decided arm by arm below, and a record that carried
+/// a second way of running one would be a case those arms could not see.
+#[derive(Debug)]
+pub(crate) struct Slash {
+    /// Which command this is.
+    command: Command,
+    /// Where it came from.
+    provenance: Provenance,
+}
+
+impl Slash {
+    /// A command compiled into this binary.
+    ///
+    /// # Errors
+    ///
+    /// [`RegistryError`] where the name does not fit a source identity, which a
+    /// constant name cannot fail to.
+    fn builtin(command: Command) -> Result<Self, RegistryError> {
+        let name = command.name();
+        let provenance = Provenance::new(
+            SourceKind::Builtin,
+            format!("crucible:{name}"),
+            format!("built-in {name} command"),
+        )?;
+        Ok(Self {
+            command,
+            provenance,
+        })
+    }
+}
+
+impl Registered for Slash {
+    fn id(&self) -> &str {
+        self.command.name()
+    }
+
+    fn provenance(&self) -> &Provenance {
+        &self.provenance
+    }
+
+    fn retained_bytes(&self) -> usize {
+        size_of::<Self>() + self.provenance.retained_bytes()
+    }
+}
+
+/// The commands a line is read against: one generation of the registry.
+pub(crate) type Commands = RegistrySnapshot<Slash>;
+
+/// The command registry with every built-in command in it, in the order
+/// `/help` lists them.
+///
+/// Refusing collisions rather than ranking them: a command is typed by name,
+/// and two things answering to one name is exactly the ambiguity a reader
+/// cannot see from the box.
+///
+/// # Errors
+///
+/// [`RegistryError`] where a built-in could not be registered — a name written
+/// twice in [`EVERY`], or one too long for a source identity. Both are wiring
+/// defects, and the sentence names the command.
+pub(crate) fn builtins() -> Result<Registry<Slash>, RegistryError> {
+    let registry = Registry::new(Collision::Refuse);
+    let mut staged = registry.stage();
+    for command in EVERY {
+        staged.register(Slash::builtin(command)?)?;
+    }
+    registry.commit(staged)?;
+    Ok(registry)
+}
 
 /// What a line turned out to be asking for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -274,7 +356,7 @@ pub(super) enum MidTurn {
 /// what makes an unknown one safe to say back: it cannot be carrying an escape
 /// sequence, because a word carrying one is not shaped like a command and never
 /// reaches this far.
-pub(super) fn wanted(line: &str) -> Option<Wanted<'_>> {
+pub(super) fn wanted<'a>(commands: &Commands, line: &'a str) -> Option<Wanted<'a>> {
     let line = line.trim();
     let (word, rest) = line.split_once(char::is_whitespace).unwrap_or((line, ""));
 
@@ -282,7 +364,7 @@ pub(super) fn wanted(line: &str) -> Option<Wanted<'_>> {
         return None;
     }
 
-    Some(match named(word) {
+    Some(match named(commands, word) {
         Some(command) => Wanted::Known {
             command,
             rest: rest.trim(),
@@ -315,12 +397,13 @@ pub(super) fn live<T: Terminal>(
     match wanted.command() {
         Command::Theme => theme::live(renderer, terms, rest, while_waiting),
         Command::Help => {
+            let commands = terms.commands.snapshot();
             // No keys to read: the list is stood, and any key closes it.
             region::stand_while(
                 renderer,
                 |_| style,
                 &mut Still,
-                |_, columns, _| (listing(columns, style.glyphs()), None),
+                |_, columns, _| (listing(&commands, columns, style.glyphs()), None),
                 |arrived, _| {
                     if matches!(arrived, Pressed::Resized) {
                         Moved::Redraw
@@ -461,8 +544,8 @@ pub(super) fn refused<T: Terminal>(
 
 /// A command read mid-turn, owned so it crosses from the keyboard loop to the
 /// turn's own. `None` where the line is no command, the same as [`wanted`].
-pub(super) fn owned(line: &str) -> Option<Owned> {
-    wanted(line).map(|wanted| match wanted {
+pub(super) fn owned(commands: &Commands, line: &str) -> Option<Owned> {
+    wanted(commands, line).map(|wanted| match wanted {
         Wanted::Known { command, rest } => Owned::Known {
             command,
             rest: rest.to_owned(),
@@ -479,13 +562,15 @@ pub(super) fn owned(line: &str) -> Option<Owned> {
 /// name, so it opens the whole list.
 ///
 /// Nothing is allocated in the ordinary case, where the line is a prompt.
-pub(super) fn filtering(line: &str, glyphs: Glyphs) -> Vec<Listed<'static>> {
+pub(super) fn filtering(commands: &Commands, line: &str, glyphs: Glyphs) -> Vec<Listed<'static>> {
     if !shaped(line) {
         return Vec::new();
     }
 
-    EVERY
-        .into_iter()
+    commands
+        .entries()
+        .iter()
+        .map(|slash| slash.command)
         .filter(|command| command.name().starts_with(line))
         .map(|command| command.listed(glyphs))
         .collect()
@@ -551,7 +636,7 @@ fn answer<T: Terminal>(
         Wanted::Known {
             command: Command::Help,
             ..
-        } => renderer.present(&listing(columns, glyphs))?,
+        } => renderer.present(&listing(&terms.commands.snapshot(), columns, glyphs))?,
 
         // Nothing is drawn for it here. What it asks for is run above, where a
         // request is run, and everything a reader sees of one comes from there.
@@ -611,7 +696,7 @@ fn answer<T: Terminal>(
         Wanted::Unknown(word) => {
             renderer.commit(&format!("! no such command: {word}"))?;
             renderer.commit("")?;
-            renderer.present(&listing(columns, glyphs))?;
+            renderer.present(&listing(&terms.commands.snapshot(), columns, glyphs))?;
         }
     }
 
@@ -686,8 +771,12 @@ fn sentence(mode: Mode, columns: usize) -> Row {
 }
 
 /// The whole list, which is what `/help` is for.
-fn listing(columns: usize, glyphs: Glyphs) -> Vec<Row> {
-    let shown: Vec<Listed<'static>> = EVERY.into_iter().map(|one| one.listed(glyphs)).collect();
+fn listing(commands: &Commands, columns: usize, glyphs: Glyphs) -> Vec<Row> {
+    let shown: Vec<Listed<'static>> = commands
+        .entries()
+        .iter()
+        .map(|one| one.command.listed(glyphs))
+        .collect();
 
     Menu {
         shown: &shown,
@@ -707,9 +796,9 @@ const fn leaves(wanted: Wanted<'_>) -> bool {
     )
 }
 
-/// The command that word names.
-fn named(word: &str) -> Option<Command> {
-    EVERY.into_iter().find(|command| command.name() == word)
+/// The command that word names, in this generation of the registry.
+fn named(commands: &Commands, word: &str) -> Option<Command> {
+    commands.find(word).map(|slash| slash.command)
 }
 
 /// Whether this word is shaped like a command name: a slash, then letters, and
@@ -719,7 +808,7 @@ fn named(word: &str) -> Option<Command> {
 /// wrong` is a sentence about a file and `/Users/me/notes.md` is a file, and
 /// neither is read as a command that happens not to exist. A line is only ever
 /// taken for a command where it could not be anything else.
-fn shaped(word: &str) -> bool {
+pub(super) fn shaped(word: &str) -> bool {
     match word.strip_prefix('/') {
         Some(rest) => rest.chars().all(|one| one.is_ascii_alphabetic()),
         None => false,
