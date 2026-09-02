@@ -109,7 +109,7 @@ pub(super) fn run<T: Terminal>(
     // read before the word typed after the command rather than instead of it:
     // what is typed goes to the vendor either way, and this decides only what
     // gets offered and what gets listed back.
-    let rungs = rungs(provider, runner.model());
+    let rungs = rungs(&terms.providers.snapshot(), provider, runner.model());
 
     if !said.is_empty() {
         return match said.parse() {

@@ -19,7 +19,7 @@ use crucible_tui::{Offered, Panel, Renderer, Row, Slot, Terminal, clip};
 
 use crate::cli::converse::picking::{self, Taken};
 use crate::cli::{
-    CredentialSource, Fatal, NO_PROVIDER_CHOSEN, NOTHING_TO_ASK, PROVIDERS, Served, served,
+    CredentialSource, Fatal, NO_PROVIDER_CHOSEN, NOTHING_TO_ASK, Providers, Served, offered, served,
 };
 
 use super::{Terms, about, say};
@@ -50,9 +50,10 @@ pub(super) fn run<T: Terminal>(
     terms: &Terms,
     keys: bool,
 ) -> Result<(), Fatal> {
+    let providers = terms.providers.snapshot();
     let stored = terms.logins.read();
     let names: Vec<&str> = stored.providers().collect();
-    let held = held(&names);
+    let held = held(&providers, &names);
 
     // Before anything is drawn: a panel of nothing has no entry to take and no
     // reason to be stood up, and the rows underneath would be none as well.
@@ -60,7 +61,7 @@ pub(super) fn run<T: Terminal>(
         let remaining = terms
             .provider
             .get()
-            .and_then(|provider| served(provider).ok())
+            .and_then(|provider| served(&providers, provider).ok())
             .and_then(|provider| (terms.serving)(provider, &stored).ok());
         if let Some(remaining) = remaining {
             return say(
@@ -118,14 +119,13 @@ pub(super) fn run<T: Terminal>(
 
 /// The providers this build serves that `stored` holds a credential for.
 ///
-/// In [`PROVIDERS`] order rather than the store's, so this list and `/login`'s
+/// In registry order rather than the store's, so this list and `/login`'s
 /// read the same way down. A name in the file that this build does not serve is
 /// not among them: it names no provider here, so there is nothing to draw it as
 /// and no session that could have asked with it. The file is where it came from
 /// and the file is where it stays.
-fn held(stored: &[&str]) -> Vec<Served> {
-    PROVIDERS
-        .into_iter()
+fn held(providers: &Providers, stored: &[&str]) -> Vec<Served> {
+    offered(providers)
         .filter(|one| stored.contains(&one.name))
         .collect()
 }
@@ -199,8 +199,7 @@ fn forgetting<T: Terminal>(
             runner.serve(remaining.provider);
             not_stored(named.name, &remaining.source)
         } else {
-            let warning = if PROVIDERS
-                .into_iter()
+            let warning = if offered(&terms.providers.snapshot())
                 .any(|provider| (terms.serving)(provider, &stored).is_ok())
             {
                 NO_PROVIDER_CHOSEN

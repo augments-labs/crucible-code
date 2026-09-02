@@ -28,7 +28,7 @@ use crucible_tui::{
 
 use crate::cli::choice::Choice;
 use crate::cli::converse::picking::{self, Shelved, Standing, Taken};
-use crate::cli::{Fatal, Model, NO_MODEL_CHOSEN, PROVIDERS, Served, remember, served};
+use crate::cli::{Fatal, Model, NO_MODEL_CHOSEN, Served, offered, remember, served};
 
 use super::{Terms, about, say};
 
@@ -227,18 +227,19 @@ fn named<T: Terminal>(
     let Some(model) = choice.model else {
         return say(renderer, "! no model was named after the provider");
     };
+    let providers = terms.providers.snapshot();
     let provider = if let Some(provider) = choice.provider {
-        match served(&provider) {
+        match served(&providers, &provider) {
             Ok(provider) => provider,
             Err(problem) => return say(renderer, &format!("! {problem}")),
         }
     } else if let Some(provider) = terms.provider.get() {
-        match served(provider) {
+        match served(&providers, provider) {
             Ok(provider) => provider,
             Err(problem) => return say(renderer, &format!("! {problem}")),
         }
     } else {
-        let mut matching = PROVIDERS.into_iter().filter(|provider| {
+        let mut matching = offered(&providers).filter(|provider| {
             provider
                 .models
                 .iter()
@@ -304,7 +305,8 @@ fn stood<T: Terminal>(
     track: Track,
     while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
 ) -> Result<Shelved<Selected>, Fatal> {
-    let all = narrowing::every();
+    let providers = terms.providers.snapshot();
+    let all = narrowing::every(&providers);
     let glyphs = terms.style().glyphs();
     let (long, short) = keys(glyphs);
 
@@ -372,7 +374,7 @@ fn stood<T: Terminal>(
         terms.style(),
         &mut standing,
         |standing, columns, room| {
-            let counts = narrowing::counted(&all, standing.query.text());
+            let counts = narrowing::counted(&providers, &all, standing.query.text());
             let only = standing
                 .provider
                 .checked_sub(1)
@@ -410,11 +412,9 @@ fn stood<T: Terminal>(
                 .models
                 .iter()
                 .map(|one| {
-                    crate::cli::startup::window(one.provider.name, one.model.name, &terms.settings)
-                        .map_or_else(
-                            || glyphs.dash().to_owned(),
-                            |window| crate::cli::draw::tokens(u64::from(window)),
-                        )
+                    let window =
+                        crate::cli::startup::window(one.provider, one.model.name, &terms.settings);
+                    crate::cli::draw::tokens(u64::from(window))
                 })
                 .collect();
 
@@ -576,7 +576,7 @@ fn taken<T: Terminal>(
     runner.ask(
         name,
         crate::cli::startup::ceiling(provider, name),
-        crate::cli::startup::window(provider, name, &terms.settings),
+        Some(crate::cli::startup::window(selected, name, &terms.settings)),
         crate::cli::startup::accepts(provider, name),
     );
 
@@ -645,8 +645,7 @@ fn listed<T: Terminal>(
     }
 
     let columns = renderer.columns();
-    let rows: Vec<Row> = PROVIDERS
-        .into_iter()
+    let rows: Vec<Row> = offered(&terms.providers.snapshot())
         .flat_map(|provider| provider.models.iter().map(move |model| (provider, model)))
         .map(|(provider, model)| {
             let named = if model.shown == model.name {
@@ -675,7 +674,16 @@ mod tests {
     use crate::cli::fake::Script;
     use crate::cli::sample::Sample;
 
-    use super::{Effort, PROVIDERS, Selected, applied, keys, taken};
+    use crate::cli::Providers;
+
+    use super::{Effort, Selected, applied, keys, offered, taken};
+
+    /// The built-in providers, as one generation the rows are read off.
+    fn catalogue() -> Providers {
+        crate::cli::providers()
+            .expect("the built-in providers register")
+            .snapshot()
+    }
 
     #[test]
     fn the_keys_under_the_panes_come_out_of_the_glyph_set() {
@@ -742,8 +750,7 @@ mod tests {
 
     /// The row for one model of one provider, by both names.
     fn row(provider: &str, model: &str) -> Selected {
-        let provider = PROVIDERS
-            .into_iter()
+        let provider = offered(&catalogue())
             .find(|one| one.name == provider)
             .expect("a served provider");
         let model = provider
@@ -851,8 +858,7 @@ mod tests {
             Session::nowhere(),
         );
         let mut renderer = Renderer::new(Recording::new(80, 24));
-        let anthropic = PROVIDERS
-            .into_iter()
+        let anthropic = offered(&catalogue())
             .find(|provider| provider.name == "anthropic")
             .expect("anthropic is served");
 

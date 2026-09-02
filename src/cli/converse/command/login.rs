@@ -32,7 +32,7 @@
 //! window with no room to stand one in all come out the same way: which names
 //! crucible knows and which variable each of them signs a request from, written
 //! into the transcript where it can be scrolled back to. Every one of those
-//! halves comes off [`PROVIDERS`], so a vendor this build serves and cannot be
+//! halves comes off the provider registry, so a vendor this build serves and cannot be
 //! logged in to is not a state that exists.
 
 use std::borrow::Cow;
@@ -48,7 +48,7 @@ use crucible_tui::{
 use crate::cli::converse::picking::{self, Picked, Taken};
 use crate::cli::converse::secret;
 use crate::cli::subscription::{Account, Route};
-use crate::cli::{Fatal, PROVIDERS, Served, remember};
+use crate::cli::{Fatal, Served, offered, remember};
 
 use super::{Terms, about, say};
 
@@ -102,7 +102,8 @@ pub(super) fn run<T: Terminal>(
     terms: &Terms,
     keys: bool,
 ) -> Result<(), Fatal> {
-    let named = PROVIDERS.into_iter().find(|one| one.name == said);
+    let providers = terms.providers.snapshot();
+    let named = offered(&providers).find(|one| one.name == said);
 
     if keys {
         if let Some(named) = named {
@@ -123,8 +124,7 @@ pub(super) fn run<T: Terminal>(
     }
 
     let columns = renderer.columns();
-    let rows: Vec<Row> = PROVIDERS
-        .into_iter()
+    let rows: Vec<Row> = offered(&providers)
         .filter(|one| named.is_none_or(|only| only.name == one.name))
         .map(|one| {
             let said = about(
@@ -182,7 +182,8 @@ fn walked<T: Terminal>(
         Reaches::Console => {}
     }
 
-    let named = match chosen(renderer, terms)?.of(&PROVIDERS) {
+    let offering: Vec<Served> = offered(&terms.providers.snapshot()).collect();
+    let named = match chosen(&offering, renderer, terms)?.of(&offering) {
         Taken::Took(named) => named,
         Taken::Left => {
             say(renderer, LEFT)?;
@@ -286,15 +287,19 @@ fn method<T: Terminal>(
 }
 
 /// Stands the provider panel and says how it ended.
-fn chosen<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms) -> Result<Picked, Fatal> {
+fn chosen<T: Terminal>(
+    offering: &[Served],
+    renderer: &mut Renderer<T>,
+    terms: &Terms,
+) -> Result<Picked, Fatal> {
     // Where else the same key can come from — and the one thing that differs
     // between rows that would otherwise read identically.
-    let says: Vec<String> = PROVIDERS
+    let says: Vec<String> = offering
         .iter()
         .map(|one| format!("typed here, or set in {}", one.key))
         .collect();
 
-    let shown: Vec<Offered<'_>> = PROVIDERS
+    let shown: Vec<Offered<'_>> = offering
         .iter()
         .zip(&says)
         .map(|(one, says)| Offered {
@@ -336,7 +341,9 @@ fn subscribed<T: Terminal>(
         match attempt.wait(Duration::from_millis(50)) {
             Ok(Some(update)) => {
                 if view.apply(update) {
-                    let Some(named) = PROVIDERS.into_iter().find(|one| one.name == provider) else {
+                    let Some(named) =
+                        offered(&terms.providers.snapshot()).find(|one| one.name == provider)
+                    else {
                         return say(renderer, "! the signed-in provider is unavailable");
                     };
                     return taken(named, renderer, runner, terms);
@@ -679,6 +686,7 @@ mod tests {
             sending: crucible_tui::Sending::default(),
             commands: crate::cli::converse::command::builtins()
                 .expect("the built-in commands register"),
+            providers: crate::cli::providers().expect("the built-in providers register"),
         }
     }
 
@@ -713,8 +721,7 @@ mod tests {
         let mut runner = asking("claude-test-1");
         let mut renderer = Renderer::new(Recording::new(80, 24));
 
-        let named = *PROVIDERS
-            .iter()
+        let named = offered(&terms.providers.snapshot())
             .find(|served| served.name == "openai")
             .expect("a provider this build has an arm for");
         taken(named, &mut renderer, &mut runner, &terms).expect("the terminal to be written");
@@ -743,8 +750,7 @@ mod tests {
         let mut runner = asking("claude-test-1");
         let mut renderer = Renderer::new(Recording::new(80, 24));
 
-        let named = *PROVIDERS
-            .iter()
+        let named = offered(&terms.providers.snapshot())
             .find(|served| served.name == "anthropic")
             .expect("a provider this build has an arm for");
         taken(named, &mut renderer, &mut runner, &terms).expect("the terminal to be written");

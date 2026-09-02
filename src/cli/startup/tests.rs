@@ -20,9 +20,16 @@ impl Ask for Nobody {
     }
 }
 
-/// The entry the wiring resolves before it builds anything.
+/// The built-in providers, as one generation to resolve a name against.
+fn catalogue() -> Providers {
+    crate::cli::providers()
+        .expect("the built-in providers register")
+        .snapshot()
+}
+
+/// The record the wiring resolves before it builds anything.
 fn serving(named: &str) -> Served {
-    served(named).expect("a provider this build has")
+    served(&catalogue(), named).expect("a provider this build has")
 }
 
 /// What gets built on a machine nobody has logged in from. The store is the
@@ -135,13 +142,16 @@ fn each_provider_reads_the_key_belonging_to_it() {
     };
     let nothing = Settings::default();
 
-    for one in PROVIDERS {
-        let made = built(Some(serving(one.name)), &nothing, &from).expect("a provider");
+    let keys: Vec<&str> = crate::cli::offered(&catalogue())
+        .map(|one| {
+            let made = built(Some(one), &nothing, &from).expect("a provider");
 
-        assert_eq!(made.name(), one.name);
-    }
+            assert_eq!(made.name(), one.name);
+            one.key
+        })
+        .collect();
 
-    assert_eq!(read.into_inner(), PROVIDERS.map(|one| one.key));
+    assert_eq!(read.into_inner(), keys);
 }
 
 #[test]
@@ -374,44 +384,53 @@ fn a_machine_with_no_key_at_all_gets_the_provider_that_answers_nothing() {
 }
 
 #[test]
-fn a_name_in_the_list_with_no_arm_behind_it_is_refused_rather_than_built() {
-    // The list and the match are two halves of one change. A provider added to
-    // the list alone reaches here as a name nothing can build, and this is the
-    // arm that says so instead of returning a provider for the wrong vendor.
-    // Qualified: `Model` here is the one a turn is asked of, and this is the one
-    // a panel offers.
-    const OFFERED: &[crate::cli::Model] = &[crate::cli::Model::new("llama-4", &[])];
-
-    let unarmed = Served {
-        name: "ollama",
-        shown: "Ollama",
-        key: "OLLAMA_API_KEY",
-        models: OFFERED,
-    };
-
-    let problem = built(Some(unarmed), &Settings::default(), &|_| {
-        Some("a-key".to_owned())
-    })
-    .expect_err("this build has no such provider");
-
-    assert!(problem.to_string().contains("ollama"), "{problem}");
-}
-
-#[test]
-fn every_name_the_check_accepts_is_one_an_arm_can_build() {
-    // The check runs before the banner and the match runs after it. A name the
-    // first let through and the second had no arm for would be a run that
-    // announced its model and then said the provider does not exist.
-    for one in PROVIDERS {
-        served(one.name).expect("a check that agrees with the arm");
+fn every_name_the_registry_holds_is_one_its_own_record_can_build() {
+    // The check runs before the banner and the factory runs after it. A name
+    // the first let through and the second had no arm for would be a run that
+    // announced its model and then said the provider does not exist. A record
+    // carries its own factory, so the two halves cannot be registered apart —
+    // this is that walked, name by name.
+    for one in crate::cli::offered(&catalogue()) {
+        served(&catalogue(), one.name).expect("a check that agrees with the record");
         built(Some(one), &Settings::default(), &|_| {
             Some("a-key".to_owned())
         })
-        .expect("an arm for every name the check accepts");
+        .expect("an arm for every name the registry holds");
     }
+}
 
-    let problem = served("ollama").expect_err("this build has no such provider");
-    assert!(problem.to_string().contains("ollama"), "{problem}");
+#[test]
+fn a_name_no_record_was_registered_under_is_refused_and_the_others_are_named() {
+    // The sentence is the whole of what somebody who mistyped a provider has to
+    // work from, so it names what this build actually holds rather than only
+    // what it does not.
+    let problem = served(&catalogue(), "ollama").expect_err("this build has no such provider");
+    let said = problem.to_string();
+
+    assert!(said.contains("ollama"), "{said}");
+    for one in crate::cli::offered(&catalogue()) {
+        assert!(said.contains(one.name), "{said} omits {}", one.name);
+    }
+}
+
+#[test]
+fn a_provider_taken_out_of_the_registry_stops_being_a_name_this_build_serves() {
+    // The generation a name is read against is the one in force, not the list
+    // this build was compiled with: a provider deregistered is a provider gone,
+    // including from the sentence that says what is left.
+    let registry = crate::cli::providers().expect("the built-in providers register");
+    let mut staged = registry.stage();
+    staged
+        .deregister("anthropic")
+        .expect("a registered provider");
+    registry.commit(staged).expect("the smaller generation");
+
+    let left = registry.snapshot();
+    let problem = served(&left, "anthropic").expect_err("a provider no longer registered");
+    let said = problem.to_string();
+
+    assert!(!said.contains("anthropic, "), "{said} still offers it");
+    assert!(said.contains("moonshot"), "{said}");
 }
 
 #[test]
@@ -487,26 +506,56 @@ fn a_session_with_nothing_chosen_starts_and_asks_for_no_model() {
     assert_eq!(runner.model(), "", "an unnamed model is the empty name");
 }
 
+/// The specification one startup resolves to, for a model of `anthropic`.
+///
+/// The startup is what `coding` reads its answer off, so the tests about the
+/// answer build one. Everything the specification does not touch — the
+/// session, the workspace, the credentials — belongs to `assemble`, which
+/// these tests reach through separately.
+fn specified(model: &str, effort: Option<Effort>, settings: &Settings, told: &str) -> AgentSpec {
+    let sample = Sample::new(&format!("specified-{model}"));
+    let (logs, workspace) = (sample.logs(), sample.workspace());
+    let startup = Startup {
+        provider: Some(serving("anthropic")),
+        unasked: NOTHING_TO_ASK,
+        model: Some(model),
+        effort,
+        resuming: Resuming::No,
+        mode: Mode::Ask,
+        leaving: &crucible_tools::Background::new(),
+        settings,
+        sessions: &logs,
+        workspace: &workspace,
+        ledger: &Ledger::new(),
+        revealed: &Revealed::new(),
+        plan: &Plan::new(),
+        putting: &Putting::new(),
+        terminal: true,
+        from: &|_| None,
+        stored: &StoredCredentials::default(),
+        subscriptions: &Subscriptions::production(),
+    };
+
+    coding(&startup, "anthropic", model, told)
+}
+
 #[test]
 fn a_rung_the_run_resolved_is_on_the_model_every_turn_is_asked_of() {
     // The one thing this function does with it: a rung that stopped here would
     // be shown on the welcome and asked for nowhere.
-    let asking = coding(
-        "anthropic",
-        "claude-opus-5",
-        Some(Effort::Xhigh),
-        &Settings::default(),
-        "",
-    );
+    let settings = Settings::default();
 
-    assert_eq!(asking.model.effort, Some(Effort::Xhigh));
+    assert_eq!(
+        specified("claude-opus-5", Some(Effort::Xhigh), &settings, "")
+            .model
+            .effort,
+        Some(Effort::Xhigh)
+    );
 
     // And nothing where nothing said, which is the field left off rather than
     // a rung this program chose on the vendor's behalf.
     assert_eq!(
-        coding("anthropic", "claude-opus-5", None, &Settings::default(), "")
-            .model
-            .effort,
+        specified("claude-opus-5", None, &settings, "").model.effort,
         None
     );
 }
@@ -515,21 +564,20 @@ fn a_rung_the_run_resolved_is_on_the_model_every_turn_is_asked_of() {
 fn operational_windows_use_conservative_provider_defaults() {
     let settings = Settings::default();
 
-    assert_eq!(
-        window("anthropic", "claude-sonnet-5", &settings),
-        Some(200_000)
-    );
-    assert_eq!(
-        window("anthropic", "claude-haiku-4-5", &settings),
-        Some(200_000)
-    );
-    assert_eq!(window("openai", "gpt-5.6-sol", &settings), Some(272_000));
-    assert_eq!(window("openai", "gpt-5.5", &settings), Some(272_000));
-    assert_eq!(window("moonshot", "k3", &settings), Some(262_144));
-    assert_eq!(
-        window("moonshot", "kimi-for-coding-highspeed", &settings),
-        Some(262_144)
-    );
+    for (provider, model, held) in [
+        ("anthropic", "claude-sonnet-5", 200_000),
+        ("anthropic", "claude-haiku-4-5", 200_000),
+        ("openai", "gpt-5.6-sol", 272_000),
+        ("openai", "gpt-5.5", 272_000),
+        ("moonshot", "k3", 262_144),
+        ("moonshot", "kimi-for-coding-highspeed", 262_144),
+    ] {
+        assert_eq!(
+            window(serving(provider), model, &settings),
+            held,
+            "{provider}/{model}"
+        );
+    }
 }
 
 #[test]
@@ -537,12 +585,14 @@ fn unknown_models_do_not_bypass_the_providers_default_operational_window() {
     let settings = Settings::default();
 
     assert_eq!(
-        window("anthropic", "claude-future", &settings),
-        Some(200_000)
+        window(serving("anthropic"), "claude-future", &settings),
+        200_000
     );
-    assert_eq!(window("openai", "gpt-future", &settings), Some(272_000));
-    assert_eq!(window("moonshot", "kimi-future", &settings), Some(262_144));
-    assert_eq!(window("unheard-of", "model", &settings), None);
+    assert_eq!(window(serving("openai"), "gpt-future", &settings), 272_000);
+    assert_eq!(
+        window(serving("moonshot"), "kimi-future", &settings),
+        262_144
+    );
 }
 
 #[test]
@@ -553,30 +603,24 @@ fn an_explicit_context_window_can_opt_back_into_a_larger_window() {
     );
 
     assert_eq!(
-        window("anthropic", "claude-sonnet-5", &settings),
-        Some(1_000_000)
+        window(serving("anthropic"), "claude-sonnet-5", &settings),
+        1_000_000
     );
-    assert_eq!(window("openai", "gpt-5.6-sol", &settings), Some(872_000));
-    assert_eq!(window("openai", "gpt-future", &settings), Some(872_000));
-    assert_eq!(window("moonshot", "k3", &settings), Some(1_048_576));
+    assert_eq!(window(serving("openai"), "gpt-5.6-sol", &settings), 872_000);
+    assert_eq!(window(serving("openai"), "gpt-future", &settings), 872_000);
+    assert_eq!(window(serving("moonshot"), "k3", &settings), 1_048_576);
 }
 
 #[test]
 fn how_long_an_answer_may_be_is_the_model_own_limit_held_under_the_ceiling() {
     // A model this build has the limits of: its own output limit is far above
     // the ceiling, so the ceiling is what is asked for.
-    let known = coding("anthropic", "claude-opus-5", None, &Settings::default(), "");
+    let known = specified("claude-opus-5", None, &Settings::default(), "");
     assert_eq!(known.model.max_tokens, CEILING);
 
     // And one it has never heard of, where nothing is known and the lower
     // figure is what keeps a request from being refused outright.
-    let unknown = coding(
-        "anthropic",
-        "claude-from-the-future",
-        None,
-        &Settings::default(),
-        "",
-    );
+    let unknown = specified("claude-from-the-future", None, &Settings::default(), "");
     assert_eq!(unknown.model.max_tokens, UNKNOWN_CEILING);
 }
 
@@ -757,13 +801,7 @@ fn the_agent_is_named_coding_and_stands_under_what_the_wiring_asked() {
     // assembly test below follows them through the runner and separately
     // proves the workspace fact reaches typed context.
     let asked = "read the workspace before changing it";
-    let built = coding(
-        "anthropic",
-        "claude-opus-5",
-        None,
-        &Settings::default(),
-        asked,
-    );
+    let built = specified("claude-opus-5", None, &Settings::default(), asked);
 
     assert_eq!(built.id.as_str(), "coding");
     assert_eq!(built.instructions(), Some(asked));
@@ -781,7 +819,7 @@ fn a_definition_the_wiring_had_nothing_to_say_under_is_told_nothing() {
     // path that enforces the rule rather than around it — which is what a
     // definition read from a file, where an empty body is an ordinary case,
     // will arrive needing.
-    let built = coding("anthropic", "claude-opus-5", None, &Settings::default(), "");
+    let built = specified("claude-opus-5", None, &Settings::default(), "");
 
     assert_eq!(
         built.instructions(),

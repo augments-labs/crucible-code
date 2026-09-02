@@ -248,6 +248,13 @@ pub(crate) struct Terms {
     /// them later. A line is read against the snapshot taken as it is read, so
     /// a name it resolves is one that was in force when it was typed.
     pub(crate) commands: crucible_core::Registry<command::Slash>,
+    /// The providers a name is read against, from `--model provider/…` to the
+    /// rows `/login` and `/model` draw.
+    ///
+    /// A registry for the reason the commands are: the built-ins at startup,
+    /// and whatever is committed beside them later. Each reader takes its own
+    /// snapshot, so a provider it names is one that was in force when it asked.
+    pub(crate) providers: crucible_core::Registry<crate::cli::Arm>,
 }
 
 impl Terms {

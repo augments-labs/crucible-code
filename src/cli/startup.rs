@@ -2,8 +2,9 @@
 //!
 //! Everything the command line and the configuration files decided arrives here
 //! as a [`Startup`], and leaves as a `Runner` holding a provider, its tools, a
-//! model and a session. This is where a provider's *name* becomes a type, so
-//! adding one is an arm in [`provider`] and nothing in any crate below.
+//! model and a session. This is where a provider's *name* becomes a type: each
+//! record in the provider registry names a [`Factory`] here, so adding one is a
+//! factory and a record, and nothing in any crate below.
 //!
 //! Nothing in here reads the environment or the disk on its own account: the
 //! lookup is a parameter, which is what lets a startup be failed both ways it
@@ -33,7 +34,7 @@ use crucible_tools::{
 use super::seen::Putting;
 use super::standing;
 use super::subscription::Subscriptions;
-use super::{Fatal, PROVIDERS, Served};
+use super::{Fatal, Providers, Served};
 
 /// The most crucible will ask any model to produce in one answer, in tokens.
 ///
@@ -208,7 +209,7 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<Runner, Fatal> {
 
     // Read before the provider is handed over, because which vendor is being
     // written to is what says which model's limits are being asked about.
-    let asking = coding(provider.name(), name, startup.effort, settings, &asked);
+    let asking = coding(startup, provider.name(), name, &asked);
 
     let mut runner = Runner::new(
         provider,
@@ -275,39 +276,67 @@ pub(super) fn planned(plan: &Plan, transcript: &Transcript) {
 ///
 /// The name and nothing else: no key is looked up, no agent is built and no
 /// file is touched, which is what lets the caller run this before it draws
-/// anything. [`provider`] settles the same question again on its way past, so a
-/// name added to the list without an arm behind it still fails — later, and
-/// with the same sentence.
+/// anything. A record cannot be registered without its factory, so a name this
+/// finds is one [`provider`] can build.
 ///
 /// The entry comes back because the model to fall back on is written beside the
 /// name, and the caller has just proved which name it is.
-pub(super) fn served(named: &str) -> Result<Served, Fatal> {
-    PROVIDERS
-        .into_iter()
-        .find(|one| one.name == named)
+pub(super) fn served(providers: &Providers, named: &str) -> Result<Served, Fatal> {
+    providers
+        .find(named)
+        .map(|arm| arm.served)
         .ok_or_else(|| Fatal::Provider {
             named: named.into(),
+            has: super::names(providers).into(),
         })
 }
 
 /// Credential sources provider construction resolves as one boundary.
 #[derive(Clone, Copy)]
-pub(super) struct ProviderAuth<'a> {
+pub(crate) struct ProviderAuth<'a> {
     /// What the configuration files said.
-    pub(super) settings: &'a Settings,
+    pub(crate) settings: &'a Settings,
     /// Reads the environment.
-    pub(super) from: &'a dyn Fn(&str) -> Option<String>,
+    pub(crate) from: &'a dyn Fn(&str) -> Option<String>,
     /// What `/login` wrote down.
-    pub(super) stored: &'a StoredCredentials,
+    pub(crate) stored: &'a StoredCredentials,
     /// The subscription logins compiled into this binary.
-    pub(super) subscriptions: &'a Subscriptions,
+    pub(crate) subscriptions: &'a Subscriptions,
 }
+
+/// Everything a factory is handed to build one provider or its web sources.
+///
+/// Resolved once by the caller from the settings and the record, so no factory
+/// reads a setting or pairs a name with a variable on its own: the variable is
+/// the configured one or the record's usual name, and the address is the one a
+/// setting moved requests to, already parsed at that boundary.
+pub(crate) struct Wiring<'a> {
+    /// The provider's registered name, and the key `/login` wrote it under.
+    pub(crate) named: &'static str,
+    /// The environment variable the key is read from.
+    pub(crate) variable: &'a str,
+    /// Where a setting says requests should go, where one does.
+    pub(crate) sending: Option<Endpoint>,
+    /// The credential sources, as one boundary.
+    pub(crate) auth: ProviderAuth<'a>,
+}
+
+/// Builds one provider from its wiring.
+///
+/// Fails the start where the credential is missing or a subscription cannot be
+/// used at the configured address, with the sentence the vendor's arm owns.
+pub(crate) type Factory = fn(Wiring<'_>) -> Result<Box<dyn Provider>, Fatal>;
+
+/// Builds what answers the two web tools for one provider and model, or
+/// nothing.
+pub(crate) type Reach = fn(Wiring<'_>, &str) -> Reaching;
 
 /// The provider that serves the chosen model.
 ///
-/// The one place in the program where a provider's name becomes a type. Adding
-/// another is an arm here and a `Credential` beside it — nothing in any crate
-/// below has to learn that it exists.
+/// Where a provider's name becomes a type: the registry hands back the record
+/// the name was registered under, and the record's own factory builds it.
+/// Adding another is a factory here, a `Credential` beside it and a record —
+/// nothing in any crate below has to learn that it exists.
 ///
 /// `None` is a machine with no usable credential for any provider, and it gets
 /// the provider that answers nothing. Ending the run instead would take away
@@ -339,64 +368,78 @@ pub(super) fn provider(
         return Ok(Box::new(Unavailable::new(unasked)));
     };
 
+    (serving.build)(wiring(serving, auth)?)
+}
+
+/// The wiring one record's factories are handed, resolved from the settings.
+fn wiring(serving: Served, auth: ProviderAuth<'_>) -> Result<Wiring<'_>, Fatal> {
     let named = serving.name;
-    let variable = auth.settings.api_key_env(named).unwrap_or(serving.key);
-    let written = auth.stored.get(named);
-    let sending = sending_to(auth.settings, named)?;
+    Ok(Wiring {
+        named,
+        variable: auth.settings.api_key_env(named).unwrap_or(serving.key),
+        sending: sending_to(auth.settings, named)?,
+        auth,
+    })
+}
 
-    match named {
-        // Two protocols, one credential kind pointed at different headers.
-        // Authentication is a separate axis, and this is what that buys.
-        "anthropic" => Ok(Box::new(Anthropic::at(
-            sending.unwrap_or(Anthropic::VENDOR),
-            key(variable, Header::bare("x-api-key"), auth.from, written)?,
-            Box::new(Https::new()),
-        ))),
+/// Anthropic's Messages API, signed with a key in its own header.
+///
+/// Two protocols, one credential kind pointed at different headers.
+/// Authentication is a separate axis, and this is what that buys.
+pub(crate) fn anthropic(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, Fatal> {
+    Ok(Box::new(Anthropic::at(
+        wiring.sending.unwrap_or(Anthropic::VENDOR),
+        key(
+            wiring.variable,
+            Header::bare("x-api-key"),
+            wiring.auth.from,
+            wiring.auth.stored.get(wiring.named),
+        )?,
+        Box::new(Https::new()),
+    )))
+}
 
-        // The one provider with two vendor addresses. A key is issued against
-        // one console and refused by the other, and nothing in the key says
-        // which, so the choice cannot be made by reading it. This build asks
-        // the coding console, which is the plan sold for what crucible does;
-        // a key from the open platform sets `providers.moonshot.baseUrl` to
-        // the other address, and that is what the help text and the docs say.
-        "moonshot" => {
-            let (endpoint, credential) = credential(
-                ApiAudience {
-                    provider: named,
-                    variable,
-                    vendor: Moonshot::CODING,
-                },
-                sending,
-                auth,
-            )?;
-            Ok(Box::new(Moonshot::at(
-                endpoint,
-                credential,
-                Box::new(Https::new()),
-            )))
-        }
+/// `MoonshotAI`, at the coding console unless a setting moved it.
+///
+/// The one provider with two vendor addresses. A key is issued against one
+/// console and refused by the other, and nothing in the key says which, so the
+/// choice cannot be made by reading it. This build asks the coding console,
+/// which is the plan sold for what crucible does; a key from the open platform
+/// sets `providers.moonshot.baseUrl` to the other address, and that is what the
+/// help text and the docs say.
+pub(crate) fn moonshot(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, Fatal> {
+    let (endpoint, credential) = credential(
+        ApiAudience {
+            provider: wiring.named,
+            variable: wiring.variable,
+            vendor: Moonshot::CODING,
+        },
+        wiring.sending,
+        wiring.auth,
+    )?;
+    Ok(Box::new(Moonshot::at(
+        endpoint,
+        credential,
+        Box::new(Https::new()),
+    )))
+}
 
-        "openai" => {
-            let (endpoint, credential) = credential(
-                ApiAudience {
-                    provider: named,
-                    variable,
-                    vendor: OpenAi::VENDOR,
-                },
-                sending,
-                auth,
-            )?;
-            Ok(Box::new(OpenAi::at(
-                endpoint,
-                credential,
-                Box::new(Https::new()),
-            )))
-        }
-
-        named => Err(Fatal::Provider {
-            named: named.into(),
-        }),
-    }
+/// OpenAI's Responses API, with a key or a plan login.
+pub(crate) fn openai(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, Fatal> {
+    let (endpoint, credential) = credential(
+        ApiAudience {
+            provider: wiring.named,
+            variable: wiring.variable,
+            vendor: OpenAi::VENDOR,
+        },
+        wiring.sending,
+        wiring.auth,
+    )?;
+    Ok(Box::new(OpenAi::at(
+        endpoint,
+        credential,
+        Box::new(Https::new()),
+    )))
 }
 
 /// The vendor audience a credential is issued against.
@@ -477,139 +520,136 @@ fn credential(
 /// Nothing here fails the start. A source that cannot be built is a session
 /// without web tools, not a session that refuses to open — the user asked for a
 /// coding agent, and losing search is not losing that.
-struct Reaching {
+pub(crate) struct Reaching {
     searching: Option<Arc<dyn Search>>,
     fetching: Option<Arc<dyn Fetch>>,
 }
 
-fn web(startup: &Startup<'_>, settings: &Settings) -> Reaching {
-    let nothing = Reaching {
-        searching: None,
-        fetching: None,
-    };
+impl Reaching {
+    /// No web tools at all: the answer for a provider that serves neither, and
+    /// for a credential that could not be resolved.
+    fn nothing() -> Self {
+        Self {
+            searching: None,
+            fetching: None,
+        }
+    }
 
+    /// One source answering both tools.
+    fn both<S: Search + Fetch + 'static>(source: Arc<S>) -> Self {
+        Self {
+            searching: Some(source.clone()),
+            fetching: Some(source),
+        }
+    }
+}
+
+fn web(startup: &Startup<'_>, settings: &Settings) -> Reaching {
     let (Some(serving), Some(model)) = (startup.provider, startup.model) else {
         // A side request has to name a model, and the one it names is the
         // session's. Nothing is chosen yet in the state `/model` leaves open.
-        return nothing;
+        return Reaching::nothing();
     };
 
-    let variable = settings.api_key_env(serving.name).unwrap_or(serving.key);
-    let Ok(configured) = sending_to(settings, serving.name) else {
-        return nothing;
+    let auth = ProviderAuth {
+        settings,
+        from: startup.from,
+        stored: startup.stored,
+        subscriptions: startup.subscriptions,
+    };
+    let Ok(wiring) = wiring(serving, auth) else {
+        return Reaching::nothing();
     };
 
-    match serving.name {
-        "anthropic" => {
-            let Ok(credential) = key(
-                variable,
-                Header::bare("x-api-key"),
-                startup.from,
-                startup.stored.get(serving.name),
-            ) else {
-                return nothing;
-            };
+    (serving.reach)(wiring, model)
+}
 
-            let source = Arc::new(AnthropicWeb::new(
-                configured.unwrap_or(Anthropic::VENDOR),
-                credential,
-                Box::new(Https::new()),
-                model,
-            ));
+/// Anthropic's own search and fetch, on the session's model.
+pub(crate) fn anthropic_web(wiring: Wiring<'_>, model: &str) -> Reaching {
+    let Ok(credential) = key(
+        wiring.variable,
+        Header::bare("x-api-key"),
+        wiring.auth.from,
+        wiring.auth.stored.get(wiring.named),
+    ) else {
+        return Reaching::nothing();
+    };
 
-            Reaching {
-                searching: Some(source.clone()),
-                fetching: Some(source),
-            }
-        }
+    Reaching::both(Arc::new(AnthropicWeb::new(
+        wiring.sending.unwrap_or(Anthropic::VENDOR),
+        credential,
+        Box::new(Https::new()),
+        model,
+    )))
+}
 
-        // Whichever service the credential is for, plan or published API. An
-        // earlier version excluded the plan's backend on the grounds that it
-        // refuses an unimplemented field with a 400 that ends the turn — true
-        // of the *provider's* request, and not of this one. A source makes its
-        // own request, so a refusal there is a failed tool result and the turn
-        // carries on. Withholding the tool bought nothing and cost every plan
-        // session its search.
-        //
-        // Resolved through `credential`, which is the same resolution the
-        // provider used, rather than by reaching for the variable directly.
-        // Those two answer differently: a session logged in with `/login` runs
-        // its turns on the plan, and a key resolver would have found an
-        // `OPENAI_API_KEY` the shell happened to carry and billed every search
-        // to it — a credential the user did not choose for this session, at
-        // $10 per thousand, silently. Which credential answers is exactly what
-        // decides whether there is a source at all.
-        "openai" => {
-            let Ok((endpoint, credential)) = credential(
-                ApiAudience {
-                    provider: serving.name,
-                    variable,
-                    vendor: OpenAi::VENDOR,
-                },
-                configured,
-                ProviderAuth {
-                    settings,
-                    from: startup.from,
-                    stored: startup.stored,
-                    subscriptions: startup.subscriptions,
-                },
-            ) else {
-                return nothing;
-            };
+/// OpenAI's search and fetch, whichever service the credential is for.
+///
+/// Plan or published API. An earlier version excluded the plan's backend on
+/// the grounds that it refuses an unimplemented field with a 400 that ends the
+/// turn — true of the *provider's* request, and not of this one. A source makes
+/// its own request, so a refusal there is a failed tool result and the turn
+/// carries on. Withholding the tool bought nothing and cost every plan session
+/// its search.
+///
+/// Resolved through `credential`, which is the same resolution the provider
+/// used, rather than by reaching for the variable directly. Those two answer
+/// differently: a session logged in with `/login` runs its turns on the plan,
+/// and a key resolver would have found an `OPENAI_API_KEY` the shell happened
+/// to carry and billed every search to it — a credential the user did not
+/// choose for this session, at $10 per thousand, silently. Which credential
+/// answers is exactly what decides whether there is a source at all.
+pub(crate) fn openai_web(wiring: Wiring<'_>, model: &str) -> Reaching {
+    let Ok((endpoint, credential)) = credential(
+        ApiAudience {
+            provider: wiring.named,
+            variable: wiring.variable,
+            vendor: OpenAi::VENDOR,
+        },
+        wiring.sending,
+        wiring.auth,
+    ) else {
+        return Reaching::nothing();
+    };
 
-            let source = Arc::new(OpenAiWeb::new(
-                endpoint,
-                credential,
-                Box::new(Https::new()),
-                model,
-            ));
+    Reaching::both(Arc::new(OpenAiWeb::new(
+        endpoint,
+        credential,
+        Box::new(Https::new()),
+        model,
+    )))
+}
 
-            Reaching {
-                searching: Some(source.clone()),
-                fetching: Some(source),
-            }
-        }
+/// Kimi Code's own two services, which are what this vendor's own client
+/// reaches.
+///
+/// Not the `$web_search` builtin: that one answers with the model's prose
+/// rather than with addresses, so it fits no seam a result travels through.
+///
+/// They belong to the coding platform, and a key issued against the open
+/// platform is refused by them — so a session whose address was moved
+/// elsewhere gets no web tools rather than two that always fail.
+pub(crate) fn moonshot_web(wiring: Wiring<'_>, _model: &str) -> Reaching {
+    let Ok((endpoint, credential)) = credential(
+        ApiAudience {
+            provider: wiring.named,
+            variable: wiring.variable,
+            vendor: Moonshot::CODING,
+        },
+        wiring.sending,
+        wiring.auth,
+    ) else {
+        return Reaching::nothing();
+    };
 
-        // Kimi Code's own two services, which are what this vendor's own client
-        // reaches. Not the `$web_search` builtin: that one answers with the
-        // model's prose rather than with addresses, so it fits no seam a result
-        // travels through.
-        //
-        // They belong to the coding platform, and a key issued against the open
-        // platform is refused by them — so a session whose address was moved
-        // elsewhere gets no web tools rather than two that always fail.
-        "moonshot" => {
-            let Ok((endpoint, credential)) = credential(
-                ApiAudience {
-                    provider: serving.name,
-                    variable,
-                    vendor: Moonshot::CODING,
-                },
-                configured,
-                ProviderAuth {
-                    settings,
-                    from: startup.from,
-                    stored: startup.stored,
-                    subscriptions: startup.subscriptions,
-                },
-            ) else {
-                return nothing;
-            };
-
-            if endpoint.as_str() != Moonshot::CODING.as_str() {
-                return nothing;
-            }
-
-            let source = Arc::new(MoonshotWeb::new(credential, Box::new(Https::new())));
-
-            Reaching {
-                searching: Some(source.clone()),
-                fetching: Some(source),
-            }
-        }
-
-        _ => nothing,
+    if endpoint.as_str() != Moonshot::CODING.as_str() {
+        return Reaching::nothing();
     }
+
+    Reaching::both(Arc::new(MoonshotWeb::new(
+        credential,
+        Box::new(Https::new()),
+    )))
 }
 
 /// Where a setting says this provider's requests should go, where one does.
@@ -817,21 +857,17 @@ fn about(schema: &str) -> Box<str> {
 /// The effort stays an `Option` for the opposite reason: there is no rung that
 /// means "nobody said", and the field left off is what a vendor reads as its own
 /// default.
-fn coding(
-    provider: &str,
-    name: &str,
-    effort: Option<Effort>,
-    settings: &Settings,
-    asked: &str,
-) -> AgentSpec {
+fn coding(startup: &Startup<'_>, provider: &str, name: &str, asked: &str) -> AgentSpec {
     let mut spec = AgentSpec::new(
         AgentId::new("coding"),
         Model {
             name: name.into(),
             max_tokens: ceiling(provider, name),
-            window: window(provider, name, settings),
+            window: startup
+                .provider
+                .map(|serving| window(serving, name, startup.settings)),
             accepts: accepts(provider, name),
-            effort,
+            effort: startup.effort,
         },
     );
     spec.named("Coding");
@@ -879,21 +915,18 @@ fn policy(settings: &Settings) -> RunPolicy {
 ///
 /// A configured figure is explicit and wins, including one that opts into a
 /// model's million-token window. Without one, known native limits are held under
-/// a conservative provider default: long context is available, but using it is
-/// a choice rather than the starting behavior. The provider cap also
-/// covers names released after this build, while an unknown provider still has
-/// no number to guess from.
-pub(super) fn window(provider: &str, model: &str, settings: &Settings) -> Option<u32> {
-    settings.context_window(provider, model).or_else(|| {
-        let default = match provider {
-            "anthropic" => 200_000,
-            "openai" => 272_000,
-            "moonshot" => 262_144,
-            _ => return None,
-        };
-        let native = super::facts(provider, model).map_or(default, |facts| facts.window);
-        Some(native.min(default))
-    })
+/// the provider record's conservative default: long context is available, but
+/// using it is a choice rather than the starting behavior. The record's cap
+/// also covers names released after this build. A provider this build has no
+/// record for never reaches here: the name was refused at the registry.
+pub(super) fn window(serving: Served, model: &str, settings: &Settings) -> u32 {
+    settings
+        .context_window(serving.name, model)
+        .unwrap_or_else(|| {
+            let native =
+                super::facts(serving.name, model).map_or(serving.window, |facts| facts.window);
+            native.min(serving.window)
+        })
 }
 
 /// What this model reads, where this build has heard of it.
