@@ -5,6 +5,7 @@ use std::net::TcpListener;
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 use std::os::unix::net::UnixListener;
+use std::os::unix::process::ExitStatusExt as _;
 use std::path::PathBuf;
 use std::process::{Command, ExitStatus, Stdio};
 use std::thread;
@@ -1589,14 +1590,27 @@ fn command_deadline_kills_the_complete_bubblewrap_process_tree() {
         !live_processes_with_marker(&marker).is_empty(),
         "marker did not identify the live host descendant"
     );
-    thread::sleep(Duration::from_millis(1_100));
-    let status = process.try_wait().expect("wait");
+    // The deadline ends the workload through the broker, so the status that
+    // comes back is the workload's own; had the shell been left to finish its
+    // thirty-second sleep, it would have exited cleanly instead.
+    let expired = Instant::now() + Duration::from_secs(10);
+    let status = loop {
+        if let Some(status) = process.try_wait().expect("wait") {
+            break status;
+        }
+        assert!(
+            Instant::now() < expired,
+            "sandbox process tree survived its deadline"
+        );
+        thread::sleep(Duration::from_millis(20));
+    };
     let violation = process.violation();
     process.stop().expect("cleanup");
 
-    assert!(
-        status.is_some(),
-        "sandbox process tree survived its deadline"
+    assert_eq!(
+        status.signal(),
+        Some(rustix::process::Signal::KILL.as_raw()),
+        "the deadline did not kill the workload"
     );
     assert_eq!(
         violation,

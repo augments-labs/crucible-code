@@ -699,7 +699,13 @@ fn a_stale_journal_lock_lent_to_a_departing_child_is_recovered_not_skipped() {
         .write(true)
         .open(stage.join("transaction.wal"))
         .expect("stale journal");
-    rustix::fs::flock(&journal, FlockOperation::NonBlockingLockExclusive).expect("journal lock");
+    // A child another test is spawning may still hold, between fork and exec,
+    // a copy of the descriptor the stale transaction just closed, so the lock
+    // is taken across the same transient-holder budget the recovery allows.
+    assert!(
+        lock_after_transient_holder(&journal).expect("journal lock"),
+        "the stale journal lock outlived the transient-holder budget"
+    );
     let mut child = lend_to_departing_child(&journal);
     drop(journal);
 

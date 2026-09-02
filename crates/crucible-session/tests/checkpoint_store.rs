@@ -4,13 +4,17 @@ use std::fs;
 
 use crucible_core::{
     Ancestry, CheckpointId, CheckpointStore, ExecutionCheckpoint, InvocationRecord, Message,
-    PendingAction, PendingApproval, PendingExternalTool, RecoveryAction, ResumeDigest,
-    ResumeEvidence, ResumeScope, RunHistory, RunItem, SandboxBackendId, SandboxBackendIdentity,
-    SandboxBackendProvenance, SandboxCapabilities, SandboxCapability, SandboxCheckpoint,
-    SandboxCleanup, SandboxFeature, SandboxFilesystemAccess, SandboxFilesystemProvenance,
-    SandboxFilesystemRule, SandboxId, SandboxInspection, SandboxManifest, SandboxMode,
-    SandboxNetworkPolicy, SandboxPolicy, SandboxResourceLimits, StopReason, TOOL_ARGUMENT_BYTES,
-    ToolArgs, ToolCall, ToolEffect, ToolId, ToolOutcome, ToolOutput, ToolResult,
+    PendingAction, PendingApproval, PendingExternalTool, RecoveryAction, ResumeDigest, ResumeScope,
+    RunHistory, RunItem, StopReason, TOOL_ARGUMENT_BYTES, ToolArgs, ToolCall, ToolEffect, ToolId,
+    ToolOutcome, ToolOutput, ToolResult,
+};
+#[cfg(unix)]
+use crucible_core::{
+    ResumeEvidence, SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance,
+    SandboxCapabilities, SandboxCapability, SandboxCheckpoint, SandboxCleanup, SandboxFeature,
+    SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxId,
+    SandboxInspection, SandboxManifest, SandboxMode, SandboxNetworkPolicy, SandboxPolicy,
+    SandboxResourceLimits,
 };
 use crucible_session::{CHECKPOINT_FORMAT, CheckpointError, FileCheckpointStore};
 
@@ -39,6 +43,9 @@ fn call(id: &str) -> ToolCall {
     }
 }
 
+// The fixture is a POSIX absolute path, which no Windows path type accepts;
+// Windows has no confinement backend to give it a native shape.
+#[cfg(unix)]
 #[allow(clippy::expect_used)]
 fn sandbox_checkpoint() -> SandboxCheckpoint {
     let policy = SandboxPolicy::new(
@@ -162,6 +169,7 @@ fn pending_actions_and_finished_invocations_round_trip_in_their_own_versioned_fi
     fs::remove_dir_all(directory).unwrap();
 }
 
+#[cfg(unix)]
 #[test]
 fn sandbox_identity_round_trips_and_resume_refuses_a_weaker_live_backend() {
     let directory = directory("sandbox-resume");

@@ -195,6 +195,7 @@ impl SandboxSession for LinuxSession {
         };
         let mut status_channel = broker::StatusChannel::pair().map_err(SandboxError::Spawn)?;
         let status_descriptor = status_channel.descriptor().map_err(SandboxError::Spawn)?;
+        let canceller = status_channel.canceller().map_err(SandboxError::Spawn)?;
         let process = match command::build(command::Plan {
             backend: &self.backend,
             broker: &self.broker,
@@ -236,6 +237,7 @@ impl SandboxSession for LinuxSession {
                 audit_cleanup: false,
                 invocation: self.request.invocation_mode(),
                 call_result_key: self.request.call_result_key(),
+                canceller: Some(canceller),
             },
         );
         status_channel.close_writer();

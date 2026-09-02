@@ -135,6 +135,13 @@ impl Drop for Stage {
     }
 }
 
+/// Asks a backend to end its workload before the uncatchable group kill.
+///
+/// The argument is the process id of the spawned leader. The call may wait,
+/// within a budget of its own, for that leader to exit so the backend's report
+/// arrives before the kill.
+pub(super) type Canceller = Box<dyn Fn(u32) -> io::Result<()> + Send + Sync>;
+
 /// Spawns `command` inside a platform process-tree scope.
 pub(super) struct SpawnPlan {
     pub(super) inspection: SandboxInspection,
@@ -149,6 +156,11 @@ pub(super) struct SpawnPlan {
     pub(super) audit_cleanup: bool,
     pub(super) invocation: SandboxInvocationMode,
     pub(super) call_result_key: Option<CallResultKey>,
+    /// A cooperative stop the supervisor tries before the group kill. Killing
+    /// the Linux launcher alone leaves its PID namespace running, so the Linux
+    /// backend asks the broker to end the workload and report its wait status;
+    /// the kill stays as the backstop.
+    pub(super) canceller: Option<Canceller>,
 }
 
 /// Starts one command under an already negotiated process plan.
@@ -167,6 +179,7 @@ pub(super) fn spawn(
         audit_cleanup,
         invocation,
         call_result_key,
+        canceller,
     } = plan;
     command
         .stdin(Stdio::null())
@@ -235,6 +248,8 @@ pub(super) fn spawn(
             limits
                 .command_time
                 .map(|allowed| started.checked_add(allowed).unwrap_or(started)),
+            canceller,
+            child.id(),
         ) {
             Ok(supervisor) => Some(supervisor),
             Err(source) => {
@@ -409,6 +424,8 @@ impl Supervisor {
         control: Arc<Control>,
         terminator: Terminator,
         deadline: Option<Instant>,
+        canceller: Option<Canceller>,
+        leader: u32,
     ) -> io::Result<Self> {
         let supervised = Arc::clone(&control);
         let thread = thread::Builder::new()
@@ -432,6 +449,10 @@ impl Supervisor {
                     };
                     if supervised.done.load(Ordering::Acquire) {
                         return;
+                    }
+                    if let Some(cancel) = &canceller {
+                        // A cancellation the backend cannot deliver leaves the kill.
+                        let _ = cancel(leader);
                     }
                     if let Err(problem) = terminator.stop() {
                         supervised.record_failure(&problem);
@@ -811,6 +832,7 @@ pub(crate) fn testing(
             audit_cleanup: true,
             invocation: SandboxInvocationMode::Foreground,
             call_result_key: None,
+            canceller: None,
         },
     )
 }

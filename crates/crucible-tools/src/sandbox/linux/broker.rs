@@ -6,11 +6,14 @@ use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use crucible_core::SandboxError;
 use crucible_sandbox_broker::{
-    GO_FRAME, READY_FRAME, REFUSED_DESCRIPTOR_CLOSURE, REFUSED_FRAME, REFUSED_SCAN,
+    CANCEL_FRAME, GO_FRAME, READY_FRAME, REFUSED_DESCRIPTOR_CLOSURE, REFUSED_FRAME, REFUSED_SCAN,
 };
+
+use super::super::process::Canceller;
 
 const MAX_BROKER_BYTES: u64 = 16 * 1024 * 1024;
 
@@ -156,6 +159,22 @@ impl StatusChannel {
         Ok(())
     }
 
+    /// A stop the supervisor hands the broker before it kills the launcher.
+    ///
+    /// Killing Bubblewrap alone does not end the PID namespace: the broker,
+    /// started in its own session, outlives it together with the workload. The
+    /// cancellation frame makes the broker kill the workload and write its wait
+    /// status, and the wait keeps the launcher alive until that report has
+    /// left, or until the budget ends and the kill proceeds regardless.
+    pub(super) fn canceller(&self) -> io::Result<Canceller> {
+        let channel = self.reader.try_clone()?;
+        Ok(Box::new(move |leader| {
+            (&channel).write_all(&CANCEL_FRAME)?;
+            (&channel).flush()?;
+            await_launcher_exit(leader)
+        }))
+    }
+
     pub(super) fn send_go(&mut self) -> io::Result<()> {
         self.reader.write_all(&GO_FRAME)?;
         self.reader.flush()
@@ -170,6 +189,41 @@ fn unavailable(reason: &'static str) -> SandboxError {
     SandboxError::BackendUnavailable {
         reason: reason.into(),
     }
+}
+
+/// How long a cancelled broker may take to end its workload and report.
+///
+/// The supervisor holds the process lifecycle lock meanwhile, so this also
+/// bounds how long a wait on the process can stall behind a deadline or an
+/// output ceiling.
+const CANCEL_GRACE: Duration = Duration::from_secs(5);
+/// How often the cancelling supervisor looks for the launcher's exit.
+const CANCEL_POLL: Duration = Duration::from_millis(5);
+
+/// Waits, within the cancellation budget, for the launcher to exit.
+///
+/// The exit is observed without reaping so the process owner still collects
+/// the status. A launcher that outlives the budget is reported as timed out
+/// and left to the kill.
+fn await_launcher_exit(leader: u32) -> io::Result<()> {
+    use rustix::process::{WaitId, WaitIdOptions};
+
+    let raw = i32::try_from(leader)
+        .map_err(|_| io::Error::other("launcher process id does not fit this platform"))?;
+    let pid = rustix::process::Pid::from_raw(raw)
+        .ok_or_else(|| io::Error::other("launcher process id cannot be observed"))?;
+    let options = WaitIdOptions::NOHANG | WaitIdOptions::EXITED | WaitIdOptions::NOWAIT;
+    let expired = Instant::now() + CANCEL_GRACE;
+    while rustix::process::waitid(WaitId::Pid(pid), options)?.is_none() {
+        if Instant::now() >= expired {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "sandbox broker did not report within the cancellation budget",
+            ));
+        }
+        std::thread::sleep(CANCEL_POLL);
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -251,6 +251,7 @@ impl SandboxSession for CompatibilitySession {
                 audit_cleanup: true,
                 invocation: self.request.invocation_mode(),
                 call_result_key: self.request.call_result_key(),
+                canceller: None,
             }),
             inspection: self.inspection.clone(),
             audit: self.request.audit().clone(),

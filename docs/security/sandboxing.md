@@ -154,7 +154,10 @@ values, proxy material or raw out-of-scope paths.
 
 The local supervisor stops and reaps the complete owned process scope on normal
 exit, deadline, output violation, cancellation, refusal, launch failure, panic,
-explicit stop and ordinary host shutdown. Cleanup is idempotent. An
+explicit stop and ordinary host shutdown. On enforcing Linux a deadline or
+output ceiling first tells the broker to end the workload, so the workload's
+own wait status is still reported, and kills the launcher once the broker has
+exited or after a short budget. Cleanup is idempotent. An
 uncatchable host/process kill cannot run user-space destructors. On enforcing
 Linux, loss of the broker status channel and Bubblewrap's parent-death boundary
 still terminate the PID-namespace workload. The next preparation replays the
