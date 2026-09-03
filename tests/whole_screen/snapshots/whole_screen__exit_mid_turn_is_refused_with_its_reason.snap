@@ -19,7 +19,7 @@ expression: window.picture()
 |● Bash(sleep 30)                                            |
 |  ⎿ (no output yet) (+2 lines · ctrl+o to expand)           |
 |                                                            |
-|the quick brown fox jumps                                   |
+|It is started. That is all.                                 |
 |────────────────────────────────────────────────────────────|
 |                                                            |
 |/exit                                                       |
