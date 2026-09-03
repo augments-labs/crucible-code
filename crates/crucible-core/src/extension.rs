@@ -604,6 +604,7 @@ fn repeated<T: Copy + PartialEq>(
 }
 
 mod parse;
+pub(crate) mod wire;
 
 #[cfg(test)]
 mod tests;

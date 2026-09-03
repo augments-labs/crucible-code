@@ -61,6 +61,7 @@ pub use extension::{
     EXTENSION_ID_BYTES, EXTENSION_MANIFEST_BYTES, EXTENSION_REQUESTS, EXTENSION_TEXT_BYTES,
     ExtensionCapability, ExtensionContribution, ExtensionError, ExtensionIdentity,
     ExtensionManifest, ExtensionProtocol, ExtensionRequests, ExtensionUnhosted,
+    wire::{EXTENSION_FRAME_BYTES, FrameError, Frames, Written},
 };
 pub use ids::{
     AgentId, CredentialScopeId, IdError, ProviderAttemptId, RunId, SandboxId, SessionId, ToolId,
