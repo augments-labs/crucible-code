@@ -239,3 +239,42 @@ fn an_extension_asking_for_more_reach_than_this_build_has_is_told_what_it_gets()
         "{said}"
     );
 }
+
+#[test]
+fn the_settings_written_for_an_extension_are_named_but_never_quoted() {
+    // Whoever is deciding about this extension wrote these names from its
+    // documentation, and the listing is where they find out crucible read the
+    // block they meant. The values stay out: crucible cannot tell which of
+    // these names holds a key somebody pasted, and a listing is the wrong place
+    // to find out it was one.
+    let sample = Sample::new("extensions-listing-configured");
+    sample.installed("reviewer", &manifest("acme.reviewer"));
+    let settings = sample.user(
+        r#"{"extensions": {"acme.reviewer": {"enabled": true, "config": {
+             "style": "terse", "token": "sk-not-a-real-one"}}}}"#,
+    );
+
+    let said = listing(&sample.discovered(), &settings, RUNNING);
+
+    // Directly under `enabled`, because both were written in the same block of
+    // the same file and the pair read as one answer: allowed, and told this.
+    assert!(
+        said.contains("enabled   yes\n  config    style, token"),
+        "{said}"
+    );
+    assert!(!said.contains("terse"), "{said}");
+    assert!(!said.contains("sk-not-a-real-one"), "{said}");
+}
+
+#[test]
+fn an_extension_nobody_wrote_settings_for_says_so_rather_than_nothing() {
+    // A blank space beside the label reads like the listing failed to work it
+    // out, the same way it would beside `asks for`. Nothing written is a real
+    // and ordinary state and gets a word of its own.
+    let sample = Sample::new("extensions-listing-unconfigured");
+    sample.installed("reviewer", &manifest("acme.reviewer"));
+
+    let said = listing(&sample.discovered(), &sample.decided(), RUNNING);
+
+    assert!(said.contains("config    nothing"), "{said}");
+}

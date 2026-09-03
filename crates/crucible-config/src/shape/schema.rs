@@ -85,6 +85,12 @@ fn of(shape: &Shape) -> Value {
         // are spelled as one.
         Shape::Whole(bounds) => json!({ "type": "string", "pattern": pattern(bounds) }),
         Shape::Fields(_) | Shape::Named { .. } => object(shape),
+        // An object and nothing more. No `properties`, because the names are
+        // the extension's; and deliberately no `additionalProperties: false`,
+        // which everywhere else in this file is what turns a misspelling into a
+        // squiggle. Here it would turn every correctly spelled setting into
+        // one, in every editor that resolves this schema.
+        Shape::Opaque => json!({ "type": "object" }),
 
         // `uniqueItems` because no list here means anything by a repeat: the
         // kind decides which rule wins, so a second copy of a rule cannot
@@ -164,7 +170,8 @@ fn described(field: &Field) -> Value {
         | Shape::Flag
         | Shape::Whole(_)
         | Shape::Fields(_)
-        | Shape::Named { .. } => Some(&mut described),
+        | Shape::Named { .. }
+        | Shape::Opaque => Some(&mut described),
     };
     if let Some(into) = holder.and_then(Value::as_object_mut) {
         into.insert("examples".into(), json!(examples));
@@ -195,7 +202,8 @@ fn stated(shape: &Shape, usual: &str) -> Value {
         | Shape::Whole(_)
         | Shape::Fields(_)
         | Shape::Named { .. }
-        | Shape::List(_) => Value::from(usual),
+        | Shape::List(_)
+        | Shape::Opaque => Value::from(usual),
     }
 }
 
@@ -249,7 +257,8 @@ fn object(shape: &Shape) -> Value {
         | Shape::Count
         | Shape::Flag
         | Shape::Whole(_)
-        | Shape::List(_) => of(shape),
+        | Shape::List(_)
+        | Shape::Opaque => of(shape),
     }
 }
 

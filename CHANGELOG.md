@@ -29,6 +29,13 @@ change in any release with no deprecation period.
   the one you are running, would change nothing. An extension asking for more
   of the protocol than this build has is hosted anyway, on the part they both
   know, and the listing says which part that is.
+- **`extensions.<id>.config` holds an extension's own settings.** Whatever
+  names its documentation gives, in any JSON they take; crucible checks that
+  the block is a block and reads nothing inside, because refusing a key it has
+  never heard of would mean deleting a line the extension told you to write.
+  The listing names what you wrote and never what you set it to, and the key is
+  read only from your home file — crucible cannot weigh the danger of a name it
+  cannot read, so a committed file may not write one on your behalf.
 
 ## [0.34.0] - 2026-09-02
 

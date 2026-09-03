@@ -53,11 +53,15 @@ pub(crate) fn listing(found: &Extensions, settings: &Settings, running: &str) ->
 
     let mut any_off = false;
     for one in found.found() {
-        let enabled = settings.extension_enabled(&one.manifest().identity().id);
-        any_off |= !enabled;
+        let id = &one.manifest().identity().id;
+        let decided = Decided {
+            enabled: settings.extension_enabled(id),
+            written: settings.extension_settings(id),
+        };
+        any_off |= !decided.enabled;
 
         said.push('\n');
-        describe(&mut said, one, enabled, running);
+        describe(&mut said, one, decided, running);
     }
 
     // Once, at the end, rather than beside every entry that says no. An
@@ -89,6 +93,19 @@ pub(crate) fn listing(found: &Extensions, settings: &Settings, running: &str) ->
     said
 }
 
+/// What the person running crucible said about one extension.
+///
+/// The two travel together because they come from the same block of the same
+/// file and are printed one after the other. Held as one thing rather than as
+/// two more parameters, which is also what keeps [`describe`] inside the
+/// argument count this workspace allows.
+struct Decided<'a> {
+    /// Whether they said it may run.
+    enabled: bool,
+    /// The names they wrote under its `config`, never what they set them to.
+    written: Vec<&'a str>,
+}
+
 /// One extension, in the words its own manifest used.
 ///
 /// Two of these lines the manifest gets no say in, and they are written in the
@@ -96,7 +113,8 @@ pub(crate) fn listing(found: &Extensions, settings: &Settings, running: &str) ->
 /// somebody would need to know before deciding this one is the suspect. They
 /// come after what was claimed and in the order they are decided — whether
 /// this build could run it at all, and then whether anybody said it may.
-fn describe(said: &mut String, one: &Installed, enabled: bool, running: &str) {
+fn describe(said: &mut String, one: &Installed, decided: Decided<'_>, running: &str) {
+    let Decided { enabled, written } = decided;
     let manifest = one.manifest();
     let identity = manifest.identity();
     let requests = manifest.requests();
@@ -138,6 +156,11 @@ fn describe(said: &mut String, one: &Installed, enabled: bool, running: &str) {
     // The manifest asks; this is the answer. Spelled as the key's own word so
     // that the listing and the file a reader goes on to open say one thing.
     let _ = writeln!(said, "  enabled   {}", if enabled { "yes" } else { "no" });
+    // The names only. Crucible has never read this extension's documentation,
+    // so it cannot tell which of these holds a key somebody pasted — and a
+    // listing is a thing people paste into an issue. Named at all because
+    // whoever wrote them needs to see the block was read as the one they meant.
+    let _ = writeln!(said, "  config    {}", joined(written.iter().copied()));
     // Taken over the manifest's own bytes by the parser, never read out of it:
     // a file stating its own digest would be a file asserting it had not
     // changed since somebody trusted it.

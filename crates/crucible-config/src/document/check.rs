@@ -82,6 +82,7 @@ impl Reader<'_> {
             Shape::Fields(_) => self.fields(value, shape, spot),
             Shape::Named { others, .. } => self.named(value, others, shape, spot),
             Shape::List(inner) => self.list(value, inner, shape, spot),
+            Shape::Opaque => self.opaque(value, shape, spot),
         }
     }
 
@@ -220,6 +221,26 @@ impl Reader<'_> {
             self.check(held, inner, Spot { path: &path, at })?;
         }
         Ok(())
+    }
+
+    /// An object crucible carries and does not read.
+    ///
+    /// The whole check is that it is an object, and there is deliberately no
+    /// walk under it. Every name inside was chosen by the program the block is
+    /// addressed to, so an unknown key here would be crucible refusing a
+    /// spelling out of a vocabulary it has never been shown — and the reader
+    /// would have to delete a line their extension's own documentation told
+    /// them to write.
+    ///
+    /// Nothing under here can widen either, which is why the check does not
+    /// look: `config` widens as a whole, refused at the key by
+    /// [`fields`](Self::fields) before this is ever reached from a file in the
+    /// workspace.
+    fn opaque(&self, value: &Value, shape: &Shape, spot: Spot<'_>) -> Result<(), ConfigError> {
+        if value.is_object() {
+            return Ok(());
+        }
+        Err(self.wrong_type(shape, spot))
     }
 
     /// An array, every element of the same shape.
