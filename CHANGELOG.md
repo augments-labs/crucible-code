@@ -26,7 +26,9 @@ change in any release with no deprecation period.
   offers, and stopped when the turn ends. Its tools are called as
   `mcp:<server>/<tool>`, so nothing a server offers can take over a name
   crucible already uses. A name nothing wrote down stops the run rather than
-  being left out quietly. `restarts` is still read and not acted on.
+  being left out quietly. An interrupt refuses a call that has not been sent
+  yet; one already on its way ends with the server's answer or with
+  `requestSeconds`. `restarts` is still read and not acted on.
 
 ### Changed
 

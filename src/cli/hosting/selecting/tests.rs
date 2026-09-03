@@ -282,3 +282,32 @@ fn a_record_that_names_no_directory_runs_where_a_confined_command_would() {
     };
     assert_eq!(chosen.policy.working_directory(), workspace.root());
 }
+
+#[test]
+fn a_selected_server_is_confined_at_the_mode_the_run_is_confined_at() {
+    let sample = Sample::new("selecting-mode");
+    // A server record has no key that says anything about confinement, and
+    // this is the other half of that statement: the mode comes from the run's
+    // own `sandbox.mode`, so a document that wanted its servers less confined
+    // would have to say so for `bash` in the same breath.
+    let settings = sample.user(
+        r#"{
+            "sandbox": {"mode": "off"},
+            "mcp": {"servers": {"docs": {"command": "docs-mcp"}}}
+        }"#,
+    );
+    let (_, lookup) = installed(&sample, "docs-mcp", &[]);
+
+    let found = selected(&["docs".to_owned()], &settings, &sample.workspace(), lookup)
+        .expect("a record this test wrote");
+
+    let [chosen] = found.as_slice() else {
+        panic!("one server was named");
+    };
+    assert_eq!(chosen.policy.mode(), SandboxMode::Off);
+    assert_ne!(
+        SandboxMode::Off,
+        SandboxMode::default(),
+        "a mode that is also the default would prove nothing about where it came from"
+    );
+}

@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    Ancestry, Approved, Ask, Cancel, Mode, Permission, Remember, Rules, SandboxBackendId,
+    Ancestry, Approved, Ask, Cancel, Mode, Permission, Remember, Revealed, Rules, SandboxBackendId,
     SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities, SandboxCommand,
     SandboxEnvironment, SandboxError, SandboxFilesystemAccess, SandboxFilesystemProvenance,
     SandboxFilesystemRule, SandboxId, SandboxInspection, SandboxLaunch, SandboxManifest,
@@ -1037,4 +1037,159 @@ struct Nothing;
 
 impl crucible_core::Watch for Nothing {
     fn wrote(&self, _text: crucible_core::Wrote) {}
+}
+
+#[test]
+fn the_generation_names_the_servers_in_selection_order_and_each_catalogue_in_its_own() {
+    let sandbox = Pretend::new([
+        Answers::Says(opening(
+            "docs",
+            &json!([offers("search"), offers("browse")]),
+        )),
+        Answers::Says(opening("notes", &json!([offers("find")]))),
+    ]);
+    let hosting = Hosting::new(
+        builtin(&["read"]),
+        Arc::clone(&sandbox) as Arc<dyn SandboxService>,
+        vec![chosen("docs"), chosen("notes")],
+    );
+    let context = lifecycle();
+    hosting.prepare(&context).expect("both started");
+
+    let snapshot = hosting.snapshot(&context).expect("one generation");
+    let named: Vec<&str> = snapshot
+        .entries()
+        .iter()
+        .map(|entry| entry.descriptor().name())
+        .collect();
+
+    // The order a provider is told about tools in is the order it caches
+    // against, so a generation that reordered itself between two identical
+    // runs would cost a cache hit for no reason a reader could name.
+    assert_eq!(
+        named,
+        [
+            "read",
+            "mcp:docs/search",
+            "mcp:docs/browse",
+            "mcp:notes/find"
+        ]
+    );
+    assert_eq!(
+        snapshot
+            .find("mcp:notes/find")
+            .expect("the second server's tool")
+            .descriptor()
+            .provenance()
+            .id(),
+        "mcp:notes",
+        "a tool says which server answered for it, not merely that one did"
+    );
+    hosting.dispose(&context).expect("both stopped");
+}
+
+#[test]
+fn a_generation_rebuilt_under_a_moved_roster_keeps_every_name_source_and_approval() {
+    let revealed = Revealed::new();
+    let mut tools = Tools::looking_up(revealed.clone());
+    for (name, held) in [("read", false), ("grep", true)] {
+        let descriptor = ToolDescriptor::new(
+            name,
+            r#"{"type":"object"}"#,
+            ToolProvenance::builtin(name).expect("a built-in name fits its own identity"),
+        )
+        .expect("a descriptor a test wrote");
+        let tool = Arc::new(Quiet(name));
+        if held {
+            tools.defer(descriptor, tool)
+        } else {
+            tools.add(descriptor, tool)
+        }
+        .expect("no two names here are the same");
+    }
+
+    let sandbox = Pretend::new([Answers::Says(opening("docs", &json!([offers("search")])))]);
+    let hosting = Hosting::new(
+        tools,
+        Arc::clone(&sandbox) as Arc<dyn SandboxService>,
+        vec![chosen("docs")],
+    );
+    let context = lifecycle();
+    hosting.prepare(&context).expect("the server started");
+
+    let first = hosting.snapshot(&context).expect("one generation");
+    let before = first.find("mcp:docs/search").expect("the server's tool");
+    let source = before.descriptor().provenance().id().to_owned();
+    let approval = before.tool().sensitivity(&ToolArgs::new("{}"));
+    let read = sandbox.server(0).sent().len();
+
+    // What `tool_search` does mid-turn: the built-in roster grows, so the
+    // merged generation has to be rebuilt around it.
+    revealed.reveal("grep");
+    let second = hosting.refresh(&context).expect("the generation after");
+
+    assert_ne!(
+        first.generation().context_id(),
+        second.generation().context_id(),
+        "a roster that moved is a new generation"
+    );
+    assert!(second.find("grep").is_some(), "the revealed tool arrived");
+    let after = second
+        .find("mcp:docs/search")
+        .expect("the server's tool survived the swap");
+    assert_eq!(after.descriptor().provenance().id(), source);
+    assert_eq!(
+        after.tool().sensitivity(&ToolArgs::new("{}")),
+        approval,
+        "a swap must not change what a call is approved as"
+    );
+    assert_eq!(
+        sandbox.server(0).sent().len(),
+        read,
+        "and must not go back to the server for a catalogue it already read"
+    );
+    hosting.dispose(&context).expect("the server stopped");
+}
+
+#[test]
+fn a_call_interrupted_before_it_is_sent_reaches_no_server() {
+    let mut frames = opening("docs", &json!([offers("search")]));
+    frames.push(produced("two pages", false));
+    let sandbox = Pretend::new([Answers::Says(frames)]);
+    let hosting = Hosting::new(
+        builtin(&[]),
+        Arc::clone(&sandbox) as Arc<dyn SandboxService>,
+        vec![chosen("docs")],
+    );
+    let context = lifecycle();
+    hosting.prepare(&context).expect("the server started");
+    let snapshot = hosting.snapshot(&context).expect("one generation");
+    let entry = snapshot.find("mcp:docs/search").expect("the offered tool");
+
+    let cancel = Cancel::new();
+    cancel.request();
+    let refused = entry
+        .tool()
+        .run(
+            allowed(entry.tool(), "mcp:docs/search", r#"{"query":"crates"}"#),
+            &crucible_core::ToolContext::new(
+                Ancestry::new(),
+                ToolId::new("test"),
+                &cancel,
+                None,
+                &Nothing,
+            ),
+        )
+        .expect_err("the run was interrupted");
+
+    assert!(matches!(refused, ToolError::Cancelled(_)));
+    assert!(
+        !sandbox
+            .server(0)
+            .sent()
+            .iter()
+            .any(|frame| frame.get("method").and_then(Value::as_str) == Some("tools/call")),
+        "an interrupted call must not start somebody else's program working"
+    );
+    hosting.dispose(&context).expect("the server stopped");
 }
