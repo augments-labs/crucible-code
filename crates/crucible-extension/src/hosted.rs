@@ -184,8 +184,16 @@ impl<T> Hosted<T> {
         // anything knows they were outstanding.
         let waiting = self.talk.ended();
         drop(self.talk);
+        let finish = settle(self.process.as_mut(), grace);
         Ended {
-            finish: settle(self.process.as_mut(), grace),
+            // Asked after the process has finished, because the supervisor
+            // records a violation at the moment it acts on one and this is the
+            // last point anything can ask. It is also the only ending that
+            // explains itself from nowhere else: a command killed for running
+            // too long says nothing on the way out and leaves an empty
+            // standard error behind.
+            violation: self.process.violation(),
+            finish,
             waiting,
             muttered: self.muttered,
         }
@@ -258,6 +266,13 @@ pub enum Finish {
 pub struct Ended<T> {
     /// How the process finished.
     pub finish: Finish,
+    /// The first hard resource violation the sandbox saw, where there was one.
+    ///
+    /// Why it finished that way, when the answer is that crucible's own
+    /// confinement stopped it. Nothing else in here says so: the process was
+    /// killed mid-sentence, so it wrote no complaint and its conversation just
+    /// stopped.
+    pub violation: Option<SandboxViolation>,
     /// Calls crucible was still waiting on, which nothing will answer now.
     pub waiting: Vec<(CallId, T)>,
     /// What it said beside the conversation, which is usually why it ended.
