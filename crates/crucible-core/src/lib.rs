@@ -62,6 +62,7 @@ pub use extension::{
     ExtensionCapability, ExtensionContribution, ExtensionError, ExtensionIdentity,
     ExtensionManifest, ExtensionProtocol, ExtensionRequests, ExtensionUnhosted,
     calls::{Asked, CallError, EXTENSION_CALLS, Serving},
+    conversation::{Broken, Conversation, Next},
     spoken::{CallId, EXTENSION_SAID_BYTES, Malformed, Outcome, Spoken, SpokenError, Trouble},
     wire::{EXTENSION_FRAME_BYTES, FrameError, Frames, Written},
 };

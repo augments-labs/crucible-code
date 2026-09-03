@@ -200,6 +200,17 @@ impl Trouble {
         Ok(Self { said })
     }
 
+    /// Crucible's own words for a refusal it is sending.
+    ///
+    /// Infallible where [`Trouble::new`] is not, and the difference is the
+    /// point: `new` guards words that arrived from an extension, which may be
+    /// empty, enormous or absent. These are literals this crate wrote. A
+    /// refusal that could itself fail to be built would have nowhere to go,
+    /// because the call it refuses still has to be answered.
+    pub(crate) fn ours(said: &'static str) -> Self {
+        Self { said: said.into() }
+    }
+
     /// The far end's own words, to be shown as the far end's own.
     #[must_use]
     pub fn said(&self) -> &str {
