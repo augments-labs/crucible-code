@@ -5,7 +5,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crucible_core::{FRAME_BYTES, FrameError, Written};
+use crate::{FRAME_BYTES, FrameError, Written};
 
 use super::*;
 
@@ -111,7 +111,7 @@ fn because(failure: &FrameError) -> String {
 /// The everyday case. A frame crucible sends has to arrive as one line, or the
 /// far end joins it to whatever comes next and reads neither.
 #[test]
-fn what_crucible_says_reaches_the_extension() {
+fn what_crucible_says_reaches_the_program() {
     let (mut writing, arrived) = saying(PATIENCE);
 
     let sent = writing.send(r#"{"method":"tools/list"}"#);
@@ -194,7 +194,7 @@ fn a_peer_that_has_gone_is_reported_rather_than_waited_out() {
 }
 
 /// The patience is spent on one frame and handed back. A budget for the whole
-/// conversation would cut off an extension for having been talked to for
+/// conversation would cut off a program for having been talked to for
 /// longer than crucible guessed it would be.
 #[test]
 fn patience_is_for_one_frame_and_not_for_the_conversation() {

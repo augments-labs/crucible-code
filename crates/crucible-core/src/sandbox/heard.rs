@@ -6,9 +6,9 @@
 //! it: the waiting, and the two answers a non-blocking stream can give that a
 //! blocking one has no way to express.
 //!
-//! Neither of those two is an ordinary read. *Nothing yet* is what an extension
-//! thinking looks like, so it cannot be an ending — but it is also what an
-//! extension that has wedged looks like, and nothing here can tell them apart,
+//! Neither of those two is an ordinary read. *Nothing yet* is what a program
+//! thinking looks like, so it cannot be an ending — but it is also what a
+//! program that has wedged looks like, and nothing here can tell them apart,
 //! so crucible spends a patience on it and then says so. *Bytes were dropped*
 //! is worse than a short read: the bytes that went past the output ceiling
 //! included the newline somebody was going to use as a boundary, so the stream
@@ -19,7 +19,7 @@ use std::io::{self, BufRead, Read};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crucible_core::{SandboxOutput, SandboxRead};
+use crate::{SandboxOutput, SandboxRead};
 
 /// How long crucible waits before asking a quiet stream again.
 ///
@@ -53,7 +53,7 @@ impl<O> Heard<O> {
     /// Reads what `output` says, giving up after `patience` of silence.
     ///
     /// The patience is spent on one silence and handed back whenever anything
-    /// arrives. A budget for the whole conversation would end an extension for
+    /// arrives. A budget for the whole conversation would end a program for
     /// having been useful for longer than crucible guessed it would be.
     #[must_use]
     pub const fn new(output: O, patience: Duration) -> Self {
@@ -154,7 +154,7 @@ impl<O: SandboxOutput> BufRead for Heard<O> {
 fn silent(patience: Duration) -> io::Error {
     io::Error::new(
         io::ErrorKind::TimedOut,
-        format!("the extension said nothing for {patience:?}"),
+        format!("the confined program said nothing for {patience:?}"),
     )
 }
 
@@ -163,7 +163,7 @@ fn lost(discarded: usize) -> io::Error {
     io::Error::new(
         io::ErrorKind::InvalidData,
         format!(
-            "the extension's output passed its ceiling, so {discarded} bytes \
+            "the confined program's output passed its ceiling, so {discarded} bytes \
              are missing from the middle of what it said"
         ),
     )

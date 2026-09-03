@@ -23,21 +23,13 @@
 //! because the ending was untidy leaves somebody upstairs waiting forever.
 
 use std::fmt;
-use std::io;
-use std::process::ExitStatus;
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crucible_core::{
-    Asking, CallId, Outcome, Over, SandboxOutput, SandboxProcess, SandboxUsage, SandboxViolation,
-    Speaking, Turn,
+    Asking, CallId, Finish, Heard, Muttered, Outcome, Over, Said, SandboxOutput, SandboxProcess,
+    SandboxUsage, SandboxViolation, Speaking, Turn,
 };
 use serde_json::Value;
-
-use crate::{Heard, Muttered, Said};
-
-/// How long the wait for a process to finish sleeps between looks.
-const WATCH: Duration = Duration::from_millis(5);
 
 /// An extension, hosted over a confined process.
 ///
@@ -78,7 +70,7 @@ impl<T> Hosted<T> {
         };
         let muttered = process
             .take_stderr()
-            .map_or_else(|| Muttered::draining(Quiet), Muttered::draining);
+            .map_or_else(Muttered::silent, Muttered::draining);
         Ok(Self {
             process,
             talk: Speaking::new(Heard::new(output, patience), Said::new(input, patience)),
@@ -184,7 +176,7 @@ impl<T> Hosted<T> {
         // anything knows they were outstanding.
         let waiting = self.talk.ended();
         drop(self.talk);
-        let finish = settle(self.process.as_mut(), grace);
+        let finish = Finish::after(self.process.as_mut(), grace);
         Ended {
             // Asked after the process has finished, because the supervisor
             // records a violation at the moment it acts on one and this is the
@@ -197,26 +189,6 @@ impl<T> Hosted<T> {
             waiting,
             muttered: self.muttered,
         }
-    }
-}
-
-/// Waits out `grace` for a process to finish, and stops it where it does not.
-fn settle(process: &mut dyn SandboxProcess, grace: Duration) -> Finish {
-    let began = Instant::now();
-    loop {
-        // An error here is not an ending, it is not knowing, and the remedy for
-        // not knowing is the same as for a process that will not go: stop it.
-        if let Ok(Some(status)) = process.try_wait() {
-            return Finish::Exited(status);
-        }
-        let Some(left) = grace.checked_sub(began.elapsed()) else {
-            break;
-        };
-        thread::sleep(left.min(WATCH));
-    }
-    match process.stop() {
-        Ok(()) => Finish::Stopped,
-        Err(source) => Finish::Unreaped(source),
     }
 }
 
@@ -245,22 +217,6 @@ pub enum Unstarted {
     Unheard,
 }
 
-/// How a hosted extension finished.
-#[derive(Debug)]
-pub enum Finish {
-    /// It ended on its own, within the grace it was given.
-    Exited(ExitStatus),
-
-    /// It did not, so it was stopped and its scope was reaped.
-    Stopped,
-
-    /// It did not, and stopping it failed.
-    ///
-    /// The sandbox could not confirm that everything the command owned is gone,
-    /// which is the one ending that is somebody's problem afterwards.
-    Unreaped(io::Error),
-}
-
 /// Everything an ended extension leaves behind.
 #[derive(Debug)]
 pub struct Ended<T> {
@@ -277,20 +233,6 @@ pub struct Ended<T> {
     pub waiting: Vec<(CallId, T)>,
     /// What it said beside the conversation, which is usually why it ended.
     pub muttered: Muttered,
-}
-
-/// A stream that says nothing, for a process the sandbox gave no standard
-/// error.
-///
-/// Nothing in this repository's own backends does that, and a host that carried
-/// an `Option` through every use of it would be spelling out that possibility
-/// everywhere in exchange for nothing.
-struct Quiet;
-
-impl SandboxOutput for Quiet {
-    fn read_ready(&mut self, _buffer: &mut [u8]) -> io::Result<crucible_core::SandboxRead> {
-        Ok(crucible_core::SandboxRead::End)
-    }
 }
 
 #[cfg(test)]

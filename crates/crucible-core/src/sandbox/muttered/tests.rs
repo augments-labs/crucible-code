@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crucible_core::{SandboxOutput, SandboxRead};
+use crate::{SandboxOutput, SandboxRead};
 
 use super::{KEPT, Muttered};
 

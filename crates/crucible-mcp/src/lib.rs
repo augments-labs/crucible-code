@@ -17,6 +17,7 @@
 //! until something above turns it into tools the model can see.
 
 mod catalogue;
+mod hosted;
 mod talking;
 mod wire;
 
@@ -24,5 +25,6 @@ pub use catalogue::{
     ABOUT_BYTES, Greeting, NAME_BYTES, Offered, PAGES, Rebuffed, SCHEMA_BYTES, TOOLS, VERSIONS,
     hello, tools,
 };
+pub use hosted::{Ended, Hosted, Unstarted};
 pub use talking::{ASIDES, Talking, Trouble};
 pub use wire::{Call, Garbled, Heard, NO_SUCH_METHOD, RPC, Reply, SAID_BYTES, Sent};

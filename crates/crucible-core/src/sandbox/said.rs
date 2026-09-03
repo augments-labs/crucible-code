@@ -1,7 +1,7 @@
 //! What crucible says to a confined process, as something a frame writer can
 //! write.
 //!
-//! The mirror of [`Heard`](crate::Heard), and it exists for the same reason
+//! The mirror of [`Heard`](super::Heard), and it exists for the same reason
 //! pointed the other way. A frame writer wants a [`Write`] whose failures are
 //! errors, and a pipe into a confined process is a [`Write`] whose failure mode
 //! is not an error at all: it stops taking bytes and the caller waits. A peer
@@ -29,7 +29,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread;
 use std::time::Duration;
 
-use crucible_core::FRAME_BYTES;
+use crate::FRAME_BYTES;
 
 /// The most bytes one unfinished frame may hold before it is handed over.
 ///
@@ -144,20 +144,23 @@ impl Write for Said {
 fn deaf(patience: Duration) -> io::Error {
     io::Error::new(
         ErrorKind::TimedOut,
-        format!("the extension stopped reading for {patience:?}"),
+        format!("the confined program stopped reading for {patience:?}"),
     )
 }
 
 /// A pipe with nobody left on the other end of it.
 fn closed() -> io::Error {
-    io::Error::new(ErrorKind::BrokenPipe, "the extension's input is closed")
+    io::Error::new(
+        ErrorKind::BrokenPipe,
+        "the confined program's input is closed",
+    )
 }
 
 /// A conversation crucible has already stopped holding up its end of.
 fn over() -> io::Error {
     io::Error::new(
         ErrorKind::BrokenPipe,
-        "crucible already stopped speaking to this extension",
+        "crucible already stopped speaking to this program",
     )
 }
 
