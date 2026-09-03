@@ -230,11 +230,25 @@ executing whatever the moving `sh.rustup.rs` endpoint serves that day.
    is unstable for the whole 0.x line — an editor is a hint, and the program is
    the authority.
 3. Open a fresh `Unreleased` section in the changelog.
-4. If the release is broken, do not delete or move the tag. Fix forward with a
-   patch release. A tag that changes meaning breaks every checksum anyone
-   recorded against it — which is why a `v*` tag can no longer be deleted or
-   moved at all. The ruleset refuses it, so the remedy is the patch release
-   whether or not anybody remembered this paragraph.
+4. If a **published** release is broken, do not delete or move the tag. Fix
+   forward with a patch release: a tag that changes meaning breaks every
+   checksum anyone recorded against it. The `release tags` ruleset refuses the
+   move, so that is the remedy whether or not anybody remembered this
+   paragraph.
+
+   A tag that published nothing is the other case, and it is not the same one.
+   When a job fails before `publish`, there is no release, no artifact, and so
+   no checksum for a move to invalidate. Spending a version number on
+   infrastructure that was never the code's fault only leaves the next reader
+   comparing two versions that carry identical code. Confirm it shipped
+   nothing — `gh release view v<version>` answering `release not found` is the
+   check — then repair what broke on `main`, relax the `release tags` ruleset,
+   move the annotated tag onto the commit carrying the repair, and put the
+   ruleset back before anything else. Restoring it is part of the procedure,
+   not a follow-up.
+
+   The friction is deliberate. The paragraph above is the usual case; this one
+   is the exception, and it has to be shown to apply before it is used.
 
 ## If a release must be pulled
 

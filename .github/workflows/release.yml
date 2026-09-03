@@ -84,7 +84,11 @@ jobs:
   # somebody else's schedule rather than on a change here. When it does, every
   # Linux job fails to start with `manifest unknown` before a line of this
   # workflow runs, and the repair is to resolve the tag again and paste the new
-  # digest below. What it may not become is the bare tag: the floor above is a
+  # digest below:
+  #
+  #   curl -s 'https://quay.io/api/v1/repository/centos/centos/tag/?onlyActiveTags=true&specificTag=stream9'
+  #
+  # What it may not become is the bare tag: the floor above is a
   # promise about a build input, and an input that can change underneath a
   # rebuild is not one. The smoke step before `publish` measures the floor the
   # artifact actually carries and fails the release when it has moved, so a
@@ -95,7 +99,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     container:
-      image: quay.io/centos/centos:stream9@sha256:0ae48e0618d4e26d6d43406f923170160c72d8681ff42df9f26b2c8f3f500a94
+      image: quay.io/centos/centos:stream9@sha256:d323b7623e947245a8eb506fbb0ad0e55eb2ae2d2407b66741a15f372caf9bdc
     defaults:
       run:
         shell: bash

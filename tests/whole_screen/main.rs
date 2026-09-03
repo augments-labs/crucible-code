@@ -1230,20 +1230,26 @@ fn choosing_notes_makes_room_and_says_what_it_took() {
     // Three turns, because a recap stands in place of what is behind the two
     // this keeps whole: a shorter session has no middle to replace, and the
     // choice would spend nothing.
+    // Each answer names the turn it belongs to, because a turn is waited out by
+    // watching for what only that turn can put on the screen. The permission
+    // row is on the screen before, during and after one, so a wait on it is no
+    // wait at all: it returns on the first lull, which on a loaded machine is
+    // the gap between the keys being echoed and the answer starting to arrive,
+    // and the next keys are then typed into a session still answering.
     let vendor = Vendor::recapping_after(
         &[
-            "Notes on everything that came before.",
-            "Notes on everything that came before.",
-            "Notes on everything that came before.",
+            "Notes on the first thing.",
+            "Notes on the second thing.",
+            "Notes on the third thing.",
         ],
         "Notes on everything that came before.",
         None,
     );
     let mut window = Watched::compacting("resume-notes", 80, 24, &vendor);
 
-    window.types_until("the first thing\r", "Notes on");
-    window.types_until("the second thing\r", "ask mode on");
-    window.types_until("the third thing\r", "ask mode on");
+    window.types_until("the first thing\r", "Notes on the first thing.");
+    window.types_until("the second thing\r", "Notes on the second thing.");
+    window.types_until("the third thing\r", "Notes on the third thing.");
     window.types_until("/clear\r", "ask mode on");
 
     // The picker stands over the window with the cleared session marked, and

@@ -393,6 +393,15 @@ impl Watched {
     }
 
     /// Types `keys` and waits until the screen contains `wanted` and settles.
+    ///
+    /// `wanted` has to be something only this step can draw. A mark the screen
+    /// already carries — the permission row, a heading, an answer worded the
+    /// same as the one before it — leaves the quiet doing the waiting on its
+    /// own, and quiet is the one thing a step in flight can produce: the gap
+    /// between the keys being echoed and the answer starting to arrive is
+    /// silence, and on a loaded machine it outlasts [`QUIET`]. The step then
+    /// returns on the turn before it, and whatever is typed next lands in a
+    /// session that is still answering.
     pub(crate) fn types_until(&mut self, keys: &str, wanted: &str) {
         self.terminal
             .write_all(keys.as_bytes())

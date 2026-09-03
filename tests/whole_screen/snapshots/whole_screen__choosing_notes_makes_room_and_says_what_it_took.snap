@@ -1,21 +1,20 @@
 ---
 source: tests/whole_screen/main.rs
-assertion_line: 1095
 expression: picture
 ---
 80x24 cursor 20,4 scrolled 0
 |                                                                                |
 |› the first thing                                                               |
 |                                                                                |
-|Notes on everything that came before.                                           |
+|Notes on the first thing.                                                       |
 |                                                                                |
 |› the second thing                                                              |
 |                                                                                |
-|Notes on everything that came before.                                           |
+|Notes on the second thing.                                                      |
 |                                                                                |
 |› the third thing                                                               |
 |                                                                                |
-|Notes on everything that came before.                                           |
+|Notes on the third thing.                                                       |
 |                                                                                |
 |────────────────────────────────────────────────────────────────────────────────|
 | compacted · you chose notes over carrying this session whole                   |
