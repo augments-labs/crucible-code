@@ -3,7 +3,7 @@
 use super::{
     EXTENSION_ID_BYTES, EXTENSION_REQUESTS, EXTENSION_TEXT_BYTES, ExtensionCapability,
     ExtensionContribution, ExtensionError, ExtensionIdentity, ExtensionManifest, ExtensionProtocol,
-    ExtensionRequests,
+    ExtensionRequests, ExtensionUnhosted,
 };
 use crate::SourceKind;
 
@@ -247,4 +247,114 @@ fn a_manifest_retains_its_spellings_and_what_it_asked_for() {
             + 2 * size_of::<ExtensionCapability>()
             + size_of::<ExtensionContribution>()
     );
+}
+
+#[test]
+fn a_manifest_written_against_another_major_is_not_hosted_at_all() {
+    // A different major is two programs that disagree about the shape of a
+    // frame, so there is no smaller vocabulary to fall back to and no crucible
+    // old or new enough to change the answer. Asked before the minimum for
+    // that reason: a version this build could satisfy is not the reason it
+    // cannot speak.
+    let far = ExtensionProtocol::new(ExtensionProtocol::HOST.major().saturating_add(1), 0);
+    let one = ExtensionManifest::read(
+        identity(),
+        ExtensionRequests {
+            protocol: far,
+            minimum: "0.0.1".into(),
+            ..requests()
+        },
+    )
+    .expect("a manifest that agrees with itself");
+
+    assert_eq!(one.hosted("0.34.0"), Err(ExtensionUnhosted::Protocol));
+
+    // Wrong on both counts is still the protocol. A crucible new enough to
+    // satisfy the minimum would leave two programs that cannot exchange a
+    // frame, so naming the version would send whoever read it after a fix
+    // that changes nothing.
+    let both = ExtensionManifest::read(
+        identity(),
+        ExtensionRequests {
+            protocol: far,
+            minimum: "9.0.0".into(),
+            ..requests()
+        },
+    )
+    .expect("a manifest that agrees with itself");
+
+    assert_eq!(both.hosted("0.34.0"), Err(ExtensionUnhosted::Protocol));
+}
+
+#[test]
+fn a_manifest_that_names_a_later_crucible_than_this_one_is_not_hosted() {
+    let one = ExtensionManifest::read(
+        identity(),
+        ExtensionRequests {
+            protocol: ExtensionProtocol::HOST,
+            minimum: "9.0.0".into(),
+            ..requests()
+        },
+    )
+    .expect("a manifest that agrees with itself");
+
+    assert_eq!(one.hosted("0.34.0"), Err(ExtensionUnhosted::Newer));
+    // The same manifest on a crucible that has caught up.
+    assert_eq!(one.hosted("9.0.0"), Ok(ExtensionProtocol::HOST));
+}
+
+#[test]
+fn a_manifest_this_build_can_host_agrees_the_reach_they_both_have() {
+    // Asking for more reach than this build has is not a refusal: the pair
+    // settle on the smaller vocabulary they both know, and what comes back is
+    // that, rather than what was asked for.
+    let far = ExtensionProtocol::new(
+        ExtensionProtocol::HOST.major(),
+        ExtensionProtocol::HOST.minor().saturating_add(3),
+    );
+    let one = ExtensionManifest::read(
+        identity(),
+        ExtensionRequests {
+            protocol: far,
+            minimum: "0.1.0".into(),
+            ..requests()
+        },
+    )
+    .expect("a manifest that agrees with itself");
+
+    assert_eq!(one.hosted("0.34.0"), Ok(ExtensionProtocol::HOST));
+}
+
+#[test]
+fn a_minimum_nobody_could_read_as_a_version_is_not_a_bar() {
+    // The field is whatever its author typed. A spelling with no number in it
+    // asserting that it is ahead of every crucible there is would be one line
+    // of somebody else's text shutting an extension off on every machine.
+    let one = ExtensionManifest::read(
+        identity(),
+        ExtensionRequests {
+            protocol: ExtensionProtocol::HOST,
+            minimum: "whatever ships next".into(),
+            ..requests()
+        },
+    )
+    .expect("a manifest that agrees with itself");
+
+    assert_eq!(one.hosted("0.34.0"), Ok(ExtensionProtocol::HOST));
+}
+
+#[test]
+fn a_protocol_is_shown_as_the_two_numbers_a_manifest_writes() {
+    assert_eq!(ExtensionProtocol::new(1, 3).to_string(), "1.3");
+}
+
+#[test]
+fn the_protocol_this_build_speaks_is_the_one_that_is_written_down() {
+    // A tripwire rather than a proof. Nothing crosses a wire yet, so there is
+    // no second declaration for this to be checked against — the only thing
+    // between a quietly changed number and a listing that names the wrong one
+    // is somebody being made to look. Whoever moves it moves the sample
+    // listing in `docs/configuration/configuration.md` with it, which prints
+    // what this build speaks.
+    assert_eq!(ExtensionProtocol::HOST, ExtensionProtocol::new(1, 0));
 }

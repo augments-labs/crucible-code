@@ -541,9 +541,9 @@ be allowed to do:
 {
   "id": "acme.reviewer",
   "version": "1.4.0",
-  "protocol": "1.3",
+  "protocol": "1.0",
   "entrypoint": "bin/reviewer",
-  "minimumCrucible": "0.35.0",
+  "minimumCrucible": "0.34.0",
   "capabilities": ["registerTools", "readRunContext"],
   "contributions": ["tools"]
 }
@@ -556,11 +556,12 @@ be allowed to do:
 
 acme.reviewer 1.4.0
   from      /home/you/.crucible/extensions/reviewer/manifest.json
-  protocol  1.3, needs crucible 0.35.0
+  protocol  1.0, needs crucible 0.34.0
   asks for  registerTools, readRunContext
   gives     tools
+  hosted    yes
   enabled   no
-  digest    sha256:701bc6c828b804c37a762243dcc082b81a226cd286664367b4660dc446e3cc20
+  digest    sha256:810cb273aa0d388bf206a0685138577efc74b078759f6921d166539580d61e16
 
 nothing runs until its enabled key is true in your home configuration file
 ```
@@ -569,6 +570,36 @@ Nothing installed is run to produce that list, which is the point of being able
 to read it: the entrypoint is a string in a file crucible has not opened, and
 the digest is taken over the manifest's own bytes rather than read out of it, so
 two listings a week apart tell you whether the file changed.
+
+`hosted` is whether this crucible could run the extension at all, which is a
+different question from whether you have allowed it and is not something
+allowing it would change. It says no for two reasons. One is a protocol whose
+first number is not the one this build speaks — two programs that disagree
+about the shape of what crosses the wire, with no older crucible or newer one
+that would help:
+
+```
+  protocol  2.0, needs crucible 0.34.0
+  hosted    no; this crucible speaks protocol 1.0
+```
+
+The other is an extension written for a crucible later than the one you are
+running, which an upgrade fixes:
+
+```
+  protocol  1.0, needs crucible 0.40.0
+  hosted    no; this crucible is 0.34.0
+```
+
+An extension asking for a higher second number is not refused: the two settle
+on the smaller vocabulary they both know, and the listing says which that is,
+because the part of the extension written against the rest of it will find it
+missing.
+
+```
+  protocol  1.4, needs crucible 0.34.0
+  hosted    yes, speaking 1.0
+```
 
 **Crucible does not yet run extensions.** This release reads the manifests,
 shows you them, and records which ones you have decided to allow; there is no

@@ -14,13 +14,17 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use crucible_config::{Extensions, Installed, Settings};
+use crucible_core::{ExtensionManifest, ExtensionProtocol, ExtensionUnhosted};
 
 /// The listing, as one block of text ending in a newline.
 ///
 /// Empty of extensions is a sentence rather than an empty answer: somebody who
 /// just installed one and sees nothing needs to be told which directory was
 /// looked in, because the usual mistake is having put it somewhere else.
-pub(crate) fn listing(found: &Extensions, settings: &Settings) -> String {
+///
+/// `running` is the crucible this is, which decides whether an extension
+/// naming an older one could be hosted at all.
+pub(crate) fn listing(found: &Extensions, settings: &Settings, running: &str) -> String {
     let mut said = String::new();
     let at = shown(found.at());
 
@@ -53,7 +57,7 @@ pub(crate) fn listing(found: &Extensions, settings: &Settings) -> String {
         any_off |= !enabled;
 
         said.push('\n');
-        describe(&mut said, one, enabled);
+        describe(&mut said, one, enabled, running);
     }
 
     // Once, at the end, rather than beside every entry that says no. An
@@ -87,11 +91,12 @@ pub(crate) fn listing(found: &Extensions, settings: &Settings) -> String {
 
 /// One extension, in the words its own manifest used.
 ///
-/// `enabled` is the only line here that the manifest does not get a say in, and
-/// it is written in the same column as the rest because it is the same kind of
-/// fact: what somebody would need to know before deciding this one is the
-/// suspect.
-fn describe(said: &mut String, one: &Installed, enabled: bool) {
+/// Two of these lines the manifest gets no say in, and they are written in the
+/// same column as the rest because they are the same kind of fact: what
+/// somebody would need to know before deciding this one is the suspect. They
+/// come after what was claimed and in the order they are decided — whether
+/// this build could run it at all, and then whether anybody said it may.
+fn describe(said: &mut String, one: &Installed, enabled: bool, running: &str) {
     let manifest = one.manifest();
     let identity = manifest.identity();
     let requests = manifest.requests();
@@ -100,10 +105,8 @@ fn describe(said: &mut String, one: &Installed, enabled: bool) {
     let _ = writeln!(said, "  from      {}", one.file());
     let _ = writeln!(
         said,
-        "  protocol  {}.{}, needs crucible {}",
-        requests.protocol.major(),
-        requests.protocol.minor(),
-        requests.minimum,
+        "  protocol  {}, needs crucible {}",
+        requests.protocol, requests.minimum,
     );
     // "nothing" rather than an empty line, both times. An extension that asks
     // for no capability is a real and unremarkable thing, and a blank space
@@ -128,6 +131,10 @@ fn describe(said: &mut String, one: &Installed, enabled: bool) {
                 .map(|contribution| contribution.as_str())
         )
     );
+    // The two lines above are what it asked for; this is whether this build
+    // could answer. Said even for an extension nobody has turned on, because
+    // the two are different refusals and turning it on would not cure this one.
+    let _ = writeln!(said, "  hosted    {}", hosting(manifest, running));
     // The manifest asks; this is the answer. Spelled as the key's own word so
     // that the listing and the file a reader goes on to open say one thing.
     let _ = writeln!(said, "  enabled   {}", if enabled { "yes" } else { "no" });
@@ -135,6 +142,29 @@ fn describe(said: &mut String, one: &Installed, enabled: bool) {
     // a file stating its own digest would be a file asserting it had not
     // changed since somebody trusted it.
     let _ = writeln!(said, "  digest    {}", identity.digest);
+}
+
+/// Whether this build could run it, and what stands in the way where it could not.
+///
+/// The reason names the fact the manifest's own line above does not carry: what
+/// this crucible speaks, or which crucible this is. Neither is in the manifest,
+/// so neither can be read off the two lines already printed.
+fn hosting(manifest: &ExtensionManifest, running: &str) -> String {
+    let asked = manifest.requests().protocol;
+
+    match manifest.hosted(running) {
+        Ok(agreed) if agreed == asked => String::from("yes"),
+        // Not a refusal: the pair settle on the smaller vocabulary they both
+        // know. It is said anyway, because the extension was written against
+        // reach it is not going to get and its author is the one who can tell
+        // whether that matters.
+        Ok(agreed) => format!("yes, speaking {agreed}"),
+        Err(ExtensionUnhosted::Protocol) => format!(
+            "no; this crucible speaks protocol {}",
+            ExtensionProtocol::HOST
+        ),
+        Err(ExtensionUnhosted::Newer) => format!("no; this crucible is {running}"),
+    }
 }
 
 /// A list of spellings, or the word for an empty one.
