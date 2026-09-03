@@ -35,10 +35,10 @@ fn asks(id: CallId, method: &str) -> Spoken {
 #[test]
 fn an_answer_carries_back_what_was_waiting_on_it() {
     let mut talk = Conversation::new();
-    let sent = talk
+    let (id, sent) = talk
         .ask("search", json!({ "for": "kettle" }), "the search")
         .expect("a call");
-    let Spoken::Request { id, method, params } = sent else {
+    let Spoken::Request { method, params, .. } = sent else {
         panic!("asking must produce a request");
     };
 
@@ -78,12 +78,9 @@ fn an_answer_to_a_call_crucible_never_made_ends_the_conversation() {
 #[test]
 fn answering_one_call_twice_ends_the_conversation() {
     let mut talk = Conversation::new();
-    let sent = talk
+    let (id, _) = talk
         .ask("search", Value::Null, "the search")
         .expect("a call");
-    let Spoken::Request { id, .. } = sent else {
-        panic!("asking must produce a request");
-    };
     let answer = || Spoken::Answer {
         id,
         outcome: Outcome::Worked(Value::Null),
@@ -236,11 +233,8 @@ fn answering_a_call_the_extension_never_made_is_refused() {
 #[test]
 fn ending_hands_back_everything_crucible_was_waiting_on() {
     let mut talk = Conversation::new();
-    let first = talk.ask("one", Value::Null, "the first").expect("a call");
+    let (first, _) = talk.ask("one", Value::Null, "the first").expect("a call");
     talk.ask("two", Value::Null, "the second").expect("a call");
-    let Spoken::Request { id: first, .. } = first else {
-        panic!("asking must produce a request");
-    };
     assert!(matches!(
         talk.heard(Spoken::Answer {
             id: first,

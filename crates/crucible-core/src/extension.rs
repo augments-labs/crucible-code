@@ -606,6 +606,7 @@ fn repeated<T: Copy + PartialEq>(
 pub(crate) mod calls;
 pub(crate) mod conversation;
 mod parse;
+pub(crate) mod speaking;
 pub(crate) mod spoken;
 pub(crate) mod wire;
 

@@ -218,6 +218,12 @@ impl<W: Write> Written<W> {
         self.to.flush()?;
         Ok(())
     }
+
+    /// Everything sent so far, where the far end is something a test can read.
+    #[cfg(test)]
+    pub(crate) const fn sent(&self) -> &W {
+        &self.to
+    }
 }
 
 #[cfg(test)]

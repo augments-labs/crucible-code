@@ -142,13 +142,16 @@ impl<T> Conversation<T> {
         method: impl Into<Box<str>>,
         params: Value,
         about: T,
-    ) -> Result<Spoken, CallError> {
+    ) -> Result<(CallId, Spoken), CallError> {
         let id = self.asked.ask(about)?;
-        Ok(Spoken::Request {
+        Ok((
             id,
-            method: method.into(),
-            params,
-        })
+            Spoken::Request {
+                id,
+                method: method.into(),
+                params,
+            },
+        ))
     }
 
     /// Answers a call the extension made, and returns the frame to send.

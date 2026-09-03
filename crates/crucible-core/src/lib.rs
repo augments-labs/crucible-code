@@ -63,6 +63,7 @@ pub use extension::{
     ExtensionManifest, ExtensionProtocol, ExtensionRequests, ExtensionUnhosted,
     calls::{Asked, CallError, EXTENSION_CALLS, Serving},
     conversation::{Broken, Conversation, Next},
+    speaking::{Asking, Over, Speaking, Turn},
     spoken::{CallId, EXTENSION_SAID_BYTES, Malformed, Outcome, Spoken, SpokenError, Trouble},
     wire::{EXTENSION_FRAME_BYTES, FrameError, Frames, Written},
 };
