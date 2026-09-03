@@ -1,0 +1,21 @@
+[package]
+name = "crucible-mcp"
+description = "Speaks the Model Context Protocol to a server somebody else wrote."
+publish.workspace = true
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# Core alone, for the reason crucible-extension takes core alone: this crate
+# knows a wire and nothing about which server is on the other end of it. What
+# starts a process and what a settings document said are decided above.
+[dependencies]
+crucible-core.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

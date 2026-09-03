@@ -306,6 +306,7 @@ allowed='crucible-code auth
 crucible-code config
 crucible-code core
 crucible-code extension
+crucible-code mcp
 crucible-code privacy
 crucible-code provider
 crucible-code runner
@@ -317,6 +318,7 @@ auth core
 auth privacy
 config core
 extension core
+mcp core
 provider core
 runner core
 runner session

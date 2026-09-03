@@ -49,6 +49,7 @@ crucible-auth = { path = "crates/crucible-auth" }
 crucible-config = { path = "crates/crucible-config" }
 crucible-core = { path = "crates/crucible-core" }
 crucible-extension = { path = "crates/crucible-extension" }
+crucible-mcp = { path = "crates/crucible-mcp" }
 crucible-privacy = { path = "crates/crucible-privacy" }
 crucible-provider = { path = "crates/crucible-provider" }
 crucible-runner = { path = "crates/crucible-runner" }
