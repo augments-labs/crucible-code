@@ -10,7 +10,11 @@
 //! read a settings document would be deciding what it is only supposed to run.
 
 mod heard;
+mod hosted;
+mod muttered;
 mod said;
 
 pub use heard::Heard;
+pub use hosted::{Ended, Finish, Hosted, Unstarted};
+pub use muttered::Muttered;
 pub use said::Said;
