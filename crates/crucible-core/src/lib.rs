@@ -171,7 +171,7 @@ pub use sandbox::{
     SandboxNetworkInspection, SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxOutput,
     SandboxPlanInspection, SandboxPolicy, SandboxPolicyError, SandboxProcess, SandboxRead,
     SandboxRequest, SandboxResourceLimits, SandboxRootInspection, SandboxService, SandboxSession,
-    SandboxUnreadablePattern, SandboxUsage, SandboxViolation,
+    SandboxSpeech, SandboxUnreadablePattern, SandboxUsage, SandboxViolation,
 };
 pub use source::{Fetch, Page, Search, SearchResult, SourceError};
 pub use steer::Steer;

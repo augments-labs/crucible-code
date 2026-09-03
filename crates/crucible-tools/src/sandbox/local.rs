@@ -252,6 +252,7 @@ impl SandboxSession for CompatibilitySession {
                 invocation: self.request.invocation_mode(),
                 call_result_key: self.request.call_result_key(),
                 canceller: None,
+                speech: command.speech(),
             }),
             inspection: self.inspection.clone(),
             audit: self.request.audit().clone(),

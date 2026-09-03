@@ -161,6 +161,9 @@ pub(super) struct SpawnPlan {
     /// backend asks the broker to end the workload and report its wait status;
     /// the kill stays as the backstop.
     pub(super) canceller: Option<Canceller>,
+    /// Whether crucible keeps the writing end of standard input. Decided with
+    /// the command, because a pipe cannot be attached after a spawn.
+    pub(super) speech: crucible_core::SandboxSpeech,
 }
 
 /// Starts one command under an already negotiated process plan.
@@ -180,9 +183,15 @@ pub(super) fn spawn(
         invocation,
         call_result_key,
         canceller,
+        speech,
     } = plan;
     command
-        .stdin(Stdio::null())
+        .stdin(match speech {
+            // A step that reads gets end-of-file, which is an answer. A peer
+            // gets a pipe crucible keeps, because it is going to be spoken to.
+            crucible_core::SandboxSpeech::Closed => Stdio::null(),
+            crucible_core::SandboxSpeech::Held => Stdio::piped(),
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
@@ -213,6 +222,13 @@ pub(super) fn spawn(
     };
 
     let control = Arc::new(Control::new(limits.output_bytes, audit, sandbox));
+
+    // Taken before anything can fail below, so a spawn that is torn down does
+    // not leave the writing end alive in a child being killed.
+    let stdin = child
+        .stdin
+        .take()
+        .map(|input| Box::new(input) as Box<dyn std::io::Write + Send>);
 
     let stdout = match child
         .stdout
@@ -275,6 +291,7 @@ pub(super) fn spawn(
     Ok(Box::new(LocalProcess {
         child,
         scope,
+        stdin,
         terminator,
         stdout: stdout.map(|pipe| Box::new(pipe) as Box<dyn SandboxOutput>),
         stderr: stderr.map(|pipe| Box::new(pipe) as Box<dyn SandboxOutput>),
@@ -521,6 +538,9 @@ struct LocalProcess {
     child: Child,
     scope: Scope,
     terminator: Terminator,
+    /// The writing end of a peer's input, until somebody takes it. Dropping it
+    /// unread is what closes the far end's stdin.
+    stdin: Option<Box<dyn std::io::Write + Send>>,
     stdout: Option<Box<dyn SandboxOutput>>,
     stderr: Option<Box<dyn SandboxOutput>>,
     inspection: SandboxInspection,
@@ -585,6 +605,10 @@ impl LocalProcess {
 }
 
 impl SandboxProcess for LocalProcess {
+    fn take_stdin(&mut self) -> Option<Box<dyn std::io::Write + Send>> {
+        self.stdin.take()
+    }
+
     fn take_stdout(&mut self) -> Option<Box<dyn SandboxOutput>> {
         self.stdout.take()
     }
@@ -772,6 +796,7 @@ fn stop_scope(scope: &Scope, child: &mut Child) -> io::Result<()> {
 #[cfg(all(test, unix))]
 pub(crate) fn testing(
     command: Command,
+    speech: crucible_core::SandboxSpeech,
 ) -> Result<Box<dyn SandboxProcess>, crucible_core::SandboxError> {
     use crucible_core::{
         Ancestry, SandboxAudit, SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance,
@@ -833,6 +858,7 @@ pub(crate) fn testing(
             invocation: SandboxInvocationMode::Foreground,
             call_result_key: None,
             canceller: None,
+            speech,
         },
     )
 }
@@ -840,6 +866,103 @@ pub(crate) fn testing(
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::Stage;
+
+    #[cfg(unix)]
+    use std::io::Write as _;
+
+    /// A command whose whole job is to say back what it was told, so a test can
+    /// prove crucible was heard rather than only that a pipe existed.
+    #[cfg(unix)]
+    fn echoing() -> std::process::Command {
+        let mut command = std::process::Command::new("/bin/sh");
+        command.args(["-c", "read line; printf '%s\\n' \"heard $line\""]);
+        command
+    }
+
+    /// The everyday case, and the one that must not change: a step reads
+    /// end-of-file rather than waiting on a crucible that has nothing to say.
+    #[cfg(unix)]
+    #[test]
+    fn a_command_nobody_speaks_to_has_no_standard_input_to_take() {
+        let mut process = super::testing(echoing(), crucible_core::SandboxSpeech::Closed)
+            .expect("a confined step");
+
+        assert!(
+            process.take_stdin().is_none(),
+            "a command built Closed must not hand back a writer"
+        );
+
+        process.stop().expect("cleanup");
+    }
+
+    /// A peer is spoken to, and what it says back proves the bytes arrived
+    /// rather than that a handle was returned.
+    #[cfg(unix)]
+    #[test]
+    fn a_command_crucible_speaks_to_hears_what_it_said() {
+        let mut process =
+            super::testing(echoing(), crucible_core::SandboxSpeech::Held).expect("a confined peer");
+        let mut stdin = process
+            .take_stdin()
+            .expect("a command built Held hands back a writer");
+
+        stdin.write_all(b"a kettle\n").expect("crucible speaks");
+        stdin.flush().expect("nothing is left in a buffer");
+        drop(stdin);
+
+        let said = drained(&mut process).expect("what the peer said back");
+        assert_eq!(said.trim_end(), "heard a kettle");
+
+        process.stop().expect("cleanup");
+    }
+
+    /// Standard input is handed over once. A second holder would be two writers
+    /// interleaving frames into one stream the far end reads as one.
+    #[cfg(unix)]
+    #[test]
+    fn standard_input_is_handed_over_once() {
+        let mut process =
+            super::testing(echoing(), crucible_core::SandboxSpeech::Held).expect("a confined peer");
+
+        let first = process.take_stdin();
+        let second = process.take_stdin();
+
+        assert!(first.is_some(), "the first take hands back the writer");
+        assert!(second.is_none(), "the second take hands back nothing");
+
+        drop(first);
+        process.stop().expect("cleanup");
+    }
+
+    /// Reads stdout until the far end closes it.
+    ///
+    /// Written without a panicking path because it is a helper rather than a
+    /// test: the exemption the workspace grants covers `#[test]` bodies, and a
+    /// helper that panics reports its own failure instead of the caller's.
+    #[cfg(unix)]
+    fn drained(process: &mut Box<dyn crucible_core::SandboxProcess>) -> std::io::Result<String> {
+        let mut output = process
+            .take_stdout()
+            .ok_or_else(|| std::io::Error::other("the process has no stdout"))?;
+        let mut said = Vec::new();
+        let mut buffer = [0_u8; 256];
+        loop {
+            let taken = match output.read_ready(&mut buffer)? {
+                crucible_core::SandboxRead::Bytes(read) => read,
+                crucible_core::SandboxRead::Limited { retained, .. } => retained,
+                crucible_core::SandboxRead::Pending => {
+                    std::thread::yield_now();
+                    continue;
+                }
+                crucible_core::SandboxRead::End => break,
+            };
+            let arrived = buffer
+                .get(..taken)
+                .ok_or_else(|| std::io::Error::other("more bytes were reported than read"))?;
+            said.extend_from_slice(arrived);
+        }
+        String::from_utf8(said).map_err(std::io::Error::other)
+    }
 
     #[test]
     fn stage_cleanup_is_explicit_and_idempotent() {
