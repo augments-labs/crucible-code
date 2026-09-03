@@ -761,6 +761,10 @@ record would run a different program from a different place. Write the whole
 path, or a bare name for PATH to answer
 ```
 
+What counts as absolute is the machine's own answer: a leading `/` on Linux and
+macOS, a drive or a share on Windows. A bare name is the spelling that means the
+same thing on all of them, which is why the schema offers it first.
+
 `env` holds values and is applied verbatim, so nothing secret belongs in it — a
 configuration file is a file, and a value written there is a value on disk.
 `envFrom` is the key for a secret: it holds *names* on both sides. `"DOCS_TOKEN":

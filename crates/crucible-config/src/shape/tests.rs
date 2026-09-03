@@ -193,11 +193,12 @@ fn every_example_the_schema_offers_is_one_crucible_accepts() {
     assert!(!offered.is_empty(), "no field offers an example");
 
     for (path, field) in offered {
-        // The one field whose examples are absolute paths, which is a thing
-        // spelled differently per platform. It offers a spelling each and only
-        // this platform's can be read back here — the other is a valid example
-        // for the machine it is meant for, not a defect.
-        let spellings = path == ["permissions", "extraDirectories"];
+        // The fields whose examples are absolute paths, which is a thing
+        // spelled differently per platform. Each offers a spelling per platform
+        // and only this platform's can be read back here — the others are valid
+        // examples for the machines they are meant for, not defects.
+        let spellings = path == ["permissions", "extraDirectories"]
+            || path == ["mcp", "servers", "whatever", "command"];
         let mut accepted = 0;
 
         for example in field.examples {

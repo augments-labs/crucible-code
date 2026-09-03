@@ -4,14 +4,45 @@ use crate::shape;
 
 use super::*;
 
+/// An absolute program path this platform reads back.
+///
+/// What counts as absolute is a drive on Windows and a leading slash everywhere
+/// else, and the parser applies the platform's own answer — so a test written
+/// in one spelling would be a test of one platform. Forward slashes on both,
+/// because Windows accepts them and a backslash inside JSON is an escape.
+#[cfg(windows)]
+const PROGRAM: &str = "C:/Program Files/docs-mcp/docs-mcp.exe";
+#[cfg(not(windows))]
+const PROGRAM: &str = "/usr/local/bin/docs-mcp";
+
+/// An absolute directory this platform reads back.
+#[cfg(windows)]
+const ELSEWHERE: &str = "C:/srv/docs";
+#[cfg(not(windows))]
+const ELSEWHERE: &str = "/srv/docs";
+
+/// A program and a directory that are absolute and are not there.
+#[cfg(windows)]
+const NOWHERE: &str = "C:/nowhere";
+#[cfg(not(windows))]
+const NOWHERE: &str = "/nowhere";
+
+/// The record every test that wants a whole one starts from, in this
+/// platform's spelling.
+fn whole() -> String {
+    WHOLE
+        .replace("PROGRAM", PROGRAM)
+        .replace("ELSEWHERE", ELSEWHERE)
+}
+
 /// The record every test that wants a whole one starts from.
 const WHOLE: &str = r#"{
     "mcp": {
         "servers": {
             "docs": {
-                "command": "/usr/local/bin/docs-mcp",
+                "command": "PROGRAM",
                 "args": ["--catalogue", "public"],
-                "directory": "/srv/docs",
+                "directory": "ELSEWHERE",
                 "env": {"DOCS_LOCALE": "en"},
                 "envFrom": {"DOCS_TOKEN": "EXAMPLE_DOCS_TOKEN"},
                 "handshakeSeconds": 3,
@@ -30,15 +61,15 @@ fn read(text: &str) -> Vec<McpServer> {
 
 #[test]
 fn every_key_a_record_may_hold_is_read_back_from_it() {
-    let found = read(WHOLE);
+    let found = read(&whole());
     let [server] = found.as_slice() else {
         panic!("one server was written down");
     };
 
     assert_eq!(server.name(), "docs");
-    assert_eq!(server.command(), "/usr/local/bin/docs-mcp");
+    assert_eq!(server.command(), PROGRAM);
     assert_eq!(server.args().collect::<Vec<_>>(), ["--catalogue", "public"]);
-    assert_eq!(server.directory(), Some("/srv/docs"));
+    assert_eq!(server.directory(), Some(ELSEWHERE));
     assert_eq!(server.env().collect::<Vec<_>>(), [("DOCS_LOCALE", "en")]);
     assert_eq!(
         server.env_from().collect::<Vec<_>>(),
@@ -95,7 +126,7 @@ fn a_record_that_says_only_what_to_run_takes_the_answers_the_schema_publishes() 
 
 #[test]
 fn a_file_that_arrived_with_the_checkout_cannot_write_a_server() {
-    let refused = Document::parse(WHOLE, "config.json", Origin::Project)
+    let refused = Document::parse(&whole(), "config.json", Origin::Project)
         .expect_err("a committed file may not choose whose program runs");
 
     assert!(
@@ -199,19 +230,20 @@ fn what_is_written_down_starts_nothing_and_resolves_nothing() {
     // The whole guarantee of this module, stated as a test: a record naming a
     // program that does not exist, in a directory that does not exist, taking a
     // variable that is not set, reads back without any of that being touched.
-    let found = read(
-        r#"{"mcp": {"servers": {"docs": {
-            "command": "/nowhere/docs-mcp",
-            "directory": "/nowhere",
-            "envFrom": {"DOCS_TOKEN": "CRUCIBLE_TEST_UNSET_VARIABLE"}
-        }}}}"#,
-    );
+    let missing = format!("{NOWHERE}/docs-mcp");
+    let found = read(&format!(
+        r#"{{"mcp": {{"servers": {{"docs": {{
+            "command": "{missing}",
+            "directory": "{NOWHERE}",
+            "envFrom": {{"DOCS_TOKEN": "CRUCIBLE_TEST_UNSET_VARIABLE"}}
+        }}}}}}}}"#
+    ));
     let [server] = found.as_slice() else {
         panic!("one server was written down");
     };
 
-    assert_eq!(server.command(), "/nowhere/docs-mcp");
-    assert_eq!(server.directory(), Some("/nowhere"));
+    assert_eq!(server.command(), missing);
+    assert_eq!(server.directory(), Some(NOWHERE));
     assert_eq!(
         server.env_from().collect::<Vec<_>>(),
         [("DOCS_TOKEN", "CRUCIBLE_TEST_UNSET_VARIABLE")],

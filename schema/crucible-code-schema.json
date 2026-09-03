@@ -198,7 +198,8 @@
                 "description": "The program to run for this server. An absolute path, or a bare program name for PATH to answer. Read only from the configuration file in your home directory",
                 "examples": [
                   "npx",
-                  "/usr/local/bin/docs-mcp"
+                  "/usr/local/bin/docs-mcp",
+                  "C:\\Program Files\\docs-mcp\\docs-mcp.exe"
                 ],
                 "type": "string"
               },

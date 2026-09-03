@@ -886,7 +886,16 @@ const MCP_SERVER: Shape = Shape::Fields(&[
         name: "command",
         about: "The program to run for this server. An absolute path, or a bare program name for PATH to answer. Read only from the configuration file in your home directory",
         shape: Shape::Text,
-        examples: &["npx", "/usr/local/bin/docs-mcp"],
+        // A bare name first, because it is the one spelling every platform
+        // reads back and it is what `written` in the shape tests puts in every
+        // other example's record. Then one absolute spelling per platform: what
+        // counts as absolute is a drive or a share on Windows and a leading
+        // slash everywhere else, and this schema is one file served to both.
+        examples: &[
+            "npx",
+            "/usr/local/bin/docs-mcp",
+            r"C:\Program Files\docs-mcp\docs-mcp.exe",
+        ],
         // Nothing. A command crucible chose would be crucible choosing whose
         // program runs, which is the one thing this key exists to state.
         usual: None,
