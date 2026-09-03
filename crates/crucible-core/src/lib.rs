@@ -61,6 +61,7 @@ pub use extension::{
     EXTENSION_ID_BYTES, EXTENSION_MANIFEST_BYTES, EXTENSION_REQUESTS, EXTENSION_TEXT_BYTES,
     ExtensionCapability, ExtensionContribution, ExtensionError, ExtensionIdentity,
     ExtensionManifest, ExtensionProtocol, ExtensionRequests, ExtensionUnhosted,
+    calls::{Asked, CallError, EXTENSION_CALLS, Serving},
     spoken::{CallId, EXTENSION_SAID_BYTES, Malformed, Outcome, Spoken, SpokenError, Trouble},
     wire::{EXTENSION_FRAME_BYTES, FrameError, Frames, Written},
 };

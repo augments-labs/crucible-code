@@ -603,6 +603,7 @@ fn repeated<T: Copy + PartialEq>(
     })
 }
 
+pub(crate) mod calls;
 mod parse;
 pub(crate) mod spoken;
 pub(crate) mod wire;
