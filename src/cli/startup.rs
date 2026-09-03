@@ -10,6 +10,7 @@
 //! lookup is a parameter, which is what lets a startup be failed both ways it
 //! can fail without a key or a home directory anywhere near the test.
 
+use std::ffi::OsString;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -31,6 +32,7 @@ use crucible_tools::{
     ToolSearch, WebFetch, WebSearch, Write,
 };
 
+use super::hosting::{Hosting, selecting};
 use super::seen::Putting;
 use super::standing;
 use super::subscription::Subscriptions;
@@ -135,6 +137,11 @@ pub(super) struct Startup<'a> {
     /// Where a tool's questions reach the thread that draws them. Made by the
     /// caller for the reason the plan is: the loop holds the other end.
     pub(super) putting: &'a Putting,
+    /// Which MCP servers written down under `mcp.servers` this run hosts, by
+    /// name and in the order the command line gave them. Empty is the ordinary
+    /// run: a configuration file lists servers somebody could start, and this
+    /// is the moment one of them is chosen.
+    pub(super) hosting: &'a [String],
     /// Whether there is anybody at a keyboard to be asked.
     ///
     /// A redirected run has nobody, and a tool that can only ever answer "there
@@ -178,6 +185,15 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<Runner, Fatal> {
         },
     )?;
 
+    // Beside the provider, and for its reason: naming a server nobody wrote
+    // down, or one whose program is not on this machine, is a run that cannot
+    // do what it was asked, and the session file must not exist yet when that
+    // is found out. Nothing is started here — this resolves the selection and
+    // reaches no process.
+    let chosen = selecting::selected(startup.hosting, settings, workspace, |name| {
+        (startup.from)(name).map(OsString::from)
+    })?;
+
     // Resolved the same way the provider's was, and separately: a source is a
     // request crucible makes on the user's behalf and needs its own
     // authorisation. Going through the same resolver is what keeps the two
@@ -216,14 +232,25 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<Runner, Fatal> {
     // written to is what says which model's limits are being asked about.
     let asking = coding(startup, provider.name(), name, &asked);
 
-    let mut runner = Runner::new(
-        provider,
-        offering,
-        asking,
-        ContextInputs::new(workspace.root()),
-        session,
-    )
-    .permitting(settings.permission(startup.mode))
+    // Two constructors rather than one always-hosting toolset, because a run
+    // that named no server must reach the runner as the built-in generation
+    // itself: an empty [`Hosting`] would be a live toolset whose first exact
+    // generation is prepared at admission, which is a different thing to be
+    // for every run that never asked for one.
+    let context = ContextInputs::new(workspace.root());
+    let permission = settings.permission(startup.mode);
+    let mut runner = if chosen.is_empty() {
+        Runner::new(provider, offering, asking, context, session)
+    } else {
+        Runner::with_toolset(
+            provider,
+            Hosting::new(offering, Arc::new(LocalSandbox::new()), chosen),
+            asking,
+            context,
+            session,
+        )
+    }
+    .permitting(permission)
     .under(policy(settings));
     if let Some(transcript) = earlier {
         planned(startup.plan, &transcript);

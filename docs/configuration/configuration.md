@@ -742,11 +742,30 @@ the two characters that qualification is spelled with — a server called `a/b`
 would produce tool names nobody could read back to a server.
 
 Writing a record starts nothing. It is a statement that a server exists and how
-it would be launched; what launches one is a selection made per run. **This
-release reads the block and stops there** — no server is started yet, so a
-record you write today is checked, listed back by the schema in your editor, and
-otherwise inert. That is the point of writing it down first: the record is
-settled before anything acts on it.
+it would be launched; what launches one is a selection made per run, and the
+selection is `--with-mcp`:
+
+```bash
+crucible --with-mcp docs
+```
+
+Repeat the flag for each server you want. A run that names none starts none,
+which is every run that does not type it — twenty servers written down and no
+flag is twenty processes that do not exist. A name nothing wrote down stops the
+run rather than being quietly left out, because a turn missing the tools you
+asked for reads as a model that will not do the work.
+
+The servers a turn hosts are started when it begins and stopped when it ends,
+and each is asked once what it offers. What comes back is named under the server
+it came from — the `docs` server's `search` tool is `mcp:docs/search` — so
+nothing a server offers can take over a name crucible already uses.
+
+A server is somebody else's program, so it runs confined the way a command run
+through `bash` does, under the same `sandbox.mode`. It starts in the workspace
+unless the record names a `directory`, which is then a root it may write in as
+well as the place it starts. And it is given exactly the variables `env` and
+`envFrom` name and nothing else: a server inherits none of crucible's own
+environment.
 
 `command` is the only key a record cannot do without, and it is either an
 absolute path or a bare name for `PATH` to answer. Anything in between —
@@ -783,6 +802,11 @@ them has an answer already:
 | `shutdownSeconds` | `5` | How long the server is given to stop before it is killed |
 | `restarts` | `0` | How many times it may be started again after it ends |
 | `required` | `false` | Whether a run that selected it fails when it cannot be prepared, rather than carrying on without its tools |
+
+`restarts` is read and checked but nothing acts on it yet. A server that ends
+part way through a turn is not started again, and the tools it offered fail for
+the rest of that turn; the next turn starts it fresh. Write the key if you want
+it recorded, but this release does not honour a number above zero.
 
 Every key in `mcp.servers` is read **only** from `~/.crucible/config.json`. A
 committed `.crucible/config.json` naming a server would be choosing whose

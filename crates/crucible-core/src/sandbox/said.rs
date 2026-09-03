@@ -85,6 +85,17 @@ impl Said {
         }
     }
 
+    /// Waits a different time out for one frame from here on.
+    ///
+    /// The reading half's [`Heard::patient_for`] and this one move together:
+    /// what a caller is setting is how patient one exchange is, and half an
+    /// exchange is not a thing to be patient about on its own.
+    ///
+    /// [`Heard::patient_for`]: crate::Heard::patient_for
+    pub const fn patient_for(&mut self, patience: Duration) {
+        self.patience = patience;
+    }
+
     /// Hands the whole frame over and waits for the pipe to have taken it.
     fn hand_over(&mut self) -> io::Result<()> {
         let frame = std::mem::take(&mut self.held);
