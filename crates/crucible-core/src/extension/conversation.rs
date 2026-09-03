@@ -75,6 +75,18 @@ pub enum Next<T> {
         params: Value,
     },
 
+    /// An answer arrived for a call crucible gave up on. Carry on.
+    ///
+    /// Not confusion, and not something the host still wants: giving up is
+    /// crucible's own act and the extension was never told about it, so an
+    /// answer that crosses it is the far end doing exactly what it was asked.
+    /// Whatever was waiting on that call was handed back when it was given up
+    /// on, and one call owes one final answer.
+    Late {
+        /// The identifier that arrived, for a diagnostic that wants it.
+        id: CallId,
+    },
+
     /// Send this and carry on.
     Refuse(Spoken),
 
@@ -112,12 +124,11 @@ impl<T> Conversation<T> {
     /// What to do about one thing the extension said.
     pub fn heard(&mut self, spoken: Spoken) -> Next<T> {
         match spoken {
-            Spoken::Answer { id, outcome } => self
-                .asked
-                .answered(id)
-                .map_or(Next::Stop(Broken::Unmatched { id }), |waiting| {
-                    Next::Answer { waiting, outcome }
-                }),
+            Spoken::Answer { id, outcome } => match self.asked.answered(id) {
+                Ok(Some(waiting)) => Next::Answer { waiting, outcome },
+                Ok(None) => Next::Late { id },
+                Err(_) => Next::Stop(Broken::Unmatched { id }),
+            },
             Spoken::Request { id, method, params } => match self.serving.take(id) {
                 Ok(()) => Next::Asked { id, method, params },
                 Err(CallError::Repeated { .. }) => Next::Stop(Broken::Doubled { id }),
@@ -163,6 +174,22 @@ impl<T> Conversation<T> {
     pub fn answer(&mut self, id: CallId, outcome: Outcome) -> Result<Spoken, CallError> {
         self.serving.answered(id)?;
         Ok(Spoken::Answer { id, outcome })
+    }
+
+    /// Stops waiting on a call crucible made, handing back what it remembered.
+    ///
+    /// The extension is not told, because this protocol has no way to say it
+    /// and inventing one here would be deciding a vocabulary that belongs with
+    /// the methods. What this settles is crucible's side: the host gets its
+    /// final answer now, and a reply that arrives afterwards is recognised and
+    /// dropped rather than mistaken for the far end inventing a call.
+    ///
+    /// # Errors
+    ///
+    /// [`CallError::Unknown`] where that is not a call crucible is waiting on,
+    /// which covers giving up on one twice.
+    pub fn give_up(&mut self, id: CallId) -> Result<T, CallError> {
+        self.asked.given_up(id)
     }
 
     /// Everything crucible was waiting on, once the conversation is over.

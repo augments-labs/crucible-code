@@ -12,8 +12,8 @@ fn an_answer_gives_back_what_was_remembered_against_that_call() {
     let second = asked.ask("translate").expect("a second call");
 
     assert_ne!(first, second, "two live calls must not share an identifier");
-    assert_eq!(asked.answered(second), Ok("translate"));
-    assert_eq!(asked.answered(first), Ok("summarise"));
+    assert_eq!(asked.answered(second), Ok(Some("translate")));
+    assert_eq!(asked.answered(first), Ok(Some("summarise")));
 }
 
 /// Identifiers are handed out once for the life of the table. Reusing a number
@@ -53,7 +53,7 @@ fn one_call_can_only_be_answered_once() {
     let mut asked = Asked::new();
     let id = asked.ask("search").expect("a call");
 
-    assert_eq!(asked.answered(id), Ok("search"));
+    assert_eq!(asked.answered(id), Ok(Some("search")));
     assert_eq!(asked.answered(id), Err(CallError::Unknown { id }));
 }
 
@@ -220,4 +220,94 @@ fn every_refusal_names_what_went_wrong() {
         CallError::Exhausted.to_string(),
         "there are no call identifiers left"
     );
+}
+
+/// Giving up hands back what was remembered right then, because the host owes
+/// its own caller an answer at that moment rather than whenever the extension
+/// gets there.
+#[test]
+fn giving_up_on_a_call_hands_back_what_was_remembered_against_it() {
+    let mut asked = Asked::new();
+    let id = asked.ask("search").expect("a call");
+
+    assert_eq!(asked.given_up(id), Ok("search"));
+}
+
+/// The extension was never told, so it may still answer. That answer is placed
+/// rather than refused: refusing it would end the conversation over crucible's
+/// own act.
+#[test]
+fn a_call_given_up_on_is_still_recognised_when_it_is_answered() {
+    let mut asked = Asked::new();
+    let id = asked.ask("search").expect("a call");
+    asked.given_up(id).expect("giving up on it");
+
+    assert_eq!(asked.answered(id), Ok(None));
+}
+
+/// Once its answer has arrived the identifier is finished with, and a second
+/// one is the far end saying something about a call that no longer exists.
+#[test]
+fn a_call_given_up_on_is_finished_by_the_answer_that_arrives_for_it() {
+    let mut asked = Asked::new();
+    let id = asked.ask("search").expect("a call");
+    asked.given_up(id).expect("giving up on it");
+    asked.answered(id).expect("the answer that crossed it");
+
+    assert_eq!(asked.answered(id), Err(CallError::Unknown { id }));
+}
+
+/// Giving up is what produces the host's final answer for a call, so a second
+/// one would produce a second final answer for one call.
+#[test]
+fn one_call_can_only_be_given_up_on_once() {
+    let mut asked = Asked::new();
+    let id = asked.ask("search").expect("a call");
+    asked.given_up(id).expect("giving up on it");
+
+    assert_eq!(asked.given_up(id), Err(CallError::Unknown { id }));
+}
+
+/// A call crucible never made cannot be given up on either.
+#[test]
+fn a_call_nobody_made_cannot_be_given_up_on() {
+    let mut asked: Asked<()> = Asked::new();
+    let invented = CallId::new(7);
+
+    assert_eq!(
+        asked.given_up(invented),
+        Err(CallError::Unknown { id: invented })
+    );
+}
+
+/// Giving up frees nothing until the extension answers. This is what bounds it:
+/// a host that gives up in a loop against an extension that never replies runs
+/// out of room rather than out of memory.
+#[test]
+fn a_call_given_up_on_holds_its_place_until_the_extension_answers() {
+    let mut asked = Asked::new();
+    for _ in 0..EXTENSION_CALLS {
+        let id = asked.ask(()).expect("a call below the ceiling");
+        asked.given_up(id).expect("giving up on it");
+    }
+
+    assert_eq!(asked.waiting(), EXTENSION_CALLS);
+    assert_eq!(
+        asked.ask(()),
+        Err(CallError::TooMany {
+            maximum: EXTENSION_CALLS
+        })
+    );
+}
+
+/// The far end going away must not hand a call back twice. Whatever was
+/// waiting on a given-up call left with the giving up.
+#[test]
+fn a_call_given_up_on_is_not_handed_back_again_when_the_extension_goes_away() {
+    let mut asked = Asked::new();
+    let abandoned = asked.ask("still wanted").expect("a call");
+    let given_up = asked.ask("no longer wanted").expect("another call");
+    asked.given_up(given_up).expect("giving up on the second");
+
+    assert_eq!(asked.abandoned(), vec![(abandoned, "still wanted")]);
 }

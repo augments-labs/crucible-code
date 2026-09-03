@@ -134,6 +134,21 @@ impl<T> Hosted<T> {
         self.talk.answer(id, outcome)
     }
 
+    /// Stops waiting on a call crucible made, handing back what it remembered.
+    ///
+    /// For a call whose answer stopped being wanted — the run it belonged to
+    /// ended, or whoever asked went away — without ending the conversation and
+    /// the extension with it. The extension is not told and may still answer;
+    /// that answer is recognised and dropped.
+    ///
+    /// # Errors
+    ///
+    /// [`Asking`] where that is not a call crucible is waiting on, or where the
+    /// conversation has already ended.
+    pub fn give_up(&mut self, id: CallId) -> Result<T, Asking> {
+        self.talk.give_up(id)
+    }
+
     /// What the extension has written to standard error so far.
     #[must_use]
     pub fn muttered(&self) -> &Muttered {
