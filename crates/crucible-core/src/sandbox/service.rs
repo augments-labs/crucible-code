@@ -1360,6 +1360,17 @@ pub trait SandboxOutput: Send {
     fn read_ready(&mut self, buffer: &mut [u8]) -> io::Result<SandboxRead>;
 }
 
+/// A boxed output is an output.
+///
+/// A stream taken from a process arrives boxed, because which backend it came
+/// from is exactly what the caller is not supposed to know. Without this, that
+/// box is the one shape that cannot reach anything written against the trait.
+impl<O: SandboxOutput + ?Sized> SandboxOutput for Box<O> {
+    fn read_ready(&mut self, buffer: &mut [u8]) -> io::Result<SandboxRead> {
+        (**self).read_ready(buffer)
+    }
+}
+
 /// A running sandbox command, including its complete cleanup scope.
 pub trait SandboxProcess: Send {
     /// Takes the writing end of standard input once.

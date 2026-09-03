@@ -9,11 +9,14 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
-# Core alone, deliberately. What an extension is, what it says and the sandbox
-# it runs under are all domain types; a host that named a concrete backend or a
-# settings document here would be deciding what it is only supposed to run.
+# One crucible crate, deliberately. What an extension is, what it says and the
+# sandbox it runs under are all domain types; a host that named a concrete
+# backend or a settings document here would be deciding what it is only
+# supposed to run.
 [dependencies]
 crucible-core.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
 
 [lints]
 workspace = true
