@@ -437,8 +437,15 @@ impl Tool for Calling {
         Summary::new(self.called.clone())
     }
 
-    fn run(&self, approved: Approved, _context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
+    fn run(&self, approved: Approved, context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
         let arguments = arguments(&self.called, approved.args())?;
+        // Asked before anything is sent, because that is where this can still
+        // answer. Once a call is on its way the wait belongs to the request
+        // deadline the record set: the conversation is a blocking read of one
+        // pipe, and an interrupt cannot reach into it.
+        if context.cancel().requested() {
+            return Err(ToolError::Cancelled(self.called.clone()));
+        }
         let mut talking = self
             .server
             .talking

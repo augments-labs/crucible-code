@@ -803,6 +803,12 @@ them has an answer already:
 | `restarts` | `0` | How many times it may be started again after it ends |
 | `required` | `false` | Whether a run that selected it fails when it cannot be prepared, rather than carrying on without its tools |
 
+`requestSeconds` is also what an interrupt is measured against. Pressing escape
+before a call reaches the server refuses it there and then; once it has been
+sent, crucible is inside a blocking read of that server's pipe and the wait ends
+when the answer arrives or `requestSeconds` runs out. Set it to what you are
+willing to wait for a server that has stopped answering.
+
 `restarts` is read and checked but nothing acts on it yet. A server that ends
 part way through a turn is not started again, and the tools it offered fail for
 the rest of that turn; the next turn starts it fresh. Write the key if you want
