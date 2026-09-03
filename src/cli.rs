@@ -832,7 +832,11 @@ pub(crate) fn start() -> ExitCode {
 /// left of this run to report it to.
 fn listed() -> Result<(), Fatal> {
     let home = Home::find(&|name| std::env::var_os(name))?;
-    let found = extensions::listing(&crucible_config::Extensions::discover(&home));
+    // The home file alone, and no workspace. Whether an extension may run is a
+    // decision only the person running crucible makes, so the checkout this
+    // happened to be started in has nothing to contribute and is not opened.
+    let settings = Settings::read_home(&home)?;
+    let found = extensions::listing(&crucible_config::Extensions::discover(&home), &settings);
 
     let _ = io::stdout().write_all(found.as_bytes());
     Ok(())

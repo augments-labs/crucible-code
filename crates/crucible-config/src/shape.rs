@@ -48,6 +48,15 @@ pub(crate) enum Shape {
     /// the same way a [`Choice`](Shape::Choice) and its reader are.
     Whole(&'static Whole),
 
+    /// True or false, and nothing that looks like either.
+    ///
+    /// A JSON boolean rather than `"true"`, for the reason [`Count`](Shape::Count)
+    /// is a number: this document is served to editors from a registry, so what
+    /// the schema says a value is is what somebody's editor will insist on, and
+    /// a string where a flag belongs would be a wrong type nobody could see was
+    /// wrong.
+    Flag,
+
     /// An object whose keys are exactly these, all of them optional.
     Fields(&'static [Field]),
 
@@ -700,6 +709,27 @@ const PERMISSIONS: &[Field] = &[
     },
 ];
 
+/// What one extension's block may say.
+///
+/// Keyed by the identifier the extension's own manifest states, which is why
+/// the block above declares no names: crucible does not know what is installed
+/// until it has swept the directory, and a list written here would be a second
+/// answer to that going stale on whatever is installed next.
+const EXTENSION: Shape = Shape::Fields(&[Field {
+    name: "enabled",
+    about: "Whether crucible may run this extension. Read only from the configuration file in your home directory",
+    shape: Shape::Flag,
+    // No example: `true` and `false` are the whole of what may be written here,
+    // and the schema already says so.
+    examples: &[],
+    usual: Some("false"),
+    // Turning on somebody else's code is the plainest widening in the document.
+    // Either project filename can be committed, so a repository that could
+    // write this would be granting authority on behalf of whoever cloned it,
+    // to a program that has not been read, before anything has been typed.
+    widens: true,
+}]);
+
 /// The document itself.
 pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
     // The only key that says *which* provider. Everything under `providers` is
@@ -742,6 +772,17 @@ pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
         shape: Shape::Named {
             declared: ENV,
             others: &VALUE,
+        },
+        examples: &[],
+        usual: None,
+        widens: false,
+    },
+    Field {
+        name: "extensions",
+        about: "Per-extension settings, keyed by the identifier the extension's manifest states",
+        shape: Shape::Named {
+            declared: &[],
+            others: &EXTENSION,
         },
         examples: &[],
         usual: None,
@@ -828,6 +869,7 @@ impl Shape {
             Self::Text
             | Self::Choice(_)
             | Self::Count
+            | Self::Flag
             | Self::Whole(_)
             | Self::Named { .. }
             | Self::List(_) => Vec::new(),
@@ -845,7 +887,12 @@ impl Shape {
             | Self::Named {
                 declared: fields, ..
             } => fields.iter().find(|field| field.name == name),
-            Self::Text | Self::Choice(_) | Self::Count | Self::Whole(_) | Self::List(_) => None,
+            Self::Text
+            | Self::Choice(_)
+            | Self::Count
+            | Self::Flag
+            | Self::Whole(_)
+            | Self::List(_) => None,
         }
     }
 
@@ -856,7 +903,12 @@ impl Shape {
             Self::Named { others, .. } => {
                 Some(self.declared(name).map_or(*others, |field| &field.shape))
             }
-            Self::Text | Self::Choice(_) | Self::Count | Self::Whole(_) | Self::List(_) => None,
+            Self::Text
+            | Self::Choice(_)
+            | Self::Count
+            | Self::Flag
+            | Self::Whole(_)
+            | Self::List(_) => None,
         }
     }
 
@@ -871,6 +923,7 @@ impl Shape {
             Self::Text
             | Self::Choice(_)
             | Self::Count
+            | Self::Flag
             | Self::Whole(_)
             | Self::Fields(_)
             | Self::Named { .. } => None,
@@ -883,6 +936,7 @@ impl Shape {
             Self::Text => "a string",
             Self::Choice(_) => "one of a fixed set of strings",
             Self::Count => "a whole number that is not negative",
+            Self::Flag => "true or false",
             Self::Whole(_) => "a whole number written as a string",
             Self::Fields(_) | Self::Named { .. } => "an object",
             Self::List(_) => "a list",

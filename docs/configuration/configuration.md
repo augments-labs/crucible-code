@@ -559,7 +559,10 @@ acme.reviewer 1.4.0
   protocol  1.3, needs crucible 0.35.0
   asks for  registerTools, readRunContext
   gives     tools
+  enabled   no
   digest    sha256:701bc6c828b804c37a762243dcc082b81a226cd286664367b4660dc446e3cc20
+
+nothing runs until its enabled key is true in your home configuration file
 ```
 
 Nothing installed is run to produce that list, which is the point of being able
@@ -567,9 +570,36 @@ to read it: the entrypoint is a string in a file crucible has not opened, and
 the digest is taken over the manifest's own bytes rather than read out of it, so
 two listings a week apart tell you whether the file changed.
 
-**Crucible does not yet run extensions.** This release reads the manifests and
-shows you them; there is no configuration key that enables one and no host that
-starts one.
+**Crucible does not yet run extensions.** This release reads the manifests,
+shows you them, and records which ones you have decided to allow; there is no
+host that starts one yet.
+
+### Allowing one
+
+Installed is not permitted. An extension stays off until you say otherwise, and
+you say it under its own identifier — the `id` its manifest states, which is
+also what the listing prints:
+
+```json
+{ "extensions": { "acme.reviewer": { "enabled": true } } }
+```
+
+That key is read from `~/.crucible/config.json` and from nowhere else. Writing
+it in `.crucible/config.json` or `.crucible/config.local.json` is refused rather
+than accepted and ignored:
+
+```
+crucible: .crucible/config.json: extensions.acme.reviewer.enabled cannot be set
+here at line 2, column 5 — this file is inside the workspace and can arrive with
+a checkout, and this key only ever widens what crucible does without asking. A
+workspace file may tighten its own rules — permissions.ask and permissions.deny
+— and may not loosen anybody's. Put this one in the configuration file in your
+home directory
+```
+
+Both project files can be committed, so a repository carrying that key would be
+a checkout deciding that code on your machine may run. Whoever is running
+crucible is the only one who can answer that, in the one file only they write.
 
 A directory that cannot be read does not hide the ones that can. Each is listed
 under its own heading with the reason:

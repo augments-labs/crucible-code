@@ -209,6 +209,22 @@ impl Settings {
             })
     }
 
+    /// Whether the person running crucible said this extension may run.
+    ///
+    /// False where nothing said, which is what an extension nobody has decided
+    /// about is. `enabled` widens, so neither project file can answer this on
+    /// behalf of whoever opened the checkout: an installed extension is off
+    /// until the person running crucible turns it on in their own file.
+    #[must_use]
+    pub fn extension_enabled(&self, id: &str) -> bool {
+        self.value
+            .get("extensions")
+            .and_then(|block| block.get(id))
+            .and_then(|one| one.get("enabled"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    }
+
     /// Effective operating-system confinement mode.
     #[must_use]
     pub const fn sandbox_mode(&self) -> crucible_core::SandboxMode {
@@ -446,5 +462,23 @@ mod tests {
 
         let printed = format!("{:?}", Settings::resolve(vec![user]));
         assert!(printed.contains("from-home"), "got {printed}");
+    }
+
+    #[test]
+    fn an_extension_nobody_decided_about_is_off_rather_than_unknown() {
+        // Nothing said is the state every installed extension starts in, and
+        // it has to read as off. An answer of "unknown" here would be one more
+        // caller deciding for itself what to do about somebody else's code.
+        let user = Document::sample(
+            r#"{"extensions": {"acme.reviewer": {"enabled": true},
+                               "acme.quiet": {"enabled": false}}}"#,
+            Origin::User,
+        );
+        let settings = Settings::resolve(vec![user]);
+
+        assert!(settings.extension_enabled("acme.reviewer"));
+        assert!(!settings.extension_enabled("acme.quiet"));
+        assert!(!settings.extension_enabled("acme.never-mentioned"));
+        assert!(!Settings::default().extension_enabled("acme.reviewer"));
     }
 }

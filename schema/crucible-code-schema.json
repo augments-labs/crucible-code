@@ -91,6 +91,48 @@
       },
       "type": "object"
     },
+    "extensions": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "$comment": {
+            "type": "string"
+          },
+          "$schema": {
+            "type": "string"
+          },
+          "enabled": {
+            "default": false,
+            "description": "Whether crucible may run this extension. Read only from the configuration file in your home directory",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "description": "Per-extension settings, keyed by the identifier the extension's manifest states",
+      "properties": {
+        "$comment": {
+          "type": "string"
+        },
+        "$schema": {
+          "type": "string"
+        }
+      },
+      "propertyNames": {
+        "anyOf": [
+          {
+            "pattern": "^[^$]"
+          },
+          {
+            "enum": [
+              "$schema",
+              "$comment"
+            ]
+          }
+        ]
+      },
+      "type": "object"
+    },
     "input": {
       "additionalProperties": false,
       "description": "What the keyboard does",

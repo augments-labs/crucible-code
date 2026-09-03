@@ -13,14 +13,14 @@
 use std::fmt::Write as _;
 use std::path::Path;
 
-use crucible_config::{Extensions, Installed};
+use crucible_config::{Extensions, Installed, Settings};
 
 /// The listing, as one block of text ending in a newline.
 ///
 /// Empty of extensions is a sentence rather than an empty answer: somebody who
 /// just installed one and sees nothing needs to be told which directory was
 /// looked in, because the usual mistake is having put it somewhere else.
-pub(crate) fn listing(found: &Extensions) -> String {
+pub(crate) fn listing(found: &Extensions, settings: &Settings) -> String {
     let mut said = String::new();
     let at = shown(found.at());
 
@@ -47,9 +47,24 @@ pub(crate) fn listing(found: &Extensions) -> String {
         );
     }
 
+    let mut any_off = false;
     for one in found.found() {
+        let enabled = settings.extension_enabled(&one.manifest().identity().id);
+        any_off |= !enabled;
+
         said.push('\n');
-        describe(&mut said, one);
+        describe(&mut said, one, enabled);
+    }
+
+    // Once, at the end, rather than beside every entry that says no. An
+    // installed extension is off until somebody turns it on, so on most
+    // machines every entry says no and the remedy repeated seven times is
+    // noise; said once it is the next thing to do.
+    if any_off {
+        let _ = writeln!(
+            said,
+            "\nnothing runs until its enabled key is true in your home configuration file",
+        );
     }
 
     let refused = found.refused();
@@ -71,7 +86,12 @@ pub(crate) fn listing(found: &Extensions) -> String {
 }
 
 /// One extension, in the words its own manifest used.
-fn describe(said: &mut String, one: &Installed) {
+///
+/// `enabled` is the only line here that the manifest does not get a say in, and
+/// it is written in the same column as the rest because it is the same kind of
+/// fact: what somebody would need to know before deciding this one is the
+/// suspect.
+fn describe(said: &mut String, one: &Installed, enabled: bool) {
     let manifest = one.manifest();
     let identity = manifest.identity();
     let requests = manifest.requests();
@@ -108,6 +128,9 @@ fn describe(said: &mut String, one: &Installed) {
                 .map(|contribution| contribution.as_str())
         )
     );
+    // The manifest asks; this is the answer. Spelled as the key's own word so
+    // that the listing and the file a reader goes on to open say one thing.
+    let _ = writeln!(said, "  enabled   {}", if enabled { "yes" } else { "no" });
     // Taken over the manifest's own bytes by the parser, never read out of it:
     // a file stating its own digest would be a file asserting it had not
     // changed since somebody trusted it.

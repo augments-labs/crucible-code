@@ -394,3 +394,31 @@ fn a_file_that_is_not_json_says_where_it_stopped_being_json() {
     assert!(matches!(err, ConfigError::Malformed { .. }), "got {err:?}");
     assert!(said.contains("line 2"), "got {said}");
 }
+
+#[test]
+fn a_committed_project_file_may_not_turn_an_extension_on() {
+    // An extension is somebody else's code, sitting in the home directory of
+    // whoever runs crucible. A file anybody can commit turning one on is
+    // authority granted by a file nobody in the checkout read, so the key is
+    // refused by where it was written rather than by what it was set to.
+    let err = shared(r#"{"extensions": {"acme.reviewer": {"enabled": true}}}"#).unwrap_err();
+    assert!(matches!(err, ConfigError::Widening { .. }), "got {err:?}");
+
+    let err = local(r#"{"extensions": {"acme.reviewer": {"enabled": true}}}"#).unwrap_err();
+    assert!(matches!(err, ConfigError::Widening { .. }), "got {err:?}");
+
+    // The setting still exists; only its origin was wrong.
+    mine(r#"{"extensions": {"acme.reviewer": {"enabled": true}}}"#).unwrap();
+}
+
+#[test]
+fn a_flag_written_as_the_word_for_it_is_refused() {
+    // `"true"` is what a reader who has been writing strings all document
+    // writes next, and a string is not what the key takes. Accepting it would
+    // make the quotes decide whether an extension runs.
+    let err = mine(r#"{"extensions": {"acme.reviewer": {"enabled": "true"}}}"#).unwrap_err();
+    assert!(matches!(err, ConfigError::WrongType { .. }), "got {err:?}");
+
+    let said = err.to_string();
+    assert!(said.contains("true or false"), "got {said}");
+}
