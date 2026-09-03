@@ -3,7 +3,7 @@
 use std::collections::VecDeque;
 use std::io::{BufReader, Cursor, Read, Write};
 
-use super::{EXTENSION_FRAME_BYTES, FrameError, Frames, Written};
+use super::{FRAME_BYTES, FrameError, Frames, Written};
 
 /// Reads from `bytes` in chunks small enough that no frame arrives whole.
 ///
@@ -44,17 +44,17 @@ fn a_frame_split_across_reads_is_handed_over_whole() {
 
 #[test]
 fn a_frame_at_the_ceiling_arrives_and_one_byte_more_does_not() {
-    let at = "x".repeat(EXTENSION_FRAME_BYTES);
+    let at = "x".repeat(FRAME_BYTES);
     let (read, err) = drained(dribbled(format!("{at}\n").as_bytes()));
     assert!(err.is_none(), "{err:?}");
     assert_eq!(read.len(), 1);
-    assert_eq!(read.first().map(String::len), Some(EXTENSION_FRAME_BYTES));
+    assert_eq!(read.first().map(String::len), Some(FRAME_BYTES));
 
-    let over = "x".repeat(EXTENSION_FRAME_BYTES + 1);
+    let over = "x".repeat(FRAME_BYTES + 1);
     let (read, err) = drained(dribbled(format!("{over}\n").as_bytes()));
     assert!(read.is_empty(), "{read:?}");
     assert!(
-        matches!(err, Some(FrameError::TooLong { maximum }) if maximum == EXTENSION_FRAME_BYTES),
+        matches!(err, Some(FrameError::TooLong { maximum }) if maximum == FRAME_BYTES),
         "{err:?}"
     );
 }
@@ -64,7 +64,7 @@ fn a_frame_past_the_ceiling_ends_the_stream_rather_than_being_skipped() {
     // The frame after it is well formed and must not arrive anyway. Crucible
     // stopped reading mid-frame, so every byte after that is the extension's
     // word for where the next one starts — including the newline it planted.
-    let over = "x".repeat(EXTENSION_FRAME_BYTES + 1);
+    let over = "x".repeat(FRAME_BYTES + 1);
     let mut frames = dribbled(format!("{over}\n{{\"after\":true}}\n").as_bytes());
     assert!(matches!(
         frames.next_frame(),
@@ -147,12 +147,10 @@ fn a_frame_carrying_a_newline_is_refused_before_anything_is_written() {
 fn a_frame_past_the_ceiling_is_refused_before_anything_is_written() {
     let mut pipe = Recorded::default();
     let mut sending = Written::new(&mut pipe);
-    let err = sending
-        .send(&"x".repeat(EXTENSION_FRAME_BYTES + 1))
-        .unwrap_err();
+    let err = sending.send(&"x".repeat(FRAME_BYTES + 1)).unwrap_err();
 
     assert!(
-        matches!(err, FrameError::TooLong { maximum } if maximum == EXTENSION_FRAME_BYTES),
+        matches!(err, FrameError::TooLong { maximum } if maximum == FRAME_BYTES),
         "{err:?}"
     );
     assert!(pipe.bytes.is_empty(), "{:?}", pipe.bytes);

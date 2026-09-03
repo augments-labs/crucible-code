@@ -66,7 +66,7 @@ pub use extension::{
     speaking::{Asking, Over, Speaking, Turn},
     spoken::{CallId, EXTENSION_SAID_BYTES, Malformed, Outcome, Spoken, SpokenError, Trouble},
     trust::{ExtensionDecision, ExtensionTrusted, ExtensionUntrusted},
-    wire::{EXTENSION_FRAME_BYTES, FrameError, Frames, Written},
+    wire::{FRAME_BYTES, FrameError, Frames, Written},
 };
 pub use ids::{
     AgentId, CredentialScopeId, IdError, ProviderAttemptId, RunId, SandboxId, SessionId, ToolId,

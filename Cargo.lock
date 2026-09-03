@@ -400,6 +400,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "crucible-mcp"
+version = "0.35.0"
+dependencies = [
+ "crucible-core",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "crucible-privacy"
 version = "0.35.0"
 dependencies = [

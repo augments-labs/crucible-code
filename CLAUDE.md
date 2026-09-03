@@ -27,6 +27,7 @@ crates/crucible-core/    domain types and extension traits
 crates/crucible-auth/    credentials and account authorization
 crates/crucible-config/  configuration documents and settings
 crates/crucible-extension/ runs somebody else's program and talks to it
+crates/crucible-mcp/      speaks the Model Context Protocol to such a program
 crates/crucible-privacy/ protected local-file primitives
 crates/crucible-provider/ provider wire protocols
 crates/crucible-runner/  turn execution over traits

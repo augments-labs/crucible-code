@@ -5,7 +5,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crucible_core::{EXTENSION_FRAME_BYTES, FrameError, Written};
+use crucible_core::{FRAME_BYTES, FrameError, Written};
 
 use super::*;
 
@@ -261,7 +261,7 @@ fn a_frame_that_never_ends_is_refused_rather_than_retained() {
     let mut said = Said::new(Kept { to }, PATIENCE);
 
     let mut refused = None;
-    for _ in 0..=(EXTENSION_FRAME_BYTES / PIECE) {
+    for _ in 0..=(FRAME_BYTES / PIECE) {
         if let Err(failure) = said.write_all(&vec![b'x'; PIECE]) {
             refused = Some(failure.to_string());
             break;

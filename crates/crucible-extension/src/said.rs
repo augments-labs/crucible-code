@@ -29,7 +29,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread;
 use std::time::Duration;
 
-use crucible_core::EXTENSION_FRAME_BYTES;
+use crucible_core::FRAME_BYTES;
 
 /// The most bytes one unfinished frame may hold before it is handed over.
 ///
@@ -37,7 +37,7 @@ use crucible_core::EXTENSION_FRAME_BYTES;
 /// anything longer before a byte is written; this is that same ceiling standing
 /// where the bytes are actually retained, so a caller that never ends a frame
 /// cannot grow this buffer instead.
-const HELD: usize = EXTENSION_FRAME_BYTES + 1;
+const HELD: usize = FRAME_BYTES + 1;
 
 /// What crucible says to a confined process, bounded in bytes and in patience.
 pub struct Said {

@@ -1,30 +1,36 @@
-//! The frames an extension and crucible exchange over a pipe.
+//! The frames crucible exchanges with a program over a pipe.
 //!
 //! One document per line, which is the whole framing. There is no length prefix
-//! because a length is a number the extension writes and crucible would have to
+//! because a length is a number the far end writes and crucible would have to
 //! believe before it had read anything; a newline is a boundary the reader finds
 //! for itself, having read no further than it was willing to read anyway.
 //!
-//! Everything here reads the far end as hostile. An extension is a program
-//! somebody installed and crucible started with their privileges, and this is
-//! where its bytes arrive — so a ceiling that holds here is a ceiling on what an
-//! extension can make this process hold, whoever wrote it.
+//! Two protocols run over this, an extension's and MCP's, and the framing is
+//! the half neither of them owns: a line is a line whoever is on the other end.
+//! The sentences here say "the program on the other end" for that reason —
+//! which of the two it is belongs to the crate that started it, and it says so
+//! around this.
+//!
+//! Everything here reads the far end as hostile. It is a program somebody
+//! installed and crucible started with their privileges, and this is where its
+//! bytes arrive — so a ceiling that holds here is a ceiling on what it can make
+//! this process hold, whoever wrote it.
 
 use std::io::{self, BufRead, Write};
 
 /// The most bytes one frame may carry, not counting the newline that ends it.
 ///
-/// Past anything the protocol exchanges: a result an extension wanted a person
-/// to read is already longer than a person reads at a megabyte. Held all the
-/// same, because the number that matters is not what an honest extension sends
-/// but what a dishonest one can make crucible keep.
-pub const EXTENSION_FRAME_BYTES: usize = 1024 * 1024;
+/// Past anything either protocol exchanges: a result somebody's program wanted
+/// a person to read is already longer than a person reads at a megabyte. Held
+/// all the same, because the number that matters is not what an honest program
+/// sends but what a dishonest one can make crucible keep.
+pub const FRAME_BYTES: usize = 1024 * 1024;
 
 /// Why a frame did not arrive.
 #[derive(Debug, thiserror::Error)]
 pub enum FrameError {
     /// The pipe would not read.
-    #[error("the extension's output could not be read: {source}")]
+    #[error("the program on the other end could not be read: {source}")]
     Unreadable {
         /// What the operating system reported.
         #[from]
@@ -35,22 +41,22 @@ pub enum FrameError {
     ///
     /// How far past is deliberately not stated: crucible stopped reading at the
     /// ceiling, so it does not know, and a figure it guessed would be a figure
-    /// the extension chose.
-    #[error("the extension sent more than {maximum} bytes without ending a frame")]
+    /// the far end chose.
+    #[error("the program on the other end sent more than {maximum} bytes without ending a frame")]
     TooLong {
         /// The ceiling it ran past.
         maximum: usize,
     },
 
     /// The stream ended partway through a frame.
-    #[error("the extension's output ended {seen} bytes into an unfinished frame")]
+    #[error("the program on the other end stopped {seen} bytes into an unfinished frame")]
     Truncated {
         /// How much of it had arrived.
         seen: usize,
     },
 
     /// A frame was not text.
-    #[error("the extension sent a frame that is not UTF-8")]
+    #[error("the program on the other end sent a frame that is not UTF-8")]
     NotText,
 
     /// A frame crucible was about to send carried a boundary of its own.
@@ -97,9 +103,9 @@ impl<R: BufRead> Frames<R> {
     /// # Errors
     ///
     /// [`FrameError`] where the pipe fails, a frame runs past
-    /// [`EXTENSION_FRAME_BYTES`], the stream stops partway through one, or one
+    /// [`FRAME_BYTES`], the stream stops partway through one, or one
     /// arrives that is not text. Every one of those finishes the stream: the
-    /// reader has lost its place in a boundary the extension was stating, and
+    /// reader has lost its place in a boundary the far end was stating, and
     /// hunting for the next newline would mean reading whatever it sends until
     /// it decides to send one.
     pub fn next_frame(&mut self) -> Option<Result<String, FrameError>> {
@@ -147,9 +153,9 @@ impl<R: BufRead> Frames<R> {
             // so the ceiling is counted over the frame's own bytes.
             let carried = ended.unwrap_or(arrived.len());
             let consumed = ended.map_or(arrived.len(), |at| at.saturating_add(1));
-            if carried > EXTENSION_FRAME_BYTES.saturating_sub(self.held.len()) {
+            if carried > FRAME_BYTES.saturating_sub(self.held.len()) {
                 return Err(FrameError::TooLong {
-                    maximum: EXTENSION_FRAME_BYTES,
+                    maximum: FRAME_BYTES,
                 });
             }
             self.held.extend(arrived.iter().take(carried).copied());
@@ -167,7 +173,7 @@ impl<R: BufRead> Frames<R> {
     /// Ends the stream and lets go of whatever was being assembled.
     ///
     /// Every refusal comes through here, because each of them means the reader
-    /// no longer knows where a frame starts: the boundary was the extension's
+    /// no longer knows where a frame starts: the boundary was the far end's
     /// to state, and reading on to find the next newline is reading whatever it
     /// sends until it chooses to send one. What was held goes with it — a
     /// refused frame is not evidence, and keeping it would leave a megabyte
@@ -201,13 +207,13 @@ impl<W: Write> Written<W> {
     /// # Errors
     ///
     /// [`FrameError`] where the frame carries a newline, runs past
-    /// [`EXTENSION_FRAME_BYTES`], or the pipe fails. The first two are settled
+    /// [`FRAME_BYTES`], or the pipe fails. The first two are settled
     /// before a byte is written: a frame refused halfway would leave a fragment
     /// on the wire that the far end joins to whatever crucible sends next.
     pub fn send(&mut self, frame: &str) -> Result<(), FrameError> {
-        if frame.len() > EXTENSION_FRAME_BYTES {
+        if frame.len() > FRAME_BYTES {
             return Err(FrameError::TooLong {
-                maximum: EXTENSION_FRAME_BYTES,
+                maximum: FRAME_BYTES,
             });
         }
         if frame.as_bytes().contains(&b'\n') {

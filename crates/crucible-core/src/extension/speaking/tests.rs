@@ -6,7 +6,7 @@ use std::io::{self, BufRead, Write};
 use serde_json::{Value, json};
 
 use super::{Asking, Over, Speaking, Turn};
-use crate::{CallError, CallId, EXTENSION_FRAME_BYTES, Outcome, Spoken};
+use crate::{CallError, CallId, FRAME_BYTES, Outcome, Spoken};
 
 /// An extension that says these things and then closes its output.
 fn says(frames: &[&str]) -> Vec<u8> {
@@ -103,7 +103,7 @@ fn a_frame_that_cannot_be_understood_ends_the_conversation() {
 /// wire leaves the reader without a boundary it trusts.
 #[test]
 fn a_frame_that_cannot_be_read_ends_the_conversation() {
-    let enormous = "x".repeat(EXTENSION_FRAME_BYTES.saturating_add(1));
+    let enormous = "x".repeat(FRAME_BYTES.saturating_add(1));
     let mut talk: Speaking<io::Cursor<Vec<u8>>, Vec<u8>, &str> =
         Speaking::new(io::Cursor::new(says(&[&enormous])), Vec::new());
 
