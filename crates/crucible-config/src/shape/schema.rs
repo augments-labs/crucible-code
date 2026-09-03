@@ -92,15 +92,23 @@ fn of(shape: &Shape) -> Value {
         // one, in every editor that resolves this schema.
         Shape::Opaque => json!({ "type": "object" }),
 
-        // `uniqueItems` because no list here means anything by a repeat: the
-        // kind decides which rule wins, so a second copy of a rule cannot
-        // change an outcome, and a directory named twice is reached once. The
-        // editor marking it is how a paste that went in twice is noticed.
-        Shape::List(inner) => json!({
-            "type": "array",
-            "items": of(inner),
-            "uniqueItems": true,
-        }),
+        // `uniqueItems` for a list that says a repeat means nothing: the kind
+        // decides which rule wins, so a second copy of a rule cannot change an
+        // outcome, and a directory named twice is reached once. The editor
+        // marking it is how a paste that went in twice is noticed. A list that
+        // repeats gets no such keyword, because there the second copy is a
+        // second element and the editor would be marking a valid document that
+        // crucible accepts.
+        Shape::List { of: inner, repeats } => {
+            let mut described = Map::from_iter([
+                ("type".to_owned(), Value::from("array")),
+                ("items".to_owned(), of(inner)),
+            ]);
+            if !repeats {
+                described.insert("uniqueItems".to_owned(), Value::Bool(true));
+            }
+            Value::Object(described)
+        }
     }
 }
 
@@ -144,6 +152,7 @@ fn described(field: &Field) -> Value {
         shape,
         examples,
         usual,
+        needed: _,
         // Which layers a key may be written in is not something one schema can
         // say: this file is served to all three, and a key refused in one of
         // them is a key everywhere else. The sentence above says it in words
@@ -163,7 +172,7 @@ fn described(field: &Field) -> Value {
     }
 
     let holder = match shape {
-        Shape::List(_) => described.get_mut("items"),
+        Shape::List { .. } => described.get_mut("items"),
         Shape::Text
         | Shape::Choice(_)
         | Shape::Count
@@ -184,9 +193,12 @@ fn described(field: &Field) -> Value {
 /// `usual` is spelled the way it would be written in a document, because what
 /// goes in the file is what a reader meets. For every key whose value is a
 /// string that is the same text either way; for a [`Shape::Flag`] the document
-/// holds `true`, and a schema publishing `"true"` beside `"type": "boolean"`
-/// would have every editor that resolves it insert the one value the key
-/// refuses.
+/// holds `true` and for a [`Shape::Count`] it holds `10`, and a schema
+/// publishing `"true"` beside `"type": "boolean"` would have every editor that
+/// resolves it insert the one value the key refuses.
+///
+/// A [`Shape::Whole`] is the exception that proves it: that one *is* a number
+/// written as a string, so its default is published as the string it has to be.
 ///
 /// A spelling that is not the shape's own is left as the string it was written
 /// as, so that it fails the agreement test beside this one rather than being
@@ -196,13 +208,15 @@ fn stated(shape: &Shape, usual: &str) -> Value {
         Shape::Flag => usual
             .parse::<bool>()
             .map_or_else(|_| Value::from(usual), Value::from),
+        Shape::Count => usual
+            .parse::<u64>()
+            .map_or_else(|_| Value::from(usual), Value::from),
         Shape::Text
         | Shape::Choice(_)
-        | Shape::Count
         | Shape::Whole(_)
         | Shape::Fields(_)
         | Shape::Named { .. }
-        | Shape::List(_)
+        | Shape::List { .. }
         | Shape::Opaque => Value::from(usual),
     }
 }
@@ -222,11 +236,25 @@ fn object(shape: &Shape) -> Value {
             for field in *fields {
                 properties.insert(field.name.into(), described(field));
             }
-            json!({
+            // Written only where there is one, rather than as an empty list on
+            // every block: `"required": []` is a true statement no editor
+            // learns anything from, repeated across every object in the file.
+            let needed: Vec<_> = fields
+                .iter()
+                .filter(|field| field.needed)
+                .map(|field| field.name)
+                .collect();
+            let mut described = json!({
                 "type": "object",
                 "properties": properties,
                 "additionalProperties": false,
-            })
+            });
+            if !needed.is_empty()
+                && let Some(into) = described.as_object_mut()
+            {
+                into.insert("required".into(), json!(needed));
+            }
+            described
         }
 
         // Keys the user chose: a provider name, a variable name. Every name
@@ -257,7 +285,7 @@ fn object(shape: &Shape) -> Value {
         | Shape::Count
         | Shape::Flag
         | Shape::Whole(_)
-        | Shape::List(_)
+        | Shape::List { .. }
         | Shape::Opaque => of(shape),
     }
 }
@@ -393,6 +421,34 @@ mod tests {
                 assert_eq!(at(held, "type"), "string", "{where_} {key}");
             }
         }
+    }
+
+    #[test]
+    fn a_list_whose_repeats_mean_something_is_not_published_as_a_set() {
+        // Two lists, because the interesting failure is the keyword being
+        // unconditional again: a test that only reads `args` passes just as
+        // well when nothing publishes `uniqueItems` at all.
+        let schema = generated();
+
+        let rules = property(&schema, &["permissions", "deny"]);
+        assert_eq!(
+            rules.get("uniqueItems"),
+            Some(&Value::Bool(true)),
+            "a rule named twice wins once, so the editor is what notices the \
+             paste that went in twice"
+        );
+
+        let server = at(
+            property(&schema, &["mcp", "servers"]),
+            "additionalProperties",
+        );
+        let args = at(at(server, "properties"), "args");
+        assert_eq!(at(args, "type"), "array");
+        assert!(
+            args.get("uniqueItems").is_none(),
+            "a repeated argument is a second argument, and marking it invalid \
+             would leave the editor refusing a command line crucible runs"
+        );
     }
 
     #[test]

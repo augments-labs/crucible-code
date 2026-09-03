@@ -716,6 +716,92 @@ claiming one `id` are not both kept — the first in sorted order keeps the
 identifier and the second is listed as refused, because the identifier is what
 everything else would key on.
 
+## MCP servers
+
+An MCP server is somebody else's program that contributes tools. `mcp.servers`
+is where you write down which ones exist on this machine, keyed by the name you
+want their tools qualified by:
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "docs": {
+        "command": "npx",
+        "args": ["-y", "@example/docs-mcp"],
+        "envFrom": { "DOCS_TOKEN": "MY_DOCS_TOKEN" }
+      }
+    }
+  }
+}
+```
+
+The name you choose is the name you will read later: `docs` makes the server's
+`search` tool `mcp:docs/search`. So a name may not hold `:` or `/`, which are
+the two characters that qualification is spelled with — a server called `a/b`
+would produce tool names nobody could read back to a server.
+
+Writing a record starts nothing. It is a statement that a server exists and how
+it would be launched; what launches one is a selection made per run. **This
+release reads the block and stops there** — no server is started yet, so a
+record you write today is checked, listed back by the schema in your editor, and
+otherwise inert. That is the point of writing it down first: the record is
+settled before anything acts on it.
+
+`command` is the only key a record cannot do without, and it is either an
+absolute path or a bare name for `PATH` to answer. Anything in between —
+`./server`, `bin/server` — is refused, because it would be resolved against
+whichever directory crucible happened to be started in:
+
+```
+crucible: /home/you/.crucible/config.json: mcp.servers.docs.command is neither
+an absolute path nor a bare program name at line 4, column 7 — ./docs-mcp would
+be resolved against whichever directory crucible was started in, so the same
+record would run a different program from a different place. Write the whole
+path, or a bare name for PATH to answer
+```
+
+What counts as absolute is the machine's own answer: a leading `/` on Linux and
+macOS, a drive or a share on Windows. A bare name is the spelling that means the
+same thing on all of them, which is why the schema offers it first.
+
+`env` holds values and is applied verbatim, so nothing secret belongs in it — a
+configuration file is a file, and a value written there is a value on disk.
+`envFrom` is the key for a secret: it holds *names* on both sides. `"DOCS_TOKEN":
+"MY_DOCS_TOKEN"` means the server is given `DOCS_TOKEN` set to whatever crucible
+was itself started with in `MY_DOCS_TOKEN`. The token never appears in a
+document, a session file or a log line, which is the same bargain `apiKeyEnv`
+makes for provider keys.
+
+The rest of the record is the timing and failure behaviour, and every one of
+them has an answer already:
+
+| Key | Default | What it decides |
+| --- | --- | --- |
+| `handshakeSeconds` | `10` | How long to wait for the server to agree a protocol version |
+| `requestSeconds` | `60` | How long to wait for one request |
+| `shutdownSeconds` | `5` | How long the server is given to stop before it is killed |
+| `restarts` | `0` | How many times it may be started again after it ends |
+| `required` | `false` | Whether a run that selected it fails when it cannot be prepared, rather than carrying on without its tools |
+
+Every key in `mcp.servers` is read **only** from `~/.crucible/config.json`. A
+committed `.crucible/config.json` naming a server would be choosing whose
+program runs — and what it is told, and what it is started with — on behalf of
+whoever cloned the checkout, before anything has been typed:
+
+```
+crucible: /home/you/api/.crucible/config.json: mcp.servers cannot be set here at
+line 3, column 5 — this file is inside the workspace and can arrive with a
+checkout, and this key only ever widens what crucible does without asking. A
+workspace file may tighten its own rules — permissions.ask and permissions.deny
+— and may not loosen anybody's. Put this one in the configuration file in your
+home directory
+```
+
+Crucible reads 64 servers, 256 arguments and 256 variables per record. Past a
+bound the rest is not read, so a document cannot make startup walk further by
+being longer.
+
 ## `CRUCIBLE_CODE_HOME`
 
 Moves crucible's whole directory — the configuration file and the session logs

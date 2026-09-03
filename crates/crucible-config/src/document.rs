@@ -116,7 +116,13 @@ impl Document {
     /// [`ConfigError::Malformed`] when the text is not JSON, one of the shape
     /// errors when it is JSON crucible does not understand, and
     /// [`ConfigError::BadRule`] or [`ConfigError::Relative`] when the
-    /// permissions block holds text that is the right shape and says nothing.
+    /// permissions block holds text that is the right shape and says nothing,
+    /// and [`ConfigError::Unrooted`], [`ConfigError::ServerName`] or
+    /// [`ConfigError::Relative`] when an MCP server record cannot be read back
+    /// to one program under one name.
+    ///
+    /// [`ConfigError::Needed`] for a block written without a key it cannot mean
+    /// anything without.
     ///
     /// [`ConfigError::Widening`] and [`ConfigError::ProjectEnv`] for a document
     /// that says something its layer is not allowed to say — which is why the
@@ -134,6 +140,7 @@ impl Document {
         reader.check(&value, &DOCUMENT, Spot::ROOT)?;
         reader.variables(&value)?;
         reader.directories(&value)?;
+        reader.servers(&value)?;
         let rules = rules::read(&reader, &value)?;
         let prompt_cache = prompt_cache::read(&value, file, text, origin)?;
         let sandbox = sandbox::read(&value, file, text, origin)?;

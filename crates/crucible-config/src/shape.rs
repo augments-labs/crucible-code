@@ -80,10 +80,22 @@ pub(crate) enum Shape {
 
     /// An array, every element having the same shape.
     ///
-    /// Order carries no meaning anywhere in this document and neither does a
-    /// repeat, which is what lets a list be concatenated across layers instead
-    /// of replaced. See `docs/configuration/configuration.md`.
-    List(&'static Shape),
+    /// Order carries no meaning in a list that does not repeat, and neither
+    /// does a second copy of an element, which is what lets such a list be
+    /// concatenated across layers instead of replaced. See
+    /// `docs/configuration/configuration.md`.
+    List {
+        /// What each element is.
+        of: &'static Shape,
+        /// Whether a repeated element means something.
+        ///
+        /// False for every list whose kind decides the outcome — a rule named
+        /// twice wins once, a directory named twice is reached once — and the
+        /// schema marks a repeat so that a paste that went in twice is seen.
+        /// True for a list that is a sequence: the arguments handed to a
+        /// program are positional, and `-e` twice is two of them.
+        repeats: bool,
+    },
 
     /// An object whose names belong to somebody else.
     ///
@@ -133,6 +145,19 @@ pub(crate) struct Field {
     /// invented for the schema is a sentence about behaviour that nothing runs.
     pub(crate) usual: Option<&'static str>,
 
+    /// Whether a record carrying this shape is incomplete without this key.
+    ///
+    /// Declared here, beside the key, so that the walk that refuses a record
+    /// missing it and the schema that marks it required are reading one
+    /// answer. A list of mandatory paths kept somewhere else would be a second
+    /// declaration of the same keys, and an editor that stopped agreeing with
+    /// the parser is the failure nobody sees until a file is refused.
+    ///
+    /// Only meaningful under [`Shape::Fields`], where the keys are crucible's
+    /// own. A block the user keys has no key that must be there — which name
+    /// would it be?
+    pub(crate) needed: bool,
+
     /// Whether this key can only ever loosen what crucible does unasked.
     ///
     /// Declared here, beside the key, rather than as a list of paths somewhere
@@ -157,6 +182,7 @@ const PROVIDER: Shape = Shape::Fields(&[
         // file served to every editor outlives the model.
         examples: &[],
         usual: None,
+        needed: false,
         widens: false,
     },
     Field {
@@ -166,6 +192,7 @@ const PROVIDER: Shape = Shape::Fields(&[
         // A `Choice` lists its own answers.
         examples: &[],
         usual: None,
+        needed: false,
         widens: false,
     },
     // The *name*. A key never appears in a configuration file: this workspace
@@ -179,6 +206,7 @@ const PROVIDER: Shape = Shape::Fields(&[
         shape: Shape::Text,
         examples: &[],
         usual: None,
+        needed: false,
         widens: true,
     },
     // The one key here that decides *who* the request goes to, which is who
@@ -191,6 +219,7 @@ const PROVIDER: Shape = Shape::Fields(&[
         shape: Shape::Text,
         examples: &["https://gateway.example/v1/messages"],
         usual: None,
+        needed: false,
         widens: true,
     },
     Field {
@@ -199,6 +228,7 @@ const PROVIDER: Shape = Shape::Fields(&[
         shape: Shape::Count,
         examples: &[],
         usual: None,
+        needed: false,
         widens: false,
     },
     Field {
@@ -210,6 +240,7 @@ const PROVIDER: Shape = Shape::Fields(&[
         },
         examples: &[],
         usual: None,
+        needed: false,
         widens: false,
     },
 ]);
@@ -271,6 +302,7 @@ const ENV: &[Field] = &[Field {
     usual: Some("6"),
     // Crucible's own namespace is what either project file may set: these are
     // settings rather than secrets, and none of them widens anything.
+    needed: false,
     widens: false,
 }];
 
@@ -345,6 +377,7 @@ const PROMPT: &[Field] = &[
         // A `Choice` lists its own answers.
         examples: &[],
         usual: Some("concise"),
+        needed: false,
         widens: false,
     },
     Field {
@@ -356,6 +389,7 @@ const PROMPT: &[Field] = &[
         // thing, which is a guard a repository may not take away from whoever
         // opened it.
         usual: None,
+        needed: false,
         widens: true,
     },
     Field {
@@ -364,6 +398,7 @@ const PROMPT: &[Field] = &[
         shape: Shape::Text,
         examples: &["This repository is deployed on Fridays; never push to main."],
         usual: None,
+        needed: false,
         widens: false,
     },
 ];
@@ -378,6 +413,7 @@ const OUTPUT: &[Field] = &[
         // written twice.
         examples: &[],
         usual: Some("auto"),
+        needed: false,
         widens: false,
     },
     Field {
@@ -386,6 +422,7 @@ const OUTPUT: &[Field] = &[
         shape: Shape::Choice(THEME),
         examples: &[],
         usual: Some("auto"),
+        needed: false,
         widens: false,
     },
     Field {
@@ -394,6 +431,7 @@ const OUTPUT: &[Field] = &[
         shape: Shape::Text,
         examples: &["Monokai Extended", "GitHub"],
         usual: Some("Monokai Extended"),
+        needed: false,
         widens: false,
     },
     Field {
@@ -402,6 +440,7 @@ const OUTPUT: &[Field] = &[
         shape: Shape::Choice(GLYPHS),
         examples: &[],
         usual: Some("unicode"),
+        needed: false,
         widens: false,
     },
     Field {
@@ -410,6 +449,7 @@ const OUTPUT: &[Field] = &[
         shape: Shape::Choice(TOOL_DETAIL),
         examples: &[],
         usual: Some("compact"),
+        needed: false,
         widens: false,
     },
 ];
@@ -437,6 +477,7 @@ const INPUT: &[Field] = &[Field {
     shape: Shape::Choice(SEND),
     examples: &[],
     usual: Some("enter"),
+    needed: false,
     widens: false,
 }];
 
@@ -454,6 +495,7 @@ const UPDATES: &[Field] = &[Field {
     shape: Shape::Choice(UPDATE_CHECK),
     examples: &[],
     usual: Some("auto"),
+    needed: false,
     widens: false,
 }];
 
@@ -475,6 +517,7 @@ const SANDBOX: &[Field] = &[Field {
     usual: Some("required"),
     // Semantic parsing permits a project to state `required` while refusing
     // only the weakening values, which this key-wide flag cannot express.
+    needed: false,
     widens: false,
 }];
 
@@ -512,6 +555,7 @@ const CACHE_RETENTION: &[Field] = &[
         shape: Shape::Choice(PROMPT_CACHE_RETENTION),
         examples: &[],
         usual: Some("providerDefault"),
+        needed: false,
         widens: false,
     },
     Field {
@@ -520,6 +564,7 @@ const CACHE_RETENTION: &[Field] = &[
         shape: Shape::Count,
         examples: &[],
         usual: None,
+        needed: false,
         widens: false,
     },
 ];
@@ -531,6 +576,7 @@ const CACHE_RESOURCES: &[Field] = &[Field {
     shape: Shape::Choice(PROMPT_CACHE_PERSISTENT),
     examples: &[],
     usual: Some("forbid"),
+    needed: false,
     widens: false,
 }];
 
@@ -542,14 +588,19 @@ const PROMPT_CACHE: &[Field] = &[
         shape: Shape::Choice(PROMPT_CACHE_MODE),
         examples: &[],
         usual: Some("prefer"),
+        needed: false,
         widens: false,
     },
     Field {
         name: "allowedMechanisms",
         about: "Provider-neutral cache mechanisms still permitted after capability resolution; layers intersect this list",
-        shape: Shape::List(&CACHE_MECHANISM),
+        shape: Shape::List {
+            of: &CACHE_MECHANISM,
+            repeats: false,
+        },
         examples: &[],
         usual: None,
+        needed: false,
         widens: false,
     },
     Field {
@@ -558,6 +609,7 @@ const PROMPT_CACHE: &[Field] = &[
         shape: Shape::Choice(PROMPT_CACHE_ISOLATION),
         examples: &[],
         usual: Some("session"),
+        needed: false,
         widens: false,
     },
     Field {
@@ -566,6 +618,7 @@ const PROMPT_CACHE: &[Field] = &[
         shape: Shape::Fields(CACHE_RETENTION),
         examples: &[],
         usual: None,
+        needed: false,
         widens: false,
     },
     Field {
@@ -574,6 +627,7 @@ const PROMPT_CACHE: &[Field] = &[
         shape: Shape::Fields(CACHE_RESOURCES),
         examples: &[],
         usual: None,
+        needed: false,
         widens: false,
     },
     Field {
@@ -583,6 +637,7 @@ const PROMPT_CACHE: &[Field] = &[
         examples: &["personal"],
         usual: None,
         // A project-chosen external identity could collide with another scope.
+        needed: false,
         widens: true,
     },
 ];
@@ -599,6 +654,7 @@ const COMPACTION: &[Field] = &[
         shape: Shape::Choice(COMPACTION_WHEN),
         examples: &[],
         usual: Some("full"),
+        needed: false,
         widens: false,
     },
     Field {
@@ -607,6 +663,7 @@ const COMPACTION: &[Field] = &[
         shape: Shape::Count,
         examples: &[],
         usual: None,
+        needed: false,
         widens: false,
     },
     Field {
@@ -615,6 +672,7 @@ const COMPACTION: &[Field] = &[
         shape: Shape::Count,
         examples: &[],
         usual: None,
+        needed: false,
         widens: false,
     },
     Field {
@@ -623,6 +681,7 @@ const COMPACTION: &[Field] = &[
         shape: Shape::Count,
         examples: &[],
         usual: None,
+        needed: false,
         widens: false,
     },
     Field {
@@ -631,6 +690,7 @@ const COMPACTION: &[Field] = &[
         shape: Shape::Count,
         examples: &[],
         usual: None,
+        needed: false,
         widens: false,
     },
     Field {
@@ -639,6 +699,7 @@ const COMPACTION: &[Field] = &[
         shape: Shape::Count,
         examples: &[],
         usual: None,
+        needed: false,
         widens: false,
     },
 ];
@@ -673,39 +734,55 @@ const PERMISSIONS: &[Field] = &[
         shape: Shape::Choice(MODE),
         examples: &[],
         usual: Some("ask"),
+        needed: false,
         widens: true,
     },
     Field {
         name: "allow",
         about: "Rules for calls that run without being put to you. Read only from the configuration file in your home directory",
-        shape: Shape::List(&RULE),
+        shape: Shape::List {
+            of: &RULE,
+            repeats: false,
+        },
         // A whole command rather than a program and a wildcard. `bash(git *)`
         // would read as the obvious thing to write and would cover `git push`,
         // and an example is where somebody learns which one to write.
         examples: &["read(src/**)", "bash(cargo test)"],
         usual: None,
+        needed: false,
         widens: true,
     },
     Field {
         name: "ask",
         about: "Rules for calls that are always put to you, whatever the mode says",
-        shape: Shape::List(&RULE),
+        shape: Shape::List {
+            of: &RULE,
+            repeats: false,
+        },
         examples: &["edit(Cargo.lock)", "bash(git push)"],
         usual: None,
+        needed: false,
         widens: false,
     },
     Field {
         name: "deny",
         about: "Rules for calls that are refused in every mode, beating any allow written beside them",
-        shape: Shape::List(&RULE),
+        shape: Shape::List {
+            of: &RULE,
+            repeats: false,
+        },
         examples: &["read(.env)", "edit(.git/**)"],
         usual: None,
+        needed: false,
         widens: false,
     },
     Field {
         name: "extraDirectories",
         about: "Absolute paths to directories outside the working directory that tools may reach. Read only from the configuration file in your home directory",
-        shape: Shape::List(&DIRECTORY),
+        shape: Shape::List {
+            of: &DIRECTORY,
+            repeats: false,
+        },
         // One spelling per platform. What counts as absolute is a drive or a
         // share on Windows and a leading slash everywhere else, and this schema
         // is one file served to both — so a single Unix example would be handed
@@ -718,6 +795,7 @@ const PERMISSIONS: &[Field] = &[
         // would otherwise refuse, so naming one is widening even though no
         // rule is written.
         usual: None,
+        needed: false,
         widens: true,
     },
 ];
@@ -741,6 +819,7 @@ const EXTENSION: Shape = Shape::Fields(&[
         // Either project filename can be committed, so a repository that could
         // write this would be granting authority on behalf of whoever cloned it,
         // to a program that has not been read, before anything has been typed.
+        needed: false,
         widens: true,
     },
     Field {
@@ -758,6 +837,7 @@ const EXTENSION: Shape = Shape::Fields(&[
         // For the reason `enabled` does, and it is the same widening: a
         // committed file that could write this would be answering which
         // program was agreed to, on behalf of whoever cloned the checkout.
+        needed: false,
         widens: true,
     },
     Field {
@@ -776,9 +856,179 @@ const EXTENSION: Shape = Shape::Fields(&[
         // these names, so it cannot tell a harmless one from a directory to
         // send the checkout to — and a key whose danger it has no way to weigh
         // is one a committed file may not write on behalf of whoever cloned it.
+        needed: false,
         widens: true,
     },
 ]);
+
+/// What one MCP server's record may say.
+///
+/// Keyed by the identifier the reader chooses, which is the name every tool the
+/// server contributes is qualified by — `mcp:docs/search` is the `search` tool
+/// of the server written down as `docs`. That is why the identifier is checked
+/// rather than merely retained: a name carrying the two characters that
+/// qualification is spelled with would produce a tool name nobody could read
+/// back to a server.
+///
+/// Every key here widens, and it is the same widening throughout: this block
+/// says which program crucible starts, what it is told, and what it is started
+/// with. A committed file able to write any of it would be choosing somebody
+/// else's server, arguments and environment on behalf of whoever cloned the
+/// checkout, before anything has been typed. So the whole record is read from
+/// the configuration file in the home directory and a file under the working
+/// directory may not carry it at all.
+///
+/// Nothing here starts anything. A record is an inert statement that a server
+/// exists and how it would be launched; what launches one is an exact
+/// selection, made per agent or per run.
+const MCP_SERVER: Shape = Shape::Fields(&[
+    Field {
+        name: "command",
+        about: "The program to run for this server. An absolute path, or a bare program name for PATH to answer. Read only from the configuration file in your home directory",
+        shape: Shape::Text,
+        // A bare name first, because it is the one spelling every platform
+        // reads back and it is what `written` in the shape tests puts in every
+        // other example's record. Then one absolute spelling per platform: what
+        // counts as absolute is a drive or a share on Windows and a leading
+        // slash everywhere else, and this schema is one file served to both.
+        examples: &[
+            "npx",
+            "/usr/local/bin/docs-mcp",
+            r"C:\Program Files\docs-mcp\docs-mcp.exe",
+        ],
+        // Nothing. A command crucible chose would be crucible choosing whose
+        // program runs, which is the one thing this key exists to state.
+        usual: None,
+        // Every other key here means something without this one; this is what a
+        // record is for. A record missing it is refused where it was written,
+        // rather than becoming a server that quietly does not exist.
+        needed: true,
+        widens: true,
+    },
+    Field {
+        name: "args",
+        about: "What to pass the program, one argument per element, applied verbatim. Read only from the configuration file in your home directory",
+        shape: Shape::List {
+            of: &VALUE,
+            // A command line is a sequence, so `-e` twice is two arguments and
+            // not a paste that went in twice.
+            repeats: true,
+        },
+        examples: &["-y", "@example/docs-mcp"],
+        usual: None,
+        needed: false,
+        widens: true,
+    },
+    Field {
+        name: "directory",
+        about: "An absolute path to start the program in. Left off, the directory crucible was started in. Read only from the configuration file in your home directory",
+        shape: Shape::Text,
+        // No example. Every absolute path is somebody's own machine, and one
+        // written here is what an editor offers to complete the field with.
+        examples: &[],
+        usual: None,
+        needed: false,
+        widens: true,
+    },
+    Field {
+        name: "env",
+        about: "Environment variables for this server, applied verbatim — values, so nothing secret belongs here. Read only from the configuration file in your home directory",
+        shape: Shape::Named {
+            declared: &[],
+            others: &VALUE,
+        },
+        examples: &[],
+        usual: None,
+        needed: false,
+        widens: true,
+    },
+    // The *names*. A secret never appears in a configuration file: crucible
+    // reads the variable named here out of its own environment and passes the
+    // value to the server, so nothing that arrives this way has a path into a
+    // document, a session file or a log line. `env` above is for values, and
+    // this is for everything a value would be the wrong place for.
+    Field {
+        name: "envFrom",
+        about: "Environment variables for this server taken from crucible's own, keyed by the name the server reads and holding the name crucible reads — names, never secrets. Read only from the configuration file in your home directory",
+        shape: Shape::Named {
+            declared: &[],
+            others: &VALUE,
+        },
+        examples: &[],
+        usual: None,
+        needed: false,
+        widens: true,
+    },
+    Field {
+        name: "handshakeSeconds",
+        about: "How long to wait for the server to agree a protocol version before giving up on it. Read only from the configuration file in your home directory",
+        shape: Shape::Count,
+        examples: &[],
+        usual: Some("10"),
+        needed: false,
+        widens: true,
+    },
+    Field {
+        name: "requestSeconds",
+        about: "How long to wait for one request to this server before giving up on it. Read only from the configuration file in your home directory",
+        shape: Shape::Count,
+        examples: &[],
+        usual: Some("60"),
+        needed: false,
+        widens: true,
+    },
+    Field {
+        name: "shutdownSeconds",
+        about: "How long the server is given to stop on its own before it is killed. Read only from the configuration file in your home directory",
+        shape: Shape::Count,
+        examples: &[],
+        usual: Some("5"),
+        needed: false,
+        widens: true,
+    },
+    Field {
+        name: "restarts",
+        about: "How many times this server may be started again after it ends. Read only from the configuration file in your home directory",
+        shape: Shape::Count,
+        examples: &[],
+        usual: Some("0"),
+        needed: false,
+        widens: true,
+    },
+    Field {
+        name: "required",
+        about: "Whether a run that selected this server fails when it cannot be prepared, rather than carrying on without its tools. Read only from the configuration file in your home directory",
+        shape: Shape::Flag,
+        // `true` and `false` are the whole of what may be written here.
+        examples: &[],
+        usual: Some("false"),
+        needed: false,
+        widens: true,
+    },
+]);
+
+/// What the `mcp` block may say.
+///
+/// One key, rather than servers keyed directly under `mcp`. The block is where
+/// anything else about MCP would go, and a document that keyed servers at the
+/// top of it could never gain a second key without a server called by that
+/// name meaning two things at once.
+const MCP: Shape = Shape::Fields(&[Field {
+    name: "servers",
+    about: "MCP servers that may be selected, keyed by the identifier their tools are qualified by. Nothing is started by being written here",
+    shape: Shape::Named {
+        declared: &[],
+        others: &MCP_SERVER,
+    },
+    examples: &[],
+    // Nothing, rather than an empty block. Crucible installs no server, and a
+    // default written here would be one it installed.
+    usual: None,
+    // Refused under the working directory as a whole, so a project file is
+    // told at the block rather than at whichever key it wrote first.
+    needed: false,
+    widens: true,
+}]);
 
 /// The document itself.
 pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
@@ -803,6 +1053,7 @@ pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
         // crate — the schema is generated from here and served to every editor.
         examples: &[],
         usual: None,
+        needed: false,
         widens: true,
     },
     Field {
@@ -814,6 +1065,7 @@ pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
         },
         examples: &[],
         usual: None,
+        needed: false,
         widens: false,
     },
     Field {
@@ -825,6 +1077,7 @@ pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
         },
         examples: &[],
         usual: None,
+        needed: false,
         widens: false,
     },
     Field {
@@ -836,6 +1089,16 @@ pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
         },
         examples: &[],
         usual: None,
+        needed: false,
+        widens: false,
+    },
+    Field {
+        name: "mcp",
+        about: "MCP servers crucible may be asked to start",
+        shape: MCP,
+        examples: &[],
+        usual: None,
+        needed: false,
         widens: false,
     },
     Field {
@@ -844,6 +1107,7 @@ pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
         shape: Shape::Fields(INPUT),
         examples: &[],
         usual: None,
+        needed: false,
         widens: false,
     },
     Field {
@@ -852,6 +1116,7 @@ pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
         shape: Shape::Fields(OUTPUT),
         examples: &[],
         usual: None,
+        needed: false,
         widens: false,
     },
     Field {
@@ -860,6 +1125,7 @@ pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
         shape: Shape::Fields(PROMPT),
         examples: &[],
         usual: None,
+        needed: false,
         widens: false,
     },
     Field {
@@ -868,6 +1134,7 @@ pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
         shape: Shape::Fields(PERMISSIONS),
         examples: &[],
         usual: None,
+        needed: false,
         widens: false,
     },
     Field {
@@ -876,6 +1143,7 @@ pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
         shape: Shape::Fields(SANDBOX),
         examples: &[],
         usual: None,
+        needed: false,
         widens: false,
     },
     Field {
@@ -884,6 +1152,7 @@ pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
         shape: Shape::Fields(COMPACTION),
         examples: &[],
         usual: None,
+        needed: false,
         widens: false,
     },
     Field {
@@ -892,6 +1161,7 @@ pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
         shape: Shape::Fields(PROMPT_CACHE),
         examples: &[],
         usual: None,
+        needed: false,
         widens: false,
     },
     Field {
@@ -900,6 +1170,7 @@ pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
         shape: Shape::Fields(UPDATES),
         examples: &[],
         usual: None,
+        needed: false,
         widens: false,
     },
 ]);
@@ -924,7 +1195,7 @@ impl Shape {
             | Self::Flag
             | Self::Whole(_)
             | Self::Named { .. }
-            | Self::List(_)
+            | Self::List { .. }
             | Self::Opaque => Vec::new(),
         }
     }
@@ -945,9 +1216,29 @@ impl Shape {
             | Self::Count
             | Self::Flag
             | Self::Whole(_)
-            | Self::List(_)
+            | Self::List { .. }
             | Self::Opaque => None,
         }
+    }
+
+    /// The keys a block of this shape cannot mean anything without.
+    ///
+    /// Empty for every shape whose keys the user chose: which name would have
+    /// to be there? A [`Named`](Self::Named) block's declared keys are names
+    /// crucible described, not names it requires.
+    pub(crate) fn needed(&self) -> impl Iterator<Item = &'static Field> {
+        let fields: &'static [Field] = match self {
+            Self::Fields(fields) => fields,
+            Self::Text
+            | Self::Choice(_)
+            | Self::Count
+            | Self::Flag
+            | Self::Whole(_)
+            | Self::List { .. }
+            | Self::Named { .. }
+            | Self::Opaque => &[],
+        };
+        fields.iter().filter(|field| field.needed)
     }
 
     /// The shape of `name` under this one, if it is a key at all.
@@ -967,7 +1258,7 @@ impl Shape {
             | Self::Count
             | Self::Flag
             | Self::Whole(_)
-            | Self::List(_)
+            | Self::List { .. }
             | Self::Opaque => None,
         }
     }
@@ -979,7 +1270,7 @@ impl Shape {
     /// declaration rather than a special case per block.
     pub(crate) fn element(&self) -> Option<&'static Shape> {
         match self {
-            Self::List(inner) => Some(inner),
+            Self::List { of, .. } => Some(of),
             Self::Text
             | Self::Choice(_)
             | Self::Count
@@ -1000,7 +1291,7 @@ impl Shape {
             Self::Flag => "true or false",
             Self::Whole(_) => "a whole number written as a string",
             Self::Fields(_) | Self::Named { .. } => "an object",
-            Self::List(_) => "a list",
+            Self::List { .. } => "a list",
             // Said at more length than the plain object above, because a
             // reader who wrote a string here is somebody following an
             // extension's own documentation, and the useful thing to tell them
