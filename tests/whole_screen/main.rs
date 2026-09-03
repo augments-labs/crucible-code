@@ -78,6 +78,25 @@ fn taller_than_the_window() -> String {
     "the quick brown fox jumps over the lazy dog. ".repeat(40)
 }
 
+/// The word [`a_long_answer`] ends with.
+///
+/// Every sentence of [`taller_than_the_window`] is the same sentence, and the
+/// window holds fewer of them than the answer has, so no phrase from the
+/// transcript tells an answer that is all here from one that is nearly here.
+/// This is the one word only the end can put on screen.
+const ANSWER_END: &str = "done.";
+
+/// [`taller_than_the_window`], with an end a case can wait for.
+///
+/// Waiting for the screen to go still is not the same thing. A stall on a
+/// loaded machine is quiet, and quiet is all `settle` has to go on, so a case
+/// that only waits for stillness can be handed a transcript the stream had not
+/// finished writing — and then draws a map, or a box, around however much of it
+/// had arrived.
+fn a_long_answer() -> String {
+    format!("{}{ANSWER_END}", taller_than_the_window())
+}
+
 /// What [`a_turn_still_running`] answers once the call is away.
 const HELD_ANSWER: &str = "It is started. That is all.";
 
@@ -227,10 +246,10 @@ fn an_answer_longer_than_the_window_leaves_the_box_whole_under_it() {
     // by the rows left under it, so an answer this long ate the box from the
     // top as it grew. A short window, because what decides it is how much of
     // the screen the answer fills.
-    let vendor = Vendor::answering(&taller_than_the_window());
+    let vendor = Vendor::answering(&a_long_answer());
     let mut window = Watched::answering("answered-long", 80, 16, &vendor);
 
-    window.types("say something long\r");
+    window.types_until("say something long\r", ANSWER_END);
 
     insta::assert_snapshot!(window.picture());
 }
@@ -378,12 +397,10 @@ fn a_theme_panel_opens_while_a_turn_is_still_running() {
     // snapshot. `/theme` moves nothing but the screen, so its picker opens
     // over the box with the turn going on behind it.
     //
-    // Every sentence of the fixture is the same sentence, and the window holds
-    // fewer of them than the answer has, so no phrase from the transcript can
-    // tell an answer that is all here from one that is nearly here. This one
-    // ends in a word nothing else draws, and waiting for that word is what
+    // The answer is the long one here, because what the picker has to stand
+    // over is a transcript taller than the window. Waiting for its end is what
     // makes the row above the panel the same row every run.
-    let answer = format!("{}done.", taller_than_the_window());
+    let answer = a_long_answer();
     let vendor = Vendor::calling_then_holding(
         "bash",
         r#"{"command":"sleep 30","background":true}"#,
@@ -391,7 +408,7 @@ fn a_theme_panel_opens_while_a_turn_is_still_running() {
     );
     let mut window = Watched::allowing("theme-mid-turn", 60, 24, &vendor, "bash(*)");
 
-    window.types_and_catches("start it\r", "done.");
+    window.types_and_catches("start it\r", ANSWER_END);
 
     // The picker stands over the box, covering every transcript row but the
     // first: its title row is the stable mark, and the theme list under it is
@@ -483,9 +500,9 @@ fn the_transcript_map_drags_a_long_answer_back_to_its_first_retained_row() {
     // second gesture drags its current place to the first cell. The
     // transcript jumps from the answer's foot to the opening while the box
     // stays on the same rows underneath it.
-    let vendor = Vendor::answering(&taller_than_the_window());
+    let vendor = Vendor::answering(&a_long_answer());
     let mut window = Watched::answering("transcript-map", 80, 16, &vendor);
-    window.types("say something long\r");
+    window.types_until("say something long\r", ANSWER_END);
 
     // The padded control begins at column 62; the open map track begins at 6.
     window.clicks(15, 62);
