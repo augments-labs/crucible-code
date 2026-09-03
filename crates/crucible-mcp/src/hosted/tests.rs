@@ -273,6 +273,16 @@ fn greeted(version: &str) -> String {
     .to_string()
 }
 
+/// A `tools/call` answer carrying one line of text.
+fn produced(id: u64, said: &str) -> String {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": {"content": [{"type": "text", "text": said}]},
+    })
+    .to_string()
+}
+
 /// A `tools/list` answer offering exactly `names`, with no further page.
 fn listed(id: u64, names: &[&str]) -> String {
     let tools: Vec<Value> = names
@@ -338,6 +348,46 @@ fn a_handshake_and_a_catalogue_travel_over_the_process_streams() {
             .collect::<Vec<_>>(),
         ["initialize", "notifications/initialized", "tools/list"],
         "the handshake is finished before a catalogue is asked for"
+    );
+}
+
+#[test]
+fn a_tool_the_catalogue_offered_can_then_be_called_over_the_same_streams() {
+    let (fake, watched) = Fake::new(
+        [
+            Step::Says(greeted(newest())),
+            Step::Says(listed(2, &["search"])),
+            Step::Says(produced(3, "one match")),
+        ],
+        Ending::Exited,
+    );
+
+    let mut hosted = Hosted::over(fake, PATIENCE).expect("a process with both pipes");
+    let greeting = hosted.greet().expect("an agreeable server");
+    let offered = hosted
+        .catalogue(&greeting)
+        .expect("a catalogue within bounds");
+    let tool = offered.first().expect("the server offered one tool");
+    let answered = hosted
+        .call(tool, &json!({"query": "sandbox"}))
+        .expect("the server answered the call");
+
+    assert_eq!(answered.text(), "one match");
+    assert!(!answered.failed());
+
+    let called = watched
+        .sent()
+        .into_iter()
+        .find(|message| message.get("method") == Some(&json!("tools/call")))
+        .expect("crucible sent the call over the process's own input");
+    assert_eq!(
+        called.pointer("/params/name"),
+        Some(&json!("search")),
+        "the name that goes across is the one this server's catalogue carried"
+    );
+    assert_eq!(
+        called.pointer("/params/arguments"),
+        Some(&json!({"query": "sandbox"}))
     );
 }
 
