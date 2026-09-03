@@ -25,8 +25,10 @@ use crucible_core::{
     Finish, Heard, Muttered, Said, SandboxOutput, SandboxProcess, SandboxUsage, SandboxViolation,
 };
 
+use crate::calling::{Answered, Unanswered};
 use crate::catalogue::{Greeting, Offered, Rebuffed};
 use crate::talking::Talking;
+use serde_json::Value;
 
 /// An MCP server, hosted over a confined process.
 pub struct Hosted {
@@ -90,6 +92,19 @@ impl Hosted {
     /// of those bounds. A catalogue is refused whole rather than shortened.
     pub fn catalogue(&mut self, greeting: &Greeting) -> Result<Vec<Offered>, Rebuffed> {
         crate::catalogue::tools(&mut self.talking, greeting)
+    }
+
+    /// Calls one tool the server offered, under crucible's own bounds.
+    ///
+    /// The tool has to be one this server's own catalogue carried, so there is
+    /// no way to try a name on a server that never mentioned it.
+    ///
+    /// # Errors
+    ///
+    /// [`Unanswered`] where the conversation fails or the result is not the
+    /// shape the protocol gives. A tool that ran and failed is not an error.
+    pub fn call(&mut self, tool: &Offered, arguments: &Value) -> Result<Answered, Unanswered> {
+        crate::calling::call(&mut self.talking, tool, arguments)
     }
 
     /// What the server has written to standard error so far.

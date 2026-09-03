@@ -16,11 +16,13 @@
 //! whole of it is treated as hostile input — bounded on arrival, and inert
 //! until something above turns it into tools the model can see.
 
+mod calling;
 mod catalogue;
 mod hosted;
 mod talking;
 mod wire;
 
+pub use calling::{Answered, BLOCKS, CUT, RESULT_BYTES, Unanswered, call};
 pub use catalogue::{
     ABOUT_BYTES, Greeting, NAME_BYTES, Offered, PAGES, Rebuffed, SCHEMA_BYTES, TOOLS, VERSIONS,
     hello, tools,
