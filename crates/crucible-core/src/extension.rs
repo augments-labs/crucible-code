@@ -14,6 +14,8 @@
 //! never asked for is not, and is refused here rather than part-way through a
 //! registration.
 
+use std::fmt;
+
 use crate::registry::SourceKind;
 
 /// The most bytes an extension identifier may retain.
@@ -279,6 +281,14 @@ pub struct ExtensionProtocol {
 }
 
 impl ExtensionProtocol {
+    /// The protocol this build of crucible speaks.
+    ///
+    /// Declared here rather than worked out from the crate version, because
+    /// the two answer different questions and move at different speeds: a
+    /// release happens whenever anything ships, and this changes only when the
+    /// shape of what crosses the wire does.
+    pub const HOST: Self = Self::new(1, 0);
+
     /// A version.
     #[must_use]
     pub const fn new(major: u16, minor: u16) -> Self {
@@ -316,6 +326,27 @@ impl ExtensionProtocol {
             },
         })
     }
+}
+
+impl fmt::Display for ExtensionProtocol {
+    /// The two numbers, as a manifest writes them.
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(out, "{}.{}", self.major, self.minor)
+    }
+}
+
+/// Why this build would not host an extension.
+///
+/// Data rather than a message, because the two facts either answer names —
+/// what this build speaks, and which crucible is running — are already in the
+/// hand of whoever asked. Saying them again here would be this crate writing
+/// prose for a screen it cannot see.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExtensionUnhosted {
+    /// Written against a protocol whose frames this build does not know.
+    Protocol,
+    /// It works with a crucible later than the one running.
+    Newer,
 }
 
 /// What an extension is, and where its bytes came from.
@@ -446,6 +477,37 @@ impl ExtensionManifest {
     #[must_use]
     pub const fn requests(&self) -> &ExtensionRequests {
         &self.requests
+    }
+
+    /// What this build and this extension would speak, or why they would not.
+    ///
+    /// `running` is the crucible being run, which this crate has no way to ask
+    /// for: the version belongs to the binary, and a library reading its own
+    /// would answer for itself rather than for the program that was started.
+    ///
+    /// Nothing here is a trust decision. An extension this build could host is
+    /// still one nobody has said may run, and the two are asked separately so
+    /// that neither answer can be mistaken for the other.
+    ///
+    /// # Errors
+    ///
+    /// [`ExtensionUnhosted::Protocol`] where the majors differ, which is asked
+    /// first because it is the deeper refusal: a crucible new enough to satisfy
+    /// the minimum would still be two programs that cannot exchange a frame.
+    /// [`ExtensionUnhosted::Newer`] where it names a crucible later than this
+    /// one.
+    pub fn hosted(&self, running: &str) -> Result<ExtensionProtocol, ExtensionUnhosted> {
+        let agreed = self
+            .requests
+            .protocol
+            .agreed(ExtensionProtocol::HOST)
+            .ok_or(ExtensionUnhosted::Protocol)?;
+
+        if crate::version::later(&self.requests.minimum, running) {
+            return Err(ExtensionUnhosted::Newer);
+        }
+
+        Ok(agreed)
     }
 
     /// The source-qualified identifier.

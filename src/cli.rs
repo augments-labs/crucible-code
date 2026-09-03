@@ -836,7 +836,11 @@ fn listed() -> Result<(), Fatal> {
     // decision only the person running crucible makes, so the checkout this
     // happened to be started in has nothing to contribute and is not opened.
     let settings = Settings::read_home(&home)?;
-    let found = extensions::listing(&crucible_config::Extensions::discover(&home), &settings);
+    let found = extensions::listing(
+        &crucible_config::Extensions::discover(&home),
+        &settings,
+        env!("CARGO_PKG_VERSION"),
+    );
 
     let _ = io::stdout().write_all(found.as_bytes());
     Ok(())

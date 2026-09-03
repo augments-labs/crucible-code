@@ -43,6 +43,7 @@ mod steer;
 mod tool;
 mod toolset;
 mod transcript;
+mod version;
 mod workspace;
 
 pub use aside::Aside;
@@ -59,7 +60,7 @@ pub use event::{Event, EventEnvelope, Post, Reporter, TurnError};
 pub use extension::{
     EXTENSION_ID_BYTES, EXTENSION_MANIFEST_BYTES, EXTENSION_REQUESTS, EXTENSION_TEXT_BYTES,
     ExtensionCapability, ExtensionContribution, ExtensionError, ExtensionIdentity,
-    ExtensionManifest, ExtensionProtocol, ExtensionRequests,
+    ExtensionManifest, ExtensionProtocol, ExtensionRequests, ExtensionUnhosted,
 };
 pub use ids::{
     AgentId, CredentialScopeId, IdError, ProviderAttemptId, RunId, SandboxId, SessionId, ToolId,
@@ -183,4 +184,5 @@ pub use toolset::{
     ToolSnapshot, ToolSourceKind, ToolSourceReceipt, Toolset, ToolsetContext, ToolsetError,
 };
 pub use transcript::{Attachment, Message, StopReason, ToolResult, Transcript};
+pub use version::later;
 pub use workspace::{PathError, WalkFiles, Workspace, WorkspacePath, written};

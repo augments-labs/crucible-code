@@ -19,6 +19,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, SystemTime};
 
+use crucible_core::later;
 use crucible_provider::Https;
 
 /// Where the newest release is named.
@@ -69,7 +70,7 @@ pub(crate) fn newer(home: &Path, running: &str) -> Option<Newer> {
     let said = cached(&home.join(REMEMBERED))?;
     let version = said.lines().next()?.trim();
 
-    beyond(version, running).then(|| Newer {
+    later(version, running).then(|| Newer {
         version: version.into(),
         from: FROM.into(),
     })
@@ -215,34 +216,6 @@ fn temporary(into: &Path) -> Option<(PathBuf, File)> {
     None
 }
 
-/// Whether `offered` is a later release than `running`.
-///
-/// Compared number by number rather than as text, which is the whole reason
-/// this is not `!=`: `0.0.10` sorts before `0.0.9` as a string, and a user on
-/// the newer of the two would be told for ever that an older one is available.
-///
-/// Anything after a `-` is dropped, so a pre-release is treated as its version.
-/// A part that is not a number stops the comparison, and a name that is not
-/// shaped like a version is not newer than anything.
-fn beyond(offered: &str, running: &str) -> bool {
-    let numbers = |version: &str| -> Vec<u64> {
-        version
-            .split('-')
-            .next()
-            .unwrap_or_default()
-            .split('.')
-            .map(|part| part.trim().parse().unwrap_or(0))
-            .collect()
-    };
-
-    let (offered, running) = (numbers(offered), numbers(running));
-    if offered.iter().all(|part| *part == 0) {
-        return false;
-    }
-
-    offered > running
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -266,34 +239,6 @@ mod tests {
     impl Drop for Scratch {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
-
-    #[test]
-    fn a_release_is_compared_number_by_number_and_not_as_text() {
-        // The bug this exists to prevent: `0.0.10` is *before* `0.0.9` as text,
-        // so a user who had upgraded would be told to upgrade for ever.
-        assert!(beyond("0.0.10", "0.0.9"));
-        assert!(!beyond("0.0.9", "0.0.10"));
-
-        assert!(beyond("0.1.0", "0.0.9"));
-        assert!(beyond("1.0.0", "0.9.9"));
-        assert!(!beyond("0.0.9", "0.0.9"));
-        assert!(!beyond("0.0.8", "0.0.9"));
-    }
-
-    #[test]
-    fn a_pre_release_is_read_as_the_version_it_leads_to() {
-        assert!(beyond("0.1.0-rc.1", "0.0.9"));
-        assert!(!beyond("0.0.9-rc.1", "0.0.9"));
-    }
-
-    #[test]
-    fn a_name_that_is_not_a_version_is_newer_than_nothing() {
-        // A tag that does not parse reaches here as zeroes, and zeroes are
-        // newer than nothing rather than newer than everything.
-        for said in ["", "nightly", "latest"] {
-            assert!(!beyond(said, "0.0.9"), "{said:?}");
         }
     }
 

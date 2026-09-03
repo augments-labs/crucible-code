@@ -23,6 +23,12 @@ change in any release with no deprecation period.
   configuration file in your home directory — a project file carrying it is
   refused, because a committed file turning on code on your machine is a
   decision only you can make.
+- **The listing says whether this crucible could host each extension.** A
+  `hosted` line answers before the question of whether you allowed it, because
+  allowing one written against another protocol, or for a crucible later than
+  the one you are running, would change nothing. An extension asking for more
+  of the protocol than this build has is hosted anyway, on the part they both
+  know, and the listing says which part that is.
 
 ## [0.34.0] - 2026-09-02
 
