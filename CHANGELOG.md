@@ -8,36 +8,7 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
-### Added
-
-- **`crucible --extensions` lists what is installed in
-  `~/.crucible/extensions` and stops.** Each directory's `manifest.json` is
-  read for what the extension calls itself, what it asks to be allowed to do
-  and the digest crucible takes over the file's own bytes; nothing installed is
-  run to produce the list. A manifest that will not parse is listed with its
-  reason rather than hiding the ones that will. Crucible does not yet run
-  extensions.
-- **`extensions.<id>.enabled` records which installed extensions you allow.**
-  Installed is not permitted: an extension is off until you turn it on, and the
-  listing says which of the two each one is. The key is read only from the
-  configuration file in your home directory — a project file carrying it is
-  refused, because a committed file turning on code on your machine is a
-  decision only you can make.
-- **The listing says whether this crucible could host each extension.** A
-  `hosted` line answers before the question of whether you allowed it, because
-  allowing one written against another protocol, or for a crucible later than
-  the one you are running, would change nothing. An extension asking for more
-  of the protocol than this build has is hosted anyway, on the part they both
-  know, and the listing says which part that is.
-- **`extensions.<id>.config` holds an extension's own settings.** Whatever
-  names its documentation gives, in any JSON they take; crucible checks that
-  the block is a block and reads nothing inside, because refusing a key it has
-  never heard of would mean deleting a line the extension told you to write.
-  The listing names what you wrote and never what you set it to, and the key is
-  read only from your home file — crucible cannot weigh the danger of a name it
-  cannot read, so a committed file may not write one on your behalf.
-
-## [0.34.0] - 2026-09-02
+## [0.35.0] - 2026-09-03
 
 ### Added
 
@@ -71,6 +42,33 @@ change in any release with no deprecation period.
   serialized across commands, an abandoned transaction is recovered or
   quarantined at the next preparation, and a detached command's start result is
   accepted only once it is durably stored.
+
+- **`crucible --extensions` lists what is installed in
+  `~/.crucible/extensions` and stops.** Each directory's `manifest.json` is
+  read for what the extension calls itself, what it asks to be allowed to do
+  and the digest crucible takes over the file's own bytes; nothing installed is
+  run to produce the list. A manifest that will not parse is listed with its
+  reason rather than hiding the ones that will. Crucible does not yet run
+  extensions.
+- **`extensions.<id>.enabled` records which installed extensions you allow.**
+  Installed is not permitted: an extension is off until you turn it on, and the
+  listing says which of the two each one is. The key is read only from the
+  configuration file in your home directory — a project file carrying it is
+  refused, because a committed file turning on code on your machine is a
+  decision only you can make.
+- **The listing says whether this crucible could host each extension.** A
+  `hosted` line answers before the question of whether you allowed it, because
+  allowing one written against another protocol, or for a crucible later than
+  the one you are running, would change nothing. An extension asking for more
+  of the protocol than this build has is hosted anyway, on the part they both
+  know, and the listing says which part that is.
+- **`extensions.<id>.config` holds an extension's own settings.** Whatever
+  names its documentation gives, in any JSON they take; crucible checks that
+  the block is a block and reads nothing inside, because refusing a key it has
+  never heard of would mean deleting a line the extension told you to write.
+  The listing names what you wrote and never what you set it to, and the key is
+  read only from your home file — crucible cannot weigh the danger of a name it
+  cannot read, so a committed file may not write one on your behalf.
 
 ### Changed
 
@@ -3264,8 +3262,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.34.0...HEAD
-[0.34.0]: https://github.com/augments-labs/crucible-code/compare/v0.33.0...v0.34.0
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.35.0...HEAD
+[0.35.0]: https://github.com/augments-labs/crucible-code/compare/v0.33.0...v0.35.0
 [0.33.0]: https://github.com/augments-labs/crucible-code/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/augments-labs/crucible-code/compare/v0.31.0...v0.32.0
 [0.31.0]: https://github.com/augments-labs/crucible-code/compare/v0.30.0...v0.31.0
