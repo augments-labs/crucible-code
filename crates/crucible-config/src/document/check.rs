@@ -78,6 +78,7 @@ impl Reader<'_> {
             Shape::Text | Shape::Whole(_) => self.text_at(value, shape, spot),
             Shape::Choice(allowed) => self.choice(value, allowed, shape, spot),
             Shape::Count => self.count(value, shape, spot),
+            Shape::Flag => self.flag(value, shape, spot),
             Shape::Fields(_) => self.fields(value, shape, spot),
             Shape::Named { others, .. } => self.named(value, others, shape, spot),
             Shape::List(inner) => self.list(value, inner, shape, spot),
@@ -101,6 +102,19 @@ impl Reader<'_> {
     /// same reason a negative is — nothing here can mean it.
     fn count(&self, value: &Value, shape: &Shape, spot: Spot<'_>) -> Result<(), ConfigError> {
         if value.as_u64().is_some() {
+            return Ok(());
+        }
+        Err(self.wrong_type(shape, spot))
+    }
+
+    /// True or false, and nothing that looks like either.
+    ///
+    /// `"true"` is refused rather than read: a flag that a quoted word switched
+    /// on would be a key whose value is right in the file and wrong in the
+    /// schema every editor resolves, and the one thing this document may not do
+    /// is mean two things at once.
+    fn flag(&self, value: &Value, shape: &Shape, spot: Spot<'_>) -> Result<(), ConfigError> {
+        if value.is_boolean() {
             return Ok(());
         }
         Err(self.wrong_type(shape, spot))

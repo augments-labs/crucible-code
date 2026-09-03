@@ -45,36 +45,58 @@ impl Settings {
         let mut documents = Vec::new();
 
         for (path, origin) in files(home, workspace) {
-            // Named by its whole path. Two of these live in the project and one
-            // does not, so `config.json` alone would leave the reader working
-            // out which file the message is about.
-            let file: Box<str> = path.display().to_string().into();
-
-            let opened = match File::open(&path) {
-                Ok(opened) => opened,
-                Err(source) if source.kind() == io::ErrorKind::NotFound => continue,
-                Err(source) => return Err(ConfigError::Unreadable { file, source }),
-            };
-            let mut text = String::new();
-            opened
-                .take((MAX_DOCUMENT_BYTES + 1) as u64)
-                .read_to_string(&mut text)
-                .map_err(|source| ConfigError::Unreadable {
-                    file: file.clone(),
-                    source,
-                })?;
-            if text.len() > MAX_DOCUMENT_BYTES {
-                return Err(ConfigError::TooLarge {
-                    file,
-                    maximum: MAX_DOCUMENT_BYTES,
-                });
-            }
-
-            documents.push(Document::parse(&text, &file, origin)?);
+            documents.extend(read_one(&path, origin)?);
         }
 
         Self::resolve_checked(documents)
     }
+
+    /// Reads the home file alone, whatever checkout crucible was started in.
+    ///
+    /// For a question the two project layers are not allowed to answer. Those
+    /// keys widen, so a value in a committed file is refused at the boundary
+    /// anyway — but reading a project file only to be told it may not speak
+    /// lets one that will not parse withhold an answer it was never going to
+    /// contribute to. This opens the one file that decides.
+    ///
+    /// # Errors
+    ///
+    /// As [`Settings::read`], for that one file.
+    pub fn read_home(home: &Home) -> Result<Self, ConfigError> {
+        let document = read_one(&user(home), Origin::User)?;
+
+        Self::resolve_checked(document.into_iter().collect())
+    }
+}
+
+/// One layer, or nothing where that file is not on this machine.
+fn read_one(path: &Path, origin: Origin) -> Result<Option<Document>, ConfigError> {
+    // Named by its whole path. Two of these live in the project and one does
+    // not, so `config.json` alone would leave the reader working out which file
+    // the message is about.
+    let file: Box<str> = path.display().to_string().into();
+
+    let opened = match File::open(path) {
+        Ok(opened) => opened,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => return Err(ConfigError::Unreadable { file, source }),
+    };
+    let mut text = String::new();
+    opened
+        .take((MAX_DOCUMENT_BYTES + 1) as u64)
+        .read_to_string(&mut text)
+        .map_err(|source| ConfigError::Unreadable {
+            file: file.clone(),
+            source,
+        })?;
+    if text.len() > MAX_DOCUMENT_BYTES {
+        return Err(ConfigError::TooLarge {
+            file,
+            maximum: MAX_DOCUMENT_BYTES,
+        });
+    }
+
+    Document::parse(&text, &file, origin).map(Some)
 }
 
 /// Where a project conventionally keeps its nearer non-authority settings.

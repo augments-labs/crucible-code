@@ -77,6 +77,8 @@ fn of(shape: &Shape) -> Value {
         // be is a fact about somebody's model, which this crate does not have.
         Shape::Count => json!({ "type": "integer", "minimum": 0 }),
 
+        Shape::Flag => json!({ "type": "boolean" }),
+
         // `minimum` and `maximum` would say nothing here: they hold for a
         // number, and this is a string, which is what the environment has.
         // `pattern` is what an editor checks a string against, so the bounds
@@ -147,7 +149,7 @@ fn described(field: &Field) -> Value {
     if let Some(into) = described.as_object_mut() {
         into.insert("description".into(), (*about).into());
         if let Some(usual) = usual {
-            into.insert("default".into(), (*usual).into());
+            into.insert("default".into(), stated(shape, usual));
         }
     }
     if examples.is_empty() {
@@ -159,6 +161,7 @@ fn described(field: &Field) -> Value {
         Shape::Text
         | Shape::Choice(_)
         | Shape::Count
+        | Shape::Flag
         | Shape::Whole(_)
         | Shape::Fields(_)
         | Shape::Named { .. } => Some(&mut described),
@@ -167,6 +170,33 @@ fn described(field: &Field) -> Value {
         into.insert("examples".into(), json!(examples));
     }
     described
+}
+
+/// A stated default, as the value an editor will write into the file.
+///
+/// `usual` is spelled the way it would be written in a document, because what
+/// goes in the file is what a reader meets. For every key whose value is a
+/// string that is the same text either way; for a [`Shape::Flag`] the document
+/// holds `true`, and a schema publishing `"true"` beside `"type": "boolean"`
+/// would have every editor that resolves it insert the one value the key
+/// refuses.
+///
+/// A spelling that is not the shape's own is left as the string it was written
+/// as, so that it fails the agreement test beside this one rather than being
+/// quietly turned into whichever value `false` happens to be.
+fn stated(shape: &Shape, usual: &str) -> Value {
+    match shape {
+        Shape::Flag => usual
+            .parse::<bool>()
+            .map_or_else(|_| Value::from(usual), Value::from),
+        Shape::Text
+        | Shape::Choice(_)
+        | Shape::Count
+        | Shape::Whole(_)
+        | Shape::Fields(_)
+        | Shape::Named { .. }
+        | Shape::List(_) => Value::from(usual),
+    }
 }
 
 /// An object, whichever way its keys are decided.
@@ -214,9 +244,12 @@ fn object(shape: &Shape) -> Value {
             })
         }
 
-        Shape::Text | Shape::Choice(_) | Shape::Count | Shape::Whole(_) | Shape::List(_) => {
-            of(shape)
-        }
+        Shape::Text
+        | Shape::Choice(_)
+        | Shape::Count
+        | Shape::Flag
+        | Shape::Whole(_)
+        | Shape::List(_) => of(shape),
     }
 }
 

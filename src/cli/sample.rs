@@ -130,14 +130,27 @@ impl Sample {
 
     /// What a sweep of this tree's home directory finds.
     pub(super) fn discovered(&self) -> Extensions {
-        // Pointed at this disposable tree rather than whatever the machine
-        // running the test has installed.
-        let home = Home::find(&|name: &str| {
+        Extensions::discover(&self.found())
+    }
+
+    /// Writes this tree's home configuration file.
+    pub(super) fn configured(&self, document: &str) {
+        fs::create_dir_all(self.home()).expect("a temporary directory");
+        fs::write(self.user_file(), document).expect("a temporary directory");
+    }
+
+    /// What this tree's home file decided, and nothing the checkout said.
+    pub(super) fn decided(&self) -> Settings {
+        Settings::read_home(&self.found()).expect("a readable home file")
+    }
+
+    /// This tree's home directory as crucible would find it, rather than
+    /// whatever the machine running the test keeps in its own.
+    fn found(&self) -> Home {
+        Home::find(&|name: &str| {
             (name == crucible_config::HOME).then(|| OsString::from(self.base.join("home")))
         })
-        .expect("an absolute path was given");
-
-        Extensions::discover(&home)
+        .expect("an absolute path was given")
     }
 
     /// The store this tree keeps, which is the file `/login` writes and
@@ -156,14 +169,7 @@ impl Sample {
     }
 
     fn read(&self) -> Settings {
-        // Pointed at this disposable tree rather than whatever the machine
-        // running the test has configured.
-        let home = Home::find(&|name: &str| {
-            (name == crucible_config::HOME).then(|| OsString::from(self.base.join("home")))
-        })
-        .expect("an absolute path was given");
-
-        Settings::read(&home, &self.root()).expect("a document this test wrote")
+        Settings::read(&self.found(), &self.root()).expect("a document this test wrote")
     }
 
     /// What the permission engine makes of one call, with this tree's files

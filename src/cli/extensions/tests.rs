@@ -25,7 +25,7 @@ fn nothing_installed_names_the_directory_that_was_looked_in() {
     // act on.
     let sample = Sample::new("extensions-listing-none");
 
-    let said = listing(&sample.discovered());
+    let said = listing(&sample.discovered(), &sample.decided());
 
     assert!(said.starts_with("no extensions in "), "{said}");
     assert!(said.contains("extensions"), "{said}");
@@ -36,7 +36,7 @@ fn one_extension_is_listed_with_what_it_asked_for_and_where_it_came_from() {
     let sample = Sample::new("extensions-listing-one");
     sample.installed("reviewer", &manifest("acme.reviewer"));
 
-    let said = listing(&sample.discovered());
+    let said = listing(&sample.discovered(), &sample.decided());
 
     assert!(said.starts_with("1 extension in "), "{said}");
     assert!(said.contains("acme.reviewer 1.4.0"), "{said}");
@@ -50,6 +50,10 @@ fn one_extension_is_listed_with_what_it_asked_for_and_where_it_came_from() {
         "{said}"
     );
     assert!(said.contains("gives     tools"), "{said}");
+    // Installed is not permitted. Somebody reading this list is deciding
+    // whether to trust the thing, so the answer to whether it already runs
+    // belongs beside what it asked for.
+    assert!(said.contains("enabled   no"), "{said}");
     // The digest the parser took over the file's own bytes, so that two
     // listings a week apart say whether the file changed.
     assert!(said.contains("digest    sha256:"), "{said}");
@@ -74,7 +78,7 @@ fn an_extension_that_asks_for_nothing_says_so_rather_than_leaving_a_blank() {
 }"#,
     );
 
-    let said = listing(&sample.discovered());
+    let said = listing(&sample.discovered(), &sample.decided());
 
     assert!(said.contains("asks for  nothing"), "{said}");
     assert!(said.contains("gives     nothing"), "{said}");
@@ -88,7 +92,7 @@ fn a_directory_that_could_not_be_read_is_listed_rather_than_left_out() {
     sample.installed("broken", "{ \"id\": ");
     sample.installed("working", &manifest("acme.working"));
 
-    let said = listing(&sample.discovered());
+    let said = listing(&sample.discovered(), &sample.decided());
 
     assert!(said.starts_with("1 extension in "), "{said}");
     assert!(said.contains("acme.working"), "{said}");
@@ -109,10 +113,37 @@ fn a_short_answer_says_so_before_the_list_rather_than_after_it() {
         );
     }
 
-    let said = listing(&sample.discovered());
+    let said = listing(&sample.discovered(), &sample.decided());
     let short = said
         .find("this list is short")
         .expect("a truncated sweep says so");
 
     assert!(short < said.find("acme.plugin0").expect("the first entry"));
+}
+
+#[test]
+fn an_extension_the_home_file_turned_on_is_listed_as_enabled() {
+    let sample = Sample::new("extensions-listing-enabled");
+    sample.installed("reviewer", &manifest("acme.reviewer"));
+    sample.configured(r#"{"extensions": {"acme.reviewer": {"enabled": true}}}"#);
+
+    let said = listing(&sample.discovered(), &sample.decided());
+
+    assert!(said.contains("enabled   yes"), "{said}");
+    // The remedy is for the ones that are off. Said over a list where nothing
+    // is, it sends a reader to change a file that is already right.
+    assert!(!said.contains("nothing runs until"), "{said}");
+}
+
+#[test]
+fn a_list_holding_one_that_is_off_says_once_what_would_turn_it_on() {
+    // Every entry carrying the same sentence is noise on the usual machine,
+    // where nothing has been turned on yet and every entry says no.
+    let sample = Sample::new("extensions-listing-remedy");
+    sample.installed("one", &manifest("acme.one"));
+    sample.installed("two", &manifest("acme.two"));
+
+    let said = listing(&sample.discovered(), &sample.decided());
+
+    assert_eq!(said.matches("nothing runs until").count(), 1, "{said}");
 }

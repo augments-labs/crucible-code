@@ -50,7 +50,12 @@ fn offering(
         // Nothing below to reach. Spelled out rather than closed with a
         // wildcard, so a shape that later does hold fields has to be decided
         // about here instead of dropping out of the walk in silence.
-        Shape::Text | Shape::Choice(_) | Shape::Count | Shape::Whole(_) | Shape::List(_) => {}
+        Shape::Text
+        | Shape::Choice(_)
+        | Shape::Count
+        | Shape::Flag
+        | Shape::Whole(_)
+        | Shape::List(_) => {}
     }
 }
 
@@ -59,6 +64,13 @@ fn written(path: &[&str], shape: &Shape, example: &str) -> String {
     let mut value = match shape {
         // Examples are elements, so one goes in a list of its own.
         Shape::List(_) => json!([example]),
+        // True and false go into a document as themselves, never as the two
+        // words that spell them.
+        Shape::Flag => json!(
+            example
+                .parse::<bool>()
+                .expect("a flag is written down as true or false")
+        ),
         Shape::Text
         | Shape::Choice(_)
         | Shape::Count
@@ -71,6 +83,61 @@ fn written(path: &[&str], shape: &Shape, example: &str) -> String {
         value = Value::Object(Map::from_iter([((*key).to_owned(), value)]));
     }
     value.to_string()
+}
+
+#[test]
+fn every_default_the_schema_publishes_is_the_kind_of_value_its_key_takes() {
+    // What a key falls back to is declared as the text a document would hold,
+    // because what goes in the file is what a reader meets. The schema is
+    // served to editors from a registry, so a default published as the wrong
+    // kind of value is one every editor will insert into somebody's file and
+    // the parser will then refuse. The two are one fact and this is where they
+    // are held together.
+    let published: Value =
+        serde_json::from_str(&crate::shape::schema::schema()).expect("the schema is JSON");
+
+    let mut found = Vec::new();
+    offering(&DOCUMENT, &mut Vec::new(), &mut found);
+    let stating: Vec<_> = found
+        .into_iter()
+        .filter(|(_, field)| field.usual.is_some())
+        .collect();
+
+    // A walk that stopped short would pass for ever, and the place it stops
+    // invisibly is a block the user keys: there is no name in the declaration
+    // to notice missing from the list.
+    assert!(
+        stating.iter().any(|(path, _)| path.contains(&"whatever")),
+        "the walk did not reach a key the user chooses"
+    );
+
+    for (path, _) in stating {
+        let mut at = &published;
+        for name in &path {
+            let next = at
+                .get("properties")
+                .and_then(|properties| properties.get(name))
+                // A key the user chooses is described once, for all of them.
+                .or_else(|| at.get("additionalProperties"));
+            at = next.unwrap_or_else(|| panic!("{path:?} is described by the schema"));
+        }
+
+        let stated = at
+            .get("default")
+            .unwrap_or_else(|| panic!("{path:?} publishes what it falls back to"));
+        let kind = at
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_else(|| panic!("{path:?} says what it takes"));
+
+        let agrees = match kind {
+            "string" => stated.is_string(),
+            "boolean" => stated.is_boolean(),
+            "integer" => stated.is_u64(),
+            other => panic!("{path:?} takes {other}, which this test has not been taught"),
+        };
+        assert!(agrees, "{path:?} takes {kind} and falls back to {stated}");
+    }
 }
 
 #[test]

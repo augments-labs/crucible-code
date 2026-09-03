@@ -17,6 +17,12 @@ change in any release with no deprecation period.
   run to produce the list. A manifest that will not parse is listed with its
   reason rather than hiding the ones that will. Crucible does not yet run
   extensions.
+- **`extensions.<id>.enabled` records which installed extensions you allow.**
+  Installed is not permitted: an extension is off until you turn it on, and the
+  listing says which of the two each one is. The key is read only from the
+  configuration file in your home directory — a project file carrying it is
+  refused, because a committed file turning on code on your machine is a
+  decision only you can make.
 
 ## [0.34.0] - 2026-09-02
 
