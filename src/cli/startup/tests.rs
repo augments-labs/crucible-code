@@ -460,6 +460,7 @@ fn a_startup_with_nothing_to_authenticate_with_leaves_no_session_behind() {
         revealed: &Revealed::new(),
         plan: &Plan::new(),
         putting: &Putting::new(),
+        hosting: &[],
         terminal: true,
         from: &|_| None,
         stored: &StoredCredentials::default(),
@@ -498,6 +499,7 @@ fn a_session_with_nothing_chosen_starts_and_asks_for_no_model() {
         revealed: &Revealed::new(),
         plan: &Plan::new(),
         putting: &Putting::new(),
+        hosting: &[],
         terminal: true,
         from: &|_| None,
         stored: &StoredCredentials::default(),
@@ -534,6 +536,7 @@ fn specified(model: &str, effort: Option<Effort>, settings: &Settings, told: &st
         revealed: &Revealed::new(),
         plan: &Plan::new(),
         putting: &Putting::new(),
+        hosting: &[],
         terminal: true,
         from: &|_| None,
         stored: &StoredCredentials::default(),
@@ -672,6 +675,7 @@ fn reaching_for(named: &str, model: Option<&'static str>) -> Reaching {
             revealed: &Revealed::new(),
             plan: &Plan::new(),
             putting: &Putting::new(),
+            hosting: &[],
             terminal: true,
             from: &|_| Some("sk-test".to_owned()),
             stored: &StoredCredentials::default(),
@@ -743,6 +747,7 @@ fn offered(terminal: bool) -> crucible_runner::Tools {
             revealed: &Revealed::new(),
             plan: &Plan::new(),
             putting: &Putting::new(),
+            hosting: &[],
             terminal,
             from: &|_| None,
             stored: &StoredCredentials::default(),
@@ -882,6 +887,7 @@ fn a_session_is_assembled_with_stable_instructions_and_workspace_context() {
         revealed: &Revealed::new(),
         plan: &Plan::new(),
         putting: &Putting::new(),
+        hosting: &[],
         terminal: true,
         from: &|_| None,
         stored: &StoredCredentials::default(),
@@ -983,4 +989,105 @@ fn the_figures_no_document_reaches_are_the_ones_this_program_ships() {
         "the document above was not read, so the figures it left alone prove nothing"
     );
     assert_eq!(policy(&configured).compaction.keep_tokens, 1_000);
+}
+
+/// A configuration file holding one server, named `docs`, run by `command`.
+fn wrote(command: &str) -> String {
+    format!(r#"{{"mcp": {{"servers": {{"docs": {{"command": "{command}"}}}}}}}}"#)
+}
+
+#[test]
+fn naming_a_server_nobody_wrote_down_fails_before_a_session_file_exists() {
+    // For the reason the missing-credential startup above leaves none: a run
+    // that cannot host what it was asked to host is one that never happened,
+    // and an empty session file would be the newest for this directory.
+    let sample = Sample::new("unknown-server");
+    let (logs, workspace) = (sample.logs(), sample.workspace());
+
+    let Err(problem) = assemble(&Startup {
+        providers: &catalogue(),
+        provider: None,
+        unasked: NOTHING_TO_ASK,
+        model: None,
+        effort: None,
+        resuming: Resuming::No,
+        mode: Mode::Ask,
+        leaving: &crucible_tools::Background::new(),
+        settings: &Settings::default(),
+        sessions: &logs,
+        workspace: &workspace,
+        ledger: &Ledger::new(),
+        revealed: &Revealed::new(),
+        plan: &Plan::new(),
+        putting: &Putting::new(),
+        hosting: &["docs".to_owned()],
+        terminal: true,
+        from: &|_| None,
+        stored: &StoredCredentials::default(),
+        subscriptions: &Subscriptions::production(),
+    }) else {
+        panic!("a run naming a server nothing wrote down was accepted");
+    };
+
+    assert!(matches!(problem, Fatal::NoServer { .. }), "{problem:?}");
+    assert!(
+        !logs.exists(),
+        "a session was written for a run that could not be hosted"
+    );
+}
+
+#[test]
+fn a_run_that_named_a_server_reaches_the_runner_as_a_live_toolset() {
+    // What a hosted run costs, stated where it is paid: the built-in roster is
+    // no longer the between-turn view, because the generation the model is
+    // offered is not assembled until the turn that starts the servers. A run
+    // that named none must therefore keep the roster it always had, which is
+    // the other half of this test and the reason there are two constructors.
+    let sample = Sample::new("hosted");
+    let (logs, workspace) = (sample.logs(), sample.workspace());
+    let directory = sample.root().join("bin");
+    std::fs::create_dir_all(&directory).expect("a temporary directory");
+    let at = directory.join(crucible_tools::program::spelled("docs-mcp"));
+    std::fs::write(&at, "").expect("a temporary directory");
+    let path = directory.display().to_string();
+    let settings = sample.user(&wrote("docs-mcp"));
+
+    let starting = |hosting: &[String]| {
+        assemble(&Startup {
+            providers: &catalogue(),
+            provider: None,
+            unasked: NOTHING_TO_ASK,
+            model: None,
+            effort: None,
+            resuming: Resuming::No,
+            mode: Mode::Ask,
+            leaving: &crucible_tools::Background::new(),
+            settings: &settings,
+            sessions: &logs,
+            workspace: &workspace,
+            ledger: &Ledger::new(),
+            revealed: &Revealed::new(),
+            plan: &Plan::new(),
+            putting: &Putting::new(),
+            hosting,
+            terminal: true,
+            from: &|name| (name == "PATH").then(|| path.clone()),
+            stored: &StoredCredentials::default(),
+            subscriptions: &Subscriptions::production(),
+        })
+        .expect("a run this test wrote the record for")
+    };
+
+    let hosted = starting(&["docs".to_owned()]);
+    assert!(
+        hosted.offering().is_empty(),
+        "a live toolset has no generation until the turn that prepares it"
+    );
+
+    let alone = starting(&[]);
+    assert!(
+        alone.offering().contains(&"bash".to_owned()),
+        "a run that named no server is the built-in roster itself: {:?}",
+        alone.offering()
+    );
 }

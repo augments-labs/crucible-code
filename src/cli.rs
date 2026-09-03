@@ -21,6 +21,7 @@ mod extensions;
 #[cfg(test)]
 mod fake;
 mod gathering;
+mod hosting;
 mod kept;
 mod models;
 mod prompt_cache;
@@ -631,6 +632,11 @@ manifest asks to be allowed to do and the digest crucible took over its bytes, \
 and stops. Nothing installed is run to produce that list, which is the point of \
 being able to read it.
 
+--with-mcp names a server written down under mcp.servers and hosts it for this \
+run, and may be repeated. A configuration file is a list of servers you could \
+run; nothing is started until a run names one. What a hosted server offers is \
+called as mcp:<server>/<tool>, and it runs confined the way a command does.
+
 Flags, session files and config are unstable for the whole 0.x line."
 )]
 struct Cli {
@@ -654,11 +660,16 @@ struct Cli {
     #[arg(short, long, value_name = "RUNG")]
     effort: Option<Effort>,
 
+    /// Host an MCP server written down under mcp.servers, by name. Repeat it
+    /// for each one. Nothing is hosted unless it is named here.
+    #[arg(long = "with-mcp", value_name = "NAME")]
+    with_mcp: Vec<String>,
+
     /// List what is installed in crucible's extensions directory and stop,
     /// without running any of it.
     #[arg(
         long,
-        conflicts_with_all = ["continue", "resume", "model", "effort"]
+        conflicts_with_all = ["continue", "resume", "model", "effort", "with_mcp"]
     )]
     extensions: bool,
 }
@@ -743,6 +754,28 @@ pub(crate) enum Fatal {
         named: Box<str>,
         /// The names the registry held when it was asked, comma-separated.
         has: Box<str>,
+    },
+
+    /// `--with-mcp` named a server no configuration file writes down.
+    ///
+    /// Fatal rather than a run without it: somebody who asked for a server by
+    /// name and got a turn without its tools would be told nothing, and would
+    /// read the silence as the model refusing the work.
+    #[error("no mcp server called {named}; this configuration has {has}")]
+    NoServer {
+        /// What was asked for.
+        named: Box<str>,
+        /// The names `mcp.servers` held, comma-separated.
+        has: Box<str>,
+    },
+
+    /// A written-down server cannot be turned into something startable.
+    #[error("mcp.servers.{server}: {problem}")]
+    Server {
+        /// Whose record could not be resolved.
+        server: Box<str>,
+        /// What about it could not be, naming no value it read.
+        problem: Box<str>,
     },
 
     /// `providers.<name>.baseUrl` is not an address requests can be sent to.
@@ -1136,6 +1169,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         revealed: &revealed,
         plan: &plan,
         putting: &putting,
+        hosting: &cli.with_mcp,
         terminal: renderer.is_terminal(),
         from: &from,
         stored: &keys,

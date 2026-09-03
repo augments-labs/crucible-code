@@ -950,6 +950,25 @@ pub enum ToolsetError {
     /// One registration's source could not be described.
     #[error(transparent)]
     Provenance(#[from] crate::registry::ProvenanceError),
+    /// A live source could not be started, read, or released.
+    ///
+    /// The static roster cannot reach this: it registers what the binary
+    /// compiled in, and nothing outside the process can refuse that. Every
+    /// other implementation of [`Toolset`] starts somebody else's program or
+    /// reads somebody else's file, and without this its only way to report a
+    /// refusal would be to invent a descriptor error about a descriptor that
+    /// was never built.
+    #[error("tool source {id}: {problem}")]
+    Source {
+        /// Which source, by the stable spelling its provenance carries.
+        ///
+        /// Not spelled `source`, which `thiserror` reads as the error this one
+        /// wraps: what refused here is a program or a file rather than another
+        /// error, and there is nothing underneath to chain to.
+        id: Box<str>,
+        /// What went wrong, in the words the source's own failure used.
+        problem: Box<str>,
+    },
     /// Two distinct registrations answer to one provider-visible name.
     #[error("tool {name} is registered by both {first} and {second}")]
     Duplicate {

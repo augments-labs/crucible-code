@@ -84,6 +84,19 @@ impl Hosted {
         crate::catalogue::hello(&mut self.talking)
     }
 
+    /// Waits a different silence out from here on, in both directions.
+    ///
+    /// A handshake and a request are not the same wait. Agreeing a version is
+    /// a peer answering from a table; a call is a peer doing the work, and the
+    /// number that is generous for one is a hang for the other. So the
+    /// conversation starts under whichever the caller opened it with and is
+    /// moved once the greeting is behind it.
+    pub fn patient_for(&mut self, patience: Duration) {
+        let (heard, said) = self.talking.streams_mut();
+        heard.patient_for(patience);
+        said.patient_for(patience);
+    }
+
     /// Reads every tool the server offers, under crucible's own bounds.
     ///
     /// # Errors

@@ -13,11 +13,20 @@ change in any release with no deprecation period.
 - **`mcp.servers` says which MCP servers exist on this machine.** Each record
   names the program, its arguments, its directory, its environment and its
   timing, keyed by the name its tools will be qualified by — `docs` makes the
-  server's `search` tool `mcp:docs/search`. Nothing is started by being written
-  there yet; this release reads and checks the block, refusing a name holding
-  `:` or `/`, a `command` that is neither absolute nor a bare name, and any
-  record written in a file that arrived with a checkout. Secrets go in
-  `envFrom`, which holds variable names on both sides rather than values.
+  server's `search` tool `mcp:docs/search`. The block is read and checked,
+  refusing a name holding `:` or `/`, a `command` that is neither absolute nor
+  a bare name, and any record written in a file that arrived with a checkout.
+  Secrets go in `envFrom`, which holds variable names on both sides rather than
+  values.
+
+- **`--with-mcp <NAME>` hosts one of those servers for the run.** Repeat it for
+  each server you want; a run that names none starts none. A hosted server is
+  started confined the way a command run through `bash` is, given exactly the
+  variables its record names and nothing of crucible's own, asked once what it
+  offers, and stopped when the turn ends. Its tools are called as
+  `mcp:<server>/<tool>`, so nothing a server offers can take over a name
+  crucible already uses. A name nothing wrote down stops the run rather than
+  being left out quietly. `restarts` is still read and not acted on.
 
 ### Changed
 

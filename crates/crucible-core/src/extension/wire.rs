@@ -84,6 +84,15 @@ pub struct Frames<R> {
 }
 
 impl<R: BufRead> Frames<R> {
+    /// The stream underneath, for what only it can be asked.
+    ///
+    /// Framing is all this type does; how long the stream waits and what it
+    /// has seen belong to the stream, and a caller that owns both should not
+    /// have to keep a second handle on one of them.
+    pub const fn stream_mut(&mut self) -> &mut R {
+        &mut self.from
+    }
+
     /// Reads frames from `from`.
     #[must_use]
     pub const fn new(from: R) -> Self {
@@ -196,6 +205,11 @@ pub struct Written<W> {
 }
 
 impl<W: Write> Written<W> {
+    /// The stream underneath, for what only it can be asked.
+    pub const fn stream_mut(&mut self) -> &mut W {
+        &mut self.to
+    }
+
     /// Sends frames to `to`.
     #[must_use]
     pub const fn new(to: W) -> Self {

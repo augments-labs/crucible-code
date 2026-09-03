@@ -114,6 +114,11 @@ impl<R: BufRead, W: Write> Talking<R, W> {
         }
     }
 
+    /// The two streams this runs over, for what only they can be asked.
+    pub const fn streams_mut(&mut self) -> (&mut R, &mut W) {
+        (self.heard.stream_mut(), self.said.stream_mut())
+    }
+
     /// Asks the server something and waits for its answer.
     ///
     /// # Errors

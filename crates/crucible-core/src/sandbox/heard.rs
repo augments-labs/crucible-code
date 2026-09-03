@@ -60,6 +60,16 @@ impl<O> Heard<O> {
         Self::with_pause(output, patience, PAUSE)
     }
 
+    /// Waits a different silence out from here on.
+    ///
+    /// A conversation does not have one patience throughout: agreeing a
+    /// protocol version is a handshake with a deadline of its own, and the
+    /// requests after it are the peer doing work. A value fixed at construction
+    /// would make the caller choose which of the two to be wrong about.
+    pub const fn patient_for(&mut self, patience: Duration) {
+        self.patience = patience;
+    }
+
     /// The same, with the pause between polls chosen rather than inherited.
     ///
     /// A test that waits in real milliseconds should wait as few of them as it

@@ -17,7 +17,8 @@ use std::path::{Path, PathBuf};
 /// to be", and where this program happens to be is a directory the model can
 /// write to. A directory that cannot be named from the root is not one crucible
 /// looks in.
-pub(crate) fn on_path(lookup: impl Fn(&str) -> Option<OsString>, program: &str) -> Option<PathBuf> {
+#[must_use]
+pub fn on_path(lookup: impl Fn(&str) -> Option<OsString>, program: &str) -> Option<PathBuf> {
     let path = lookup("PATH")?;
     std::env::split_paths(&path)
         .filter(|directory| directory.is_absolute())
@@ -26,7 +27,13 @@ pub(crate) fn on_path(lookup: impl Fn(&str) -> Option<OsString>, program: &str) 
 }
 
 /// What this platform spells `program` as.
-fn spelled(program: &str) -> String {
+///
+/// Beside [`on_path`] because a caller with a bare name needs both answers and
+/// neither is worth deciding twice: an executable is `ffmpeg` on two platforms
+/// and `ffmpeg.exe` on the third, and a lookup that skips this finds nothing on
+/// the one that is different.
+#[must_use]
+pub fn spelled(program: &str) -> String {
     if cfg!(windows) {
         format!("{program}.exe")
     } else {
