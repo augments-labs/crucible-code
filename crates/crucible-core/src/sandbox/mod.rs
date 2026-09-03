@@ -14,9 +14,13 @@
 
 mod audit;
 mod capability;
+mod finish;
 mod guardrail;
+mod heard;
 mod manifest;
+mod muttered;
 mod policy;
+mod said;
 mod service;
 
 pub use audit::{
@@ -29,15 +33,18 @@ pub use capability::{
     SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities, SandboxCapability,
     SandboxCapabilityError, SandboxFeature,
 };
+pub use finish::Finish;
 pub use guardrail::{
     MAX_SANDBOX_GUARDRAIL_BYTES, MAX_SANDBOX_GUARDRAIL_LAYERS, MAX_SANDBOX_GUARDRAIL_RULES,
     MAX_SANDBOX_GUARDRAIL_WORDS, SandboxCommandPolicy, SandboxCommandRule, SandboxCommandStage,
     SandboxGuardrailDecision, SandboxGuardrailEffect, SandboxGuardrailError,
 };
+pub use heard::Heard;
 pub use manifest::{
     MAX_SANDBOX_MANIFEST_BYTES, MAX_SANDBOX_MANIFEST_ENTRIES, MAX_SANDBOX_MANIFEST_FILE_BYTES,
     SandboxManifest, SandboxManifestEntry, SandboxManifestError,
 };
+pub use muttered::Muttered;
 pub use policy::{
     MAX_SANDBOX_FILESYSTEM_RULES, MAX_SANDBOX_HOST_BYTES, MAX_SANDBOX_NETWORK_ENDPOINTS,
     MAX_SANDBOX_PATH_BYTES, MAX_SANDBOX_PATTERN_COMPONENTS, MAX_SANDBOX_UNREADABLE_PATTERNS,
@@ -45,6 +52,7 @@ pub use policy::{
     SandboxNetworkEndpoint, SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxPolicy,
     SandboxPolicyError, SandboxResourceLimits, SandboxUnreadablePattern,
 };
+pub use said::Said;
 pub use service::{
     MAX_SANDBOX_COMMAND_ARGUMENTS, MAX_SANDBOX_COMMAND_BYTES, MAX_SANDBOX_CREDENTIAL_HANDLE_BYTES,
     MAX_SANDBOX_ENVIRONMENT_BYTES, MAX_SANDBOX_ENVIRONMENT_ENTRIES,

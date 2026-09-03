@@ -9,14 +9,8 @@
 //! Core alone, deliberately. A host that named a concrete sandbox backend or
 //! read a settings document would be deciding what it is only supposed to run.
 
-mod heard;
 mod hosted;
-mod muttered;
 mod restarts;
-mod said;
 
-pub use heard::Heard;
-pub use hosted::{Ended, Finish, Hosted, Unstarted};
-pub use muttered::Muttered;
+pub use hosted::{Ended, Hosted, Unstarted};
 pub use restarts::{Ambiguity, NoRestart, Restarting, Restarts};
-pub use said::Said;

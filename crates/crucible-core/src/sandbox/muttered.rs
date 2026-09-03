@@ -2,17 +2,17 @@
 //!
 //! Standard error is not part of the protocol, and that is exactly why it needs
 //! an owner. The sandbox gives every command a pipe for it whether anybody is
-//! reading or not, and a pipe nobody reads fills — at which point the extension
+//! reading or not, and a pipe nobody reads fills — at which point the program
 //! blocks in a write crucible is not waiting on, having said nothing wrong. A
-//! host that leaves standard error alone is a host that hangs on an extension
+//! host that leaves standard error alone is a host that hangs on a program
 //! for being talkative.
 //!
 //! So it is drained, on a thread, and thrown away except for the beginning. The
-//! beginning rather than the end because the question this answers is why an
-//! extension stopped, and the first thing that went wrong says that; what
+//! beginning rather than the end because the question this answers is why a
+//! program stopped, and the first thing that went wrong says that; what
 //! follows is usually the same thing again with the process falling over on top
 //! of it. How much was dropped is kept too, because a bound nobody is told
-//! about reads as an extension that went quiet.
+//! about reads as a program that went quiet.
 
 use std::fmt::{self, Write as _};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -20,13 +20,13 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use crucible_core::{SandboxOutput, SandboxRead};
+use crate::{SandboxOutput, SandboxRead};
 
-/// How much of one extension's complaint is kept.
+/// How much of one program's complaint is kept.
 ///
 /// Enough for a stack trace or a loader's list of what it could not find, and
 /// far short of anything worth streaming. This is a diagnostic, not an output
-/// channel: an extension with something to say to crucible has a protocol for
+/// channel: a program with something to say to crucible has a protocol for
 /// saying it.
 const KEPT: usize = 8 * 1024;
 
@@ -61,6 +61,21 @@ impl Muttered {
     #[must_use]
     pub fn draining<O: SandboxOutput + 'static>(output: O) -> Self {
         Self::with_pause(output, PAUSE)
+    }
+
+    /// A standard error that will never say anything.
+    ///
+    /// For a process the sandbox gave no such stream. Nothing in this
+    /// repository's own backends does that, and a host carrying an `Option`
+    /// through every use of this would be spelling out that possibility
+    /// everywhere in exchange for nothing. No thread, because there is no
+    /// stream for one to read.
+    #[must_use]
+    pub fn silent() -> Self {
+        Self {
+            kept: Arc::new(Mutex::new(Kept::default())),
+            done: Arc::new(AtomicBool::new(true)),
+        }
     }
 
     /// The same, with the pause between polls chosen rather than inherited.
@@ -98,7 +113,7 @@ impl Muttered {
         Self { kept, done }
     }
 
-    /// What the extension said, as text, saying so where it was cut short.
+    /// What the program said, as text, saying so where it was cut short.
     ///
     /// Lossy, because standard error is whatever the program wrote and a
     /// diagnostic that cannot be shown because of one bad byte is worse than a
@@ -115,7 +130,7 @@ impl Muttered {
             let _footnote = write!(
                 said,
                 "\n[{} further bytes were dropped: crucible keeps the first \
-                 {KEPT} bytes an extension writes to standard error]",
+                 {KEPT} bytes a program writes to standard error]",
                 held.dropped
             );
         }
@@ -142,7 +157,7 @@ impl fmt::Debug for Muttered {
 impl Drop for Muttered {
     /// Tells the drain to stop, without waiting for it to notice.
     ///
-    /// Joining would mean waiting out one pause on every extension that ends,
+    /// Joining would mean waiting out one pause on every program that ends,
     /// and the thread holds nothing anybody else is about to want: the stream
     /// closes when it lets go of it, which is the only thing left to happen.
     fn drop(&mut self) {

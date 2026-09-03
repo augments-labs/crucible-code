@@ -6,7 +6,7 @@ use std::fmt::Write as _;
 use std::io;
 use std::time::{Duration, Instant};
 
-use crucible_core::{Over, SandboxOutput, SandboxRead, Speaking, Turn};
+use crate::{Over, SandboxOutput, SandboxRead, Speaking, Turn};
 
 use super::Heard;
 
@@ -40,7 +40,7 @@ enum Step {
 /// A confined stream that does what it was told to, then goes quiet forever.
 ///
 /// Running out of script is silence rather than an ending, because a hung
-/// extension is exactly a process that is still there and has stopped talking.
+/// program is exactly a process that is still there and has stopped talking.
 struct Says {
     /// What is left to do.
     steps: VecDeque<Step>,
@@ -111,7 +111,7 @@ fn because(over: &Over) -> String {
 }
 
 #[test]
-fn what_an_extension_says_arrives_as_a_turn() {
+fn what_a_program_says_arrives_as_a_turn() {
     let mut talk = hearing([
         Step::Says(r#"{"id":1,"method":"tools/list","params":{}}"#),
         Step::Closes,
@@ -127,7 +127,7 @@ fn what_an_extension_says_arrives_as_a_turn() {
 
 /// The reason this type exists. A stream that answers "nothing yet" is not a
 /// stream that has ended, and treating the two alike would end a conversation
-/// every time an extension took a breath.
+/// every time a program took a breath.
 ///
 /// How long a poll waits is not what is being asked here, so it waits for no
 /// time at all. Three inherited pauses are fifteen milliseconds of the fifty
@@ -155,7 +155,7 @@ fn a_pause_is_not_an_ending() {
 }
 
 /// Patience is spent on one silence and handed back whenever something is
-/// said. A budget for the whole conversation would kill an extension for the
+/// said. A budget for the whole conversation would kill a program for the
 /// crime of being useful for longer than crucible guessed.
 #[test]
 fn patience_is_for_one_silence_and_not_for_the_conversation() {
@@ -191,7 +191,7 @@ fn patience_is_for_one_silence_and_not_for_the_conversation() {
 /// A peer that has stopped reading and a peer that is merely slow look the
 /// same from here, so the only honest answer is a deadline crucible chose.
 #[test]
-fn an_extension_that_says_nothing_for_long_enough_is_given_up_on() {
+fn a_program_that_says_nothing_for_long_enough_is_given_up_on() {
     let mut talk = patiently([Step::Waits], PAUSE);
 
     let began = Instant::now();
@@ -210,7 +210,7 @@ fn an_extension_that_says_nothing_for_long_enough_is_given_up_on() {
 }
 
 /// Bytes past the output ceiling are gone, and one of them was a newline. The
-/// reader has lost the boundary the extension was stating, so what is left is
+/// reader has lost the boundary the program was stating, so what is left is
 /// not a shorter conversation but a stream that cannot be framed at all.
 #[test]
 fn a_stream_with_a_hole_in_it_cannot_be_framed() {
