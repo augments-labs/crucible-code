@@ -101,6 +101,10 @@
           "$schema": {
             "type": "string"
           },
+          "config": {
+            "description": "Settings for the extension itself, in whatever names its own documentation gives. Read only from the configuration file in your home directory",
+            "type": "object"
+          },
           "enabled": {
             "default": false,
             "description": "Whether crucible may run this extension. Read only from the configuration file in your home directory",

@@ -225,6 +225,27 @@ impl Settings {
             .unwrap_or(false)
     }
 
+    /// The names written under this extension's `config` block.
+    ///
+    /// The names and not what they were set to. Crucible does not know what any
+    /// of these mean, so it cannot tell which of them holds a token somebody
+    /// pasted — and a listing that printed the values would be this program
+    /// putting a credential on a screen to describe a key it cannot read.
+    ///
+    /// Empty covers a block nobody wrote, a block written empty, and an
+    /// extension nobody has mentioned at all. They are one answer here because
+    /// they are one answer to whoever asked: nothing was set.
+    #[must_use]
+    pub fn extension_settings(&self, id: &str) -> Vec<&str> {
+        self.value
+            .get("extensions")
+            .and_then(|block| block.get(id))
+            .and_then(|one| one.get("config"))
+            .and_then(Value::as_object)
+            .map(|written| written.keys().map(String::as_str).collect())
+            .unwrap_or_default()
+    }
+
     /// Effective operating-system confinement mode.
     #[must_use]
     pub const fn sandbox_mode(&self) -> crucible_core::SandboxMode {
@@ -480,5 +501,46 @@ mod tests {
         assert!(!settings.extension_enabled("acme.quiet"));
         assert!(!settings.extension_enabled("acme.never-mentioned"));
         assert!(!Settings::default().extension_enabled("acme.reviewer"));
+    }
+
+    #[test]
+    fn the_names_written_for_an_extension_come_back_without_what_was_set() {
+        // The names alone, because this is what the listing shows and a value
+        // is the one part that could be a token somebody pasted. What crucible
+        // knows about them is that they were written; what they mean is the
+        // extension's.
+        let user = Document::sample(
+            r#"{"extensions": {"acme.reviewer": {"enabled": true, "config": {
+                                 "style": "terse", "token": "sk-not-a-real-one",
+                                 "depth": 3}},
+                               "acme.quiet": {"enabled": true, "config": {}},
+                               "acme.plain": {"enabled": true}}}"#,
+            Origin::User,
+        );
+        let settings = Settings::resolve(vec![user]);
+
+        // Sorted, because the document is read into a map that holds its keys
+        // that way. A listing whose rows moved between two runs of a program
+        // nobody changed would read as something having happened.
+        assert_eq!(
+            settings.extension_settings("acme.reviewer"),
+            vec!["depth", "style", "token"]
+        );
+
+        // Three ways of having nothing written, all one answer: the caller is
+        // showing a person what was set, and a block left empty and a block
+        // never opened are the same thing to them.
+        assert!(settings.extension_settings("acme.quiet").is_empty());
+        assert!(settings.extension_settings("acme.plain").is_empty());
+        assert!(
+            settings
+                .extension_settings("acme.never-mentioned")
+                .is_empty()
+        );
+        assert!(
+            Settings::default()
+                .extension_settings("acme.reviewer")
+                .is_empty()
+        );
     }
 }

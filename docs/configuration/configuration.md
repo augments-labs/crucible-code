@@ -561,6 +561,7 @@ acme.reviewer 1.4.0
   gives     tools
   hosted    yes
   enabled   no
+  config    nothing
   digest    sha256:810cb273aa0d388bf206a0685138577efc74b078759f6921d166539580d61e16
 
 nothing runs until its enabled key is true in your home configuration file
@@ -631,6 +632,46 @@ home directory
 Both project files can be committed, so a repository carrying that key would be
 a checkout deciding that code on your machine may run. Whoever is running
 crucible is the only one who can answer that, in the one file only they write.
+
+### Configuring one
+
+An extension's own settings go in a `config` block beside `enabled`, under names
+its documentation gives rather than any crucible knows:
+
+```json
+{
+  "extensions": {
+    "acme.reviewer": {
+      "enabled": true,
+      "config": { "style": "terse", "rules": ["no-unwrap"], "depth": 3 }
+    }
+  }
+}
+```
+
+Nothing inside is checked, because there is nothing here to check it against:
+crucible has never read that extension's documentation, and refusing a key it
+does not recognise would mean deleting a line the extension told you to write.
+Any JSON goes in — strings, numbers, lists, blocks inside blocks — and the only
+thing crucible insists on is that the block is a block:
+
+```
+crucible: /home/you/.crucible/config.json: extensions.acme.reviewer.config wants
+an object of the extension's own settings at line 5, column 7
+```
+
+The listing names what you wrote and never what you set it to, because crucible
+cannot tell which of those names holds a key you pasted:
+
+```
+  enabled   yes
+  config    depth, rules, style
+```
+
+`config` is read only from your home file, like `enabled` and for the same
+reason one step removed: crucible cannot read these names, so it cannot tell a
+harmless one from somewhere to send the checkout. A key whose danger it has no
+way to weigh is not one a committed file may write on your behalf.
 
 A directory that cannot be read does not hide the ones that can. Each is listed
 under its own heading with the reason:

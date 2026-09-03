@@ -50,12 +50,16 @@ fn offering(
         // Nothing below to reach. Spelled out rather than closed with a
         // wildcard, so a shape that later does hold fields has to be decided
         // about here instead of dropping out of the walk in silence.
+        // Nothing below an `Opaque` either, and for a reason that will not
+        // change: what is under it belongs to an extension, so there is no
+        // field here for this walk to have an opinion about.
         Shape::Text
         | Shape::Choice(_)
         | Shape::Count
         | Shape::Flag
         | Shape::Whole(_)
-        | Shape::List(_) => {}
+        | Shape::List(_)
+        | Shape::Opaque => {}
     }
 }
 
@@ -76,7 +80,8 @@ fn written(path: &[&str], shape: &Shape, example: &str) -> String {
         | Shape::Count
         | Shape::Whole(_)
         | Shape::Fields(_)
-        | Shape::Named { .. } => json!(example),
+        | Shape::Named { .. }
+        | Shape::Opaque => json!(example),
     };
 
     for key in path.iter().rev() {

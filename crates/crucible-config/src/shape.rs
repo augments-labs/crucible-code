@@ -84,6 +84,19 @@ pub(crate) enum Shape {
     /// repeat, which is what lets a list be concatenated across layers instead
     /// of replaced. See `docs/configuration/configuration.md`.
     List(&'static Shape),
+
+    /// An object whose names belong to somebody else.
+    ///
+    /// Not a laxer [`Named`](Shape::Named): that one still says what every
+    /// value under it is, and this cannot, because the program that will read
+    /// these names is not this one. Crucible carries the block from the file to
+    /// whoever it is addressed to and reads nothing on the way.
+    ///
+    /// So there is no unknown key here and no wrong value — only a value that
+    /// is not an object at all, which is the one thing a block being a block
+    /// still asserts. Whatever is inside is the extension's to refuse, in its
+    /// own words, about its own keys.
+    Opaque,
 }
 
 /// One key, and everything the parser and the schema each need about it.
@@ -715,20 +728,40 @@ const PERMISSIONS: &[Field] = &[
 /// the block above declares no names: crucible does not know what is installed
 /// until it has swept the directory, and a list written here would be a second
 /// answer to that going stale on whatever is installed next.
-const EXTENSION: Shape = Shape::Fields(&[Field {
-    name: "enabled",
-    about: "Whether crucible may run this extension. Read only from the configuration file in your home directory",
-    shape: Shape::Flag,
-    // No example: `true` and `false` are the whole of what may be written here,
-    // and the schema already says so.
-    examples: &[],
-    usual: Some("false"),
-    // Turning on somebody else's code is the plainest widening in the document.
-    // Either project filename can be committed, so a repository that could
-    // write this would be granting authority on behalf of whoever cloned it,
-    // to a program that has not been read, before anything has been typed.
-    widens: true,
-}]);
+const EXTENSION: Shape = Shape::Fields(&[
+    Field {
+        name: "enabled",
+        about: "Whether crucible may run this extension. Read only from the configuration file in your home directory",
+        shape: Shape::Flag,
+        // No example: `true` and `false` are the whole of what may be written here,
+        // and the schema already says so.
+        examples: &[],
+        usual: Some("false"),
+        // Turning on somebody else's code is the plainest widening in the document.
+        // Either project filename can be committed, so a repository that could
+        // write this would be granting authority on behalf of whoever cloned it,
+        // to a program that has not been read, before anything has been typed.
+        widens: true,
+    },
+    Field {
+        name: "config",
+        about: "Settings for the extension itself, in whatever names its own documentation gives. Read only from the configuration file in your home directory",
+        shape: Shape::Opaque,
+        // None either. Every name that could stand here belongs to an extension
+        // this build has never heard of, so an example would be crucible making
+        // one up and every editor completing the file with it.
+        examples: &[],
+        // Nothing, rather than an empty block. An extension with no settings
+        // written for it is not the same as one told to use none, and which of
+        // those it is is the extension's own to decide.
+        usual: None,
+        // For the reason `enabled` does, once removed. Crucible cannot read
+        // these names, so it cannot tell a harmless one from a directory to
+        // send the checkout to — and a key whose danger it has no way to weigh
+        // is one a committed file may not write on behalf of whoever cloned it.
+        widens: true,
+    },
+]);
 
 /// The document itself.
 pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
@@ -866,13 +899,16 @@ impl Shape {
             // Empty even where a `Named` declares some, because under one no
             // key is unknown: the sentence this feeds is the one a misspelling
             // gets back, and there is no misspelling of a name the user chose.
+            // Under an `Opaque` there is no misspelling either, and crucible
+            // could not name the alternatives if there were.
             Self::Text
             | Self::Choice(_)
             | Self::Count
             | Self::Flag
             | Self::Whole(_)
             | Self::Named { .. }
-            | Self::List(_) => Vec::new(),
+            | Self::List(_)
+            | Self::Opaque => Vec::new(),
         }
     }
 
@@ -892,7 +928,8 @@ impl Shape {
             | Self::Count
             | Self::Flag
             | Self::Whole(_)
-            | Self::List(_) => None,
+            | Self::List(_)
+            | Self::Opaque => None,
         }
     }
 
@@ -903,12 +940,18 @@ impl Shape {
             Self::Named { others, .. } => {
                 Some(self.declared(name).map_or(*others, |field| &field.shape))
             }
+            // `None` under an `Opaque` for a different reason than under a
+            // scalar: there are keys, and none of them is crucible's to
+            // describe. The merge reads that as the nearer layer's copy
+            // standing, which is the only answer available when nothing here
+            // knows whether two of these names mean the same thing.
             Self::Text
             | Self::Choice(_)
             | Self::Count
             | Self::Flag
             | Self::Whole(_)
-            | Self::List(_) => None,
+            | Self::List(_)
+            | Self::Opaque => None,
         }
     }
 
@@ -926,7 +969,8 @@ impl Shape {
             | Self::Flag
             | Self::Whole(_)
             | Self::Fields(_)
-            | Self::Named { .. } => None,
+            | Self::Named { .. }
+            | Self::Opaque => None,
         }
     }
 
@@ -940,6 +984,12 @@ impl Shape {
             Self::Whole(_) => "a whole number written as a string",
             Self::Fields(_) | Self::Named { .. } => "an object",
             Self::List(_) => "a list",
+            // Said at more length than the plain object above, because a
+            // reader who wrote a string here is somebody following an
+            // extension's own documentation, and the useful thing to tell them
+            // is that its settings go inside a block rather than beside the
+            // key.
+            Self::Opaque => "an object of the extension's own settings",
         }
     }
 }

@@ -422,3 +422,75 @@ fn a_flag_written_as_the_word_for_it_is_refused() {
     let said = err.to_string();
     assert!(said.contains("true or false"), "got {said}");
 }
+
+#[test]
+fn an_extensions_own_settings_are_not_crucibles_to_recognise() {
+    // The keys under `config` were chosen by whoever wrote the extension, and
+    // this program has never read its documentation. Refusing one as unknown
+    // would be crucible claiming a vocabulary it does not have, so the block is
+    // accepted whole — every kind of value JSON has, at whatever depth.
+    mine(
+        r#"{"extensions": {"acme.reviewer": {"enabled": true, "config": {
+             "style": "terse",
+             "rules": ["no-unwrap", "no-panic"],
+             "depth": 3,
+             "strict": false,
+             "thresholds": {"warn": 0.5, "fail": null}
+           }}}}"#,
+    )
+    .unwrap();
+
+    // Including a `$`-prefixed name, which everywhere else in the document
+    // belongs to the standard. Under here it belongs to the extension, and one
+    // refused as a misspelled `$schema` would be crucible correcting a spelling
+    // in somebody else's namespace.
+    mine(r#"{"extensions": {"acme.reviewer": {"config": {"$ref": "x"}}}}"#).unwrap();
+
+    // Empty is a block somebody started and has not filled in yet.
+    mine(r#"{"extensions": {"acme.reviewer": {"config": {}}}}"#).unwrap();
+}
+
+#[test]
+fn an_extensions_own_settings_must_still_be_a_block() {
+    // The one thing crucible does know about this key: it holds an object,
+    // because an object is what gets handed over. Not knowing what the names
+    // inside mean is a different thing from not knowing there are names.
+    for written in [r#""terse""#, "3", "true", r#"["no-unwrap"]"#, "null"] {
+        let err = mine(&format!(
+            r#"{{"extensions": {{"acme.reviewer": {{"config": {written}}}}}}}"#
+        ))
+        .unwrap_err();
+        assert!(
+            matches!(err, ConfigError::WrongType { .. }),
+            "{written}: got {err:?}"
+        );
+
+        // Named at more length than the plain objects elsewhere in the
+        // document. Somebody who wrote a string here was following an
+        // extension's own documentation, and what they need told is that its
+        // settings go inside a block rather than beside the key.
+        let said = err.to_string();
+        assert!(
+            said.contains("wants an object of the extension's own settings"),
+            "{written}: got {said}"
+        );
+    }
+}
+
+#[test]
+fn a_committed_project_file_may_not_configure_an_extension() {
+    // The same refusal `enabled` has, one key along. Crucible cannot read these
+    // names, so it cannot tell a harmless one from a directory to upload the
+    // checkout to — and a key whose danger it has no way to judge is one a file
+    // anybody can commit may not write on behalf of whoever cloned it.
+    let written = r#"{"extensions": {"acme.reviewer": {"config": {"post": "https://elsewhere"}}}}"#;
+
+    let err = shared(written).unwrap_err();
+    assert!(matches!(err, ConfigError::Widening { .. }), "got {err:?}");
+
+    let err = local(written).unwrap_err();
+    assert!(matches!(err, ConfigError::Widening { .. }), "got {err:?}");
+
+    // The key still exists; only its origin was wrong.
+    mine(written).unwrap();
+}
