@@ -8,6 +8,17 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Changed
+
+- **Allowing an extension now records which extension you allowed.**
+  `extensions.<id>.enabled` no longer permits anything on its own: a
+  `digest` key beside it holds the manifest digest `crucible --extensions`
+  prints, and an extension runs only when the two agree. An extension that
+  updates itself, or that something else overwrote, keeps its identifier and
+  loses its digest, so a decision you made about one program cannot be
+  inherited by another. The listing's `enabled` line is now `may run`, and
+  says which half of the decision is missing.
+
 ## [0.35.0] - 2026-09-03
 
 ### Added

@@ -225,6 +225,24 @@ impl Settings {
             .unwrap_or(false)
     }
 
+    /// The manifest digest this extension was agreed to at.
+    ///
+    /// `None` covers a decision that recorded none and an extension nobody has
+    /// mentioned. They are one answer because they are one answer to whoever
+    /// asked: nothing here says which program was agreed to, so nothing here
+    /// lets one run.
+    ///
+    /// This widens for the reason `enabled` does. A committed file that could
+    /// write it would be naming the bytes somebody else's checkout agreed to.
+    #[must_use]
+    pub fn extension_digest(&self, id: &str) -> Option<&str> {
+        self.value
+            .get("extensions")
+            .and_then(|block| block.get(id))
+            .and_then(|one| one.get("digest"))
+            .and_then(Value::as_str)
+    }
+
     /// The names written under this extension's `config` block.
     ///
     /// The names and not what they were set to. Crucible does not know what any
@@ -501,6 +519,27 @@ mod tests {
         assert!(!settings.extension_enabled("acme.quiet"));
         assert!(!settings.extension_enabled("acme.never-mentioned"));
         assert!(!Settings::default().extension_enabled("acme.reviewer"));
+    }
+
+    #[test]
+    fn the_digest_an_extension_was_agreed_to_at_is_read_back_or_is_absent() {
+        // Absent and never-mentioned are one answer for the same reason `off`
+        // is: a decision that names no bytes permits nothing, so there is
+        // nothing for a caller to tell apart.
+        let user = Document::sample(
+            r#"{"extensions": {"acme.reviewer": {"enabled": true, "digest": "sha256:0f1e"},
+                               "acme.plain": {"enabled": true}}}"#,
+            Origin::User,
+        );
+        let settings = Settings::resolve(vec![user]);
+
+        assert_eq!(
+            settings.extension_digest("acme.reviewer"),
+            Some("sha256:0f1e")
+        );
+        assert_eq!(settings.extension_digest("acme.plain"), None);
+        assert_eq!(settings.extension_digest("acme.never-mentioned"), None);
+        assert_eq!(Settings::default().extension_digest("acme.reviewer"), None);
     }
 
     #[test]

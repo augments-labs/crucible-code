@@ -14,7 +14,7 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use crucible_config::{Extensions, Installed, Settings};
-use crucible_core::{ExtensionManifest, ExtensionProtocol, ExtensionUnhosted};
+use crucible_core::{ExtensionDecision, ExtensionManifest, ExtensionProtocol, ExtensionUnhosted};
 
 /// The listing, as one block of text ending in a newline.
 ///
@@ -55,10 +55,13 @@ pub(crate) fn listing(found: &Extensions, settings: &Settings, running: &str) ->
     for one in found.found() {
         let id = &one.manifest().identity().id;
         let decided = Decided {
-            enabled: settings.extension_enabled(id),
+            trust: ExtensionDecision {
+                enabled: settings.extension_enabled(id),
+                digest: settings.extension_digest(id),
+            },
             written: settings.extension_settings(id),
         };
-        any_off |= !decided.enabled;
+        any_off |= one.manifest().trusted(decided.trust).is_err();
 
         said.push('\n');
         describe(&mut said, one, decided, running);
@@ -71,7 +74,8 @@ pub(crate) fn listing(found: &Extensions, settings: &Settings, running: &str) ->
     if any_off {
         let _ = writeln!(
             said,
-            "\nnothing runs until its enabled key is true in your home configuration file",
+            "\nnothing runs until its enabled key is true and its digest key holds the \
+             digest printed above, both in your home configuration file",
         );
     }
 
@@ -100,8 +104,8 @@ pub(crate) fn listing(found: &Extensions, settings: &Settings, running: &str) ->
 /// two more parameters, which is also what keeps [`describe`] inside the
 /// argument count this workspace allows.
 struct Decided<'a> {
-    /// Whether they said it may run.
-    enabled: bool,
+    /// Whether they said it may run, and which manifest they said it about.
+    trust: ExtensionDecision<'a>,
     /// The names they wrote under its `config`, never what they set them to.
     written: Vec<&'a str>,
 }
@@ -114,7 +118,7 @@ struct Decided<'a> {
 /// come after what was claimed and in the order they are decided — whether
 /// this build could run it at all, and then whether anybody said it may.
 fn describe(said: &mut String, one: &Installed, decided: Decided<'_>, running: &str) {
-    let Decided { enabled, written } = decided;
+    let Decided { trust, written } = decided;
     let manifest = one.manifest();
     let identity = manifest.identity();
     let requests = manifest.requests();
@@ -153,9 +157,19 @@ fn describe(said: &mut String, one: &Installed, decided: Decided<'_>, running: &
     // could answer. Said even for an extension nobody has turned on, because
     // the two are different refusals and turning it on would not cure this one.
     let _ = writeln!(said, "  hosted    {}", hosting(manifest, running));
-    // The manifest asks; this is the answer. Spelled as the key's own word so
-    // that the listing and the file a reader goes on to open say one thing.
-    let _ = writeln!(said, "  enabled   {}", if enabled { "yes" } else { "no" });
+    // The manifest asks; this is the answer, and it is one answer rather than
+    // an `enabled` line a reader has to combine with a digest line themselves.
+    // Both keys are in the same block of the same file and neither permits
+    // anything alone, so a listing that printed them apart would be inviting
+    // the reading where a stale pin looks like permission.
+    let _ = writeln!(
+        said,
+        "  may run   {}",
+        match manifest.trusted(trust) {
+            Ok(_) => String::from("yes"),
+            Err(why) => format!("no; {why}"),
+        }
+    );
     // The names only. Crucible has never read this extension's documentation,
     // so it cannot tell which of these holds a key somebody pasted — and a
     // listing is a thing people paste into an issue. Named at all because

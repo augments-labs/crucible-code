@@ -731,7 +731,7 @@ const PERMISSIONS: &[Field] = &[
 const EXTENSION: Shape = Shape::Fields(&[
     Field {
         name: "enabled",
-        about: "Whether crucible may run this extension. Read only from the configuration file in your home directory",
+        about: "Whether crucible may run this extension. Not enough on its own: `digest` says which program was agreed to. Read only from the configuration file in your home directory",
         shape: Shape::Flag,
         // No example: `true` and `false` are the whole of what may be written here,
         // and the schema already says so.
@@ -741,6 +741,23 @@ const EXTENSION: Shape = Shape::Fields(&[
         // Either project filename can be committed, so a repository that could
         // write this would be granting authority on behalf of whoever cloned it,
         // to a program that has not been read, before anything has been typed.
+        widens: true,
+    },
+    Field {
+        name: "digest",
+        about: "The manifest digest this extension was agreed to at, as --extensions prints it. Read only from the configuration file in your home directory",
+        shape: Shape::Text,
+        // No example. Every digest is over one particular file, so a specimen
+        // here would be a value nobody's installation has and every editor
+        // offers to complete the field with.
+        examples: &[],
+        // Nothing. A digest crucible chose would be crucible agreeing to an
+        // extension on the reader's behalf, which is the one thing this field
+        // exists to stop.
+        usual: None,
+        // For the reason `enabled` does, and it is the same widening: a
+        // committed file that could write this would be answering which
+        // program was agreed to, on behalf of whoever cloned the checkout.
         widens: true,
     },
     Field {

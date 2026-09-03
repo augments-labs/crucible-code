@@ -608,6 +608,7 @@ pub(crate) mod conversation;
 mod parse;
 pub(crate) mod speaking;
 pub(crate) mod spoken;
+pub(crate) mod trust;
 pub(crate) mod wire;
 
 #[cfg(test)]

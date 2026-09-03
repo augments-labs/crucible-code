@@ -1,5 +1,6 @@
 //! What the listing says about what was found, and about what was not.
 
+use crucible_config::Extensions;
 use crucible_core::ExtensionProtocol;
 
 use super::listing;
@@ -24,6 +25,23 @@ fn manifest(id: &str) -> String {
   "contributions": ["tools"]
 }}"#
     )
+}
+
+/// The digest one installed manifest was read at.
+///
+/// Read back out of the sweep rather than written down here. It is the value a
+/// person copies out of the listing into their own file, and a fixture holding
+/// its own copy would be asserting the two agree by writing them both.
+fn agreed(found: &Extensions, id: &str) -> String {
+    found
+        .found()
+        .iter()
+        .find(|one| &*one.manifest().identity().id == id)
+        .expect("an installed extension")
+        .manifest()
+        .identity()
+        .digest
+        .to_string()
 }
 
 /// A manifest naming a protocol and the oldest crucible it says it works with.
@@ -79,8 +97,12 @@ fn one_extension_is_listed_with_what_it_asked_for_and_where_it_came_from() {
     assert!(said.contains("hosted    yes"), "{said}");
     // Installed is not permitted. Somebody reading this list is deciding
     // whether to trust the thing, so the answer to whether it already runs
-    // belongs beside what it asked for.
-    assert!(said.contains("enabled   no"), "{said}");
+    // belongs beside what it asked for — and it says which of the ways of not
+    // being permitted this one is, because they need different things done.
+    assert!(
+        said.contains("may run   no; nobody has said this extension may run"),
+        "{said}"
+    );
     // The digest the parser took over the file's own bytes, so that two
     // listings a week apart say whether the file changed.
     assert!(said.contains("digest    sha256:"), "{said}");
@@ -149,17 +171,54 @@ fn a_short_answer_says_so_before_the_list_rather_than_after_it() {
 }
 
 #[test]
-fn an_extension_the_home_file_turned_on_is_listed_as_enabled() {
+fn an_extension_the_home_file_agreed_to_at_its_own_digest_may_run() {
     let sample = Sample::new("extensions-listing-enabled");
     sample.installed("reviewer", &manifest("acme.reviewer"));
-    sample.configured(r#"{"extensions": {"acme.reviewer": {"enabled": true}}}"#);
+    let found = sample.discovered();
+    let settings = sample.user(&format!(
+        r#"{{"extensions": {{"acme.reviewer": {{"enabled": true,
+             "digest": "{}"}}}}}}"#,
+        agreed(&found, "acme.reviewer"),
+    ));
 
-    let said = listing(&sample.discovered(), &sample.decided(), RUNNING);
+    let said = listing(&found, &settings, RUNNING);
 
-    assert!(said.contains("enabled   yes"), "{said}");
+    assert!(said.contains("may run   yes"), "{said}");
     // The remedy is for the ones that are off. Said over a list where nothing
     // is, it sends a reader to change a file that is already right.
     assert!(!said.contains("nothing runs until"), "{said}");
+}
+
+#[test]
+fn a_decision_that_names_no_manifest_or_names_another_one_is_told_apart() {
+    // Both are enabled, so a listing that printed only that would show two
+    // extensions as permitted when neither is. What separates them is what
+    // whoever reads it has to do: write the digest down, or find out why the
+    // file they agreed to is not the file that is there.
+    let sample = Sample::new("extensions-listing-unpinned");
+    sample.installed("one", &manifest("acme.one"));
+    sample.installed("two", &manifest("acme.two"));
+    let found = sample.discovered();
+    let settings = sample.user(
+        r#"{"extensions": {"acme.one": {"enabled": true},
+                           "acme.two": {"enabled": true,
+                                        "digest": "sha256:beef"}}}"#,
+    );
+
+    let said = listing(&found, &settings, RUNNING);
+
+    assert!(
+        said.contains("may run   no; no digest says which program was agreed to"),
+        "{said}"
+    );
+    assert!(
+        said.contains(
+            "may run   no; the manifest has changed since it was agreed to at sha256:beef"
+        ),
+        "{said}"
+    );
+    // Neither is permitted, so the remedy still belongs at the foot of the list.
+    assert_eq!(said.matches("nothing runs until").count(), 1, "{said}");
 }
 
 #[test]
@@ -249,17 +308,21 @@ fn the_settings_written_for_an_extension_are_named_but_never_quoted() {
     // to find out it was one.
     let sample = Sample::new("extensions-listing-configured");
     sample.installed("reviewer", &manifest("acme.reviewer"));
-    let settings = sample.user(
-        r#"{"extensions": {"acme.reviewer": {"enabled": true, "config": {
-             "style": "terse", "token": "sk-not-a-real-one"}}}}"#,
-    );
+    let found = sample.discovered();
+    let settings = sample.user(&format!(
+        r#"{{"extensions": {{"acme.reviewer": {{"enabled": true,
+             "digest": "{}", "config": {{
+             "style": "terse", "token": "sk-not-a-real-one"}}}}}}}}"#,
+        agreed(&found, "acme.reviewer"),
+    ));
 
-    let said = listing(&sample.discovered(), &settings, RUNNING);
+    let said = listing(&found, &settings, RUNNING);
 
-    // Directly under `enabled`, because both were written in the same block of
-    // the same file and the pair read as one answer: allowed, and told this.
+    // Directly under whether it may run, because both were written in the same
+    // block of the same file and the pair read as one answer: allowed, and
+    // told this.
     assert!(
-        said.contains("enabled   yes\n  config    style, token"),
+        said.contains("may run   yes\n  config    style, token"),
         "{said}"
     );
     assert!(!said.contains("terse"), "{said}");
