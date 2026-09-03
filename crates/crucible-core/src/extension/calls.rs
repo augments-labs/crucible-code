@@ -57,10 +57,18 @@ pub enum CallError {
 /// `T` is whatever the host needs back when the answer comes — the method that
 /// was asked for, somewhere to put the result, whatever it is. Held here rather
 /// than named here, so this stays about keeping calls straight.
+///
+/// A call crucible has given up on stays in the table with nothing against it.
+/// It has to: the extension was never told, so it may still answer, and an
+/// answer this could not place would read as the far end inventing a call.
+/// Keeping the identifier is also what bounds giving up — a call crucible
+/// abandoned holds its place among [`EXTENSION_CALLS`] until the extension
+/// says something about it, so a host that gives up in a loop runs out of room
+/// rather than out of memory.
 #[derive(Debug)]
 pub struct Asked<T> {
-    /// What is being waited on, by call.
-    waiting: BTreeMap<CallId, T>,
+    /// What is being waited on, by call, or nothing where it was given up on.
+    waiting: BTreeMap<CallId, Option<T>>,
     /// The next identifier to hand out, or nothing once they run out.
     next: Option<u64>,
 }
@@ -105,22 +113,48 @@ impl<T> Asked<T> {
         let number = self.next.ok_or(CallError::Exhausted)?;
         let id = CallId::new(number);
         self.next = number.checked_add(1);
-        self.waiting.insert(id, about);
+        self.waiting.insert(id, Some(about));
         Ok(id)
     }
 
     /// Takes back what was remembered against one call.
+    ///
+    /// `Ok(None)` is an answer to a call crucible gave up on, which is a
+    /// perfectly ordinary thing for the far end to send and nothing for the
+    /// host to do anything about; it is told apart here rather than upstairs
+    /// so that only this table has to know a given-up call still exists.
     ///
     /// # Errors
     ///
     /// [`CallError::Unknown`] where nothing was waiting under it, which covers
     /// both an identifier crucible never handed out and one it already
     /// collected an answer for.
-    pub fn answered(&mut self, id: CallId) -> Result<T, CallError> {
+    pub fn answered(&mut self, id: CallId) -> Result<Option<T>, CallError> {
         self.waiting.remove(&id).ok_or(CallError::Unknown { id })
     }
 
-    /// How many calls are still waiting.
+    /// Stops waiting on one call, taking back what was remembered against it.
+    ///
+    /// The call is not over — the extension was not told and may still be
+    /// working — but crucible owes its own caller an answer now rather than
+    /// whenever the far end gets there.
+    ///
+    /// # Errors
+    ///
+    /// [`CallError::Unknown`] where nothing was waiting under it, which covers
+    /// giving up twice on the same call.
+    pub fn given_up(&mut self, id: CallId) -> Result<T, CallError> {
+        self.waiting
+            .get_mut(&id)
+            .and_then(Option::take)
+            .ok_or(CallError::Unknown { id })
+    }
+
+    /// How many calls are in flight, including ones crucible gave up on.
+    ///
+    /// Given-up calls are counted because they still hold their place: the
+    /// extension has not answered them, and crucible is still obliged to
+    /// recognise the identifier when it does.
     #[must_use]
     pub fn waiting(&self) -> usize {
         self.waiting.len()
@@ -130,9 +164,14 @@ impl<T> Asked<T> {
     ///
     /// For the far end going away. A call nobody will ever answer has to become
     /// a failure the host reports, because the alternative is whatever was
-    /// waiting on it waiting for the length of the run.
+    /// waiting on it waiting for the length of the run. A call crucible gave up
+    /// on is not among them: the host was handed what it was waiting on at the
+    /// moment it gave up, and one call owes one final answer, not two.
     pub fn abandoned(&mut self) -> Vec<(CallId, T)> {
-        std::mem::take(&mut self.waiting).into_iter().collect()
+        std::mem::take(&mut self.waiting)
+            .into_iter()
+            .filter_map(|(id, about)| about.map(|about| (id, about)))
+            .collect()
     }
 }
 

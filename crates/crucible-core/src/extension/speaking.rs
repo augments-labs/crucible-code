@@ -154,10 +154,10 @@ impl<R: BufRead, W: Write, T> Speaking<R, W, T> {
                 return Err(Over::Finished);
             }
             match self.next() {
-                // A refusal is crucible's own word about a call it declined, so
-                // it goes out here and the loop reads on. The host is never
-                // told: there is nothing about a call crucible did not take on
-                // for it to decide.
+                // A refusal is crucible's own word about a call it declined,
+                // and a late answer is one it gave up on. Both go no further:
+                // there is nothing about a call crucible did not take on, or
+                // has already reported, for the host to decide.
                 Ok(None) => {}
                 Ok(Some(turn)) => return Ok(turn),
                 Err(over) => {
@@ -180,6 +180,7 @@ impl<R: BufRead, W: Write, T> Speaking<R, W, T> {
             Next::Answer { waiting, outcome } => Ok(Some(Turn::Answer { waiting, outcome })),
             Next::Asked { id, method, params } => Ok(Some(Turn::Asked { id, method, params })),
             Next::Told { method, params } => Ok(Some(Turn::Told { method, params })),
+            Next::Late { .. } => Ok(None),
             Next::Refuse(refusal) => self.send(&refusal).map(|()| None),
             Next::Stop(source) => Err(Over::Broke { source }),
         }
@@ -227,6 +228,25 @@ impl<R: BufRead, W: Write, T> Speaking<R, W, T> {
         }
         let spoken = self.talk.answer(id, outcome).map_err(Asking::Refused)?;
         self.said(&spoken)
+    }
+
+    /// Stops waiting on a call crucible made, handing back what it remembered.
+    ///
+    /// Nothing goes on the wire: the extension is not told, and an answer that
+    /// arrives afterwards is recognised and dropped. Once the conversation is
+    /// over this is refused, because by then [`Speaking::ended`] has handed
+    /// back everything that was outstanding and giving up again would be a
+    /// second final answer for one call.
+    ///
+    /// # Errors
+    ///
+    /// [`Asking::Refused`] where that is not a call crucible is waiting on,
+    /// and [`Asking::Over`] once the conversation has ended.
+    pub fn give_up(&mut self, id: CallId) -> Result<T, Asking> {
+        if self.over {
+            return Err(Asking::Over(Over::Finished));
+        }
+        self.talk.give_up(id).map_err(Asking::Refused)
     }
 
     /// Sends what crucible owes, ending the conversation where it cannot.

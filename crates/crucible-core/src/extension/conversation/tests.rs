@@ -280,3 +280,48 @@ fn crucibles_own_refusal_is_something_a_frame_can_carry() {
         CROWDED.len()
     );
 }
+
+/// Giving up is crucible's own act and the extension is never told about it, so
+/// an answer that crosses it is the far end doing exactly what it was asked.
+/// Breaking the conversation over that would kill an extension for a race the
+/// host started.
+#[test]
+fn an_answer_to_a_call_crucible_gave_up_on_does_not_break_the_conversation() {
+    let mut talk = Conversation::new();
+    let (id, _) = talk
+        .ask("search", Value::Null, "the search")
+        .expect("a call");
+
+    assert_eq!(talk.give_up(id), Ok("the search"));
+    assert_eq!(
+        talk.heard(Spoken::Answer {
+            id,
+            outcome: Outcome::Worked(json!({ "found": 3 })),
+        }),
+        Next::Late { id }
+    );
+}
+
+/// The far end going away must not hand back a call the host already has an
+/// answer for. One call owes one final answer.
+#[test]
+fn a_call_crucible_gave_up_on_is_not_handed_back_again_at_the_end() {
+    let mut talk = Conversation::new();
+    let (given_up, _) = talk.ask("search", Value::Null, "gone").expect("a call");
+    let (waiting, _) = talk.ask("read", Value::Null, "kept").expect("another call");
+    talk.give_up(given_up).expect("giving up on the first");
+
+    assert_eq!(talk.ended(), vec![(waiting, "kept")]);
+}
+
+/// Giving up twice would produce a second final answer for one call.
+#[test]
+fn a_call_can_only_be_given_up_on_once() {
+    let mut talk = Conversation::new();
+    let (id, _) = talk
+        .ask("search", Value::Null, "the search")
+        .expect("a call");
+    talk.give_up(id).expect("giving up on it");
+
+    assert_eq!(talk.give_up(id), Err(CallError::Unknown { id }));
+}

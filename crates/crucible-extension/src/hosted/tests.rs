@@ -432,3 +432,29 @@ fn a_call_the_extension_makes_is_answered_on_the_wire() {
         "the answer names the call it settles: {said:?}"
     );
 }
+
+/// A call the host has stopped waiting on is answered right then, and is not
+/// handed back a second time when the extension goes away.
+#[test]
+fn a_call_the_host_gave_up_on_is_not_owed_again_at_the_end() {
+    let (process, _) = Fake::new([Step::Waits], Ending::Exited);
+    let mut hosted = Hosted::<&str>::over(process, PATIENCE).expect("hosted");
+    let kept = hosted
+        .ask("tools/list", json!({}), "still wanted")
+        .expect("asked");
+    let given_up = hosted
+        .ask("tools/call", json!({}), "no longer wanted")
+        .expect("asked again");
+
+    assert_eq!(
+        hosted.give_up(given_up).expect("giving up on it"),
+        "no longer wanted"
+    );
+
+    let ended = hosted.stop(PATIENCE);
+    let [(id, why)] = ended.waiting.as_slice() else {
+        panic!("only the call still wanted comes back: {:?}", ended.waiting);
+    };
+    assert_eq!(*id, kept);
+    assert_eq!(*why, "still wanted");
+}

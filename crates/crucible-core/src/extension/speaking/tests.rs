@@ -266,3 +266,62 @@ fn every_ending_says_what_it_was() {
         "an ending must carry the reason underneath it: {over}"
     );
 }
+
+/// Giving up on a call does not end the conversation, and the answer that
+/// crosses it is read past rather than handed to the host. The host was given
+/// what it was waiting on when it gave up; being told again would be a second
+/// final answer for one call, and ending the conversation over it would kill an
+/// extension for a race crucible started.
+#[test]
+fn an_answer_to_a_call_crucible_gave_up_on_is_read_past() {
+    let mut talk = talking(&[
+        r#"{"id":0,"result":["a kettle"]}"#,
+        r#"{"method":"ready","params":null}"#,
+    ]);
+    let id = talk
+        .ask("search", json!({ "for": "kettle" }), "the search")
+        .expect("a call");
+
+    assert_eq!(talk.give_up(id).expect("giving up on it"), "the search");
+    assert_eq!(
+        talk.turn().expect("the conversation goes on"),
+        Turn::Told {
+            method: "ready".into(),
+            params: Value::Null,
+        }
+    );
+}
+
+/// Once the conversation is over, everything outstanding has already been
+/// handed back by `ended`, so giving up again would produce a second final
+/// answer for a call that already has one.
+#[test]
+fn a_call_cannot_be_given_up_on_once_the_conversation_is_over() {
+    let mut talk = talking(&[]);
+    let id = talk
+        .ask("search", Value::Null, "the search")
+        .expect("a call");
+    talk.turn().expect_err("the extension said nothing");
+
+    let refused = talk.give_up(id).expect_err("the conversation is over");
+
+    assert!(
+        matches!(refused, Asking::Over(Over::Finished)),
+        "{refused:?}"
+    );
+}
+
+/// Giving up is not a way to make a call vanish: an identifier crucible is not
+/// waiting on is refused here the same as anywhere else.
+#[test]
+fn a_call_crucible_is_not_waiting_on_cannot_be_given_up_on() {
+    let mut talk = talking(&[]);
+    let invented = CallId::new(7);
+
+    let refused = talk.give_up(invented).expect_err("nothing waits on it");
+
+    assert!(
+        matches!(refused, Asking::Refused(CallError::Unknown { id }) if id == invented),
+        "{refused:?}"
+    );
+}
