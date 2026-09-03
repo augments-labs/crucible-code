@@ -305,6 +305,7 @@ fi
 allowed='crucible-code auth
 crucible-code config
 crucible-code core
+crucible-code extension
 crucible-code privacy
 crucible-code provider
 crucible-code runner
@@ -315,6 +316,7 @@ crucible-code tui
 auth core
 auth privacy
 config core
+extension core
 provider core
 runner core
 runner session

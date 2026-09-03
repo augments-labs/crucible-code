@@ -23,9 +23,10 @@ publish = false
 #   session    -> core, privacy   one append-only log per session
 #   sandbox-broker -> (nothing)   frozen child-status protocol and PID 1 binary
 #   tools      -> core, sandbox-broker
+#   extension  -> core            runs somebody else's program and talks to it
 #   runner     -> core, session   drives turns through traits only
 #   tui        -> core
-#   crucible-code (this package) -> all eight, and is the only place concrete
+#   crucible-code (this package) -> all nine, and is the only place concrete
 #                                   types are wired together
 #
 # `config` sits beside the others rather than above them: it reads files into
@@ -47,6 +48,7 @@ image = { version = "=0.25.10", default-features = false, features = ["png"] }
 crucible-auth = { path = "crates/crucible-auth" }
 crucible-config = { path = "crates/crucible-config" }
 crucible-core = { path = "crates/crucible-core" }
+crucible-extension = { path = "crates/crucible-extension" }
 crucible-privacy = { path = "crates/crucible-privacy" }
 crucible-provider = { path = "crates/crucible-provider" }
 crucible-runner = { path = "crates/crucible-runner" }

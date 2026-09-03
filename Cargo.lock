@@ -391,6 +391,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "crucible-extension"
+version = "0.34.0"
+dependencies = [
+ "crucible-core",
+]
+
+[[package]]
 name = "crucible-privacy"
 version = "0.34.0"
 dependencies = [
