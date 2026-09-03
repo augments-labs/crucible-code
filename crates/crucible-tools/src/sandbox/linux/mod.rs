@@ -238,6 +238,7 @@ impl SandboxSession for LinuxSession {
                 invocation: self.request.invocation_mode(),
                 call_result_key: self.request.call_result_key(),
                 canceller: Some(canceller),
+                speech: command.speech(),
             },
         );
         status_channel.close_writer();

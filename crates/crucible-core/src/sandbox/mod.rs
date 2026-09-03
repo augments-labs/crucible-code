@@ -52,6 +52,6 @@ pub use service::{
     SandboxCredentialHandle, SandboxCredentialProjection, SandboxCredentialProvenance,
     SandboxEnvironment, SandboxError, SandboxInspection, SandboxInvocationMode, SandboxLaunch,
     SandboxNetworkInspection, SandboxOutput, SandboxPlanInspection, SandboxProcess, SandboxRead,
-    SandboxRequest, SandboxRootInspection, SandboxService, SandboxSession, SandboxUsage,
-    SandboxViolation,
+    SandboxRequest, SandboxRootInspection, SandboxService, SandboxSession, SandboxSpeech,
+    SandboxUsage, SandboxViolation,
 };

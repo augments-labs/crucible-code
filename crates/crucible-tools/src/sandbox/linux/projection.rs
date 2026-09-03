@@ -821,6 +821,10 @@ impl ProjectedProcess {
 }
 
 impl SandboxProcess for ProjectedProcess {
+    fn take_stdin(&mut self) -> Option<Box<dyn std::io::Write + Send>> {
+        self.process.take_stdin()
+    }
+
     fn take_stdout(&mut self) -> Option<Box<dyn SandboxOutput>> {
         self.process.take_stdout()
     }

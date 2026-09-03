@@ -176,7 +176,8 @@ fn byte_counts_saturate_instead_of_wrapping() {
 fn a_live_child_is_never_reaped_with_an_unbounded_wait() {
     let mut command = std::process::Command::new("sh");
     command.args(["-c", "sleep 5"]);
-    let mut process = crate::sandbox::process::testing(command).unwrap();
+    let mut process =
+        crate::sandbox::process::testing(command, crucible_core::SandboxSpeech::Closed).unwrap();
     let started = std::time::Instant::now();
 
     let status = super::reap(process.as_mut(), std::time::Duration::from_millis(40)).unwrap();
@@ -195,7 +196,8 @@ fn an_early_return_guard_stops_the_whole_process_group() {
     command
         .args(["-c", "(sleep 0.3; printf x > \"$MARKER\") & wait"])
         .env("MARKER", &base);
-    let process = crate::sandbox::process::testing(command).unwrap();
+    let process =
+        crate::sandbox::process::testing(command, crucible_core::SandboxSpeech::Closed).unwrap();
 
     drop(super::Waited::new(process));
     std::thread::sleep(std::time::Duration::from_millis(450));
