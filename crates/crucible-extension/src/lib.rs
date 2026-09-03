@@ -10,5 +10,7 @@
 //! read a settings document would be deciding what it is only supposed to run.
 
 mod heard;
+mod said;
 
 pub use heard::Heard;
+pub use said::Said;
