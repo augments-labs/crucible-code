@@ -165,6 +165,10 @@ struct Fake {
     speaks: bool,
     /// What happens when it is asked to finish.
     ending: Ending,
+    /// What the sandbox stopped it for, where anything. Reported only once it
+    /// has been stopped, the way a supervisor records one at the moment it acts
+    /// on it rather than while the command is still running.
+    violation: Option<SandboxViolation>,
     /// What a test reads back afterwards.
     watched: Arc<Watched>,
     /// Its redacted report.
@@ -180,11 +184,23 @@ impl Fake {
                 stderr: None,
                 speaks: true,
                 ending,
+                violation: None,
                 watched: Arc::clone(&watched),
                 inspection: inspection(),
             }),
             watched,
         )
+    }
+
+    /// The same process, but one crucible's confinement stopped for `violation`.
+    fn violating(
+        steps: impl IntoIterator<Item = Step>,
+        ending: Ending,
+        violation: SandboxViolation,
+    ) -> (Box<Self>, Arc<Watched>) {
+        let (mut fake, watched) = Self::new(steps, ending);
+        fake.violation = Some(violation);
+        (fake, watched)
     }
 }
 
@@ -230,7 +246,8 @@ impl SandboxProcess for Fake {
     }
 
     fn violation(&self) -> Option<SandboxViolation> {
-        None
+        self.violation
+            .filter(|_| self.watched.stopped.load(Ordering::Relaxed) > 0)
     }
 }
 
@@ -341,6 +358,10 @@ fn stopping_closes_the_input_first_and_reports_a_quiet_ending() {
         );
     };
     assert_eq!(*why, "unanswered");
+    assert_eq!(
+        ended.violation, None,
+        "an extension that was not stopped for anything has nothing to report"
+    );
     assert!(
         until(|| watched.closed.load(Ordering::Relaxed)),
         "crucible's end of the input is closed"
@@ -457,4 +478,27 @@ fn a_call_the_host_gave_up_on_is_not_owed_again_at_the_end() {
     };
     assert_eq!(*id, kept);
     assert_eq!(*why, "still wanted");
+}
+
+/// An extension crucible's own confinement stopped explains itself from
+/// nowhere else: it was killed mid-sentence, so it wrote no complaint and its
+/// conversation simply stopped. The reason has to survive the ending or the
+/// host has nothing to say about it.
+#[test]
+fn an_extension_the_sandbox_stopped_says_what_it_was_stopped_for() {
+    let (process, _) = Fake::violating(
+        [Step::Waits],
+        Ending::Stubborn,
+        SandboxViolation::CommandTime,
+    );
+    let hosted = Hosted::<()>::over(process, PATIENCE).expect("hosted");
+
+    let ended = hosted.stop(Duration::from_millis(20));
+
+    assert_eq!(ended.violation, Some(SandboxViolation::CommandTime));
+    assert!(
+        matches!(ended.finish, Finish::Stopped),
+        "it outlasted its grace: {:?}",
+        ended.finish
+    );
 }
