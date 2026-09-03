@@ -37,17 +37,28 @@ fn exited() -> ExitStatus {
     }
 }
 
+/// An absolute path spelled the way the running platform's path type accepts.
+///
+/// A POSIX root is not absolute on Windows, and a policy refuses a path that is
+/// not. The host these tests are about has no platform in it, so the fixture
+/// takes the local spelling rather than the tests taking a `cfg` that would
+/// leave ten of them unrun on one of the platforms crucible ships to.
+#[cfg(unix)]
+const ROOT: &str = "/workspace";
+#[cfg(windows)]
+const ROOT: &str = r"C:\workspace";
+
 /// A redacted inspection, which every process has to be able to show.
 fn inspection() -> SandboxInspection {
     let policy = SandboxPolicy::new(
         SandboxMode::Required,
         [SandboxFilesystemRule::new(
-            "/workspace",
+            ROOT,
             SandboxFilesystemAccess::ReadWrite,
             SandboxFilesystemProvenance::Workspace,
         )
         .expect("rule")],
-        "/workspace",
+        ROOT,
         SandboxNetworkPolicy::Closed,
         SandboxResourceLimits::default(),
     )
