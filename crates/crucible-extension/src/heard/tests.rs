@@ -11,7 +11,9 @@ use crucible_core::{Over, SandboxOutput, SandboxRead, Speaking, Turn};
 use super::Heard;
 
 /// How long a test sits through one silence. Long next to the pause between
-/// polls, so a machine that oversleeps does not change what a test means.
+/// polls, but not long enough to absorb several of them: an oversleeping
+/// machine stretches every pause a test takes, so a test whose subject is not
+/// timing should take none.
 const PATIENCE: Duration = Duration::from_millis(50);
 
 /// The pause between polls a test runs with. Short, because a test that waits
@@ -126,15 +128,23 @@ fn what_an_extension_says_arrives_as_a_turn() {
 /// The reason this type exists. A stream that answers "nothing yet" is not a
 /// stream that has ended, and treating the two alike would end a conversation
 /// every time an extension took a breath.
+///
+/// How long a poll waits is not what is being asked here, so it waits for no
+/// time at all. Three inherited pauses are fifteen milliseconds of the fifty
+/// this case is allowed, which reads like room until a loaded machine stretches
+/// each one and the case fails on the machine rather than on the code.
 #[test]
 fn a_pause_is_not_an_ending() {
-    let mut talk = hearing([
-        Step::Waits,
-        Step::Waits,
-        Step::Waits,
-        Step::Says(r#"{"method":"ready"}"#),
-        Step::Closes,
-    ]);
+    let mut talk = patiently(
+        [
+            Step::Waits,
+            Step::Waits,
+            Step::Waits,
+            Step::Says(r#"{"method":"ready"}"#),
+            Step::Closes,
+        ],
+        Duration::ZERO,
+    );
 
     let turn = talk.turn();
 
