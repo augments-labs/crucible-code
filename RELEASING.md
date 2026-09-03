@@ -236,19 +236,37 @@ executing whatever the moving `sh.rustup.rs` endpoint serves that day.
    move, so that is the remedy whether or not anybody remembered this
    paragraph.
 
-   A tag that published nothing is the other case, and it is not the same one.
-   When a job fails before `publish`, there is no release, no artifact, and so
-   no checksum for a move to invalidate. Spending a version number on
-   infrastructure that was never the code's fault only leaves the next reader
-   comparing two versions that carry identical code. Confirm it shipped
+   Where that rule comes from decides how far it reaches, so it is worth
+   writing down rather than inheriting. A Go module tag is recorded in a public
+   checksum database the first time anybody fetches it, and a tag that moves
+   afterwards makes every later build of that version fail outright instead of
+   quietly serving different code. crates.io and npm arrive at the same place
+   from the other direction, by refusing to publish over a version that already
+   exists. Container tags are the counter-example, and this repository depends
+   on their being one: `stream9` is meant to move, which is why the release
+   workflow pins a digest underneath it and why repointing that pin is an
+   ordinary commit rather than an incident. So the rule was never about tags. It
+   is about whether something outside this repository has already recorded what
+   a version here meant.
+
+   Crucible publishes to none of those registries. It is a binary distribution,
+   and the only thing that pins a version is the `SHA256SUMS` line the `publish`
+   job uploads with the artifacts. Everything the rule protects hangs off that
+   line, and until `publish` runs there is no line.
+
+   A tag that published nothing is therefore the other case, and it is not the
+   same one. When a job fails before `publish`, there is no release, no
+   artifact, and so no checksum for a move to invalidate. Spending a version
+   number on infrastructure that was never the code's fault only leaves the next
+   reader comparing two versions that carry identical code. Confirm it shipped
    nothing — `gh release view v<version>` answering `release not found` is the
    check — then repair what broke on `main`, relax the `release tags` ruleset,
    move the annotated tag onto the commit carrying the repair, and put the
    ruleset back before anything else. Restoring it is part of the procedure,
    not a follow-up.
 
-   The friction is deliberate. The paragraph above is the usual case; this one
-   is the exception, and it has to be shown to apply before it is used.
+   The friction is deliberate. The published release is the usual case; this
+   one is the exception, and it has to be shown to apply before it is used.
 
 ## If a release must be pulled
 
