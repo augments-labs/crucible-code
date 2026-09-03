@@ -58,16 +58,16 @@ fn offering(
         | Shape::Count
         | Shape::Flag
         | Shape::Whole(_)
-        | Shape::List(_)
+        | Shape::List { .. }
         | Shape::Opaque => {}
     }
 }
 
-/// One example, as the smallest document that would hold it.
-fn written(path: &[&str], shape: &Shape, example: &str) -> String {
-    let mut value = match shape {
+/// One value, spelled the way a document holds it.
+fn spelled(shape: &Shape, example: &str) -> Value {
+    match shape {
         // Examples are elements, so one goes in a list of its own.
-        Shape::List(_) => json!([example]),
+        Shape::List { .. } => json!([example]),
         // True and false go into a document as themselves, never as the two
         // words that spell them.
         Shape::Flag => json!(
@@ -75,17 +75,51 @@ fn written(path: &[&str], shape: &Shape, example: &str) -> String {
                 .parse::<bool>()
                 .expect("a flag is written down as true or false")
         ),
+        // A count goes into a document as a number, and a `Whole` beside it as
+        // the string that one deliberately is.
+        Shape::Count => json!(
+            example
+                .parse::<u64>()
+                .expect("a count is written down as a whole number")
+        ),
         Shape::Text
         | Shape::Choice(_)
-        | Shape::Count
         | Shape::Whole(_)
         | Shape::Fields(_)
         | Shape::Named { .. }
         | Shape::Opaque => json!(example),
-    };
+    }
+}
 
-    for key in path.iter().rev() {
-        value = Value::Object(Map::from_iter([((*key).to_owned(), value)]));
+/// One example, as the smallest document that would hold it.
+///
+/// Smallest, not shortest: a block with a key it cannot do without is written
+/// whole, because the walk refuses a document missing one and an example
+/// pasted into half a block would fail here for the block rather than for
+/// itself.
+fn written(path: &[&str], shape: &Shape, example: &str) -> String {
+    let mut value = spelled(shape, example);
+
+    let mut holding = Vec::new();
+    let mut at = &DOCUMENT;
+    for key in path {
+        holding.push(at);
+        at = at.field(key).expect("every key on the path is a key");
+    }
+
+    for (key, holder) in path.iter().zip(holding).rev() {
+        let mut object = Map::from_iter([((*key).to_owned(), value)]);
+        for field in holder.needed() {
+            if field.name == *key {
+                continue;
+            }
+            let example = field
+                .examples
+                .first()
+                .expect("a key its block cannot do without offers one to write");
+            object.insert(field.name.to_owned(), spelled(&field.shape, example));
+        }
+        value = Value::Object(object);
     }
     value.to_string()
 }

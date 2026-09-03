@@ -203,6 +203,84 @@ pub enum ConfigError {
         at: At,
     },
 
+    /// A program named by a path that is neither absolute nor a bare name.
+    ///
+    /// Named for what the path lacks rather than for how it reads, because
+    /// [`At::Ambiguous`] above already means something else in this file: that
+    /// a position could not be worked out. A path here is not unclear, it is
+    /// missing a root.
+    ///
+    /// Its own refusal rather than [`Relative`](Self::Relative), because a bare
+    /// name is accepted here and the answer "make it absolute" would be wrong
+    /// about half of what may be written. A name with no separator in it is a
+    /// question for `PATH`, which is a rule the reader can state and crucible
+    /// can follow; `./server` is a question for whichever directory crucible
+    /// happened to be started in, which is not written anywhere.
+    #[error(
+        "{file}: {path} is neither an absolute path nor a bare program name{at} \
+         — {found} would be resolved against whichever directory crucible was \
+         started in, so the same record would run a different program from a \
+         different place. Write the whole path, or a bare name for PATH to \
+         answer"
+    )]
+    Unrooted {
+        /// The file, as the user would name it.
+        file: Box<str>,
+        /// The dotted path to the key.
+        path: Box<str>,
+        /// What was written there.
+        found: Box<str>,
+        /// Where the key is, when that can be said.
+        at: At,
+    },
+
+    /// A block missing a key it cannot mean anything without.
+    ///
+    /// Most keys are optional, and a block that leaves one out is a block
+    /// taking the answer crucible states for it. A few say what the block *is*
+    /// — the program an MCP server record would start — and leaving one of
+    /// those out is not a shorter way of writing the block, it is a block that
+    /// says nothing. Which keys those are is declared beside them, so the
+    /// schema marks the same ones required and an editor refuses the file
+    /// before crucible is asked to.
+    #[error("{file}: {path} needs {name}{at} — {said}")]
+    Needed {
+        /// The file, as the user would name it.
+        file: Box<str>,
+        /// The dotted path to the block that is missing it.
+        path: Box<str>,
+        /// The key that has to be there.
+        name: Box<str>,
+        /// That key's own sentence, which says what it is for.
+        said: Box<str>,
+        /// Where the block is, when that can be said.
+        at: At,
+    },
+
+    /// A server identifier holding a character its tool names are qualified
+    /// with.
+    ///
+    /// Every tool a server contributes is named `mcp:<server>/<tool>`, so an
+    /// identifier carrying either separator produces a name that reads back as
+    /// a different server or a different tool. Refused where it is written,
+    /// rather than at the moment a catalogue is committed, because by then the
+    /// file it was written in is gone.
+    #[error(
+        "{file}: mcp.servers.{name} cannot be a server name{at} — its tools \
+         would be called mcp:{name}/<tool>, and {found} in the name makes that \
+         a name that reads back as a different server. Use a name without : or /"
+    )]
+    ServerName {
+        /// The file, as the user would name it.
+        file: Box<str>,
+        /// The identifier as it was written.
+        name: Box<str>,
+        /// The character that cannot appear in it.
+        found: char,
+        /// Where the key is, when that can be said.
+        at: At,
+    },
+
     /// An `env` variable that is not crucible's own, in a file under the
     /// working directory.
     ///

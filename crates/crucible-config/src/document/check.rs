@@ -23,6 +23,16 @@ use super::Origin;
 /// The key naming directories outside the root that tools may reach.
 const DIRECTORIES: &str = "extraDirectories";
 
+/// The key holding the MCP servers a run may be allowed to select.
+const SERVERS: &str = "servers";
+
+/// The two characters a tool name qualifies a server with.
+///
+/// `mcp:docs/search` is the whole vocabulary: the first separates the source
+/// kind from the server and the second the server from its tool. Neither may
+/// appear in a name the qualification is built from.
+const QUALIFIERS: [char; 2] = [':', '/'];
+
 /// Where in a document the walk is standing.
 ///
 /// The two travel together everywhere — a refusal names the path and points at
@@ -81,7 +91,7 @@ impl Reader<'_> {
             Shape::Flag => self.flag(value, shape, spot),
             Shape::Fields(_) => self.fields(value, shape, spot),
             Shape::Named { others, .. } => self.named(value, others, shape, spot),
-            Shape::List(inner) => self.list(value, inner, shape, spot),
+            Shape::List { of, .. } => self.list(value, of, shape, spot),
             Shape::Opaque => self.opaque(value, shape, spot),
         }
     }
@@ -190,6 +200,27 @@ impl Reader<'_> {
             }
 
             self.check(held, &declared.shape, Spot { path: &path, at })?;
+        }
+
+        // After the walk rather than before it, so a block that is wrong about
+        // a key it did write is told about that first. Being told what is
+        // missing from a block whose other value is the wrong kind sends the
+        // reader to the second thing wrong with it.
+        for field in shape.needed() {
+            if object.contains_key(field.name) {
+                continue;
+            }
+            return Err(ConfigError::Needed {
+                file: self.file.into(),
+                path: if spot.path.is_empty() {
+                    "the document".into()
+                } else {
+                    spot.path.into()
+                },
+                name: field.name.into(),
+                said: field.about.into(),
+                at: spot.at,
+            });
         }
         Ok(())
     }
@@ -390,6 +421,61 @@ impl Reader<'_> {
                 found: found.into(),
                 at: At::of(DIRECTORIES, self.text),
             });
+        }
+        Ok(())
+    }
+
+    /// Checks that every MCP server record can be read back to a program and a
+    /// name.
+    ///
+    /// Not a shape rule, for the reason [`directories`](Self::directories) is
+    /// not: a relative command and a name with a colon in it are strings like
+    /// any other, and the shape has nothing to say about either. Here rather
+    /// than where a server is started, because a record is inert until
+    /// something selects it and a refusal that waited for that would arrive
+    /// with the file it is about long closed.
+    pub(super) fn servers(&self, value: &Value) -> Result<(), ConfigError> {
+        let Some(servers) = value
+            .get("mcp")
+            .and_then(|block| block.get(SERVERS))
+            .and_then(Value::as_object)
+        else {
+            return Ok(());
+        };
+
+        for (name, record) in servers {
+            let at = At::of(name, self.text);
+            if let Some(found) = name.chars().find(|held| QUALIFIERS.contains(held)) {
+                return Err(ConfigError::ServerName {
+                    file: self.file.into(),
+                    name: name.as_str().into(),
+                    found,
+                    at,
+                });
+            }
+
+            if let Some(found) = record.get("command").and_then(Value::as_str) {
+                let program = Path::new(found);
+                if !program.is_absolute() && program.components().count() > 1 {
+                    return Err(ConfigError::Unrooted {
+                        file: self.file.into(),
+                        path: format!("mcp.{SERVERS}.{name}.command").into(),
+                        found: found.into(),
+                        at,
+                    });
+                }
+            }
+
+            if let Some(found) = record.get("directory").and_then(Value::as_str)
+                && !Path::new(found).is_absolute()
+            {
+                return Err(ConfigError::Relative {
+                    file: self.file.into(),
+                    path: format!("mcp.{SERVERS}.{name}.directory").into(),
+                    found: found.into(),
+                    at,
+                });
+            }
         }
         Ok(())
     }

@@ -8,6 +8,17 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Added
+
+- **`mcp.servers` says which MCP servers exist on this machine.** Each record
+  names the program, its arguments, its directory, its environment and its
+  timing, keyed by the name its tools will be qualified by — `docs` makes the
+  server's `search` tool `mcp:docs/search`. Nothing is started by being written
+  there yet; this release reads and checks the block, refusing a name holding
+  `:` or `/`, a `command` that is neither absolute nor a bare name, and any
+  record written in a file that arrived with a checkout. Secrets go in
+  `envFrom`, which holds variable names on both sides rather than values.
+
 ### Changed
 
 - **Allowing an extension now records which extension you allowed.**
