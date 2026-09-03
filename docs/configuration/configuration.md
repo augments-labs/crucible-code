@@ -560,11 +560,12 @@ acme.reviewer 1.4.0
   asks for  registerTools, readRunContext
   gives     tools
   hosted    yes
-  enabled   no
+  may run   no; nobody has said this extension may run
   config    nothing
   digest    sha256:810cb273aa0d388bf206a0685138577efc74b078759f6921d166539580d61e16
 
-nothing runs until its enabled key is true in your home configuration file
+nothing runs until its enabled key is true and its digest key holds the digest
+printed above, both in your home configuration file
 ```
 
 Nothing installed is run to produce that list, which is the point of being able
@@ -610,13 +611,40 @@ host that starts one yet.
 
 Installed is not permitted. An extension stays off until you say otherwise, and
 you say it under its own identifier — the `id` its manifest states, which is
-also what the listing prints:
+also what the listing prints. Two keys, not one:
 
 ```json
-{ "extensions": { "acme.reviewer": { "enabled": true } } }
+{
+  "extensions": {
+    "acme.reviewer": {
+      "enabled": true,
+      "digest": "sha256:810cb273aa0d388bf206a0685138577efc74b078759f6921d166539580d61e16"
+    }
+  }
+}
 ```
 
-That key is read from `~/.crucible/config.json` and from nowhere else. Writing
+`enabled` is your answer; `digest` is which program you answered about, copied
+from the listing. Neither permits anything alone, and the listing says which
+half is missing:
+
+```
+  may run   no; no digest says which program was agreed to
+```
+
+An extension keeps its identifier when it updates itself, and it keeps it if
+something else on your machine writes over it. The digest is what does not
+survive either, so a decision recorded against it stops applying at the moment
+the program you agreed to stopped being the one that is there:
+
+```
+  may run   no; the manifest has changed since it was agreed to at sha256:810cb2…
+```
+
+That is not an accusation, and an update you were expecting is the ordinary
+cause. Read the listing again, decide again, and paste the new digest.
+
+Those keys are read from `~/.crucible/config.json` and from nowhere else. Writing
 it in `.crucible/config.json` or `.crucible/config.local.json` is refused rather
 than accepted and ignored:
 
@@ -643,6 +671,7 @@ its documentation gives rather than any crucible knows:
   "extensions": {
     "acme.reviewer": {
       "enabled": true,
+      "digest": "sha256:810cb273aa0d388bf206a0685138577efc74b078759f6921d166539580d61e16",
       "config": { "style": "terse", "rules": ["no-unwrap"], "depth": 3 }
     }
   }
@@ -664,11 +693,11 @@ The listing names what you wrote and never what you set it to, because crucible
 cannot tell which of those names holds a key you pasted:
 
 ```
-  enabled   yes
+  may run   yes
   config    depth, rules, style
 ```
 
-`config` is read only from your home file, like `enabled` and for the same
+`config` is read only from your home file, like `enabled` and `digest` and for the same
 reason one step removed: crucible cannot read these names, so it cannot tell a
 harmless one from somewhere to send the checkout. A key whose danger it has no
 way to weigh is not one a committed file may write on your behalf.

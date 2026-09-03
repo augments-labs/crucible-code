@@ -65,6 +65,7 @@ pub use extension::{
     conversation::{Broken, Conversation, Next},
     speaking::{Asking, Over, Speaking, Turn},
     spoken::{CallId, EXTENSION_SAID_BYTES, Malformed, Outcome, Spoken, SpokenError, Trouble},
+    trust::{ExtensionDecision, ExtensionTrusted, ExtensionUntrusted},
     wire::{EXTENSION_FRAME_BYTES, FrameError, Frames, Written},
 };
 pub use ids::{

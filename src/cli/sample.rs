@@ -133,12 +133,6 @@ impl Sample {
         Extensions::discover(&self.found())
     }
 
-    /// Writes this tree's home configuration file.
-    pub(super) fn configured(&self, document: &str) {
-        fs::create_dir_all(self.home()).expect("a temporary directory");
-        fs::write(self.user_file(), document).expect("a temporary directory");
-    }
-
     /// What this tree's home file decided, and nothing the checkout said.
     pub(super) fn decided(&self) -> Settings {
         Settings::read_home(&self.found()).expect("a readable home file")
