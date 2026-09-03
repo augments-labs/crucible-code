@@ -1,6 +1,6 @@
 ---
 source: tests/whole_screen/main.rs
-expression: window.picture()
+expression: on_the_first_beat(&window.picture())
 ---
 80x24 cursor 20,4 scrolled 0
 |│                                  │                                           │|
@@ -17,7 +17,7 @@ expression: window.picture()
 |● Bash(sleep 30)                                                                |
 |  ⎿ (no output yet) (+2 lines · ctrl+o to expand)                               |
 |                                                                                |
-|the quick brown fox jumps                                                       |
+|It is started. That is all.                                                     |
 |                                                                                |
 |✳ writing (0s · ↓ 4 · esc to interrupt)                                         |
 |                                                                                |

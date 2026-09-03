@@ -78,6 +78,33 @@ fn taller_than_the_window() -> String {
     "the quick brown fox jumps over the lazy dog. ".repeat(40)
 }
 
+/// What [`a_turn_still_running`] answers once the call is away.
+const HELD_ANSWER: &str = "It is started. That is all.";
+
+/// The last word of [`HELD_ANSWER`].
+///
+/// Waiting on it is what makes the rows above a mid-turn panel the same rows
+/// every run: the answer is whole by then, so nothing further can arrive to
+/// move them.
+const HELD_LAST_WORD: &str = "all.";
+
+/// A backgrounded call, and a turn still running behind an answer already whole.
+///
+/// Every case that acts mid-turn wants the same two things: a call in the
+/// transcript to act beside, and a turn that has not ended. An answer long
+/// enough to still be arriving gives the second by accident and takes the first
+/// away — what is drawn is however far the deltas had got when the step landed,
+/// so the picture moves with the machine and a loaded one draws a word fewer of
+/// it. Holding the message open behind a finished answer pins the screen and
+/// leaves the turn exactly where these cases want it.
+fn a_turn_still_running() -> Vendor {
+    Vendor::calling_then_holding(
+        "bash",
+        r#"{"command":"sleep 30","background":true}"#,
+        HELD_ANSWER,
+    )
+}
+
 #[test]
 fn a_first_run_with_nothing_set_up_draws_the_welcome_the_warning_and_the_box() {
     // Nothing typed: this is the whole of what crucible puts on screen before
@@ -225,31 +252,29 @@ fn a_click_on_the_count_opens_the_list_while_a_turn_is_still_running() {
     // on, and the key that opens the list means backgrounding while a turn is
     // waiting — so the mouse is the door here, and a click that moved nothing
     // was the defect. The command is backgrounded by the model, so the count
-    // is up from the moment the call is answered, with the next answer still
-    // arriving over it.
-    // The answer after the call is long enough to still be arriving when the
-    // click lands, which is what keeps the turn running over it: a short one
-    // ends the turn first, and the click finds the at-rest box instead.
-    let answer = taller_than_the_window();
-    let vendor = Vendor::calling(
-        "bash",
-        r#"{"command":"sleep 30","background":true}"#,
-        &answer,
-    );
+    // is up from the moment the call is answered.
+    //
+    // The turn is held open behind a finished answer rather than made long
+    // enough to still be arriving. A still-arriving one put the pace of the
+    // stream into the picture: what stood above the list was however far the
+    // deltas had got when the click landed, so a loaded machine drew one word
+    // fewer of it and the case failed on its own timing rather than on its
+    // subject. Short, because the call has to stay on screen beside the list —
+    // the row the click is aimed at is the one under that box — and an answer
+    // taller than the window pushes it off the top.
+    let vendor = a_turn_still_running();
     let mut window = Watched::allowing("click-count-mid-turn", 60, 24, &vendor, "bash(*)");
 
-    // The first word of the answer after the call is what the catch waits
-    // for: the command is backgrounded and counted by then, the turn is
-    // provably still running, and the count under the box names the row to
-    // click. The spinner keeps the screen beating, so this catches the text
-    // rather than waiting for a stillness that does not come. A narrow
-    // window, so the model's name is the fact that gives way rather than the
-    // count.
-    window.types_and_catches("start it\r", "the quick brown fox");
+    // Waited for by its last word, so every row the click is measured against
+    // is drawn: the command is backgrounded and counted by then, the turn is
+    // provably still running behind the keep-alives, and the count under the
+    // box names the row to click. A narrow window, so the model's name is the
+    // fact that gives way rather than the count.
+    window.types_and_catches("start it\r", HELD_LAST_WORD);
     let at = count_row(&window.picture());
 
-    // The same reason: the answer is still arriving over the list, so opening
-    // it is caught by its heading rather than waited out to a still screen.
+    // Caught by its heading rather than waited out to a still screen: the
+    // spinner of a turn that is still running keeps the screen beating.
     window.clicks_catching(at, 0, "Still running");
 
     insta::assert_snapshot!(window.picture());
@@ -257,22 +282,15 @@ fn a_click_on_the_count_opens_the_list_while_a_turn_is_still_running() {
 
 #[test]
 fn a_command_that_cannot_run_mid_turn_says_so_on_a_panel() {
-    // The answer is long enough that the turn is still running when the
-    // command is sent: a short one ends first and the command lands at the
-    // at-rest box, which is the between-turns path rather than this one.
-    let answer = taller_than_the_window();
-    let vendor = Vendor::calling(
-        "bash",
-        r#"{"command":"sleep 30","background":true}"#,
-        &answer,
-    );
+    // The turn is still running when the command is sent; at an at-rest box
+    // this would be the between-turns path rather than this one.
+    let vendor = a_turn_still_running();
     let mut window = Watched::allowing("refuse-command-mid-turn", 60, 24, &vendor, "bash(*)");
 
-    // The first word of the answer proves the turn is running: the command is
-    // backgrounded and counted, and the answer to it is still arriving. The
-    // spinner keeps the screen beating, so the text is caught rather than
-    // waited out to a stillness that does not come.
-    window.types_and_catches("start it\r", "the quick brown fox");
+    // The last word of the answer proves the turn got that far: the command is
+    // backgrounded and counted by then. Caught rather than settled for, because
+    // the spinner of a turn still running never lets the screen go quiet.
+    window.types_and_catches("start it\r", HELD_LAST_WORD);
 
     // `/logout` removes the key the request now in flight is signed with, so
     // it is the command that must not run mid-turn. What stands instead names
@@ -284,15 +302,10 @@ fn a_command_that_cannot_run_mid_turn_says_so_on_a_panel() {
 
 #[test]
 fn exit_mid_turn_is_refused_with_its_reason() {
-    let answer = taller_than_the_window();
-    let vendor = Vendor::calling(
-        "bash",
-        r#"{"command":"sleep 30","background":true}"#,
-        &answer,
-    );
+    let vendor = a_turn_still_running();
     let mut window = Watched::allowing("exit-mid-turn", 60, 24, &vendor, "bash(*)");
 
-    window.types_and_catches("start it\r", "the quick brown fox");
+    window.types_and_catches("start it\r", HELD_LAST_WORD);
 
     // `/exit` ends the session a running turn owns, so it is refused and says
     // why — it is not a word that names no command.
@@ -306,15 +319,10 @@ fn a_refusal_closed_leaves_a_clean_box() {
     // The turn runs on. `/exit` is refused, the panel closes on esc, and what
     // the box comes back to is a clean one: no command list left standing over
     // it, no `/` to erase, and Enter on a fresh `/` picks a command again.
-    let answer = taller_than_the_window();
-    let vendor = Vendor::calling(
-        "bash",
-        r#"{"command":"sleep 30","background":true}"#,
-        &answer,
-    );
+    let vendor = a_turn_still_running();
     let mut window = Watched::allowing("refusal-close", 80, 24, &vendor, "bash(*)");
 
-    window.types_and_catches("start it\r", "the quick brown fox");
+    window.types_and_catches("start it\r", HELD_LAST_WORD);
     window.types_and_catches("/exit\r", "ends the session");
 
     // Esc closes the panel. The box it comes back to is empty, and the list is
@@ -326,9 +334,8 @@ fn a_refusal_closed_leaves_a_clean_box() {
         "the refused line is gone:\n{clean}"
     );
     assert!(!clean.contains("/clear"), "no list is left open:\n{clean}");
-    // No snapshot: the answer streams on past the catch, so the frame esc's
-    // redraw lands in is not a fixed one. The assertions above are the
-    // behavior; a picture of it would be of whichever frame it caught.
+    // No snapshot: what this case is about is what is *absent* after esc, and
+    // absence is what an assertion says and a picture cannot.
 }
 
 #[test]
@@ -336,15 +343,10 @@ fn a_command_picked_off_the_list_runs_the_marked_one() {
     // `/ex` typed, the down arrow walked to a row, and Enter runs the row the
     // mark is on — not the half-typed word. The list's mark is what a reader
     // has chosen, and a running turn changes nothing about that.
-    let answer = taller_than_the_window();
-    let vendor = Vendor::calling(
-        "bash",
-        r#"{"command":"sleep 30","background":true}"#,
-        &answer,
-    );
+    let vendor = a_turn_still_running();
     let mut window = Watched::allowing("marked-command", 80, 24, &vendor, "bash(*)");
 
-    window.types_and_catches("start it\r", "the quick brown fox");
+    window.types_and_catches("start it\r", HELD_LAST_WORD);
 
     // `/ex` filters to `/exit`; Enter runs the marked row, which the refusal
     // names. A bare-typed-word submission would name no command instead.
@@ -356,15 +358,10 @@ fn a_command_picked_off_the_list_runs_the_marked_one() {
 fn a_bare_slash_is_the_list_opener_not_a_command() {
     // Enter on a box holding only `/` is a reader still choosing, not a
     // submission: the line stays, the list stays open, and nothing is refused.
-    let answer = taller_than_the_window();
-    let vendor = Vendor::calling(
-        "bash",
-        r#"{"command":"sleep 30","background":true}"#,
-        &answer,
-    );
+    let vendor = a_turn_still_running();
     let mut window = Watched::allowing("bare-slash", 80, 24, &vendor, "bash(*)");
 
-    window.types_and_catches("start it\r", "the quick brown fox");
+    window.types_and_catches("start it\r", HELD_LAST_WORD);
     window.types_and_catches("/", "/clear");
 
     // Enter on the bare slash: the list is still open and the box still holds
@@ -410,15 +407,10 @@ fn a_shift_tab_mid_turn_steps_the_mode_the_next_turn_runs_under() {
     // turn is decided under cannot change mid-turn — the runner holding it is
     // on the worker — so the step is held for the next turn, and the row under
     // the box says which mode that is.
-    let answer = taller_than_the_window();
-    let vendor = Vendor::calling(
-        "bash",
-        r#"{"command":"sleep 30","background":true}"#,
-        &answer,
-    );
+    let vendor = a_turn_still_running();
     let mut window = Watched::allowing("mode-mid-turn", 80, 24, &vendor, "bash(*)");
 
-    window.types_and_catches("start it\r", "the quick brown fox");
+    window.types_and_catches("start it\r", HELD_LAST_WORD);
 
     // Shift+Tab: from the running mode one step on.
     window.types_and_catches("\x1b[Z", "allow edits on");
@@ -431,15 +423,10 @@ fn a_mode_command_mid_turn_steps_the_mode_the_next_turn_runs_under() {
     // `/mode` typed mid-turn is the shift+tab step made by name: the mode the
     // running turn is decided under cannot change, so the step is held for the
     // next turn and the row under the box says which mode it reached.
-    let answer = taller_than_the_window();
-    let vendor = Vendor::calling(
-        "bash",
-        r#"{"command":"sleep 30","background":true}"#,
-        &answer,
-    );
+    let vendor = a_turn_still_running();
     let mut window = Watched::allowing("mode-command-mid-turn", 80, 24, &vendor, "bash(*)");
 
-    window.types_and_catches("start it\r", "the quick brown fox");
+    window.types_and_catches("start it\r", HELD_LAST_WORD);
 
     // One step on from ask, the same as one shift+tab.
     window.types_and_catches("/mode\r", "allow edits on");
@@ -450,15 +437,10 @@ fn a_slash_typed_mid_turn_opens_the_command_list() {
     // The turn is still running when `/` is typed. The command list the line
     // opens is the same one the prompt would open between turns, stood above
     // the box while the turn goes on writing behind it.
-    let answer = taller_than_the_window();
-    let vendor = Vendor::calling(
-        "bash",
-        r#"{"command":"sleep 30","background":true}"#,
-        &answer,
-    );
+    let vendor = a_turn_still_running();
     let mut window = Watched::allowing("list-mid-turn", 80, 24, &vendor, "bash(*)");
 
-    window.types_and_catches("start it\r", "the quick brown fox");
+    window.types_and_catches("start it\r", HELD_LAST_WORD);
 
     // `/` typed into the box opens the list above it.
     window.types_and_catches("/", "/clear");
@@ -481,15 +463,10 @@ fn a_model_picked_mid_turn_is_confirmed_then_held() {
     // holding the turn open is what keeps it running rather than the answer
     // going on long enough to: the command it was sent into stays on screen
     // beside the picker, where a picture of a turn still running wants it.
-    let answer = "It is started. That is all.";
-    let vendor = Vendor::calling_then_holding(
-        "bash",
-        r#"{"command":"sleep 30","background":true}"#,
-        answer,
-    );
+    let vendor = a_turn_still_running();
     let mut window = Watched::allowing("model-mid-turn", 100, 24, &vendor, "bash(*)");
 
-    window.types_and_catches("start it\r", "all.");
+    window.types_and_catches("start it\r", HELD_LAST_WORD);
 
     // The picker opens, then a step down and Enter picks a model that is not
     // the one in force. What stands next is the consequence, said and asked
