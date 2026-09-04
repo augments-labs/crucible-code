@@ -791,6 +791,114 @@ mod tests {
         process.stop().expect("cleanup");
     }
 
+    /// Runs a command writing 24 bytes to each stream under `ceiling`, drains
+    /// both to their end, and returns what the caller kept beside what the
+    /// accounting says was captured.
+    fn drained_under(name: &str, ceiling: Option<u64>) -> (usize, crucible_core::SandboxUsage) {
+        let sample = Sample::new(name);
+        let limits = crucible_core::SandboxResourceLimits {
+            output_bytes: ceiling,
+            ..Default::default()
+        };
+        let policy = SandboxPolicy::standard(&sample.workspace())
+            .expect("policy")
+            .with_mode(SandboxMode::Off)
+            .with_limits(limits)
+            .expect("limits");
+        let service = LocalSandbox::new();
+        let mut session = service
+            .prepare(SandboxRequest::new(
+                SandboxId::new(),
+                Ancestry::new(),
+                ToolId::new("counted-output"),
+                policy,
+                SandboxManifest::empty(),
+            ))
+            .expect("session");
+        session.materialize().expect("materialized");
+        let mut process = session
+            .start(
+                SandboxCommand::new(
+                    "/bin/sh",
+                    [
+                        OsString::from("-c"),
+                        OsString::from("head -c 24 /dev/zero; head -c 24 /dev/zero >&2"),
+                    ],
+                    SandboxEnvironment::empty(),
+                )
+                .expect("command"),
+            )
+            .expect("process");
+        let mut streams = [process.take_stdout(), process.take_stderr()];
+        let mut finished = [false, false];
+        let mut retained = 0_usize;
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while finished.iter().any(|done| !done) {
+            for (stream, done) in streams.iter_mut().zip(finished.iter_mut()) {
+                let Some(output) = stream else {
+                    *done = true;
+                    continue;
+                };
+                if *done {
+                    continue;
+                }
+                // Smaller than either stream, so the bytes arrive over several
+                // reads and a counter that added on the wrong edge would show.
+                let mut buffer = [0_u8; 16];
+                match output.read_ready(&mut buffer).expect("read") {
+                    crucible_core::SandboxRead::Bytes(read)
+                    | crucible_core::SandboxRead::Limited { retained: read, .. } => {
+                        retained = retained.saturating_add(read);
+                    }
+                    crucible_core::SandboxRead::Pending => {}
+                    crucible_core::SandboxRead::End => *done = true,
+                }
+            }
+            assert!(Instant::now() < deadline, "streams did not finish");
+            thread::sleep(Duration::from_millis(5));
+        }
+        while process.try_wait().expect("wait").is_none() {
+            assert!(Instant::now() < deadline, "command did not finish");
+            thread::sleep(Duration::from_millis(5));
+        }
+
+        // Reading a stream that already ended is not another 48 bytes, and
+        // asking for the usage twice is a reading rather than an addition.
+        for stream in &mut streams {
+            let Some(output) = stream else {
+                continue;
+            };
+            let mut buffer = [0_u8; 16];
+            assert!(matches!(
+                output.read_ready(&mut buffer).expect("read past the end"),
+                crucible_core::SandboxRead::End
+            ));
+        }
+        let usage = process.usage();
+        assert_eq!(
+            usage.output_bytes,
+            process.usage().output_bytes,
+            "the count moved when it was read"
+        );
+        process.stop().expect("cleanup");
+        (retained, usage)
+    }
+
+    #[test]
+    fn every_captured_byte_is_counted_once_whether_it_was_kept_or_dropped() {
+        // Nothing is dropped, so the two numbers are the same number, and it is
+        // the number of bytes the command actually wrote.
+        let (retained, usage) = drained_under("sandbox-output-counted-once", None);
+        assert_eq!(retained, 48);
+        assert_eq!(usage.output_bytes, 48);
+
+        // Past the ceiling the caller keeps less, and the accounting still
+        // counts each byte exactly once: it is raw capture, not what survived.
+        let (retained, usage) = drained_under("sandbox-output-counted-past", Some(32));
+        assert_eq!(retained, 32);
+        assert_eq!(usage.output_bytes, 48);
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn normal_leader_exit_stops_and_reaps_its_descendants() {
