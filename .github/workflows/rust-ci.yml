@@ -7,16 +7,13 @@ permissions:
   contents: read
 
 jobs:
-  macos-uid:
-    name: macOS adapted UID compatibility (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-15-intel, macos-26]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 8
+  windows-bootstrap:
+    name: Windows final-token bootstrap
+    runs-on: windows-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: sh .github/probes/macos-uid.sh
+      - shell: pwsh
+        run: ./.github/probes/windows-bootstrap.ps1
