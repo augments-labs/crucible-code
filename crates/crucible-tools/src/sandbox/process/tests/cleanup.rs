@@ -1,7 +1,7 @@
 //! Failure regressions exercise the production process owner with per-instance
 //! native-operation faults. Rescue cleanup is outside every observed assertion.
 
-use super::*;
+use super::super::*;
 
 struct Fixture {
     process: Option<LocalProcess>,
@@ -10,34 +10,46 @@ struct Fixture {
 }
 
 impl Fixture {
-    fn new(stage: Option<Stage>) -> Self {
+    fn new(stage: Option<Stage>) -> io::Result<Self> {
         let mut command = Command::new("/bin/sh");
         // The owned stdin writer keeps this builtin alive without descendants.
         command.args(["-c", "read line"]);
         let process = testing_local(command, crucible_core::SandboxSpeech::Held, stage)
-            .expect("production process fixture");
-        let active = Arc::clone(&process.reservation.as_ref().expect("reservation").active);
-        Self {
+            .map_err(io::Error::other)?;
+        let active = Arc::clone(
+            &process
+                .reservation
+                .as_ref()
+                .ok_or_else(|| io::Error::other("fixture has no reservation"))?
+                .active,
+        );
+        Ok(Self {
             process: Some(process),
             unreaped: None,
             active,
-        }
+        })
     }
 
-    fn process(&mut self) -> &mut LocalProcess {
-        self.process.as_mut().expect("owned process")
+    fn process(&mut self) -> io::Result<&mut LocalProcess> {
+        self.process
+            .as_mut()
+            .ok_or_else(|| io::Error::other("fixture has no process"))
     }
 
-    fn lose_unconfirmed_owner(&mut self) {
-        let mut process = self.process.take().expect("owned process");
+    fn lose_unconfirmed_owner(&mut self) -> io::Result<()> {
+        let mut process = self
+            .process
+            .take()
+            .ok_or_else(|| io::Error::other("fixture has no process"))?;
         process.test_stop = fail_stop;
         process.test_reap = fail_reap;
         self.unreaped = rustix::process::Pid::from_raw(
-            i32::try_from(process.child.id()).expect("fixture process identifier"),
+            i32::try_from(process.child.id()).map_err(io::Error::other)?,
         );
         // Both injected operations leave this child unreaped, so the rescue
         // PID cannot be reused before Fixture::drop reaps its owned child.
         drop(process);
+        Ok(())
     }
 }
 
@@ -78,26 +90,26 @@ fn fail_reap(_child: &mut Child, _status: &mut Option<ExitStatus>) -> io::Result
     ))
 }
 
-fn stage(sample: &crate::sample::Sample) -> std::path::PathBuf {
+fn stage(sample: &crate::sample::Sample) -> io::Result<std::path::PathBuf> {
     let root = sample.root().join("stage");
-    std::fs::create_dir(&root).expect("stage directory");
-    std::fs::write(root.join("marker"), "owned staging data").expect("stage marker");
-    root
+    std::fs::create_dir(&root)?;
+    std::fs::write(root.join("marker"), "owned staging data")?;
+    Ok(root)
 }
 
 #[test]
-fn repeated_stage_failure_never_becomes_success() {
+fn repeated_stage_failure_never_becomes_success() -> io::Result<()> {
     let sample = crate::sample::Sample::new("cleanup-repeated-stage-failure");
     let root = sample.root().join("stage-file");
     std::fs::write(&root, "a regular file cannot be removed as a tree").expect("stage error");
-    let mut fixture = Fixture::new(Some(Stage::new(root)));
-    fixture.process().stop().expect_err("first cleanup fails");
+    let mut fixture = Fixture::new(Some(Stage::new(root)))?;
+    fixture.process()?.stop().expect_err("first cleanup fails");
     fixture
-        .process()
+        .process()?
         .stop()
         .expect_err("unchanged cleanup still fails");
     assert_eq!(
-        fixture.process().inspection().cleanup(),
+        fixture.process()?.inspection().cleanup(),
         SandboxCleanup::Failed
     );
     assert_eq!(
@@ -105,20 +117,21 @@ fn repeated_stage_failure_never_becomes_success() {
         1,
         "failed cleanup keeps its slot"
     );
+    Ok(())
 }
 
 #[test]
-fn repaired_stage_cleanup_is_retried_and_audited() {
+fn repaired_stage_cleanup_is_retried_and_audited() -> io::Result<()> {
     let sample = crate::sample::Sample::new("cleanup-recovered-stage");
     let root = sample.root().join("stage-file");
     std::fs::write(&root, "stage error").expect("stage error");
-    let mut fixture = Fixture::new(Some(Stage::new(root.clone())));
-    let audit = fixture.process().control.audit.clone();
-    fixture.process().stop().expect_err("first cleanup fails");
+    let mut fixture = Fixture::new(Some(Stage::new(root.clone())))?;
+    let audit = fixture.process()?.control.audit.clone();
+    fixture.process()?.stop().expect_err("first cleanup fails");
     std::fs::remove_file(&root).expect("repair failed resource");
     std::fs::create_dir(&root).expect("recoverable stage");
     fixture
-        .process()
+        .process()?
         .stop()
         .expect("retry removes repaired stage");
     assert!(
@@ -127,7 +140,7 @@ fn repaired_stage_cleanup_is_retried_and_audited() {
     );
     assert_eq!(fixture.active.load(Ordering::Acquire), 0);
     assert_eq!(
-        fixture.process().inspection().cleanup(),
+        fixture.process()?.inspection().cleanup(),
         SandboxCleanup::Complete
     );
     let cleanup: Vec<_> = audit
@@ -143,22 +156,23 @@ fn repaired_stage_cleanup_is_retried_and_audited() {
         })
         .collect();
     assert_eq!(cleanup, [SandboxCleanup::Failed, SandboxCleanup::Complete]);
+    Ok(())
 }
 
 #[test]
-fn failed_scope_stop_preserves_staging_and_admission() {
+fn failed_scope_stop_preserves_staging_and_admission() -> io::Result<()> {
     let sample = crate::sample::Sample::new("cleanup-live-scope");
-    let root = stage(&sample);
-    let mut fixture = Fixture::new(Some(Stage::new(root.clone())));
-    fixture.process().test_stop = fail_stop;
-    fixture.process().test_reap = fail_reap;
+    let root = stage(&sample)?;
+    let mut fixture = Fixture::new(Some(Stage::new(root.clone())))?;
+    fixture.process()?.test_stop = fail_stop;
+    fixture.process()?.test_reap = fail_reap;
     fixture
-        .process()
+        .process()?
         .stop()
         .expect_err("scope remains unconfirmed");
     assert!(
         fixture
-            .process()
+            .process()?
             .child
             .try_wait()
             .expect("owned child state")
@@ -170,16 +184,17 @@ fn failed_scope_stop_preserves_staging_and_admission() {
     );
     assert_eq!(fixture.active.load(Ordering::Acquire), 1);
     assert!(Reservation::take(Arc::clone(&fixture.active), 1).is_err());
+    Ok(())
 }
 
 #[test]
-fn failed_reap_preserves_staging_and_admission() {
+fn failed_reap_preserves_staging_and_admission() -> io::Result<()> {
     let sample = crate::sample::Sample::new("cleanup-unreaped-scope");
-    let root = stage(&sample);
-    let mut fixture = Fixture::new(Some(Stage::new(root.clone())));
-    fixture.process().test_reap = fail_reap;
+    let root = stage(&sample)?;
+    let mut fixture = Fixture::new(Some(Stage::new(root.clone())))?;
+    fixture.process()?.test_reap = fail_reap;
     fixture
-        .process()
+        .process()?
         .stop()
         .expect_err("leader remains unconfirmed");
     assert!(
@@ -187,14 +202,15 @@ fn failed_reap_preserves_staging_and_admission() {
         "unconfirmed reap retains its stage"
     );
     assert_eq!(fixture.active.load(Ordering::Acquire), 1);
+    Ok(())
 }
 
 #[test]
-fn dropping_an_unconfirmed_scope_keeps_the_service_slot_and_stage() {
+fn dropping_an_unconfirmed_scope_keeps_the_service_slot_and_stage() -> io::Result<()> {
     let sample = crate::sample::Sample::new("cleanup-owner-loss");
-    let root = stage(&sample);
-    let mut fixture = Fixture::new(Some(Stage::new(root.clone())));
-    fixture.lose_unconfirmed_owner();
+    let root = stage(&sample)?;
+    let mut fixture = Fixture::new(Some(Stage::new(root.clone())))?;
+    fixture.lose_unconfirmed_owner()?;
     assert_eq!(
         fixture.active.load(Ordering::Acquire),
         1,
@@ -205,55 +221,55 @@ fn dropping_an_unconfirmed_scope_keeps_the_service_slot_and_stage() {
         root.join("marker").exists(),
         "Stage::drop must preserve unconfirmed workload data"
     );
+    Ok(())
 }
 
 #[test]
-fn a_recoverable_scope_failure_is_retried() {
-    let mut fixture = Fixture::new(None);
-    fixture.process().test_stop = fail_stop;
-    fixture.process().test_reap = fail_reap;
-    fixture.process().stop().expect_err("first stop fails");
-    fixture.process().test_stop = stop_scope;
-    fixture.process().test_reap = reap;
+fn a_recoverable_scope_failure_is_retried() -> io::Result<()> {
+    let mut fixture = Fixture::new(None)?;
+    fixture.process()?.test_stop = fail_stop;
+    fixture.process()?.test_reap = fail_reap;
+    fixture.process()?.stop().expect_err("first stop fails");
+    fixture.process()?.test_stop = stop_scope;
+    fixture.process()?.test_reap = reap;
     fixture
-        .process()
+        .process()?
         .stop()
         .expect("second stop confirms cleanup");
     assert!(
-        fixture.process().status.is_some(),
+        fixture.process()?.status.is_some(),
         "retry must really reap the leader"
     );
     assert_eq!(fixture.active.load(Ordering::Acquire), 0);
+    Ok(())
 }
 
-fn supervisor_failure(fixture: &mut Fixture) {
-    let process = fixture.process();
-    process.supervisor = Some(
-        Supervisor::start(
-            Arc::clone(&process.control),
-            process.terminator,
-            None,
-            None,
-            process.child.id(),
-        )
-        .expect("real supervisor"),
-    );
+fn supervisor_failure(fixture: &mut Fixture) -> io::Result<()> {
+    let process = fixture.process()?;
+    process.supervisor = Some(Supervisor::start(
+        Arc::clone(&process.control),
+        process.terminator,
+        None,
+        None,
+        process.child.id(),
+    )?);
     process
         .control
         .record_failure(&io::Error::other("injected supervisor failure"));
+    Ok(())
 }
 
 #[test]
-fn joining_a_failed_supervisor_cannot_claim_complete_cleanup() {
-    let mut fixture = Fixture::new(None);
-    supervisor_failure(&mut fixture);
+fn joining_a_failed_supervisor_cannot_claim_complete_cleanup() -> io::Result<()> {
+    let mut fixture = Fixture::new(None)?;
+    supervisor_failure(&mut fixture)?;
     fixture
-        .process()
+        .process()?
         .stop()
         .expect_err("stored supervisor failure");
     assert!(
         fixture
-            .process()
+            .process()?
             .supervisor
             .as_ref()
             .expect("supervisor")
@@ -261,29 +277,31 @@ fn joining_a_failed_supervisor_cannot_claim_complete_cleanup() {
             .is_none()
     );
     assert_eq!(
-        fixture.process().inspection().cleanup(),
+        fixture.process()?.inspection().cleanup(),
         SandboxCleanup::Failed
     );
     fixture
-        .process()
+        .process()?
         .stop()
         .expect_err("stored failure remains visible");
+    Ok(())
 }
 
 #[test]
-fn cached_leader_status_cannot_hide_a_failed_stop() {
-    let mut fixture = Fixture::new(None);
-    supervisor_failure(&mut fixture);
+fn cached_leader_status_cannot_hide_a_failed_stop() -> io::Result<()> {
+    let mut fixture = Fixture::new(None)?;
+    supervisor_failure(&mut fixture)?;
     fixture
-        .process()
+        .process()?
         .stop()
         .expect_err("stop observes supervisor failure");
     assert!(
-        fixture.process().status.is_some(),
+        fixture.process()?.status.is_some(),
         "the real leader was reaped"
     );
     fixture
-        .process()
+        .process()?
         .try_wait()
         .expect_err("cached status cannot erase the failure");
+    Ok(())
 }

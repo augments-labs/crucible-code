@@ -893,10 +893,9 @@ fn testing_local(
 }
 
 #[cfg(all(test, target_os = "linux"))]
-mod cleanup_tests;
-
-#[cfg(all(test, target_os = "linux"))]
 mod tests {
+    mod cleanup;
+
     use super::Stage;
 
     #[cfg(unix)]
