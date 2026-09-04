@@ -27,6 +27,14 @@ use super::*;
 /// about nothing. The verdict comes from the engine in the mode that asks about
 /// nothing, which is the only way anything outside it can obtain one.
 fn running(case: &str, count: usize) -> (Background, Sample) {
+    running_with(case, count, std::sync::Arc::new(LocalSandbox::new()))
+}
+
+fn running_with(
+    case: &str,
+    count: usize,
+    sandbox: std::sync::Arc<dyn crucible_core::SandboxService>,
+) -> (Background, Sample) {
     let here = Sample::new(case);
     let left = Background::new();
     let cancel = Cancel::new();
@@ -35,10 +43,7 @@ fn running(case: &str, count: usize) -> (Background, Sample) {
     // keeps that boundary visible instead of depending on the host running the
     // test to permit nested user namespaces.
     let tool = Bash::new(here.workspace())
-        .sandboxing(
-            std::sync::Arc::new(LocalSandbox::new()),
-            crucible_core::SandboxMode::Off,
-        )
+        .sandboxing(sandbox, crucible_core::SandboxMode::Off)
         .leaving(left.clone());
     let mut engine = Permission::with(Mode::FullAccess, Rules::default());
 
@@ -93,6 +98,44 @@ fn running(case: &str, count: usize) -> (Background, Sample) {
     );
 
     (left, here)
+}
+
+mod cleanup;
+
+#[test]
+fn failed_stop_keeps_the_last_row_and_its_retry_notice() {
+    let (sandbox, denied) = cleanup::sandbox();
+    let (left, _here) = running_with("failed-stop", 1, sandbox);
+    let mut leaving = Leaving::default();
+    let number = left.running().first().expect("running command").number;
+
+    assert_eq!(
+        leaving.against(Pressed::Key(Key::Char('x')), &left),
+        Moved::Redraw,
+        "failed cleanup closed the panel"
+    );
+    assert_eq!(left.running().first().map(|one| one.number), Some(number));
+    for (columns, room, glyphs) in [(80, 24, Glyphs::Unicode), (24, 8, Glyphs::Ascii)] {
+        let rows = leaving.rows(&left, columns, room, glyphs);
+        let text = rows.iter().map(Row::text).collect::<Vec<_>>().join("\n");
+        assert!(text.contains("Stop failed; x retries"), "{text}");
+        assert!(
+            !text.contains(cleanup::PRIVATE_ERROR),
+            "opaque error reached the panel"
+        );
+        assert!(rows.len() <= room);
+        assert!(
+            rows.iter()
+                .all(|row| crucible_tui::columns(&row.text()) <= columns)
+        );
+    }
+
+    denied.store(false, std::sync::atomic::Ordering::Relaxed);
+    assert_eq!(
+        leaving.against(Pressed::Key(Key::Char('x')), &left),
+        Moved::Left
+    );
+    assert_eq!(left.count(), 0);
 }
 
 /// Answers nothing, because in this mode nothing is asked.
@@ -247,7 +290,7 @@ fn a_command_that_ended_while_the_list_was_open_brings_the_mark_back_inside_it()
 
     let numbers: Vec<usize> = left.running().iter().map(|one| one.number).collect();
     if let Some(last) = numbers.last() {
-        left.stop(*last);
+        left.stop(*last).expect("background cleanup");
     }
 
     drop(leaving.rows(&left, 80, 24, Glyphs::Unicode));

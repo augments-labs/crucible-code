@@ -18,7 +18,7 @@
 
 use crucible_tools::{Background, Standing};
 use crucible_tui::{
-    Command, Expanded, Glyphs, Key, Pressed, Renderer, Row, Running, Shown, Terminal,
+    Command, Expanded, Glyphs, Key, Pressed, Renderer, Row, Running, Shown, Slot, Terminal,
 };
 
 use crate::cli::Fatal;
@@ -49,6 +49,8 @@ pub(super) struct Leaving {
     from: usize,
     /// How far down it may be scrolled, which only the layout knows.
     end: usize,
+    /// The command whose last stop failed and still needs a cleanup owner.
+    failed: Option<usize>,
 }
 
 impl Leaving {
@@ -82,11 +84,31 @@ impl Leaving {
         // A command that ended while this was open takes its row with it, and the
         // mark comes back inside the list rather than pointing past the end of it.
         self.at = self.at.min(running.len().saturating_sub(1));
-
-        match self.shown {
-            Some(_) => self.watching(left, columns, rows, glyphs),
-            None => listed(&running, self.at, columns, rows, glyphs),
+        if self
+            .failed
+            .is_some_and(|number| !running.iter().any(|one| one.number == number))
+        {
+            self.failed = None;
         }
+
+        if self.shown.is_some() {
+            return self.watching(left, columns, rows, glyphs);
+        }
+
+        let mut listed = listed(&running, self.at, columns, rows, glyphs);
+        if self.failed.is_some()
+            && running.get(self.at).map(|one| one.number) == self.failed
+            && let Some(at) = listed.len().checked_sub(2)
+            && let Some(notice) = listed.get_mut(at)
+        {
+            // Use the existing blank above the keys: a failure must not
+            // push its own command or retry control out of a short panel.
+            *notice = Row::new().then(
+                Slot::Trouble,
+                crucible_tui::clip("Stop failed; x retries", columns),
+            );
+        }
+        listed
     }
 
     /// One command's output, stood whole.
@@ -230,7 +252,11 @@ impl Leaving {
             // somebody allowed, and this is the only key that can end one.
             Pressed::Key(Key::Char('x')) => match running.get(self.at) {
                 Some(standing) => {
-                    left.stop(standing.number);
+                    if left.stop(standing.number).is_err() {
+                        self.failed = Some(standing.number);
+                        return Moved::Redraw;
+                    }
+                    self.failed = None;
 
                     // The last one going takes the list with it — there is nothing
                     // left to stand, and a frame of empty chrome is worse than the
