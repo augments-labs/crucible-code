@@ -1,16 +1,15 @@
-# Probe identity: windows-token-v4; immutable predecessors v1/v2/v3 retained.
-# V3 run 33923417901: restricted-only launch succeeds; all LPAC launches fail203.
-# H5: LPAC setup requires LOCALAPPDATA in the supplied environment block.
-# Primary supporting experiment (independent implementation, same runner error):
-# https://github.com/Convira/convira-sandbox/issues/1#issuecomment-5225682721
-# Same-run controls: restricted baseline, LPAC baseline, LPAC+LOCALAPPDATA,
-# combined+LOCALAPPDATA. No launcher API, SID restriction, or ACL fallback.
-# LOCALAPPDATA comes from SHGetKnownFolderPath without CREATE, not inherited env.
-# Prediction: LPAC baseline fails203, LPAC+key returns a suspended process;
-# combined+key then independently determines whether token composition works.
-# Baseline failures remain failures in the output/exit code, not hidden passes.
-# Correct non-AC introspection by not requesting AC-only information classes;
-# retain real Win32 errors and information-class labels for query failures.
+# Probe identity: windows-token-v5; immutable predecessors retained.
+# V4 run33924136290 confirms LOCALAPPDATA setup; the null-buffer sizing call
+# for token class46 fails87. This does not test a correctly sized DWORD call.
+# SDK audit: TokenIsLessPrivilegedAppContainer=46; TokenProcessTrustLevel=41.
+# https://github.com/microsoft/win32metadata/blob/main/generation/WinSDK/RecompiledIdlHeaders/um/winnt.h
+# https://github.com/microsoft/WindowsAppSDK/discussions/3633
+# https://github.com/winsiderss/phnt/blob/master/ntseapi.h (class46 queries ULONG)
+# H6: direct fixed-DWORD query succeeds where generic zero-length sizing fails.
+# Independently query Win32 and Nt APIs; successful answers must agree.
+# At least one correctly sized query must affirm LPAC, for child AND duplicate.
+# Query failure never becomes an assumed LPAC flag or weaker launch.
+# Same four controls, environment, token restrictions, matrix and cleanup as v4.
 # Disposable experiment, not a production launcher. Owns only its unique temp
 # directory and current-user AppContainer profile. Run in a disposable Windows
 # runner with a job-level timeout (suggested: 3 minutes). No network operations.
@@ -38,7 +37,7 @@ using System.Security.Principal;
 using System.Security.Cryptography;
 using System.Threading;
 
-public static class CrucibleWindowsTokenProbeV4 {
+public static class CrucibleWindowsTokenProbeV5 {
     const uint TOKEN_QUERY = 8, TOKEN_DUPLICATE = 2, TOKEN_IMPERSONATE = 4, TOKEN_ASSIGN_PRIMARY = 1;
     const uint FILE_READ_DATA = 1, FILE_ALL_ACCESS = 0x001F01FF;
     const uint DACL = 4, PROTECTED_DACL = 0x80000000;
@@ -83,6 +82,8 @@ public static class CrucibleWindowsTokenProbeV4 {
     [DllImport("advapi32.dll")] static extern IntPtr FreeSid(IntPtr p);
     [DllImport("advapi32.dll", SetLastError=true)] static extern bool OpenProcessToken(IntPtr p,uint access,out IntPtr t);
     [DllImport("advapi32.dll", SetLastError=true)] static extern bool GetTokenInformation(IntPtr t,int cls,IntPtr b,uint n,out uint needed);
+    [DllImport("ntdll.dll", ExactSpelling=true)] static extern uint NtQueryInformationToken(IntPtr t,int cls,IntPtr b,uint n,out uint needed);
+    [DllImport("ntdll.dll", ExactSpelling=true)] static extern uint RtlNtStatusToDosError(uint status);
     [DllImport("advapi32.dll", SetLastError=true)] static extern bool CreateRestrictedToken(IntPtr t,uint flags,uint nd,IntPtr ds,uint np,IntPtr ps,uint nr,IntPtr rs,out IntPtr result);
     [DllImport("advapi32.dll", SetLastError=true)] static extern bool IsTokenRestricted(IntPtr t);
     [DllImport("advapi32.dll", SetLastError=true)] static extern bool DuplicateTokenEx(IntPtr t,uint access,IntPtr sa,int level,int type,out IntPtr result);
@@ -153,6 +154,28 @@ public static class CrucibleWindowsTokenProbeV4 {
         IntPtr p=Info(token,cls); try { return Marshal.ReadInt32(p)!=0; }
         finally { Marshal.FreeHGlobal(p); }
     }
+    static bool LpacInfo(IntPtr token) {
+        IntPtr value=Marshal.AllocHGlobal(4);
+        try {
+            uint winLength,nativeLength;
+            Marshal.WriteInt32(value,0x5A5A5A5A);
+            bool winOk=GetTokenInformation(token,46,value,4,out winLength);
+            uint winError=unchecked((uint)Marshal.GetLastWin32Error());
+            bool winShape=winOk && winLength==4 && (Marshal.ReadInt32(value)==0 || Marshal.ReadInt32(value)==1);
+            bool winLpac=winShape && Marshal.ReadInt32(value)!=0;
+            Marshal.WriteInt32(value,0x5A5A5A5A);
+            uint ntStatus=NtQueryInformationToken(token,46,value,4,out nativeLength);
+            bool ntOk=ntStatus==0;
+            bool ntShape=ntOk && nativeLength==4 && (Marshal.ReadInt32(value)==0 || Marshal.ReadInt32(value)==1);
+            bool ntLpac=ntShape && Marshal.ReadInt32(value)!=0;
+            uint nativeError=ntOk?0:RtlNtStatusToDosError(ntStatus);
+            Record("{\"event\":\"lpac_fixed_query\",\"win32_success\":"+B(winOk)+",\"win32_status\":"+(winOk?0:winError)+",\"win32_shape_valid\":"+B(winShape)+",\"win32_lpac\":"+(winShape?B(winLpac):"null")+",\"native_success\":"+B(ntOk)+",\"native_win32_status\":"+nativeError+",\"native_shape_valid\":"+B(ntShape)+",\"native_lpac\":"+(ntShape?B(ntLpac):"null")+"}");
+            if((winOk && !winShape) || (ntOk && !ntShape)) throw new ProbeFailure(13);
+            if(winShape && ntShape && winLpac!=ntLpac) throw new ProbeFailure(13);
+            if(!winShape && !ntShape) throw new ProbeFailure(winError!=0?winError:nativeError);
+            return winShape?winLpac:ntLpac;
+        } finally { Marshal.FreeHGlobal(value); }
+    }
     static bool OnlySid(IntPtr token,IntPtr expected) {
         IntPtr p=Info(token,11);
         try {
@@ -213,8 +236,8 @@ public static class CrucibleWindowsTokenProbeV4 {
     static int RunCase(string name,bool useRestricted,bool useLpac,bool atomicJob,bool useLocalAppData) {
         currentCase=name; stage="case_start";
         string suffix=Guid.NewGuid().ToString("N");
-        string profile="crucible.token.probe.v4."+suffix;
-        string root=Path.Combine(Path.GetTempPath(),"crucible-token-probe-v4-"+suffix);
+        string profile="crucible.token.probe.v5."+suffix;
+        string root=Path.Combine(Path.GetTempPath(),"crucible-token-probe-v5-"+suffix);
         IntPtr package=IntPtr.Zero,restrictSid=IntPtr.Zero,baseToken=IntPtr.Zero,restricted=IntPtr.Zero;
         IntPtr actual=IntPtr.Zero,impersonation=IntPtr.Zero,job=IntPtr.Zero,list=IntPtr.Zero;
         IntPtr restrictEntry=IntPtr.Zero,capsMemory=IntPtr.Zero,lpacMemory=IntPtr.Zero,jobMemory=IntPtr.Zero,environment=IntPtr.Zero;
@@ -299,7 +322,7 @@ public static class CrucibleWindowsTokenProbeV4 {
                 } finally { if(folderMemory!=IntPtr.Zero) Marshal.FreeCoTaskMem(folderMemory); }
             }
             environment=Marshal.StringToHGlobalUni(environmentBlock);
-            Record("{\"event\":\"probe_identity\",\"version\":4,\"deterministic_directory_environment\":true,\"known_folder_localappdata_included\":"+B(useLocalAppData)+"}");
+            Record("{\"event\":\"probe_identity\",\"version\":5,\"deterministic_directory_environment\":true,\"known_folder_localappdata_included\":"+B(useLocalAppData)+"}");
             stage="create_suspended";
             string executable=Path.Combine(systemDirectory,"cmd.exe");
             System.Text.StringBuilder line=new System.Text.StringBuilder("\""+executable+"\" /d /c exit 0");
@@ -320,7 +343,7 @@ public static class CrucibleWindowsTokenProbeV4 {
             bool ac=BoolInfo(actual,29),onlyS=OnlySid(actual,restrictSid);
             bool lpac=false,zeroCaps=false,packageMatches=false;
             if(ac) {
-                lpac=BoolInfo(actual,46);
+                lpac=LpacInfo(actual);
                 IntPtr capInfo=IntPtr.Zero,packageInfo=IntPtr.Zero;
                 try {
                     capInfo=Info(actual,30); packageInfo=Info(actual,31);
@@ -338,7 +361,7 @@ public static class CrucibleWindowsTokenProbeV4 {
             if(!requestedToken) throw new ProbeFailure(13);
             if(useRestricted && useLpac) {
             Need(DuplicateTokenEx(actual,TOKEN_QUERY|TOKEN_IMPERSONATE,IntPtr.Zero,2,2,out impersonation));
-            bool duplicateMatches=BoolInfo(impersonation,29) && BoolInfo(impersonation,46)
+            bool duplicateMatches=BoolInfo(impersonation,29) && LpacInfo(impersonation)
                 && OnlySid(impersonation,restrictSid) && IsTokenRestricted(impersonation);
             Record("{\"event\":\"impersonation_token\",\"preserves_lpac_and_session_restriction\":"+B(duplicateMatches)+"}");
             if(!duplicateMatches) throw new ProbeFailure(13);
@@ -403,4 +426,4 @@ public static class CrucibleWindowsTokenProbeV4 {
 '@
 try { Add-Type -TypeDefinition $source -Language CSharp -ErrorAction Stop }
 catch { Write-Output '{"event":"probe_compile_failure","status":0}'; exit 90 }
-exit ([CrucibleWindowsTokenProbeV4]::Run())
+exit ([CrucibleWindowsTokenProbeV5]::Run())
