@@ -285,3 +285,6 @@ pub(super) fn read(
 fn raw(pipe: &impl AsRawHandle) -> HANDLE {
     pipe.as_raw_handle() as HANDLE
 }
+
+#[cfg(test)]
+mod tests;
