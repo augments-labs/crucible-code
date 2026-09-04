@@ -11,6 +11,8 @@ mod transaction;
 #[cfg(test)]
 mod escape_tests;
 #[cfg(test)]
+mod guardrail_tests;
+#[cfg(test)]
 mod resource_tests;
 #[cfg(test)]
 mod tests;
