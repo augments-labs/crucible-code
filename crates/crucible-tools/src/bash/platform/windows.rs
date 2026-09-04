@@ -1,4 +1,9 @@
 //! Windows race-free job containment and pollable anonymous pipes.
+//!
+//! Completion requires a successful job-accounting query with zero active
+//! members after termination is requested. Windows can still be finalizing
+//! descendant process objects and pending I/O; the caller separately reaps the
+//! leader. This scope supplies process control for compatibility execution.
 #![allow(
     unsafe_code,
     reason = "Windows exposes job objects and anonymous-pipe polling only through its system API"
@@ -9,6 +14,8 @@ use std::mem::size_of;
 use std::os::windows::io::AsRawHandle;
 use std::os::windows::process::CommandExt as _;
 use std::process::{Child, Command, ExitStatus};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use windows_sys::Win32::Foundation::{
     CloseHandle, ERROR_BROKEN_PIPE, ERROR_NO_DATA, HANDLE, INVALID_HANDLE_VALUE,
@@ -18,8 +25,9 @@ use windows_sys::Win32::System::Diagnostics::ToolHelp::{
 };
 use windows_sys::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
-    SetInformationJobObject, TerminateJobObject,
+    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    JobObjectBasicAccountingInformation, JobObjectExtendedLimitInformation,
+    QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
 };
 use windows_sys::Win32::System::Pipes::PeekNamedPipe;
 use windows_sys::Win32::System::Threading::{
@@ -27,6 +35,10 @@ use windows_sys::Win32::System::Threading::{
 };
 
 use super::ReadState;
+
+/// Bounds job-state polling separately from the caller's leader reap.
+const STOP_WAIT: Duration = Duration::from_millis(250);
+const STOP_POLL: Duration = Duration::from_millis(5);
 
 /// A kill-on-close job containing one command and all its descendants.
 pub(crate) struct Scope(HANDLE);
@@ -42,8 +54,9 @@ unsafe impl Send for Terminator {}
 
 // SAFETY: a job object is a kernel handle rather than anything owned by the
 // thread that made it. Every call this module makes through it —
-// `AssignProcessToJobObject`, `TerminateJobObject`, `CloseHandle` — is documented
-// as usable from any thread, and the handle is not duplicated: exactly one `Scope`
+// `AssignProcessToJobObject`, `TerminateJobObject`, `QueryInformationJobObject`,
+// `CloseHandle` — is documented as usable from any thread, and the handle is
+// not duplicated: exactly one `Scope`
 // owns it and closes it once. What crossing a thread means here is that a command
 // left running is owned by the registry the whole process shares, and the thread
 // that started it has gone.
@@ -114,11 +127,7 @@ impl Scope {
         Ok(Terminator(self.0))
     }
 
-    /// Reaps a finished leader only after its stable job has been emptied.
-    #[expect(
-        clippy::unused_self,
-        reason = "the Unix scope observes its group through `self`; both share one call shape"
-    )]
+    /// Reports a finished leader after confirming no active job members.
     pub(crate) fn try_wait(
         &self,
         child: &mut Child,
@@ -127,11 +136,14 @@ impl Scope {
         let status = child.try_wait()?;
         if status.is_some() {
             terminator.stop()?;
+            if !self.empty()? {
+                return Ok(None);
+            }
         }
         Ok(status)
     }
 
-    /// Stops every active process in the job, then the shell as a fallback.
+    /// Requests job termination, kills the leader, and confirms job emptiness.
     pub(crate) fn stop(&self, child: &mut Child) -> io::Result<()> {
         // SAFETY: the job handle remains owned by `self`.
         let stopped = unsafe { TerminateJobObject(self.0, 1) };
@@ -145,12 +157,49 @@ impl Scope {
                 .then_some(())
                 .ok_or(problem)
         });
-        job_result.and(child_result)
+        job_result.and(child_result)?;
+        let deadline = Instant::now() + STOP_WAIT;
+        loop {
+            if self.empty()? {
+                return Ok(());
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "the Windows job still has active processes after termination",
+                ));
+            }
+            thread::sleep(remaining.min(STOP_POLL));
+        }
+    }
+
+    /// Observes job membership without mistaking an unavailable count for zero.
+    fn empty(&self) -> io::Result<bool> {
+        let mut accounting = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+        let length = u32::try_from(size_of::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>())
+            .map_err(|_| io::Error::other("job accounting does not fit the Windows API"))?;
+        // SAFETY: `self` owns the live job handle and the writable buffer has
+        // exactly the layout and size selected by the information class.
+        let queried = unsafe {
+            QueryInformationJobObject(
+                self.0,
+                JobObjectBasicAccountingInformation,
+                std::ptr::from_mut(&mut accounting).cast(),
+                length,
+                std::ptr::null_mut(),
+            )
+        };
+        if queried == 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(accounting.ActiveProcesses == 0)
+        }
     }
 }
 
 impl Terminator {
-    /// Stops every process still assigned to the command job.
+    /// Requests termination; the owning scope separately observes completion.
     pub(crate) fn stop(self) -> io::Result<()> {
         // SAFETY: the owning `Scope` remains live until this supervisor call
         // returns and the thread is joined.
