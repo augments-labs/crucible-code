@@ -45,6 +45,9 @@ pub struct Heard<O> {
     pause: Duration,
     /// What can end the waiting before the patience does.
     abandon: Option<Cancel>,
+    /// When this exchange runs out of time, whether or not the far end is
+    /// saying anything.
+    until: Option<Instant>,
     /// The most recent bytes, held until they have been consumed.
     held: Vec<u8>,
     /// How much of them has been.
@@ -83,6 +86,7 @@ impl<O> Heard<O> {
             patience,
             pause,
             abandon: None,
+            until: None,
             held: Vec::new(),
             at: 0,
         }
@@ -98,6 +102,23 @@ impl<O> Heard<O> {
     pub fn abandoned_when(&mut self, abandon: Option<Cancel>) {
         self.abandon = abandon;
     }
+
+    /// Stops waiting once `until` has passed, however busy the far end has
+    /// been.
+    ///
+    /// The patience measures one silence and is handed back whenever anything
+    /// arrives, which is the right measure for a slow peer and no measure at
+    /// all for a peer that says a byte just short of it and then goes quiet
+    /// again: that one is never silent for long enough to be given up on. A
+    /// deadline counts the time rather than the gaps in it, so it is the
+    /// ceiling the patience cannot be.
+    ///
+    /// Set around one exchange, like [`Self::abandoned_when`], and for the same
+    /// reason: it is that exchange being given a length, not the stream. `None`
+    /// puts the reader back to answering only to its patience.
+    pub const fn bounded_until(&mut self, until: Option<Instant>) {
+        self.until = until;
+    }
 }
 
 impl<O> fmt::Debug for Heard<O> {
@@ -107,6 +128,7 @@ impl<O> fmt::Debug for Heard<O> {
             .field("patience", &self.patience)
             .field("pause", &self.pause)
             .field("abandon", &self.abandon)
+            .field("until", &self.until)
             .field("held", &self.held.len())
             .field("at", &self.at)
             .finish_non_exhaustive()
@@ -124,23 +146,32 @@ impl<O: SandboxOutput> Heard<O> {
         let mut buffer = [0_u8; CHUNK];
         let began = Instant::now();
         loop {
-            match self.output.read_ready(&mut buffer)? {
+            // Asked before the read rather than after a quiet one, because it
+            // does not depend on what the far end does next: a peer with a byte
+            // always ready would otherwise never be asked, and a caller who
+            // asked to stop is not waiting to find out how long the program was
+            // allowed to be quiet for.
+            if self.abandon.as_ref().is_some_and(Cancel::requested) {
+                return Err(abandoned());
+            }
+            match self.output.read_ready(&mut buffer).map_err(mistaken)? {
                 // Zero bytes is not an ending. A stream saying it has nothing
                 // is the same thing whether it says so with a count or a word.
                 SandboxRead::Bytes(0) | SandboxRead::Pending => {
-                    // Before the patience, because the two are different
-                    // answers and this is the one that is already true: a
-                    // caller who asked to stop is not waiting to find out how
-                    // long the program was allowed to be quiet for.
-                    if self.abandon.as_ref().is_some_and(Cancel::requested) {
-                        return Err(abandoned());
-                    }
                     if began.elapsed() >= self.patience {
                         return Err(silent(self.patience));
                     }
                     thread::sleep(self.pause);
                 }
                 SandboxRead::Bytes(count) => {
+                    // The deadline is asked here and the patience below,
+                    // because each answers the peer the other cannot. A quiet
+                    // peer is a silence and is reported as one; a peer that
+                    // keeps saying a byte is never quiet, and the only thing
+                    // left to measure it against is the time it has used.
+                    if self.until.is_some_and(|end| Instant::now() >= end) {
+                        return Err(overdue());
+                    }
                     if let Some(bytes) = buffer.get(..count) {
                         self.held.extend_from_slice(bytes);
                     }
@@ -205,6 +236,40 @@ fn silent(patience: Duration) -> io::Error {
 /// wait with it would be a reader whose caller immediately puts it back into
 /// the same wait, forever. So the kind here is the one that says the near end
 /// let go of the conversation, which is what happened.
+/// An exchange that ran past the length it was given, whatever it spent that
+/// length doing.
+///
+/// [`io::ErrorKind::TimedOut`], the same as a silence, because it is the same
+/// news about the far end: crucible waited as long as it was going to and the
+/// answer did not come. What it is not is the caller's doing, which is why it
+/// is not the kind an interruption uses.
+fn overdue() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::TimedOut,
+        "the confined program did not finish within the time the exchange was given",
+    )
+}
+
+/// A backend's own failure, with the one kind this reader keeps for itself
+/// taken off it.
+///
+/// [`abandoned`] is spelled [`io::ErrorKind::ConnectionAborted`], and
+/// everything downstream reads that kind as crucible having let go: a backend
+/// whose read failed that way would be handing a caller a sentence about a key
+/// nobody pressed, and — where a call is being decided on — a half-done call
+/// blamed on the reader rather than on the connection. What actually happened
+/// is the far end going, which is what [`io::ErrorKind::BrokenPipe`] says here
+/// already.
+///
+/// The words are kept: they are the operating system's account of it and this
+/// only disagrees about which of the two ends stopped.
+fn mistaken(problem: io::Error) -> io::Error {
+    if problem.kind() != io::ErrorKind::ConnectionAborted {
+        return problem;
+    }
+    io::Error::new(io::ErrorKind::BrokenPipe, problem.to_string())
+}
+
 fn abandoned() -> io::Error {
     io::Error::new(
         io::ErrorKind::ConnectionAborted,

@@ -269,3 +269,23 @@ fn a_result_that_says_nothing_about_failing_did_not_fail() {
          every ordinary result an error"
     );
 }
+
+#[test]
+fn a_result_that_says_it_failed_in_words_crucible_cannot_read_is_read_as_failed() {
+    // The member is a boolean and this server wrote something else. Crucible
+    // cannot tell what it meant, and of the two ways to guess only one is
+    // cheap: a working result called a failure costs a call, while a failure
+    // called a result is the model reading that a thing which did not happen
+    // did — and going on to build on it.
+    for said in [json!("yes"), json!(1), json!({ "code": 4 })] {
+        let answer = json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "result": { "content": [text("no such file")], "isError": said },
+        });
+        let (answered, _said) = called(answer, &json!({}));
+
+        let answered = answered.expect("the server answered");
+        assert!(answered.failed(), "{said}");
+    }
+}

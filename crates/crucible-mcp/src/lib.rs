@@ -24,8 +24,8 @@ mod wire;
 
 pub use calling::{Answered, BLOCKS, CUT, RESULT_BYTES, Unanswered, call};
 pub use catalogue::{
-    ABOUT_BYTES, Greeting, NAME_BYTES, Offered, PAGES, Rebuffed, SCHEMA_BYTES, TOOLS, VERSIONS,
-    hello, tools,
+    ABOUT_BYTES, CURSOR_BYTES, Greeting, NAME_BYTES, Offered, PAGES, Rebuffed, SCHEMA_BYTES, TOOLS,
+    VERSIONS, hello, tools,
 };
 pub use hosted::{Ended, Hosted, Unstarted};
 pub use talking::{ASIDES, Talking, Trouble};

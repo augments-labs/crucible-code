@@ -41,12 +41,16 @@ pub const ASIDES: usize = 64;
 /// Why a call did not come back.
 #[derive(Debug, thiserror::Error)]
 pub enum Trouble {
-    /// The frame was never handed to the pipe, so the server never saw it.
+    /// The frame crucible was writing did not go.
     ///
-    /// Its own variant because it is the only failure here that leaves the far
-    /// end exactly as it was. Every other one happened after crucible let go of
-    /// the request, and from this side a tool that never started, one that ran,
-    /// and one that ran and lost its answer look the same.
+    /// Its own variant because it is the only failure here that can leave the
+    /// far end exactly as it was. Every other one happened after crucible let
+    /// go of the request, and from this side a tool that never started, one
+    /// that ran, and one that ran and lost its answer look the same.
+    ///
+    /// Can, not does: a write that ran out of patience left the bytes with the
+    /// thread that owns the pipe, and they may yet be read. Which of the two
+    /// this is, is [`FrameError::never_left`]'s answer and not the variant's.
     #[error("crucible could not send {method} to the server: {source}")]
     Unsent {
         /// What it was going to say.
@@ -111,14 +115,23 @@ pub enum Trouble {
 impl Trouble {
     /// Whether the server may have acted on the call.
     ///
-    /// True for everything except a frame that never left, which is the honest
-    /// shape of it: crucible can prove it did not ask, and can prove nothing
-    /// about what happened once it did. A caller deciding whether to ask again
-    /// reads this, and a `false` is the only answer that makes repeating the
-    /// request a repeat rather than a second one.
+    /// True for everything except a frame that can be proven never to have
+    /// reached the far end, which is the honest shape of it: crucible can prove
+    /// it did not ask, and can prove nothing about what happened once it did. A
+    /// caller deciding whether to ask again reads this, and a `false` is the
+    /// only answer that makes repeating the request a repeat rather than a
+    /// second one.
+    ///
+    /// So a write that did not go is not enough on its own. A frame crucible
+    /// stopped waiting for the pipe to take is a frame the pipe may still take,
+    /// and counting that as unasked would be crucible asking twice for the one
+    /// ending where it cannot tell.
     #[must_use]
-    pub const fn outstanding(&self) -> bool {
-        !matches!(self, Self::Unsent { .. })
+    pub fn outstanding(&self) -> bool {
+        match self {
+            Self::Unsent { source, .. } => !source.never_left(),
+            _ => true,
+        }
     }
 
     /// Whether the conversation can carry another call.

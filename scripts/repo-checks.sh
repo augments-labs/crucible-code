@@ -280,19 +280,29 @@ edges=$(awk '
         sub(/^crates\//, "", crate)
         sub(/\/Cargo.toml$/, "", crate)
         if (FILENAME == "Cargo.toml") crate = "crucible-code"
+        # Both ends of an edge are written the short way, so the allowed list
+        # reads as the layering rather than as a list of package names.
+        sub(/^crucible-/, "", crate)
         table = 0
     }
     /^[[:space:]]*\[/ {
         header = $0
         sub(/^[[:space:]]*\[+[[:space:]]*/, "", header)
         sub(/[[:space:]]*\]+.*$/, "", header)
-        table = (header ~ /(^|\.)(dependencies|dev-dependencies|build-dependencies)$/)
+        # [workspace.dependencies] is where a version is agreed, not where a
+        # crate takes one on: reading it as an edge would give the root every
+        # edge in the workspace and hide the ones it actually has.
+        table = (header ~ /(^|\.)(dependencies|dev-dependencies|build-dependencies)$/ &&
+                 header !~ /^workspace\./)
         next
     }
-    table && /^[[:space:]]*crucible-[a-z0-9-]+[[:space:].]*=/ {
+    # A dependency is named by the key that opens the line, and a member writes
+    # that key as crucible-core.workspace: the name ends at the first dot, space
+    # or equals, and matching up to the equals instead matched no member at all.
+    table && /^[[:space:]]*crucible-[a-z0-9-]+[[:space:].=]/ {
         dependency = $0
         sub(/^[[:space:]]*/, "", dependency)
-        sub(/[[:space:].]*=.*/, "", dependency)
+        sub(/[[:space:].=].*$/, "", dependency)
         sub(/^crucible-/, "", dependency)
         print crate " " dependency
     }
@@ -302,18 +312,18 @@ if [[ -z "$edges" ]]; then
     failed=1
 fi
 
-allowed='crucible-code auth
-crucible-code config
-crucible-code core
-crucible-code extension
-crucible-code mcp
-crucible-code privacy
-crucible-code provider
-crucible-code runner
-crucible-code session
-crucible-code tools
-crucible-code sandbox-broker
-crucible-code tui
+allowed='code auth
+code config
+code core
+code extension
+code mcp
+code privacy
+code provider
+code runner
+code session
+code tools
+code sandbox-broker
+code tui
 auth core
 auth privacy
 config core

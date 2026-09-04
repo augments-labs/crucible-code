@@ -764,7 +764,8 @@ impl ToolSnapshot {
     /// # Errors
     ///
     /// [`ToolsetError`] if the snapshot is too large or contains two entries
-    /// with one provider-visible name.
+    /// whose provider-visible names are one name to a permission rule, which
+    /// reads them without case.
     pub fn new(entries: impl IntoIterator<Item = ToolEntry>) -> Result<Self, ToolsetError> {
         let entries: Vec<ToolEntry> = entries.into_iter().collect();
         if entries.len() > TOOL_SNAPSHOT_ENTRIES {
@@ -784,11 +785,18 @@ impl ToolSnapshot {
                 });
             }
 
-            if let Some(first) = entries
-                .iter()
-                .take(at)
-                .find(|first| first.descriptor().name() == entry.descriptor().name())
-            {
+            // Ignoring case, because that is how a permission rule reads a
+            // name: `Rule::names` matches without it, so two tools spelled
+            // apart only by case are one tool to every rule anybody could write
+            // about them — and a verdict given for the first would be spent on
+            // the second without ever having been asked about it. A roster that
+            // cannot be written rules about is refused instead.
+            if let Some(first) = entries.iter().take(at).find(|first| {
+                first
+                    .descriptor()
+                    .name()
+                    .eq_ignore_ascii_case(entry.descriptor().name())
+            }) {
                 return Err(ToolsetError::Duplicate {
                     name: entry.descriptor().name().into(),
                     first: first.descriptor().provenance().clone(),

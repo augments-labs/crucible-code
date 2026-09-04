@@ -69,6 +69,33 @@ pub enum FrameError {
     Divided,
 }
 
+impl FrameError {
+    /// Whether a frame crucible was sending can be proven not to have reached
+    /// the far end.
+    ///
+    /// Asked of a sending failure; a reading one was never going anywhere. The
+    /// answer is what a caller deciding whether to ask again depends on, so it
+    /// is `true` only where nothing could have been read, and the doubtful
+    /// cases are counted as sent.
+    ///
+    /// A ceiling and a boundary are settled before a byte is written, and a
+    /// pipe nobody is left reading cannot have handed the bytes to anybody. A
+    /// patience is the one that cannot be claimed: [`Said`] gives the frame to
+    /// the thread that owns the pipe and then waits, so a wait that ran out
+    /// ended with those bytes already gone from here and possibly already read
+    /// over there.
+    ///
+    /// [`Said`]: crate::Said
+    #[must_use]
+    pub fn never_left(&self) -> bool {
+        match self {
+            Self::TooLong { .. } | Self::Divided => true,
+            Self::Unreadable { source } => source.kind() != io::ErrorKind::TimedOut,
+            Self::Truncated { .. } | Self::NotText => false,
+        }
+    }
+}
+
 /// The frames arriving from one extension, read one at a time.
 ///
 /// Holds one frame's worth at most. A frame is handed over whole or not at all,

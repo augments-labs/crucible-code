@@ -6,7 +6,8 @@ use std::{fmt::Write as _, io::Cursor};
 use serde_json::{Value, json};
 
 use super::{
-    Greeting, NAME_BYTES, Offered, PAGES, Rebuffed, SCHEMA_BYTES, TOOLS, VERSIONS, hello, tools,
+    CURSOR_BYTES, Greeting, NAME_BYTES, Offered, PAGES, Rebuffed, SCHEMA_BYTES, TOOLS, VERSIONS,
+    hello, tools,
 };
 use crate::talking::Talking;
 
@@ -397,4 +398,48 @@ fn a_conversation_that_fails_is_reported_as_the_conversation_failing() {
         matches!(greeting, Err(Rebuffed::Talking(_))),
         "expected the conversation itself to be blamed, got {greeting:?}"
     );
+}
+
+#[test]
+fn two_tools_one_permission_rule_could_not_tell_apart_are_refused_as_one_name() {
+    // A rule reads a tool's name without case, so these are two tools here and
+    // one name to anything anybody could write about them: a verdict given for
+    // the first would be spent on the second without being asked for.
+    let (read, _) = read(&[
+        agreeable(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "result": { "tools": [{ "name": "search" }, { "name": "SEARCH" }] },
+        }),
+    ]);
+
+    let Err(Rebuffed::Twice { name }) = read else {
+        panic!("expected the repeated name to be refused, got {read:?}");
+    };
+    assert_eq!(&*name, "SEARCH");
+}
+
+#[test]
+fn a_cursor_past_its_ceiling_is_refused_rather_than_handed_back() {
+    // The one string here crucible never reads: it is the server's own, kept
+    // only to be given back. Something nothing looks at is something nothing
+    // would notice growing, so it is held to a ceiling like every other
+    // spelling off a pipe.
+    let (read, _) = read(&[
+        agreeable(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "result": {
+                "tools": [{ "name": "search" }],
+                "nextCursor": "c".repeat(CURSOR_BYTES + 1),
+            },
+        }),
+    ]);
+
+    let Err(Rebuffed::TooLong { field, .. }) = read else {
+        panic!("expected the cursor to be refused, got {read:?}");
+    };
+    assert_eq!(field, "nextCursor");
 }

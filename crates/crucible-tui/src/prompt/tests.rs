@@ -964,11 +964,16 @@ fn a_committed_line_says_exactly_what_was_typed() {
     // spaces in front of it and reads back without them is a transcript that
     // disagrees with the request it is the record of — and pasted code is the
     // case that actually happens.
-    for said in [
-        "    let x = 1;",
-        "\thello",
-        "  two  spaces  inside  ",
-        "plain",
+    //
+    // A tab is the one character the record cannot keep as it was: a row is
+    // measured a column at a time and a terminal moves a tab to the next stop,
+    // so a row holding one is a row whose width is a guess. It reads back as
+    // the space a row can account for.
+    for (said, recorded) in [
+        ("    let x = 1;", "    let x = 1;"),
+        ("\thello", " hello"),
+        ("  two  spaces  inside  ", "  two  spaces  inside  "),
+        ("plain", "plain"),
     ] {
         let rows = Prompt::committed(said, 200, Glyphs::Unicode, false);
         let back: String = rows
@@ -979,7 +984,7 @@ fn a_committed_line_says_exactly_what_was_typed() {
             .expect("the mark")
             .to_owned();
 
-        assert_eq!(back, said, "{said:?}");
+        assert_eq!(back, recorded, "{said:?}");
     }
 }
 

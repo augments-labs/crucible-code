@@ -158,6 +158,9 @@ struct Watched {
     /// Whether the process behind this one has gone, so that writing to it
     /// finds nothing on the other end.
     departed: AtomicBool,
+    /// Whether the process behind this one has stopped reading, so that a write
+    /// runs out of patience with the bytes already gone from crucible's hands.
+    deafened: AtomicBool,
 }
 
 impl Watched {
@@ -189,6 +192,18 @@ impl Watched {
     fn departs(&self) {
         self.departed.store(true, Ordering::Relaxed);
     }
+
+    /// Makes this server stop reading its input, the way a program still
+    /// running but no longer listening does.
+    ///
+    /// The opposite ending to [`Self::departs`] and the reason the two are
+    /// separate: crucible spends a patience and gives up, but the bytes were
+    /// handed to the thread that owns the pipe before that wait began, so the
+    /// far end may read the call the moment after crucible stopped waiting for
+    /// it to.
+    fn deafens(&self) {
+        self.deafened.store(true, Ordering::Relaxed);
+    }
 }
 
 /// The writing end of a server's input, as a test can read it back.
@@ -207,6 +222,12 @@ impl Write for Input {
             return Err(io::Error::new(
                 io::ErrorKind::BrokenPipe,
                 "the server this was written to has gone",
+            ));
+        }
+        if self.0.deafened.load(Ordering::Relaxed) {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "the server this was written to stopped reading",
             ));
         }
         self.0
@@ -628,6 +649,35 @@ fn a_server_naming_a_tool_the_builtin_roster_owns_takes_nothing_over() {
         "and the server is still offered"
     );
     hosting.dispose(&context).expect("the server stopped");
+}
+
+#[test]
+fn a_server_offering_two_names_a_rule_cannot_tell_apart_is_never_started() {
+    // `search` and `Search` are two tools to the server and one name to every
+    // permission rule that could be written about them, because a rule reads a
+    // name without case. A verdict given for the first would be spent on the
+    // second, so the catalogue refuses the pair where it reads them and the
+    // server never starts — the roster is not reached, let alone published.
+    let sandbox = Pretend::new([Answers::Says(opening(
+        "docs",
+        &json!([offers("search"), offers("Search")]),
+    ))]);
+    let hosting = Hosting::new(
+        builtin(&[]),
+        Arc::clone(&sandbox) as Arc<dyn SandboxService>,
+        vec![chosen("docs")],
+    );
+    let context = lifecycle();
+
+    let refused = hosting
+        .prepare(&context)
+        .expect_err("two names one rule cannot tell apart");
+
+    assert!(
+        refused.to_string().contains("Search"),
+        "the refusal names the pair: {refused}"
+    );
+    hosting.dispose(&context).expect("nothing to stop");
 }
 
 #[test]
@@ -1344,6 +1394,48 @@ fn a_server_that_died_before_the_frame_went_is_started_again_and_the_call_answer
 }
 
 #[test]
+fn a_call_whose_frame_ran_out_of_patience_is_never_sent_a_second_time() {
+    let mut first = opening("docs", &json!([offers("search")]));
+    first.push(produced("never said", false));
+    let mut second = opening("docs", &json!([offers("search")]));
+    second.push(produced("two pages", false));
+    let sandbox = Pretend::new([Answers::Says(first), Answers::Says(second)]);
+    let hosting = Hosting::new(
+        builtin(&[]),
+        Arc::clone(&sandbox) as Arc<dyn SandboxService>,
+        vec![chosen("docs").restarting(1)],
+    );
+    let context = lifecycle();
+    hosting.prepare(&context).expect("the server started");
+    let snapshot = hosting.snapshot(&context).expect("one generation");
+    let entry = snapshot.find("mcp:docs/search").expect("the offered tool");
+
+    // The server stops reading rather than going. Crucible spends its patience
+    // and gives up on the write, but by then the bytes are with the thread that
+    // owns the pipe: the far end may read that call a moment later, and there
+    // is a restart in the budget for a crucible that believed otherwise.
+    sandbox.server(0).deafens();
+    let refused = calls(
+        entry.tool(),
+        "mcp:docs/search",
+        r#"{"query":"crates"}"#,
+        &Cancel::new(),
+    )
+    .expect_err("a write nobody took is not an answer");
+
+    assert!(
+        !matches!(refused, ToolError::Cancelled { .. }),
+        "nobody pressed anything; the pipe simply stopped taking bytes: {refused}"
+    );
+    assert_eq!(
+        sandbox.started(),
+        1,
+        "a call that may already have been read is not one to send again, so \
+         the restart in the budget is left unspent"
+    );
+}
+
+#[test]
 fn a_server_selected_with_no_restarts_is_not_started_again_and_the_answer_says_why() {
     let mut frames = opening("docs", &json!([offers("search")]));
     frames.push(produced("never said", false));
@@ -1415,6 +1507,47 @@ fn a_restarted_server_offering_the_tool_under_another_schema_is_refused_and_reti
     assert!(
         refused.to_string().contains("will not be asked again"),
         "and the tool is finished with: {refused}"
+    );
+    hosting.dispose(&context).expect("nothing left to stop");
+}
+
+#[test]
+fn a_restarted_server_that_reshaped_a_tool_nobody_called_is_refused_just_the_same() {
+    // The call in hand comes back describable and its neighbour does not. The
+    // model holds both descriptors and may call the second next, so a restart
+    // judged on the first alone would leave the published roster promising a
+    // schema the server no longer offers.
+    let mut first = opening("docs", &json!([offers("search"), offers("fetch")]));
+    first.push(produced("never said", false));
+    let moved = json!([
+        offers("search"),
+        {
+            "name": "fetch",
+            "inputSchema": { "type": "object", "required": ["url"] },
+        },
+    ]);
+    let mut second = opening("docs", &moved);
+    second.push(produced("two pages", false));
+    let sandbox = Pretend::new([Answers::Says(first), Answers::Says(second)]);
+    let hosting = Hosting::new(
+        builtin(&[]),
+        Arc::clone(&sandbox) as Arc<dyn SandboxService>,
+        vec![chosen("docs").restarting(1)],
+    );
+    let context = lifecycle();
+    hosting.prepare(&context).expect("the server started");
+    let snapshot = hosting.snapshot(&context).expect("one generation");
+    let entry = snapshot.find("mcp:docs/search").expect("the offered tool");
+
+    sandbox.server(0).departs();
+    let refused = calls(entry.tool(), "mcp:docs/search", "{}", &Cancel::new())
+        .expect_err("what came back does not describe everything that was published");
+
+    assert_eq!(sandbox.started(), 2, "it was started again to find out");
+    assert_eq!(sandbox.server(1).stops(), 1, "the replacement is stopped");
+    assert!(
+        refused.to_string().contains("fetch"),
+        "and the refusal names the tool that moved: {refused}"
     );
     hosting.dispose(&context).expect("nothing left to stop");
 }

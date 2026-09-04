@@ -68,7 +68,7 @@ impl Unanswered {
     /// this crate refused counts the same as a conversation that broke after
     /// the frame went. Only [`Trouble::outstanding`] can answer `false`.
     #[must_use]
-    pub const fn outstanding(&self) -> bool {
+    pub fn outstanding(&self) -> bool {
         match self {
             Self::Talking(trouble) => trouble.outstanding(),
             Self::Missing { .. } => true,
@@ -173,12 +173,18 @@ pub fn call<R: BufRead, W: Write>(
     let (text, cut) = cut(said);
     Ok(Answered {
         text,
-        // Absent is a result that worked. The member says a tool failed, and a
+        // Absent is a result that worked: the member says a tool failed, and a
         // server that leaves it off has not said anything went wrong.
-        failed: answer
-            .get("isError")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
+        //
+        // Written and unreadable is the other way about. `isError: "yes"` is a
+        // server saying something crucible cannot read, and the two ways to
+        // guess are not equally cheap: a working result reported as a failure
+        // costs a call, and a failure reported as a result is the model being
+        // told a thing that did not happen did.
+        failed: match answer.get("isError") {
+            None | Some(Value::Null) => false,
+            Some(said) => said.as_bool().unwrap_or(true),
+        },
         omitted: omitted.saturating_add(cut),
     })
 }

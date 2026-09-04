@@ -1,6 +1,6 @@
 //! Conversations a server could hold, including the ones it should not.
 
-use std::io::Cursor;
+use std::io::{self, Cursor};
 
 use serde_json::{Value, json};
 
@@ -209,5 +209,63 @@ fn a_frame_that_is_not_a_message_stops_the_call_rather_than_being_skipped() {
         matches!(answers.first(), Some(Err(Trouble::Garbled(_)))),
         "{:?}",
         answers.first()
+    );
+}
+
+/// A pipe that refuses a frame with a given ending.
+///
+/// Standing in for [`Said`](crucible_core::Said), whose two ways of refusing
+/// mean opposite things about the far end: a write that timed out left the
+/// bytes with the thread that owns the pipe, and a broken one left them
+/// nowhere.
+///
+/// [`Said`]: crucible_core::Said
+struct Refuses(io::ErrorKind);
+
+impl io::Write for Refuses {
+    fn write(&mut self, _bytes: &[u8]) -> io::Result<usize> {
+        Err(io::Error::new(self.0, "the frame did not go"))
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Err(io::Error::new(self.0, "the frame did not go"))
+    }
+}
+
+/// Asks one call over a pipe that refuses the frame that way.
+fn refused(ending: io::ErrorKind) -> Trouble {
+    Talking::new(Cursor::new(String::new()), Refuses(ending))
+        .ask("tools/call", &json!({}))
+        .expect_err("a pipe that will not take a frame")
+}
+
+#[test]
+fn a_frame_the_pipe_timed_out_on_is_outstanding_because_the_bytes_may_yet_land() {
+    let trouble = refused(io::ErrorKind::TimedOut);
+
+    assert!(
+        matches!(trouble, Trouble::Unsent { .. }),
+        "a frame the pipe would not take did not go, whatever became of it: {trouble}"
+    );
+    assert!(
+        trouble.outstanding(),
+        "a patience spent waiting for the pipe to take a frame ends with those \
+         bytes still in the writer's hands, so the server may have been asked \
+         and this is not a call anybody may ask again: {trouble}"
+    );
+}
+
+#[test]
+fn a_frame_the_pipe_broke_on_is_not_outstanding_because_nothing_was_left_to_read_it() {
+    let trouble = refused(io::ErrorKind::BrokenPipe);
+
+    assert!(
+        matches!(trouble, Trouble::Unsent { .. }),
+        "a broken pipe is a frame that did not go: {trouble}"
+    );
+    assert!(
+        !trouble.outstanding(),
+        "a pipe with nobody on the other end of it cannot have delivered the \
+         frame, which is the one ending crucible can prove was harmless: {trouble}"
     );
 }

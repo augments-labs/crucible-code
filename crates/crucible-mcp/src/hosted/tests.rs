@@ -9,7 +9,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    Ancestry, Finish, SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance,
+    Ancestry, Cancel, Finish, SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance,
     SandboxCapabilities, SandboxFilesystemAccess, SandboxFilesystemProvenance,
     SandboxFilesystemRule, SandboxId, SandboxInspection, SandboxManifest, SandboxMode,
     SandboxNetworkPolicy, SandboxOutput, SandboxPolicy, SandboxProcess, SandboxRead,
@@ -330,10 +330,10 @@ fn a_handshake_and_a_catalogue_travel_over_the_process_streams() {
 
     let mut hosted = Hosted::over(fake, PATIENCE).expect("a process with both pipes");
     let greeting = hosted
-        .greet()
+        .greet(None)
         .expect("a server offering a version crucible speaks");
     let offered = hosted
-        .catalogue(&greeting)
+        .catalogue(&greeting, None)
         .expect("a catalogue within every bound");
 
     assert_eq!(greeting.version(), newest());
@@ -363,9 +363,9 @@ fn a_tool_the_catalogue_offered_can_then_be_called_over_the_same_streams() {
     );
 
     let mut hosted = Hosted::over(fake, PATIENCE).expect("a process with both pipes");
-    let greeting = hosted.greet().expect("an agreeable server");
+    let greeting = hosted.greet(None).expect("an agreeable server");
     let offered = hosted
-        .catalogue(&greeting)
+        .catalogue(&greeting, None)
         .expect("a catalogue within bounds");
     let tool = offered.first().expect("the server offered one tool");
     let answered = hosted
@@ -396,7 +396,7 @@ fn a_server_that_says_nothing_is_given_up_on_rather_than_waited_out_forever() {
     let (fake, _watched) = Fake::new([Step::Waits], Ending::Stubborn);
 
     let mut hosted = Hosted::over(fake, PATIENCE).expect("a process with both pipes");
-    let refused = hosted.greet().expect_err("a server that never answers");
+    let refused = hosted.greet(None).expect_err("a server that never answers");
 
     assert!(
         refused.to_string().contains("said nothing"),
@@ -511,12 +511,36 @@ fn what_a_server_complained_about_survives_the_ending_that_it_explains() {
     // The drain runs on a thread of its own, so the complaint is read while
     // crucible waits out the silence rather than before it starts.
     let mut hosted = hosted;
-    drop(hosted.greet());
+    drop(hosted.greet(None));
     let ended = hosted.stop(Duration::ZERO);
 
     assert!(
         ended.muttered.text().contains("no index"),
         "standard error is usually the only thing that says why a server ended: {:?}",
         ended.muttered.text()
+    );
+}
+
+#[test]
+fn a_handshake_nobody_is_waiting_for_any_more_ends_at_the_press() {
+    // A server that never answers the greeting, and a patience nobody sits
+    // through. Start-up is where a press matters most: nothing has been asked
+    // of the far end yet, so giving up leaves nothing behind to wonder about.
+    let (fake, _watched) = Fake::new([Step::Waits], Ending::Exited);
+    let cancel = Cancel::new();
+    cancel.request();
+    let mut hosted =
+        Hosted::over(fake, Duration::from_secs(30)).expect("a process with both pipes");
+
+    let began = Instant::now();
+    let rebuffed = hosted
+        .greet(Some(&cancel))
+        .expect_err("a handshake that was called off is not a greeting");
+    let waited = began.elapsed();
+
+    assert!(
+        waited < Duration::from_secs(5),
+        "a handshake carries the press the same way a call does, or a server that \
+         says nothing holds the whole start-up open: {waited:?} against {rebuffed}"
     );
 }

@@ -61,7 +61,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use crucible_core::{
-    Ancestry, Approved, Command, Finish, SandboxCommand, SandboxEnvironment, SandboxId,
+    Ancestry, Approved, Cancel, Command, Finish, SandboxCommand, SandboxEnvironment, SandboxId,
     SandboxManifest, SandboxPolicy, SandboxRequest, SandboxService, Sensitivity, Summary, Tool,
     ToolArgs, ToolContext, ToolDescriptor, ToolEntry, ToolError, ToolId, ToolOutput,
     ToolProvenance, ToolSnapshot, ToolSourceKind, Toolset, ToolsetContext, ToolsetError,
@@ -207,6 +207,7 @@ fn start(
     chosen: &Chosen,
     sandbox: &dyn SandboxService,
     ancestry: Ancestry,
+    interrupt: Option<&Cancel>,
 ) -> Result<Started, Box<str>> {
     let refused = |problem: &dyn std::fmt::Display| -> Box<str> { problem.to_string().into() };
 
@@ -235,11 +236,13 @@ fn start(
     let process = session.start(command).map_err(|e| refused(&e))?;
 
     let mut hosted = Hosted::over(process, chosen.handshake).map_err(|e| refused(&e))?;
-    let greeting = hosted.greet().map_err(|e| refused(&e))?;
+    let greeting = hosted.greet(interrupt).map_err(|e| refused(&e))?;
     // Under the other number from here on: the greeting was a peer reading
     // from a table, and everything after it is a peer doing work.
     hosted.patient_for(chosen.request);
-    let offered = hosted.catalogue(&greeting).map_err(|e| refused(&e))?;
+    let offered = hosted
+        .catalogue(&greeting, interrupt)
+        .map_err(|e| refused(&e))?;
     Ok(Started { hosted, offered })
 }
 
@@ -275,6 +278,12 @@ struct Server {
     sandbox: Arc<dyn SandboxService>,
     /// Whose run this process belongs to, for the audit a restart also owes.
     ancestry: Ancestry,
+    /// Every tool this run published for it, as it was offered at start-up.
+    ///
+    /// The whole catalogue rather than the tool a call is about, because a
+    /// restart is checked against what the model can *see*: the descriptors
+    /// went out together and any of them may be called next.
+    published: Vec<Offered>,
     /// The conversation and the budget, under one lock.
     ///
     /// One rather than two because they are decided together: what happens to
@@ -318,11 +327,16 @@ impl Hosting {
         chosen: &Arc<Chosen>,
         context: &ToolsetContext,
     ) -> Result<(Arc<Server>, Vec<ToolEntry>), ToolsetError> {
-        let Started { hosted, offered } = start(chosen, self.sandbox.as_ref(), context.ancestry())
-            .map_err(|problem| ToolsetError::Source {
-                id: chosen.name.clone(),
-                problem,
-            })?;
+        let Started { hosted, offered } = start(
+            chosen,
+            self.sandbox.as_ref(),
+            context.ancestry(),
+            Some(context.cancel()),
+        )
+        .map_err(|problem| ToolsetError::Source {
+            id: chosen.name.clone(),
+            problem,
+        })?;
 
         let provenance = ToolProvenance::new(
             ToolSourceKind::Mcp,
@@ -335,6 +349,7 @@ impl Hosting {
             chosen: Arc::clone(chosen),
             sandbox: Arc::clone(&self.sandbox),
             ancestry: context.ancestry(),
+            published: offered.clone(),
             live: Mutex::new(Conversation {
                 hosted: Some(hosted),
                 restarts: Restarts::ceiling(chosen.restarts),
@@ -423,7 +438,8 @@ impl Server {
     }
 
     /// Starts this server again, if the ending permits it and the budget has
-    /// one left, and hands back a conversation that still offers `tool`.
+    /// one left, and hands back a conversation that still offers everything
+    /// this run published for it.
     ///
     /// The budget is asked before anything is started, and it is asked with the
     /// ending's own certainty rather than a decision made here: a request that
@@ -434,30 +450,44 @@ impl Server {
     /// The old conversation is stopped first. A process that has to be started
     /// again is one crucible has already lost track of, and leaving it running
     /// beside its replacement would leave a server nothing will ever reap.
-    fn restart(&self, after: Ambiguity, tool: &Offered) -> Result<(), Box<str>> {
+    fn restart(&self, after: Ambiguity, interrupt: Option<&Cancel>) -> Result<(), Box<str>> {
         let mut live = self.live.lock().unwrap_or_else(PoisonError::into_inner);
         let permitted = live.restarts.again(after).map_err(|no| no.to_string())?;
         drop(self.reaped(live.hosted.take()));
 
-        let Started { hosted, offered } = start(&self.chosen, self.sandbox.as_ref(), self.ancestry)
-            .map_err(|problem| {
-                format!("restart {} did not start it: {problem}", permitted.nth()).into_boxed_str()
-            })?;
+        let Started { hosted, offered } = start(
+            &self.chosen,
+            self.sandbox.as_ref(),
+            self.ancestry,
+            interrupt,
+        )
+        .map_err(|problem| {
+            format!("restart {} did not start it: {problem}", permitted.nth()).into_boxed_str()
+        })?;
 
-        // The descriptor the model wrote its arguments against is the one this
-        // run published, and a server is free to come back offering something
-        // else under the same name. Sending arguments checked against the old
-        // schema to the new tool would be crucible vouching for a promise
-        // nobody made, so a catalogue that moved ends the server instead.
-        let same = offered
-            .iter()
-            .any(|one| one.name() == tool.name() && one.schema() == tool.schema());
-        if !same {
+        // The descriptors the model wrote its arguments against are the ones
+        // this run published, and a server is free to come back offering
+        // something else under the same names. Sending arguments checked
+        // against an old schema to the new tool would be crucible vouching for
+        // a promise nobody made, so a catalogue that moved ends the server
+        // instead.
+        //
+        // All of them rather than the one this call is about: the model holds
+        // every descriptor this run published and may call any of them next, so
+        // a server that came back with the tool in hand intact and its
+        // neighbour reshaped would leave the rest of the roster describing
+        // something that is no longer there.
+        let moved = self.published.iter().find(|then| {
+            !offered
+                .iter()
+                .any(|now| now.name() == then.name() && now.schema() == then.schema())
+        });
+        if let Some(moved) = moved {
             drop(self.reaped(Some(hosted)));
             return Err(format!(
                 "it came back without {}, or offering it under a different schema, so the \
                  tools this run published no longer describe it",
-                tool.name()
+                moved.name()
             )
             .into_boxed_str());
         }
@@ -603,7 +633,7 @@ impl Tool for Calling {
         } else {
             Ambiguity::Settled
         };
-        if let Err(refused) = self.server.restart(after, &self.offered) {
+        if let Err(refused) = self.server.restart(after, Some(context.cancel())) {
             drop(self.server.release());
             return Err(if problem.interrupted() {
                 // Reported as the interruption it was. The restart was refused

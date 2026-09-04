@@ -245,8 +245,17 @@ fn call(written: &Map<String, Value>) -> Result<Call, Garbled> {
 
 /// An identifier, as the number crucible issues and nothing else.
 fn numbered(id: &Value) -> Result<Call, Garbled> {
-    id.as_u64().map(Call::new).ok_or_else(|| Garbled::NotACall {
-        found: id.to_string().into(),
+    if let Some(call) = id.as_u64() {
+        return Ok(Call::new(call));
+    }
+
+    // Held to the same ceiling as everything else retained off a pipe. The
+    // spelling is kept so the sentence can say what arrived instead, and a
+    // frame is a megabyte: without this the sentence could be one.
+    let found = id.to_string();
+    bounded("id", &found)?;
+    Err(Garbled::NotACall {
+        found: found.into(),
     })
 }
 
