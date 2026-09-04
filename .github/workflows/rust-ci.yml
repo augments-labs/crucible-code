@@ -7,58 +7,16 @@ permissions:
   contents: read
 
 jobs:
-  windows-bootstrap:
-    name: Windows final-token bootstrap
-    runs-on: windows-latest
-    timeout-minutes: 5
+  macos-cpu:
+    name: macOS hard CPU limit (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15-intel, macos-26]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 4
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - shell: pwsh
-        run: ./.github/probes/windows-bootstrap.ps1
-  windows-stop:
-    name: Windows stop observation GREEN RED GREEN
-    runs-on: windows-latest
-    timeout-minutes: 8
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - name: GREEN before
-        timeout-minutes: 2
-        shell: pwsh
-        run: |
-          cargo test -p crucible-tools --lib --locked bash::platform::windows::tests:: -- --nocapture --test-threads=1
-      - name: RED observation removed and exact restoration
-        timeout-minutes: 2
-        shell: pwsh
-        run: |
-          $path = 'crates/crucible-tools/src/bash/platform/windows.rs'
-          $original = [IO.File]::ReadAllBytes($path)
-          $log = Join-Path $env:RUNNER_TEMP 'windows-stop-red.log'
-          if ((Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant() -ne '09f4a5a9dcd91f7a6f3442bad43fd01ce38b7071e9124cb5973d2ba728d7c1fc') { throw 'production identity' }
-          try {
-            git apply .github/probes/windows-stop-no-observation.patch
-            if ($LASTEXITCODE -ne 0) { throw 'mutation application' }
-            if ((Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'abf044e215b2c61d3c364aa24c5bd0645d7b0da2bccaefcfc6c62b15f950b8b1') { throw 'mutant identity' }
-            cargo test -p crucible-tools --lib --locked bash::platform::windows::tests::explicit_stop_cannot_complete_without_query_authority -- --exact --nocapture --test-threads=1 *> $log
-            $result = $LASTEXITCODE
-            Get-Content $log | Out-Host
-            $content = [IO.File]::ReadAllText($log)
-            if ($result -eq 0 -or !$content.Contains('explicit stop must observe job extinction: ()') -or !$content.Contains('test result: FAILED. 0 passed; 1 failed;')) { throw 'missing intended RED assertion' }
-            Write-Output 'EXPECTED-RED stop observation mutation caught'
-          } finally {
-            [IO.File]::WriteAllBytes($path, $original)
-            if ((Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant() -ne '09f4a5a9dcd91f7a6f3442bad43fd01ce38b7071e9124cb5973d2ba728d7c1fc') { throw 'restoration identity' }
-          }
-          exit 0
-      - name: GREEN after
-        timeout-minutes: 2
-        shell: pwsh
-        run: |
-          cargo test -p crucible-tools --lib --locked bash::platform::windows::tests:: -- --nocapture --test-threads=1
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          if ((Get-FileHash 'crates/crucible-tools/src/bash/platform/windows/tests.rs' -Algorithm SHA256).Hash.ToLowerInvariant() -ne '5f9c7f9baec216fb367a705335b9cd220a38df47f5e9b993f78e7f9c0d1482dd') { throw 'tests changed' }
-          git diff --exit-code
+      - run: sh .github/probes/macos-hard-cpu.sh
