@@ -15,6 +15,11 @@ change in any release with no deprecation period.
   confirmed, Crucible retains staging data, Linux projection evidence and the
   command slot instead of reporting successful cleanup or deleting the evidence.
 
+- **Background commands remain reachable when cleanup fails.** Their rows and
+  command slots stay held until cleanup succeeds, including when the original
+  result was abandoned. A failed stop keeps the panel open with
+  `Stop failed; x retries`; the next press retries the same command.
+
 - **Failed local process cleanup remains visible.** Compatibility-mode stops
   retry unfinished cleanup, and a cached exit status cannot hide a prior
   supervisor failure. Unconfirmed cleanup retains staging data and its command

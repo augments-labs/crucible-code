@@ -1,7 +1,15 @@
-//! Real startup failures use owned children and staging roots. The native stop
-//! fault leaves its child unreaped; rescue runs after the bounded observation.
+//! Real startup failures use owned children and staging roots. Rescue holds a
+//! pidfd acquired before any wait, including when testing the broken startup path.
 
 use super::super::*;
+
+use std::os::fd::{AsFd as _, OwnedFd};
+
+thread_local! {
+    // The hook and registration run on the same worker. Other parallel tests
+    // have separate slots, and only the first stop attempt transfers a handle.
+    static RESCUE: std::cell::RefCell<Option<std::sync::mpsc::SyncSender<io::Result<OwnedFd>>>> = const { std::cell::RefCell::new(None) };
+}
 
 fn full_audit(plan: &SpawnPlan) -> io::Result<()> {
     for _ in 0..crucible_core::MAX_SANDBOX_AUDIT_FACTS {
@@ -15,7 +23,22 @@ fn full_audit(plan: &SpawnPlan) -> io::Result<()> {
     Ok(())
 }
 
-fn fail_stop(_scope: &Scope, _child: &mut Child) -> io::Result<()> {
+fn fail_stop(_scope: &Scope, child: &mut Child) -> io::Result<()> {
+    RESCUE.with_borrow_mut(|rescue| {
+        if let Some(send) = rescue.take() {
+            // The caller has not waited or reaped this owned Child. Capturing
+            // identity here remains safe even if the broken path reaps it next.
+            let handle = i32::try_from(child.id())
+                .ok()
+                .and_then(rustix::process::Pid::from_raw)
+                .ok_or_else(|| io::Error::other("fixture child PID is invalid"))
+                .and_then(|pid| {
+                    rustix::process::pidfd_open(pid, rustix::process::PidfdFlags::empty())
+                        .map_err(io::Error::from)
+                });
+            let _ = send.send(handle);
+        }
+    });
     Err(io::Error::new(
         io::ErrorKind::PermissionDenied,
         "injected startup scope stop",
@@ -28,7 +51,6 @@ fn startup_stop_failure_is_bounded_and_quarantines_owned_resources() -> io::Resu
     let root = sample.root().join("stage");
     std::fs::create_dir(&root)?;
     std::fs::write(root.join("payload"), "owned staging data")?;
-    let marker = sample.root().join("owned-child-pid");
     let plan = testing_plan(
         crucible_core::SandboxSpeech::Held,
         Some(Stage::new(root.clone())),
@@ -36,18 +58,14 @@ fn startup_stop_failure_is_bounded_and_quarantines_owned_resources() -> io::Resu
     .map_err(io::Error::other)?;
     full_audit(&plan)?;
     let active = Arc::clone(&plan.reservation.active);
-    // The fixture itself expires if setup fails before rescue learns its PID.
-    // This timeout exceeds the asserted startup bound and is not cleanup proof.
+    // This independent expiry bounds even the broken wait path if the test
+    // worker cannot hand over a pidfd. It is not evidence of successful cleanup.
     let mut command = Command::new("/bin/bash");
-    command
-        .args([
-            "-c",
-            "printf '%s' \"$$\" > \"$1\"; read -t 5 line",
-            "fixture",
-        ])
-        .arg(&marker);
+    command.args(["-c", "read -t 5 line"]);
     let (send, receive) = std::sync::mpsc::sync_channel(1);
+    let (rescue_send, rescue_receive) = std::sync::mpsc::sync_channel(1);
     let worker = thread::spawn(move || {
+        RESCUE.with_borrow_mut(|slot| *slot = Some(rescue_send));
         let result = spawn_inner(command, plan, fail_stop).map(drop);
         let _ = send.send(result);
     });
@@ -55,43 +73,37 @@ fn startup_stop_failure_is_bounded_and_quarantines_owned_resources() -> io::Resu
     // The fixed owner returns promptly without asserting that this child died.
     let returned = receive.recv_timeout(Duration::from_secs(1));
     let bounded = returned.is_ok();
-    let deadline = Instant::now() + Duration::from_secs(3);
-    let pid = loop {
-        if let Ok(raw) = std::fs::read_to_string(&marker)
-            && let Ok(raw) = raw.parse::<i32>()
-            && let Some(pid) = rustix::process::Pid::from_raw(raw)
-        {
-            break Some(pid);
-        }
-        if Instant::now() >= deadline {
-            break None;
-        }
-        thread::sleep(SUPERVISE);
-    };
-    // This PID belongs to our still-unreaped child; it cannot be reused before
-    // either the baseline waiter or this rescue reaps it. Signal exactly once.
-    if let Some(pid) = pid {
-        let _ = rustix::process::kill_process(pid, rustix::process::Signal::KILL);
+    let rescue = rescue_receive
+        .recv_timeout(Duration::from_secs(1))
+        .map_err(io::Error::other)
+        .and_then(std::convert::identity);
+    if let Ok(handle) = &rescue {
+        // ESRCH is safe: the captured process may already have exited/reaped.
+        // Unlike a numeric PID, this descriptor cannot select its replacement.
+        let _ = rustix::process::pidfd_send_signal(handle, rustix::process::Signal::KILL);
     }
     let result = match returned {
         Ok(result) => result,
         Err(_) => receive
-            .recv_timeout(Duration::from_secs(2))
+            .recv_timeout(Duration::from_secs(6))
             .map_err(io::Error::other)?,
     };
     worker
         .join()
         .map_err(|_| io::Error::other("startup fixture panicked"))?;
-    if let Some(pid) = pid {
-        let deadline = Instant::now() + REAP;
-        loop {
-            match rustix::process::waitpid(Some(pid), rustix::process::WaitOptions::NOHANG) {
-                Ok(None) if Instant::now() < deadline => thread::sleep(SUPERVISE),
-                _ => break,
-            }
+    let handle = rescue?;
+    let deadline = Instant::now() + REAP;
+    loop {
+        match rustix::process::waitid(
+            rustix::process::WaitId::PidFd(handle.as_fd()),
+            rustix::process::WaitIdOptions::EXITED | rustix::process::WaitIdOptions::NOHANG,
+        ) {
+            Ok(Some(_)) | Err(rustix::io::Errno::CHILD) => break,
+            Ok(None) if Instant::now() < deadline => thread::sleep(SUPERVISE),
+            Ok(None) => return Err(io::Error::other("fixture child did not exit")),
+            Err(problem) => return Err(problem.into()),
         }
     }
-    assert!(pid.is_some(), "fixture must identify its owned child");
     assert_eq!(
         (
             bounded,

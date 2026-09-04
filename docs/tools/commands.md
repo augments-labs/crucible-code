@@ -146,6 +146,12 @@ esc to close · enter shows it · x stops it
 stood in. <kbd>x</kbd> ends it, with no confirmation: the command was started by a
 call you allowed, and stopping it is why the list is reachable.
 
+If cleanup fails, the command stays selected and the panel says
+`Stop failed; x retries`. Press <kbd>x</kbd> again to retry. Its row and command
+slot remain held until cleanup succeeds; a failed cleanup is not reported as a
+completed background command. A command whose original result was abandoned
+also remains reachable here if its cleanup failed.
+
 ## When one ends on its own
 
 It says so, because the count going quietly down would leave you — and the model —
