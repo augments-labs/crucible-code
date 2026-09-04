@@ -1,0 +1,11 @@
+--- a/crates/crucible-tools/src/bash/platform/windows.rs
++++ b/crates/crucible-tools/src/bash/platform/windows.rs
+@@ -166,7 +166,7 @@
+         let deadline = Instant::now() + STOP_WAIT;
+         loop {
+             if self.empty()? {
+-                return Ok(());
++                return Err(io::Error::from(io::ErrorKind::TimedOut));
+             }
+             let remaining = deadline.saturating_duration_since(Instant::now());
+             if remaining.is_zero() {

@@ -1,0 +1,14 @@
+--- a/crates/crucible-tools/src/bash/platform/windows.rs
++++ b/crates/crucible-tools/src/bash/platform/windows.rs
+@@ -170,10 +170,7 @@
+             }
+             let remaining = deadline.saturating_duration_since(Instant::now());
+             if remaining.is_zero() {
+-                return Err(io::Error::new(
+-                    io::ErrorKind::TimedOut,
+-                    "the Windows job still has active processes after termination",
+-                ));
++                return Ok(());
+             }
+             thread::sleep(remaining.min(STOP_POLL));
+         }
