@@ -7,6 +7,8 @@
 
 mod callback;
 
+pub(super) use callback::PORTS;
+
 use std::fmt;
 use std::io::Read as _;
 use std::sync::mpsc;
@@ -217,6 +219,8 @@ pub(crate) struct Flow {
     token: Box<str>,
     minimum_interval: Duration,
     login_lifetime: Duration,
+    /// The loopback ports a browser login may be answered on.
+    callback_ports: &'static [u16],
 }
 
 struct ActiveLogin<'a> {
@@ -227,7 +231,7 @@ struct ActiveLogin<'a> {
 }
 
 impl Flow {
-    fn production() -> Self {
+    pub(super) fn production() -> Self {
         let config = ureq::Agent::config_builder()
             .timeout_global(Some(REQUEST_LIFETIME))
             .max_redirects(0)
@@ -241,6 +245,7 @@ impl Flow {
             token: format!("{ISSUER}/oauth/token").into(),
             minimum_interval: Duration::from_secs(1),
             login_lifetime: LOGIN_LIFETIME,
+            callback_ports: &PORTS,
         }
     }
 
@@ -259,7 +264,16 @@ impl Flow {
             token: format!("{base}/oauth/token").into(),
             minimum_interval: Duration::from_millis(1),
             login_lifetime: crate::oauth::PATIENCE,
+            // An ephemeral port: the registered pair belongs to the host, and a
+            // test that claimed it would fail whenever something else had it.
+            callback_ports: &[0],
         }
+    }
+
+    /// The loopback ports this flow will answer a browser login on.
+    #[cfg(test)]
+    pub(super) fn callback_ports(&self) -> &[u16] {
+        self.callback_ports
     }
 
     fn login(&self, method: LoginMethod, active: &ActiveLogin<'_>) -> Result<(), OAuthError> {
@@ -290,7 +304,7 @@ impl Flow {
     ) -> Result<Tokens, OAuthError> {
         let pkce = Pkce::new()?;
         let state = random_urlsafe::<32>()?;
-        let callback = callback::Server::bind(self.login_lifetime)?;
+        let callback = callback::Server::bind(self.callback_ports, self.login_lifetime)?;
         let redirect = callback.redirect_uri();
         let authorization = authorization_uri(&self.issuer, &redirect, &pkce.challenge, &state);
         updates

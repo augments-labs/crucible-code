@@ -16,7 +16,13 @@ use crucible_core::Cancel;
 
 use super::{CANCEL_POLL, OAuthError, random_urlsafe};
 
-const PORTS: [u16; 2] = [1455, 1457];
+/// The loopback ports the provider will redirect a browser back to.
+///
+/// A redirect address is registered with the provider, not chosen at run time,
+/// so a login can only be answered on one of these. There is no ephemeral
+/// alternative in production: a port outside this list is a redirect the
+/// provider refuses.
+pub(crate) const PORTS: [u16; 2] = [1455, 1457];
 const MAX_HEADERS: usize = 16 * 1024;
 const MAX_FIELDS: usize = 32;
 const MAX_VALUE: usize = 8 * 1024;
@@ -36,11 +42,14 @@ pub(super) struct Server {
 }
 
 impl Server {
-    pub(super) fn bind(lifetime: Duration) -> Result<Self, OAuthError> {
-        Self::bind_on(&PORTS, lifetime)
-    }
-
-    fn bind_on(ports: &[u16], lifetime: Duration) -> Result<Self, OAuthError> {
+    /// Listens on the first free port of `ports`, which is `PORTS` in
+    /// production and one ephemeral port under test.
+    ///
+    /// A test that took the registered pair would depend on two fixed ports
+    /// being free on whatever host it runs on, which no test controls: another
+    /// process holding them, or a second test in the same binary, turns a
+    /// working login into a bind failure that reads as a broken one.
+    pub(super) fn bind(ports: &[u16], lifetime: Duration) -> Result<Self, OAuthError> {
         for port in ports {
             let Ok(listener) = TcpListener::bind((Ipv4Addr::LOCALHOST, *port)) else {
                 continue;
@@ -359,7 +368,7 @@ mod tests {
 
     #[test]
     fn a_forged_state_does_not_consume_the_real_callback() {
-        let server = Server::bind_on(&[0], Duration::from_secs(2)).unwrap();
+        let server = Server::bind(&[0], Duration::from_secs(2)).unwrap();
         let port = server.port;
         let launch = server.launch_uri();
         let cancel = Cancel::new();
@@ -394,7 +403,7 @@ mod tests {
         // one's, so a bare `/launch` polled by somebody else must not answer
         // with the authorization URI — the state inside it is what lets a
         // forged callback through.
-        let server = Server::bind_on(&[0], Duration::from_secs(2)).unwrap();
+        let server = Server::bind(&[0], Duration::from_secs(2)).unwrap();
         let port = server.port;
         let cancel = Cancel::new();
         let (_input, submitted) = mpsc::sync_channel(1);
@@ -420,7 +429,7 @@ mod tests {
 
     #[test]
     fn cancellation_ends_an_idle_callback_promptly() {
-        let server = Server::bind_on(&[0], Duration::from_secs(2)).unwrap();
+        let server = Server::bind(&[0], Duration::from_secs(2)).unwrap();
         let cancel = Cancel::new();
         let stopping = cancel.clone();
         let (_input, submitted) = mpsc::sync_channel(1);
@@ -439,7 +448,7 @@ mod tests {
 
     #[test]
     fn manual_input_accepts_a_code_or_the_matching_redirect_only() {
-        let server = Server::bind_on(&[0], Duration::from_secs(2)).unwrap();
+        let server = Server::bind(&[0], Duration::from_secs(2)).unwrap();
         assert_eq!(
             server.manual("raw-code", "state").unwrap().as_ref(),
             "raw-code"

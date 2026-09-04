@@ -1,10 +1,10 @@
 //! Protocol, cancellation and secrecy tests for subscription login.
 
-use super::openai::{CLIENT_ID, Flow, VERIFY, now};
+use super::openai::{CLIENT_ID, Flow, PORTS, VERIFY, now};
 use super::*;
 
 use std::io::{Read as _, Write as _};
-use std::net::{TcpListener, TcpStream};
+use std::net::{Ipv4Addr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 
 use base64::Engine as _;
@@ -429,6 +429,69 @@ fn browser_login_can_finish_with_a_code_pasted_into_the_terminal() {
     server.join().unwrap();
     assert!(sent.body.contains("code=manual-code"));
     assert!(store.read().has("openai"));
+}
+
+/// Holds a port for as long as it is alive, or reports that somebody else has.
+fn occupied(port: u16) -> Option<TcpListener> {
+    TcpListener::bind((Ipv4Addr::LOCALHOST, port)).ok()
+}
+
+#[test]
+fn a_browser_login_is_not_refused_because_the_registered_ports_are_busy() {
+    // The provider redirects to one of two registered ports, so production has
+    // to ask for those and nothing else. A test cannot: the ports belong to the
+    // host, another process or a second test in this binary may hold them, and a
+    // login that failed for that reason would read as a broken login rather than
+    // a busy machine. Occupying both proves the test flow does not want them.
+    let _busy: Vec<_> = PORTS.iter().filter_map(|port| occupied(*port)).collect();
+
+    let expires = now() + 3600;
+    let (base, requests, server) = server(vec![tokens(
+        "unused-canary",
+        "busy-refresh",
+        "busy-account",
+        expires,
+    )]);
+    let oauth = OpenAiOAuth::testing(Flow::testing(&base));
+    let scratch = Scratch::new("browser-busy");
+    let store = Store::in_home(scratch.path());
+    let attempt = oauth.start(OpenAiOAuth::BROWSER, store.clone()).unwrap();
+
+    let launch = match attempt.wait(PATIENCE).unwrap().unwrap() {
+        LoginUpdate::Authorize { shown_uri, .. } => shown_uri,
+        other => panic!("expected browser authorization, got {other:?}"),
+    };
+    let port = launch
+        .strip_prefix("http://localhost:")
+        .and_then(|rest| rest.split('/').next())
+        .and_then(|port| port.parse::<u16>().ok())
+        .unwrap();
+    assert!(
+        !PORTS.contains(&port),
+        "a test answered on the registered port {port}"
+    );
+
+    attempt.submit("busy-code").unwrap();
+    assert_eq!(
+        attempt.wait(PATIENCE).unwrap(),
+        Some(LoginUpdate::Progress {
+            message: "finishing browser authorization…",
+        })
+    );
+    assert_eq!(attempt.wait(PATIENCE).unwrap(), Some(LoginUpdate::Complete));
+    let sent = requests.recv_timeout(PATIENCE).unwrap();
+    server.join().unwrap();
+    assert!(sent.body.contains("code=busy-code"));
+    assert!(store.read().has("openai"));
+}
+
+#[test]
+fn a_real_login_still_answers_only_where_the_provider_will_redirect() {
+    // The ephemeral port above is a test convenience. A production flow that
+    // took one would receive no callback at all, because the provider refuses a
+    // redirect it never registered, so the two must not converge.
+    assert_eq!(Flow::production().callback_ports(), &PORTS);
+    assert_eq!(Flow::testing("http://127.0.0.1:1").callback_ports(), &[0]);
 }
 
 #[test]
