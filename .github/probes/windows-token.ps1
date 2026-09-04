@@ -1,15 +1,16 @@
-# Probe identity: windows-token-v5; immutable predecessors retained.
-# V4 run33924136290 confirms LOCALAPPDATA setup; the null-buffer sizing call
-# for token class46 fails87. This does not test a correctly sized DWORD call.
-# SDK audit: TokenIsLessPrivilegedAppContainer=46; TokenProcessTrustLevel=41.
-# https://github.com/microsoft/win32metadata/blob/main/generation/WinSDK/RecompiledIdlHeaders/um/winnt.h
-# https://github.com/microsoft/WindowsAppSDK/discussions/3633
-# https://github.com/winsiderss/phnt/blob/master/ntseapi.h (class46 queries ULONG)
-# H6: direct fixed-DWORD query succeeds where generic zero-length sizing fails.
-# Independently query Win32 and Nt APIs; successful answers must agree.
-# At least one correctly sized query must affirm LPAC, for child AND duplicate.
-# Query failure never becomes an assumed LPAC flag or weaker launch.
-# Same four controls, environment, token restrictions, matrix and cleanup as v4.
+# Probe identity: windows-token-v6; immutable predecessors retained.
+# V5 run33924529303: fixed-DWORD class46 is rejected87 by Win32 and Nt APIs.
+# Final bounded alternative oracle: actual TokenSecurityAttributes (native class39),
+# locating WIN://NOALLAPPPKG with one enabled nonzero UInt64 value.
+# Primary basis: Google Project Zero NtCoreLib.NtToken.LowPrivilegeAppContainer:
+# https://github.com/googleprojectzero/sandbox-attacksurface-analysis-tools/blob/main/NtCoreLib/NtToken.cs
+# ABI declarations: https://github.com/winsiderss/phnt/blob/master/ntseapi.h
+# H7: this established attribute oracle is supported when class46 is unavailable.
+# Query a bounded 64KiB buffer; bound every returned pointer/count before reading.
+# Inspect the named flag only; never print other attributes or token contents.
+# Child AND impersonation duplicate must affirm LPAC before the read matrix.
+# On oracle failure stop with unsupported introspection; no assumed LPAC state.
+# All launch controls/environment/ACLs/restricting SIDs/cleanup remain as v5.
 # Disposable experiment, not a production launcher. Owns only its unique temp
 # directory and current-user AppContainer profile. Run in a disposable Windows
 # runner with a job-level timeout (suggested: 3 minutes). No network operations.
@@ -37,7 +38,7 @@ using System.Security.Principal;
 using System.Security.Cryptography;
 using System.Threading;
 
-public static class CrucibleWindowsTokenProbeV5 {
+public static class CrucibleWindowsTokenProbeV6 {
     const uint TOKEN_QUERY = 8, TOKEN_DUPLICATE = 2, TOKEN_IMPERSONATE = 4, TOKEN_ASSIGN_PRIMARY = 1;
     const uint FILE_READ_DATA = 1, FILE_ALL_ACCESS = 0x001F01FF;
     const uint DACL = 4, PROTECTED_DACL = 0x80000000;
@@ -73,6 +74,16 @@ public static class CrucibleWindowsTokenProbeV5 {
         public UIntPtr ProcessMemory, JobMemory, PeakProcessMemory, PeakJobMemory;
     }
     [StructLayout(LayoutKind.Sequential)] struct Mapping { public uint Read, Write, Execute, All; }
+    [StructLayout(LayoutKind.Sequential)] struct NativeName {
+        public ushort Length, MaximumLength; public IntPtr Buffer;
+    }
+    [StructLayout(LayoutKind.Sequential)] struct TokenAttribute {
+        public NativeName Name; public ushort ValueType, Reserved;
+        public uint Flags, ValueCount; public IntPtr Values;
+    }
+    [StructLayout(LayoutKind.Sequential)] struct AttributeHeader {
+        public ushort Version, Reserved; public uint Count; public IntPtr Attributes;
+    }
 
     [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
     [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern uint GetSystemDirectoryW(System.Text.StringBuilder buffer,uint size);
@@ -131,7 +142,10 @@ public static class CrucibleWindowsTokenProbeV5 {
             && (int)Marshal.OffsetOf(typeof(GroupsOne),"First")== (x64?8:4)
             && Marshal.SizeOf(typeof(BasicLimits))==(x64?64:48)
             && Marshal.SizeOf(typeof(ExtendedLimits))==(x64?144:112)
-            && Marshal.SizeOf(typeof(ProcessInfo))==(x64?24:16);
+            && Marshal.SizeOf(typeof(ProcessInfo))==(x64?24:16)
+            && Marshal.SizeOf(typeof(NativeName))==(x64?16:8)
+            && Marshal.SizeOf(typeof(TokenAttribute))==(x64?40:24)
+            && Marshal.SizeOf(typeof(AttributeHeader))==(x64?16:12);
         Record("{\"event\":\"abi_layout\",\"matches_windows_sdk\":"+B(valid)+",\"host_64_bit\":"+B(x64)+"}");
         if(!valid) throw new ProbeFailure(13);
     }
@@ -154,27 +168,45 @@ public static class CrucibleWindowsTokenProbeV5 {
         IntPtr p=Info(token,cls); try { return Marshal.ReadInt32(p)!=0; }
         finally { Marshal.FreeHGlobal(p); }
     }
+    static bool InQuery(IntPtr buffer,uint length,IntPtr pointer,uint bytes) {
+        ulong begin=unchecked((ulong)buffer.ToInt64()),address=unchecked((ulong)pointer.ToInt64());
+        return pointer!=IntPtr.Zero && address>=begin && bytes<=length && address-begin<=length-bytes;
+    }
     static bool LpacInfo(IntPtr token) {
-        IntPtr value=Marshal.AllocHGlobal(4);
+        IntPtr buffer=Marshal.AllocHGlobal(65536);
         try {
-            uint winLength,nativeLength;
-            Marshal.WriteInt32(value,0x5A5A5A5A);
-            bool winOk=GetTokenInformation(token,46,value,4,out winLength);
-            uint winError=unchecked((uint)Marshal.GetLastWin32Error());
-            bool winShape=winOk && winLength==4 && (Marshal.ReadInt32(value)==0 || Marshal.ReadInt32(value)==1);
-            bool winLpac=winShape && Marshal.ReadInt32(value)!=0;
-            Marshal.WriteInt32(value,0x5A5A5A5A);
-            uint ntStatus=NtQueryInformationToken(token,46,value,4,out nativeLength);
-            bool ntOk=ntStatus==0;
-            bool ntShape=ntOk && nativeLength==4 && (Marshal.ReadInt32(value)==0 || Marshal.ReadInt32(value)==1);
-            bool ntLpac=ntShape && Marshal.ReadInt32(value)!=0;
-            uint nativeError=ntOk?0:RtlNtStatusToDosError(ntStatus);
-            Record("{\"event\":\"lpac_fixed_query\",\"win32_success\":"+B(winOk)+",\"win32_status\":"+(winOk?0:winError)+",\"win32_shape_valid\":"+B(winShape)+",\"win32_lpac\":"+(winShape?B(winLpac):"null")+",\"native_success\":"+B(ntOk)+",\"native_win32_status\":"+nativeError+",\"native_shape_valid\":"+B(ntShape)+",\"native_lpac\":"+(ntShape?B(ntLpac):"null")+"}");
-            if((winOk && !winShape) || (ntOk && !ntShape)) throw new ProbeFailure(13);
-            if(winShape && ntShape && winLpac!=ntLpac) throw new ProbeFailure(13);
-            if(!winShape && !ntShape) throw new ProbeFailure(winError!=0?winError:nativeError);
-            return winShape?winLpac:ntLpac;
-        } finally { Marshal.FreeHGlobal(value); }
+            uint used;
+            uint ntStatus=NtQueryInformationToken(token,39,buffer,65536,out used);
+            uint error=ntStatus==0?0:RtlNtStatusToDosError(ntStatus);
+            Record("{\"event\":\"lpac_attribute_query\",\"query_success\":"+B(ntStatus==0)+",\"status\":"+error+"}");
+            if(ntStatus!=0) throw new ProbeFailure(error);
+            uint headerSize=(uint)Marshal.SizeOf(typeof(AttributeHeader));
+            uint entrySize=(uint)Marshal.SizeOf(typeof(TokenAttribute));
+            if(used<headerSize || used>65536) throw new ProbeFailure(13);
+            AttributeHeader header=(AttributeHeader)Marshal.PtrToStructure(buffer,typeof(AttributeHeader));
+            if(header.Version!=1 || header.Count>128) throw new ProbeFailure(13);
+            if(header.Count!=0 && !InQuery(buffer,used,header.Attributes,header.Count*entrySize)) throw new ProbeFailure(13);
+            bool present=false,typed=false,single=false,enabled=false,nonzero=false;
+            for(uint i=0;i<header.Count;i++) {
+                IntPtr entry=IntPtr.Add(header.Attributes,(int)(i*entrySize));
+                TokenAttribute attribute=(TokenAttribute)Marshal.PtrToStructure(entry,typeof(TokenAttribute));
+                if(attribute.Name.Length==0) continue;
+                if(attribute.Name.Length>2048 || attribute.Name.Length%2!=0
+                    || attribute.Name.MaximumLength<attribute.Name.Length
+                    || !InQuery(buffer,used,attribute.Name.Buffer,attribute.Name.Length)) throw new ProbeFailure(13);
+                string name=Marshal.PtrToStringUni(attribute.Name.Buffer,attribute.Name.Length/2);
+                if(!String.Equals(name,"WIN://NOALLAPPPKG",StringComparison.OrdinalIgnoreCase)) continue;
+                if(present) throw new ProbeFailure(13);
+                present=true; typed=attribute.ValueType==2; single=attribute.ValueCount==1;
+                enabled=(attribute.Flags & 0x54)==0; // not deny-only, disabled, or ignored
+                if(typed && single) {
+                    if(!InQuery(buffer,used,attribute.Values,8)) throw new ProbeFailure(13);
+                    nonzero=Marshal.ReadInt64(attribute.Values)!=0;
+                }
+            }
+            Record("{\"event\":\"lpac_security_attribute\",\"no_all_app_pkg_present\":"+B(present)+",\"uint64_type\":"+B(typed)+",\"single_value\":"+B(single)+",\"enabled\":"+B(enabled)+",\"nonzero\":"+B(nonzero)+"}");
+            return present && typed && single && enabled && nonzero;
+        } finally { Marshal.FreeHGlobal(buffer); }
     }
     static bool OnlySid(IntPtr token,IntPtr expected) {
         IntPtr p=Info(token,11);
@@ -236,8 +268,8 @@ public static class CrucibleWindowsTokenProbeV5 {
     static int RunCase(string name,bool useRestricted,bool useLpac,bool atomicJob,bool useLocalAppData) {
         currentCase=name; stage="case_start";
         string suffix=Guid.NewGuid().ToString("N");
-        string profile="crucible.token.probe.v5."+suffix;
-        string root=Path.Combine(Path.GetTempPath(),"crucible-token-probe-v5-"+suffix);
+        string profile="crucible.token.probe.v6."+suffix;
+        string root=Path.Combine(Path.GetTempPath(),"crucible-token-probe-v6-"+suffix);
         IntPtr package=IntPtr.Zero,restrictSid=IntPtr.Zero,baseToken=IntPtr.Zero,restricted=IntPtr.Zero;
         IntPtr actual=IntPtr.Zero,impersonation=IntPtr.Zero,job=IntPtr.Zero,list=IntPtr.Zero;
         IntPtr restrictEntry=IntPtr.Zero,capsMemory=IntPtr.Zero,lpacMemory=IntPtr.Zero,jobMemory=IntPtr.Zero,environment=IntPtr.Zero;
@@ -322,7 +354,7 @@ public static class CrucibleWindowsTokenProbeV5 {
                 } finally { if(folderMemory!=IntPtr.Zero) Marshal.FreeCoTaskMem(folderMemory); }
             }
             environment=Marshal.StringToHGlobalUni(environmentBlock);
-            Record("{\"event\":\"probe_identity\",\"version\":5,\"deterministic_directory_environment\":true,\"known_folder_localappdata_included\":"+B(useLocalAppData)+"}");
+            Record("{\"event\":\"probe_identity\",\"version\":6,\"deterministic_directory_environment\":true,\"known_folder_localappdata_included\":"+B(useLocalAppData)+"}");
             stage="create_suspended";
             string executable=Path.Combine(systemDirectory,"cmd.exe");
             System.Text.StringBuilder line=new System.Text.StringBuilder("\""+executable+"\" /d /c exit 0");
@@ -426,4 +458,4 @@ public static class CrucibleWindowsTokenProbeV5 {
 '@
 try { Add-Type -TypeDefinition $source -Language CSharp -ErrorAction Stop }
 catch { Write-Output '{"event":"probe_compile_failure","status":0}'; exit 90 }
-exit ([CrucibleWindowsTokenProbeV5]::Run())
+exit ([CrucibleWindowsTokenProbeV6]::Run())
