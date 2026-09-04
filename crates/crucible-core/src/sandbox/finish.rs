@@ -10,7 +10,7 @@
 //! stopped are both ordinary — one program exits on a closed pipe and another
 //! waits to be told twice — and neither is anybody's problem afterwards. Not
 //! being able to stop it is the third, and it is somebody's problem: the
-//! sandbox could not confirm that everything the command owned is gone.
+//! sandbox could not confirm scope termination and leader exit.
 
 use std::io;
 use std::process::ExitStatus;
@@ -28,12 +28,12 @@ pub enum Finish {
     /// It ended on its own, within the grace it was given.
     Exited(ExitStatus),
 
-    /// It did not, so it was stopped and its scope was reaped.
+    /// It did not, so its owned scope was stopped and its leader was reaped.
     Stopped,
 
     /// It did not, and stopping it failed.
     ///
-    /// The sandbox could not confirm that everything the command owned is gone,
+    /// The sandbox could not confirm scope termination and leader exit,
     /// which is the one ending that is somebody's problem afterwards.
     Unreaped(io::Error),
 }
