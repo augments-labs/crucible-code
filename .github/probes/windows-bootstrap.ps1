@@ -1,6 +1,6 @@
-# windows-bootstrap-v4: disposable fresh Windows x64 VM only; no production claim.
+# windows-bootstrap-v5: disposable fresh Windows x64 VM only; no production claim.
 # Independently authored. V6 proved only the actual combined-token ACL primitive.
-# V4: v3 native run33927711312 proved LNK2019 memcpy in ProbeEntry. Change only /O1 to /Od.
+# V5: diagnostic-only successor to v4 dependency_manifest failure; limits and guest behavior unchanged.
 # MSVC basis: https://learn.microsoft.com/en-us/cpp/build/reference/od-disable-debug?view=msvc-170
 # /NODEFAULTLIB and the kernel32-only import oracle remain mandatory; no runtime library added.
 # Trusted MSVC vctip orphan was cleaned by the VM runner in v3; host descendant extinction remains unproved.
@@ -15,7 +15,7 @@
 # API-set contracts are counted, not fabricated as files. Dynamic/registry/IPC dependencies remain unproved.
 # Three 12-second guest deadlines; 4-process kill-on-close jobs; require external CI timeout 5 minutes.
 $ErrorActionPreference = 'Stop'
-$buildRoot = Join-Path ([IO.Path]::GetTempPath()) ('crucible-bootstrap-v4-' + [Guid]::NewGuid().ToString('N'))
+$buildRoot = Join-Path ([IO.Path]::GetTempPath()) ('crucible-bootstrap-v5-' + [Guid]::NewGuid().ToString('N'))
 $native = @'
 #include <windows.h>
 static WCHAR image[32768],command[32772];
@@ -52,7 +52,7 @@ using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Security.Cryptography;
 using System.Threading;
-public static class CrucibleWindowsBootstrapProbeV4 {
+public static class CrucibleWindowsBootstrapProbeV5 {
     const uint TOKEN_QUERY = 8, TOKEN_DUPLICATE = 2, TOKEN_IMPERSONATE = 4, TOKEN_ASSIGN_PRIMARY = 1;
     const uint FILE_READ_DATA = 1, FILE_ALL_ACCESS = 0x001F01FF;
     const uint DACL = 4, PROTECTED_DACL = 0x80000000;
@@ -355,7 +355,7 @@ public static class CrucibleWindowsBootstrapProbeV4 {
         return success&&cleaned;
     }
     public static int Run(string buildRoot,string[] sourceFiles,string compilerIdentity) {
-        string profile="crucible.bootstrap.v4."+Guid.NewGuid().ToString("N"),root=null; bool profileOwned=false,rootOwned=false,cleanup=true; int result=1;
+        string profile="crucible.bootstrap.v5."+Guid.NewGuid().ToString("N"),root=null; bool profileOwned=false,rootOwned=false,cleanup=true; int result=1;
         IntPtr package=IntPtr.Zero,session=IntPtr.Zero,baseToken=IntPtr.Zero,restricted=IntPtr.Zero,entry=IntPtr.Zero;
         try {
             currentCase="setup"; VerifyLayouts(); stage="profile";
@@ -455,7 +455,8 @@ function Invoke-ProbeTool([string]$Tool,[string[]]$Arguments) {
         $cancel.Dispose(); $process.Dispose()
     }
 }
-$result=90; $buildOwned=$false; $hostStage="toolchain_discovery"
+function Safe-ManifestLabel([string]$Label) { if($Label -cmatch '\A[A-Za-z0-9_.-]{1,128}\.(?:[dD][lL][lL]|[eE][xX][eE])\z') { return $Label }; return 'unavailable' }
+$result=90; $buildOwned=$false; $hostStage="toolchain_discovery"; $manifestCount=0; [long]$manifestBytes=0; $manifestFile=''; $manifestImport=''; $manifestImportCount=0
 try {
     if([IntPtr]::Size -ne 8) { throw 'x64_required' }; if(Test-Path -LiteralPath $buildRoot) { throw 'unique_root_collision' }
     [IO.Directory]::CreateDirectory($buildRoot)|Out-Null; $buildOwned=$true
@@ -476,13 +477,14 @@ try {
     foreach($name in @('cmd.exe','ntdll.dll','kernel32.dll','KernelBase.dll','ucrtbase.dll')) { $queue.Enqueue((Join-Path $system $name)) }
     $files=[Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase); $contracts=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase); [long]$bytes=0
     while($queue.Count) {
-        $file=$queue.Dequeue(); $name=[IO.Path]::GetFileName($file); if($files.ContainsKey($name)) {continue}
+        $file=$queue.Dequeue(); $name=[IO.Path]::GetFileName($file); if($files.ContainsKey($name)) {continue}; $manifestFile=$name; $manifestImport=''; $manifestImportCount=0
         $item=Get-Item -LiteralPath $file; if($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {throw 'source_reparse'}
-        $bytes+=$item.Length; if($files.Count -ge 64 -or $bytes -gt 134217728) {throw 'runtime_bound'}; $files.Add($name,$file)
+        $bytes+=$item.Length; $manifestBytes=$bytes; $manifestCount=$files.Count; if($files.Count -ge 64 -or $bytes -gt 134217728) {throw 'runtime_bound'}; $files.Add($name,$file); $manifestCount=$files.Count
         $imports=Invoke-ProbeTool $dumpbin @('/NOLOGO','/DEPENDENTS',$file)
+        $dependencyMatches=[regex]::Matches($imports,'(?im)^\s+([a-z0-9_.-]+\.dll)\s*$'); $manifestImportCount=$dependencyMatches.Count; if($dependencyMatches.Count) { $manifestImport=$dependencyMatches[0].Groups[1].Value }
         if($name -eq 'fixture.exe' -and $imports -notmatch '(?im)^\s+kernel32\.dll\s*$') {throw 'fixture_import_missing'}
-        foreach($match in [regex]::Matches($imports,'(?im)^\s+([a-z0-9_.-]+\.dll)\s*$')) {
-            $dependency=$match.Groups[1].Value
+        foreach($match in $dependencyMatches) {
+            $dependency=$match.Groups[1].Value; $manifestImport=$dependency
             if($name -eq 'fixture.exe' -and $dependency -ine 'kernel32.dll') {throw 'fixture_import_not_kernel32'}
             if($dependency -match '^(api-ms-|ext-ms-)') { [void]$contracts.Add($dependency); continue }
             $queue.Enqueue((Join-Path $system $dependency))
@@ -491,7 +493,8 @@ try {
     Write-Output ('{"event":"host_compile","success":true,"api_set_contract_count":'+$contracts.Count+'}')
     $hostStage="compile_host"; Add-Type -TypeDefinition $source -Language CSharp -ErrorAction Stop
     [string[]]$sources=@($files.Values | Sort-Object { [IO.Path]::GetFileName($_).ToLowerInvariant() })
-    $hostStage="invoke_host"; $result=[CrucibleWindowsBootstrapProbeV4]::Run($buildRoot,$sources,(Get-FileHash -LiteralPath $cl -Algorithm SHA256).Hash.ToLowerInvariant())
-} catch { Write-Output ('{"event":"host_setup_failure","stage":"'+$hostStage+'","hresult":'+$_.Exception.HResult+'}'); $result=90 }
+    $hostStage="invoke_host"; $result=[CrucibleWindowsBootstrapProbeV5]::Run($buildRoot,$sources,(Get-FileHash -LiteralPath $cl -Algorithm SHA256).Hash.ToLowerInvariant())
+} catch { $reason='unclassified_exception'; if($_.Exception.Message -cin @('x64_required','unique_root_collision','msvc_missing','source_reparse','runtime_bound','fixture_import_missing','fixture_import_not_kernel32','tool_start','tool_deadline','tool_output_cap','tool_failed')) { $reason=$_.Exception.Message }
+    @{event='host_setup_failure';stage=$hostStage;hresult=$_.Exception.HResult;reason=$reason;accepted_file_count=$manifestCount;candidate_total_bytes=$manifestBytes;current_file=(Safe-ManifestLabel $manifestFile);current_import=(Safe-ManifestLabel $manifestImport);parsed_import_count=$manifestImportCount;file_cap=64;byte_cap=134217728} | ConvertTo-Json -Compress | Out-Host; $result=90 }
 finally { if($hostToolUnsettled) { $result=3 }; if($buildOwned -and $result -ne 3) { try { Remove-Item -LiteralPath $buildRoot -Recurse -Force -ErrorAction Stop } catch { Write-Output '{"event":"build_cleanup","complete":false}'; $result=3 } } }
 exit $result

@@ -1,0 +1,24 @@
+--- a/crates/crucible-tools/src/bash/platform/windows.rs
++++ b/crates/crucible-tools/src/bash/platform/windows.rs
+@@ -158,20 +158,7 @@
+                 .ok_or(problem)
+         });
+         job_result.and(child_result)?;
+-        let deadline = Instant::now() + STOP_WAIT;
+-        loop {
+-            if self.empty()? {
+-                return Ok(());
+-            }
+-            let remaining = deadline.saturating_duration_since(Instant::now());
+-            if remaining.is_zero() {
+-                return Err(io::Error::new(
+-                    io::ErrorKind::TimedOut,
+-                    "the Windows job still has active processes after termination",
+-                ));
+-            }
+-            thread::sleep(remaining.min(STOP_POLL));
+-        }
++        Ok(())
+     }
+ 
+     /// Observes job membership without mistaking an unavailable count for zero.

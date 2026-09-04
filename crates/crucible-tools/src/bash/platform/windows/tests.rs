@@ -21,6 +21,7 @@ struct Job {
 
 impl Job {
     fn new(arguments: &[&str]) -> Self {
+        let executable = std::env::current_exe().expect("test executable");
         let mut command = Command::new("cmd.exe");
         command
             .args(arguments)
@@ -28,18 +29,24 @@ impl Job {
             .stdout(Stdio::null())
             .stderr(Stdio::null());
         let scope = Scope::new(&mut command).expect("job");
-        let leader = command.spawn().expect("suspended leader");
+        let mut leader = command.spawn().expect("suspended leader");
 
         // A suspended member cannot exit on its own or launch work outside this
         // fixture. Assignment supplies the same membership inherited by a real
         // descendant without making the test depend on shell startup timing.
-        let descendant = Command::new(std::env::current_exe().expect("test executable"))
+        let descendant = Command::new(executable)
             .creation_flags(CREATE_SUSPENDED)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .expect("suspended member");
+            .unwrap_or_else(|problem| {
+                // The leader has not joined the job yet, so kill-on-close
+                // cannot own this construction failure. Reap it explicitly.
+                let _ = leader.kill();
+                let _ = exited(&mut leader);
+                panic!("suspended member: {problem}");
+            });
         let fixture = Self {
             scope,
             leader,
@@ -206,6 +213,46 @@ fn a_failed_job_query_cannot_report_completion() {
     let problem = restricted
         .try_wait(&mut job.leader, signal)
         .expect_err("unavailable job state must not report completion");
+    assert_eq!(
+        problem.raw_os_error(),
+        i32::try_from(ERROR_ACCESS_DENIED).ok()
+    );
+}
+
+#[test]
+fn explicit_stop_cannot_complete_without_query_authority() {
+    use windows_sys::Win32::Foundation::{DuplicateHandle, ERROR_ACCESS_DENIED};
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+
+    // This access mask is documented by Win32; naming it locally avoids adding
+    // the unrelated SystemServices feature solely for a test constant.
+    const JOB_OBJECT_TERMINATE: u32 = 0x0008;
+
+    let mut job = Job::new(&["/d", "/c", "set /p VALUE="]);
+    assert!(active(&job.scope) > 0, "the job begins alive");
+    let mut restricted = std::ptr::null_mut();
+    // SAFETY: the source job remains owned by the fixture. The non-inheritable
+    // duplicate names that same job with only termination access and is owned
+    // below. The pseudo process handles are never closed.
+    let duplicated = unsafe {
+        DuplicateHandle(
+            GetCurrentProcess(),
+            job.scope.0,
+            GetCurrentProcess(),
+            &raw mut restricted,
+            JOB_OBJECT_TERMINATE,
+            0,
+            0,
+        )
+    };
+    assert_ne!(duplicated, 0, "duplicate: {}", io::Error::last_os_error());
+    let restricted = Scope(restricted);
+    let result = restricted.stop(&mut job.leader);
+
+    // This suspended member cannot exit by itself or from the leader's kill.
+    // Its exit proves job termination succeeded before the query was refused.
+    exited(&mut job.descendant).expect("same-job termination reached the member");
+    let problem = result.expect_err("explicit stop must observe job extinction");
     assert_eq!(
         problem.raw_os_error(),
         i32::try_from(ERROR_ACCESS_DENIED).ok()
