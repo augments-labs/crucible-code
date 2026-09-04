@@ -72,7 +72,7 @@ persistence request or snapshot request into best-effort behavior.
 | `cpu_limit` | enforced | unsupported |
 | `memory_limit` | enforced | unsupported |
 | `disk_limit` | unsupported | unsupported |
-| `process_limit` | unsupported | unsupported |
+| `process_limit` | enforced on Linux 5.14 or newer | unsupported |
 | `open_file_limit` | enforced | unsupported |
 | `command_time_limit` | enforced | enforced |
 | `session_time_limit` | unsupported | unsupported |
@@ -95,10 +95,27 @@ default policy asks for. Under `required`, the standard policy states
 it is running. `memory_limit` is enforced but not asked for: the knob is the
 address space a process may map rather than the memory it uses, and runtimes
 that reserve enormously and touch little would be refused by any ceiling low
-enough to catch a real runaway. `disk_limit` and `process_limit` are unsupported
-above, and a policy may not ask for a ceiling its backend cannot apply — which
-is also why lowering the mode takes the two confining ceilings off with it,
-rather than carrying numbers the compatibility backend would have to refuse.
+enough to catch a real runaway. `disk_limit` is unsupported above, and a policy
+may not ask for a ceiling its backend cannot apply — which is also why lowering
+the mode takes the two confining ceilings off with it, rather than carrying
+numbers the compatibility backend would have to refuse.
+
+`process_limit` is the one ceiling a policy does not have to ask for. The broker
+is PID 1 of the namespace, and it caps the processes beneath it at 1024 whether
+or not anything states a number, the way it zeroes the core-dump ceiling: a
+workload that forks in a loop is otherwise bounded by nothing the sandbox owns,
+and the processor and descriptor ceilings do not help, because each new process
+gets its own. A policy may state fewer and the broker takes the lower of the
+two; it may not state more.
+
+Stating one is what the table's row is about, and it needs a kernel that counts
+processes per user namespace — Linux 5.14 and newer. Below that the kernel
+counts them for the real user across the whole machine, so a stated ceiling
+would bound the host's other work rather than the sandbox's, and `required`
+refuses the policy instead of applying a number that means something else. The
+broker's own 1024 still applies there, and under the older counting it can bind
+before the sandbox has reached 1024 of its own — but the only thing it ever
+stops is the sandbox forking. Nothing outside the namespace is ended by it.
 
 The currently declared session surface is prepare, materialize, start, inspect,
 read bounded output, observe usage/violations, stop and dispose. PTY, direct

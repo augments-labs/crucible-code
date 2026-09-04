@@ -35,7 +35,7 @@ fn request(sample: &Sample, manifest: SandboxManifest) -> SandboxRequest {
     )
 }
 
-fn command(script: &str) -> SandboxCommand {
+pub(super) fn command(script: &str) -> SandboxCommand {
     SandboxCommand::new(
         "/bin/sh",
         [OsString::from("-c"), OsString::from(script)],
@@ -48,7 +48,7 @@ fn direct(program: &str, arguments: impl IntoIterator<Item = OsString>) -> Sandb
     SandboxCommand::new(program, arguments, SandboxEnvironment::empty()).expect("command")
 }
 
-fn finish(mut process: Box<dyn SandboxProcess>) -> (ExitStatus, Vec<u8>, Vec<u8>) {
+pub(super) fn finish(mut process: Box<dyn SandboxProcess>) -> (ExitStatus, Vec<u8>, Vec<u8>) {
     let mut stdout = process.take_stdout();
     let mut stderr = process.take_stderr();
     let mut output = Vec::new();
@@ -1624,127 +1624,6 @@ fn command_deadline_kills_the_complete_bubblewrap_process_tree() {
         );
         thread::sleep(Duration::from_millis(5));
     }
-}
-
-#[test]
-fn requested_open_file_limit_is_hard_before_workload_exec() {
-    let service = LocalSandbox::new();
-    if skipped_without_enforcement(&service) {
-        return;
-    }
-    let sample = Sample::new("sandbox-open-file-limit");
-    let base = SandboxPolicy::standard(&sample.workspace()).expect("base policy");
-    let policy = SandboxPolicy::new(
-        SandboxMode::Required,
-        base.filesystem().iter().cloned(),
-        sample.root().clone(),
-        SandboxNetworkPolicy::Closed,
-        SandboxResourceLimits {
-            open_files: Some(32),
-            ..SandboxResourceLimits::default()
-        },
-    )
-    .expect("policy");
-    let request = SandboxRequest::new(
-        SandboxId::new(),
-        Ancestry::new(),
-        ToolId::new("open-file-limit"),
-        policy,
-        SandboxManifest::empty(),
-    );
-    let mut session = service.prepare(request).expect("supported hard limit");
-    session.materialize().expect("materialized workspace");
-
-    let (status, output, errors) = finish(
-        session
-            .start(command("ulimit -n"))
-            .expect("started limited command"),
-    );
-
-    assert!(status.success(), "{}", String::from_utf8_lossy(&errors));
-    assert_eq!(String::from_utf8(output).expect("utf8").trim(), "32");
-}
-
-#[test]
-fn requested_address_space_limit_is_hard_before_workload_exec() {
-    let service = LocalSandbox::new();
-    if skipped_without_enforcement(&service) {
-        return;
-    }
-    let sample = Sample::new("sandbox-address-space-limit");
-    let base = SandboxPolicy::standard(&sample.workspace()).expect("base policy");
-    let policy = SandboxPolicy::new(
-        SandboxMode::Required,
-        base.filesystem().iter().cloned(),
-        sample.root().clone(),
-        SandboxNetworkPolicy::Closed,
-        SandboxResourceLimits {
-            memory_bytes: Some(64 * 1024 * 1024),
-            ..SandboxResourceLimits::default()
-        },
-    )
-    .expect("policy");
-    let request = SandboxRequest::new(
-        SandboxId::new(),
-        Ancestry::new(),
-        ToolId::new("address-space-limit"),
-        policy,
-        SandboxManifest::empty(),
-    );
-    let mut session = service.prepare(request).expect("supported hard limit");
-    session.materialize().expect("materialized workspace");
-
-    let (status, output, errors) = finish(
-        session
-            .start(command("ulimit -v"))
-            .expect("started limited command"),
-    );
-
-    assert!(status.success(), "{}", String::from_utf8_lossy(&errors));
-    assert_eq!(String::from_utf8(output).expect("utf8").trim(), "65536");
-}
-
-#[test]
-fn requested_cpu_limit_terminates_the_workload_scope() {
-    let service = LocalSandbox::new();
-    if skipped_without_enforcement(&service) {
-        return;
-    }
-    let sample = Sample::new("sandbox-cpu-limit");
-    let base = SandboxPolicy::standard(&sample.workspace()).expect("base policy");
-    let policy = SandboxPolicy::new(
-        SandboxMode::Required,
-        base.filesystem().iter().cloned(),
-        sample.root().clone(),
-        SandboxNetworkPolicy::Closed,
-        SandboxResourceLimits {
-            cpu_seconds: Some(1),
-            ..SandboxResourceLimits::default()
-        },
-    )
-    .expect("policy");
-    let request = SandboxRequest::new(
-        SandboxId::new(),
-        Ancestry::new(),
-        ToolId::new("cpu-limit"),
-        policy,
-        SandboxManifest::empty(),
-    );
-    let mut session = service.prepare(request).expect("supported hard limit");
-    session.materialize().expect("materialized workspace");
-    let started = Instant::now();
-
-    let (status, _, _) = finish(
-        session
-            .start(command("while :; do :; done"))
-            .expect("started limited command"),
-    );
-
-    assert!(!status.success(), "CPU-bound workload escaped its ceiling");
-    assert!(
-        started.elapsed() < Duration::from_secs(3),
-        "CPU ceiling did not terminate the workload promptly"
-    );
 }
 
 const CRASH_HELPER_ROOT: &str = "CRUCIBLE_TEST_CRASH_HELPER_ROOT";
