@@ -1,5 +1,5 @@
 #!/bin/sh
-# v2: Darwin proc_pidinfo descriptor closure plus an unprivileged native self-test.
+# v3: inspect kernel groups; log the account-based Darwin getgroups extension separately.
 # DISPOSABLE macOS VM ONLY. Numeric UID noncollision is a fixture assumption,
 # not production identity reservation. No account/service/host ACL changes.
 set -eu
@@ -110,6 +110,7 @@ cat > "$probe_root/uid.c" <<'C'
 #include <string.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -181,11 +182,19 @@ static int absent(uid_t uid) {
     return empty(uid);
 }
 static void verify(uid_t uid, const char *label) {
-    struct proc_bsdshortinfo p; gid_t groups[64];
-    int n=getgroups(64,groups);
+    struct proc_bsdshortinfo p; gid_t groups[64], directory_groups[64];
+    /* Libc 71bbe350ab79eef58113991d817ccc6165061a64 include/unistd.h
+     * maps _DARWIN_C_SOURCE getgroups to a directory-account extension.
+     * sys/getgroups.c returns EINVAL for our deliberately accountless UID.
+     * Keep that result as diagnostics; verify setgroups against XNU's actual
+     * credential vector via SYS_getgroups (kern_prot.c / syscalls.master).
+     * XNU rejects undersized buffers, not a capacity of 64.
+     */
+    errno=0; int directory_n=getgroups(64,directory_groups); int directory_errno=errno;
+    errno=0; int n=(int)syscall(SYS_getgroups,64,groups); int groups_errno=errno;
     if (proc_pidinfo(getpid(),PROC_PIDT_SHORTBSDINFO,0,&p,sizeof p)!=(int)sizeof p) die("self info");
-    printf("CREDENTIALS label=%s pid=%d uid=%u euid=%u suid=%u gid=%u egid=%u sgid=%u groups=%d\n",
-           label,getpid(),getuid(),geteuid(),p.pbsi_svuid,getgid(),getegid(),p.pbsi_svgid,n);
+    printf("CREDENTIALS label=%s pid=%d uid=%u euid=%u suid=%u gid=%u egid=%u sgid=%u groups=%d groups_errno=%d darwin_getgroups=%d darwin_getgroups_errno=%d\n",
+           label,getpid(),getuid(),geteuid(),p.pbsi_svuid,getgid(),getegid(),p.pbsi_svgid,n,groups_errno,directory_n,directory_errno);
     if (!uid || getuid()!=uid || geteuid()!=uid || p.pbsi_svuid!=uid ||
         getgid()!=uid || getegid()!=uid || p.pbsi_svgid!=uid || n!=1 || groups[0]!=uid) exit(77);
 }
@@ -372,4 +381,3 @@ probe_status=$?
 set -e
 printf 'FIXTURE-RESULT status=%s retained=%s\n' "$probe_status" "$probe_root"
 exit "$probe_status"
-
