@@ -10,6 +10,15 @@ change in any release with no deprecation period.
 
 ### Added
 
+- **`crucible --sandbox` prints the confinement a command here would run
+  under.** Which backend enforces it and at what version, every feature that
+  backend can and cannot hold, the reach and ceilings a command would get with
+  each ceiling beside the claim it rests on, and whether anything was given up.
+  The inspection record already held all of this; there was no way to read it
+  without running something. Nothing is run to produce the report, and every
+  path in it except your workspace root is a digest, so it can be pasted into an
+  issue.
+
 - **The sandbox now holds a process ceiling.** The broker is PID 1 of the
   namespace and caps the processes beneath it at 1024 whether or not a policy
   mentions one, the way it already zeroes the core-dump ceiling. A workload that

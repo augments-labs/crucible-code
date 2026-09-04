@@ -29,6 +29,7 @@ mod release;
 mod remember;
 #[cfg(test)]
 mod sample;
+mod sandbox;
 mod seen;
 mod standing;
 mod startup;
@@ -44,13 +45,14 @@ use clap::Parser;
 use crucible_auth::{Store, StoredCredentials};
 use crucible_config::{ConfigError, Home, Settings};
 use crucible_core::{
-    Cancel, Collision, CredentialError, Effort, ModelCapabilities, ModelError, ModelLimits,
-    PathError, Provenance, Provider, Registered, Registry, RegistryError, RegistrySnapshot,
-    Revealed, SessionId, SourceKind, ToolsetError, Workspace,
+    Ancestry, Cancel, Collision, CredentialError, Effort, ModelCapabilities, ModelError,
+    ModelLimits, PathError, Provenance, Provider, Registered, Registry, RegistryError,
+    RegistrySnapshot, Revealed, SandboxId, SandboxManifest, SandboxPolicy, SandboxPolicyError,
+    SandboxRequest, SandboxService as _, SessionId, SourceKind, ToolId, ToolsetError, Workspace,
 };
 use crucible_provider::EndpointError;
 use crucible_runner::SessionError;
-use crucible_tools::{Background, Ledger, Plan};
+use crucible_tools::{Background, Ledger, LocalSandbox, Plan};
 use crucible_tui::{
     RawError, Renderer, ScreenError, SystemTerminal, TerminalError, Title, TitleError, Welcome,
 };
@@ -632,6 +634,11 @@ manifest asks to be allowed to do and the digest crucible took over its bytes, \
 and stops. Nothing installed is run to produce that list, which is the point of \
 being able to read it.
 
+--sandbox prints the confinement a command in this directory would run under — \
+which backend enforces it, what that backend can and cannot hold, the reach and \
+ceilings a command would get, and anything given up along the way — and stops. \
+No command is run to produce it, and every path in it is a digest.
+
 --with-mcp names a server written down under mcp.servers and hosts it for this \
 run, and may be repeated. A configuration file is a list of servers you could \
 run; nothing is started until a run names one. What a hosted server offers is \
@@ -672,6 +679,14 @@ struct Cli {
         conflicts_with_all = ["continue", "resume", "model", "effort", "with_mcp"]
     )]
     extensions: bool,
+
+    /// Print the confinement a command in this directory would run under and
+    /// stop, without running one.
+    #[arg(
+        long,
+        conflicts_with_all = ["continue", "resume", "model", "effort", "with_mcp", "extensions"]
+    )]
+    sandbox: bool,
 }
 
 /// Why crucible could not run, or could not carry on.
@@ -717,6 +732,14 @@ pub(crate) enum Fatal {
     /// crucible's own files could not be found or read.
     #[error(transparent)]
     Config(#[from] ConfigError),
+
+    /// No confinement could be built for this directory at all.
+    ///
+    /// Fatal rather than a report saying so, because it is not an answer about
+    /// a backend: the policy is refused before any backend is asked, and what
+    /// is wrong is the directory the question was asked about.
+    #[error("no confinement could be built for this directory: {0}")]
+    Confinement(#[from] SandboxPolicyError),
 
     /// There is no key to authenticate with.
     #[error(transparent)]
@@ -844,7 +867,11 @@ pub(crate) enum Fatal {
 pub(crate) fn start() -> ExitCode {
     let cli = Cli::parse();
 
-    let done = if cli.extensions { listed() } else { run(&cli) };
+    let done = match (cli.extensions, cli.sandbox) {
+        (true, _) => listed(),
+        (_, true) => confined(),
+        _ => run(&cli),
+    };
 
     match done {
         Ok(()) => ExitCode::SUCCESS,
@@ -876,6 +903,60 @@ fn listed() -> Result<(), Fatal> {
     );
 
     let _ = io::stdout().write_all(found.as_bytes());
+    Ok(())
+}
+
+/// Writes the confinement a command here would run under, and stops.
+///
+/// The workspace is opened, unlike [`listed`], because the confinement is made
+/// out of it: the roots a command may reach are this checkout's roots, and a
+/// report assembled without one would be describing a sandbox nobody is going
+/// to get. Nothing beyond that is built — no credential is read, no session
+/// file is written, no manifest is materialized and no program is spawned. The
+/// session exists to be asked what it negotiated and is dropped on the way out
+/// of this function.
+///
+/// A backend that will not take this policy is not a failure of this flag. It
+/// is the answer, so it is written to standard output with everything that
+/// explains it and the run ends successfully; somebody reaching for `--sandbox`
+/// because their commands are being refused would learn nothing from the same
+/// refusal arriving again on standard error.
+fn confined() -> Result<(), Fatal> {
+    let here = std::env::current_dir().map_err(Fatal::Here)?;
+    let workspace = Workspace::open(here)?;
+    let home = Home::find(&|name| std::env::var_os(name))?;
+    let settings = Settings::read(&home, workspace.root())?;
+    // Widened the way a run widens it, and for the same reason the run gives:
+    // the extra directories are part of the reach, so a report that left them
+    // out would understate what a command can touch.
+    let workspace = workspace.reaching(settings.extra_directories())?;
+
+    let mode = settings.sandbox_mode();
+    let service = LocalSandbox::new();
+    let probed = service.probe();
+    let policy = SandboxPolicy::standard(&workspace)?.with_mode(mode);
+    let prepared = service.prepare(SandboxRequest::new(
+        SandboxId::new(),
+        Ancestry::new(),
+        // The call this policy would be built for. Nothing is called: the
+        // request needs a name and this is the honest one.
+        ToolId::new("sandbox"),
+        policy,
+        SandboxManifest::empty(),
+    ));
+
+    let probe = match (&prepared, &probed) {
+        (Ok(session), _) => sandbox::Probe::Prepared(session.inspection()),
+        (Err(why), Ok((backend, capabilities))) => sandbox::Probe::Refused {
+            backend,
+            capabilities,
+            why,
+        },
+        (Err(_), Err(why)) => sandbox::Probe::Absent(why),
+    };
+    let said = sandbox::report(workspace.root(), mode, &probe);
+
+    let _ = io::stdout().write_all(said.as_bytes());
     Ok(())
 }
 

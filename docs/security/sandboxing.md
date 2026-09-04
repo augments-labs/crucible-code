@@ -194,6 +194,65 @@ still terminate the PID-namespace workload. The next preparation replays the
 checksummed lifecycle WAL, rolls back an unambiguous interrupted transaction,
 and quarantines ambiguous publication instead of inventing cleanup or success.
 
+## Reading the report
+
+`crucible --sandbox` prints that inspection report for the directory you are
+standing in and stops. No command is run to produce it: a session is negotiated,
+asked what it settled on, and dropped. Nothing is materialized and nothing is
+spawned.
+
+```
+sandbox required in /home/you/project
+  backend   linux-bubblewrap bubblewrap 0.11.1, system
+  build     sha256:0abea81db798ebf6b4742ac0664802d97521547a353c2a0dbdc21d76cbbfd2c0
+
+what this backend can hold:
+  filesystem            enforced
+  network_deny          enforced
+  network_allowlist     unsupported
+  ...
+  audit                 enforced
+  usage                 observed
+
+what a command would run under:
+  mode      required
+  cwd       sha256:1e3ffb52af5c198fe9cc1d10392d3a4160db588bedefa3a7e740dbc2fc84d9af
+  reach     4 places, named by digest
+    read_write  workspace           sha256:d6407f95fd7d98352f3068e2dbdf96c0bef1fc9147c28a70ac2c2dfb2ecdd169
+    protected   protected_metadata  sha256:66c7ff1304b464fc8b146ef2eeb56306dcb7476982d7913c9418f51a9d6943d4
+  hidden    0 patterns
+  network   closed
+  ceilings
+    cpu 60m                 enforced
+    4096 open files         enforced
+  staged    nothing
+  outlives  no
+  snapshots no
+  confined  yes
+  gave up   nothing
+  cleanup   pending; nothing was run and nothing was staged
+  policy    sha256:51d8eb2751c012e44f287582830e063f5d960ef3cc896960e3555f84c90520d5
+  manifest  sha256:72c169df3655f6857b163163b2618631ec65982557eea70b57ea1cb983ae0890
+```
+
+Every ceiling is printed beside the claim it rests on, because a number the
+backend only observes is recorded after the fact rather than imposed, and the
+two read identically until they are on one line. The capability matrix lists
+every feature, including the ones this policy never asks for; it is what makes
+an `enforced` elsewhere in the report mean something.
+
+The workspace root is the only path printed. Roots, the working directory and
+the policies are named by the digests the record keeps, so a report can be
+pasted into an issue without pasting your tree with it. Two reports over the
+same directory produce the same digests, which is what makes them comparable
+between machines.
+
+Where a backend answers but will not take this workspace's policy, the matrix is
+printed and the refusal follows it — the unsupported feature above is usually
+the whole explanation. Where nothing answers at all, the report says that rather
+than printing a matrix of claims belonging to nobody. Neither is an error: both
+are the answer, and the run ends successfully.
+
 ## Writable roots and publication
 
 On enforcing Linux a writable root is not handed to the command directly. The
