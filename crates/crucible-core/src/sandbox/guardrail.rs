@@ -1,4 +1,17 @@
 //! Bounded command allow/deny guardrails, separate from permission approval.
+//!
+//! A rule matches the words of the invocation crucible hands the backend, and
+//! nothing beyond them. `bash` hands it `sh -c <script>`, so the script is one
+//! word and the programs it runs are not words at all: a rule naming a program
+//! by path cannot see that program if a shell reaches it, and a helper the
+//! script copies and runs was never in the vector. A rule written over the
+//! script word does match, because the whole word is matched, but the grammar
+//! is a glob rather than a shell parser and a script can spell the same call
+//! more than one way.
+//!
+//! That is the boundary, not a defect: these rules are a policy over what
+//! crucible was asked to launch. What a launched command may then do is the
+//! sandbox's to bound, and the tests below say so in both directions.
 
 use std::ffi::{OsStr, OsString};
 use std::path::Path;
@@ -508,6 +521,84 @@ mod tests {
                 SandboxCommandStage::Requested,
             ),
             SandboxGuardrailDecision::Denied
+        );
+    }
+
+    /// The invocation `bash` builds: a shell, `-c`, and the whole script.
+    fn script(source: &str) -> SandboxCommand {
+        SandboxCommand::new(
+            "/bin/sh",
+            [OsString::from("-c"), OsString::from(source)],
+            SandboxEnvironment::empty(),
+        )
+        .expect("command")
+    }
+
+    #[test]
+    fn a_rule_naming_a_program_does_not_reach_inside_a_script() {
+        let policy = SandboxCommandPolicy::new([
+            SandboxCommandRule::anchored(SandboxGuardrailEffect::Deny, ["/usr/bin/curl", "*"])
+                .expect("deny"),
+            SandboxCommandRule::anchored(SandboxGuardrailEffect::Deny, ["*/helper"]).expect("deny"),
+        ])
+        .expect("policy");
+
+        // Both rules match the program they name when it is the program.
+        for denied in [
+            SandboxCommand::new(
+                "/usr/bin/curl",
+                [OsString::from("https://example.invalid")],
+                SandboxEnvironment::empty(),
+            )
+            .expect("command"),
+            SandboxCommand::new("/tmp/helper", [], SandboxEnvironment::empty()).expect("command"),
+        ] {
+            assert_eq!(
+                policy.evaluate(&denied, SandboxCommandStage::Effective),
+                SandboxGuardrailDecision::Denied
+            );
+        }
+
+        // Reached through a shell, neither is a word in the vector, so neither
+        // rule has anything to match and the invocation is admitted. The
+        // confinement is what bounds what these then do.
+        for admitted in [
+            "curl https://example.invalid",
+            "cp /bin/sh ./helper && ./helper -c true",
+        ] {
+            assert_eq!(
+                policy.evaluate(&script(admitted), SandboxCommandStage::Effective),
+                SandboxGuardrailDecision::Allowed,
+                "{admitted}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_rule_may_be_written_over_the_script_word_itself() {
+        let policy = SandboxCommandPolicy::new([SandboxCommandRule::anchored(
+            SandboxGuardrailEffect::Deny,
+            ["/bin/sh", "-c", "*curl*"],
+        )
+        .expect("deny")])
+        .expect("policy");
+
+        assert_eq!(
+            policy.evaluate(
+                &script("curl https://example.invalid"),
+                SandboxCommandStage::Effective,
+            ),
+            SandboxGuardrailDecision::Denied
+        );
+        // The word is matched whole, by glob. A script that reaches the same
+        // program by another spelling is a different word, and this rule is not
+        // a shell parser: it says what it says.
+        assert_eq!(
+            policy.evaluate(
+                &script("c\\url https://example.invalid"),
+                SandboxCommandStage::Effective,
+            ),
+            SandboxGuardrailDecision::Allowed
         );
     }
 
