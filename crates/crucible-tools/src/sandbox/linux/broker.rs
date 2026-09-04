@@ -95,6 +95,16 @@ impl Broker {
         ))
     }
 
+    /// A broker that is never executed, for tests that read the plan.
+    ///
+    /// `build` binds the image by descriptor and never names it, so any open
+    /// file stands in — which lets a plan be asserted on a machine that has no
+    /// installed broker to pin.
+    #[cfg(test)]
+    pub(super) const fn unexecuted(path: PathBuf, image: File) -> Self {
+        Self { path, image }
+    }
+
     pub(super) fn descriptor(&self) -> RawFd {
         self.image.as_raw_fd()
     }
