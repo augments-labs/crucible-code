@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # The performance budgets, measured. Deterministic source checks have their own
-# gates; this script owns speed, and RELEASING.md blocks a tag on it.
+# gates; this script owns speed. `performance.yml` blocks a merge on it under
+# `CI required`, and RELEASING.md blocks a tag on a quiet-machine run of it —
+# see that document for why those two readings are not the same claim.
 #
 #     scripts/bench.sh              every budget
 #     scripts/bench.sh startup      first frame, first input, resume preview

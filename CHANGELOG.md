@@ -29,6 +29,13 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **`RELEASING.md` and the performance gate now say the same thing.** The
+  document called shared-runner numbers "a trend and nothing more" while
+  `performance.yml` blocked every merge on exactly those numbers. All three
+  runs of the probes are now described for what each one decides, and what to
+  do when the shared runner reds and a quiet machine holds is written down —
+  which is to change the budget deliberately, not to re-run until green.
+
 - **The crate-graph check now reads the manifests it was written for.** It
   looked for a dependency key spelled out to an `=`, and every member writes
   `crucible-core.workspace = true`, so it matched nothing in any crate and
@@ -87,12 +94,27 @@ it is a report from the field; it is the result of auditing the boundary the
   so a backend raising it was crucible telling the turn the user had
   interrupted.
 
-Two findings are disclosed rather than fixed. `SandboxResourceLimits::default()`
-sets no CPU, memory, disk, process, descriptor, output or wall-time ceiling, so
-a confined command is bounded by the sandbox and not by a quota — that is
-workspace-wide policy for every confined command rather than anything the `mcp`
-block introduced, and it is owned separately. And `deny.toml` states no `[bans]`
-section, so no gate refuses a duplicate or unwanted crate.
+- **A confined command now runs under a processor and descriptor ceiling.** The
+  standard policy stated no quota at all, so a command the sandbox let run was
+  bounded by what it could reach and not by what it could spend: a loop that
+  never returns held a core until somebody noticed, and a descriptor leak ran
+  to the machine's own limit. An hour of processor time per process and 4096
+  open files — generous enough that nothing which worked before stops working,
+  and far below where a runaway reaches the rest of the machine. A command may
+  narrow those; it can no longer drop them, which is what starting from
+  `SandboxResourceLimits::default()` silently did. Memory, process count and
+  disk are deliberately still unstated, with the reason recorded next to the
+  ceilings that are: a limit no backend applies bounds nothing and reads as a
+  settled question.
+
+- **`deny.toml` now refuses duplicate and unwanted crates.** Two copies of one
+  crate are two copies of one bug, and nothing said which one a vulnerable call
+  went through. `multiple-versions` and `wildcards` are denied, the five
+  duplicates this tree cannot collapse are skipped by exact version with the
+  graph that pins each one written down, and OpenSSL is refused outright so a
+  second TLS trust store cannot arrive underneath rustls. `dependency-policy.yml`
+  runs `cargo deny check bans` alongside licences and sources, under
+  `CI required`.
 
 ## [0.36.0] - 2026-09-03
 
