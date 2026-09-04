@@ -258,3 +258,52 @@ fn explicit_stop_cannot_complete_without_query_authority() {
         i32::try_from(ERROR_ACCESS_DENIED).ok()
     );
 }
+
+#[test]
+fn waiting_for_members_times_out_without_terminating_them() {
+    let mut job = Job::new(&["/d", "/c", "set /p VALUE="]);
+    assert!(active(&job.scope) > 0, "the job begins alive");
+
+    let started = Instant::now();
+    let problem = job
+        .scope
+        .wait_empty()
+        .expect_err("live members cannot become completed at the deadline");
+    assert_eq!(problem.kind(), io::ErrorKind::TimedOut);
+    assert!(
+        started.elapsed() >= Duration::from_millis(250),
+        "observation must allow the full stop budget"
+    );
+    assert!(started.elapsed() < WAIT, "observation exceeded its budget");
+    assert!(
+        active(&job.scope) > 0,
+        "observation must not terminate members"
+    );
+    assert!(
+        job.descendant
+            .try_wait()
+            .expect("suspended member")
+            .is_none(),
+        "the suspended member remains alive"
+    );
+}
+
+#[test]
+fn waiting_for_job_extinction_recovers_after_timeout() {
+    let job = Job::new(&["/d", "/c", "set /p VALUE="]);
+    let problem = job.scope.wait_empty().expect_err("the live job times out");
+    assert_eq!(problem.kind(), io::ErrorKind::TimedOut);
+    assert!(active(&job.scope) > 0, "the timed-out job remains alive");
+
+    // Signal the real job directly so this check does not use Scope::stop's
+    // own observation as proof that the next observation should succeed.
+    job.scope
+        .terminator(&job.leader)
+        .expect("terminator")
+        .stop()
+        .expect("terminate the same job");
+    job.scope
+        .wait_empty()
+        .expect("observed extinction can succeed after a prior timeout");
+    assert_eq!(active(&job.scope), 0, "success requires no active members");
+}
