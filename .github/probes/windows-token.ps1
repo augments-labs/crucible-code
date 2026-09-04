@@ -1,3 +1,8 @@
+# Probe identity: windows-token-v2; successor to windows-token-v1.
+# V1 native run 33922373835: CreateProcessAsUserW failed with 203; matrix untested.
+# H1: empty environment prevents setup. V2 supplies only SystemRoot and WINDIR,
+# derived from GetSystemDirectoryW; unchanged token policy and matrix judge.
+# Prediction: creation advances past 203. Failure is setup evidence only.
 # Disposable experiment, not a production launcher. Owns only its unique temp
 # directory and current-user AppContainer profile. Run in a disposable Windows
 # runner with a job-level timeout (suggested: 3 minutes). No network operations.
@@ -9,6 +14,8 @@
 # https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-createrestrictedtoken
 # https://learn.microsoft.com/en-us/windows/win32/secauthz/implementing-an-appcontainer
 # https://chromium.googlesource.com/chromium/src/+/main/sandbox/win/src/app_container_test.cc
+# https://learn.microsoft.com/en-us/windows/win32/api/sysinfoapi/nf-sysinfoapi-getsystemdirectoryw
+# https://docs.python.org/3/library/subprocess.html (SystemRoot/SxS requirement)
 # Limits: tests file access using an impersonation duplicate of the real suspended
 # child's token; does not establish guest bootstrap, descendant, or network behavior.
 # All denied rows must fail CreateFile with ERROR_ACCESS_DENIED (5), not a missing
@@ -23,7 +30,7 @@ using System.Security.Principal;
 using System.Security.Cryptography;
 using System.Threading;
 
-public static class CrucibleWindowsTokenProbeV1 {
+public static class CrucibleWindowsTokenProbeV2 {
     const uint TOKEN_QUERY = 8, TOKEN_DUPLICATE = 2, TOKEN_IMPERSONATE = 4, TOKEN_ASSIGN_PRIMARY = 1;
     const uint FILE_READ_DATA = 1, FILE_ALL_ACCESS = 0x001F01FF;
     const uint DACL = 4, PROTECTED_DACL = 0x80000000;
@@ -61,6 +68,7 @@ public static class CrucibleWindowsTokenProbeV1 {
     [StructLayout(LayoutKind.Sequential)] struct Mapping { public uint Read, Write, Execute, All; }
 
     [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern uint GetSystemDirectoryW(System.Text.StringBuilder buffer,uint size);
     [DllImport("kernel32.dll", SetLastError=true)] static extern bool CloseHandle(IntPtr h);
     [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr p);
     [DllImport("advapi32.dll")] static extern IntPtr FreeSid(IntPtr p);
@@ -173,8 +181,8 @@ public static class CrucibleWindowsTokenProbeV1 {
     }
     public static int Run() {
         string suffix=Guid.NewGuid().ToString("N");
-        string profile="crucible.token.probe."+suffix;
-        string root=Path.Combine(Path.GetTempPath(),"crucible-token-probe-"+suffix);
+        string profile="crucible.token.probe.v2."+suffix;
+        string root=Path.Combine(Path.GetTempPath(),"crucible-token-probe-v2-"+suffix);
         IntPtr package=IntPtr.Zero,restrictSid=IntPtr.Zero,baseToken=IntPtr.Zero,restricted=IntPtr.Zero;
         IntPtr actual=IntPtr.Zero,impersonation=IntPtr.Zero,job=IntPtr.Zero,list=IntPtr.Zero;
         IntPtr restrictEntry=IntPtr.Zero,capsMemory=IntPtr.Zero,lpacMemory=IntPtr.Zero,jobMemory=IntPtr.Zero,environment=IntPtr.Zero;
@@ -229,9 +237,20 @@ public static class CrucibleWindowsTokenProbeV1 {
             Attribute(list,0x2000D,jobMemory,IntPtr.Size);
             StartupInfoEx si=new StartupInfoEx(); si.Startup.cb=(uint)Marshal.SizeOf(typeof(StartupInfoEx)); si.Attributes=list;
             // No inherited handles at all: the suspended guest requires no streams.
-            environment=Marshal.AllocHGlobal(4); Marshal.WriteInt32(environment,0);
+            stage="deterministic_environment";
+            System.Text.StringBuilder systemBuffer=new System.Text.StringBuilder(32768);
+            uint systemLength=GetSystemDirectoryW(systemBuffer,(uint)systemBuffer.Capacity);
+            Need(systemLength!=0);
+            if(systemLength>=(uint)systemBuffer.Capacity) throw new ProbeFailure(122);
+            string systemDirectory=systemBuffer.ToString();
+            string windowsDirectory=Path.GetDirectoryName(systemDirectory);
+            if(String.IsNullOrEmpty(windowsDirectory) || !Path.IsPathRooted(windowsDirectory)) throw new ProbeFailure(13);
+            // Two sorted entries only; the allocator adds the final block terminator.
+            // Never read or inherit the caller's environment values.
+            environment=Marshal.StringToHGlobalUni("SystemRoot="+windowsDirectory+"\0WINDIR="+windowsDirectory+"\0");
+            Console.WriteLine("{\"event\":\"probe_identity\",\"version\":2,\"deterministic_directory_environment\":true}");
             stage="create_suspended_lpac";
-            string executable=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"cmd.exe");
+            string executable=Path.Combine(systemDirectory,"cmd.exe");
             System.Text.StringBuilder line=new System.Text.StringBuilder("\""+executable+"\" /d /c exit 0");
             Need(CreateProcessAsUserW(restricted,executable,line,IntPtr.Zero,IntPtr.Zero,false,
                 CREATE_SUSPENDED|EXTENDED_STARTUPINFO_PRESENT|CREATE_UNICODE_ENVIRONMENT,environment,root,ref si,out pi));
@@ -293,4 +312,4 @@ public static class CrucibleWindowsTokenProbeV1 {
 '@
 try { Add-Type -TypeDefinition $source -Language CSharp -ErrorAction Stop }
 catch { Write-Output '{"event":"probe_compile_failure","status":0}'; exit 90 }
-exit ([CrucibleWindowsTokenProbeV1]::Run())
+exit ([CrucibleWindowsTokenProbeV2]::Run())
