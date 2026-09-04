@@ -1,13 +1,16 @@
-# Probe identity: windows-token-v3 diagnostic controls; v1 and v2 retained.
-# V1 run 33922373835 and V2 run 33922808106 both failed at launch with 203.
-# The two-key environment did not advance setup; no matrix evidence exists yet.
-# Compare restricted-only, LPAC-only, combined, and combined without JOB_LIST.
-# Each case owns fresh profile/fixtures/job; no case ever resumes a guest.
-# Controls are diagnostic only and cannot establish a valid sandbox.
-# H2: the LPAC/restricted-token combination alone causes failure.
-# H3: JOB_LIST interaction causes failure (post-assignment isolates this).
-# H4: malformed ABI or stale last-error; assert layouts and capture BOOL/error.
-# All cases use the same deterministic SystemRoot/WINDIR environment policy.
+# Probe identity: windows-token-v4; immutable predecessors v1/v2/v3 retained.
+# V3 run 33923417901: restricted-only launch succeeds; all LPAC launches fail203.
+# H5: LPAC setup requires LOCALAPPDATA in the supplied environment block.
+# Primary supporting experiment (independent implementation, same runner error):
+# https://github.com/Convira/convira-sandbox/issues/1#issuecomment-5225682721
+# Same-run controls: restricted baseline, LPAC baseline, LPAC+LOCALAPPDATA,
+# combined+LOCALAPPDATA. No launcher API, SID restriction, or ACL fallback.
+# LOCALAPPDATA comes from SHGetKnownFolderPath without CREATE, not inherited env.
+# Prediction: LPAC baseline fails203, LPAC+key returns a suspended process;
+# combined+key then independently determines whether token composition works.
+# Baseline failures remain failures in the output/exit code, not hidden passes.
+# Correct non-AC introspection by not requesting AC-only information classes;
+# retain real Win32 errors and information-class labels for query failures.
 # Disposable experiment, not a production launcher. Owns only its unique temp
 # directory and current-user AppContainer profile. Run in a disposable Windows
 # runner with a job-level timeout (suggested: 3 minutes). No network operations.
@@ -35,7 +38,7 @@ using System.Security.Principal;
 using System.Security.Cryptography;
 using System.Threading;
 
-public static class CrucibleWindowsTokenProbeV3 {
+public static class CrucibleWindowsTokenProbeV4 {
     const uint TOKEN_QUERY = 8, TOKEN_DUPLICATE = 2, TOKEN_IMPERSONATE = 4, TOKEN_ASSIGN_PRIMARY = 1;
     const uint FILE_READ_DATA = 1, FILE_ALL_ACCESS = 0x001F01FF;
     const uint DACL = 4, PROTECTED_DACL = 0x80000000;
@@ -74,6 +77,7 @@ public static class CrucibleWindowsTokenProbeV3 {
 
     [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
     [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern uint GetSystemDirectoryW(System.Text.StringBuilder buffer,uint size);
+    [DllImport("shell32.dll", ExactSpelling=true)] static extern int SHGetKnownFolderPath(ref Guid id,uint flags,IntPtr token,out IntPtr path);
     [DllImport("kernel32.dll", SetLastError=true)] static extern bool CloseHandle(IntPtr h);
     [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr p);
     [DllImport("advapi32.dll")] static extern IntPtr FreeSid(IntPtr p);
@@ -136,7 +140,11 @@ public static class CrucibleWindowsTokenProbeV3 {
     static void Close(ref IntPtr h) { if(h!=IntPtr.Zero) { CloseHandle(h); h=IntPtr.Zero; } }
     static IntPtr Info(IntPtr token,int cls) {
         uint needed; GetTokenInformation(token,cls,IntPtr.Zero,0,out needed);
-        if(needed==0 || needed>65536) throw new ProbeFailure(13);
+        uint queryError=unchecked((uint)Marshal.GetLastWin32Error());
+        if(needed==0 || needed>65536) {
+            Record("{\"event\":\"token_info_size_failed\",\"information_class\":"+cls+",\"status\":"+queryError+"}");
+            throw new ProbeFailure(queryError==0?13:queryError);
+        }
         IntPtr p=Marshal.AllocHGlobal((int)needed);
         try { Need(GetTokenInformation(token,cls,p,needed,out needed)); return p; }
         catch { Marshal.FreeHGlobal(p); throw; }
@@ -202,11 +210,11 @@ public static class CrucibleWindowsTokenProbeV3 {
             return Marshal.ReadInt32(data)==0 && Marshal.ReadInt32(data,4)==0;
         } finally { Marshal.FreeHGlobal(data); }
     }
-    static int RunCase(string name,bool useRestricted,bool useLpac,bool atomicJob) {
+    static int RunCase(string name,bool useRestricted,bool useLpac,bool atomicJob,bool useLocalAppData) {
         currentCase=name; stage="case_start";
         string suffix=Guid.NewGuid().ToString("N");
-        string profile="crucible.token.probe.v3."+suffix;
-        string root=Path.Combine(Path.GetTempPath(),"crucible-token-probe-v3-"+suffix);
+        string profile="crucible.token.probe.v4."+suffix;
+        string root=Path.Combine(Path.GetTempPath(),"crucible-token-probe-v4-"+suffix);
         IntPtr package=IntPtr.Zero,restrictSid=IntPtr.Zero,baseToken=IntPtr.Zero,restricted=IntPtr.Zero;
         IntPtr actual=IntPtr.Zero,impersonation=IntPtr.Zero,job=IntPtr.Zero,list=IntPtr.Zero;
         IntPtr restrictEntry=IntPtr.Zero,capsMemory=IntPtr.Zero,lpacMemory=IntPtr.Zero,jobMemory=IntPtr.Zero,environment=IntPtr.Zero;
@@ -276,10 +284,22 @@ public static class CrucibleWindowsTokenProbeV3 {
             string systemDirectory=systemBuffer.ToString();
             string windowsDirectory=Path.GetDirectoryName(systemDirectory);
             if(String.IsNullOrEmpty(windowsDirectory) || !Path.IsPathRooted(windowsDirectory)) throw new ProbeFailure(13);
-            // Two sorted entries only; the allocator adds the final block terminator.
+            // Sorted baseline entries; the allocator adds the final block terminator.
             // Never read or inherit the caller's environment values.
-            environment=Marshal.StringToHGlobalUni("SystemRoot="+windowsDirectory+"\0WINDIR="+windowsDirectory+"\0");
-            Record("{\"event\":\"probe_identity\",\"version\":3,\"deterministic_directory_environment\":true}");
+            string environmentBlock="SystemRoot="+windowsDirectory+"\0WINDIR="+windowsDirectory+"\0";
+            if(useLocalAppData) {
+                stage="known_folder_local_app_data";
+                Guid folder=new Guid("F1B32785-6FBA-4FCF-9D55-7B8E7F157091");
+                IntPtr folderMemory=IntPtr.Zero;
+                try {
+                    Status(unchecked((uint)SHGetKnownFolderPath(ref folder,0,IntPtr.Zero,out folderMemory)));
+                    string localDirectory=Marshal.PtrToStringUni(folderMemory);
+                    if(String.IsNullOrEmpty(localDirectory) || !Path.IsPathRooted(localDirectory)) throw new ProbeFailure(13);
+                    environmentBlock="LOCALAPPDATA="+localDirectory+"\0"+environmentBlock;
+                } finally { if(folderMemory!=IntPtr.Zero) Marshal.FreeCoTaskMem(folderMemory); }
+            }
+            environment=Marshal.StringToHGlobalUni(environmentBlock);
+            Record("{\"event\":\"probe_identity\",\"version\":4,\"deterministic_directory_environment\":true,\"known_folder_localappdata_included\":"+B(useLocalAppData)+"}");
             stage="create_suspended";
             string executable=Path.Combine(systemDirectory,"cmd.exe");
             System.Text.StringBuilder line=new System.Text.StringBuilder("\""+executable+"\" /d /c exit 0");
@@ -297,15 +317,24 @@ public static class CrucibleWindowsTokenProbeV3 {
             stage="actual_child_token";
             bool inJob; Need(IsProcessInJob(pi.Process,job,out inJob));
             Need(OpenProcessToken(pi.Process,TOKEN_QUERY|TOKEN_DUPLICATE,out actual));
-            bool ac=BoolInfo(actual,29),lpac=BoolInfo(actual,46),onlyS=OnlySid(actual,restrictSid);
-            IntPtr capInfo=Info(actual,30),packageInfo=Info(actual,31);
-            bool zeroCaps,packageMatches;
-            try { zeroCaps=Marshal.ReadInt32(capInfo)==0; packageMatches=Marshal.ReadIntPtr(packageInfo)!=IntPtr.Zero && EqualSid(Marshal.ReadIntPtr(packageInfo),package); }
-            finally { Marshal.FreeHGlobal(capInfo); Marshal.FreeHGlobal(packageInfo); }
+            bool ac=BoolInfo(actual,29),onlyS=OnlySid(actual,restrictSid);
+            bool lpac=false,zeroCaps=false,packageMatches=false;
+            if(ac) {
+                lpac=BoolInfo(actual,46);
+                IntPtr capInfo=IntPtr.Zero,packageInfo=IntPtr.Zero;
+                try {
+                    capInfo=Info(actual,30); packageInfo=Info(actual,31);
+                    zeroCaps=Marshal.ReadInt32(capInfo)==0;
+                    packageMatches=Marshal.ReadIntPtr(packageInfo)!=IntPtr.Zero && EqualSid(Marshal.ReadIntPtr(packageInfo),package);
+                } finally {
+                    if(capInfo!=IntPtr.Zero) Marshal.FreeHGlobal(capInfo);
+                    if(packageInfo!=IntPtr.Zero) Marshal.FreeHGlobal(packageInfo);
+                }
+            }
             bool isRestricted=IsTokenRestricted(actual);
-            Record("{\"event\":\"actual_token\",\"appcontainer\":"+B(ac)+",\"lpac\":"+B(lpac)+",\"restricted\":"+B(isRestricted)+",\"only_session_restricting_sid\":"+B(onlyS)+",\"package_matches\":"+B(packageMatches)+",\"zero_capabilities\":"+B(zeroCaps)+",\"in_job\":"+B(inJob)+",\"guest_never_resumed\":true}");
-            bool requestedToken=ac==useLpac && lpac==useLpac && zeroCaps && inJob
-                && (!useLpac || packageMatches) && (useRestricted ? onlyS && isRestricted : !onlyS);
+            Record("{\"event\":\"actual_token\",\"appcontainer\":"+B(ac)+",\"lpac\":"+B(lpac)+",\"restricted\":"+B(isRestricted)+",\"only_session_restricting_sid\":"+B(onlyS)+",\"package_matches\":"+B(packageMatches)+",\"zero_capabilities\":"+(ac?B(zeroCaps):"null")+",\"in_job\":"+B(inJob)+",\"guest_never_resumed\":true}");
+            bool requestedToken=ac==useLpac && lpac==useLpac && inJob
+                && (!useLpac || zeroCaps && packageMatches) && (useRestricted ? onlyS && isRestricted : !onlyS);
             if(!requestedToken) throw new ProbeFailure(13);
             if(useRestricted && useLpac) {
             Need(DuplicateTokenEx(actual,TOKEN_QUERY|TOKEN_IMPERSONATE,IntPtr.Zero,2,2,out impersonation));
@@ -355,12 +384,13 @@ public static class CrucibleWindowsTokenProbeV3 {
         return result;
     }
     public static int Run() {
-        string[] names={"restricted_only_job","lpac_only_job","combined_job","combined_postassign"};
-        bool[] restrictions={true,false,true,true};
+        string[] names={"restricted_baseline","lpac_baseline","lpac_localappdata","combined_localappdata"};
+        bool[] restrictions={true,false,false,true};
         bool[] lpacs={false,true,true,true};
+        bool[] localAppData={false,false,true,true};
         int overall=0;
         for(int i=0;i<names.Length;i++) {
-            int result=RunCase(names[i],restrictions[i],lpacs[i],i!=3);
+            int result=RunCase(names[i],restrictions[i],lpacs[i],true,localAppData[i]);
             if(result>overall) overall=result;
             // A failed extinction/cleanup receipt ends the whole experiment.
             if(result==3) break;
@@ -373,4 +403,4 @@ public static class CrucibleWindowsTokenProbeV3 {
 '@
 try { Add-Type -TypeDefinition $source -Language CSharp -ErrorAction Stop }
 catch { Write-Output '{"event":"probe_compile_failure","status":0}'; exit 90 }
-exit ([CrucibleWindowsTokenProbeV3]::Run())
+exit ([CrucibleWindowsTokenProbeV4]::Run())
