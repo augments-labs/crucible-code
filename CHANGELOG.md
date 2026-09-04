@@ -10,6 +10,21 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **Failed sandbox startup keeps uncertain cleanup visible.** Startup errors
+  stop and reap a spawned command within bounded waits. If cleanup cannot be
+  confirmed, Crucible retains staging data, Linux projection evidence and the
+  command slot instead of reporting successful cleanup or deleting the evidence.
+
+- **Failed local process cleanup remains visible.** Compatibility-mode stops
+  retry unfinished cleanup, and a cached exit status cannot hide a prior
+  supervisor failure. Unconfirmed cleanup retains staging data and its command
+  slot instead of admitting more work on an unproved cleanup result.
+
+- **Windows command cleanup confirms job membership.** After requesting
+  termination, Crucible checks that the command's job has no active processes
+  before reporting completion. Unavailable job state is an error, and an
+  explicit stop bounds its wait for an empty job.
+
 - **Sandbox configuration validates in SchemaStore's strict validator.** The
   generated schema declares the keys used by its mutual-exclusion rule inside
   that rule, so editors still reject combined `enabled` and `mode` settings

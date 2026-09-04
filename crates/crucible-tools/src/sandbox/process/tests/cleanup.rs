@@ -307,3 +307,70 @@ fn cached_leader_status_cannot_hide_a_failed_stop() -> io::Result<()> {
         .expect_err("cached status cannot erase the failure");
     Ok(())
 }
+
+#[test]
+fn panicked_supervisor_stop_failure_survives_consumed_join() -> io::Result<()> {
+    let mut fixture = Fixture::new(None)?;
+    let process = fixture.process()?;
+    process.supervisor = Some(Supervisor {
+        control: Arc::clone(&process.control),
+        thread: Some(thread::spawn(|| panic!("owned supervisor panic fixture"))),
+    });
+    process
+        .stop()
+        .expect_err("joining the panicked thread fails");
+    assert!(
+        process
+            .supervisor
+            .as_ref()
+            .expect("supervisor")
+            .thread
+            .is_none(),
+        "the failing join was consumed"
+    );
+    process
+        .stop()
+        .expect_err("a consumed join cannot erase its failure");
+    process
+        .try_wait()
+        .expect_err("a reaped leader cannot hide the failed join");
+    assert_eq!(process.inspection().cleanup(), SandboxCleanup::Failed);
+    Ok(())
+}
+
+#[test]
+fn panicked_supervisor_wait_failure_survives_cached_status() -> io::Result<()> {
+    let mut fixture = Fixture::new(None)?;
+    let process = fixture.process()?;
+    process.supervisor = Some(Supervisor {
+        control: Arc::clone(&process.control),
+        thread: Some(thread::spawn(|| panic!("owned supervisor panic fixture"))),
+    });
+    // EOF ends the real shell's read builtin without an injected wait result.
+    process.stdin.take();
+    let deadline = Instant::now() + REAP;
+    loop {
+        match process.try_wait() {
+            Err(_) => break,
+            Ok(None) if Instant::now() < deadline => thread::sleep(SUPERVISE),
+            other => panic!("expected the failed join after real exit, got {other:?}"),
+        }
+    }
+    assert!(process.status.is_some(), "the real leader was reaped");
+    assert!(
+        process
+            .supervisor
+            .as_ref()
+            .expect("supervisor")
+            .thread
+            .is_none()
+    );
+    process
+        .try_wait()
+        .expect_err("cached status cannot erase the failed join");
+    process
+        .stop()
+        .expect_err("cleanup retains the historical failed join");
+    assert_eq!(process.inspection().cleanup(), SandboxCleanup::Failed);
+    Ok(())
+}
