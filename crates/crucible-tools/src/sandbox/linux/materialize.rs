@@ -585,4 +585,134 @@ mod tests {
         assert!(commit(&request).is_err());
         assert!(!root.exists());
     }
+    #[test]
+    fn an_overlapping_destination_is_staged_in_one_order_however_it_arrived() {
+        let sample = Sample::new("sandbox-stage-overlap");
+        sample.write("mounted.txt", "mounted");
+        let provenance = SandboxFilesystemProvenance::Manifest;
+        let entries = || {
+            [
+                SandboxManifestEntry::file(
+                    "tree/deep/leaf",
+                    Box::<[u8]>::from(&b"leaf"[..]),
+                    provenance,
+                )
+                .expect("leaf"),
+                SandboxManifestEntry::directory("tree", provenance).expect("parent"),
+                SandboxManifestEntry::mount(
+                    sample.root().join("mounted.txt"),
+                    "tree/mounted",
+                    SandboxFilesystemAccess::ReadOnly,
+                    provenance,
+                )
+                .expect("mount"),
+                SandboxManifestEntry::directory("tree-sibling", provenance)
+                    .expect("lexical sibling"),
+            ]
+        };
+        let mut arrived_reversed = entries();
+        arrived_reversed.reverse();
+
+        // One order, whichever order the caller wrote them in, and the parent
+        // ahead of everything under it. The lexical sibling sorts after the
+        // whole subtree because a path is ordered by its components, which is
+        // what keeps a parent adjacent to its own descendants.
+        let manifest = SandboxManifest::new(arrived_reversed).expect("manifest");
+        let same = SandboxManifest::new(entries()).expect("manifest");
+        assert_eq!(manifest.digest(), same.digest());
+        let destinations: Vec<_> = manifest
+            .entries()
+            .iter()
+            .map(SandboxManifestEntry::destination)
+            .collect();
+        assert_eq!(
+            destinations,
+            [
+                Path::new("tree"),
+                Path::new("tree/deep/leaf"),
+                Path::new("tree/mounted"),
+                Path::new("tree-sibling"),
+            ]
+        );
+
+        let request = request(&sample, manifest);
+        let root = staging_root(&request).expect("staging root");
+        let materialization = commit(&request).expect("commit").expect("stage");
+        let staged = root.join("manifest");
+
+        // The directory above them did not become their owner: each entry is
+        // still itself, and the mount kept a stub for the kernel to cover.
+        assert!(staged.join("tree").is_dir());
+        assert!(staged.join("tree-sibling").is_dir());
+        assert_eq!(
+            fs::read(staged.join("tree/deep/leaf")).expect("staged leaf"),
+            b"leaf"
+        );
+        assert!(staged.join("tree/mounted").is_file());
+        assert_eq!(
+            materialization
+                .mounts()
+                .first()
+                .map(PreparedMount::destination),
+            Some(Path::new("/crucible/manifest/tree/mounted"))
+        );
+    }
+
+    #[test]
+    fn materializations_running_at_once_never_share_or_disturb_a_stage() {
+        /// Enough at once that a shared root would be reached for.
+        const AT_ONCE: usize = 4;
+
+        let sample = Sample::new("sandbox-stage-at-once");
+        let ready = std::sync::Barrier::new(AT_ONCE);
+        let mut staged: Vec<(usize, PathBuf, Materialization)> = std::thread::scope(|scope| {
+            let started: Vec<_> = (0..AT_ONCE)
+                .map(|index| {
+                    let ready = &ready;
+                    let sample = &sample;
+                    scope.spawn(move || {
+                        let request = request(
+                            sample,
+                            SandboxManifest::new([SandboxManifestEntry::file(
+                                "leaf",
+                                format!("stage-{index}").into_bytes(),
+                                SandboxFilesystemProvenance::Manifest,
+                            )
+                            .expect("entry")])
+                            .expect("manifest"),
+                        );
+                        let root = staging_root(&request).expect("staging root");
+                        ready.wait();
+                        let materialization = commit(&request).expect("commit").expect("stage");
+                        (index, root, materialization)
+                    })
+                })
+                .collect();
+            started
+                .into_iter()
+                .map(|thread| thread.join().expect("a staged manifest"))
+                .collect()
+        });
+
+        // A stage is named by its request and created rather than opened, so
+        // two of them cannot be the same directory, and neither can read what
+        // the other wrote.
+        let roots: std::collections::HashSet<&Path> =
+            staged.iter().map(|(_, root, _)| root.as_path()).collect();
+        assert_eq!(roots.len(), AT_ONCE, "two materializations shared a stage");
+        for (index, root, _) in &staged {
+            assert_eq!(
+                fs::read(root.join("manifest").join("leaf")).expect("staged leaf"),
+                format!("stage-{index}").into_bytes()
+            );
+        }
+
+        // And one of them finishing takes its own stage and nothing else.
+        let (_, finished, materialization) = staged.pop().expect("a staged manifest");
+        drop(materialization);
+        assert!(!finished.exists());
+        for (_, root, _) in &staged {
+            assert!(root.is_dir(), "one stage's cleanup removed another's");
+        }
+    }
 }
