@@ -29,7 +29,8 @@ jobs:
       - name: GREEN before
         timeout-minutes: 2
         shell: pwsh
-        run: cargo test -p crucible-tools --lib --locked bash::platform::windows::tests:: -- --nocapture --test-threads=1
+        run: |
+          cargo test -p crucible-tools --lib --locked bash::platform::windows::tests:: -- --nocapture --test-threads=1
       - name: RED observation removed and exact restoration
         timeout-minutes: 2
         shell: pwsh
