@@ -89,7 +89,19 @@ enum Step {
     Says(String),
     /// It has nothing yet, and its writer is still there.
     Waits,
+    /// It waits a moment, and then has a byte that finishes nothing.
+    ///
+    /// A silence is measured between bytes, so a run of these is never quiet
+    /// for long enough to be given up on — and never says a whole frame
+    /// either. It is the shape a patience-per-silence cannot bound.
+    Trickles,
 }
+
+/// How long a [`Step::Trickles`] holds its byte back.
+///
+/// Under any patience a test using it sets, so the silence between two of them
+/// never runs out.
+const TRICKLE: Duration = Duration::from_millis(20);
 
 /// A scripted stream that goes quiet forever once its script runs out.
 struct Says(VecDeque<Step>);
@@ -98,6 +110,16 @@ impl SandboxOutput for Says {
     fn read_ready(&mut self, buffer: &mut [u8]) -> io::Result<SandboxRead> {
         match self.0.pop_front() {
             None | Some(Step::Waits) => Ok(SandboxRead::Pending),
+            Some(Step::Trickles) => {
+                thread::sleep(TRICKLE);
+                match buffer.first_mut() {
+                    Some(into) => {
+                        *into = b' ';
+                        Ok(SandboxRead::Bytes(1))
+                    }
+                    None => Ok(SandboxRead::Pending),
+                }
+            }
             Some(Step::Says(frame)) => {
                 let said = format!("{frame}\n");
                 let bytes = said.as_bytes();
@@ -542,5 +564,34 @@ fn a_handshake_nobody_is_waiting_for_any_more_ends_at_the_press() {
         waited < Duration::from_secs(5),
         "a handshake carries the press the same way a call does, or a server that \
          says nothing holds the whole start-up open: {waited:?} against {rebuffed}"
+    );
+}
+
+#[test]
+fn a_server_that_speaks_just_often_enough_to_never_fall_silent_is_still_given_up_on() {
+    // `requestSeconds` is spent on one quiet stretch and handed back the moment
+    // anything moves, so a server saying a byte just short of it and then going
+    // quiet again is never silent long enough to be given up on. It would hold
+    // the exchange open for as long as it cared to. A deadline over the whole
+    // exchange counts the time rather than the gaps in it.
+    let patience = Duration::from_millis(200);
+    let dribbling = TRICKLE * 100;
+    let (fake, _watched) = Fake::new(
+        std::iter::repeat_with(|| Step::Trickles).take(100),
+        Ending::Exited,
+    );
+    let mut hosted = Hosted::over(fake, patience).expect("a process with both pipes");
+
+    let began = Instant::now();
+    let refused = hosted
+        .greet(None)
+        .expect_err("a server that never finishes a frame is not a greeting");
+    let waited = began.elapsed();
+
+    assert!(
+        waited < dribbling / 2,
+        "the exchange ran to the end of what the server was willing to dribble \
+         rather than to its own deadline: {waited:?} of a possible {dribbling:?}, \
+         against {refused}"
     );
 }

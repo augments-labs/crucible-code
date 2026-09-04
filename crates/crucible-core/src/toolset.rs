@@ -1104,6 +1104,56 @@ mod tests {
     }
 
     #[test]
+    fn two_names_one_permission_rule_reads_alike_are_one_name_to_a_snapshot() {
+        // A rule matches a tool name without case, so `search` and `Search` are
+        // one name to every rule anybody could write. A snapshot holding both
+        // would spend a verdict given for one on the other, so it is refused —
+        // here rather than only where a particular source reads its own names,
+        // because every source arrives through this door.
+        use crate::{Summary, ToolContext};
+
+        // Named and never asked anything: the roster is refused while it is
+        // being built, so nothing here is ever reached.
+        struct Inert;
+        impl Tool for Inert {
+            fn validate(&self, _args: &ToolArgs) -> Result<(), ToolError> {
+                panic!("named, never called")
+            }
+
+            fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
+                panic!("named, never called")
+            }
+
+            fn summary(&self, _args: &ToolArgs) -> Summary {
+                panic!("named, never called")
+            }
+
+            fn run(
+                &self,
+                _approved: Approved,
+                _context: &ToolContext<'_>,
+            ) -> Result<ToolOutput, ToolError> {
+                panic!("named, never called")
+            }
+        }
+
+        let entry = |name: &str| {
+            ToolEntry::new(
+                ToolDescriptor::new(name, "{}", source(name)).unwrap(),
+                Arc::new(Inert) as Arc<dyn Tool>,
+            )
+        };
+
+        let refused = ToolSnapshot::new([entry("search"), entry("Search")])
+            .expect_err("one name to every rule");
+
+        assert!(
+            matches!(&refused, ToolsetError::Duplicate { name, .. } if &**name == "Search"),
+            "{refused:?}"
+        );
+    }
+
+    #[test]
     fn generation_identity_is_equality_only_and_shared_by_a_clone() {
         let snapshot = ToolSnapshot::new(Vec::new()).unwrap();
         let same = snapshot.clone();
