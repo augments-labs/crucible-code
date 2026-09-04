@@ -1052,9 +1052,10 @@ is named in [`env`](../configuration/configuration.md#env).
 The shell and its descendants are one command scope. When the command exits,
 times out, is cancelled, or cannot be collected, crucible stops that scope and
 waits only for a bounded interval: a background process does not keep an output
-reader or a turn alive. On Linux the default `required` mode launches the scope
-through a verified Bubblewrap boundary with closed networking and only the
-declared filesystem view. See
+reader or a turn alive. OS confinement is off by default; enable it in your
+configuration with `{"sandbox":{"enabled":true}}`. On Linux this requires a
+verified Bubblewrap boundary with closed networking and only the declared
+filesystem view. An unavailable enforcing backend refuses execution. See
 [Operating-system confinement](../security/sandboxing.md) for the exact
 capability matrix and the explicitly unconfined compatibility modes.
 

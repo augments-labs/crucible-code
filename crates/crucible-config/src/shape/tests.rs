@@ -20,7 +20,7 @@ fn offering(
     found: &mut Vec<(Vec<&'static str>, &'static Field)>,
 ) {
     match shape {
-        Shape::Fields(fields) => {
+        Shape::Fields(fields) | Shape::ExclusiveFields(fields) => {
             for field in *fields {
                 path.push(field.name);
                 found.push((path.clone(), field));
@@ -86,6 +86,7 @@ fn spelled(shape: &Shape, example: &str) -> Value {
         | Shape::Choice(_)
         | Shape::Whole(_)
         | Shape::Fields(_)
+        | Shape::ExclusiveFields(_)
         | Shape::Named { .. }
         | Shape::Opaque => json!(example),
     }

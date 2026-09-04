@@ -89,7 +89,7 @@ impl Reader<'_> {
             Shape::Choice(allowed) => self.choice(value, allowed, shape, spot),
             Shape::Count => self.count(value, shape, spot),
             Shape::Flag => self.flag(value, shape, spot),
-            Shape::Fields(_) => self.fields(value, shape, spot),
+            Shape::Fields(_) | Shape::ExclusiveFields(_) => self.fields(value, shape, spot),
             Shape::Named { others, .. } => self.named(value, others, shape, spot),
             Shape::List { of, .. } => self.list(value, of, shape, spot),
             Shape::Opaque => self.opaque(value, shape, spot),
@@ -200,6 +200,20 @@ impl Reader<'_> {
             }
 
             self.check(held, &declared.shape, Spot { path: &path, at })?;
+        }
+
+        if let Shape::ExclusiveFields(fields) = shape {
+            let mut stated = fields
+                .iter()
+                .filter(|field| object.contains_key(field.name));
+            if let (Some(first), Some(second)) = (stated.next(), stated.next()) {
+                return Err(ConfigError::ConflictingKeys {
+                    file: self.file.into(),
+                    first: join(spot.path, first.name).into(),
+                    second: join(spot.path, second.name).into(),
+                    at: At::of(second.name, self.text),
+                });
+            }
         }
 
         // After the walk rather than before it, so a block that is wrong about

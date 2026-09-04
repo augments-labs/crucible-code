@@ -138,6 +138,19 @@ pub enum ConfigError {
         accepted: Accepted,
     },
 
+    /// Two alternative keys were supplied in one document.
+    #[error("{file}: {first} and {second} cannot be combined{at} — keep only one")]
+    ConflictingKeys {
+        /// The file containing both choices.
+        file: Box<str>,
+        /// The first fully qualified key.
+        first: Box<str>,
+        /// The second fully qualified key.
+        second: Box<str>,
+        /// Where the second key occurs.
+        at: At,
+    },
+
     /// A key whose value is the wrong kind of thing.
     #[error("{file}: {path} wants {wanted}{at}")]
     WrongType {

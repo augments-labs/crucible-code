@@ -670,6 +670,16 @@
     },
     "sandbox": {
       "additionalProperties": false,
+      "allOf": [
+        {
+          "not": {
+            "required": [
+              "enabled",
+              "mode"
+            ]
+          }
+        }
+      ],
       "description": "Operating-system confinement for commands and descendant processes",
       "properties": {
         "$comment": {
@@ -678,9 +688,13 @@
         "$schema": {
           "type": "string"
         },
+        "enabled": {
+          "default": false,
+          "description": "Require verified operating-system confinement for commands; off by default, and only user configuration may disable it; cannot be combined with mode",
+          "type": "boolean"
+        },
         "mode": {
-          "default": "required",
-          "description": "Whether commands require verified kernel confinement, may use an explicit compatibility fallback, or run unconfined; only user configuration may weaken required",
+          "description": "Explicit confinement mode: required refuses unavailable enforcement, degraded permits a reported compatibility fallback, and off runs unconfined; only user configuration may weaken it; cannot be combined with enabled",
           "enum": [
             "required",
             "degraded",

@@ -1,4 +1,4 @@
-//! Confinement mode resolved without letting workspace layers weaken it.
+//! Opt-in confinement resolved without letting workspace layers weaken it.
 
 use crucible_core::SandboxMode;
 use serde_json::Value;
@@ -20,25 +20,37 @@ pub(crate) fn read(
     text: &str,
     origin: Origin,
 ) -> Result<Option<SandboxLayer>, ConfigError> {
-    let Some(written) = value
-        .get("sandbox")
-        .and_then(|block| block.get("mode"))
-        .and_then(Value::as_str)
-    else {
+    let Some(block) = value.get("sandbox") else {
         return Ok(None);
     };
-    let mode = match written {
-        "required" => SandboxMode::Required,
-        "degraded" => SandboxMode::Degraded,
-        "off" => SandboxMode::Off,
-        // The shape walk already proves this cannot occur.
-        _ => return Ok(None),
+    // The shape walk has already proved that only one spelling was supplied.
+    // Convert at this boundary so all runtime consumers still receive one mode.
+    let (mode, key) = if let Some(enabled) = block.get("enabled").and_then(Value::as_bool) {
+        (
+            if enabled {
+                SandboxMode::Required
+            } else {
+                SandboxMode::Off
+            },
+            "enabled",
+        )
+    } else if let Some(written) = block.get("mode").and_then(Value::as_str) {
+        let mode = match written {
+            "required" => SandboxMode::Required,
+            "degraded" => SandboxMode::Degraded,
+            "off" => SandboxMode::Off,
+            // The shape walk already proves this cannot occur.
+            _ => return Ok(None),
+        };
+        (mode, "mode")
+    } else {
+        return Ok(None);
     };
     if origin.in_the_workspace() && mode != SandboxMode::Required {
         return Err(ConfigError::Widening {
             file: file.into(),
-            path: "sandbox.mode".into(),
-            at: At::of("mode", text),
+            path: format!("sandbox.{key}").into(),
+            at: At::of(key, text),
         });
     }
     Ok(Some(SandboxLayer { origin, mode }))
@@ -50,7 +62,7 @@ pub(crate) fn resolve(documents: &[Document]) -> SandboxMode {
         .iter()
         .filter_map(Document::sandbox)
         .find(|layer| layer.origin == Origin::User)
-        .map_or(SandboxMode::Required, |layer| layer.mode);
+        .map_or(SandboxMode::Off, |layer| layer.mode);
     if documents
         .iter()
         .filter_map(Document::sandbox)
@@ -60,3 +72,6 @@ pub(crate) fn resolve(documents: &[Document]) -> SandboxMode {
     }
     mode
 }
+
+#[cfg(test)]
+mod tests;
