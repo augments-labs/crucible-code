@@ -290,9 +290,15 @@ The compatibility modes retain command guardrails, deadlines, output bounds,
 usage and audit records, but their inspection report says `confined: false`.
 They apply no resource ceiling, because the ceilings above are the confining
 backend's to apply: choosing `degraded` or `off` takes them off with it.
-Permission approval and a worktree are not a sandbox in any mode. See
+Permission approval and a worktree are not a sandbox in any mode.
+
+`crucible --sandbox` prints what a command in the directory you are standing in
+would actually run under — which backend enforces it, what that backend can and
+cannot hold, the reach and ceilings a command would get, and anything given up
+along the way — and stops without running one. See
 [Operating-system confinement](../security/sandboxing.md) for the exact backend
-capability matrix, lifecycle, inspection and failure behavior.
+capability matrix, lifecycle, inspection and failure behavior, and for how to
+read that report.
 
 ### `permissions`
 
