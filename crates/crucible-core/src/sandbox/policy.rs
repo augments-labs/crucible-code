@@ -656,10 +656,12 @@ impl SandboxResourceLimits {
     ///   reserve enormously and touch little — Go, a JVM, anything built under
     ///   a sanitiser — would be refused by a ceiling low enough to catch
     ///   anything real.
-    /// - Processes. That ceiling is counted per user rather than per command,
-    ///   so it would be spent on whatever else the person is already running,
-    ///   and a busy desktop would refuse a command for reasons nothing here
-    ///   could explain.
+    /// - Processes. Not because nothing bounds them: the broker caps the scope
+    ///   it is PID 1 of whether or not a policy says so. Stating a number here
+    ///   would instead refuse every command on a kernel older than 5.14, where
+    ///   the count is the person's whole machine rather than this namespace,
+    ///   and a busy desktop would be turned away for reasons nothing here could
+    ///   explain.
     /// - Disk, outbound bytes and cost. Nothing in this tree enforces them yet,
     ///   and [`crate::SandboxRequest::negotiate`] refuses a policy asking
     ///   for a ceiling the backend cannot apply.
