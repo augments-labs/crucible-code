@@ -1009,7 +1009,12 @@ fn an_environment_authenticated_session_never_claims_logout_removed_it() {
     let vendor = Vendor::answering("still authenticated");
     let mut window = Watched::answering("environment-logout", 80, 24, &vendor);
 
-    window.types("/logout\r");
+    // The reply is the mark, because quiet is not. Between the echo of the
+    // typed line and the answer to it there is nothing on the stream, and on a
+    // loaded machine that gap outlasts the settling wait: the screen captured
+    // then still holds the command list over an unsent line, which is a
+    // picture of the moment before this case begins.
+    window.types_until("/logout\r", "still uses ANTHROPIC_API_KEY");
 
     insta::assert_snapshot!(window.picture());
 }
