@@ -5,8 +5,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use windows_sys::Win32::System::JobObjects::{
-    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JobObjectBasicAccountingInformation,
-    QueryInformationJobObject,
+    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_BASIC_PROCESS_ID_LIST,
+    JobObjectBasicAccountingInformation, JobObjectBasicProcessIdList, QueryInformationJobObject,
 };
 
 use super::*;
@@ -177,4 +177,54 @@ fn stopping_a_live_job_confirms_every_member_has_exited() {
     assert_eq!(active(&job.scope), 0, "stop returned with active members");
     assert!(job.leader.try_wait().expect("leader exit").is_some());
     assert!(job.descendant.try_wait().expect("member exit").is_some());
+}
+
+#[test]
+#[ignore = "native job accounting investigation"]
+fn process_list_at_each_exit_boundary() {
+    fn listed(scope: &Scope) -> (i32, u32, u32, Option<i32>) {
+        let mut list = JOBOBJECT_BASIC_PROCESS_ID_LIST::default();
+        // SAFETY: this live job and correctly sized writable list are held
+        // throughout the query. A short buffer is retained as evidence too.
+        let read = unsafe {
+            QueryInformationJobObject(
+                scope.0,
+                JobObjectBasicProcessIdList,
+                std::ptr::from_mut(&mut list).cast(),
+                u32::try_from(size_of::<JOBOBJECT_BASIC_PROCESS_ID_LIST>()).expect("list size"),
+                std::ptr::null_mut(),
+            )
+        };
+        (
+            read,
+            list.NumberOfAssignedProcesses,
+            list.NumberOfProcessIdsInList,
+            (read == 0)
+                .then(|| io::Error::last_os_error().raw_os_error())
+                .flatten(),
+        )
+    }
+
+    let mut job = Job::new(&["/d", "/c", "exit 0"]);
+    exited(&mut job.leader).expect("leader exit");
+    println!(
+        "before termination: active={}, listed={:?}",
+        active(&job.scope),
+        listed(&job.scope)
+    );
+    Terminator(job.scope.0)
+        .stop()
+        .expect("termination accepted");
+    let active_after = active(&job.scope);
+    let listed_after = listed(&job.scope);
+    let member_after = job.descendant.try_wait().expect("member status");
+    println!(
+        "after acceptance: active={active_after}, listed={listed_after:?}, member={member_after:?}"
+    );
+    exited(&mut job.descendant).expect("member exit");
+    println!(
+        "after member signal, handles retained: active={}, listed={:?}",
+        active(&job.scope),
+        listed(&job.scope)
+    );
 }
