@@ -263,6 +263,9 @@ impl SandboxSession for LinuxSession {
             owner_transferred: false,
             released: false,
         };
+        // Materialization and admission already belong to spawn's process
+        // owner; the launch now owns the distinct projection and journal.
+        // Session Drop must not infer Complete from its emptied fields.
         self.transferred = true;
         match spawned {
             Ok(process) => launch.process = Some(process),
@@ -437,13 +440,11 @@ impl LinuxLaunch {
                 kind: problem.failure_kind(),
             },
         );
-        self.status_channel.take();
-        self.projection.take();
-        let _ = self.audit.record(
-            self.sandbox,
-            SandboxFactKind::Cleanup(SandboxCleanup::Complete),
-        );
-        self.released = true;
+        // Spawn preserves its original error only after proved cleanup. A
+        // Lifecycle error retains evidence through the existing refusal path.
+        let cleanup_proved = !matches!(problem, SandboxError::Lifecycle(_));
+        let _ = self.record_refusal(cleanup_proved);
+        self.finish_cleanup(cleanup_proved);
     }
 
     fn record_refusal(&mut self, stopped: bool) -> io::Result<()> {

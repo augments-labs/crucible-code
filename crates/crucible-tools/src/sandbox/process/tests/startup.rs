@@ -36,9 +36,15 @@ fn startup_stop_failure_is_bounded_and_quarantines_owned_resources() -> io::Resu
     .map_err(io::Error::other)?;
     full_audit(&plan)?;
     let active = Arc::clone(&plan.reservation.active);
-    let mut command = Command::new("/bin/sh");
+    // The fixture itself expires if setup fails before rescue learns its PID.
+    // This timeout exceeds the asserted startup bound and is not cleanup proof.
+    let mut command = Command::new("/bin/bash");
     command
-        .args(["-c", "printf '%s' \"$$\" > \"$1\"; read line", "fixture"])
+        .args([
+            "-c",
+            "printf '%s' \"$$\" > \"$1\"; read -t 5 line",
+            "fixture",
+        ])
         .arg(&marker);
     let (send, receive) = std::sync::mpsc::sync_channel(1);
     let worker = thread::spawn(move || {

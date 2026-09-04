@@ -179,6 +179,10 @@ pub(super) struct SpawnPlan {
 }
 
 /// Starts one command under an already negotiated process plan.
+///
+/// An unconfirmed startup cleanup returns Lifecycle; Spawn and Audit errors
+/// retain their original category only after cleanup has been proved. Callers
+/// use that distinction to retain their separately owned projection evidence.
 pub(super) fn spawn(
     command: Command,
     plan: SpawnPlan,
