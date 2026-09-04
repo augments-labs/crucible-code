@@ -8,6 +8,13 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Sandbox configuration validates in SchemaStore's strict validator.** The
+  generated schema declares the keys used by its mutual-exclusion rule inside
+  that rule, so editors still reject combined `enabled` and `mode` settings
+  without the schema itself failing to compile.
+
 ### Changed
 
 - **OS sandboxing is now opt-in.** Set `sandbox.enabled` to `true` to require
@@ -16,6 +23,12 @@ change in any release with no deprecation period.
   and specifying both keys in one file is rejected by the parser and schema.
 
 ### Added
+
+- **Sandbox admission is tested before workspace materialization.** Concurrent
+  preparations and cloned services share the requested command ceiling and the
+  absolute sixteen-command limit, and dropping a session releases its slot.
+  These regression tests run against compatibility and the enforcing backend;
+  the enforcing CI job fails if its backend is missing.
 
 - **A sandbox backend's capability claims are now checked against what it
   does.** `crucible_tools::conformance` is published for adapters outside this

@@ -673,6 +673,10 @@
       "allOf": [
         {
           "not": {
+            "properties": {
+              "enabled": {},
+              "mode": {}
+            },
             "required": [
               "enabled",
               "mode"
