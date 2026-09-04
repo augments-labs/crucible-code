@@ -1,5 +1,5 @@
 #!/bin/sh
-# v3: inspect kernel groups; log the account-based Darwin getgroups extension separately.
+# v4b: fail fast after a failed case is fully cleaned up; full 24-case pass oracle.
 # DISPOSABLE macOS VM ONLY. Numeric UID noncollision is a fixture assumption,
 # not production identity reservation. No account/service/host ACL changes.
 set -eu
@@ -66,15 +66,28 @@ PY
 cat > "$probe_root/run-case.sh" <<'SH'
 set -eu
 case_name=$1; profile=$2; fixture=$3
+echo "STAGE case=$case_name profile=$profile script-entered"
 case "$case_name" in
     shell-git)
+        echo "STAGE shell-pipeline-before"
         test "$(printf shell | /usr/bin/tr a-z A-Z)" = SHELL
+        echo "STAGE shell-pipeline-after"
+        echo "STAGE directories-before"
         mkdir repo empty-template; cd repo
+        echo "STAGE directories-after"
+        echo "STAGE git-init-before"
         /usr/bin/git init -q --template=../empty-template
+        echo "STAGE git-init-after"
         printf payload > a
+        echo "STAGE git-add-before"
         /usr/bin/git -c core.hooksPath=/dev/null add a
+        echo "STAGE git-add-after"
+        echo "STAGE git-diff-before"
         test "$(/usr/bin/git diff --cached --name-only)" = a
-        test "$(/usr/bin/git -c alias.probe='!printf child-shell' probe)" = child-shell ;;
+        echo "STAGE git-diff-after"
+        echo "STAGE git-alias-before"
+        test "$(/usr/bin/git -c alias.probe='!printf child-shell' probe)" = child-shell
+        echo "STAGE git-alias-after" ;;
     rust-command) "$fixture/rust-command" ;;
     rustc-link) "$RUSTC" --edition=2021 "$fixture/hello.rs" -o rust-output; ./rust-output ;;
     clang-object) "$PROBE_CLANG" -c "$fixture/hello.c" -o c-output.o; test -s c-output.o ;;
@@ -156,8 +169,10 @@ static void path(char *out, const char *a, const char *b) {
 static int scan(uid_t uid, int type, int verbose) {
     pid_t pids[65536]; errno=0;
     int bytes=proc_listpids(type,uid,pids,sizeof pids), error=errno;
-    if (bytes<0 || (bytes==0 && error) || bytes%sizeof(pid_t) || bytes >= (int)sizeof pids) return -1;
-    int n=bytes/(int)sizeof(pid_t);
+    int complete=!(bytes<0 || (bytes==0 && error) || bytes%sizeof(pid_t) || bytes >= (int)sizeof pids);
+    int n=complete?bytes/(int)sizeof(pid_t):-1;
+    printf("UID-SCAN uid=%u filter=%d bytes=%d errno=%d count=%d complete=%d\n",uid,type,bytes,error,n,complete);
+    if(!complete) return -1;
     if (verbose) for (int i=0;i<n;i++) printf("UID-MEMBER uid=%u pid=%d filter=%d\n",uid,pids[i],type);
     return n;
 }
@@ -229,8 +244,19 @@ static int cleanup(uid_t uid) {
             errno=0; int r=kill(-1,SIGKILL);
             _exit(r==0 || errno==ESRCH ? 0 : 77);
         }
-        int status;
-        if (!reap(worker,end,&status) || !WIFEXITED(status) || WEXITSTATUS(status)) break;
+        int status=0; errno=0;
+        int waited=reap(worker,end,&status), wait_error=errno;
+        printf("SIGNAL-WORKER pid=%d reaped=%d wait_errno=%d raw_status=%d exit=%d signal=%d\n",
+               worker,waited,wait_error,status,
+               waited&&WIFEXITED(status)?WEXITSTATUS(status):-1,
+               waited&&WIFSIGNALED(status)?WTERMSIG(status):0);
+        if(!waited) break;
+        /* XNU kill wrapper uses posix=1 under __DARWIN_UNIX03;
+         * kern_sig.c killpg1_allfilt then includes the sender.
+         * Its expected SIGKILL is not a completion receipt: rescan the UID.
+         */
+        if(!(WIFEXITED(status)&&WEXITSTATUS(status)==0) &&
+           !(WIFSIGNALED(status)&&WTERMSIG(status)==SIGKILL)) break;
         usleep(100000);
     } while (now()<end);
     printf("QUARANTINE uid=%u reason=incomplete-uid-teardown\n",uid);
@@ -302,6 +328,7 @@ int main(int argc,char **argv) {
         uid_t uid=(uid_t)atoi(argv[2]); verify(uid,"sandbox-guest"); alarm(60);
         if(!strcmp(argv[3],"escape")) return escapes(argv[0],uid);
         char script[PATH_MAX],fixtures[PATH_MAX]; path(script,argv[5],"run-case.sh"); path(fixtures,argv[5],"fixtures");
+        printf("GUEST-SHELL-EXEC case=%s profile=%s pid=%d\n",argv[3],argv[4],getpid());
         execl("/bin/sh","sh",script,argv[3],argv[4],fixtures,(char *)NULL); die("guest exec");
     }
     if(argc!=5 || geteuid()!=0) { fprintf(stderr,"coordinator needs root and fixture/clang/python/sdk\n"); return 77; }
@@ -347,6 +374,10 @@ int main(int argc,char **argv) {
         }
         int status=0,done=0; double end=now()+65;
         while(now()<end&&!stopped) { pid_t r=waitpid(p,&status,WNOHANG); if(r==p) { done=1; break; } if(r<0&&errno!=EINTR) break; usleep(50000); }
+        printf("GUEST-WAIT profile=%s case=%s reaped=%d raw_status=%d exit=%d signal=%d\n",
+               profiles[pr],cases[c],done,status,
+               done&&WIFEXITED(status)?WEXITSTATUS(status):-1,
+               done&&WIFSIGNALED(status)?WTERMSIG(status):0);
         int result=done&&WIFEXITED(status)?WEXITSTATUS(status):77;
         if(!strcmp(cases[c],"escape") && (scan(uid,PROC_UID_ONLY,1)<3 || scan(uid,PROC_RUID_ONLY,1)<3)) result=77;
         int clean=cleanup(uid);
@@ -359,7 +390,12 @@ int main(int argc,char **argv) {
         if(!clean) return 77;
         if(!strcmp(cases[c],"escape") && !quiet_heartbeats(work)) result=77;
         printf("RESULT profile=%s case=%s status=%d uid_empty=1\n",profiles[pr],cases[c],result);
-        if(result) failed=1;
+        if(result) {
+            failed=1;
+            printf("UID-PROBE-FAIL failed_profile=%s failed_case=%s remaining_untested=%d cleanup_complete=1\n",
+                   profiles[pr],cases[c],24-(pr*12+c+1));
+            return failed;
+        }
     }
     puts(failed?"UID-PROBE-FAIL":"UID-PROBE-PASS compatibility-and-observed-UID-teardown-only");
     return failed?1:0;
