@@ -22,7 +22,8 @@ use std::fmt;
 use std::time::Duration;
 
 use crucible_core::{
-    Finish, Heard, Muttered, Said, SandboxOutput, SandboxProcess, SandboxUsage, SandboxViolation,
+    Cancel, Finish, Heard, Muttered, Said, SandboxOutput, SandboxProcess, SandboxUsage,
+    SandboxViolation,
 };
 
 use crate::calling::{Answered, Unanswered};
@@ -112,12 +113,31 @@ impl Hosted {
     /// The tool has to be one this server's own catalogue carried, so there is
     /// no way to try a name on a server that never mentioned it.
     ///
+    /// `interrupt` ends the waiting the moment it is raised, instead of at the
+    /// request patience. It is taken per call and put down again afterwards,
+    /// because a cancellation belongs to the call somebody interrupted: a token
+    /// left on the stream would end the next call for a press spent on the
+    /// last. What it cannot do is unask the question — the frame has gone, and
+    /// [`Unanswered::outstanding`] is how the caller finds out that the tool
+    /// may be running still.
+    ///
     /// # Errors
     ///
-    /// [`Unanswered`] where the conversation fails or the result is not the
-    /// shape the protocol gives. A tool that ran and failed is not an error.
-    pub fn call(&mut self, tool: &Offered, arguments: &Value) -> Result<Answered, Unanswered> {
-        crate::calling::call(&mut self.talking, tool, arguments)
+    /// [`Unanswered`] where the conversation fails, crucible is asked to stop
+    /// waiting, or the result is not the shape the protocol gives. A tool that
+    /// ran and failed is not an error.
+    pub fn call(
+        &mut self,
+        tool: &Offered,
+        arguments: &Value,
+        interrupt: Option<&Cancel>,
+    ) -> Result<Answered, Unanswered> {
+        let (heard, _) = self.talking.streams_mut();
+        heard.abandoned_when(interrupt.cloned());
+        let answered = crate::calling::call(&mut self.talking, tool, arguments);
+        let (heard, _) = self.talking.streams_mut();
+        heard.abandoned_when(None);
+        answered
     }
 
     /// What the server has written to standard error so far.

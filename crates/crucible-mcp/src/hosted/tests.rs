@@ -369,7 +369,7 @@ fn a_tool_the_catalogue_offered_can_then_be_called_over_the_same_streams() {
         .expect("a catalogue within bounds");
     let tool = offered.first().expect("the server offered one tool");
     let answered = hosted
-        .call(tool, &json!({"query": "sandbox"}))
+        .call(tool, &json!({"query": "sandbox"}), None)
         .expect("the server answered the call");
 
     assert_eq!(answered.text(), "one match");

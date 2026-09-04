@@ -29,6 +29,25 @@
 //! has become — which does move, because `tool_search` reveals a schema
 //! mid-turn.
 //!
+//! **A call that was sent cannot be unsent, and that decides everything after
+//! it.** An interrupt reaches into the wait — the reading side is a poll loop,
+//! not a blocked syscall, so escape ends a slow call at the press rather than
+//! at `requestSeconds`. What it cannot do is reach the server. The request has
+//! gone, the tool may be running, and from this side a tool that never started,
+//! one that finished, and one whose answer was lost are the same silence. So an
+//! interrupted server is finished with for the run: the conversation would
+//! otherwise read the abandoned call's answer as the reply to the next
+//! question.
+//!
+//! **`restarts` is spent on the endings where asking again is asking once.** A
+//! server whose process died before crucible let go of the frame left the far
+//! end untouched, and starting it again and sending the same call is one call.
+//! Every other ending has a request outstanding, and no amount of budget makes
+//! repeating it safe — the budget is not consulted for those. A restarted
+//! server has to still offer the tool under the same name and the same schema,
+//! because the descriptor the model was shown is the one it wrote its arguments
+//! against.
+//!
 //! **A handle is dead the moment its lifecycle is.** Disposal stops every
 //! server and marks it gone, so an executor still held from an earlier turn
 //! refuses rather than speaking into a pipe that now belongs to nothing. The
@@ -42,12 +61,13 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use crucible_core::{
-    Approved, Command, Finish, SandboxCommand, SandboxEnvironment, SandboxId, SandboxManifest,
-    SandboxPolicy, SandboxRequest, SandboxService, Sensitivity, Summary, Tool, ToolArgs,
-    ToolContext, ToolDescriptor, ToolEntry, ToolError, ToolId, ToolOutput, ToolProvenance,
-    ToolSnapshot, ToolSourceKind, Toolset, ToolsetContext, ToolsetError,
+    Ancestry, Approved, Command, Finish, SandboxCommand, SandboxEnvironment, SandboxId,
+    SandboxManifest, SandboxPolicy, SandboxRequest, SandboxService, Sensitivity, Summary, Tool,
+    ToolArgs, ToolContext, ToolDescriptor, ToolEntry, ToolError, ToolId, ToolOutput,
+    ToolProvenance, ToolSnapshot, ToolSourceKind, Toolset, ToolsetContext, ToolsetError,
 };
-use crucible_mcp::{Hosted, Offered};
+use crucible_extension::{Ambiguity, Restarts};
+use crucible_mcp::{Answered, Hosted, Offered, Unanswered};
 use crucible_runner::Tools;
 use serde_json::Value;
 
@@ -90,6 +110,8 @@ pub(crate) struct Chosen {
     grace: Duration,
     /// Whether a run that cannot start it fails, rather than going without it.
     required: bool,
+    /// How often its process may be started again after it ends.
+    restarts: u32,
     /// What it is confined to, which is its own: two servers written down in
     /// one file can name two directories to run in, and a policy shared across
     /// the selection could only be right about one of them.
@@ -125,6 +147,7 @@ impl Chosen {
             request: BRIEF,
             grace: BRIEF,
             required: false,
+            restarts: 0,
             policy,
         }
     }
@@ -154,12 +177,76 @@ impl Chosen {
         self.required = required;
         self
     }
+
+    /// How often its process may be started again after it ends.
+    ///
+    /// Zero, the default, is one start and no more. It is a ceiling on the
+    /// endings crucible can prove were harmless, not a retry policy: an ending
+    /// with a request outstanding is refused whatever this says.
+    pub(crate) const fn restarting(mut self, restarts: u32) -> Self {
+        self.restarts = restarts;
+        self
+    }
+}
+
+/// One server that is running, and the catalogue it answered with.
+struct Started {
+    /// The conversation crucible holds with it.
+    hosted: Hosted,
+    /// What it said it offers, in the order it said it.
+    offered: Vec<Offered>,
+}
+
+/// Starts `chosen` confined, agrees a version, and reads what it offers.
+///
+/// Free of [`Hosting`] because it is also what a restart does, and a restart
+/// happens with a call in hand rather than a lifecycle: a second copy of these
+/// steps is a second place for the handshake patience, the confinement or the
+/// catalogue bound to drift.
+fn start(
+    chosen: &Chosen,
+    sandbox: &dyn SandboxService,
+    ancestry: Ancestry,
+) -> Result<Started, Box<str>> {
+    let refused = |problem: &dyn std::fmt::Display| -> Box<str> { problem.to_string().into() };
+
+    // A call identity of its own rather than the run's: what the audit is
+    // about here is the server, and every tool it later offers is one call
+    // inside this one process.
+    let request = SandboxRequest::new(
+        SandboxId::new(),
+        ancestry,
+        ToolId::new(format!("{NAMESPACE}{OF}{}", chosen.name)),
+        chosen.policy.clone(),
+        SandboxManifest::empty(),
+    );
+    let mut session = sandbox.prepare(request).map_err(|e| refused(&e))?;
+    session.materialize().map_err(|e| refused(&e))?;
+    let command = SandboxCommand::new(
+        chosen.program.clone(),
+        chosen.arguments.iter().cloned(),
+        chosen.environment.clone(),
+    )
+    .map_err(|e| refused(&e))?
+    // Crucible keeps the writing end: the whole protocol is a conversation,
+    // and a server whose input crucible let go could be greeted but never
+    // asked anything.
+    .spoken_to();
+    let process = session.start(command).map_err(|e| refused(&e))?;
+
+    let mut hosted = Hosted::over(process, chosen.handshake).map_err(|e| refused(&e))?;
+    let greeting = hosted.greet().map_err(|e| refused(&e))?;
+    // Under the other number from here on: the greeting was a peer reading
+    // from a table, and everything after it is a peer doing work.
+    hosted.patient_for(chosen.request);
+    let offered = hosted.catalogue(&greeting).map_err(|e| refused(&e))?;
+    Ok(Started { hosted, offered })
 }
 
 /// The built-in roster, and whatever the selected servers offered.
 pub(crate) struct Hosting {
     builtin: Tools,
-    chosen: Vec<Chosen>,
+    chosen: Vec<Arc<Chosen>>,
     sandbox: Arc<dyn SandboxService>,
     live: Mutex<Live>,
 }
@@ -181,14 +268,33 @@ struct Live {
 struct Server {
     /// What its tools are named under.
     name: Box<str>,
-    /// How long it is given to go on its own at disposal.
-    grace: Duration,
-    /// Taken at disposal, because stopping consumes the conversation.
+    /// The selection it was started from, kept because a restart starts it
+    /// again from exactly the same words.
+    chosen: Arc<Chosen>,
+    /// What starts it, which is the same service the lifecycle used.
+    sandbox: Arc<dyn SandboxService>,
+    /// Whose run this process belongs to, for the audit a restart also owes.
+    ancestry: Ancestry,
+    /// The conversation and the budget, under one lock.
+    ///
+    /// One rather than two because they are decided together: what happens to
+    /// a server whose call failed is read off the budget and written back to
+    /// the conversation, and a second lock would let two calls each spend the
+    /// last restart.
+    live: Mutex<Conversation>,
+}
+
+/// What a server is, between one call and the next.
+struct Conversation {
+    /// Taken at disposal, because stopping consumes it, and taken when a call
+    /// leaves the two ends disagreeing about what was asked.
     ///
     /// This is the whole of a handle's validity: a handle that finds nothing
-    /// here is one whose lifecycle has ended, and there is no second flag
-    /// beside it to disagree with.
-    talking: Mutex<Option<Hosted>>,
+    /// here is one whose server has ended, and there is no second flag beside
+    /// it to disagree with.
+    hosted: Option<Hosted>,
+    /// How many more times it may be started again.
+    restarts: Restarts,
 }
 
 impl Hosting {
@@ -200,7 +306,7 @@ impl Hosting {
     ) -> Self {
         Self {
             builtin,
-            chosen,
+            chosen: chosen.into_iter().map(Arc::new).collect(),
             sandbox,
             live: Mutex::new(Live::default()),
         }
@@ -209,44 +315,14 @@ impl Hosting {
     /// Starts one server, greets it, and turns its catalogue into entries.
     fn host(
         &self,
-        chosen: &Chosen,
+        chosen: &Arc<Chosen>,
         context: &ToolsetContext,
     ) -> Result<(Arc<Server>, Vec<ToolEntry>), ToolsetError> {
-        let refused = |problem: &dyn std::fmt::Display| ToolsetError::Source {
-            id: chosen.name.clone(),
-            problem: problem.to_string().into(),
-        };
-
-        // A call identity of its own rather than the run's: what the audit is
-        // about here is the server, and every tool it later offers is one call
-        // inside this one process.
-        let request = SandboxRequest::new(
-            SandboxId::new(),
-            context.ancestry(),
-            ToolId::new(format!("{NAMESPACE}{OF}{}", chosen.name)),
-            chosen.policy.clone(),
-            SandboxManifest::empty(),
-        );
-        let mut session = self.sandbox.prepare(request).map_err(|e| refused(&e))?;
-        session.materialize().map_err(|e| refused(&e))?;
-        let command = SandboxCommand::new(
-            chosen.program.clone(),
-            chosen.arguments.iter().cloned(),
-            chosen.environment.clone(),
-        )
-        .map_err(|e| refused(&e))?
-        // Crucible keeps the writing end: the whole protocol is a conversation,
-        // and a server whose input crucible let go could be greeted but never
-        // asked anything.
-        .spoken_to();
-        let process = session.start(command).map_err(|e| refused(&e))?;
-
-        let mut hosted = Hosted::over(process, chosen.handshake).map_err(|e| refused(&e))?;
-        let greeting = hosted.greet().map_err(|e| refused(&e))?;
-        // Under the other number from here on: the greeting was a peer reading
-        // from a table, and everything after it is a peer doing work.
-        hosted.patient_for(chosen.request);
-        let offered = hosted.catalogue(&greeting).map_err(|e| refused(&e))?;
+        let Started { hosted, offered } = start(chosen, self.sandbox.as_ref(), context.ancestry())
+            .map_err(|problem| ToolsetError::Source {
+                id: chosen.name.clone(),
+                problem,
+            })?;
 
         let provenance = ToolProvenance::new(
             ToolSourceKind::Mcp,
@@ -256,8 +332,13 @@ impl Hosting {
         let program: Box<str> = chosen.program.display().to_string().into();
         let server = Arc::new(Server {
             name: chosen.name.clone(),
-            grace: chosen.grace,
-            talking: Mutex::new(Some(hosted)),
+            chosen: Arc::clone(chosen),
+            sandbox: Arc::clone(&self.sandbox),
+            ancestry: context.ancestry(),
+            live: Mutex::new(Conversation {
+                hosted: Some(hosted),
+                restarts: Restarts::ceiling(chosen.restarts),
+            }),
         });
 
         let mut entries = Vec::with_capacity(offered.len());
@@ -318,21 +399,71 @@ impl Server {
     /// already gone and does nothing to it.
     fn release(&self) -> Result<(), ToolsetError> {
         let taken = self
-            .talking
+            .live
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+            .hosted
             .take();
+        self.reaped(taken)
+    }
+
+    /// The same, for a conversation already taken out from under the lock.
+    fn reaped(&self, taken: Option<Hosted>) -> Result<(), ToolsetError> {
         let Some(hosted) = taken else {
             return Ok(());
         };
 
-        match hosted.stop(self.grace).finish {
+        match hosted.stop(self.chosen.grace).finish {
             Finish::Exited(_) | Finish::Stopped => Ok(()),
             Finish::Unreaped(problem) => Err(ToolsetError::Source {
                 id: self.name.clone(),
                 problem: problem.to_string().into(),
             }),
         }
+    }
+
+    /// Starts this server again, if the ending permits it and the budget has
+    /// one left, and hands back a conversation that still offers `tool`.
+    ///
+    /// The budget is asked before anything is started, and it is asked with the
+    /// ending's own certainty rather than a decision made here: a request that
+    /// was outstanding is refused by [`Restarts::again`] whatever the ceiling
+    /// says, so the rule that a half-done call is never repeated is written
+    /// once, beside every other program crucible supervises.
+    ///
+    /// The old conversation is stopped first. A process that has to be started
+    /// again is one crucible has already lost track of, and leaving it running
+    /// beside its replacement would leave a server nothing will ever reap.
+    fn restart(&self, after: Ambiguity, tool: &Offered) -> Result<(), Box<str>> {
+        let mut live = self.live.lock().unwrap_or_else(PoisonError::into_inner);
+        let permitted = live.restarts.again(after).map_err(|no| no.to_string())?;
+        drop(self.reaped(live.hosted.take()));
+
+        let Started { hosted, offered } = start(&self.chosen, self.sandbox.as_ref(), self.ancestry)
+            .map_err(|problem| {
+                format!("restart {} did not start it: {problem}", permitted.nth()).into_boxed_str()
+            })?;
+
+        // The descriptor the model wrote its arguments against is the one this
+        // run published, and a server is free to come back offering something
+        // else under the same name. Sending arguments checked against the old
+        // schema to the new tool would be crucible vouching for a promise
+        // nobody made, so a catalogue that moved ends the server instead.
+        let same = offered
+            .iter()
+            .any(|one| one.name() == tool.name() && one.schema() == tool.schema());
+        if !same {
+            drop(self.reaped(Some(hosted)));
+            return Err(format!(
+                "it came back without {}, or offering it under a different schema, so the \
+                 tools this run published no longer describe it",
+                tool.name()
+            )
+            .into_boxed_str());
+        }
+
+        live.hosted = Some(hosted);
+        Ok(())
     }
 }
 
@@ -439,51 +570,154 @@ impl Tool for Calling {
 
     fn run(&self, approved: Approved, context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
         let arguments = arguments(&self.called, approved.args())?;
-        // Asked before anything is sent, because that is where this can still
-        // answer. Once a call is on its way the wait belongs to the request
-        // deadline the record set: the conversation is a blocking read of one
-        // pipe, and an interrupt cannot reach into it.
+        // Asked before anything is sent, because refusing here costs the far
+        // end nothing at all: no process is disturbed and no budget is spent.
+        // Once the frame has gone the answer is the one below, which is more
+        // expensive and less certain.
         if context.cancel().requested() {
             return Err(ToolError::Cancelled(self.called.clone()));
         }
-        let mut talking = self
-            .server
-            .talking
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let Some(hosted) = talking.as_mut() else {
-            // The lifecycle that read this catalogue has ended, and a handle
-            // outlives it whenever a turn was abandoned mid-call.
-            return Err(ToolError::StaleGeneration {
-                tool: self.called.clone(),
-            });
+
+        let problem = match self.attempt(&arguments, context) {
+            Ok(answered) => return Ok(said(&answered)),
+            // A handle that outlived its lifecycle. Nothing broke and nothing
+            // is running: the turn that read this catalogue is over, and
+            // starting the server again here would give a finished run a
+            // process no disposal will ever reach.
+            Err(Refusal::Gone) => return Err(self.stale()),
+            Err(Refusal::Unanswered(problem)) => problem,
         };
-
-        let answered = hosted
-            .call(&self.offered, &arguments)
-            .map_err(|problem| ToolError::Io {
-                tool: self.called.clone(),
-                problem: format!("the MCP server {} could not answer", self.server.name).into(),
-                source: io::Error::other(problem.to_string()),
-            })?;
-
-        let mut said = answered.text().to_owned();
-        // A result that lost something says so. The mark inside the text says
-        // where the cut was; this says how much went, which is the part a
-        // reader of what survived has no way to work out.
-        if answered.omitted() > 0 {
-            let omitted = answered.omitted();
-            let _ = write!(
-                said,
-                "\n[…crucible left out {omitted} bytes of this result…]"
-            );
+        // The server answered, and what it answered with is this crate's
+        // complaint rather than the conversation's. Nothing is stopped and
+        // nothing is spent.
+        if problem.settled() {
+            return Err(self.broke(&problem));
         }
 
-        Ok(if answered.failed() {
-            ToolOutput::failed(said)
+        // Everything from here is a conversation that cannot carry another
+        // call. Whether the server may have acted on the one it was given is
+        // what decides both the budget and the words, and only a frame crucible
+        // never let go of can answer no.
+        let after = if problem.outstanding() {
+            Ambiguity::Unsettled
         } else {
-            ToolOutput::ok(said)
-        })
+            Ambiguity::Settled
+        };
+        if let Err(refused) = self.server.restart(after, &self.offered) {
+            drop(self.server.release());
+            return Err(if problem.interrupted() {
+                // Reported as the interruption it was. The restart was refused
+                // because the call is outstanding, which is that same sentence
+                // twice and is not news to whoever pressed the key.
+                ToolError::Cancelled(self.called.clone())
+            } else {
+                self.gone(&problem, &refused)
+            });
+        }
+
+        // One retry, and the same reading of its failure: a server that has to
+        // be started again for every call is one this run will not get an
+        // answer out of, and the budget is what stops that being discovered a
+        // call at a time forever.
+        self.attempt(&arguments, context)
+            .map(|answered| said(&answered))
+            .map_err(|again| match again {
+                Refusal::Gone => self.stale(),
+                Refusal::Unanswered(again) => {
+                    if !again.settled() {
+                        drop(self.server.release());
+                    }
+                    if again.interrupted() {
+                        ToolError::Cancelled(self.called.clone())
+                    } else {
+                        self.broke(&again)
+                    }
+                }
+            })
+    }
+}
+
+impl Calling {
+    /// Sends the call, with the interrupt that can end the waiting early.
+    ///
+    /// A wait somebody ends by pressing escape ends at the press rather than at
+    /// the request patience. The lock is taken and released inside, because
+    /// what happens next may be a restart and that takes the same lock.
+    fn attempt(&self, arguments: &Value, context: &ToolContext<'_>) -> Result<Answered, Refusal> {
+        let mut live = self
+            .server
+            .live
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let Some(hosted) = live.hosted.as_mut() else {
+            // The lifecycle that read this catalogue has ended, or a call
+            // before this one left the conversation somewhere it could not come
+            // back from.
+            return Err(Refusal::Gone);
+        };
+        hosted
+            .call(&self.offered, arguments, Some(context.cancel()))
+            .map_err(Refusal::Unanswered)
+    }
+
+    /// A handle whose lifecycle has ended.
+    fn stale(&self) -> ToolError {
+        ToolError::StaleGeneration {
+            tool: self.called.clone(),
+        }
+    }
+
+    /// A call that produced no result, in words the model can read.
+    fn broke(&self, problem: &Unanswered) -> ToolError {
+        ToolError::Io {
+            tool: self.called.clone(),
+            problem: format!("the MCP server {} could not answer", self.server.name).into(),
+            source: io::Error::other(problem.to_string()),
+        }
+    }
+
+    /// A server this run has finished with, and why it will not be asked again.
+    fn gone(&self, problem: &Unanswered, refused: &str) -> ToolError {
+        ToolError::Io {
+            tool: self.called.clone(),
+            problem: format!(
+                "the MCP server {} could not answer and will not be asked again: {refused}",
+                self.server.name
+            )
+            .into(),
+            source: io::Error::other(problem.to_string()),
+        }
+    }
+}
+
+/// Why a call produced no result, including the one ending that is not the
+/// server's doing.
+enum Refusal {
+    /// There was no conversation to speak over.
+    Gone,
+
+    /// There was, and this is what it said.
+    Unanswered(Unanswered),
+}
+
+/// What a model is shown for one answered call.
+///
+/// A result that lost something says so. The mark inside the text says where
+/// the cut was; this says how much went, which is the part a reader of what
+/// survived has no way to work out.
+fn said(answered: &Answered) -> ToolOutput {
+    let mut said = answered.text().to_owned();
+    if answered.omitted() > 0 {
+        let omitted = answered.omitted();
+        let _ = write!(
+            said,
+            "\n[…crucible left out {omitted} bytes of this result…]"
+        );
+    }
+    if answered.failed() {
+        ToolOutput::failed(said)
+    } else {
+        ToolOutput::ok(said)
     }
 }
 

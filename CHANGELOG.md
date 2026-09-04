@@ -8,6 +8,25 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Changed
+
+- **An interrupt now ends an MCP call at the press rather than at
+  `requestSeconds`.** The reading side is a poll loop, so escape during a slow
+  `mcp:<server>/<tool>` call comes back cancelled immediately instead of after
+  the request patience. It still cannot reach the server: the request has gone
+  and the tool may be running, so the interrupted server is finished with for
+  the turn rather than asked a second question it would answer with the first
+  one's reply.
+
+- **`restarts` is now acted on.** A server whose process had already gone when
+  crucible tried to write the call is started again, up to the number the
+  record names, and the same call is sent once — the frame never left crucible,
+  so nothing over there half-happened. Every other ending has a request
+  outstanding and is refused whatever the ceiling says. A restarted server has
+  to come back offering the tool under the same name and the same schema, or it
+  is stopped and the tool reported gone. The default of `0` is unchanged: one
+  start and no more.
+
 ## [0.36.0] - 2026-09-03
 
 ### Added

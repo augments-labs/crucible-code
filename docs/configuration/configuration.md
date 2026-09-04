@@ -803,16 +803,27 @@ them has an answer already:
 | `restarts` | `0` | How many times it may be started again after it ends |
 | `required` | `false` | Whether a run that selected it fails when it cannot be prepared, rather than carrying on without its tools |
 
-`requestSeconds` is also what an interrupt is measured against. Pressing escape
-before a call reaches the server refuses it there and then; once it has been
-sent, crucible is inside a blocking read of that server's pipe and the wait ends
-when the answer arrives or `requestSeconds` runs out. Set it to what you are
+`requestSeconds` is how long a server that says nothing is given, not how long
+an interrupt takes. Pressing escape before a call reaches the server refuses it
+there and then. Pressing it during a call ends the wait at the press: the call
+comes back cancelled immediately, whatever `requestSeconds` is set to. What the
+press cannot do is reach the server — the request has gone, the tool may be
+running, and from crucible's side a tool that never started, one that finished,
+and one whose answer was lost look the same. So an interrupted server is
+finished with for the rest of that turn rather than asked a second question it
+would answer with the first one's reply. Set `requestSeconds` to what you are
 willing to wait for a server that has stopped answering.
 
-`restarts` is read and checked but nothing acts on it yet. A server that ends
-part way through a turn is not started again, and the tools it offered fail for
-the rest of that turn; the next turn starts it fresh. Write the key if you want
-it recorded, but this release does not honour a number above zero.
+`restarts` is a ceiling on the endings crucible can prove were harmless, not a
+retry count. A server whose process had already gone when crucible tried to
+write the call left the far end untouched, so it is started again and the same
+call sent once — that is what the number is spent on. Every other ending has a
+request outstanding, and no number makes repeating it safe: those end the server
+for the turn whatever the ceiling says. A server started again has to come back
+offering the tool under the same name and the same schema, because the
+description the model wrote its arguments against is the one this run published;
+a catalogue that moved retires the server instead. The default of `0` is one
+start and no more.
 
 Every key in `mcp.servers` is read **only** from `~/.crucible/config.json`. A
 committed `.crucible/config.json` naming a server would be choosing whose

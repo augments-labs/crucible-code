@@ -29,6 +29,7 @@ const BARE: &str = r#"{
                 "handshakeSeconds": 3,
                 "requestSeconds": 12,
                 "shutdownSeconds": 2,
+                "restarts": 2,
                 "required": true
             },
             "notes": {"command": "notes-mcp"}
@@ -101,7 +102,36 @@ fn a_named_server_is_resolved_into_what_it_takes_to_start_it() {
     assert_eq!(chosen.handshake, Duration::from_secs(3));
     assert_eq!(chosen.request, Duration::from_secs(12));
     assert_eq!(chosen.grace, Duration::from_secs(2));
+    // The number itself rather than merely some ceiling: a selection that
+    // carried a larger one would restart a server the document said to give up
+    // on, and one that carried a smaller one would give up on a server the
+    // document was still willing to try.
+    assert_eq!(chosen.restarts, 2);
     assert!(chosen.required);
+}
+
+#[test]
+fn a_record_that_named_no_restarts_gets_one_start_and_no_more() {
+    let sample = Sample::new("selecting-restarts-default");
+    let settings = sample.user(BARE);
+    let (_, lookup) = installed(&sample, "notes-mcp", &[]);
+
+    let found = selected(
+        &["notes".to_owned()],
+        &settings,
+        &sample.workspace(),
+        lookup,
+    )
+    .expect("a record this test wrote");
+
+    let [chosen] = found.as_slice() else {
+        panic!("one server was named");
+    };
+    assert_eq!(
+        chosen.restarts, 0,
+        "starting somebody else's program again is something a document asks \
+         for, not something crucible does by default"
+    );
 }
 
 #[test]

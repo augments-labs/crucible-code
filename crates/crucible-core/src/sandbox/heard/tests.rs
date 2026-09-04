@@ -3,10 +3,10 @@
 use std::collections::VecDeque;
 use std::error::Error as _;
 use std::fmt::Write as _;
-use std::io;
+use std::io::{self, BufRead as _};
 use std::time::{Duration, Instant};
 
-use crate::{Over, SandboxOutput, SandboxRead, Speaking, Turn};
+use crate::{Cancel, Over, SandboxOutput, SandboxRead, Speaking, Turn};
 
 use super::Heard;
 
@@ -243,5 +243,69 @@ fn a_closed_stream_is_the_ordinary_ending() {
     assert!(
         matches!(over, Over::Silent),
         "a writer that has gone is nobody's fault: {over:?}"
+    );
+}
+
+/// The whole reason the waiting is a poll loop and not a blocked read. A
+/// patience answers "how long may a quiet program stay quiet"; an interrupt
+/// answers "somebody wants this to stop", and those are different questions.
+/// A reader that could only give the first answer would make escape mean *at
+/// the deadline*, which for a request patience measured in minutes is not a
+/// reader anybody can interrupt.
+#[test]
+fn a_reader_asked_to_stop_gives_up_on_the_silence_rather_than_waiting_it_out() {
+    let cancel = Cancel::new();
+    // Far longer than this case is willing to take, so that ending at the
+    // patience and ending because somebody asked cannot be confused: only one
+    // of the two can produce an answer inside the assertion below.
+    let mut heard = Heard::with_pause(Says::new([Step::Waits]), Duration::from_secs(2), PAUSE);
+    heard.abandoned_when(Some(cancel.clone()));
+    cancel.request();
+
+    let began = Instant::now();
+    let stopped = heard.fill_buf().expect_err("the wait was interrupted");
+    let waited = began.elapsed();
+
+    assert_eq!(
+        stopped.kind(),
+        io::ErrorKind::ConnectionAborted,
+        "an abandoned wait is not a program that timed out, and a caller that \
+         has to tell them apart reads the kind: {stopped}"
+    );
+    assert_ne!(
+        stopped.kind(),
+        io::ErrorKind::Interrupted,
+        "and it must not be the kind every std reader retries, or the caller \
+         that gave up would be put straight back into the wait"
+    );
+    assert!(
+        waited < Duration::from_millis(500),
+        "a wait somebody asked to end must end there and then, not at the \
+         patience: {waited:?}"
+    );
+}
+
+/// The token is set around one exchange, so the reader has to put it down
+/// again. A stream that stayed abandoned would refuse the next call for a
+/// press that was spent on the last one.
+#[test]
+fn a_reader_handed_no_token_waits_out_a_silence_it_was_told_to_abandon_before() {
+    let cancel = Cancel::new();
+    let mut heard = Heard::with_pause(
+        Says::new([Step::Waits, Step::Says(r#"{"method":"ready"}"#)]),
+        PATIENCE,
+        PAUSE,
+    );
+    heard.abandoned_when(Some(cancel.clone()));
+    heard.abandoned_when(None);
+    cancel.request();
+
+    let arrived = heard.fill_buf().expect("no token is no interruption");
+
+    assert!(
+        std::str::from_utf8(arrived)
+            .unwrap_or_default()
+            .contains("ready"),
+        "a spent press must not end the exchange after it"
     );
 }

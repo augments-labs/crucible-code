@@ -19,7 +19,7 @@ use std::io::{self, BufRead, Read};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::{SandboxOutput, SandboxRead};
+use crate::{Cancel, SandboxOutput, SandboxRead};
 
 /// How long crucible waits before asking a quiet stream again.
 ///
@@ -43,6 +43,8 @@ pub struct Heard<O> {
     patience: Duration,
     /// How long it waits between asking.
     pause: Duration,
+    /// What can end the waiting before the patience does.
+    abandon: Option<Cancel>,
     /// The most recent bytes, held until they have been consumed.
     held: Vec<u8>,
     /// How much of them has been.
@@ -80,9 +82,21 @@ impl<O> Heard<O> {
             output,
             patience,
             pause,
+            abandon: None,
             held: Vec::new(),
             at: 0,
         }
+    }
+
+    /// Stops waiting the moment `abandon` is raised, as well as at the
+    /// patience.
+    ///
+    /// Set around one exchange rather than for the life of the stream: a
+    /// cancellation belongs to the call somebody interrupted, and a token left
+    /// behind would end the next read for a press that was spent on the last
+    /// one. `None` puts the reader back to answering only to its patience.
+    pub fn abandoned_when(&mut self, abandon: Option<Cancel>) {
+        self.abandon = abandon;
     }
 }
 
@@ -92,6 +106,7 @@ impl<O> fmt::Debug for Heard<O> {
         f.debug_struct("Heard")
             .field("patience", &self.patience)
             .field("pause", &self.pause)
+            .field("abandon", &self.abandon)
             .field("held", &self.held.len())
             .field("at", &self.at)
             .finish_non_exhaustive()
@@ -113,6 +128,13 @@ impl<O: SandboxOutput> Heard<O> {
                 // Zero bytes is not an ending. A stream saying it has nothing
                 // is the same thing whether it says so with a count or a word.
                 SandboxRead::Bytes(0) | SandboxRead::Pending => {
+                    // Before the patience, because the two are different
+                    // answers and this is the one that is already true: a
+                    // caller who asked to stop is not waiting to find out how
+                    // long the program was allowed to be quiet for.
+                    if self.abandon.as_ref().is_some_and(Cancel::requested) {
+                        return Err(abandoned());
+                    }
                     if began.elapsed() >= self.patience {
                         return Err(silent(self.patience));
                     }
@@ -165,6 +187,28 @@ fn silent(patience: Duration) -> io::Error {
     io::Error::new(
         io::ErrorKind::TimedOut,
         format!("the confined program said nothing for {patience:?}"),
+    )
+}
+
+/// A wait that ended because crucible was asked to stop, not because the peer
+/// was too slow.
+///
+/// Its own kind, because the two endings mean opposite things about the far
+/// end: a program that timed out is one nothing more should be asked of, and
+/// an abandoned one is doing exactly what it was told and simply is not wanted
+/// any more.
+///
+/// [`io::ErrorKind::Interrupted`] is the kind this reads as and the one it must
+/// not use. That kind means *a signal arrived, try the call again*, and the
+/// standard library's own readers act on it: [`BufRead::read_line`] and
+/// everything built on it retry a fill that fails with it. A reader ending a
+/// wait with it would be a reader whose caller immediately puts it back into
+/// the same wait, forever. So the kind here is the one that says the near end
+/// let go of the conversation, which is what happened.
+fn abandoned() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::ConnectionAborted,
+        "crucible was asked to stop waiting for the confined program",
     )
 }
 
