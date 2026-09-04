@@ -274,8 +274,10 @@ exit, deadline, output violation, cancellation, refusal, launch failure, panic,
 explicit stop and ordinary host shutdown. On enforcing Linux a deadline or
 output ceiling first tells the broker to end the workload, so the workload's
 own wait status is still reported, and kills the launcher once the broker has
-exited or after a short budget. Repeated stops retry unfinished cleanup within
-bounded waits. Successful cleanup is idempotent; a failed attempt does not become
+exited or after a short budget. The local process owner used by compatibility
+mode retries unfinished cleanup within bounded waits. The enforcing Linux
+projection owner retains its separate terminal failure and quarantine outcome.
+Successful cleanup is idempotent; a failed attempt does not become
 successful just because it is called again. Staging data and the command's
 admission slot remain held until process cleanup is confirmed. If the process
 owner is dropped while cleanup is still uncertain, staging data is retained and

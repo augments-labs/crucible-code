@@ -10,8 +10,8 @@ change in any release with no deprecation period.
 
 ### Fixed
 
-- **Failed sandbox cleanup remains an error until it is resolved.** Repeated
-  stops retry unfinished cleanup, and a cached exit status cannot hide a prior
+- **Failed local process cleanup remains visible.** Compatibility-mode stops
+  retry unfinished cleanup, and a cached exit status cannot hide a prior
   supervisor failure. Unconfirmed cleanup retains staging data and its command
   slot instead of admitting more work on an unproved cleanup result.
 
