@@ -8,6 +8,13 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Sandbox configuration validates in SchemaStore's strict validator.** The
+  generated schema declares the keys used by its mutual-exclusion rule inside
+  that rule, so editors still reject combined `enabled` and `mode` settings
+  without the schema itself failing to compile.
+
 ### Changed
 
 - **OS sandboxing is now opt-in.** Set `sandbox.enabled` to `true` to require

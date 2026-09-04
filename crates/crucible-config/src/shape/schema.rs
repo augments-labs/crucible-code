@@ -260,8 +260,13 @@ fn object(shape: &Shape) -> Value {
                 let mut exclusions = Vec::new();
                 for (index, first) in fields.iter().enumerate() {
                     for second in fields.iter().skip(index + 1) {
-                        exclusions
-                            .push(json!({ "not": { "required": [first.name, second.name] } }));
+                        // Ajv's strictRequired check scopes names to this
+                        // subschema. Empty definitions preserve the presence
+                        // check; value validation belongs to the outer object.
+                        exclusions.push(json!({ "not": {
+                            "properties": { (first.name): {}, (second.name): {} },
+                            "required": [first.name, second.name]
+                        } }));
                     }
                 }
                 if !exclusions.is_empty()
@@ -483,7 +488,10 @@ mod tests {
         assert_eq!(
             sandbox.get("allOf"),
             Some(&json!([
-                { "not": { "required": ["enabled", "mode"] } }
+                { "not": {
+                    "properties": { "enabled": {}, "mode": {} },
+                    "required": ["enabled", "mode"]
+                } }
             ]))
         );
     }
