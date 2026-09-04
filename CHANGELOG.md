@@ -10,6 +10,16 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **Background commands remain reachable when cleanup fails.** Their rows and
+  command slots stay held until cleanup succeeds, including when the original
+  result was abandoned. A failed stop keeps the panel open with
+  `Stop failed; x retries`; the next press retries the same command.
+
+- **Failed local process cleanup remains visible.** Compatibility-mode stops
+  retry unfinished cleanup, and a cached exit status cannot hide a prior
+  supervisor failure. Unconfirmed cleanup retains staging data and its command
+  slot instead of admitting more work on an unproved cleanup result.
+
 - **Windows command cleanup confirms job membership.** After requesting
   termination, Crucible checks that the command's job has no active processes
   before reporting completion. Unavailable job state is an error, and an
@@ -28,6 +38,10 @@ change in any release with no deprecation period.
   and specifying both keys in one file is rejected by the parser and schema.
 
 ### Added
+
+- **Windows cleanup tests exercise failed observation and recovery.** Native
+  job tests cover a refused state query after termination, a live job that
+  reaches the stop deadline, and successful observation after that job ends.
 
 - **Sandbox admission is tested before workspace materialization.** Concurrent
   preparations and cloned services share the requested command ceiling and the

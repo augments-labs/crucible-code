@@ -731,7 +731,7 @@ fn a_command_left_running_answers_at_once_and_keeps_running() {
 
     // And it is ended by letting go of the registry, which is what the process
     // leaving does.
-    left.stop(1);
+    left.stop(1).expect("background cleanup");
     assert!(left.running().is_empty());
 }
 
@@ -778,7 +778,7 @@ fn a_command_the_developer_let_go_of_says_who_let_go_of_it() {
         output.text()
     );
 
-    left.stop(1);
+    left.stop(1).expect("background cleanup");
 }
 
 #[test]
@@ -798,7 +798,7 @@ fn linux_ctrl_b_uses_owned_durable_detachment_before_go() {
     assert!(!output.is_failed(), "{}", output.text());
     assert!(output.text().contains("ctrl+b"), "{}", output.text());
     assert_eq!(left.running().len(), 1);
-    left.stop(1);
+    left.stop(1).expect("background cleanup");
     assert!(left.running().is_empty());
 }
 
@@ -876,7 +876,7 @@ fn an_explicit_background_command_has_no_foreground_deadline() {
         Some(super::PROCESS_OUTPUT_BYTES)
     );
     drop(limits);
-    left.stop(1);
+    left.stop(1).expect("background cleanup");
 }
 
 #[test]
