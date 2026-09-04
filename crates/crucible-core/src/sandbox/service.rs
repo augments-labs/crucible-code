@@ -1397,11 +1397,17 @@ pub trait SandboxProcess: Send {
     /// The backend process could not be inspected or reaped.
     fn try_wait(&mut self) -> io::Result<Option<ExitStatus>>;
 
-    /// Stops and reaps the complete process tree. Idempotent.
+    /// Stops the complete owned process scope and reaps the command leader.
+    /// Idempotent.
+    ///
+    /// Success confirms that no workload in the owned scope remains active.
+    /// Operating-system cleanup of descendant process objects may finish later.
+    /// A backend publishing private effects must also establish that those
+    /// effects cannot change before publication.
     ///
     /// # Errors
     ///
-    /// The backend could not confirm that the complete owned scope was reaped.
+    /// The backend could not confirm scope termination or reap the leader.
     fn stop(&mut self) -> io::Result<()>;
 
     /// Redacted inspection snapshot.
