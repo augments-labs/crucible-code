@@ -10,6 +10,11 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **Windows command cleanup confirms job membership.** After requesting
+  termination, Crucible checks that the command's job has no active processes
+  before reporting completion. Unavailable job state is an error, and an
+  explicit stop bounds its wait for an empty job.
+
 - **Sandbox configuration validates in SchemaStore's strict validator.** The
   generated schema declares the keys used by its mutual-exclusion rule inside
   that rule, so editors still reject combined `enabled` and `mode` settings
