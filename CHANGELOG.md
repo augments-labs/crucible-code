@@ -10,6 +10,11 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **Failed local process cleanup remains visible.** Compatibility-mode stops
+  retry unfinished cleanup, and a cached exit status cannot hide a prior
+  supervisor failure. Unconfirmed cleanup retains staging data and its command
+  slot instead of admitting more work on an unproved cleanup result.
+
 - **Windows command cleanup confirms job membership.** After requesting
   termination, Crucible checks that the command's job has no active processes
   before reporting completion. Unavailable job state is an error, and an
