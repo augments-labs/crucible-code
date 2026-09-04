@@ -60,6 +60,10 @@ pub(crate) enum Shape {
     /// An object whose keys are exactly these, all of them optional.
     Fields(&'static [Field]),
 
+    /// An object allowing at most one declared field. Reserved JSON metadata
+    /// does not count as a choice. Parser and schema share the same exclusion.
+    ExclusiveFields(&'static [Field]),
+
     /// An object whose keys the user chooses — a provider name, a variable
     /// name — each value having the same shape.
     ///
@@ -509,17 +513,27 @@ pub(crate) const MODE: &[&str] = &["ask", "allowEdits", "fullAccess"];
 pub(crate) const SANDBOX_MODE: &[&str] = &["required", "degraded", "off"];
 
 /// Operating-system confinement policy.
-const SANDBOX: &[Field] = &[Field {
-    name: "mode",
-    about: "Whether commands require verified kernel confinement, may use an explicit compatibility fallback, or run unconfined; only user configuration may weaken required",
-    shape: Shape::Choice(SANDBOX_MODE),
-    examples: &[],
-    usual: Some("required"),
-    // Semantic parsing permits a project to state `required` while refusing
-    // only the weakening values, which this key-wide flag cannot express.
-    needed: false,
-    widens: false,
-}];
+const SANDBOX: &[Field] = &[
+    Field {
+        name: "enabled",
+        about: "Require verified operating-system confinement for commands; off by default, and only user configuration may disable it; cannot be combined with mode",
+        shape: Shape::Flag,
+        examples: &[],
+        usual: Some("false"),
+        needed: false,
+        // The value-specific authority check permits a project to enable it.
+        widens: false,
+    },
+    Field {
+        name: "mode",
+        about: "Explicit confinement mode: required refuses unavailable enforcement, degraded permits a reported compatibility fallback, and off runs unconfined; only user configuration may weaken it; cannot be combined with enabled",
+        shape: Shape::Choice(SANDBOX_MODE),
+        examples: &[],
+        usual: None,
+        needed: false,
+        widens: false,
+    },
+];
 
 /// Every answer `compaction.when` accepts.
 pub(crate) const COMPACTION_WHEN: &[&str] = &["full", "never"];
@@ -1140,7 +1154,7 @@ pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
     Field {
         name: "sandbox",
         about: "Operating-system confinement for commands and descendant processes",
-        shape: Shape::Fields(SANDBOX),
+        shape: Shape::ExclusiveFields(SANDBOX),
         examples: &[],
         usual: None,
         needed: false,
@@ -1182,7 +1196,9 @@ impl Shape {
     /// say something other than "did you mean".
     pub(crate) fn keys(&self) -> Vec<&'static str> {
         match self {
-            Self::Fields(fields) => fields.iter().map(|field| field.name).collect(),
+            Self::Fields(fields) | Self::ExclusiveFields(fields) => {
+                fields.iter().map(|field| field.name).collect()
+            }
 
             // Empty even where a `Named` declares some, because under one no
             // key is unknown: the sentence this feeds is the one a misspelling
@@ -1208,6 +1224,7 @@ impl Shape {
     pub(crate) fn declared(&self, name: &str) -> Option<&'static Field> {
         match self {
             Self::Fields(fields)
+            | Self::ExclusiveFields(fields)
             | Self::Named {
                 declared: fields, ..
             } => fields.iter().find(|field| field.name == name),
@@ -1228,7 +1245,7 @@ impl Shape {
     /// crucible described, not names it requires.
     pub(crate) fn needed(&self) -> impl Iterator<Item = &'static Field> {
         let fields: &'static [Field] = match self {
-            Self::Fields(fields) => fields,
+            Self::Fields(fields) | Self::ExclusiveFields(fields) => fields,
             Self::Text
             | Self::Choice(_)
             | Self::Count
@@ -1244,7 +1261,9 @@ impl Shape {
     /// The shape of `name` under this one, if it is a key at all.
     pub(crate) fn field(&self, name: &str) -> Option<&'static Shape> {
         match self {
-            Self::Fields(_) => self.declared(name).map(|field| &field.shape),
+            Self::Fields(_) | Self::ExclusiveFields(_) => {
+                self.declared(name).map(|field| &field.shape)
+            }
             Self::Named { others, .. } => {
                 Some(self.declared(name).map_or(*others, |field| &field.shape))
             }
@@ -1277,6 +1296,7 @@ impl Shape {
             | Self::Flag
             | Self::Whole(_)
             | Self::Fields(_)
+            | Self::ExclusiveFields(_)
             | Self::Named { .. }
             | Self::Opaque => None,
         }
@@ -1290,7 +1310,7 @@ impl Shape {
             Self::Count => "a whole number that is not negative",
             Self::Flag => "true or false",
             Self::Whole(_) => "a whole number written as a string",
-            Self::Fields(_) | Self::Named { .. } => "an object",
+            Self::Fields(_) | Self::ExclusiveFields(_) | Self::Named { .. } => "an object",
             Self::List { .. } => "a list",
             // Said at more length than the plain object above, because a
             // reader who wrote a string here is somebody following an

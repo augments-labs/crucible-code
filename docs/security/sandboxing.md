@@ -6,7 +6,15 @@ resolves one immutable filesystem, network, environment, command and resource
 plan; probes the backend; refuses missing hard capabilities; materializes inert
 inputs; and only then launches the process.
 
-`sandbox.mode` defaults to `required`. The production Linux backend uses a
+OS confinement is disabled by default. Enable it with
+`{"sandbox":{"enabled":true}}`; `enabled: false` in your home configuration
+selects unconfined execution. Approval, minimal environment, command deadlines,
+output bounds and audit remain active in either mode. Existing explicit
+`sandbox.mode` settings retain their meaning, but cannot appear beside
+`enabled` in the same document. Project settings can require confinement and
+cannot disable it. See [configuration](../configuration/configuration.md#sandbox).
+
+When enabled, the production Linux backend uses a
 canonical, root-owned, non-writable system Bubblewrap executable reached only
 through root-owned, non-writable parent directories. Every bounded `PATH`
 candidate is tried until one passes its exact command-surface, numeric version,
@@ -50,6 +58,24 @@ The exact endpoint allowlist is deliberately unsupported in this release. It
 requires a policy-bound proxy or equivalent mechanism with redirect, DNS,
 metadata, forwarding and outbound-byte enforcement. A requested exact rule is
 rejected instead of being translated into broad egress.
+
+## Platform support
+
+| Platform | Enforcing backend in this version | When enabled |
+| --- | --- | --- |
+| Linux | Verified system Bubblewrap | Runs only when the backend satisfies the requested policy |
+| macOS | Not implemented | Refuses command execution |
+| Windows | Not implemented | Refuses command execution |
+
+A normal unconfined command succeeding on macOS or Windows is not evidence of
+sandbox support. Their native enforcing backends are required follow-up work;
+this table describes the current implementation. An unavailable backend never
+turns `enabled: true` into permission to run outside confinement.
+
+SDK callers constructing `SandboxPolicy::standard` or `Bash::new` still receive
+a required policy. The application applies its resolved configuration explicitly;
+changing the application's default does not weaken independently constructed
+SDK policies or inherited child authority.
 
 ## Capability matrix
 

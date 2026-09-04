@@ -223,7 +223,9 @@ impl std::fmt::Debug for Exported<'_> {
 }
 
 impl Bash {
-    /// Runs in `workspace`.
+    /// Runs in `workspace`, requiring confinement unless the host explicitly
+    /// selects another mode through [`Self::sandboxing`]. The application's
+    /// opt-in configuration is applied by its composition root.
     #[must_use]
     pub fn new(workspace: Workspace) -> Self {
         Self::inheriting(workspace, |name| std::env::var_os(name))

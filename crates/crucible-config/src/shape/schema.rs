@@ -84,7 +84,7 @@ fn of(shape: &Shape) -> Value {
         // `pattern` is what an editor checks a string against, so the bounds
         // are spelled as one.
         Shape::Whole(bounds) => json!({ "type": "string", "pattern": pattern(bounds) }),
-        Shape::Fields(_) | Shape::Named { .. } => object(shape),
+        Shape::Fields(_) | Shape::ExclusiveFields(_) | Shape::Named { .. } => object(shape),
         // An object and nothing more. No `properties`, because the names are
         // the extension's; and deliberately no `additionalProperties: false`,
         // which everywhere else in this file is what turns a misspelling into a
@@ -179,6 +179,7 @@ fn described(field: &Field) -> Value {
         | Shape::Flag
         | Shape::Whole(_)
         | Shape::Fields(_)
+        | Shape::ExclusiveFields(_)
         | Shape::Named { .. }
         | Shape::Opaque => Some(&mut described),
     };
@@ -215,6 +216,7 @@ fn stated(shape: &Shape, usual: &str) -> Value {
         | Shape::Choice(_)
         | Shape::Whole(_)
         | Shape::Fields(_)
+        | Shape::ExclusiveFields(_)
         | Shape::Named { .. }
         | Shape::List { .. }
         | Shape::Opaque => Value::from(usual),
@@ -232,7 +234,7 @@ fn object(shape: &Shape) -> Value {
         // Keys crucible chose: each is named, and nothing else is allowed. That
         // `false` is what turns a misspelling into a red squiggle in the editor
         // instead of a setting that silently never applies.
-        Shape::Fields(fields) => {
+        Shape::Fields(fields) | Shape::ExclusiveFields(fields) => {
             for field in *fields {
                 properties.insert(field.name.into(), described(field));
             }
@@ -253,6 +255,20 @@ fn object(shape: &Shape) -> Value {
                 && let Some(into) = described.as_object_mut()
             {
                 into.insert("required".into(), json!(needed));
+            }
+            if matches!(shape, Shape::ExclusiveFields(_)) {
+                let mut exclusions = Vec::new();
+                for (index, first) in fields.iter().enumerate() {
+                    for second in fields.iter().skip(index + 1) {
+                        exclusions
+                            .push(json!({ "not": { "required": [first.name, second.name] } }));
+                    }
+                }
+                if !exclusions.is_empty()
+                    && let Some(into) = described.as_object_mut()
+                {
+                    into.insert("allOf".into(), json!(exclusions));
+                }
             }
             described
         }

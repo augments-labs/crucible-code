@@ -266,7 +266,10 @@ impl Settings {
             .unwrap_or_default()
     }
 
-    /// Effective operating-system confinement mode.
+    /// Effective operating-system confinement mode, off unless a document
+    /// opts in with `sandbox.enabled` or explicitly selects `sandbox.mode`.
+    /// Workspace layers may require confinement but cannot disable it.
+    /// Core policy constructors remain conservative; hosts apply this choice.
     #[must_use]
     pub const fn sandbox_mode(&self) -> crucible_core::SandboxMode {
         self.sandbox
@@ -411,11 +414,7 @@ mod tests {
     }
 
     #[test]
-    fn confinement_defaults_to_required_and_only_the_user_can_weaken_it() {
-        assert_eq!(
-            Settings::resolve(Vec::new()).sandbox_mode(),
-            crucible_core::SandboxMode::Required
-        );
+    fn explicit_confinement_modes_remain_subject_to_user_authority() {
         let user = Document::sample(r#"{"sandbox":{"mode":"off"}}"#, Origin::User);
         assert_eq!(
             Settings::resolve(vec![user]).sandbox_mode(),
