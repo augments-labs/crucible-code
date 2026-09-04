@@ -7,12 +7,13 @@ permissions:
   contents: read
 
 jobs:
-  windows-token:
-    name: Windows restricted LPAC token experiment v2
+  windows-lifetime:
+    name: Windows job extinction observation
     runs-on: windows-latest
-    timeout-minutes: 3
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: ./.github/probes/windows-token.ps1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo test -p crucible-tools --lib process_list_at_each_exit_boundary --locked -- --ignored --nocapture
