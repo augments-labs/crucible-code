@@ -39,6 +39,10 @@ change in any release with no deprecation period.
 
 ### Added
 
+- **Windows cleanup tests exercise failed observation and recovery.** Native
+  job tests cover a refused state query after termination, a live job that
+  reaches the stop deadline, and successful observation after that job ends.
+
 - **Sandbox admission is tested before workspace materialization.** Concurrent
   preparations and cloned services share the requested command ceiling and the
   absolute sixteen-command limit, and dropping a session releases its slot.
