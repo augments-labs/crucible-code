@@ -279,8 +279,17 @@ state `required`, strengthening a user choice, but cannot state `degraded` or
 `off`. A project, tool, extension, skill, agent, or descendant therefore cannot
 weaken the confinement chosen above it.
 
+Under `required`, a command also runs under resource ceilings the confining
+backend applies: an hour of processor time per process, and 4096 open files at
+once. They are not a budget you are meant to work within — a long build and a
+program that opens a great many files both pass — but the point past which a
+command has stopped being a command. They are not configurable, and a command
+may narrow them but not drop them.
+
 The compatibility modes retain command guardrails, deadlines, output bounds,
 usage and audit records, but their inspection report says `confined: false`.
+They apply no resource ceiling, because the ceilings above are the confining
+backend's to apply: choosing `degraded` or `off` takes them off with it.
 Permission approval and a worktree are not a sandbox in any mode. See
 [Operating-system confinement](../security/sandboxing.md) for the exact backend
 capability matrix, lifecycle, inspection and failure behavior.

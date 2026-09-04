@@ -88,6 +88,18 @@ persistence request or snapshot request into best-effort behavior.
 | `audit` | enforced | enforced |
 | `usage` | observed | observed |
 
+A capability being enforced says what a backend *can* apply, not what the
+default policy asks for. Under `required`, the standard policy states
+`cpu_limit` at one hour per process and `open_file_limit` at 4096; `bash` adds
+`command_time_limit`, `output_limit` and `concurrency_limit` for the one command
+it is running. `memory_limit` is enforced but not asked for: the knob is the
+address space a process may map rather than the memory it uses, and runtimes
+that reserve enormously and touch little would be refused by any ceiling low
+enough to catch a real runaway. `disk_limit` and `process_limit` are unsupported
+above, and a policy may not ask for a ceiling its backend cannot apply — which
+is also why lowering the mode takes the two confining ceilings off with it,
+rather than carrying numbers the compatibility backend would have to refuse.
+
 The currently declared session surface is prepare, materialize, start, inspect,
 read bounded output, observe usage/violations, stop and dispose. PTY, direct
 file operations, persistence, snapshots and resume are absent rather than

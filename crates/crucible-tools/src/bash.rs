@@ -562,11 +562,14 @@ impl Tool for Bash {
                 std::io::Error::other(problem.to_string()),
             )
         })?;
+        // Narrowing what the policy already states: the confinement's own
+        // ceilings stay as the policy left them, and this command adds the
+        // three that belong to one command rather than to the sandbox.
         let limits = SandboxResourceLimits {
             command_time: (!background).then_some(allowed),
             output_bytes: Some(PROCESS_OUTPUT_BYTES),
             concurrent_commands: Some(16),
-            ..SandboxResourceLimits::default()
+            ..base.limits()
         };
         let policy = base.clone().with_limits(limits).map_err(|error| {
             io(

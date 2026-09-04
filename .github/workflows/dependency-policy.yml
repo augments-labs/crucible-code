@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   cargo-deny:
-    name: Licenses and sources
+    name: Licenses, sources and bans
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -40,7 +40,11 @@ jobs:
       - name: Populate the locked Cargo cache
         run: cargo fetch --locked
 
-      - name: Check deterministic license and source policy offline
-        run: cargo-deny --locked --offline check licenses sources
+      # Bans belongs with these two rather than with advisories: what it decides
+      # is read entirely out of the lockfile in front of it, so the answer only
+      # changes when a dependency changes, and it is the same answer today and
+      # in a year. Advisory data is not, which is why it has its own schedule.
+      - name: Check deterministic license, source and ban policy offline
+        run: cargo-deny --locked --offline check licenses sources bans
 
       - uses: ./.github/actions/check-clean-worktree

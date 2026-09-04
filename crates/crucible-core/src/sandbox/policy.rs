@@ -597,6 +597,20 @@ impl SandboxNetworkPolicy {
     }
 }
 
+/// Processor seconds one confined process may burn before it is killed.
+///
+/// An hour of it. Counted per process rather than per command, so a build
+/// spreading work over many compilers gets an hour each; what it catches is one
+/// process that has stopped making progress and not noticed.
+const CPU_SECONDS: u64 = 60 * 60;
+
+/// Files one confined process may hold open at once.
+///
+/// Four times the soft limit a Linux shell usually starts with, so nothing that
+/// works outside the sandbox stops working inside it, and far below the point
+/// where a descriptor leak reaches the rest of the machine.
+const OPEN_FILES: u64 = 4096;
+
 /// Optional resource ceilings for one command/session.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SandboxResourceLimits {
@@ -625,6 +639,65 @@ pub struct SandboxResourceLimits {
 }
 
 impl SandboxResourceLimits {
+    /// The ceilings a confining backend puts on a command it starts.
+    ///
+    /// Generous on purpose. These are not a budget anybody is meant to work
+    /// within — a build is allowed to be slow and to open a great many files.
+    /// They are the point past which a command has stopped being a command and
+    /// become a runaway, and past which the machine crucible is running on is
+    /// the thing at risk.
+    ///
+    /// Only the ceilings a confining backend actually applies are here, because
+    /// a limit that nothing enforces is worse than none: it reads, to the next
+    /// person, like the question was settled. What is deliberately absent:
+    ///
+    /// - Memory. The knob a confining backend has is the address space a
+    ///   process may map, which is not the memory it uses. Runtimes that
+    ///   reserve enormously and touch little — Go, a JVM, anything built under
+    ///   a sanitiser — would be refused by a ceiling low enough to catch
+    ///   anything real.
+    /// - Processes. That ceiling is counted per user rather than per command,
+    ///   so it would be spent on whatever else the person is already running,
+    ///   and a busy desktop would refuse a command for reasons nothing here
+    ///   could explain.
+    /// - Disk, outbound bytes and cost. Nothing in this tree enforces them yet,
+    ///   and [`crate::SandboxRequest::negotiate`] refuses a policy asking
+    ///   for a ceiling the backend cannot apply.
+    ///
+    /// Wall time, captured output and concurrency are the caller's: they belong
+    /// to one command rather than to the confinement, and [`SandboxPolicy`]
+    /// carries whatever that caller narrows to.
+    #[must_use]
+    pub const fn confining() -> Self {
+        Self {
+            cpu_seconds: Some(CPU_SECONDS),
+            open_files: Some(OPEN_FILES),
+            memory_bytes: None,
+            disk_bytes: None,
+            processes: None,
+            outbound_bytes: None,
+            output_bytes: None,
+            concurrent_commands: None,
+            command_time: None,
+            session_time: None,
+            cost_micros: None,
+        }
+    }
+
+    /// The ceilings only a confining backend can apply, taken off.
+    ///
+    /// A mode below [`SandboxMode::Required`] is the host saying it will accept
+    /// a backend that confines less, and the compatibility backend applies no
+    /// rlimit at all. Keeping the numbers there would not bound anything; it
+    /// would refuse every command instead, because a policy may not ask for a
+    /// ceiling its backend cannot apply.
+    const fn unconfined(mut self) -> Self {
+        self.cpu_seconds = None;
+        self.memory_bytes = None;
+        self.open_files = None;
+        self
+    }
+
     fn is_no_wider_than(self, parent: Self) -> bool {
         no_larger(self.cpu_seconds, parent.cpu_seconds)
             && no_larger(self.memory_bytes, parent.memory_bytes)
@@ -717,7 +790,7 @@ impl SandboxPolicy {
             filesystem,
             workspace.root(),
             SandboxNetworkPolicy::Closed,
-            SandboxResourceLimits::default(),
+            SandboxResourceLimits::confining(),
         )
     }
 
@@ -853,15 +926,23 @@ impl SandboxPolicy {
 
     /// Returns a copy with command-scoped limits, preserving every other field.
     ///
+    /// One command may narrow what the policy already states; it may not widen
+    /// it, and dropping a ceiling is widening. Start from [`Self::limits`] and
+    /// change the fields the command owns.
+    ///
     /// # Errors
     ///
-    /// Zero ceilings are rejected.
+    /// Zero ceilings are rejected, as is any ceiling wider than the policy's
+    /// own.
     pub fn with_limits(
         mut self,
         limits: SandboxResourceLimits,
     ) -> Result<Self, SandboxPolicyError> {
         if !limits.valid() {
             return Err(SandboxPolicyError::InvalidResourceLimit);
+        }
+        if !limits.is_no_wider_than(self.limits) {
+            return Err(SandboxPolicyError::ResourceWidening);
         }
         self.limits = limits;
         Ok(self)
@@ -907,9 +988,18 @@ impl SandboxPolicy {
     }
 
     /// Returns a copy under a host-authorized top-level mode.
+    ///
+    /// Lowering the mode takes the confinement's own ceilings off with it. They
+    /// are applied by the backend that confines, and a mode below
+    /// [`SandboxMode::Required`] accepts one that does not — so leaving them
+    /// stated would refuse every command rather than bound any of it. What the
+    /// caller asked for over one command, such as its wall time, is untouched.
     #[must_use]
     pub const fn with_mode(mut self, mode: SandboxMode) -> Self {
         self.mode = mode;
+        if !matches!(mode, SandboxMode::Required) {
+            self.limits = self.limits.unconfined();
+        }
         self
     }
 
@@ -1193,6 +1283,14 @@ mod tests {
     }
 
     fn policy(mode: SandboxMode, rules: Vec<SandboxFilesystemRule>) -> SandboxPolicy {
+        policy_with(mode, rules, SandboxResourceLimits::default())
+    }
+
+    fn policy_with(
+        mode: SandboxMode,
+        rules: Vec<SandboxFilesystemRule>,
+        limits: SandboxResourceLimits,
+    ) -> SandboxPolicy {
         let working_directory = rules
             .first()
             .map_or_else(|| Path::new("/workspace"), SandboxFilesystemRule::path)
@@ -1202,9 +1300,80 @@ mod tests {
             rules,
             working_directory,
             SandboxNetworkPolicy::Closed,
-            SandboxResourceLimits::default(),
+            limits,
         )
         .expect("valid fixture policy")
+    }
+
+    #[test]
+    fn a_confined_command_is_given_ceilings_a_runaway_reaches_and_a_build_does_not() {
+        let workspace =
+            crate::Workspace::open(env!("CARGO_MANIFEST_DIR")).expect("this crate's own directory");
+        let limits = SandboxPolicy::standard(&workspace)
+            .expect("the standard policy for a workspace")
+            .limits();
+
+        assert_eq!(limits.cpu_seconds, Some(CPU_SECONDS));
+        assert_eq!(limits.open_files, Some(OPEN_FILES));
+
+        // Stated only where a backend applies them. A ceiling nothing enforces
+        // reads as a settled question and bounds nothing; see
+        // `SandboxResourceLimits::confining`.
+        assert_eq!(limits.memory_bytes, None);
+        assert_eq!(limits.processes, None);
+        assert_eq!(limits.disk_bytes, None);
+        assert_eq!(limits.outbound_bytes, None);
+    }
+
+    #[test]
+    fn a_mode_that_accepts_a_backend_which_does_not_confine_asks_it_for_no_ceilings() {
+        let confining = policy_with(
+            SandboxMode::Required,
+            vec![rule("/workspace", SandboxFilesystemAccess::ReadWrite)],
+            SandboxResourceLimits::confining(),
+        );
+        assert_eq!(confining.limits().cpu_seconds, Some(CPU_SECONDS));
+
+        for accepted in [SandboxMode::Degraded, SandboxMode::Off] {
+            // The compatibility backend applies no rlimit. Carrying the numbers
+            // across would not bound the command; it would refuse it, because a
+            // policy may not ask for a ceiling its backend cannot apply.
+            let relaxed = confining.clone().with_mode(accepted);
+            assert_eq!(relaxed.limits().cpu_seconds, None, "{accepted:?}");
+            assert_eq!(relaxed.limits().open_files, None, "{accepted:?}");
+            assert_eq!(relaxed.limits().memory_bytes, None, "{accepted:?}");
+        }
+    }
+
+    #[test]
+    fn one_command_may_narrow_the_confinement_it_runs_under_but_never_shed_it() {
+        let confining = policy_with(
+            SandboxMode::Required,
+            vec![rule("/workspace", SandboxFilesystemAccess::ReadWrite)],
+            SandboxResourceLimits::confining(),
+        );
+
+        let shed = confining
+            .clone()
+            .with_limits(SandboxResourceLimits {
+                command_time: Some(Duration::from_secs(30)),
+                ..SandboxResourceLimits::default()
+            })
+            .expect_err("a command that states no processor ceiling has widened past its policy");
+        assert!(
+            matches!(shed, SandboxPolicyError::ResourceWidening),
+            "{shed:?}"
+        );
+
+        let narrowed = confining
+            .with_limits(SandboxResourceLimits {
+                command_time: Some(Duration::from_secs(30)),
+                cpu_seconds: Some(CPU_SECONDS / 2),
+                ..SandboxResourceLimits::confining()
+            })
+            .expect("narrowing what the policy already states");
+        assert_eq!(narrowed.limits().cpu_seconds, Some(CPU_SECONDS / 2));
+        assert_eq!(narrowed.limits().open_files, Some(OPEN_FILES));
     }
 
     #[test]

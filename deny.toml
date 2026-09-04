@@ -1,9 +1,11 @@
 # Dependency policy beyond manifest syntax.
 #
 # The local repository gate checks exact pins and their justification. Blocking
-# CI reads this file for license and source policy. Advisory data can change
-# without a source change, so `.github/workflows/audit.yml` owns that scan on
-# dependency changes and a schedule.
+# CI reads this file for license, source and ban policy — three questions the
+# lockfile in front of it answers on its own, so the verdict changes only when a
+# dependency does. Advisory data can change without a source change, so
+# `.github/workflows/audit.yml` owns that scan on dependency changes and a
+# schedule.
 
 [advisories]
 # An advisory that genuinely does not reach us through crucible still gets an
@@ -82,3 +84,72 @@ unused-allowed-license = "deny"
 # crate here comes from crates.io, where a published version is immutable.
 unknown-registry = "deny"
 unknown-git = "deny"
+
+[bans]
+# Two copies of one crate is two copies of one bug. When an advisory lands and
+# the fix ships in the newer line, the older one keeps compiling quietly, and
+# nothing in a green build says which of the two the vulnerable call went
+# through. It also puts two `Error` types with the same name in one binary,
+# which is where a `?` stops compiling for reasons that read as nonsense.
+#
+# So: a duplicate is a decision somebody makes here, with the reason written
+# down, rather than something a lockfile update does on its own.
+multiple-versions = "deny"
+
+# `=`-pinning is the repository's rule for its own manifests, checked by
+# `scripts/repo-checks.sh`. A wildcard would be the same hole from the other
+# side: a dependency that resolves to whatever was published this morning.
+wildcards = "deny"
+
+# A crate in this workspace depends on its siblings by path and carries no
+# version for them, which reads to the check above as a wildcard. It is not the
+# hole that rule is about: a path dependency resolves to the tree in front of
+# you, not to whatever was published.
+allow-wildcard-paths = true
+
+# Each entry below is one graph this tree cannot collapse on its own, named at
+# the exact version so a new duplicate of the same crate still fails.
+skip = [
+    # `plist` reads a syntax theme a reader supplied and still wants base64 0.22;
+    # everything crucible writes itself, and `ureq`, are on 0.23. The older copy
+    # is reachable only through `syntect`'s theme loading, and it goes away when
+    # `plist` moves — not before, and not by anything this repository can do.
+    { crate = "base64:0.22.1", reason = "syntect's theme reader pins the older line" },
+
+    # `ring` — the cryptography under rustls — is on getrandom 0.2, and rustls
+    # has no build without it. Everything crucible reaches for directly, and
+    # `uuid`, use 0.4. Both copies are the same thin wrapper over the operating
+    # system's own random device, so the duplication costs bytes rather than
+    # entropy.
+    { crate = "getrandom:0.2.17", reason = "ring pins the older line under rustls" },
+
+    # `petgraph`, four levels down under Wayland clipboard support, is on
+    # hashbrown 0.15 while `indexmap` has moved to 0.17. Neither copy is on any
+    # path crucible calls; they are the hash tables inside two libraries that
+    # happen to disagree about a release.
+    { crate = "hashbrown:0.15.5", reason = "petgraph pins the older line under arboard" },
+
+    # `syn` is the Rust parser that procedural macros are written against. Both
+    # copies are build-time only — neither is linked into the binary — and a
+    # macro crate can only use the line it was written for. `zerocopy-derive`,
+    # under image decoding, is on 2; everything newer is on 3.
+    { crate = "syn:2.0.119", reason = "a proc-macro crate is written against one parser line" },
+
+    # `windows-sys` is the generated binding to the Windows API, and which
+    # version a crate picked says only which metadata release it was generated
+    # from. `arboard` and `ring` are on 0.52 while the rest of the tree is on
+    # 0.61; on every other platform both copies compile to nothing at all.
+    { crate = "windows-sys:0.52.0", reason = "generated Windows bindings, one release behind" },
+]
+
+# Crates that must not appear at all, whatever brings them.
+deny = [
+    # TLS in this tree is rustls, with Mozilla's roots compiled in. OpenSSL
+    # arriving underneath would mean a C library built at install time, a second
+    # and differently-configured trust store deciding who is trusted at the far
+    # end of a connection, and a licence question the list above does not cover.
+    # A dependency that wants it has chosen a different design; that is worth
+    # noticing when it arrives rather than after it ships.
+    { crate = "openssl-sys", use-instead = "rustls", reason = "one TLS stack, in Rust, with one trust store" },
+    { crate = "native-tls", use-instead = "rustls", reason = "one TLS stack, in Rust, with one trust store" },
+]

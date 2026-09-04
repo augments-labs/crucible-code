@@ -22,8 +22,7 @@ the workspace ships as one unit and there is no per-crate version to drift.
    scripts/check.sh
    ```
 
-3. **The budgets hold.** On a quiet machine — not a shared CI runner, whose
-   numbers are a trend and nothing more:
+3. **The budgets hold.** On a quiet machine:
 
    ```bash
    scripts/bench.sh > budgets.json
@@ -34,9 +33,23 @@ the workspace ships as one unit and there is no per-crate version to drift.
    release. A slower build is not a release, it is a bug that happens to
    compile. Keep the JSON with the tag — the next release compares against it.
 
-   This reading is the authoritative one. The release workflow runs the same
-   probes on a shared runner, but those numbers are a trend and publication
-   does not wait for them — a budget is decided here, before the tag exists.
+   The same probes run twice more, and the three runs are not the same claim:
+
+   - `performance.yml`, under `CI required`, runs them on a shared runner for
+     every pull request. It is blocking, and it is the only reading taken
+     before a change is merged rather than after. A shared runner is noisier
+     than this machine, so its margin is smaller than the number suggests.
+   - This run, here, on a quiet machine, is the authoritative one for the
+     release. It is what decides whether the tag is cut.
+   - The release workflow runs them again on a shared runner. Publication does
+     not wait for that; the budget was already decided here.
+
+   When a shared-runner probe goes red and this machine holds, the answer is
+   not to re-run until it passes. Either the probe is measuring something the
+   runner cannot measure steadily, or the budget has less headroom than it
+   looks — both are decisions to make in the open, by editing the limit in the
+   probe with the reason written next to it, so the next person inherits a
+   number somebody chose.
 4. **The changelog is real.** Move everything under `Unreleased` into a new
    version section with today's date, and add the comparison link. Written for
    someone deciding whether to upgrade, not generated from commit subjects.

@@ -1560,14 +1560,12 @@ fn command_deadline_kills_the_complete_bubblewrap_process_tree() {
             .unwrap_or("sample")
     );
     assert!(live_processes_with_marker(&marker).is_empty());
+    let confined = SandboxPolicy::standard(&sample.workspace()).expect("policy");
     let limits = SandboxResourceLimits {
         command_time: Some(Duration::from_secs(1)),
-        ..SandboxResourceLimits::default()
+        ..confined.limits()
     };
-    let policy = SandboxPolicy::standard(&sample.workspace())
-        .expect("policy")
-        .with_limits(limits)
-        .expect("limits");
+    let policy = confined.with_limits(limits).expect("limits");
     let request = SandboxRequest::new(
         SandboxId::new(),
         Ancestry::new(),
