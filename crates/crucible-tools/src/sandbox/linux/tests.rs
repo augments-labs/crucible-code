@@ -25,7 +25,7 @@ use crucible_core::{
 use crate::LocalSandbox;
 use crate::sample::{Sample, skipped_without_enforcement, symlink};
 
-fn request(sample: &Sample, manifest: SandboxManifest) -> SandboxRequest {
+pub(super) fn request(sample: &Sample, manifest: SandboxManifest) -> SandboxRequest {
     SandboxRequest::new(
         SandboxId::new(),
         Ancestry::new(),

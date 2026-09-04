@@ -202,6 +202,17 @@ the changed paths back only after the command has ended. Until then nothing the
 command wrote is visible outside the sandbox, and a reader of the workspace sees
 the root exactly as it was when the command started.
 
+That projection is an overlay, and Bubblewrap 0.11 takes no mount options for
+one, so it is the single mount inside the sandbox that would honour a setuid
+bit or a device node. Neither is a way out. The namespace maps one unprivileged
+identity and nothing above it, so a file the command marks setuid can only ever
+name the identity it already runs as, and a `mknod` for a host disc is refused
+because the command holds no capability to make a device with. Every other
+mount, including the read-only runtime and the whole of `/dev` apart from the
+device nodes themselves, is mounted `nosuid` and `nodev`. The tests assert the
+behaviour rather than the flag, because the flag is the one thing here that
+cannot be set.
+
 Publication is decided by how the command ended:
 
 - An ordinary exit, zero or nonzero, publishes the changed paths. A failing
