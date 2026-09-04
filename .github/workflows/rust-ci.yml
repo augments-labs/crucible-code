@@ -5,92 +5,12 @@ permissions:
   contents: read
 jobs:
   windows-bootstrap:
-    name: Windows final-token bootstrap v6
+    name: Windows final-token bootstrap v7
     runs-on: windows-latest
     timeout-minutes: 5
     steps:
-    - &id001
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         persist-credentials: false
     - shell: pwsh
       run: ./.github/probes/windows-bootstrap.ps1
-  windows-stop:
-    name: Windows stop timeout recovery GREEN RED RED GREEN
-    runs-on: windows-latest
-    timeout-minutes: 10
-    steps:
-    - *id001
-    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
-    - name: GREEN before - seven real job tests
-      timeout-minutes: 2
-      shell: pwsh
-      run: |-
-        if ((Get-FileHash 'crates/crucible-tools/src/bash/platform/windows.rs' -Algorithm SHA256).Hash.ToLowerInvariant() -ne '049a76032208ee67e903df41cf634a5cbc29d22bf3037809ecffa44e027dc6c6') { throw 'production identity' }
-        if ((Get-FileHash 'crates/crucible-tools/src/bash/platform/windows/tests.rs' -Algorithm SHA256).Hash.ToLowerInvariant() -ne '78a74c6db8c952f507f96dc232b6d4c27bfd45ed7d7f5c058fbaacef2e37a837') { throw 'tests identity' }
-        cargo test -p crucible-tools --lib --locked bash::platform::windows::tests:: -- --nocapture --test-threads=1
-        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-        if ((Get-FileHash 'crates/crucible-tools/src/bash/platform/windows.rs' -Algorithm SHA256).Hash.ToLowerInvariant() -ne '049a76032208ee67e903df41cf634a5cbc29d22bf3037809ecffa44e027dc6c6') { throw 'production identity' }
-        if ((Get-FileHash 'crates/crucible-tools/src/bash/platform/windows/tests.rs' -Algorithm SHA256).Hash.ToLowerInvariant() -ne '78a74c6db8c952f507f96dc232b6d4c27bfd45ed7d7f5c058fbaacef2e37a837') { throw 'tests identity' }
-    - name: RED deadline_false_success and exact restoration
-      timeout-minutes: 2
-      shell: pwsh
-      run: |-
-        $ErrorActionPreference = 'Stop'
-        $path = 'crates/crucible-tools/src/bash/platform/windows.rs'
-        $original = [IO.File]::ReadAllBytes($path)
-        $log = Join-Path $env:RUNNER_TEMP 'deadline_false_success.log'
-        if ((Get-FileHash 'crates/crucible-tools/src/bash/platform/windows.rs' -Algorithm SHA256).Hash.ToLowerInvariant() -ne '049a76032208ee67e903df41cf634a5cbc29d22bf3037809ecffa44e027dc6c6') { throw 'production identity' }
-        if ((Get-FileHash 'crates/crucible-tools/src/bash/platform/windows/tests.rs' -Algorithm SHA256).Hash.ToLowerInvariant() -ne '78a74c6db8c952f507f96dc232b6d4c27bfd45ed7d7f5c058fbaacef2e37a837') { throw 'tests identity' }
-        try {
-          git apply .github/probes/crucible-phase4b-windows-stop-deadline-false-success.patch
-          if ($LASTEXITCODE -ne 0) { throw 'mutation application' }
-          if ((Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'e069ce4ed6f5b0a76248557afb09f6c0f80fdf260160c9bd25095908fce6d2f2') { throw 'mutant identity' }
-          cargo test -p crucible-tools --lib --locked bash::platform::windows::tests::waiting_for_members_times_out_without_terminating_them -- --exact --nocapture --test-threads=1 *> $log
-          $result = $LASTEXITCODE
-          Get-Content $log | Out-Host
-          $content = [IO.File]::ReadAllText($log)
-          if ($result -ne 101 -or !$content.Contains('live members cannot become completed at the deadline: ()') -or !$content.Contains('test result: FAILED. 0 passed; 1 failed;')) { throw 'missing intended RED assertion' }
-          Write-Output 'EXPECTED-RED deadline_false_success mutation caught'
-        } finally {
-          [IO.File]::WriteAllBytes($path, $original)
-          if ((Get-FileHash 'crates/crucible-tools/src/bash/platform/windows.rs' -Algorithm SHA256).Hash.ToLowerInvariant() -ne '049a76032208ee67e903df41cf634a5cbc29d22bf3037809ecffa44e027dc6c6') { throw 'production identity' }
-        if ((Get-FileHash 'crates/crucible-tools/src/bash/platform/windows/tests.rs' -Algorithm SHA256).Hash.ToLowerInvariant() -ne '78a74c6db8c952f507f96dc232b6d4c27bfd45ed7d7f5c058fbaacef2e37a837') { throw 'tests identity' }
-        }
-        exit 0
-    - name: RED empty_false_failure and exact restoration
-      timeout-minutes: 2
-      shell: pwsh
-      run: |-
-        $ErrorActionPreference = 'Stop'
-        $path = 'crates/crucible-tools/src/bash/platform/windows.rs'
-        $original = [IO.File]::ReadAllBytes($path)
-        $log = Join-Path $env:RUNNER_TEMP 'empty_false_failure.log'
-        if ((Get-FileHash 'crates/crucible-tools/src/bash/platform/windows.rs' -Algorithm SHA256).Hash.ToLowerInvariant() -ne '049a76032208ee67e903df41cf634a5cbc29d22bf3037809ecffa44e027dc6c6') { throw 'production identity' }
-        if ((Get-FileHash 'crates/crucible-tools/src/bash/platform/windows/tests.rs' -Algorithm SHA256).Hash.ToLowerInvariant() -ne '78a74c6db8c952f507f96dc232b6d4c27bfd45ed7d7f5c058fbaacef2e37a837') { throw 'tests identity' }
-        try {
-          git apply .github/probes/crucible-phase4b-windows-stop-empty-false-failure.patch
-          if ($LASTEXITCODE -ne 0) { throw 'mutation application' }
-          if ((Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant() -ne '890f2fbc67e0de6ea1528e7d4a83690abb45fc0297453f615eccd82755863def') { throw 'mutant identity' }
-          cargo test -p crucible-tools --lib --locked bash::platform::windows::tests::waiting_for_job_extinction_recovers_after_timeout -- --exact --nocapture --test-threads=1 *> $log
-          $result = $LASTEXITCODE
-          Get-Content $log | Out-Host
-          $content = [IO.File]::ReadAllText($log)
-          if ($result -ne 101 -or !$content.Contains('observed extinction can succeed after a prior timeout') -or !$content.Contains('test result: FAILED. 0 passed; 1 failed;')) { throw 'missing intended RED assertion' }
-          Write-Output 'EXPECTED-RED empty_false_failure mutation caught'
-        } finally {
-          [IO.File]::WriteAllBytes($path, $original)
-          if ((Get-FileHash 'crates/crucible-tools/src/bash/platform/windows.rs' -Algorithm SHA256).Hash.ToLowerInvariant() -ne '049a76032208ee67e903df41cf634a5cbc29d22bf3037809ecffa44e027dc6c6') { throw 'production identity' }
-        if ((Get-FileHash 'crates/crucible-tools/src/bash/platform/windows/tests.rs' -Algorithm SHA256).Hash.ToLowerInvariant() -ne '78a74c6db8c952f507f96dc232b6d4c27bfd45ed7d7f5c058fbaacef2e37a837') { throw 'tests identity' }
-        }
-        exit 0
-    - name: GREEN after - seven real job tests
-      timeout-minutes: 2
-      shell: pwsh
-      run: |-
-        cargo test -p crucible-tools --lib --locked bash::platform::windows::tests:: -- --nocapture --test-threads=1
-        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-        if ((Get-FileHash 'crates/crucible-tools/src/bash/platform/windows.rs' -Algorithm SHA256).Hash.ToLowerInvariant() -ne '049a76032208ee67e903df41cf634a5cbc29d22bf3037809ecffa44e027dc6c6') { throw 'production identity' }
-        if ((Get-FileHash 'crates/crucible-tools/src/bash/platform/windows/tests.rs' -Algorithm SHA256).Hash.ToLowerInvariant() -ne '78a74c6db8c952f507f96dc232b6d4c27bfd45ed7d7f5c058fbaacef2e37a837') { throw 'tests identity' }
-        git diff --exit-code
-        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

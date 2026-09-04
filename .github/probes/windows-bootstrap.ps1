@@ -1,6 +1,8 @@
-# windows-bootstrap-v6: disposable fresh Windows x64 VM only; no production claim.
+# windows-bootstrap-v7: disposable fresh Windows x64 VM only; no production claim.
 # Independently authored. V6 proved only the actual combined-token ACL primitive.
-# V6: diagnose first dependency failure; traversal, runtime caps, and guest behavior unchanged.
+# V7: required and delay sections parsed explicitly; only absent declared delay DLLs may be omitted.
+# V6 run33929521318: USER32.dll delay import wtdccm.dll is absent (HRESULT 0x80070002).
+# This is a synthetic bootstrap prerequisite, not a complete cmd/native-tool execution contract.
 # Primary: https://learn.microsoft.com/en-us/cpp/build/reference/imports-dumpbin?view=msvc-170
 # Delay imports are explicitly labeled: https://learn.microsoft.com/en-us/cpp/build/reference/linker-support-for-delay-loaded-dlls?view=msvc-170
 # MSVC basis: https://learn.microsoft.com/en-us/cpp/build/reference/od-disable-debug?view=msvc-170
@@ -12,12 +14,12 @@
 # learn.microsoft.com/en-us/cpp/build/reference/nodefaultlib-ignore-libraries
 # LPAC token oracle: github.com/googleprojectzero/sandbox-attacksurface-analysis-tools/blob/main/NtCoreLib/NtToken.cs
 # No permissive thread token, ACL edits outside owned dirs, registry edits, or network operations.
-# Runtime closure: concrete dumpbin imports plus explicit ntdll/KernelBase/ucrtbase seeds.
+# Runtime closure: concrete /IMPORTS entries plus explicit ntdll/KernelBase/ucrtbase seeds.
 # Job extinction: official JOBOBJECT_BASIC_ACCOUNTING_INFORMATION ActiveProcesses=0 after closing process handles.
 # API-set contracts are counted, not fabricated as files. Dynamic/registry/IPC dependencies remain unproved.
 # Three 12-second guest deadlines; 4-process kill-on-close jobs; require external CI timeout 5 minutes.
 $ErrorActionPreference = 'Stop'
-$buildRoot = Join-Path ([IO.Path]::GetTempPath()) ('crucible-bootstrap-v6-' + [Guid]::NewGuid().ToString('N'))
+$buildRoot = Join-Path ([IO.Path]::GetTempPath()) ('crucible-bootstrap-v7-' + [Guid]::NewGuid().ToString('N'))
 $native = @'
 #include <windows.h>
 static WCHAR image[32768],command[32772];
@@ -54,7 +56,7 @@ using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Security.Cryptography;
 using System.Threading;
-public static class CrucibleWindowsBootstrapProbeV6 {
+public static class CrucibleWindowsBootstrapProbeV7 {
     const uint TOKEN_QUERY = 8, TOKEN_DUPLICATE = 2, TOKEN_IMPERSONATE = 4, TOKEN_ASSIGN_PRIMARY = 1;
     const uint FILE_READ_DATA = 1, FILE_ALL_ACCESS = 0x001F01FF;
     const uint DACL = 4, PROTECTED_DACL = 0x80000000;
@@ -357,7 +359,7 @@ public static class CrucibleWindowsBootstrapProbeV6 {
         return success&&cleaned;
     }
     public static int Run(string buildRoot,string[] sourceFiles,string compilerIdentity) {
-        string profile="crucible.bootstrap.v6."+Guid.NewGuid().ToString("N"),root=null; bool profileOwned=false,rootOwned=false,cleanup=true; int result=1;
+        string profile="crucible.bootstrap.v7."+Guid.NewGuid().ToString("N"),root=null; bool profileOwned=false,rootOwned=false,cleanup=true; int result=1;
         IntPtr package=IntPtr.Zero,session=IntPtr.Zero,baseToken=IntPtr.Zero,restricted=IntPtr.Zero,entry=IntPtr.Zero;
         try {
             currentCase="setup"; VerifyLayouts(); stage="profile";
@@ -457,9 +459,57 @@ function Invoke-ProbeTool([string]$Tool,[string[]]$Arguments) {
         $cancel.Dispose(); $process.Dispose()
     }
 }
+function Read-DumpImports([string]$Text) {
+    if($Text.Length -gt 1048576) { throw 'parser_text_cap' }
+    $rows=[Collections.Generic.List[object]]::new(); $names=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $reader=[IO.StringReader]::new($Text); $state='none'; $fileType=$false; $summary=$false; $requiredHeading=$false; $delayHeading=$false; $lines=0
+    try { while($null -ne ($line=$reader.ReadLine())) {
+        $lines++; if($lines -gt 65536 -or $line.Length -gt 4096) { throw 'parser_line_cap' }; $trim=$line.Trim()
+        if($trim -cmatch '^File Type: (?:DLL|EXECUTABLE IMAGE)$') { if($fileType -or $state -ne 'none') {throw 'parser_ambiguous_header'}; $fileType=$true; continue }
+        if($trim -cmatch '^(?:Section|Image) (?:contains|has) the following imports:$') {
+            if(!$fileType -or $summary -or $requiredHeading -or $delayHeading) { throw 'parser_ambiguous_header' }; $requiredHeading=$true; $state='required'; continue
+        }
+        if($trim -cmatch '^(?:Section|Image) (?:contains|has) the following delay[ -](?:load|loaded) imports:$') {
+            if(!$fileType -or $summary -or $delayHeading) { throw 'parser_ambiguous_header' }; $delayHeading=$true; $state='delay'; continue
+        }
+        if($trim.EndsWith(':') -or $trim -cmatch '^(?:Section|Image)\b') { throw 'parser_unknown_header' }
+        if($trim -ceq 'Summary') { if(!$fileType -or $summary) {throw 'parser_ambiguous_header'}; $summary=$true; $state='summary'; continue }
+        if($trim -imatch '\A[A-Za-z0-9_.-]{1,128}\.dll\z') {
+            if($state -cnotin @('required','delay')) {throw 'parser_orphan_dll'}
+            if($rows.Count -ge 1024 -or !$names.Add($trim)) {throw 'parser_ambiguous_dll'}
+            $rows.Add([pscustomobject]@{Name=$trim;Kind=$state}); continue
+        }
+        if($trim -imatch '\.dll$' -and !$trim.StartsWith('Dump of file ')) { throw 'parser_invalid_dll' }
+    } } finally { $reader.Dispose() }
+    if(!$fileType -or !$summary) { throw 'parser_incomplete' }; return ,$rows
+}
+function Assert-FixtureImports($Rows) { if($Rows.Count -ne 1 -or $Rows[0].Name -ine 'kernel32.dll' -or $Rows[0].Kind -cne 'required') {throw 'fixture_import_policy'} }
+function Can-OmitDelay([string]$Kind,[int]$Status) { return $Kind -ceq 'delay' -and $Status -eq -2147024894 }
+function Test-ImportParser {
+    $head="Dump of file fixture.exe`r`nFile Type: EXECUTABLE IMAGE`r`n"; $tail="`r`n  Summary`r`n"; $required="  Section contains the following imports:`r`n"; $delay="  Section contains the following delay load imports:`r`n"
+    $fixture=$head+$required+"    KERNEL32.dll"+$tail; $mixed=$head+$required+"    KERNEL32.dll`r`n"+$delay+"    wtdccm.dll"+$tail
+    $one=Read-DumpImports $fixture; Assert-FixtureImports $one; $both=Read-DumpImports $mixed
+    if($both.Count -ne 2 -or $both[0].Kind -cne 'required' -or $both[1].Kind -cne 'delay' -or $both[1].Name -cne 'wtdccm.dll') {throw 'parser_self_test'}
+    $empty=Read-DumpImports ("Dump of file ntdll.dll`nFile Type: DLL`n  Summary`n"); if($empty.Count -ne 0) {throw 'parser_self_test'}
+    $cases=@(
+        @{Name='unknown_heading';Text=$head+"  Section contains the following mystery imports:`n    bad.dll"+$tail;Fixture=$false},
+        @{Name='unknown_header_without_colon';Text=$head+$required+"    good.dll`n  Section contains future imports`n    bad.dll"+$tail;Fixture=$false},
+        @{Name='orphan_dll';Text=$head+"    bad.dll"+$tail;Fixture=$false},
+        @{Name='repeated_heading';Text=$head+$required+$required+"    bad.dll"+$tail;Fixture=$false},
+        @{Name='ambiguous_dll';Text=$head+$required+"    same.dll`n"+$delay+"    SAME.dll"+$tail;Fixture=$false},
+        @{Name='missing_summary';Text=$head+$required+"    bad.dll";Fixture=$false},
+        @{Name='invalid_dll_path';Text=$head+$required+"    outside\bad.dll"+$tail;Fixture=$false},
+        @{Name='fixture_extra_dll';Text=$mixed;Fixture=$true},
+        @{Name='fixture_missing_kernel32';Text=$head+$required+"    USER32.dll"+$tail;Fixture=$true},
+        @{Name='fixture_delay_kernel32';Text=$head+$delay+"    KERNEL32.dll"+$tail;Fixture=$true})
+    foreach($case in $cases) { $rejected=$false; try { $rows=Read-DumpImports $case.Text; if($case.Fixture) {Assert-FixtureImports $rows} } catch { $rejected=$_.Exception.Message -cmatch '^(?:parser_|fixture_import_policy)' }; if(!$rejected) {throw 'parser_self_test'}; @{event='parser_control';fixture=$case.Name;rejected=$true} | ConvertTo-Json -Compress | Out-Host }
+    if(!(Can-OmitDelay 'delay' -2147024894) -or (Can-OmitDelay 'required' -2147024894) -or (Can-OmitDelay 'delay' -2147024891) -or (Can-OmitDelay 'delay' -2147024893)) {throw 'parser_self_test'}
+    Write-Output '{"event":"parser_self_test","required_included":true,"delay_classified":true,"empty_image_accepted":true,"fixture_kernel32_only":true,"missing_required_fatal":true,"denied_delay_fatal":true,"missing_delay_explicit":true,"pass":true}'
+}
 function Safe-ManifestLabel([string]$Label) { if($Label -cmatch '\A[A-Za-z0-9_.-]{1,128}\.(?:[dD][lL][lL]|[eE][xX][eE])\z') { return $Label }; return 'unavailable' }
-$result=90; $buildOwned=$false; $hostStage="toolchain_discovery"; $manifestCount=0; [long]$manifestBytes=0; $manifestFile=''; $manifestImport=''; $manifestImportCount=0; $manifestParent=''
+$result=90; $buildOwned=$false; $hostStage="parser_self_test"; $manifestCount=0; [long]$manifestBytes=0; $manifestFile=''; $manifestImport=''; $manifestImportCount=0; $manifestParent=''; $manifestKind=''; $metadataStatus=$null; $unavailableCount=0
 try {
+    Test-ImportParser; $hostStage='toolchain_discovery'
     if([IntPtr]::Size -ne 8) { throw 'x64_required' }; if(Test-Path -LiteralPath $buildRoot) { throw 'unique_root_collision' }
     [IO.Directory]::CreateDirectory($buildRoot)|Out-Null; $buildOwned=$true
     [IO.File]::WriteAllText((Join-Path $buildRoot 'fixture.c'),$native,[Text.Encoding]::ASCII)
@@ -475,57 +525,38 @@ try {
     foreach($part in @('um','shared','ucrt')) { $compile+=('/I'+(Join-Path $kits ('Include\'+$sdk+'\'+$part))) }; $compile+=(Join-Path $buildRoot 'fixture.c')
     $hostStage="compile_fixture"; Invoke-ProbeTool $cl $compile | Out-Null
     $hostStage="link_fixture"; Invoke-ProbeTool $link @('/NOLOGO','/NODEFAULTLIB','/ENTRY:ProbeEntry','/SUBSYSTEM:CONSOLE','/MACHINE:X64','/DYNAMICBASE','/NXCOMPAT','/MANIFEST:NO',('/OUT:'+$fixture),$object,(Join-Path $kits ('Lib\'+$sdk+'\um\x64\kernel32.lib'))) | Out-Null
-    $hostStage="dependency_manifest"; $system=[Environment]::SystemDirectory; $queue=[Collections.Generic.Queue[string]]::new(); $queue.Enqueue($fixture)
-    foreach($name in @('cmd.exe','ntdll.dll','kernel32.dll','KernelBase.dll','ucrtbase.dll')) { $queue.Enqueue((Join-Path $system $name)) }
-    $origins=[Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase); $files=[Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase); $contracts=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase); [long]$bytes=0
+    $hostStage="dependency_manifest"; $system=[Environment]::SystemDirectory; $queue=[Collections.Generic.Queue[object]]::new()
+    $queue.Enqueue([pscustomobject]@{Path=$fixture;Parent='';Kind='required'})
+    foreach($name in @('cmd.exe','ntdll.dll','kernel32.dll','KernelBase.dll','ucrtbase.dll')) { $queue.Enqueue([pscustomobject]@{Path=(Join-Path $system $name);Parent='';Kind='required'}) }
+    $files=[Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase); $contracts=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase); $unavailable=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase); [long]$bytes=0
     while($queue.Count) {
-        $file=$queue.Dequeue(); $name=[IO.Path]::GetFileName($file); if($files.ContainsKey($name)) {continue}; $manifestFile=$name; $manifestImport=''; $manifestImportCount=0; $manifestParent=''; if($origins.ContainsKey($name)) { $manifestParent=$origins[$name] }
-        $item=Get-Item -LiteralPath $file; if($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {throw 'source_reparse'}
-        $bytes+=$item.Length; $manifestBytes=$bytes; $manifestCount=$files.Count; if($files.Count -ge 64 -or $bytes -gt 134217728) {throw 'runtime_bound'}; $files.Add($name,$file); $manifestCount=$files.Count
-        $imports=Invoke-ProbeTool $dumpbin @('/NOLOGO','/DEPENDENTS',$file)
-        $dependencyMatches=[regex]::Matches($imports,'(?im)^\s+([a-z0-9_.-]+\.dll)\s*$'); $manifestImportCount=$dependencyMatches.Count; if($dependencyMatches.Count) { $manifestImport=$dependencyMatches[0].Groups[1].Value }
-        if($name -eq 'fixture.exe' -and $imports -notmatch '(?im)^\s+kernel32\.dll\s*$') {throw 'fixture_import_missing'}
-        foreach($match in $dependencyMatches) {
-            $dependency=$match.Groups[1].Value; $manifestImport=$dependency
-            if($name -eq 'fixture.exe' -and $dependency -ine 'kernel32.dll') {throw 'fixture_import_not_kernel32'}
+        $entry=$queue.Dequeue(); $file=$entry.Path; $name=[IO.Path]::GetFileName($file); if($files.ContainsKey($name)) {continue}
+        $manifestFile=$name; $manifestImport=''; $manifestImportCount=0; $manifestParent=$entry.Parent; $manifestKind=$entry.Kind; $metadataStatus=$null
+        try { $attributes=[IO.File]::GetAttributes($file); $metadataStatus=0 }
+        catch {
+            $metadataStatus=$_.Exception.GetBaseException().HResult
+            if(!(Can-OmitDelay $entry.Kind $metadataStatus)) {throw 'dependency_metadata_failed'}
+            if($unavailable.Add($name)) { $unavailableCount=$unavailable.Count; if($unavailable.Count -gt 64) {throw 'delay_omission_cap'}; @{event='unavailable_delay_import';parent=(Safe-ManifestLabel $entry.Parent);dependency=(Safe-ManifestLabel $name);metadata_hresult=$metadataStatus;paths_using_it_validated=$false} | ConvertTo-Json -Compress | Out-Host }; continue
+        }
+        if($attributes -band [IO.FileAttributes]::ReparsePoint) {throw 'source_reparse'}
+        $bytes+=([IO.FileInfo]::new($file)).Length; $manifestBytes=$bytes; $manifestCount=$files.Count; if($files.Count -ge 64 -or $bytes -gt 134217728) {throw 'runtime_bound'}; $files.Add($name,$file); $manifestCount=$files.Count
+        $imports=Invoke-ProbeTool $dumpbin @('/NOLOGO','/IMPORTS',$file); $dependencyRows=Read-DumpImports $imports; $manifestImportCount=$dependencyRows.Count
+        if($name -eq 'fixture.exe') { Assert-FixtureImports $dependencyRows }
+        foreach($import in $dependencyRows) {
+            $dependency=$import.Name; $manifestImport=$dependency
             if($dependency -match '^(api-ms-|ext-ms-)') { [void]$contracts.Add($dependency); continue }
-            if(!$origins.ContainsKey($dependency)) { $origins.Add($dependency,$name) }; $queue.Enqueue((Join-Path $system $dependency))
+            if($queue.Count -ge 4096) {throw 'dependency_queue_cap'}; $queue.Enqueue([pscustomobject]@{Path=(Join-Path $system $dependency);Parent=$name;Kind=$import.Kind})
         }
     }
+    @{event='dependency_closure';concrete_files=$files.Count;bytes=$bytes;unavailable_delay_count=$unavailableCount;api_set_contract_count=$contracts.Count;all_native_tool_paths_validated=$false} | ConvertTo-Json -Compress | Out-Host
     Write-Output ('{"event":"host_compile","success":true,"api_set_contract_count":'+$contracts.Count+'}')
     $hostStage="compile_host"; Add-Type -TypeDefinition $source -Language CSharp -ErrorAction Stop
     [string[]]$sources=@($files.Values | Sort-Object { [IO.Path]::GetFileName($_).ToLowerInvariant() })
-    $hostStage="invoke_host"; $result=[CrucibleWindowsBootstrapProbeV6]::Run($buildRoot,$sources,(Get-FileHash -LiteralPath $cl -Algorithm SHA256).Hash.ToLowerInvariant())
+    $hostStage="invoke_host"; $result=[CrucibleWindowsBootstrapProbeV7]::Run($buildRoot,$sources,(Get-FileHash -LiteralPath $cl -Algorithm SHA256).Hash.ToLowerInvariant())
 } catch {
-    $failure=$_; $failedStage=$hostStage; $reason='unclassified_exception'; $category=$failure.CategoryInfo.Category.ToString()
-    if($failure.Exception.Message -cin @('x64_required','unique_root_collision','msvc_missing','source_reparse','runtime_bound','fixture_import_missing','fixture_import_not_kernel32','tool_start','tool_deadline','tool_output_cap','tool_failed')) { $reason=$failure.Exception.Message }
-    $getItemPathMissing=$failure.FullyQualifiedErrorId -ceq 'PathNotFound,Microsoft.PowerShell.Commands.GetItemCommand'
-    $metadataAvailable=$false; $metadataStatus=$null; $hidden=$false; $systemFlag=$false; $reparse=$false; $kind='unclassified'; $diagnostic='not_attempted'; $headingCount=0; $targetCount=0
-    if(!$hostToolUnsettled -and $failedStage -eq 'dependency_manifest' -and (Safe-ManifestLabel $manifestFile) -ne 'unavailable') {
-        try { $attributes=[IO.File]::GetAttributes((Join-Path $system $manifestFile)); $metadataAvailable=$true; $metadataStatus=0; $hidden=[bool]($attributes -band [IO.FileAttributes]::Hidden); $systemFlag=[bool]($attributes -band [IO.FileAttributes]::System); $reparse=[bool]($attributes -band [IO.FileAttributes]::ReparsePoint) }
-        catch { $metadataStatus=$_.Exception.GetBaseException().HResult }
-        if((Safe-ManifestLabel $manifestParent) -ne 'unavailable' -and $files.ContainsKey($manifestParent)) {
-            try {
-                $hostStage='dependency_import_diagnostic'; $details=Invoke-ProbeTool $dumpbin @('/NOLOGO',('/IMPORTS:'+$manifestFile),$files[$manifestParent])
-                $token=[regex]::Match($details,'(?im)^[ \t]*(?:(?<heading>[A-Za-z -]{1,96}imports:)|(?<dll>[A-Za-z0-9_.-]{1,128}\.dll))[ \t]*\r?$')
-                $section='unclassified'; $required=$false; $delay=$false; $unclassified=$false; $tokens=0
-                while($token.Success -and $tokens -lt 1024) {
-                    if($token.Groups['heading'].Success) {
-                        $heading=$token.Groups['heading'].Value; $headingCount++
-                        if($heading -match '(?i)\bdelay[ -](?:load|loaded) imports:') { $section='delay' }
-                        elseif($heading -match '(?i)^(?:Section|Image) (?:contains|has) the following imports:$') { $section='required' } else { $section='unclassified' }
-                    } elseif($token.Groups['dll'].Value -ieq $manifestFile) {
-                        $targetCount++; if($section -eq 'delay') { $delay=$true } elseif($section -eq 'required') { $required=$true } else { $unclassified=$true }
-                    }
-                    $tokens++; $token=$token.NextMatch()
-                }
-                $diagnostic='complete'; if($token.Success) { $diagnostic='token_cap'; $unclassified=$true }
-                if(!$unclassified -and $targetCount -gt 0) { if($delay -and $required) { $kind='required_and_delay' } elseif($delay) { $kind='delay' } elseif($required) { $kind='required' } }
-            } catch { $diagnostic='query_failed' } finally { $hostStage=$failedStage }
-        }
-    }
-    @{event='dependency_failure_detail';category=$category;get_item_path_missing=$getItemPathMissing;metadata_available=$metadataAvailable;metadata_hresult=$metadataStatus;hidden=$hidden;system_attribute=$systemFlag;reparse=$reparse;importing_parent=(Safe-ManifestLabel $manifestParent);current_file=(Safe-ManifestLabel $manifestFile);import_kind=$kind;kind_evidence='filtered_dumpbin_imports_labels';diagnostic=$diagnostic;heading_count=$headingCount;target_occurrences=$targetCount} | ConvertTo-Json -Compress | Out-Host
-    @{event='host_setup_failure';stage=$failedStage;hresult=$failure.Exception.HResult;reason=$reason;accepted_file_count=$manifestCount;candidate_total_bytes=$manifestBytes;current_file=(Safe-ManifestLabel $manifestFile);current_import=(Safe-ManifestLabel $manifestImport);parsed_import_count=$manifestImportCount;file_cap=64;byte_cap=134217728} | ConvertTo-Json -Compress | Out-Host; $result=90
+    $failure=$_; $reason='unclassified_exception'; $message=$failure.Exception.Message
+    if($message -cin @('x64_required','unique_root_collision','msvc_missing','source_reparse','runtime_bound','fixture_import_policy','tool_start','tool_deadline','tool_output_cap','tool_failed','dependency_metadata_failed','delay_omission_cap','dependency_queue_cap') -or $message -cmatch '^parser_(?:text_cap|line_cap|ambiguous_header|unknown_header|orphan_dll|ambiguous_dll|invalid_dll|incomplete|self_test)$') { $reason=$message }
+    @{event='host_setup_failure';stage=$hostStage;hresult=$failure.Exception.HResult;reason=$reason;accepted_file_count=$manifestCount;candidate_total_bytes=$manifestBytes;current_file=(Safe-ManifestLabel $manifestFile);current_import=(Safe-ManifestLabel $manifestImport);importing_parent=(Safe-ManifestLabel $manifestParent);import_kind=$manifestKind;metadata_hresult=$metadataStatus;parsed_import_count=$manifestImportCount;unavailable_delay_count=$unavailableCount;file_cap=64;byte_cap=134217728} | ConvertTo-Json -Compress | Out-Host; $result=90
 }
 finally { if($hostToolUnsettled) { $result=3 }; if($buildOwned -and $result -ne 3) { try { Remove-Item -LiteralPath $buildRoot -Recurse -Force -ErrorAction Stop } catch { Write-Output '{"event":"build_cleanup","complete":false}'; $result=3 } } }
 exit $result
