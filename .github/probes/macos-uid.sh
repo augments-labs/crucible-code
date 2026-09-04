@@ -1,4 +1,5 @@
 #!/bin/sh
+# v2: Darwin proc_pidinfo descriptor closure plus an unprivileged native self-test.
 # DISPOSABLE macOS VM ONLY. Numeric UID noncollision is a fixture assumption,
 # not production identity reservation. No account/service/host ACL changes.
 set -eu
@@ -117,6 +118,36 @@ extern char **environ;
 static volatile sig_atomic_t stopped;
 static void stop(int s) { (void)s; stopped = 1; }
 static _Noreturn void die(const char *s) { perror(s); exit(77); }
+/* Darwin API: XNU f6217f891ac0bb64f3d375211650a4c1ff8ca1ea:
+ * libsyscall/wrappers/libproc/libproc.h declares proc_pidinfo (macOS 10.5+);
+ * bsd/sys/proc_info.h defines PROC_PIDLISTFDS and struct proc_fdinfo.
+ * bsd/kern/proc_info.c enumerates under proc_fdlock and may truncate at capacity.
+ * The coordinator is single-threaded; signal handlers open no descriptors.
+ * No descriptor numbers are guessed from a possibly lowered RLIMIT_NOFILE.
+ */
+static int list_self_fds(struct proc_fdinfo *fds, int capacity_bytes) {
+    errno=0;
+    int bytes=proc_pidinfo(getpid(),PROC_PIDLISTFDS,0,fds,capacity_bytes);
+    if(bytes<=0 || bytes>=capacity_bytes || bytes%(int)sizeof(*fds)) {
+        if(!errno) errno=EOVERFLOW;
+        die("descriptor enumeration failed or filled bounded buffer");
+    }
+    return bytes/(int)sizeof(*fds);
+}
+static void close_extra_fds(void) {
+    struct proc_fdinfo fds[4096];
+    int n=list_self_fds(fds,sizeof fds);
+    for(int i=0;i<n;i++) {
+        if(fds[i].proc_fd<0) { errno=EINVAL; die("invalid descriptor entry"); }
+        if(fds[i].proc_fd>=3 && close(fds[i].proc_fd)<0 && errno!=EBADF && errno!=EINTR)
+            die("close inherited descriptor");
+    }
+    /* A second complete snapshot verifies closure, including close EINTR cases. */
+    n=list_self_fds(fds,sizeof fds);
+    for(int i=0;i<n;i++) if(fds[i].proc_fd<0 || fds[i].proc_fd>=3) {
+        errno=EBUSY; die("extra descriptor remained after closure");
+    }
+}
 static double now(void) { struct timespec t; if (clock_gettime(CLOCK_MONOTONIC,&t)) die("clock"); return t.tv_sec+t.tv_nsec/1e9; }
 static void path(char *out, const char *a, const char *b) {
     if (snprintf(out,PATH_MAX,"%s/%s",a,b) >= PATH_MAX) die("path length");
@@ -185,7 +216,7 @@ static int cleanup(uid_t uid) {
         if (state) { printf("UID-EMPTY uid=%u\n",uid); return 1; }
         pid_t worker=fork(); if (worker<0) break;
         if (!worker) {
-            alarm(2); closefrom(3); drop(uid);
+            alarm(2); close_extra_fds(); drop(uid);
             errno=0; int r=kill(-1,SIGKILL);
             _exit(r==0 || errno==ESRCH ? 0 : 77);
         }
@@ -248,6 +279,15 @@ static int quiet_heartbeats(const char *work) {
 }
 int main(int argc,char **argv) {
     setvbuf(stdout,NULL,_IONBF,0);
+    if(argc==3 && !strcmp(argv[1],"fd-selftest")) {
+        int fd=open(argv[2],O_RDONLY);
+        if(fd<3) die("self-test fixture descriptor");
+        int high=fcntl(fd,F_DUPFD,128); if(high<128) die("self-test high descriptor");
+        close_extra_fds();
+        errno=0; if(fcntl(fd,F_GETFD)!=-1 || errno!=EBADF) return 77;
+        errno=0; if(fcntl(high,F_GETFD)!=-1 || errno!=EBADF) return 77;
+        puts("DARWIN-FD-CLOSE-SELFTEST-PASS"); return 0;
+    }
     if(argc==6 && !strcmp(argv[1],"heartbeat")) heartbeat((uid_t)atoi(argv[2]),argv[3],atoi(argv[4]),atoi(argv[5]));
     if(argc==6 && !strcmp(argv[1],"guest")) {
         uid_t uid=(uid_t)atoi(argv[2]); verify(uid,"sandbox-guest"); alarm(60);
@@ -256,7 +296,7 @@ int main(int argc,char **argv) {
         execl("/bin/sh","sh",script,argv[3],argv[4],fixtures,(char *)NULL); die("guest exec");
     }
     if(argc!=5 || geteuid()!=0) { fprintf(stderr,"coordinator needs root and fixture/clang/python/sdk\n"); return 77; }
-    closefrom(3); signal(SIGINT,stop); signal(SIGTERM,stop);
+    close_extra_fds(); signal(SIGINT,stop); signal(SIGTERM,stop);
     const char *root=argv[1]; struct stat rst;
     if(lstat(root,&rst)||!S_ISDIR(rst.st_mode)||strncmp(root,"/private/tmp/crucible-macos-uid.",32)) die("fixture root");
     if(chown(root,0,0)||chmod(root,0755)||chdir(root)) die("fixture root ownership");
@@ -284,7 +324,7 @@ int main(int argc,char **argv) {
         snprintf(name,sizeof name,"%s.sb",profiles[pr]); path(prof,root,name); path(self,root,"uid"); snprintf(ids,sizeof ids,"%u",uid);
         pid_t p=fork(); if(p<0) { cleanup(uid); die("guest fork"); }
         if(!p) {
-            signal(SIGINT,SIG_DFL); signal(SIGTERM,SIG_DFL); closefrom(3); drop(uid);
+            signal(SIGINT,SIG_DFL); signal(SIGTERM,SIG_DFL); close_extra_fds(); drop(uid);
             if(chdir(work)) die("guest cwd");
             char rustc[PATH_MAX],rustdoc[PATH_MAX],cargobin[PATH_MAX],envpath[PATH_MAX];
             path(rustc,root,"runtime/rust/bin/rustc"); path(rustdoc,root,"runtime/rust/bin/rustdoc"); path(cargobin,root,"runtime/rust/bin/cargo");
@@ -318,6 +358,8 @@ int main(int argc,char **argv) {
 C
 SDKROOT="$probe_sdk" "$probe_rustc" --edition=2021 "$probe_root/fixtures/command.rs" -o "$probe_root/fixtures/rust-command"
 /usr/bin/xcrun clang -O0 -Wall -Wextra -Werror -Wno-deprecated-declarations "$probe_root/uid.c" -o "$probe_root/uid"
+# Compile and exercise Darwin descriptor enumeration/closure BEFORE sudo.
+/usr/bin/env -i PATH=/usr/bin:/bin "$probe_root/uid" fd-selftest "$probe_root/fixtures/hello.c" < /dev/null
 chmod a+rx "$probe_root/uid" "$probe_root/fixtures/rust-command"
 chmod a+r "$probe_root/"*.sb "$probe_root/run-case.sh" "$probe_root/fixtures/"*
 /usr/bin/sw_vers
@@ -330,3 +372,4 @@ probe_status=$?
 set -e
 printf 'FIXTURE-RESULT status=%s retained=%s\n' "$probe_status" "$probe_root"
 exit "$probe_status"
+
