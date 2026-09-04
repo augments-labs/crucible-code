@@ -8,6 +8,8 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.37.0] - 2026-09-04
+
 ### Changed
 
 - **An interrupt now ends an MCP call at the press rather than at
@@ -3405,7 +3407,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.36.0...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.37.0...HEAD
+[0.37.0]: https://github.com/augments-labs/crucible-code/compare/v0.36.0...v0.37.0
 [0.36.0]: https://github.com/augments-labs/crucible-code/compare/v0.35.0...v0.36.0
 [0.35.0]: https://github.com/augments-labs/crucible-code/compare/v0.33.0...v0.35.0
 [0.33.0]: https://github.com/augments-labs/crucible-code/compare/v0.32.0...v0.33.0
