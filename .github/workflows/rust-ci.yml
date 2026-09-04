@@ -8,15 +8,15 @@ permissions:
 
 jobs:
   macos-uid:
-    name: macOS Git launch path (${{ matrix.os }})
+    name: macOS adapted UID compatibility (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
         os: [macos-15-intel, macos-26]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 4
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: sh .github/probes/macos-git-path.sh
+      - run: sh .github/probes/macos-uid.sh

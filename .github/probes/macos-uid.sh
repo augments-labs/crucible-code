@@ -1,5 +1,6 @@
 #!/bin/sh
-# v4b: fail fast after a failed case is fully cleaned up; full 24-case pass oracle.
+# v5: full 24 cases with actual Git/Clang paths and an explicit Rust linker.
+# Runtime adaptation is measured; absolute /usr/bin developer shims remain unsupported.
 # DISPOSABLE macOS VM ONLY. Numeric UID noncollision is a fixture assumption,
 # not production identity reservation. No account/service/host ACL changes.
 set -eu
@@ -7,9 +8,18 @@ test "$(uname -s)" = Darwin || { echo 'Requires native macOS' >&2; exit 77; }
 test "$(id -u)" != 0 || { echo 'Start as the VM runner, not root' >&2; exit 77; }
 probe_rustc=$(rustup which --toolchain stable rustc)
 probe_toolchain=$(dirname "$(dirname "$probe_rustc")")
-probe_clang=$(/usr/bin/xcrun --find clang)
-probe_sdk=$(/usr/bin/xcrun --sdk macosx --show-sdk-path)
+probe_developer_dir=$(/usr/bin/xcode-select --print-path)
+case "$probe_developer_dir" in /*) ;; *) echo 'Nonabsolute developer directory' >&2; exit 77 ;; esac
+probe_developer_dir=$(cd "$probe_developer_dir" && pwd -P)
+probe_git=$(/usr/bin/env -i PATH=/usr/bin:/bin DEVELOPER_DIR="$probe_developer_dir" /usr/bin/xcrun --find git)
+probe_clang=$(/usr/bin/env -i PATH=/usr/bin:/bin DEVELOPER_DIR="$probe_developer_dir" /usr/bin/xcrun --find clang)
+probe_sdk=$(/usr/bin/env -i PATH=/usr/bin:/bin DEVELOPER_DIR="$probe_developer_dir" /usr/bin/xcrun --sdk macosx --show-sdk-path)
 probe_python=$(command -v python3)
+for probe_path in "$probe_git" "$probe_clang" "$probe_sdk" "$probe_python"; do
+    case "$probe_path" in /*) ;; *) echo 'Nonabsolute tool/SDK path' >&2; exit 77 ;; esac
+done
+test -x "$probe_git" && test -x "$probe_clang" && test -d "$probe_sdk"
+test "$probe_git" != /usr/bin/git || { echo 'Resolved Git still names shim' >&2; exit 77; }
 probe_root=$(mktemp -d /tmp/crucible-macos-uid.XXXXXX)
 probe_root=$(cd "$probe_root" && pwd -P)
 printf 'FIXTURE %s\n' "$probe_root"
@@ -76,20 +86,20 @@ case "$case_name" in
         mkdir repo empty-template; cd repo
         echo "STAGE directories-after"
         echo "STAGE git-init-before"
-        /usr/bin/git init -q --template=../empty-template
+        "$PROBE_GIT" init -q --template=../empty-template
         echo "STAGE git-init-after"
         printf payload > a
         echo "STAGE git-add-before"
-        /usr/bin/git -c core.hooksPath=/dev/null add a
+        "$PROBE_GIT" -c core.hooksPath=/dev/null add a
         echo "STAGE git-add-after"
         echo "STAGE git-diff-before"
-        test "$(/usr/bin/git diff --cached --name-only)" = a
+        test "$("$PROBE_GIT" diff --cached --name-only)" = a
         echo "STAGE git-diff-after"
         echo "STAGE git-alias-before"
-        test "$(/usr/bin/git -c alias.probe='!printf child-shell' probe)" = child-shell
+        test "$("$PROBE_GIT" -c alias.probe='!printf child-shell' probe)" = child-shell
         echo "STAGE git-alias-after" ;;
     rust-command) "$fixture/rust-command" ;;
-    rustc-link) "$RUSTC" --edition=2021 "$fixture/hello.rs" -o rust-output; ./rust-output ;;
+    rustc-link) "$RUSTC" --edition=2021 "-Clinker=$PROBE_CLANG" "$fixture/hello.rs" -o rust-output; ./rust-output ;;
     clang-object) "$PROBE_CLANG" -c "$fixture/hello.c" -o c-output.o; test -s c-output.o ;;
     clang-link) "$PROBE_CLANG" "$fixture/hello.c" -o c-output; ./c-output ;;
     cargo-test)
@@ -331,7 +341,7 @@ int main(int argc,char **argv) {
         printf("GUEST-SHELL-EXEC case=%s profile=%s pid=%d\n",argv[3],argv[4],getpid());
         execl("/bin/sh","sh",script,argv[3],argv[4],fixtures,(char *)NULL); die("guest exec");
     }
-    if(argc!=5 || geteuid()!=0) { fprintf(stderr,"coordinator needs root and fixture/clang/python/sdk\n"); return 77; }
+    if(argc!=7 || geteuid()!=0) { fprintf(stderr,"coordinator needs root and fixture/clang/python/sdk/developer-dir/git\n"); return 77; }
     close_extra_fds(); signal(SIGINT,stop); signal(SIGTERM,stop);
     const char *root=argv[1]; struct stat rst;
     if(lstat(root,&rst)||!S_ISDIR(rst.st_mode)||strncmp(root,"/private/tmp/crucible-macos-uid.",32)) die("fixture root");
@@ -347,8 +357,8 @@ int main(int argc,char **argv) {
     }
     if(!uid) die("no demonstrably unused fixture UID");
     printf("UID-LEASE uid=%u assumption=exclusive-disposable-VM-only\n",uid);
-    const char *cases[]={"shell-git","rust-command","rustc-link","clang-object","clang-link","cargo-test",
-        "python-default","python-close-fds-false","python-cwd","python-spawn","network","escape"};
+    const char *cases[]={"escape","shell-git","rust-command","rustc-link","clang-object","clang-link","cargo-test",
+        "python-default","python-close-fds-false","python-cwd","python-spawn","network"};
     const char *profiles[]={"control","network-deny"}; int failed=0;
     for(int pr=0;pr<2;pr++) for(int c=0;c<12;c++) {
         if(stopped) { cleanup(uid); return 77; }
@@ -365,10 +375,14 @@ int main(int argc,char **argv) {
             char rustc[PATH_MAX],rustdoc[PATH_MAX],cargobin[PATH_MAX],envpath[PATH_MAX];
             path(rustc,root,"runtime/rust/bin/rustc"); path(rustdoc,root,"runtime/rust/bin/rustdoc"); path(cargobin,root,"runtime/rust/bin/cargo");
             snprintf(envpath,sizeof envpath,"%s/runtime/rust/bin:/usr/bin:/bin:/usr/sbin:/sbin",root);
+            char linker_arg[PATH_MAX+16];
+            if(snprintf(linker_arg,sizeof linker_arg,"-Clinker=%s",argv[2]) >= (int)sizeof linker_arg) die("linker flag");
             char *clean[]={NULL}; environ=clean;
             if(setenv("HOME",home,1)||setenv("TMPDIR",tmp,1)||setenv("CARGO_HOME",cargo,1)||setenv("PATH",envpath,1)||
                setenv("RUSTC",rustc,1)||setenv("RUSTDOC",rustdoc,1)||setenv("PROBE_CARGO",cargobin,1)||
                setenv("PROBE_CLANG",argv[2],1)||setenv("PROBE_PYTHON",argv[3],1)||setenv("SDKROOT",argv[4],1)||
+               setenv("DEVELOPER_DIR",argv[5],1)||setenv("PROBE_GIT",argv[6],1)||
+               setenv("CARGO_ENCODED_RUSTFLAGS",linker_arg,1)||setenv("CARGO_ENCODED_RUSTDOCFLAGS",linker_arg,1)||
                setenv("GIT_CONFIG_NOSYSTEM","1",1)||setenv("GIT_CONFIG_GLOBAL","/dev/null",1)) die("environment");
             execl("/usr/bin/sandbox-exec","sandbox-exec","-f",prof,self,"guest",ids,cases[c],profiles[pr],root,(char *)NULL); die("sandbox exec");
         }
@@ -397,22 +411,25 @@ int main(int argc,char **argv) {
             return failed;
         }
     }
-    puts(failed?"UID-PROBE-FAIL":"UID-PROBE-PASS compatibility-and-observed-UID-teardown-only");
+    puts(failed?"UID-PROBE-FAIL":"UID-PROBE-PASS adapted-native-commands-and-observed-UID-teardown-only full_sandbox_tested=0");
     return failed?1:0;
 }
 C
-SDKROOT="$probe_sdk" "$probe_rustc" --edition=2021 "$probe_root/fixtures/command.rs" -o "$probe_root/fixtures/rust-command"
-/usr/bin/xcrun clang -O0 -Wall -Wextra -Werror -Wno-deprecated-declarations "$probe_root/uid.c" -o "$probe_root/uid"
+SDKROOT="$probe_sdk" DEVELOPER_DIR="$probe_developer_dir" "$probe_rustc" --edition=2021 "-Clinker=$probe_clang" "$probe_root/fixtures/command.rs" -o "$probe_root/fixtures/rust-command"
+SDKROOT="$probe_sdk" DEVELOPER_DIR="$probe_developer_dir" "$probe_clang" -O0 -Wall -Wextra -Werror -Wno-deprecated-declarations "$probe_root/uid.c" -o "$probe_root/uid"
 # Compile and exercise Darwin descriptor enumeration/closure BEFORE sudo.
 /usr/bin/env -i PATH=/usr/bin:/bin "$probe_root/uid" fd-selftest "$probe_root/fixtures/hello.c" < /dev/null
 chmod a+rx "$probe_root/uid" "$probe_root/fixtures/rust-command"
 chmod a+r "$probe_root/"*.sb "$probe_root/run-case.sh" "$probe_root/fixtures/"*
+printf 'ADAPTER git=%s clang=%s developer_dir=%s sdk=%s\n' "$probe_git" "$probe_clang" "$probe_developer_dir" "$probe_sdk"
+printf 'ADAPTER rustc_linker_and_cargo_encoded_flags=-Clinker=%s; one encoded argument; no --target; binaries unchanged\n' "$probe_clang"
+printf 'ADAPTER Rust bin/lib copied to synthetic sysroot; explicit native Git calls; original /usr/bin/git shim is not validated; full_sandbox_tested=0\n'
 /usr/bin/sw_vers
 /usr/bin/uname -mrv
-/usr/bin/shasum -a 256 "$probe_root/uid.c" "$probe_root/uid" "$probe_root/run-case.sh"
+/usr/bin/shasum -a 256 "$probe_root/uid.c" "$probe_root/uid" "$probe_root/run-case.sh" "$probe_git" "$probe_clang"
 printf 'PRIVILEGED EFFECTS: synthetic root ownership/modes, synthetic per-case UID ownership, credential drops, limits, same-UID SIGKILL. No account/service installation.\n'
 set +e
-sudo -n /usr/bin/env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin "$probe_root/uid" "$probe_root" "$probe_clang" "$probe_python" "$probe_sdk" < /dev/null
+sudo -n /usr/bin/env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin "$probe_root/uid" "$probe_root" "$probe_clang" "$probe_python" "$probe_sdk" "$probe_developer_dir" "$probe_git" < /dev/null
 probe_status=$?
 set -e
 printf 'FIXTURE-RESULT status=%s retained=%s\n' "$probe_status" "$probe_root"
