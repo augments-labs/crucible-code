@@ -244,12 +244,14 @@ host I/O indefinitely.
 ## When it stops
 
 `timeout` seconds, or <kbd>Esc</kbd>, or the command finishing. The shell and
-its descendants are one backend-owned scope, and that scope is ended and reaped
-on every one of those paths. On Linux, the default `required` mode also places
-that scope behind the verified Bubblewrap boundary described in
+its descendants are supervised as one backend-owned scope, which is stopped on
+each of those paths. With `sandbox.enabled: true` on Linux, that scope is placed
+behind the verified Bubblewrap boundary described in
 [Operating-system confinement](../security/sandboxing.md). Permission still
 decides whether the command may start; the sandbox separately limits what the
-approved command can reach.
+approved command can reach. Confinement is disabled by default. Compatibility
+execution supervises its owned scope but cannot contain a hostile process that
+deliberately escapes that scope.
 
 A background process does not keep an output reader or a turn alive. It remains
 inside the same sandbox/process-tree scope until it exits or is stopped, and its

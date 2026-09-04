@@ -43,7 +43,7 @@ pub(crate) use variables::refused;
 ///
 /// Built once at startup and read from there on, so nothing on the turn path
 /// touches a file.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Settings {
     value: Value,
 
@@ -52,14 +52,25 @@ pub struct Settings {
     /// intersection this security boundary requires.
     prompt_cache: PromptCachePolicy,
 
-    /// Host confinement mode, defaulting to required and weakened only by a
-    /// user-originated layer.
+    /// Host confinement mode, disabled unless configured and weakened only by
+    /// a user-originated layer.
     sandbox: crucible_core::SandboxMode,
 
     /// Every layer's rules together. Held apart from the value because a rule
     /// is read where it is written — see [`Document::parse`] — and what survives
     /// the layering is the rule rather than its text.
     rules: Rules,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            value: Value::default(),
+            prompt_cache: PromptCachePolicy::default(),
+            sandbox: sandbox::resolve(&[]),
+            rules: Rules::default(),
+        }
+    }
 }
 
 impl fmt::Debug for Settings {
@@ -266,7 +277,10 @@ impl Settings {
             .unwrap_or_default()
     }
 
-    /// Effective operating-system confinement mode.
+    /// Effective operating-system confinement mode, off unless a document
+    /// opts in with `sandbox.enabled` or explicitly selects `sandbox.mode`.
+    /// Workspace layers may require confinement but cannot disable it.
+    /// Core policy constructors remain conservative; hosts apply this choice.
     #[must_use]
     pub const fn sandbox_mode(&self) -> crucible_core::SandboxMode {
         self.sandbox
@@ -411,11 +425,7 @@ mod tests {
     }
 
     #[test]
-    fn confinement_defaults_to_required_and_only_the_user_can_weaken_it() {
-        assert_eq!(
-            Settings::resolve(Vec::new()).sandbox_mode(),
-            crucible_core::SandboxMode::Required
-        );
+    fn explicit_confinement_modes_remain_subject_to_user_authority() {
         let user = Document::sample(r#"{"sandbox":{"mode":"off"}}"#, Origin::User);
         assert_eq!(
             Settings::resolve(vec![user]).sandbox_mode(),

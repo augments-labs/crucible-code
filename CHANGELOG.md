@@ -8,6 +8,13 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Changed
+
+- **OS sandboxing is now opt-in.** Set `sandbox.enabled` to `true` to require
+  confinement; absent settings default to off, while explicit `sandbox.mode`
+  settings retain their meaning. Project settings cannot disable confinement,
+  and specifying both keys in one file is rejected by the parser and schema.
+
 ### Added
 
 - **Sandbox admission is tested before workspace materialization.** Concurrent

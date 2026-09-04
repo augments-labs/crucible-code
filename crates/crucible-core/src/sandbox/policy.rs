@@ -28,6 +28,9 @@ pub const MAX_SANDBOX_UNREADABLE_PATTERNS: usize = 64;
 pub const MAX_SANDBOX_PATTERN_COMPONENTS: usize = 64;
 
 /// Whether the host must provide kernel confinement.
+///
+/// The SDK default remains required. The application resolves its opt-in
+/// configuration separately and explicitly applies that choice to the policy.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum SandboxMode {
     /// Refuse before materialization or spawn unless every requested hard

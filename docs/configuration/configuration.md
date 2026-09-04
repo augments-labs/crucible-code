@@ -260,24 +260,36 @@ inspection, privacy and source provenance.
 
 ### `sandbox`
 
-Operating-system confinement for `bash` and the descendant processes later
-extension adapters launch:
+Operating-system confinement for `bash` and explicitly selected extension and
+MCP processes is **disabled by default**. Enable it with:
 
 ```json
-{ "sandbox": { "mode": "required" } }
+{ "sandbox": { "enabled": true } }
 ```
 
-`required` is the default. On Linux it requires a verified Bubblewrap backend
-(Bubblewrap 0.11.0 or newer) and fails before spawning when the effective filesystem, network, descriptor,
-process, privilege, materialization, audit, or requested resource boundary
-cannot be enforced. It never falls back to an ordinary subprocess silently.
+Omitting the block, writing an empty block, or setting `enabled: false` in your
+home configuration leaves commands unconfined by the operating system.
+Permissions, sensitive-call approval, environment filtering, deadlines, output
+bounds and lifecycle accounting still apply.
 
-Your home configuration may explicitly choose `degraded` (use a clearly
-reported compatibility backend only when enforcement is unavailable) or `off`
-(always use the unconfined compatibility backend). Either project file may
-state `required`, strengthening a user choice, but cannot state `degraded` or
-`off`. A project, tool, extension, skill, agent, or descendant therefore cannot
-weaken the confinement chosen above it.
+`enabled: true` resolves to `required`: every requested hard boundary must be
+enforced before a command starts. It never silently falls back to an ordinary
+subprocess. The currently implemented enforcing backend is Linux Bubblewrap
+(0.11.0 or newer with the required features). macOS and Windows enforcing
+backends are not yet implemented; enabling confinement there refuses command
+execution. See the [current platform status](../security/sandboxing.md#platform-support).
+
+Explicit `sandbox.mode` remains supported: `required` has the same meaning as
+`enabled: true`; `off` has the same meaning as `enabled: false`; `degraded`
+prefers enforcement and permits a reported compatibility fallback only when
+the backend is unavailable. Write **either `enabled` or `mode` in one document**;
+using both is an error even when their values agree.
+
+Only your home configuration may disable confinement or select `degraded`.
+Either project file may set `enabled: true` or `mode: "required"`, which
+strengthens the user choice regardless of which spelling either file uses.
+Project `enabled: false`, `off`, and `degraded` are refused. A project, tool,
+extension, skill, agent, or descendant cannot weaken confinement chosen above it.
 
 Under `required`, a command also runs under resource ceilings the confining
 backend applies: an hour of processor time per process, and 4096 open files at

@@ -24,7 +24,8 @@ continued later.
   adapters; API keys and supported account logins are separate credentials.
 - **Permissioned tools.** Reads inside the workspace are available by default;
   file changes, commands and reads outside it are decided by rules and the
-  active permission mode.
+  active permission mode. OS sandboxing is opt-in with `sandbox.enabled: true`;
+  see [sandbox setup and platform support](docs/security/sandboxing.md).
 - **A responsive terminal UI.** Prompts remain editable while a turn runs, tool
   output streams in place, and redirected output stays plain text.
 - **Bounded resource use.** Tool output, retained screen records, configuration

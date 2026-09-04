@@ -57,7 +57,7 @@ impl SandboxService for LocalSandbox {
             SandboxMode::Off => compatibility(
                 request,
                 Arc::clone(&self.active),
-                "sandbox explicitly disabled by user policy",
+                "sandbox disabled by effective policy",
             ),
             SandboxMode::Required => enforcing(request, Arc::clone(&self.active)),
             SandboxMode::Degraded => {
