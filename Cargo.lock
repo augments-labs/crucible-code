@@ -354,6 +354,7 @@ dependencies = [
  "crucible-auth",
  "crucible-config",
  "crucible-core",
+ "crucible-extension",
  "crucible-mcp",
  "crucible-privacy",
  "crucible-provider",

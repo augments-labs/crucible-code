@@ -347,6 +347,12 @@ clap.workspace = true
 crucible-auth.workspace = true
 crucible-config.workspace = true
 crucible-core.workspace = true
+# The restart budget an ended program is started again under, and the question
+# of whether starting it again is safe at all. Taken here because composition is
+# where a hosted server's process ends and something has to decide what happens
+# next; the rule itself belongs beside every other program crucible supervises
+# rather than being written a second time for this one.
+crucible-extension.workspace = true
 # The one crate that speaks the Model Context Protocol. Only the binary may
 # take it: a library crate depending on it would put somebody else's server
 # behind a trait the runner drives, and the repository gate refuses that edge.

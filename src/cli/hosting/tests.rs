@@ -155,6 +155,9 @@ struct Watched {
     /// way this protocol says a conversation is over.
     closed: AtomicBool,
     ended: AtomicUsize,
+    /// Whether the process behind this one has gone, so that writing to it
+    /// finds nothing on the other end.
+    departed: AtomicBool,
 }
 
 impl Watched {
@@ -176,6 +179,16 @@ impl Watched {
     fn stops(&self) -> usize {
         self.ended.load(Ordering::Relaxed)
     }
+
+    /// Makes this server's process gone, the way a program that fell over
+    /// between two calls is gone.
+    ///
+    /// The next frame crucible tries to write finds nothing reading, which is
+    /// the one failure that leaves the far end exactly as it was: the call it
+    /// belonged to was never seen by anybody.
+    fn departs(&self) {
+        self.departed.store(true, Ordering::Relaxed);
+    }
 }
 
 /// The writing end of a server's input, as a test can read it back.
@@ -190,6 +203,12 @@ impl Drop for Input {
 
 impl Write for Input {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if self.0.departed.load(Ordering::Relaxed) {
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "the server this was written to has gone",
+            ));
+        }
         self.0
             .said
             .lock()
@@ -1192,4 +1211,296 @@ fn a_call_interrupted_before_it_is_sent_reaches_no_server() {
         "an interrupted call must not start somebody else's program working"
     );
     hosting.dispose(&context).expect("the server stopped");
+}
+
+/// Runs one offered tool the way a turn does, under an interrupt of its own.
+fn calls(
+    tool: &dyn Tool,
+    named: &str,
+    args: &str,
+    cancel: &Cancel,
+) -> Result<ToolOutput, ToolError> {
+    tool.run(
+        allowed(tool, named, args),
+        &crucible_core::ToolContext::new(
+            Ancestry::new(),
+            ToolId::new("test"),
+            cancel,
+            None,
+            &Nothing,
+        ),
+    )
+}
+
+/// A selection whose calls are given a long patience, so that a test about an
+/// interrupt is not quietly a test about a timeout.
+fn patient(name: &str, request: Duration) -> Chosen {
+    Chosen::new(name, PROGRAM, [], policy())
+        .given(SandboxEnvironment::new([]).expect("an empty environment"))
+        .waiting(PATIENCE, request, GRACE)
+        .required(true)
+}
+
+#[test]
+fn a_call_interrupted_after_the_frame_went_ends_at_the_press_rather_than_at_the_patience() {
+    // The server takes the call and thinks about it far longer than anybody
+    // waits. Without the interrupt reaching into the wait, the only ending
+    // available is the request patience, so the number below is the difference
+    // between a press that works and one that is merely recorded.
+    let mut frames = opening("docs", &json!([offers("search")]));
+    frames.push(produced("two pages", false));
+    let sandbox = Pretend::new([Answers::Slowly(frames, 2, Duration::from_secs(5))]);
+    let hosting = Hosting::new(
+        builtin(&[]),
+        Arc::clone(&sandbox) as Arc<dyn SandboxService>,
+        vec![patient("docs", Duration::from_secs(5))],
+    );
+    let context = lifecycle();
+    hosting.prepare(&context).expect("the server started");
+    let snapshot = hosting.snapshot(&context).expect("one generation");
+    let entry = snapshot.find("mcp:docs/search").expect("the offered tool");
+
+    let cancel = Cancel::new();
+    let pressing = cancel.clone();
+    let presser = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(50));
+        pressing.request();
+    });
+    let began = Instant::now();
+    let refused = calls(entry.tool(), "mcp:docs/search", "{}", &cancel)
+        .expect_err("the wait was interrupted");
+    let waited = began.elapsed();
+    presser.join().expect("the press happened");
+
+    assert!(
+        matches!(&refused, ToolError::Cancelled(tool) if tool.as_ref() == "mcp:docs/search"),
+        "an interrupted call is cancelled rather than broken: {refused}"
+    );
+    assert!(
+        waited < Duration::from_secs(2),
+        "the press ends the wait, not the patience: waited {waited:?}"
+    );
+    // The call went, so the server may be doing it. Reading its answer as the
+    // reply to some later question is exactly what must not happen.
+    let after = calls(entry.tool(), "mcp:docs/search", "{}", &Cancel::new())
+        .expect_err("the server was finished with");
+    assert!(
+        matches!(&after, ToolError::StaleGeneration { tool } if tool.as_ref() == "mcp:docs/search"),
+        "an interrupted server is not asked a second question: {after}"
+    );
+    assert_eq!(
+        sandbox.started(),
+        1,
+        "and a call whose fate is unknown buys no restart"
+    );
+    hosting.dispose(&context).expect("nothing left to stop");
+}
+
+#[test]
+fn a_server_that_died_before_the_frame_went_is_started_again_and_the_call_answered() {
+    let mut first = opening("docs", &json!([offers("search")]));
+    first.push(produced("never said", false));
+    let mut second = opening("docs", &json!([offers("search")]));
+    second.push(produced("two pages", false));
+    let sandbox = Pretend::new([Answers::Says(first), Answers::Says(second)]);
+    let hosting = Hosting::new(
+        builtin(&[]),
+        Arc::clone(&sandbox) as Arc<dyn SandboxService>,
+        vec![chosen("docs").restarting(1)],
+    );
+    let context = lifecycle();
+    hosting.prepare(&context).expect("the server started");
+    let snapshot = hosting.snapshot(&context).expect("one generation");
+    let entry = snapshot.find("mcp:docs/search").expect("the offered tool");
+
+    // The process goes between reading the catalogue and taking the call, which
+    // is the ending a restart is for: the frame never left crucible, so nothing
+    // over there has half-happened and sending it once more sends it once.
+    sandbox.server(0).departs();
+    let output = calls(
+        entry.tool(),
+        "mcp:docs/search",
+        r#"{"query":"crates"}"#,
+        &Cancel::new(),
+    )
+    .expect("the server that replaced it answered");
+
+    assert!(output.text().contains("two pages"));
+    assert_eq!(sandbox.started(), 2, "it was started again, once");
+    let sent = sandbox.server(1).sent();
+    let call = sent.last().expect("crucible said something last");
+    assert_eq!(
+        call.pointer("/params/name").and_then(Value::as_str),
+        Some("search"),
+        "and the call the model made is the one that was retried"
+    );
+    assert_eq!(
+        call.pointer("/params/arguments/query")
+            .and_then(Value::as_str),
+        Some("crates"),
+        "with the arguments it was written with"
+    );
+    hosting.dispose(&context).expect("the replacement stopped");
+}
+
+#[test]
+fn a_server_selected_with_no_restarts_is_not_started_again_and_the_answer_says_why() {
+    let mut frames = opening("docs", &json!([offers("search")]));
+    frames.push(produced("never said", false));
+    let sandbox = Pretend::new([Answers::Says(frames)]);
+    let hosting = Hosting::new(
+        builtin(&[]),
+        Arc::clone(&sandbox) as Arc<dyn SandboxService>,
+        vec![chosen("docs")],
+    );
+    let context = lifecycle();
+    hosting.prepare(&context).expect("the server started");
+    let snapshot = hosting.snapshot(&context).expect("one generation");
+    let entry = snapshot.find("mcp:docs/search").expect("the offered tool");
+
+    sandbox.server(0).departs();
+    let refused = calls(entry.tool(), "mcp:docs/search", "{}", &Cancel::new())
+        .expect_err("nothing was allowed to replace it");
+
+    assert_eq!(
+        sandbox.started(),
+        1,
+        "a default of none starts nothing again"
+    );
+    let said = refused.to_string();
+    assert!(
+        said.contains("will not be asked again"),
+        "the model is told the tool is gone rather than left to retry it: {said}"
+    );
+    hosting.dispose(&context).expect("nothing left to stop");
+}
+
+#[test]
+fn a_restarted_server_offering_the_tool_under_another_schema_is_refused_and_retired() {
+    let mut first = opening("docs", &json!([offers("search")]));
+    first.push(produced("never said", false));
+    // The same name, a different promise. The arguments the model wrote were
+    // checked against the catalogue this run published, and this is not it.
+    let moved = json!([{
+        "name": "search",
+        "inputSchema": { "type": "object", "required": ["corpus"] },
+    }]);
+    let mut second = opening("docs", &moved);
+    second.push(produced("two pages", false));
+    let sandbox = Pretend::new([Answers::Says(first), Answers::Says(second)]);
+    let hosting = Hosting::new(
+        builtin(&[]),
+        Arc::clone(&sandbox) as Arc<dyn SandboxService>,
+        vec![chosen("docs").restarting(1)],
+    );
+    let context = lifecycle();
+    hosting.prepare(&context).expect("the server started");
+    let snapshot = hosting.snapshot(&context).expect("one generation");
+    let entry = snapshot.find("mcp:docs/search").expect("the offered tool");
+
+    sandbox.server(0).departs();
+    let refused = calls(entry.tool(), "mcp:docs/search", "{}", &Cancel::new())
+        .expect_err("what came back does not describe the tool that was published");
+
+    assert_eq!(sandbox.started(), 2, "it was started again to find out");
+    assert!(
+        !sandbox
+            .server(1)
+            .sent()
+            .iter()
+            .any(|frame| frame.get("method").and_then(Value::as_str) == Some("tools/call")),
+        "and was told nothing once it had said so"
+    );
+    assert_eq!(sandbox.server(1).stops(), 1, "the replacement is stopped");
+    assert!(
+        refused.to_string().contains("will not be asked again"),
+        "and the tool is finished with: {refused}"
+    );
+    hosting.dispose(&context).expect("nothing left to stop");
+}
+
+#[test]
+fn a_call_still_outstanding_when_the_server_went_quiet_is_never_repeated() {
+    // A budget with plenty left, spent on nothing: the frame went, so what the
+    // far end did with it cannot be seen from here, and a second copy of a call
+    // that may already have run is not a recovery.
+    let sandbox = Pretend::new([
+        Answers::Says(opening("docs", &json!([offers("search")]))),
+        Answers::Says(opening("docs", &json!([offers("search")]))),
+    ]);
+    let hosting = Hosting::new(
+        builtin(&[]),
+        Arc::clone(&sandbox) as Arc<dyn SandboxService>,
+        vec![chosen("docs").restarting(3)],
+    );
+    let context = lifecycle();
+    hosting.prepare(&context).expect("the server started");
+    let snapshot = hosting.snapshot(&context).expect("one generation");
+    let entry = snapshot.find("mcp:docs/search").expect("the offered tool");
+
+    let refused = calls(entry.tool(), "mcp:docs/search", "{}", &Cancel::new())
+        .expect_err("the server took the call and said nothing");
+
+    assert_eq!(
+        sandbox.started(),
+        1,
+        "a ceiling is not permission to repeat a call whose effect is unknown"
+    );
+    assert!(
+        refused.to_string().contains("will not be asked again"),
+        "and the server is finished with rather than asked again: {refused}"
+    );
+    let after = calls(entry.tool(), "mcp:docs/search", "{}", &Cancel::new())
+        .expect_err("there is nothing left to ask");
+    assert!(
+        matches!(&after, ToolError::StaleGeneration { tool } if tool.as_ref() == "mcp:docs/search"),
+        "the conversation ended with the call it lost: {after}"
+    );
+    hosting.dispose(&context).expect("nothing left to stop");
+}
+
+#[test]
+fn a_ceiling_of_one_restart_is_spent_once_and_the_next_ending_is_the_last() {
+    // Three deaths of the kind a restart is allowed for, against a document
+    // that permitted one. A budget that were merely a flag would answer the
+    // second the way it answered the first, and a server that cannot stay up
+    // would be started again for every call the run ever makes.
+    let scripts: Vec<Answers> = (0..3)
+        .map(|_| {
+            let mut frames = opening("docs", &json!([offers("search")]));
+            frames.push(produced("two pages", false));
+            Answers::Says(frames)
+        })
+        .collect();
+    let sandbox = Pretend::new(scripts);
+    let hosting = Hosting::new(
+        builtin(&[]),
+        Arc::clone(&sandbox) as Arc<dyn SandboxService>,
+        vec![chosen("docs").restarting(1)],
+    );
+    let context = lifecycle();
+    hosting.prepare(&context).expect("the server started");
+    let snapshot = hosting.snapshot(&context).expect("one generation");
+    let entry = snapshot.find("mcp:docs/search").expect("the offered tool");
+
+    sandbox.server(0).departs();
+    calls(entry.tool(), "mcp:docs/search", "{}", &Cancel::new())
+        .expect("the one restart the document allowed");
+    assert_eq!(sandbox.started(), 2);
+
+    sandbox.server(1).departs();
+    let refused = calls(entry.tool(), "mcp:docs/search", "{}", &Cancel::new())
+        .expect_err("the budget is spent");
+
+    assert_eq!(
+        sandbox.started(),
+        2,
+        "a ceiling of one permits one restart, not one per call"
+    );
+    let said = refused.to_string();
+    assert!(
+        said.contains("will not be asked again"),
+        "and the run is told the tool is finished with: {said}"
+    );
+    hosting.dispose(&context).expect("nothing left to stop");
 }

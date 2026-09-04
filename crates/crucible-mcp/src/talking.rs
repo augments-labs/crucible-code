@@ -7,6 +7,13 @@
 //! a way for a server to hold work open, in exchange for a concurrency crucible
 //! has no caller for.
 //!
+//! Whether a call reached the server is the one thing a failure here has to be
+//! precise about, because it is what decides whether asking again is safe.
+//! A frame that never left crucible left the far end untouched; anything that
+//! goes wrong after it has gone could be a tool that already ran. So the two
+//! are separate answers rather than one error a caller has to guess at — see
+//! [`Trouble::outstanding`].
+//!
 //! Everything the server says while crucible is waiting is dealt with here
 //! rather than handed up. A notification is dropped, because crucible
 //! subscribes to nothing; a question is refused, because crucible offers a
@@ -16,7 +23,7 @@
 //! forever, so the waiting is bounded by how much it will listen to and not by
 //! a clock alone.
 
-use std::io::{BufRead, Write};
+use std::io::{self, BufRead, Write};
 
 use crucible_core::{FrameError, Frames, Written};
 use serde_json::Value;
@@ -34,6 +41,20 @@ pub const ASIDES: usize = 64;
 /// Why a call did not come back.
 #[derive(Debug, thiserror::Error)]
 pub enum Trouble {
+    /// The frame was never handed to the pipe, so the server never saw it.
+    ///
+    /// Its own variant because it is the only failure here that leaves the far
+    /// end exactly as it was. Every other one happened after crucible let go of
+    /// the request, and from this side a tool that never started, one that ran,
+    /// and one that ran and lost its answer look the same.
+    #[error("crucible could not send {method} to the server: {source}")]
+    Unsent {
+        /// What it was going to say.
+        method: Box<str>,
+        /// Why the frame did not go.
+        source: FrameError,
+    },
+
     /// The pipe broke, or a frame ran past its ceiling.
     #[error(transparent)]
     Frame(#[from] FrameError),
@@ -87,6 +108,47 @@ pub enum Trouble {
     },
 }
 
+impl Trouble {
+    /// Whether the server may have acted on the call.
+    ///
+    /// True for everything except a frame that never left, which is the honest
+    /// shape of it: crucible can prove it did not ask, and can prove nothing
+    /// about what happened once it did. A caller deciding whether to ask again
+    /// reads this, and a `false` is the only answer that makes repeating the
+    /// request a repeat rather than a second one.
+    #[must_use]
+    pub const fn outstanding(&self) -> bool {
+        !matches!(self, Self::Unsent { .. })
+    }
+
+    /// Whether the conversation can carry another call.
+    ///
+    /// Only a server that answered leaves one that can: a refusal is the far
+    /// end settling the call and going back to waiting for the next. Every
+    /// other ending here left the two sides disagreeing about what has been
+    /// asked, or left nothing on the other side at all, and a second call over
+    /// the same pipes would be read against the wrong question.
+    #[must_use]
+    pub const fn settled(&self) -> bool {
+        matches!(self, Self::Refused { .. })
+    }
+
+    /// Whether the waiting ended because crucible was asked to stop.
+    ///
+    /// Not a slow server and not a broken pipe: the far end was doing what it
+    /// was told and is simply no longer wanted. It reads the kind rather than
+    /// the words because the words come from the operating system and the kind
+    /// is the part crucible set.
+    #[must_use]
+    pub fn interrupted(&self) -> bool {
+        matches!(
+            self,
+            Self::Frame(FrameError::Unreadable { source })
+                if source.kind() == io::ErrorKind::ConnectionAborted
+        )
+    }
+}
+
 /// A server, spoken to over a reader and a writer.
 ///
 /// It takes pipes rather than starting a process. What to run, under what
@@ -123,15 +185,19 @@ impl<R: BufRead, W: Write> Talking<R, W> {
     ///
     /// # Errors
     ///
-    /// [`Trouble`] where the pipe fails, the server sends a frame crucible
-    /// cannot act on, it answers with a failure, it answers a call crucible was
-    /// not waiting on, it says more than [`ASIDES`] frames without answering,
-    /// or it stops first.
+    /// [`Trouble`] where the frame will not go, the pipe fails, the server
+    /// sends a frame crucible cannot act on, it answers with a failure, it
+    /// answers a call crucible was not waiting on, it says more than [`ASIDES`]
+    /// frames without answering, or it stops first.
     pub fn ask(&mut self, method: &str, params: &Value) -> Result<Value, Trouble> {
         let call = Call::new(self.next);
         self.next = self.next.saturating_add(1);
         self.said
-            .send(&Sent::asking(call, method, params).frame())?;
+            .send(&Sent::asking(call, method, params).frame())
+            .map_err(|source| Trouble::Unsent {
+                method: method.into(),
+                source,
+            })?;
         self.wait(call)
     }
 
@@ -139,9 +205,16 @@ impl<R: BufRead, W: Write> Talking<R, W> {
     ///
     /// # Errors
     ///
-    /// [`Trouble::Frame`] where the frame could not be sent.
+    /// [`Trouble::Unsent`] where the frame could not be sent. There is nothing
+    /// else it can be: a message that expects no answer has nothing to go
+    /// wrong after it has gone.
     pub fn tell(&mut self, method: &str, params: &Value) -> Result<(), Trouble> {
-        self.said.send(&Sent::telling(method, params).frame())?;
+        self.said
+            .send(&Sent::telling(method, params).frame())
+            .map_err(|source| Trouble::Unsent {
+                method: method.into(),
+                source,
+            })?;
         Ok(())
     }
 

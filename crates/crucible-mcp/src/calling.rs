@@ -61,6 +61,40 @@ pub enum Unanswered {
     },
 }
 
+impl Unanswered {
+    /// Whether the server may have acted on the call.
+    ///
+    /// A result crucible could not read is still a tool that ran, so a shape
+    /// this crate refused counts the same as a conversation that broke after
+    /// the frame went. Only [`Trouble::outstanding`] can answer `false`.
+    #[must_use]
+    pub const fn outstanding(&self) -> bool {
+        match self {
+            Self::Talking(trouble) => trouble.outstanding(),
+            Self::Missing { .. } => true,
+        }
+    }
+
+    /// Whether the conversation can carry another call.
+    ///
+    /// A result crucible could not read still came back over pipes that are
+    /// working: the server answered, and what it answered with is this crate's
+    /// complaint rather than the conversation's.
+    #[must_use]
+    pub const fn settled(&self) -> bool {
+        match self {
+            Self::Talking(trouble) => trouble.settled(),
+            Self::Missing { .. } => true,
+        }
+    }
+
+    /// Whether the waiting ended because crucible was asked to stop.
+    #[must_use]
+    pub fn interrupted(&self) -> bool {
+        matches!(self, Self::Talking(trouble) if trouble.interrupted())
+    }
+}
+
 /// What one tool call produced.
 ///
 /// Inert text and two facts about it. Nothing here decides what a model is

@@ -78,13 +78,16 @@ fn one(
     let policy = confinement(record, workspace, mode).map_err(refused)?;
 
     Ok(Chosen::new(record.name(), program, arguments, policy)
-            .given(environment)
-            .waiting(record.handshake(), record.request(), record.shutdown())
-            // Named on the command line and written down as required are two
-            // different statements, and this is the second one. A run says
-            // which servers it wants; the record says which of them it cannot
-            // do without.
-            .required(record.required()))
+        .given(environment)
+        .waiting(record.handshake(), record.request(), record.shutdown())
+        // Named on the command line and written down as required are two
+        // different statements, and this is the second one. A run says which
+        // servers it wants; the record says which of them it cannot do without.
+        .required(record.required())
+        // A ceiling on the endings crucible can prove were harmless, not a
+        // retry count: an ending with a request outstanding is refused whatever
+        // this says, so a document cannot buy its way past that with a number.
+        .restarting(record.restarts()))
 }
 
 /// Where the written-down command is, as an absolute path.
