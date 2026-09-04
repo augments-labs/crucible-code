@@ -1199,6 +1199,26 @@ mod tests {
     }
 
     #[test]
+    fn a_confined_command_carries_the_standard_ceilings_to_the_broker() {
+        let sample = Sample::new("sandbox-standard-ceilings");
+        let policy = SandboxPolicy::standard(&sample.workspace()).expect("policy");
+        let mut process = Command::new("/nonexistent");
+        append_resource_limits(&mut process, policy.limits());
+        let argv: Vec<_> = process
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect();
+
+        // The policy stating a ceiling and the broker being told about it are
+        // two different things, and only the second one bounds anything.
+        assert_eq!(
+            argv,
+            ["--limit-cpu-seconds", "3600", "--limit-open-files", "4096"],
+            "the standard policy's ceilings reach the broker's argv"
+        );
+    }
+
+    #[test]
     fn preparation_refuses_workspace_hard_links_to_outside_inodes() {
         let sample = Sample::new("sandbox-workspace-hard-link");
         let outside = PathBuf::from(sample.outside("secret.txt", "secret"));
