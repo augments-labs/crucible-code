@@ -101,5 +101,6 @@ pub use lookup::{Held, ToolSearch};
 pub use plan::{Plan, State, Task, TodoWrite};
 pub use read::Read;
 pub use sandbox::LocalSandbox;
+pub use sandbox::conformance;
 pub use web::{WebFetch, WebSearch};
 pub use write::Write;

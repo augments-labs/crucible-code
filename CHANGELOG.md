@@ -10,6 +10,16 @@ change in any release with no deprecation period.
 
 ### Added
 
+- **A sandbox backend's capability claims are now checked against what it
+  does.** `crucible_tools::conformance` is published for adapters outside this
+  repository: it offers each backend the smallest policy that requires one
+  feature and reads the claim and the answer together, so a backend that takes
+  a policy it says it cannot hold, or refuses one it says it can, is a fault
+  rather than a passing table. Answers are grouped into the families a backend
+  is chosen by — isolation, materialization, network, resources, terminal,
+  persistence, accounting and cost — and a feature no policy can name is
+  reported as untested rather than kept.
+
 - **`crucible --sandbox` prints the confinement a command here would run
   under.** Which backend enforces it and at what version, every feature that
   backend can and cannot hold, the reach and ceilings a command would get with

@@ -5,12 +5,15 @@
 //! system Bubblewrap executable. Every other platform, and an explicit user
 //! compatibility mode, uses the same lifecycle wrapper while reporting that it
 //! is not kernel confinement.
+//!
+//! [`conformance`] is published alongside them: it is what a backend outside
+//! this tree has to answer before it may be selected here, and it asks the two
+//! backends below exactly the same questions.
 
 mod local;
 pub(crate) mod process;
 
-#[cfg(test)]
-mod conformance;
+pub mod conformance;
 
 #[cfg(target_os = "linux")]
 mod linux;

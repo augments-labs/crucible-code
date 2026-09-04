@@ -122,6 +122,66 @@ read bounded output, observe usage/violations, stop and dispose. PTY, direct
 file operations, persistence, snapshots and resume are absent rather than
 stubs that run outside policy.
 
+## Conformance
+
+The table above is a statement, and nothing in a type system can check it. A
+row that claims more than the backend keeps would put a command behind a fence
+that is not there; a row that claims less would refuse work for no reason. So
+the claims are asked about rather than trusted, by a suite Crucible publishes
+rather than keeps to itself:
+
+```rust
+use crucible_tools::conformance::{Conformance, SandboxClaim};
+
+let audited = Conformance::audit(&backend, workspace_root)?;
+assert!(audited.faults().next().is_none());
+assert!(audited.holds(SandboxClaim::Isolation));
+println!("{}", audited.report());
+```
+
+For every feature a policy can name, the suite writes the smallest policy that
+requires exactly that feature and offers it to the backend, in the mode that
+reaches the backend that was probed. It then reads the claim and the answer as
+one statement. A claimed feature must be accepted; a disclaimed one must be
+refused *by that name*, before any session exists. Two answers are faults and
+nothing else is: **overclaimed**, where a backend that says it cannot do
+something takes the policy anyway, and **withheld**, where a backend refuses
+what it says it can do. A backend that fails for its own reasons — no
+executable, a kernel that will not give it namespaces — leaves the claim
+**unreached**, because a host without a sandbox must not read as a backend that
+lies.
+
+Where there is no backend to probe at all, `audit` returns the probe's error
+instead of a table. macOS and Windows have no enforcing backend, and a Linux
+host may have no usable Bubblewrap, so a suite that reported those as faults
+would be accusing an absent backend of overclaiming. Whether that error is a
+skip or a failure belongs to the caller: Crucible's own jobs treat it as a skip
+on a developer machine and a failure on the one job that installs a backend and
+therefore requires it.
+
+Some features cannot be asked for in a policy at all. A terminal, direct file
+operations and resuming somebody else's session are asked of a session, and a
+bare policy offered in their name would be accepted by everyone. Those are
+reported **stated** or **absent** — read, not tested. Saying a claim was
+exercised when nothing could exercise it is the same failure the suite exists
+to catch.
+
+The answers are grouped into the families a backend is chosen by: isolation,
+materialization, network, resources, terminal, persistence, accounting and
+cost. A backend that fences a filesystem perfectly and cannot bound one byte of
+egress is not partly conformant — it holds one family and not another, and a
+policy is matched against the family it needs. `holds` says a family is exact,
+not that it is supported: a backend that disclaims every network feature and
+refuses every network policy holds that family, and the claims are what tell a
+caller it can do nothing there.
+
+This is published because the backends that must pass it are not all in this
+repository. A container, a Kubernetes executor, a hosted session or another
+operating system's adapter can depend on `crucible-tools`, run the suite over a
+directory it owns and get the same verdicts from the same table, before it is
+wired to anything. Nothing is materialized and no command is started: each
+session is prepared to see whether it can be, and dropped.
+
 ## Compatibility modes
 
 Only home/user configuration may choose `degraded` or `off`; project and
