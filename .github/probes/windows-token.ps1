@@ -1,8 +1,13 @@
-# Probe identity: windows-token-v2; successor to windows-token-v1.
-# V1 native run 33922373835: CreateProcessAsUserW failed with 203; matrix untested.
-# H1: empty environment prevents setup. V2 supplies only SystemRoot and WINDIR,
-# derived from GetSystemDirectoryW; unchanged token policy and matrix judge.
-# Prediction: creation advances past 203. Failure is setup evidence only.
+# Probe identity: windows-token-v3 diagnostic controls; v1 and v2 retained.
+# V1 run 33922373835 and V2 run 33922808106 both failed at launch with 203.
+# The two-key environment did not advance setup; no matrix evidence exists yet.
+# Compare restricted-only, LPAC-only, combined, and combined without JOB_LIST.
+# Each case owns fresh profile/fixtures/job; no case ever resumes a guest.
+# Controls are diagnostic only and cannot establish a valid sandbox.
+# H2: the LPAC/restricted-token combination alone causes failure.
+# H3: JOB_LIST interaction causes failure (post-assignment isolates this).
+# H4: malformed ABI or stale last-error; assert layouts and capture BOOL/error.
+# All cases use the same deterministic SystemRoot/WINDIR environment policy.
 # Disposable experiment, not a production launcher. Owns only its unique temp
 # directory and current-user AppContainer profile. Run in a disposable Windows
 # runner with a job-level timeout (suggested: 3 minutes). No network operations.
@@ -30,14 +35,14 @@ using System.Security.Principal;
 using System.Security.Cryptography;
 using System.Threading;
 
-public static class CrucibleWindowsTokenProbeV2 {
+public static class CrucibleWindowsTokenProbeV3 {
     const uint TOKEN_QUERY = 8, TOKEN_DUPLICATE = 2, TOKEN_IMPERSONATE = 4, TOKEN_ASSIGN_PRIMARY = 1;
     const uint FILE_READ_DATA = 1, FILE_ALL_ACCESS = 0x001F01FF;
     const uint DACL = 4, PROTECTED_DACL = 0x80000000;
     const uint CREATE_SUSPENDED = 4, EXTENDED_STARTUPINFO_PRESENT = 0x80000;
     const uint CREATE_UNICODE_ENVIRONMENT = 0x400;
     static readonly IntPtr Invalid = new IntPtr(-1);
-    static string stage = "start";
+    static string stage = "start", currentCase = "start";
 
     [StructLayout(LayoutKind.Sequential)] struct SidAttr { public IntPtr Sid; public uint Attributes; }
     [StructLayout(LayoutKind.Sequential)] struct GroupsOne { public uint Count; public SidAttr First; }
@@ -88,13 +93,14 @@ public static class CrucibleWindowsTokenProbeV2 {
     [DllImport("advapi32.dll", SetLastError=true)] static extern bool AccessCheck(IntPtr sd,IntPtr token,uint access,ref Mapping mapping,IntPtr privileges,ref uint length,out uint granted,out bool allowed);
     [DllImport("userenv.dll", CharSet=CharSet.Unicode)] static extern int CreateAppContainerProfile(string name,string display,string description,IntPtr caps,uint count,out IntPtr sid);
     [DllImport("userenv.dll", CharSet=CharSet.Unicode)] static extern int DeleteAppContainerProfile(string name);
-    [DllImport("advapi32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern bool CreateProcessAsUserW(IntPtr token,string app,System.Text.StringBuilder line,IntPtr processSa,IntPtr threadSa,bool inherit,uint flags,IntPtr env,string cwd,ref StartupInfoEx si,out ProcessInfo pi);
+    [DllImport("advapi32.dll", CharSet=CharSet.Unicode, SetLastError=true, ExactSpelling=true)] static extern int CreateProcessAsUserW(IntPtr token,string app,System.Text.StringBuilder line,IntPtr processSa,IntPtr threadSa,bool inherit,uint flags,IntPtr env,string cwd,ref StartupInfoEx si,out ProcessInfo pi);
     [DllImport("kernel32.dll", SetLastError=true)] static extern bool InitializeProcThreadAttributeList(IntPtr list,int count,uint flags,ref UIntPtr size);
     [DllImport("kernel32.dll", SetLastError=true)] static extern bool UpdateProcThreadAttribute(IntPtr list,uint flags,UIntPtr attr,IntPtr value,UIntPtr size,IntPtr previous,IntPtr returned);
     [DllImport("kernel32.dll")] static extern void DeleteProcThreadAttributeList(IntPtr list);
     [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern IntPtr CreateJobObjectW(IntPtr sa,string name);
     [DllImport("kernel32.dll", SetLastError=true)] static extern bool SetInformationJobObject(IntPtr h,int cls,ref ExtendedLimits limits,uint size);
     [DllImport("kernel32.dll", SetLastError=true)] static extern bool QueryInformationJobObject(IntPtr h,int cls,IntPtr data,uint length,out uint returned);
+    [DllImport("kernel32.dll", SetLastError=true)] static extern bool AssignProcessToJobObject(IntPtr job,IntPtr process);
     [DllImport("kernel32.dll", SetLastError=true)] static extern bool IsProcessInJob(IntPtr p,IntPtr job,out bool result);
     [DllImport("kernel32.dll", SetLastError=true)] static extern bool TerminateJobObject(IntPtr job,uint code);
     [DllImport("kernel32.dll", SetLastError=true)] static extern bool TerminateProcess(IntPtr p,uint code);
@@ -107,8 +113,25 @@ public static class CrucibleWindowsTokenProbeV2 {
     static void Need(bool ok) { if(!ok) throw new ProbeFailure(unchecked((uint)Marshal.GetLastWin32Error())); }
     static void Status(uint code) { if(code!=0) throw new ProbeFailure(code); }
     static string B(bool b) { return b ? "true" : "false"; }
+    static void Record(string json) {
+        Console.WriteLine("{\"case\":\""+currentCase+"\","+json.Substring(1));
+    }
+    static void VerifyLayouts() {
+        bool x64=IntPtr.Size==8;
+        bool valid=Marshal.SizeOf(typeof(StartupInfo))==(x64?104:68)
+            && Marshal.SizeOf(typeof(StartupInfoEx))==(x64?112:72)
+            && (int)Marshal.OffsetOf(typeof(StartupInfoEx),"Attributes")== (x64?104:68)
+            && Marshal.SizeOf(typeof(SecurityCapabilities))==(x64?24:16)
+            && Marshal.SizeOf(typeof(SidAttr))==(x64?16:8)
+            && (int)Marshal.OffsetOf(typeof(GroupsOne),"First")== (x64?8:4)
+            && Marshal.SizeOf(typeof(BasicLimits))==(x64?64:48)
+            && Marshal.SizeOf(typeof(ExtendedLimits))==(x64?144:112)
+            && Marshal.SizeOf(typeof(ProcessInfo))==(x64?24:16);
+        Record("{\"event\":\"abi_layout\",\"matches_windows_sdk\":"+B(valid)+",\"host_64_bit\":"+B(x64)+"}");
+        if(!valid) throw new ProbeFailure(13);
+    }
     static void Event(string label,uint code) {
-        Console.WriteLine("{\"event\":\""+label+"\",\"stage\":\""+stage+"\",\"status\":"+code+"}");
+        Record("{\"event\":\""+label+"\",\"stage\":\""+stage+"\",\"status\":"+code+"}");
     }
     static void Close(ref IntPtr h) { if(h!=IntPtr.Zero) { CloseHandle(h); h=IntPtr.Zero; } }
     static IntPtr Info(IntPtr token,int cls) {
@@ -168,7 +191,7 @@ public static class CrucibleWindowsTokenProbeV2 {
             if(!RevertToSelf()) { Environment.FailFast("probe impersonation reversion failed"); }
         }
         bool pass=opened==expected && accessAllowed==expected && (opened || error==5);
-        Console.WriteLine("{\"event\":\"read_matrix\",\"fixture\":\""+label+"\",\"expected_read\":"+B(expected)+",\"access_check\":"+B(accessAllowed)+",\"opened\":"+B(opened)+",\"win32\":"+error+",\"pass\":"+B(pass)+"}");
+        Record("{\"event\":\"read_matrix\",\"fixture\":\""+label+"\",\"expected_read\":"+B(expected)+",\"access_check\":"+B(accessAllowed)+",\"opened\":"+B(opened)+",\"win32\":"+error+",\"pass\":"+B(pass)+"}");
         return pass;
     }
     static bool EmptyJob(IntPtr job) {
@@ -179,16 +202,19 @@ public static class CrucibleWindowsTokenProbeV2 {
             return Marshal.ReadInt32(data)==0 && Marshal.ReadInt32(data,4)==0;
         } finally { Marshal.FreeHGlobal(data); }
     }
-    public static int Run() {
+    static int RunCase(string name,bool useRestricted,bool useLpac,bool atomicJob) {
+        currentCase=name; stage="case_start";
         string suffix=Guid.NewGuid().ToString("N");
-        string profile="crucible.token.probe.v2."+suffix;
-        string root=Path.Combine(Path.GetTempPath(),"crucible-token-probe-v2-"+suffix);
+        string profile="crucible.token.probe.v3."+suffix;
+        string root=Path.Combine(Path.GetTempPath(),"crucible-token-probe-v3-"+suffix);
         IntPtr package=IntPtr.Zero,restrictSid=IntPtr.Zero,baseToken=IntPtr.Zero,restricted=IntPtr.Zero;
         IntPtr actual=IntPtr.Zero,impersonation=IntPtr.Zero,job=IntPtr.Zero,list=IntPtr.Zero;
         IntPtr restrictEntry=IntPtr.Zero,capsMemory=IntPtr.Zero,lpacMemory=IntPtr.Zero,jobMemory=IntPtr.Zero,environment=IntPtr.Zero;
         ProcessInfo pi=new ProcessInfo(); bool profileOwned=false,rootOwned=false,listReady=false,spawned=false;
         bool cleanup=true; int result=1;
         try {
+            stage="layout_check"; VerifyLayouts();
+            Record("{\"event\":\"case_identity\",\"restricted_requested\":"+B(useRestricted)+",\"lpac_requested\":"+B(useLpac)+",\"atomic_job_requested\":"+B(atomicJob)+",\"control_only\":"+B(!useRestricted || !useLpac)+"}");
             stage="host_token";
             Need(OpenProcessToken(GetCurrentProcess(),TOKEN_QUERY|TOKEN_DUPLICATE|TOKEN_ASSIGN_PRIMARY,out baseToken));
             if(IsTokenRestricted(baseToken)) throw new ProbeFailure(50);
@@ -211,7 +237,7 @@ public static class CrucibleWindowsTokenProbeV2 {
                 else Acl(path,user,grants[i]);
                 IntPtr control=CreateFileW(path,FILE_READ_DATA,7,IntPtr.Zero,3,0x80,IntPtr.Zero);
                 Need(control!=Invalid); CloseHandle(control);
-                Console.WriteLine("{\"event\":\"host_control\",\"fixture\":\""+labels[i]+"\",\"opened\":true}");
+                Record("{\"event\":\"host_control\",\"fixture\":\""+labels[i]+"\",\"opened\":true}");
             }
             stage="restrict_token";
             restrictEntry=Marshal.AllocHGlobal(Marshal.SizeOf(typeof(SidAttr)));
@@ -224,17 +250,22 @@ public static class CrucibleWindowsTokenProbeV2 {
             ExtendedLimits limits=new ExtendedLimits(); limits.Basic.Flags=0x2000|8; limits.Basic.ActiveProcesses=1;
             Need(SetInformationJobObject(job,9,ref limits,(uint)Marshal.SizeOf(typeof(ExtendedLimits))));
             stage="attributes";
-            UIntPtr bytes=UIntPtr.Zero; InitializeProcThreadAttributeList(IntPtr.Zero,3,0,ref bytes);
+            int attributeCount=(useLpac?2:0)+(atomicJob?1:0);
+            UIntPtr bytes=UIntPtr.Zero; InitializeProcThreadAttributeList(IntPtr.Zero,attributeCount,0,ref bytes);
             if(bytes.ToUInt64()==0 || bytes.ToUInt64()>65536) throw new ProbeFailure(13);
             list=Marshal.AllocHGlobal((int)bytes.ToUInt64());
-            Need(InitializeProcThreadAttributeList(list,3,0,ref bytes)); listReady=true;
-            capsMemory=Marshal.AllocHGlobal(Marshal.SizeOf(typeof(SecurityCapabilities)));
-            Marshal.StructureToPtr(new SecurityCapabilities { AppContainerSid=package },capsMemory,false);
-            Attribute(list,0x20009,capsMemory,Marshal.SizeOf(typeof(SecurityCapabilities)));
-            lpacMemory=Marshal.AllocHGlobal(4); Marshal.WriteInt32(lpacMemory,1);
-            Attribute(list,0x2000F,lpacMemory,4);
-            jobMemory=Marshal.AllocHGlobal(IntPtr.Size); Marshal.WriteIntPtr(jobMemory,job);
-            Attribute(list,0x2000D,jobMemory,IntPtr.Size);
+            Need(InitializeProcThreadAttributeList(list,attributeCount,0,ref bytes)); listReady=true;
+            if(useLpac) {
+                capsMemory=Marshal.AllocHGlobal(Marshal.SizeOf(typeof(SecurityCapabilities)));
+                Marshal.StructureToPtr(new SecurityCapabilities { AppContainerSid=package },capsMemory,false);
+                Attribute(list,0x20009,capsMemory,Marshal.SizeOf(typeof(SecurityCapabilities)));
+                lpacMemory=Marshal.AllocHGlobal(4); Marshal.WriteInt32(lpacMemory,1);
+                Attribute(list,0x2000F,lpacMemory,4);
+            }
+            if(atomicJob) {
+                jobMemory=Marshal.AllocHGlobal(IntPtr.Size); Marshal.WriteIntPtr(jobMemory,job);
+                Attribute(list,0x2000D,jobMemory,IntPtr.Size);
+            }
             StartupInfoEx si=new StartupInfoEx(); si.Startup.cb=(uint)Marshal.SizeOf(typeof(StartupInfoEx)); si.Attributes=list;
             // No inherited handles at all: the suspended guest requires no streams.
             stage="deterministic_environment";
@@ -248,28 +279,39 @@ public static class CrucibleWindowsTokenProbeV2 {
             // Two sorted entries only; the allocator adds the final block terminator.
             // Never read or inherit the caller's environment values.
             environment=Marshal.StringToHGlobalUni("SystemRoot="+windowsDirectory+"\0WINDIR="+windowsDirectory+"\0");
-            Console.WriteLine("{\"event\":\"probe_identity\",\"version\":2,\"deterministic_directory_environment\":true}");
-            stage="create_suspended_lpac";
+            Record("{\"event\":\"probe_identity\",\"version\":3,\"deterministic_directory_environment\":true}");
+            stage="create_suspended";
             string executable=Path.Combine(systemDirectory,"cmd.exe");
             System.Text.StringBuilder line=new System.Text.StringBuilder("\""+executable+"\" /d /c exit 0");
-            Need(CreateProcessAsUserW(restricted,executable,line,IntPtr.Zero,IntPtr.Zero,false,
-                CREATE_SUSPENDED|EXTENDED_STARTUPINFO_PRESENT|CREATE_UNICODE_ENVIRONMENT,environment,root,ref si,out pi));
-            spawned=true;
+            // Capture the raw BOOL and the P/Invoke cached error with no intervening API.
+            int launch=CreateProcessAsUserW(useRestricted?restricted:baseToken,executable,line,IntPtr.Zero,IntPtr.Zero,false,
+                CREATE_SUSPENDED|EXTENDED_STARTUPINFO_PRESENT|CREATE_UNICODE_ENVIRONMENT,environment,root,ref si,out pi);
+            uint launchError=unchecked((uint)Marshal.GetLastWin32Error());
+            spawned=launch!=0;
+            Record("{\"event\":\"launch_result\",\"returned_success\":"+B(spawned)+",\"status\":"+(spawned?0:launchError)+",\"returned_process_handle\":"+B(pi.Process!=IntPtr.Zero)+",\"returned_thread_handle\":"+B(pi.Thread!=IntPtr.Zero)+"}");
+            if(!spawned) throw new ProbeFailure(launchError);
+            if(!atomicJob) {
+                stage="assign_suspended_to_job";
+                Need(AssignProcessToJobObject(job,pi.Process));
+            }
             stage="actual_child_token";
             bool inJob; Need(IsProcessInJob(pi.Process,job,out inJob));
             Need(OpenProcessToken(pi.Process,TOKEN_QUERY|TOKEN_DUPLICATE,out actual));
             bool ac=BoolInfo(actual,29),lpac=BoolInfo(actual,46),onlyS=OnlySid(actual,restrictSid);
             IntPtr capInfo=Info(actual,30),packageInfo=Info(actual,31);
             bool zeroCaps,packageMatches;
-            try { zeroCaps=Marshal.ReadInt32(capInfo)==0; packageMatches=EqualSid(Marshal.ReadIntPtr(packageInfo),package); }
+            try { zeroCaps=Marshal.ReadInt32(capInfo)==0; packageMatches=Marshal.ReadIntPtr(packageInfo)!=IntPtr.Zero && EqualSid(Marshal.ReadIntPtr(packageInfo),package); }
             finally { Marshal.FreeHGlobal(capInfo); Marshal.FreeHGlobal(packageInfo); }
             bool isRestricted=IsTokenRestricted(actual);
-            Console.WriteLine("{\"event\":\"actual_token\",\"appcontainer\":"+B(ac)+",\"lpac\":"+B(lpac)+",\"restricted\":"+B(isRestricted)+",\"only_session_restricting_sid\":"+B(onlyS)+",\"package_matches\":"+B(packageMatches)+",\"zero_capabilities\":"+B(zeroCaps)+",\"in_job\":"+B(inJob)+",\"guest_never_resumed\":true}");
-            if(!(ac && lpac && onlyS && zeroCaps && packageMatches && isRestricted && inJob)) throw new ProbeFailure(13);
+            Record("{\"event\":\"actual_token\",\"appcontainer\":"+B(ac)+",\"lpac\":"+B(lpac)+",\"restricted\":"+B(isRestricted)+",\"only_session_restricting_sid\":"+B(onlyS)+",\"package_matches\":"+B(packageMatches)+",\"zero_capabilities\":"+B(zeroCaps)+",\"in_job\":"+B(inJob)+",\"guest_never_resumed\":true}");
+            bool requestedToken=ac==useLpac && lpac==useLpac && zeroCaps && inJob
+                && (!useLpac || packageMatches) && (useRestricted ? onlyS && isRestricted : !onlyS);
+            if(!requestedToken) throw new ProbeFailure(13);
+            if(useRestricted && useLpac) {
             Need(DuplicateTokenEx(actual,TOKEN_QUERY|TOKEN_IMPERSONATE,IntPtr.Zero,2,2,out impersonation));
             bool duplicateMatches=BoolInfo(impersonation,29) && BoolInfo(impersonation,46)
                 && OnlySid(impersonation,restrictSid) && IsTokenRestricted(impersonation);
-            Console.WriteLine("{\"event\":\"impersonation_token\",\"preserves_lpac_and_session_restriction\":"+B(duplicateMatches)+"}");
+            Record("{\"event\":\"impersonation_token\",\"preserves_lpac_and_session_restriction\":"+B(duplicateMatches)+"}");
             if(!duplicateMatches) throw new ProbeFailure(13);
             stage="read_matrix";
             bool pass=true;
@@ -277,11 +319,15 @@ public static class CrucibleWindowsTokenProbeV2 {
             int[] order={5,0,1,2,3,4};
             foreach(int i in order) pass=ReadRow(labels[i],Path.Combine(root,labels[i]),impersonation,expected[i]) && pass;
             result=pass ? 0 : 2;
+            } else {
+                Record("{\"event\":\"diagnostic_control_complete\",\"sandbox_validated\":false}");
+                result=0;
+            }
         } catch(ProbeFailure f) { Event("probe_api_failure",f.Code); result=1; }
           catch(Exception) { Event("probe_managed_failure",0); result=1; }
         finally {
             stage="cleanup";
-            if(spawned) {
+            if(pi.Process!=IntPtr.Zero) {
                 bool stopped=TerminateJobObject(job,1); if(!stopped) Event("terminate_job_failed",unchecked((uint)Marshal.GetLastWin32Error()));
                 // Independently stop the leader even if job-membership validation failed.
                 TerminateProcess(pi.Process,1);
@@ -293,7 +339,7 @@ public static class CrucibleWindowsTokenProbeV2 {
                 try { while(deadline.ElapsedMilliseconds<5000) { if(EmptyJob(job)) { empty=true; break; } Thread.Sleep(25); } }
                 catch(ProbeFailure f) { Event("job_query_failed",f.Code); }
                 cleanup=cleanup && empty;
-                Console.WriteLine("{\"event\":\"job_extinction\",\"empty\":"+B(empty)+"}");
+                Record("{\"event\":\"job_extinction\",\"empty\":"+B(empty)+"}");
             }
             Close(ref job); Close(ref restricted); Close(ref baseToken);
             if(listReady) DeleteProcThreadAttributeList(list);
@@ -302,14 +348,29 @@ public static class CrucibleWindowsTokenProbeV2 {
             if(package!=IntPtr.Zero) FreeSid(package);
             if(cleanup && rootOwned) { try { Directory.Delete(root,true); } catch(Exception) { cleanup=false; Event("fixture_cleanup_failed",0); } }
             if(cleanup && profileOwned) { int deleted=DeleteAppContainerProfile(profile); if(deleted!=0) { cleanup=false; Event("profile_cleanup_failed",unchecked((uint)deleted)); } }
-            Console.WriteLine("{\"event\":\"cleanup\",\"complete\":"+B(cleanup)+"}");
+            Record("{\"event\":\"cleanup\",\"complete\":"+B(cleanup)+"}");
         }
         if(!cleanup) result=3;
-        Console.WriteLine("{\"event\":\"probe_result\",\"exit_code\":"+result+",\"guest_execution_tested\":false}");
+        Record("{\"event\":\"probe_result\",\"exit_code\":"+result+",\"guest_execution_tested\":false}");
         return result;
+    }
+    public static int Run() {
+        string[] names={"restricted_only_job","lpac_only_job","combined_job","combined_postassign"};
+        bool[] restrictions={true,false,true,true};
+        bool[] lpacs={false,true,true,true};
+        int overall=0;
+        for(int i=0;i<names.Length;i++) {
+            int result=RunCase(names[i],restrictions[i],lpacs[i],i!=3);
+            if(result>overall) overall=result;
+            // A failed extinction/cleanup receipt ends the whole experiment.
+            if(result==3) break;
+        }
+        currentCase="summary";
+        Record("{\"event\":\"diagnostic_result\",\"exit_code\":"+overall+",\"guest_execution_tested\":false}");
+        return overall;
     }
 }
 '@
 try { Add-Type -TypeDefinition $source -Language CSharp -ErrorAction Stop }
 catch { Write-Output '{"event":"probe_compile_failure","status":0}'; exit 90 }
-exit ([CrucibleWindowsTokenProbeV2]::Run())
+exit ([CrucibleWindowsTokenProbeV3]::Run())
