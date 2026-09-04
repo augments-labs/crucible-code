@@ -228,3 +228,81 @@ fn process_list_at_each_exit_boundary() {
         listed(&job.scope)
     );
 }
+
+#[test]
+#[ignore = "native job completion notification investigation"]
+fn completion_notification_at_the_exit_boundary() {
+    use windows_sys::Win32::System::IO::{CreateIoCompletionPort, GetQueuedCompletionStatus};
+    use windows_sys::Win32::System::JobObjects::{
+        JOBOBJECT_ASSOCIATE_COMPLETION_PORT, JobObjectAssociateCompletionPortInformation,
+    };
+
+    let mut job = Job::new(&["/d", "/c", "exit 0"]);
+    exited(&mut job.leader).expect("leader exit");
+    assert_eq!(
+        active(&job.scope),
+        1,
+        "suspended member prevents premature empty event"
+    );
+    // SAFETY: INVALID_HANDLE_VALUE requests a new independently owned port.
+    let port = unsafe { CreateIoCompletionPort(INVALID_HANDLE_VALUE, std::ptr::null_mut(), 0, 1) };
+    assert!(
+        !port.is_null(),
+        "completion port: {}",
+        io::Error::last_os_error()
+    );
+    let port = Handle(port);
+    let association = JOBOBJECT_ASSOCIATE_COMPLETION_PORT {
+        CompletionKey: job.scope.0,
+        CompletionPort: port.0,
+    };
+    // SAFETY: the live handles and correctly sized immutable association are
+    // held throughout the call. The member cannot exit before termination.
+    let assigned = unsafe {
+        SetInformationJobObject(
+            job.scope.0,
+            JobObjectAssociateCompletionPortInformation,
+            std::ptr::from_ref(&association).cast(),
+            u32::try_from(size_of::<JOBOBJECT_ASSOCIATE_COMPLETION_PORT>())
+                .expect("association size"),
+        )
+    };
+    assert_ne!(
+        assigned,
+        0,
+        "port assignment: {}",
+        io::Error::last_os_error()
+    );
+    Terminator(job.scope.0)
+        .stop()
+        .expect("termination accepted");
+    let immediate_member = job.descendant.try_wait().expect("member status");
+    println!("termination accepted: member={immediate_member:?}");
+    let deadline = Instant::now() + WAIT;
+    loop {
+        assert!(Instant::now() < deadline, "no empty-job notification");
+        let mut code = 0;
+        let mut key = 0;
+        let mut process = std::ptr::null_mut();
+        // SAFETY: the owned port and writable output slots are held throughout
+        // the bounded dequeue. The returned process identifier is never dereferenced.
+        let read = unsafe {
+            GetQueuedCompletionStatus(port.0, &raw mut code, &raw mut key, &raw mut process, 50)
+        };
+        if read == 0 {
+            println!("dequeue: {}", io::Error::last_os_error());
+            continue;
+        }
+        let member = job.descendant.try_wait().expect("member status");
+        println!(
+            "notification={code}, correct_job={}, member={member:?}",
+            key == job.scope.0 as usize
+        );
+        // WinNT.h defines JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO as 4. This
+        // throwaway probe does not widen the workspace's Windows API features.
+        if code == 4 && key == job.scope.0 as usize {
+            break;
+        }
+    }
+    exited(&mut job.descendant).expect("member exit");
+}
