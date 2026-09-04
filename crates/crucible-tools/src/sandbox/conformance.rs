@@ -75,13 +75,28 @@ fn compatibility_matrix_is_complete_and_never_claims_kernel_confinement() {
 #[test]
 fn linux_matrix_is_complete_and_claims_only_implemented_boundaries() {
     let capabilities = super::linux::declared_capabilities();
-    assert_exact_matrix(&capabilities, LINUX_ENFORCED, OBSERVED);
+    // The process ceiling is the one cell this host decides rather than this
+    // tree: below Linux 5.14 the count it is checked against is the person's
+    // whole machine, so the backend declines to call it a sandbox boundary.
+    // Either answer is exact, and neither may be the third thing a claim must
+    // never be, which is absent from the matrix.
+    let mut enforced = LINUX_ENFORCED.to_vec();
+    if capabilities.claim(SandboxFeature::ProcessLimit) == SandboxCapability::Enforced {
+        enforced.push(SandboxFeature::ProcessLimit);
+    }
+    assert_exact_matrix(&capabilities, &enforced, OBSERVED);
 }
 
 #[test]
 fn published_capability_matrix_matches_both_declared_backends() {
     let document = include_str!("../../../../docs/security/sandboxing.md");
     for feature in SandboxFeature::ALL {
+        // The one cell no single word states, because the answer belongs to the
+        // reader's kernel rather than to this tree. It is still one row and
+        // still exact; it is checked just below.
+        if feature == SandboxFeature::ProcessLimit {
+            continue;
+        }
         let linux = expected(feature, LINUX_ENFORCED, OBSERVED).as_str();
         let compatibility = expected(feature, COMPATIBILITY_ENFORCED, OBSERVED).as_str();
         let row = format!("| `{}` | {linux} | {compatibility} |", feature.as_str());
@@ -91,6 +106,21 @@ fn published_capability_matrix_matches_both_declared_backends() {
             "missing or duplicate documented capability row: {row}"
         );
     }
+    let compatibility = expected(
+        SandboxFeature::ProcessLimit,
+        COMPATIBILITY_ENFORCED,
+        OBSERVED,
+    )
+    .as_str();
+    let row = format!(
+        "| `{}` | enforced on Linux 5.14 or newer | {compatibility} |",
+        SandboxFeature::ProcessLimit.as_str()
+    );
+    assert_eq!(
+        document.matches(&row).count(),
+        1,
+        "missing or duplicate documented capability row: {row}"
+    );
 }
 
 fn expected(

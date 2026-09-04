@@ -8,6 +8,21 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Added
+
+- **The sandbox now holds a process ceiling.** The broker is PID 1 of the
+  namespace and caps the processes beneath it at 1024 whether or not a policy
+  mentions one, the way it already zeroes the core-dump ceiling. A workload that
+  forked in a loop was previously bounded by nothing the sandbox owned: the
+  processor and descriptor ceilings do not help, because each new process gets
+  its own. A policy may state fewer and the lower of the two applies.
+
+  Stating a ceiling is a separate claim, and the Linux backend makes it only
+  where the kernel counts processes per user namespace — 5.14 and newer. On an
+  older kernel the count is the real user's across the whole machine, so
+  `required` refuses a stated ceiling rather than applying a number that would
+  bound the host's other work. The broker's own 1024 applies either way.
+
 ## [0.37.0] - 2026-09-04
 
 ### Changed

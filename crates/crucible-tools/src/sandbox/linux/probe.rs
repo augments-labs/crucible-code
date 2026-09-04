@@ -371,9 +371,54 @@ fn digest(path: &Path, length: u64) -> Result<[u8; 32], SandboxError> {
     Ok(digest.finalize().into())
 }
 
+/// Where this kernel keeps the process count `RLIMIT_NPROC` is checked against.
+///
+/// Linux 5.14 moved that count into the user namespace the process belongs to.
+/// Below it the count is the real user's across the whole machine, so a ceiling
+/// meant for one confined command would be spent on the editor, the browser and
+/// every other shell the person has open, and the command it refused would be
+/// refused for a reason nothing in this tree could explain.
+///
+/// So the ceiling is claimed only where it means the sandbox. The broker still
+/// applies one either way, because an unbounded fork loop is worse than a
+/// generous bound; what changes here is whether a policy may ask for it, and a
+/// policy that asks on an older kernel is refused rather than quietly widened.
+const NPROC_PER_USER_NAMESPACE: (u32, u32) = (5, 14);
+
+fn kernel_release() -> Option<String> {
+    std::fs::read_to_string("/proc/sys/kernel/osrelease").ok()
+}
+
+fn counts_processes_per_user_namespace(release: &str) -> bool {
+    let release = release.trim();
+    // A kernel release begins with its major number. Anything else is a string
+    // this function does not understand, and the safe reading of a string it
+    // does not understand is not a version it may compare.
+    if !release.starts_with(|character: char| character.is_ascii_digit()) {
+        return false;
+    }
+    let mut numbers = release
+        .split(|character: char| !character.is_ascii_digit())
+        .filter(|part| !part.is_empty())
+        .map(str::parse::<u32>);
+    let (Some(Ok(major)), Some(Ok(minor))) = (numbers.next(), numbers.next()) else {
+        return false;
+    };
+    (major, minor) >= NPROC_PER_USER_NAMESPACE
+}
+
+pub(super) fn process_limit() -> SandboxCapability {
+    if kernel_release().is_some_and(|release| counts_processes_per_user_namespace(&release)) {
+        SandboxCapability::Enforced
+    } else {
+        SandboxCapability::Unsupported
+    }
+}
+
 pub(super) fn capabilities() -> SandboxCapabilities {
     let enforced = SandboxCapability::Enforced;
     SandboxCapabilities::none()
+        .with(SandboxFeature::ProcessLimit, process_limit())
         .with(SandboxFeature::Filesystem, enforced)
         .with(SandboxFeature::NetworkDeny, enforced)
         .with(SandboxFeature::DescriptorIsolation, enforced)
@@ -403,6 +448,44 @@ mod tests {
     use std::cell::Cell;
 
     use crate::sample::Sample;
+
+    #[test]
+    fn a_process_ceiling_is_claimed_only_where_it_would_count_the_sandbox() {
+        for release in [
+            "5.14.0",
+            "5.15.0-91-generic",
+            "6.1.0-18-amd64",
+            "7.0.0-30-generic",
+            "10.0.0",
+            "5.140.0",
+        ] {
+            assert!(
+                counts_processes_per_user_namespace(release),
+                "{release} counts inside the namespace"
+            );
+        }
+        for release in [
+            "5.13.19",
+            "5.4.0-172-generic",
+            "4.19.0-26-amd64",
+            "3.10.0-1160.el7.x86_64",
+            "5.9.16",
+        ] {
+            assert!(
+                !counts_processes_per_user_namespace(release),
+                "{release} counts the whole machine"
+            );
+        }
+        // A release nothing can read is not an optimistic one. The claim is
+        // what a policy is allowed to rely on, so an unreadable kernel gets the
+        // answer that refuses rather than the one that widens.
+        for unreadable in ["", "linux", "6", "..", "v6.1"] {
+            assert!(
+                !counts_processes_per_user_namespace(unreadable),
+                "{unreadable:?}"
+            );
+        }
+    }
 
     #[test]
     fn capability_snapshot_never_claims_unimplemented_limits_or_operations() {

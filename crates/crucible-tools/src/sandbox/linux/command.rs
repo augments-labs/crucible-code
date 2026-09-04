@@ -213,9 +213,18 @@ pub(super) fn prepare(request: &SandboxRequest) -> Result<View, SandboxError> {
         });
     }
     let limits = request.policy().limits();
+    // The process ceiling is the one this list cannot decide on its own: what
+    // the kernel counts it against is a property of the host, so the backend's
+    // own claim is what says whether a stated ceiling can be honoured here.
+    if limits.processes.is_some()
+        && super::probe::process_limit() != crucible_core::SandboxCapability::Enforced
+    {
+        return Err(SandboxError::Unsupported {
+            feature: SandboxFeature::ProcessLimit,
+        });
+    }
     for (present, feature) in [
         (limits.disk_bytes.is_some(), SandboxFeature::DiskLimit),
-        (limits.processes.is_some(), SandboxFeature::ProcessLimit),
         (
             limits.session_time.is_some(),
             SandboxFeature::SessionTimeLimit,
@@ -638,6 +647,7 @@ fn append_resource_limits(process: &mut Command, limits: crucible_core::SandboxR
         ("--limit-cpu-seconds", limits.cpu_seconds),
         ("--limit-memory-bytes", limits.memory_bytes),
         ("--limit-open-files", limits.open_files),
+        ("--limit-processes", limits.processes),
     ] {
         if let Some(value) = value {
             process.arg(name).arg(value.to_string());
@@ -1218,7 +1228,13 @@ mod tests {
             .expect("read-only rule")],
             sample.root().clone(),
             SandboxNetworkPolicy::Closed,
-            crucible_core::SandboxResourceLimits::confining(),
+            crucible_core::SandboxResourceLimits {
+                // Stated by this caller rather than by the confinement, so the
+                // plan must carry it too; the broker lowers its own ceiling to
+                // match and never raises it to.
+                processes: Some(64),
+                ..crucible_core::SandboxResourceLimits::confining()
+            },
         )
         .expect("a confining read-only policy");
         let request = SandboxRequest::new(
@@ -1262,6 +1278,7 @@ mod tests {
         for (flag, value) in [
             ("--limit-cpu-seconds", "3600"),
             ("--limit-open-files", "4096"),
+            ("--limit-processes", "64"),
         ] {
             let at = argv
                 .iter()

@@ -210,6 +210,9 @@ fn parse_plan(
             "--limit-open-files" => {
                 limits.open_files = Some(parse_limit(arguments, limits.open_files)?);
             }
+            "--limit-processes" => {
+                limits.processes = Some(parse_limit(arguments, limits.processes)?);
+            }
             "--" => return Some((roots, exclusions, limits)),
             _ => return None,
         }
@@ -231,16 +234,31 @@ fn parse_limit(
         .filter(|value| *value > 0)
 }
 
+/// Processes the broker's scope may hold at once when nothing states fewer.
+///
+/// The broker owns this one whether or not a policy mentions it, the way it
+/// owns the core-dump ceiling: it is not a budget a caller negotiated, it is
+/// what PID 1 does to the scope beneath it. Without it a workload that forks in
+/// a loop is bounded by nothing this process controls, and the processor and
+/// descriptor ceilings do not help — each new process gets its own.
+///
+/// Far above what a parallel build reaches and far below what costs the host
+/// its process table. A policy may state fewer; it may not state more, because
+/// this is the ceiling and not a default.
+const PROCESSES: u64 = 1024;
+
 #[derive(Clone, Copy, Default)]
 struct Limits {
     cpu_seconds: Option<u64>,
     memory_bytes: Option<u64>,
     open_files: Option<u64>,
+    processes: Option<u64>,
 }
 
 impl Limits {
     fn apply(self) -> std::io::Result<()> {
         set_limit(Resource::Core, 0)?;
+        set_limit(Resource::Nproc, process_ceiling(self.processes))?;
         if let Some(value) = self.cpu_seconds {
             set_limit(Resource::Cpu, value)?;
         }
@@ -251,6 +269,18 @@ impl Limits {
             set_limit(Resource::Nofile, value)?;
         }
         Ok(())
+    }
+}
+
+/// The process ceiling this scope runs under, given whatever a policy stated.
+///
+/// A stated ceiling narrows; it never widens, so a plan the host assembled
+/// wrongly, or one an argument list was edited into, cannot buy more of the
+/// machine than the broker was willing to give away in the first place.
+const fn process_ceiling(stated: Option<u64>) -> u64 {
+    match stated {
+        Some(value) if value < PROCESSES => value,
+        _ => PROCESSES,
     }
 }
 
@@ -298,4 +328,57 @@ fn exit_code(code: Option<i32>, signal: Option<i32>) -> u8 {
     signal
         .and_then(|signal| u8::try_from(signal).ok())
         .map_or(BROKER_ERROR_EXIT, |signal| 128_u8.saturating_add(signal))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_stated_process_ceiling_may_only_lower_the_one_the_broker_already_owns() {
+        assert_eq!(process_ceiling(None), PROCESSES);
+        assert_eq!(process_ceiling(Some(1)), 1);
+        assert_eq!(process_ceiling(Some(PROCESSES - 1)), PROCESSES - 1);
+        assert_eq!(process_ceiling(Some(PROCESSES)), PROCESSES);
+        assert_eq!(process_ceiling(Some(PROCESSES + 1)), PROCESSES);
+        assert_eq!(process_ceiling(Some(u64::MAX)), PROCESSES);
+    }
+
+    #[test]
+    fn a_plan_names_each_ceiling_once_and_the_broker_reads_every_one_of_them() {
+        let plan = [
+            "--limit-cpu-seconds",
+            "3600",
+            "--limit-open-files",
+            "4096",
+            "--limit-processes",
+            "64",
+            "--",
+        ];
+        let mut arguments = plan.iter().map(OsString::from);
+        let (roots, exclusions, limits) = parse_plan(&mut arguments).expect("a readable plan");
+        assert!(roots.is_empty() && exclusions.is_empty());
+        assert_eq!(limits.cpu_seconds, Some(3600));
+        assert_eq!(limits.open_files, Some(4096));
+        assert_eq!(limits.processes, Some(64));
+        assert_eq!(limits.memory_bytes, None);
+
+        // Twice is not narrower, it is ambiguous, and the broker refuses rather
+        // than deciding which of the two the host meant.
+        let repeated = ["--limit-processes", "64", "--limit-processes", "8", "--"];
+        assert!(parse_plan(&mut repeated.iter().map(OsString::from)).is_none());
+
+        // Zero would be a ceiling nothing can run under, and an unread flag
+        // would be one the host believed it had set.
+        for refused in [
+            ["--limit-processes", "0", "--"].as_slice(),
+            ["--limit-processes", "--"].as_slice(),
+            ["--limit-threads", "8", "--"].as_slice(),
+        ] {
+            assert!(
+                parse_plan(&mut refused.iter().map(OsString::from)).is_none(),
+                "{refused:?}"
+            );
+        }
+    }
 }
