@@ -375,6 +375,53 @@ impl std::fmt::Debug for CompatibilitySession {
 #[cfg(test)]
 #[cfg(unix)]
 mod tests {
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn startup_stage_cleanup_failure_is_audited_as_failed() -> std::io::Result<()> {
+        use crate::sandbox::process::{Stage, testing_plan};
+
+        let sample = crate::sample::Sample::new("compatibility-startup-cleanup");
+        let root = sample.root().join("stage-file");
+        std::fs::write(&root, "a regular file cannot be removed as a tree")?;
+        let plan = testing_plan(
+            crucible_core::SandboxSpeech::Closed,
+            Some(Stage::new(root.clone())),
+        )
+        .map_err(std::io::Error::other)?;
+        let audit = plan.audit.clone();
+        let launch = super::CompatibilityLaunch {
+            process: Some(std::process::Command::new(
+                sample.root().join("absent-program"),
+            )),
+            inspection: plan.inspection.clone(),
+            sandbox: plan.sandbox,
+            audit: audit.clone(),
+            invocation: plan.invocation,
+            plan: Some(plan),
+            owner_transferred: false,
+            released: false,
+        };
+        let result = crucible_core::SandboxLaunch::release(Box::new(launch));
+        let facts = audit.records().map_err(std::io::Error::other)?;
+        assert!(
+            facts.iter().any(|record| matches!(
+                record.fact().kind(),
+                crucible_core::SandboxFactKind::Cleanup(crucible_core::SandboxCleanup::Failed)
+            )),
+            "unconfirmed startup cleanup must be audited as failed: {facts:?}"
+        );
+        assert!(!facts.iter().any(|record| matches!(
+            record.fact().kind(),
+            crucible_core::SandboxFactKind::Cleanup(crucible_core::SandboxCleanup::Complete)
+        )));
+        assert!(matches!(
+            result,
+            Err(crucible_core::SandboxError::Lifecycle(_))
+        ));
+        assert!(root.exists());
+        Ok(())
+    }
+
     use std::ffi::OsString;
     use std::thread;
     use std::time::{Duration, Instant};

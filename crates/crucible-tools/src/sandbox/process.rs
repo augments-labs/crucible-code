@@ -187,9 +187,24 @@ pub(super) fn spawn(
 }
 
 fn spawn_local(
-    mut command: Command,
+    command: Command,
     plan: SpawnPlan,
 ) -> Result<LocalProcess, crucible_core::SandboxError> {
+    spawn_inner(
+        command,
+        plan,
+        #[cfg(test)]
+        stop_scope,
+    )
+}
+
+fn spawn_inner(
+    mut command: Command,
+    plan: SpawnPlan,
+    #[cfg(test)] test_stop: fn(&Scope, &mut Child) -> io::Result<()>,
+) -> Result<LocalProcess, crucible_core::SandboxError> {
+    #[cfg(test)]
+    let stop_scope = test_stop;
     let SpawnPlan {
         inspection,
         reservation,
@@ -872,6 +887,14 @@ fn testing_local(
     speech: crucible_core::SandboxSpeech,
     stage: Option<Stage>,
 ) -> Result<LocalProcess, crucible_core::SandboxError> {
+    spawn_local(command, testing_plan(speech, stage)?)
+}
+
+#[cfg(all(test, unix))]
+pub(super) fn testing_plan(
+    speech: crucible_core::SandboxSpeech,
+    stage: Option<Stage>,
+) -> Result<SpawnPlan, crucible_core::SandboxError> {
     use crucible_core::{
         Ancestry, SandboxAudit, SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance,
         SandboxCapabilities, SandboxCleanup, SandboxFilesystemAccess, SandboxFilesystemProvenance,
@@ -918,28 +941,26 @@ fn testing_local(
     let active = Arc::new(AtomicUsize::new(0));
     let reservation = Reservation::take(active, 1)?;
     let sandbox = inspection.id();
-    spawn_local(
-        command,
-        SpawnPlan {
-            inspection,
-            reservation,
-            stage,
-            limits: SandboxResourceLimits::default(),
-            audit: SandboxAudit::new(Ancestry::new(), ToolId::new("test-process")),
-            sandbox,
-            audit_started: true,
-            audit_cleanup: true,
-            invocation: SandboxInvocationMode::Foreground,
-            call_result_key: None,
-            canceller: None,
-            speech,
-        },
-    )
+    Ok(SpawnPlan {
+        inspection,
+        reservation,
+        stage,
+        limits: SandboxResourceLimits::default(),
+        audit: SandboxAudit::new(Ancestry::new(), ToolId::new("test-process")),
+        sandbox,
+        audit_started: true,
+        audit_cleanup: true,
+        invocation: SandboxInvocationMode::Foreground,
+        call_result_key: None,
+        canceller: None,
+        speech,
+    })
 }
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     mod cleanup;
+    mod startup;
 
     use super::Stage;
 
