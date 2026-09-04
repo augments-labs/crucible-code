@@ -21,6 +21,7 @@ struct Job {
 
 impl Job {
     fn new(arguments: &[&str]) -> Self {
+        let executable = std::env::current_exe().expect("test executable");
         let mut command = Command::new("cmd.exe");
         command
             .args(arguments)
@@ -28,18 +29,24 @@ impl Job {
             .stdout(Stdio::null())
             .stderr(Stdio::null());
         let scope = Scope::new(&mut command).expect("job");
-        let leader = command.spawn().expect("suspended leader");
+        let mut leader = command.spawn().expect("suspended leader");
 
         // A suspended member cannot exit on its own or launch work outside this
         // fixture. Assignment supplies the same membership inherited by a real
         // descendant without making the test depend on shell startup timing.
-        let descendant = Command::new(std::env::current_exe().expect("test executable"))
+        let descendant = Command::new(executable)
             .creation_flags(CREATE_SUSPENDED)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .expect("suspended member");
+            .unwrap_or_else(|problem| {
+                // The leader has not joined the job yet, so kill-on-close
+                // cannot own this construction failure. Reap it explicitly.
+                let _ = leader.kill();
+                let _ = exited(&mut leader);
+                panic!("suspended member: {problem}");
+            });
         let fixture = Self {
             scope,
             leader,
