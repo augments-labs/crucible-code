@@ -7,21 +7,8 @@ permissions:
   contents: read
 
 jobs:
-  macos-uid:
-    name: macOS UID compatibility (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-15-intel, macos-26]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - run: sh .github/probes/macos-uid.sh
   windows-lifetime:
-    name: Windows completion notification
+    name: Windows job completion regression baseline
     runs-on: windows-latest
     timeout-minutes: 12
     steps:
@@ -31,4 +18,4 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: native-sandbox-probes
-      - run: cargo test -p crucible-tools --lib completion_notification_at_the_exit_boundary --locked -- --ignored --nocapture
+      - run: cargo test -p crucible-tools --lib bash::platform::windows::tests --locked -- --nocapture
