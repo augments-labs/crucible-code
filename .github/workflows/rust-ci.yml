@@ -7,16 +7,12 @@ permissions:
   contents: read
 
 jobs:
-  macos-scope:
-    name: macOS scope experiment (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 8
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-15-intel, macos-26]
+  windows-token:
+    name: Windows restricted LPAC token experiment
+    runs-on: windows-latest
+    timeout-minutes: 3
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: sh .github/probes/macos-tools.sh
+      - run: ./.github/probes/windows-token.ps1
