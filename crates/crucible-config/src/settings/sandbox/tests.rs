@@ -7,6 +7,7 @@ use crate::{ConfigError, Settings};
 
 #[test]
 fn no_sandbox_choice_leaves_os_confinement_off() {
+    assert_eq!(Settings::default().sandbox_mode(), SandboxMode::Off);
     assert_eq!(
         Settings::resolve(Vec::new()).sandbox_mode(),
         SandboxMode::Off

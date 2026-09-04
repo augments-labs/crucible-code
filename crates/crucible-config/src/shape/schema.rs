@@ -468,6 +468,27 @@ mod tests {
     }
 
     #[test]
+    fn sandbox_publishes_one_opt_in_choice_without_a_competing_mode_default() {
+        let schema = generated();
+        let sandbox = property(&schema, &["sandbox"]);
+        assert_eq!(
+            property(sandbox, &["enabled"]).get("default"),
+            Some(&json!(false))
+        );
+        assert_eq!(
+            property(sandbox, &["enabled"]).get("type"),
+            Some(&json!("boolean"))
+        );
+        assert!(property(sandbox, &["mode"]).get("default").is_none());
+        assert_eq!(
+            sandbox.get("allOf"),
+            Some(&json!([
+                { "not": { "required": ["enabled", "mode"] } }
+            ]))
+        );
+    }
+
+    #[test]
     fn the_checked_in_schema_is_what_this_generates() {
         // The gate that makes the checked-in file output rather than a second
         // copy to maintain. It rewrites and then fails, so the fix is to run

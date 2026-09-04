@@ -214,14 +214,15 @@ Only home/user configuration may choose `degraded` or `off`; project and
 descendant policy may preserve or strengthen that choice but never weaken it.
 `degraded` tries the enforcing Linux backend first and uses the compatibility
 backend only when enforcement is unavailable. `off` selects compatibility
-directly. Both inspection and audit records say `confined: false`, name the
-degradation, and retain the exact compatibility capability snapshot.
+directly. When compatibility is selected, inspection and audit records say
+`confined: false`, name the degradation, and retain the exact compatibility
+capability snapshot.
 
-There is no enforcing backend on macOS, Windows or FreeBSD. Because the default
-is `required`, a `bash` command on those systems fails before it starts, and the
-failure names the remedy: a home configuration must set `sandbox.mode` to
-`degraded` or `off` before commands run there, and every command that then runs
-is reported as unconfined.
+There is no enforcing backend on macOS, Windows or FreeBSD yet. Commands run
+through compatibility by default and are reported as unconfined. Enabling the
+sandbox on those systems refuses a command before it starts; it does not fall
+back silently. A user can explicitly choose `sandbox.enabled: false` or the
+legacy `sandbox.mode: degraded` to allow compatibility execution.
 
 Compatibility still clears and explicitly rebuilds the command environment,
 checks requested and transformed command guardrails, enforces command deadlines,
