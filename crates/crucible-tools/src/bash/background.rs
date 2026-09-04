@@ -5,14 +5,15 @@
 //! kept would make both the process's lifetime and its resources unbounded. This
 //! is what makes keeping one bounded instead — a cap on how many, each one's
 //! output held to the same figure a foreground command's is, and every process
-//! group ended when this is let go of.
+//! group asked to end when this is let go of. Failed cleanup keeps its entry
+//! while the registry lives, so the panel can retry without losing ownership.
 //!
 //! **Bound to the run rather than to the session.** `/clear` starts a new session
 //! and this is untouched by it, because a running dev server is a fact about the
 //! machine rather than about the context — and unlike a forgotten transcript, a
 //! killed server cannot be resumed. It is made in the binary, cloned into the
 //! tool, and held by the binary for as long as the process lives; the last clone
-//! going is what ends every group.
+//! going is what requests cleanup for every group.
 //!
 //! **Nothing here consults the cancel.** <kbd>Esc</kbd> stops the turn, and a
 //! command somebody deliberately let go of is not part of the turn that started
@@ -140,9 +141,9 @@ impl Held {
 
 impl Drop for Held {
     fn drop(&mut self) {
-        // Every group, on the way out. This is the promise the module's prose
-        // makes, and the reason the panic strategy for this workspace is unwind:
-        // an abort would run none of it and leave the commands behind.
+        // Attempt every group on the way out. The process owner retains any
+        // backend quarantine required when cleanup cannot be confirmed. Unwind
+        // reaches these owners; an abort would skip their destructors entirely.
         for left in &mut self.left {
             let _ = super::output::end(left.process.as_mut());
         }

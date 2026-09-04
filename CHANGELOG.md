@@ -10,6 +10,11 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **Background commands remain reachable when cleanup fails.** Their rows and
+  command slots stay held until cleanup succeeds, including when the original
+  result was abandoned. A failed stop keeps the panel open with
+  `Stop failed; x retries`; the next press retries the same command.
+
 - **Windows command cleanup confirms job membership.** After requesting
   termination, Crucible checks that the command's job has no active processes
   before reporting completion. Unavailable job state is an error, and an
