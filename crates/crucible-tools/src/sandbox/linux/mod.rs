@@ -9,6 +9,8 @@ mod projection;
 mod transaction;
 
 #[cfg(test)]
+mod escape_tests;
+#[cfg(test)]
 mod resource_tests;
 #[cfg(test)]
 mod tests;
