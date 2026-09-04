@@ -1,6 +1,6 @@
-# windows-bootstrap-v2: disposable fresh Windows x64 VM only; no production claim.
+# windows-bootstrap-v3: disposable fresh Windows x64 VM only; no production claim.
 # Independently authored. V6 proved only the actual combined-token ACL primitive.
-# V2: bounded host-tool output/drain; v1 preserved. Token observation is structural, not a fresh read oracle.
+# V3: diagnostic-only successor to v2 link failure1120; no compiler/launcher changes. Token observation remains structural.
 # This probe resumes synthetic native code with final restrictions from creation.
 # DLL search may use KnownDLL sections before private copies; a loader failure is evidence.
 # Sources: learn.microsoft.com/en-us/windows/win32/dlls/dynamic-link-library-search-order
@@ -12,7 +12,7 @@
 # API-set contracts are counted, not fabricated as files. Dynamic/registry/IPC dependencies remain unproved.
 # Three 12-second guest deadlines; 4-process kill-on-close jobs; require external CI timeout 5 minutes.
 $ErrorActionPreference = 'Stop'
-$buildRoot = Join-Path ([IO.Path]::GetTempPath()) ('crucible-bootstrap-v2-' + [Guid]::NewGuid().ToString('N'))
+$buildRoot = Join-Path ([IO.Path]::GetTempPath()) ('crucible-bootstrap-v3-' + [Guid]::NewGuid().ToString('N'))
 $native = @'
 #include <windows.h>
 static WCHAR image[32768],command[32772];
@@ -49,7 +49,7 @@ using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Security.Cryptography;
 using System.Threading;
-public static class CrucibleWindowsBootstrapProbeV2 {
+public static class CrucibleWindowsBootstrapProbeV3 {
     const uint TOKEN_QUERY = 8, TOKEN_DUPLICATE = 2, TOKEN_IMPERSONATE = 4, TOKEN_ASSIGN_PRIMARY = 1;
     const uint FILE_READ_DATA = 1, FILE_ALL_ACCESS = 0x001F01FF;
     const uint DACL = 4, PROTECTED_DACL = 0x80000000;
@@ -352,7 +352,7 @@ public static class CrucibleWindowsBootstrapProbeV2 {
         return success&&cleaned;
     }
     public static int Run(string buildRoot,string[] sourceFiles,string compilerIdentity) {
-        string profile="crucible.bootstrap.v2."+Guid.NewGuid().ToString("N"),root=null; bool profileOwned=false,rootOwned=false,cleanup=true; int result=1;
+        string profile="crucible.bootstrap.v3."+Guid.NewGuid().ToString("N"),root=null; bool profileOwned=false,rootOwned=false,cleanup=true; int result=1;
         IntPtr package=IntPtr.Zero,session=IntPtr.Zero,baseToken=IntPtr.Zero,restricted=IntPtr.Zero,entry=IntPtr.Zero;
         try {
             currentCase="setup"; VerifyLayouts(); stage="profile";
@@ -399,7 +399,7 @@ public static class CrucibleWindowsBootstrapProbeV2 {
     }
 }
 '@
-# Shared cap is 1 Mi characters, checked before accumulation; stderr is counted and discarded.
+# Shared stdout+stderr cap is 1 Mi characters, checked before accumulation. Only capped LNK diagnostics are emitted.
 # Two fixed 4096-character buffers and StreamReader's fixed decoder buffers are the only in-flight data.
 # Deadline includes process exit and both EOFs. Abort never waits for cancellation/drain completion.
 $hostToolUnsettled=$false
@@ -409,7 +409,7 @@ function Invoke-ProbeTool([string]$Tool,[string[]]$Arguments) {
     $process=[Diagnostics.Process]::new(); $process.StartInfo=$info; $started=$false; $complete=$false
     $cancel=[Threading.CancellationTokenSource]::new(); $deadline=[Diagnostics.Stopwatch]::StartNew()
     $readers=@(); $buffers=@([char[]]::new(4096),[char[]]::new(4096)); $tasks=@($null,$null); $eof=@($false,$false)
-    $output=[Text.StringBuilder]::new(4096); [long]$seenCharacters=0
+    $output=[Text.StringBuilder]::new(4096); $errors=[Text.StringBuilder]::new(4096); [long]$seenCharacters=0
     try {
         $started=$process.Start(); if(!$started) { throw 'tool_start' }; $readers=@($process.StandardOutput,$process.StandardError)
         for($i=0;$i -lt 2;$i++) { $tasks[$i]=$readers[$i].ReadAsync([Memory[char]]::new($buffers[$i]),$cancel.Token).AsTask() }
@@ -420,7 +420,7 @@ function Invoke-ProbeTool([string]$Tool,[string[]]$Arguments) {
                     $count=$tasks[$i].GetAwaiter().GetResult()
                     if($count -eq 0) { $eof[$i]=$true; continue }
                     if($count -lt 0 -or $count -gt 4096 -or $seenCharacters+$count -gt 1048576) { throw 'tool_output_cap' }
-                    $seenCharacters+=$count; if($i -eq 0) { [void]$output.Append($buffers[$i],0,$count) }
+                    $seenCharacters+=$count; if($i -eq 0) { [void]$output.Append($buffers[$i],0,$count) } else { [void]$errors.Append($buffers[$i],0,$count) }
                     $tasks[$i]=$readers[$i].ReadAsync([Memory[char]]::new($buffers[$i]),$cancel.Token).AsTask()
                 }
             }
@@ -428,7 +428,18 @@ function Invoke-ProbeTool([string]$Tool,[string[]]$Arguments) {
             if($process.HasExited -and $eof[0] -and $eof[1]) { $complete=$true; break }
             [Threading.Thread]::Sleep(5)
         }
-        if($process.ExitCode -ne 0) { Write-Output ('{"event":"host_tool_failure","exit_status":'+$process.ExitCode+'}') | Out-Host; throw 'tool_failed' }
+        if($hostStage -in @('compile_fixture','link_fixture')) { @{event='host_tool_exit';stage=$hostStage;exit_status=$process.ExitCode;output_characters=$seenCharacters} | ConvertTo-Json -Compress | Out-Host }
+        if($process.ExitCode -ne 0) {
+            if($hostStage -eq 'link_fixture') {
+                $text=$output.ToString()+"`n"+$errors.ToString(); $linkMatch=[regex]::Match($text,'\b(LNK[0-9]{4}):[ \t]*([\x20-\x7e]{1,480})'); $reported=0
+                while($linkMatch.Success -and $reported -lt 16) {
+                    @{event='link_diagnostic';code=$linkMatch.Groups[1].Value;message=$linkMatch.Groups[2].Value} | ConvertTo-Json -Compress | Out-Host
+                    $reported++; $linkMatch=$linkMatch.NextMatch()
+                }
+                @{event='link_diagnostic_count';reported=$reported;additional_matches=$linkMatch.Success;message_character_cap=480;record_cap=16} | ConvertTo-Json -Compress | Out-Host
+            }
+            Write-Output ('{"event":"host_tool_failure","exit_status":'+$process.ExitCode+'}') | Out-Host; throw 'tool_failed'
+        }
         return $output.ToString()
     } finally {
         if($started -and !$complete) {
@@ -477,7 +488,7 @@ try {
     Write-Output ('{"event":"host_compile","success":true,"api_set_contract_count":'+$contracts.Count+'}')
     $hostStage="compile_host"; Add-Type -TypeDefinition $source -Language CSharp -ErrorAction Stop
     [string[]]$sources=@($files.Values | Sort-Object { [IO.Path]::GetFileName($_).ToLowerInvariant() })
-    $hostStage="invoke_host"; $result=[CrucibleWindowsBootstrapProbeV2]::Run($buildRoot,$sources,(Get-FileHash -LiteralPath $cl -Algorithm SHA256).Hash.ToLowerInvariant())
+    $hostStage="invoke_host"; $result=[CrucibleWindowsBootstrapProbeV3]::Run($buildRoot,$sources,(Get-FileHash -LiteralPath $cl -Algorithm SHA256).Hash.ToLowerInvariant())
 } catch { Write-Output ('{"event":"host_setup_failure","stage":"'+$hostStage+'","hresult":'+$_.Exception.HResult+'}'); $result=90 }
 finally { if($hostToolUnsettled) { $result=3 }; if($buildOwned -and $result -ne 3) { try { Remove-Item -LiteralPath $buildRoot -Recurse -Force -ErrorAction Stop } catch { Write-Output '{"event":"build_cleanup","complete":false}'; $result=3 } } }
 exit $result
