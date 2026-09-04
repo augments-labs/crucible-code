@@ -232,108 +232,48 @@ fn spawn_inner(
     #[cfg(unix)]
     let scope = Scope::new(&mut command);
     #[cfg(windows)]
-    let scope = Scope::new(&mut command).map_err(crucible_core::SandboxError::Spawn)?;
-
-    let mut child = command
-        .spawn()
-        .map_err(crucible_core::SandboxError::Spawn)?;
-    let started = Instant::now();
-
-    #[cfg(windows)]
-    if let Err(source) = scope.attach(&child) {
-        let _ = scope.stop(&mut child);
-        let _ = child.wait();
-        return Err(crucible_core::SandboxError::Spawn(source));
-    }
-
-    let terminator = match scope.terminator(&child) {
-        Ok(terminator) => terminator,
+    let scope = match Scope::new(&mut command) {
+        Ok(scope) => scope,
         Err(source) => {
-            let _ = stop_scope(&scope, &mut child);
-            let _ = child.wait();
-            return Err(crucible_core::SandboxError::Spawn(source));
+            return Err(failed_before_spawn(
+                crucible_core::SandboxError::Spawn(source),
+                stage,
+                reservation,
+            ));
         }
     };
 
-    let control = Arc::new(Control::new(limits.output_bytes, audit, sandbox));
-
-    // Taken before anything can fail below, so a spawn that is torn down does
-    // not leave the writing end alive in a child being killed.
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(source) => {
+            return Err(failed_before_spawn(
+                crucible_core::SandboxError::Spawn(source),
+                stage,
+                reservation,
+            ));
+        }
+    };
+    let started = Instant::now();
     let stdin = child
         .stdin
         .take()
         .map(|input| Box::new(input) as Box<dyn std::io::Write + Send>);
-
-    let stdout = match child
-        .stdout
-        .take()
-        .map(|output| PreparedOutput::new(output, Arc::clone(&control)))
-        .transpose()
-    {
-        Ok(stdout) => stdout,
-        Err(source) => {
-            let _ = stop_scope(&scope, &mut child);
-            let _ = child.wait();
-            return Err(crucible_core::SandboxError::Spawn(source));
-        }
-    };
-    let stderr = match child
-        .stderr
-        .take()
-        .map(|output| PreparedOutput::new(output, Arc::clone(&control)))
-        .transpose()
-    {
-        Ok(stderr) => stderr,
-        Err(source) => {
-            let _ = stop_scope(&scope, &mut child);
-            let _ = child.wait();
-            return Err(crucible_core::SandboxError::Spawn(source));
-        }
-    };
-
-    let supervisor = if limits.command_time.is_some() || limits.output_bytes.is_some() {
-        match Supervisor::start(
-            Arc::clone(&control),
-            terminator,
-            limits
-                .command_time
-                .map(|allowed| started.checked_add(allowed).unwrap_or(started)),
-            canceller,
-            child.id(),
-        ) {
-            Ok(supervisor) => Some(supervisor),
-            Err(source) => {
-                let _ = stop_scope(&scope, &mut child);
-                let _ = child.wait();
-                return Err(crucible_core::SandboxError::Spawn(source));
-            }
-        }
-    } else {
-        None
-    };
-
-    if audit_started
-        && let Err(source) =
-            control.audit(SandboxFactKind::Lifecycle(SandboxLifecycle::CommandStarted))
-    {
-        control.done.store(true, Ordering::Release);
-        let _ = stop_scope(&scope, &mut child);
-        let _ = child.wait();
-        return Err(crucible_core::SandboxError::Audit(source));
-    }
-
-    Ok(LocalProcess {
+    let control = Arc::new(Control::new(limits.output_bytes, audit, sandbox));
+    // Own every resource before the first fallible initialization operation.
+    // No caller can observe this private, unfinished process. Stop and Drop
+    // use the scope and child directly, without needing a borrowed terminator.
+    let mut process = LocalProcess {
         child,
         scope,
         stdin,
-        terminator,
-        stdout: stdout.map(|pipe| Box::new(pipe) as Box<dyn SandboxOutput>),
-        stderr: stderr.map(|pipe| Box::new(pipe) as Box<dyn SandboxOutput>),
+        terminator: None,
+        stdout: None,
+        stderr: None,
         inspection,
         reservation: Some(reservation),
         stage,
         control,
-        supervisor,
+        supervisor: None,
         status: None,
         scope_stopped: false,
         started,
@@ -347,7 +287,72 @@ fn spawn_inner(
         test_stop: stop_scope,
         #[cfg(test)]
         test_reap: reap,
-    })
+    };
+    match process.initialize(limits, canceller, audit_started) {
+        Ok(terminator) => {
+            process.terminator = Some(terminator);
+            Ok(process)
+        }
+        Err(startup) => match process.stop() {
+            Ok(()) => Err(startup),
+            Err(cleanup) => Err(startup_cleanup_failed(startup, cleanup)),
+        },
+    }
+}
+
+/// No child exists on these paths, but failed staging cleanup still keeps its
+/// reservation consumed and its filesystem evidence intact.
+fn failed_before_spawn(
+    startup: crucible_core::SandboxError,
+    mut stage: Option<Stage>,
+    reservation: Reservation,
+) -> crucible_core::SandboxError {
+    match stage.as_mut().map_or(Ok(()), Stage::cleanup) {
+        Ok(()) => startup,
+        Err(cleanup) => {
+            if let Some(stage) = &mut stage {
+                stage.retained = true;
+            }
+            reservation.quarantine();
+            startup_cleanup_failed(startup, cleanup)
+        }
+    }
+}
+
+/// Preserves both causes while keeping the public diagnostic bounded and free
+/// of command text and temporary paths. Lifecycle means spawn cleanup failed;
+/// the original Spawn or Audit error is returned only after proved cleanup.
+#[derive(Debug)]
+struct StartupCleanupFailure {
+    startup: crucible_core::SandboxError,
+    cleanup: io::Error,
+}
+
+impl std::fmt::Display for StartupCleanupFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "sandbox startup failed ({:?}); cleanup is unconfirmed ({:?})",
+            self.startup.failure_kind(),
+            self.cleanup.kind(),
+        )
+    }
+}
+
+impl std::error::Error for StartupCleanupFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.startup)
+    }
+}
+
+fn startup_cleanup_failed(
+    startup: crucible_core::SandboxError,
+    cleanup: io::Error,
+) -> crucible_core::SandboxError {
+    crucible_core::SandboxError::Lifecycle(io::Error::new(
+        cleanup.kind(),
+        StartupCleanupFailure { startup, cleanup },
+    ))
 }
 
 /// Shared hard-limit state used by both output streams and the supervisor.
@@ -575,7 +580,8 @@ impl SandboxOutput for PreparedOutput {
 struct LocalProcess {
     child: Child,
     scope: Scope,
-    terminator: Terminator,
+    /// Present only after initialization has fully succeeded.
+    terminator: Option<Terminator>,
     /// The writing end of a peer's input, until somebody takes it. Dropping it
     /// unread is what closes the far end's stdin.
     stdin: Option<Box<dyn std::io::Write + Send>>,
@@ -617,6 +623,57 @@ struct AuditState {
 }
 
 impl LocalProcess {
+    fn initialize(
+        &mut self,
+        limits: SandboxResourceLimits,
+        canceller: Option<Canceller>,
+        audit_started: bool,
+    ) -> Result<Terminator, crucible_core::SandboxError> {
+        #[cfg(windows)]
+        self.scope
+            .attach(&self.child)
+            .map_err(crucible_core::SandboxError::Spawn)?;
+        let terminator = self
+            .scope
+            .terminator(&self.child)
+            .map_err(crucible_core::SandboxError::Spawn)?;
+        self.stdout = self
+            .child
+            .stdout
+            .take()
+            .map(|pipe| PreparedOutput::new(pipe, Arc::clone(&self.control)))
+            .transpose()
+            .map_err(crucible_core::SandboxError::Spawn)?
+            .map(|pipe| Box::new(pipe) as Box<dyn SandboxOutput>);
+        self.stderr = self
+            .child
+            .stderr
+            .take()
+            .map(|pipe| PreparedOutput::new(pipe, Arc::clone(&self.control)))
+            .transpose()
+            .map_err(crucible_core::SandboxError::Spawn)?
+            .map(|pipe| Box::new(pipe) as Box<dyn SandboxOutput>);
+        if limits.command_time.is_some() || limits.output_bytes.is_some() {
+            self.supervisor = Some(
+                Supervisor::start(
+                    Arc::clone(&self.control),
+                    terminator,
+                    limits
+                        .command_time
+                        .map(|allowed| self.started.checked_add(allowed).unwrap_or(self.started)),
+                    canceller,
+                    self.child.id(),
+                )
+                .map_err(crucible_core::SandboxError::Spawn)?,
+            );
+        }
+        if audit_started {
+            self.control
+                .audit(SandboxFactKind::Lifecycle(SandboxLifecycle::CommandStarted))?;
+        }
+        Ok(terminator)
+    }
+
     fn audit_finished(&mut self) -> io::Result<()> {
         if !self.audit_state.finished {
             self.control
@@ -676,7 +733,10 @@ impl SandboxProcess for LocalProcess {
 
         let status = {
             let _lifecycle = self.control.lifecycle()?;
-            let status = self.scope.try_wait(&mut self.child, self.terminator)?;
+            let terminator = self
+                .terminator
+                .ok_or_else(|| io::Error::other("sandbox process initialization is incomplete"))?;
+            let status = self.scope.try_wait(&mut self.child, terminator)?;
             if status.is_some() {
                 self.control.done.store(true, Ordering::Release);
             }
@@ -747,7 +807,7 @@ impl SandboxProcess for LocalProcess {
             Ok(())
         };
         let mut result = cleanup.and(joined).and(staged).and(supervised);
-        if scope_confirmed && self.status.is_some() {
+        if scope_confirmed && self.status.is_some() && self.terminator.is_some() {
             let audited = self.audit_finished();
             result = result.and(audited);
         }
@@ -757,7 +817,7 @@ impl SandboxProcess for LocalProcess {
             SandboxCleanup::Failed
         };
         self.inspection = self.inspection.clone().cleaned(cleanup_state);
-        if self.audit_cleanup {
+        if self.audit_cleanup && self.terminator.is_some() {
             let audited = self.audit_cleanup(cleanup_state);
             result = result.and(audited);
         }

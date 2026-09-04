@@ -319,17 +319,23 @@ impl SandboxLaunch for CompatibilityLaunch {
         self.released = true;
         let spawned = super::process::spawn(process, plan);
         if let Err(problem) = &spawned {
-            self.audit.record(
+            // Spawn returns Lifecycle when cleanup itself was unconfirmed.
+            // Preserve that primary error even if the bounded audit is full.
+            let cleanup = if matches!(problem, SandboxError::Lifecycle(_)) {
+                SandboxCleanup::Failed
+            } else {
+                SandboxCleanup::Complete
+            };
+            let _ = self.audit.record(
                 self.sandbox,
                 SandboxFactKind::Failed {
                     phase: SandboxFailurePhase::Start,
                     kind: problem.failure_kind(),
                 },
-            )?;
-            self.audit.record(
-                self.sandbox,
-                SandboxFactKind::Cleanup(SandboxCleanup::Complete),
-            )?;
+            );
+            let _ = self
+                .audit
+                .record(self.sandbox, SandboxFactKind::Cleanup(cleanup));
         }
         spawned
     }
