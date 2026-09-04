@@ -98,7 +98,7 @@ impl SandboxProcess for Fallible<dyn SandboxProcess> {
     }
 
     fn stop(&mut self) -> io::Result<()> {
-        if self.denied.load(Ordering::Relaxed) {
+        if self.denied.swap(false, Ordering::Relaxed) {
             Err(io::Error::other(PRIVATE_ERROR))
         } else {
             self.inner.stop()
@@ -127,4 +127,55 @@ impl SandboxProcess for Fallible<dyn SandboxProcess> {
     ) -> Result<(), SandboxError> {
         self.inner.complete_background_acceptance(receipt)
     }
+}
+
+/// An explicit capture entrypoint: the parent supplies a controlling PTY and
+/// sends `x`, observes the retry notice, then sends `x` again. The ordinary test
+/// suite exercises the same behavior without borrowing the operator's terminal.
+#[test]
+#[ignore = "manual PTY capture; send x twice and retain the before/error/recovered frames"]
+fn capture_cleanup_retry_unicode() {
+    capture(crucible_config::Glyphs::Unicode);
+}
+
+#[test]
+#[ignore = "manual PTY capture; send x twice and retain the before/error/recovered frames"]
+fn capture_cleanup_retry_ascii() {
+    capture(crucible_config::Glyphs::Ascii);
+}
+
+fn capture(glyphs: crucible_config::Glyphs) {
+    use crucible_tui::{Ground, Raw, Renderer, Screen, SystemTerminal};
+
+    use crate::cli::style::{Output, Style};
+
+    let (sandbox, _) = sandbox();
+    let (left, _workspace) = super::running_with("cleanup-visual", 1, sandbox);
+    let _raw = Raw::enter()
+        .expect("raw terminal")
+        .expect("a controlling PTY");
+    let _screen = Screen::take()
+        .expect("alternate screen")
+        .expect("a controlling PTY");
+    let mut renderer = Renderer::new(SystemTerminal::stdout());
+    let style = Style::resolve(
+        Output {
+            color: Some(crucible_config::Color::Always),
+            glyphs: Some(glyphs),
+            ..Output::default()
+        },
+        true,
+        None,
+        Some(Ground::Dark),
+        &|_| None,
+    );
+    let ended = super::Leaving::default()
+        .stand(&mut renderer, style, &left)
+        .expect("interactive cleanup panel");
+    assert_eq!(ended, super::Ended::Left);
+    assert_eq!(
+        left.count(),
+        0,
+        "capture must finish by successfully retrying stop"
+    );
 }
