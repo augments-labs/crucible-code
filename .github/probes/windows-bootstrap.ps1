@@ -1,6 +1,9 @@
-# windows-bootstrap-v3: disposable fresh Windows x64 VM only; no production claim.
+# windows-bootstrap-v4: disposable fresh Windows x64 VM only; no production claim.
 # Independently authored. V6 proved only the actual combined-token ACL primitive.
-# V3: diagnostic-only successor to v2 link failure1120; no compiler/launcher changes. Token observation remains structural.
+# V4: v3 native run33927711312 proved LNK2019 memcpy in ProbeEntry. Change only /O1 to /Od.
+# MSVC basis: https://learn.microsoft.com/en-us/cpp/build/reference/od-disable-debug?view=msvc-170
+# /NODEFAULTLIB and the kernel32-only import oracle remain mandatory; no runtime library added.
+# Trusted MSVC vctip orphan was cleaned by the VM runner in v3; host descendant extinction remains unproved.
 # This probe resumes synthetic native code with final restrictions from creation.
 # DLL search may use KnownDLL sections before private copies; a loader failure is evidence.
 # Sources: learn.microsoft.com/en-us/windows/win32/dlls/dynamic-link-library-search-order
@@ -12,7 +15,7 @@
 # API-set contracts are counted, not fabricated as files. Dynamic/registry/IPC dependencies remain unproved.
 # Three 12-second guest deadlines; 4-process kill-on-close jobs; require external CI timeout 5 minutes.
 $ErrorActionPreference = 'Stop'
-$buildRoot = Join-Path ([IO.Path]::GetTempPath()) ('crucible-bootstrap-v3-' + [Guid]::NewGuid().ToString('N'))
+$buildRoot = Join-Path ([IO.Path]::GetTempPath()) ('crucible-bootstrap-v4-' + [Guid]::NewGuid().ToString('N'))
 $native = @'
 #include <windows.h>
 static WCHAR image[32768],command[32772];
@@ -49,7 +52,7 @@ using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Security.Cryptography;
 using System.Threading;
-public static class CrucibleWindowsBootstrapProbeV3 {
+public static class CrucibleWindowsBootstrapProbeV4 {
     const uint TOKEN_QUERY = 8, TOKEN_DUPLICATE = 2, TOKEN_IMPERSONATE = 4, TOKEN_ASSIGN_PRIMARY = 1;
     const uint FILE_READ_DATA = 1, FILE_ALL_ACCESS = 0x001F01FF;
     const uint DACL = 4, PROTECTED_DACL = 0x80000000;
@@ -352,7 +355,7 @@ public static class CrucibleWindowsBootstrapProbeV3 {
         return success&&cleaned;
     }
     public static int Run(string buildRoot,string[] sourceFiles,string compilerIdentity) {
-        string profile="crucible.bootstrap.v3."+Guid.NewGuid().ToString("N"),root=null; bool profileOwned=false,rootOwned=false,cleanup=true; int result=1;
+        string profile="crucible.bootstrap.v4."+Guid.NewGuid().ToString("N"),root=null; bool profileOwned=false,rootOwned=false,cleanup=true; int result=1;
         IntPtr package=IntPtr.Zero,session=IntPtr.Zero,baseToken=IntPtr.Zero,restricted=IntPtr.Zero,entry=IntPtr.Zero;
         try {
             currentCase="setup"; VerifyLayouts(); stage="profile";
@@ -465,7 +468,7 @@ try {
     $sdk=(Get-ChildItem -LiteralPath (Join-Path $kits 'Include') -Directory | Where-Object {Test-Path (Join-Path $_.FullName 'um\windows.h')} | Sort-Object Name -Descending | Select-Object -First 1).Name
     $bin=Join-Path $vc 'bin\Hostx64\x64'; $cl=Join-Path $bin 'cl.exe'; $link=Join-Path $bin 'link.exe'; $dumpbin=Join-Path $bin 'dumpbin.exe'
     $object=Join-Path $buildRoot 'fixture.obj'; $fixture=Join-Path $buildRoot 'fixture.exe'
-    $compile=@('/nologo','/O1','/GS-','/Zl','/c','/X',('/Fo'+$object),('/I'+(Join-Path $vc 'include')))
+    $compile=@('/nologo','/Od','/GS-','/Zl','/c','/X',('/Fo'+$object),('/I'+(Join-Path $vc 'include')))
     foreach($part in @('um','shared','ucrt')) { $compile+=('/I'+(Join-Path $kits ('Include\'+$sdk+'\'+$part))) }; $compile+=(Join-Path $buildRoot 'fixture.c')
     $hostStage="compile_fixture"; Invoke-ProbeTool $cl $compile | Out-Null
     $hostStage="link_fixture"; Invoke-ProbeTool $link @('/NOLOGO','/NODEFAULTLIB','/ENTRY:ProbeEntry','/SUBSYSTEM:CONSOLE','/MACHINE:X64','/DYNAMICBASE','/NXCOMPAT','/MANIFEST:NO',('/OUT:'+$fixture),$object,(Join-Path $kits ('Lib\'+$sdk+'\um\x64\kernel32.lib'))) | Out-Null
@@ -488,7 +491,7 @@ try {
     Write-Output ('{"event":"host_compile","success":true,"api_set_contract_count":'+$contracts.Count+'}')
     $hostStage="compile_host"; Add-Type -TypeDefinition $source -Language CSharp -ErrorAction Stop
     [string[]]$sources=@($files.Values | Sort-Object { [IO.Path]::GetFileName($_).ToLowerInvariant() })
-    $hostStage="invoke_host"; $result=[CrucibleWindowsBootstrapProbeV3]::Run($buildRoot,$sources,(Get-FileHash -LiteralPath $cl -Algorithm SHA256).Hash.ToLowerInvariant())
+    $hostStage="invoke_host"; $result=[CrucibleWindowsBootstrapProbeV4]::Run($buildRoot,$sources,(Get-FileHash -LiteralPath $cl -Algorithm SHA256).Hash.ToLowerInvariant())
 } catch { Write-Output ('{"event":"host_setup_failure","stage":"'+$hostStage+'","hresult":'+$_.Exception.HResult+'}'); $result=90 }
 finally { if($hostToolUnsettled) { $result=3 }; if($buildOwned -and $result -ne 3) { try { Remove-Item -LiteralPath $buildRoot -Recurse -Force -ErrorAction Stop } catch { Write-Output '{"event":"build_cleanup","complete":false}'; $result=3 } } }
 exit $result
