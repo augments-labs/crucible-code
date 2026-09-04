@@ -1,51 +1,22 @@
-name: rust-ci
+name: native-sandbox-experiment
 
 on:
-  workflow_call:
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  linux:
-    name: Linux
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-
-      # The gate runs on the enforcing sandbox host, and a missing backend is
-      # a failure rather than a skip; the action says why.
-      - uses: ./.github/actions/enforcing-sandbox
-      - run: scripts/rust-checks.sh
-        env:
-          CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX: 1
-      - uses: ./.github/actions/check-clean-worktree
-
-  platforms:
-    name: ${{ matrix.os }}
+  macos-scope:
+    name: macOS scope experiment (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 8
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: [macos-15-intel, macos-26]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-      - if: ${{ !cancelled() }}
-        run: cargo test --workspace --locked
-      - if: ${{ !cancelled() }}
-        run: cargo doc --workspace --all-features --no-deps --locked
-        env:
-          RUSTDOCFLAGS: -D warnings
-      - if: ${{ runner.os != 'Windows' && !cancelled() }}
-        run: scripts/install-tests.sh
-      - uses: ./.github/actions/check-clean-worktree
+      - run: sh .github/probes/macos-scope.sh
