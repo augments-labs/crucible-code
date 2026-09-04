@@ -1,4 +1,10 @@
 //! One spawned command and its complete local cleanup scope.
+//!
+//! Failed cleanup remains retryable while this owner exists. A stage and its
+//! admission slot are released only after process cleanup is confirmed. If Drop
+//! still cannot finish, the stage is retained and the slot stays consumed until
+//! the service restarts. This bounds new admissions without claiming that an
+//! unconfirmed workload died or retaining an unbounded cleanup thread.
 
 use std::io;
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -49,6 +55,12 @@ impl Reservation {
         }
         Ok(Self { active, held: true })
     }
+
+    /// Keeps the service's counter slot consumed after cleanup ownership is lost.
+    /// The Arc itself is released normally; only the bounded count is retained.
+    fn quarantine(mut self) {
+        self.held = false;
+    }
 }
 
 impl std::fmt::Debug for Reservation {
@@ -68,7 +80,7 @@ impl Drop for Reservation {
     }
 }
 
-/// A generated staging tree removed on every session/process drop path.
+/// A generated staging tree, retained when cleanup cannot safely be confirmed.
 pub(super) struct Stage {
     root: std::path::PathBuf,
     retained: bool,
@@ -586,7 +598,7 @@ enum BackgroundAcceptance {
 struct AuditState {
     finished: bool,
     usage: bool,
-    cleanup: bool,
+    cleanup: Option<SandboxCleanup>,
 }
 
 impl LocalProcess {
@@ -609,13 +621,13 @@ impl LocalProcess {
     }
 
     fn audit_cleanup(&mut self, cleanup: SandboxCleanup) -> io::Result<()> {
-        if self.audit_state.cleanup {
+        if self.audit_state.cleanup == Some(cleanup) {
             return Ok(());
         }
         self.control
             .audit(SandboxFactKind::Cleanup(cleanup))
             .map_err(io::Error::other)?;
-        self.audit_state.cleanup = true;
+        self.audit_state.cleanup = Some(cleanup);
         Ok(())
     }
 }
@@ -634,12 +646,17 @@ impl SandboxProcess for LocalProcess {
     }
 
     fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
-        if let Some(status) = self.status {
-            self.audit_finished()?;
-            return Ok(Some(status));
-        }
         if let Some(problem) = self.control.failure() {
             return Err(problem);
+        }
+        if let Some(status) = self.status {
+            if !self.scope_stopped {
+                return Err(io::Error::other(
+                    "sandbox process scope cleanup is unconfirmed",
+                ));
+            }
+            self.audit_finished()?;
+            return Ok(Some(status));
         }
 
         let status = {
@@ -653,8 +670,11 @@ impl SandboxProcess for LocalProcess {
         if let Some(status) = status {
             self.status = Some(status);
             self.scope_stopped = true;
-            if let Some(supervisor) = &mut self.supervisor {
-                supervisor.finish()?;
+            if let Some(supervisor) = &mut self.supervisor
+                && let Err(problem) = supervisor.finish()
+            {
+                self.control.record_failure(&problem);
+                return Err(problem);
             }
             self.audit_finished()?;
         }
@@ -673,47 +693,63 @@ impl SandboxProcess for LocalProcess {
             return self.control.failure().map_or(Ok(()), Err);
         }
 
-        let cleanup = {
-            let _lifecycle = self.control.lifecycle()?;
-            self.control.done.store(true, Ordering::Release);
-            let signaled = if self.scope_stopped {
-                Ok(())
-            } else {
-                stop_scope(&self.scope, &mut self.child)
-            };
-            if signaled.is_ok() {
-                self.scope_stopped = true;
+        self.control.done.store(true, Ordering::Release);
+        let cleanup = match self.control.lifecycle() {
+            Ok(_lifecycle) => {
+                let signaled = if self.scope_stopped {
+                    Ok(())
+                } else {
+                    stop_scope(&self.scope, &mut self.child)
+                };
+                if signaled.is_ok() {
+                    self.scope_stopped = true;
+                }
+                // Keep the leader unreaped while its scope remains uncertain:
+                // Unix supervisors and retries still borrow its numeric identity.
+                signaled.and_then(|()| reap(&mut self.child, &mut self.status))
             }
-            let reaped = reap(&mut self.child, &mut self.status);
-            signaled.and(reaped)
+            Err(problem) => Err(problem),
         };
         let joined = self.supervisor.as_mut().map_or(Ok(()), Supervisor::finish);
+        if let Err(problem) = &joined {
+            // The join handle has been consumed even on panic. Preserve that
+            // failure so a subsequent no-op join cannot erase it.
+            self.control.record_failure(problem);
+        }
         let supervised = self.control.failure().map_or(Ok(()), Err);
 
         self.stdout.take();
         self.stderr.take();
-        let staged = self.stage.as_mut().map_or(Ok(()), Stage::cleanup);
-        if staged.is_ok() {
-            self.stage.take();
+        let scope_confirmed = cleanup.is_ok() && joined.is_ok();
+        let staged = if scope_confirmed {
+            let staged = self.stage.as_mut().map_or(Ok(()), Stage::cleanup);
+            if staged.is_ok() {
+                self.stage.take();
+                self.reservation.take();
+            }
+            staged
+        } else {
+            Ok(())
+        };
+        let mut result = cleanup.and(joined).and(staged).and(supervised);
+        if scope_confirmed && self.status.is_some() {
+            let audited = self.audit_finished();
+            result = result.and(audited);
         }
-        self.reservation.take();
-        self.stopped = true;
-        let cleanup_succeeded = cleanup.is_ok() && joined.is_ok() && staged.is_ok();
-        let cleanup_state = if cleanup_succeeded {
+        let cleanup_state = if result.is_ok() {
             SandboxCleanup::Complete
         } else {
             SandboxCleanup::Failed
         };
         self.inspection = self.inspection.clone().cleaned(cleanup_state);
-        let mut result = cleanup.and(joined).and(staged).and(supervised);
-        if self.status.is_some() {
-            let audited = self.audit_finished();
-            result = result.and(audited);
-        }
         if self.audit_cleanup {
             let audited = self.audit_cleanup(cleanup_state);
             result = result.and(audited);
         }
+        if result.is_err() {
+            self.inspection = self.inspection.clone().cleaned(SandboxCleanup::Failed);
+        }
+        self.stopped = result.is_ok();
         result
     }
 
@@ -778,6 +814,15 @@ impl std::fmt::Debug for LocalProcess {
 impl Drop for LocalProcess {
     fn drop(&mut self) {
         let _ = self.stop();
+        // Ordinary field destruction must not clean an uncertain workload's
+        // files or advertise room for a replacement process. No thread or Arc
+        // is leaked: the service retains only its already-bounded counter slot.
+        if let Some(stage) = &mut self.stage {
+            stage.retained = true;
+        }
+        if let Some(reservation) = self.reservation.take() {
+            reservation.quarantine();
+        }
     }
 }
 
