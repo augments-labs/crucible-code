@@ -19,7 +19,7 @@
 //! configuration file or registering an adapter reaches this module.
 
 use std::fmt;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crucible_core::{
     Cancel, Finish, Heard, Muttered, Said, SandboxOutput, SandboxProcess, SandboxUsage,
@@ -39,6 +39,8 @@ pub struct Hosted {
     talking: Talking<Heard<Box<dyn SandboxOutput>>, Said>,
     /// What it has said beside the conversation.
     muttered: Muttered,
+    /// How long one exchange with it may take, whatever it fills the time with.
+    patience: Duration,
 }
 
 impl Hosted {
@@ -72,17 +74,24 @@ impl Hosted {
             process,
             talking: Talking::new(Heard::new(output, patience), Said::new(input, patience)),
             muttered,
+            patience,
         })
     }
 
     /// Agrees a protocol version and finishes the handshake.
     ///
+    /// `interrupt` ends the waiting the moment it is raised, on the same terms
+    /// as [`Self::call`]. A start-up is where a caller most needs that: nothing
+    /// has been asked of the far end yet, so a handshake given up on has left
+    /// nothing behind to wonder about.
+    ///
     /// # Errors
     ///
-    /// [`Rebuffed`] where the conversation fails, the server answers with no
-    /// version, or it answers with one crucible does not speak.
-    pub fn greet(&mut self) -> Result<Greeting, Rebuffed> {
-        crate::catalogue::hello(&mut self.talking)
+    /// [`Rebuffed`] where the conversation fails, crucible is asked to stop
+    /// waiting, the server answers with no version, or it answers with one
+    /// crucible does not speak.
+    pub fn greet(&mut self, interrupt: Option<&Cancel>) -> Result<Greeting, Rebuffed> {
+        self.during(interrupt, crate::catalogue::hello)
     }
 
     /// Waits a different silence out from here on, in both directions.
@@ -93,19 +102,67 @@ impl Hosted {
     /// conversation starts under whichever the caller opened it with and is
     /// moved once the greeting is behind it.
     pub fn patient_for(&mut self, patience: Duration) {
+        self.patience = patience;
         let (heard, said) = self.talking.streams_mut();
         heard.patient_for(patience);
         said.patient_for(patience);
+    }
+
+    /// Runs one exchange under a token that ends it at the patience however the
+    /// far end fills the time, and at `interrupt` whenever that is raised.
+    ///
+    /// The patience the streams themselves hold is spent on a single quiet
+    /// stretch and handed back whenever anything moves, which is the right
+    /// measure for a slow server and no measure at all for a server that says
+    /// one byte just short of it and then goes quiet again. That one is never
+    /// silent for long enough to be given up on, and the wait it holds open is
+    /// as long as it cares to make it. A deadline over the whole exchange is
+    /// the ceiling the per-silence number cannot be: it counts the time, not
+    /// the gaps in it.
+    ///
+    /// Both are put down again afterwards, because both belong to this
+    /// exchange: a deadline left behind would end the next one early, and a
+    /// press spent here would end it before it began.
+    ///
+    /// They stay two things rather than one deadline-carrying token, because
+    /// what they mean is different. A press is the near end losing interest,
+    /// and running out of time is the far end failing to answer; a caller that
+    /// could not tell them apart would report one as the other.
+    fn during<T, E>(
+        &mut self,
+        interrupt: Option<&Cancel>,
+        work: impl FnOnce(&mut Talking<Heard<Box<dyn SandboxOutput>>, Said>) -> Result<T, E>,
+    ) -> Result<T, E> {
+        let (heard, _) = self.talking.streams_mut();
+        heard.abandoned_when(interrupt.cloned());
+        heard.bounded_until(Instant::now().checked_add(self.patience));
+        let done = work(&mut self.talking);
+        let (heard, _) = self.talking.streams_mut();
+        heard.abandoned_when(None);
+        heard.bounded_until(None);
+        done
     }
 
     /// Reads every tool the server offers, under crucible's own bounds.
     ///
     /// # Errors
     ///
-    /// [`Rebuffed`] where the conversation fails or the catalogue is past one
-    /// of those bounds. A catalogue is refused whole rather than shortened.
-    pub fn catalogue(&mut self, greeting: &Greeting) -> Result<Vec<Offered>, Rebuffed> {
-        crate::catalogue::tools(&mut self.talking, greeting)
+    /// `interrupt` ends the waiting the moment it is raised, on the same terms
+    /// as [`Self::call`].
+    ///
+    /// # Errors
+    ///
+    /// [`Rebuffed`] where the conversation fails, crucible is asked to stop
+    /// waiting, or the catalogue is past one of those bounds. A catalogue is
+    /// refused whole rather than shortened.
+    pub fn catalogue(
+        &mut self,
+        greeting: &Greeting,
+        interrupt: Option<&Cancel>,
+    ) -> Result<Vec<Offered>, Rebuffed> {
+        self.during(interrupt, |talking| {
+            crate::catalogue::tools(talking, greeting)
+        })
     }
 
     /// Calls one tool the server offered, under crucible's own bounds.
@@ -132,12 +189,9 @@ impl Hosted {
         arguments: &Value,
         interrupt: Option<&Cancel>,
     ) -> Result<Answered, Unanswered> {
-        let (heard, _) = self.talking.streams_mut();
-        heard.abandoned_when(interrupt.cloned());
-        let answered = crate::calling::call(&mut self.talking, tool, arguments);
-        let (heard, _) = self.talking.streams_mut();
-        heard.abandoned_when(None);
-        answered
+        self.during(interrupt, |talking| {
+            crate::calling::call(talking, tool, arguments)
+        })
     }
 
     /// What the server has written to standard error so far.

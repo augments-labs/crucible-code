@@ -763,9 +763,11 @@ nothing a server offers can take over a name crucible already uses.
 A server is somebody else's program, so it runs confined the way a command run
 through `bash` does, under the same `sandbox.mode`. It starts in the workspace
 unless the record names a `directory`, which is then a root it may write in as
-well as the place it starts. And it is given exactly the variables `env` and
-`envFrom` name and nothing else: a server inherits none of crucible's own
-environment.
+well as the place it starts. That path does not have to be inside the workspace
+and is not checked against it: naming one widens what the server may reach, and
+it is a key only your own configuration file may write. And it is given exactly
+the variables `env` and `envFrom` name and nothing else: a server inherits
+none of crucible's own environment.
 
 `command` is the only key a record cannot do without, and it is either an
 absolute path or a bare name for `PATH` to answer. Anything in between —

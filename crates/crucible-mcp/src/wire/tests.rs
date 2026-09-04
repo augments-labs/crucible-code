@@ -95,6 +95,22 @@ fn an_answer_to_a_call_crucible_could_not_have_made_is_refused() {
 }
 
 #[test]
+fn an_identifier_too_long_to_repeat_is_refused_rather_than_quoted_back() {
+    // The spelling of an unreadable identifier goes into a sentence somebody
+    // reads, and it is text off a pipe: a frame is a megabyte, so without a
+    // ceiling the sentence could be one.
+    let id = format!("\"{}\"", "x".repeat(SAID_BYTES));
+    let frame = format!(r#"{{"jsonrpc":"2.0","id":{id},"result":{{}}}}"#);
+
+    let refused = Heard::read(&frame).expect_err("too long to keep");
+
+    assert!(
+        matches!(refused, Garbled::TooLong { field: "id", .. }),
+        "{refused:?}"
+    );
+}
+
+#[test]
 fn a_frame_that_is_two_shapes_at_once_is_not_guessed_at() {
     let refused =
         Heard::read(r#"{"jsonrpc":"2.0","id":1,"result":{},"error":{"code":1,"message":"x"}}"#)

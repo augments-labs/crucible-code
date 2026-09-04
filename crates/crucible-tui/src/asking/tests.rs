@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::Palette;
+
 /// The three answers, in the words the binary uses.
 const ANSWERS: [&str; 3] = [
     "Yes, once",
@@ -536,4 +538,36 @@ fn both_glyph_sets_draw_the_same_panel_at_the_same_width() {
         .join("\n");
     assert!(said.contains("+---"), "{said}");
     assert!(said.contains("|  > 1. Yes, once"), "{said}");
+}
+
+#[test]
+fn a_tool_name_the_model_chose_cannot_write_to_the_terminal_through_the_panel() {
+    // The subject and the row naming whose words the prose is are built out of
+    // the name a call went out under, and that name is the model's to spell.
+    // This is the panel a reader is meant to be able to trust while deciding
+    // whether to let a call run, so a sequence in it could repaint the answer
+    // the mark is standing on.
+    let named = "bash\u{1b}[2A\u{1b}[31m";
+    let question = Question {
+        subject: named,
+        attribution: named,
+        explanation: &PARAGRAPHS,
+        ..asking(&["ls"])
+    };
+    let rows = question.within(WIDE, 24, Glyphs::Unicode);
+
+    for row in &rows {
+        assert!(!row.text().contains('\u{1b}'), "{:?}", row.text());
+        assert!(
+            !row.paint(&Palette::plain()).contains('\u{1b}'),
+            "{:?}",
+            row.text()
+        );
+    }
+
+    // And the frame still lines up: a sequence counted as text would have made
+    // these rows too wide for the window they are drawn in.
+    for row in rows.iter().take(rows.len() - 1) {
+        assert_eq!(row.columns(), WIDE, "{:?}", row.text());
+    }
 }

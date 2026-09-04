@@ -145,10 +145,17 @@ fn environment(
 /// A server is somebody else's program: it gets what a confined command gets,
 /// and the directory is the only thing about that a document may move.
 ///
+/// It moves it *outwards*: the path becomes a read-write root, and nothing here
+/// asks whether it sits inside the workspace. That is deliberate and it is safe
+/// for one reason, which is not in this file — the whole `mcp` block widens, so
+/// only the configuration file in the home directory may state it. A checked-in
+/// project file is refused at the block, before any of this is reached.
+///
 /// # Errors
 ///
-/// A directory the confinement will not take, which is one the workspace's own
-/// rules already place out of reach.
+/// A directory the policy will not take: one that is relative, unnormalised,
+/// empty or oversized, or one that conflicts with a rule the workspace already
+/// states.
 fn confinement(
     record: &McpServer,
     workspace: &Workspace,

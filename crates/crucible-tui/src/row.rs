@@ -19,7 +19,38 @@
 use std::ops::Range;
 
 use crate::color::{Palette, Slot};
+use crate::escape::Escapes;
 use crate::width;
+
+/// `text` with anything a terminal would read as an instruction taken out.
+///
+/// Every span arrives through one door, so this is asked once rather than by
+/// each component in turn. A component that builds a row out of a tool result,
+/// a file name or a model's own words is handling text this process did not
+/// write, and remembering to clean it is a thing that can be forgotten — twice,
+/// so far. Colour crucible writes for itself is never bytes inside a span, so
+/// there is nothing here for this to take away.
+///
+/// What survives an abandoned sequence, and any other control character,
+/// becomes a space: a row occupies one row, and a character that moves the
+/// cursor or rings the terminal is not text.
+fn words(text: String) -> String {
+    if !text.contains(char::is_control) {
+        return text;
+    }
+
+    let mut escapes = Escapes::default();
+    text.chars()
+        .filter(|character| !escapes.holds(*character))
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect()
+}
 
 /// A run of text that is all one slot.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -110,7 +141,10 @@ impl Row {
 
     /// Appends structural art in `slot`.
     pub fn push_structural(&mut self, slot: Slot, text: impl Into<String>) {
-        let text = text.into();
+        // Said before the width is taken, because the span below says the same
+        // thing and a mark measured before it was cleaned would claim columns
+        // the row never draws.
+        let text = words(text.into());
         let columns = width::columns(&text);
         self.push_span(
             slot,
@@ -128,7 +162,7 @@ impl Row {
         structural: Vec<Range<usize>>,
         link: Option<Box<str>>,
     ) {
-        let text = text.into();
+        let text = words(text.into());
         if text.is_empty() {
             return;
         }
@@ -757,5 +791,45 @@ mod tests {
             .paint(&colourful());
 
         assert!(painted.ends_with(colourful().close()), "{painted:?}");
+    }
+
+    #[test]
+    fn a_span_built_from_somebody_elses_text_carries_no_instruction_to_the_terminal() {
+        // A tool result, a branch name, a model's own words: text this process
+        // did not write, reaching a row through a component that did not think
+        // to clean it. The sequence would clear the line and drag everything
+        // after it back to column one.
+        let row = Row::new().then(Slot::Plain, "\u{1b}[2K\rgit status");
+
+        // The sequence is gone and the return that followed it is a space:
+        // both are instructions, and only the second leaves a column behind.
+        assert_eq!(row.text(), " git status", "the row said the sequence");
+        assert!(
+            !row.paint(&colourful()).contains("[2K"),
+            "painted the sequence"
+        );
+        assert_eq!(row.columns(), " git status".len(), "counted the sequence");
+    }
+
+    #[test]
+    fn a_control_character_in_a_span_becomes_a_space_rather_than_a_moved_cursor() {
+        // What is left when a sequence was abandoned, and what arrives on its
+        // own. A row occupies one row: a newline inside a span would make it
+        // two, and the second would be drawn wherever the cursor happened to
+        // be.
+        let row = Row::new().then(Slot::Plain, "one\ntwo\tthree");
+
+        assert_eq!(row.text(), "one two three", "the row is still one row");
+    }
+
+    #[test]
+    fn structural_art_is_measured_after_it_is_cleaned() {
+        // A mark a component built out of borrowed text. Its width decides
+        // where the divider to its right lands, so a count taken before the
+        // cleaning would leave a hole in the band.
+        let row = Row::new().then_structural(Slot::Plain, "\u{1b}[31m|");
+
+        assert_eq!(row.text(), "|");
+        assert_eq!(row.columns(), 1, "counted the colour it never drew");
     }
 }

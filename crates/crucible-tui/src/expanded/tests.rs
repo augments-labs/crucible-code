@@ -276,3 +276,34 @@ fn a_result_that_said_nothing_is_still_shown_under_its_call() {
     assert_eq!(rows.get(2).map(|row| row.trim_end()), Some("Bash(true)"));
     assert_eq!(rows.len(), 6, "{rows:?}");
 }
+
+#[test]
+fn what_a_tool_printed_is_shown_rather_than_obeyed() {
+    // The whole point of this view is that a result too big for a row is read
+    // here, so the text in it is somebody else's program's output at its
+    // longest. A sequence in it would move the cursor out of the view and
+    // repaint the transcript underneath it, and the reader asked to *see* the
+    // output, not to run it.
+    let shown = [Shown {
+        called: "Bash(cat banner)\u{1b}]0;owned\u{7}",
+        text: "ok\n\u{1b}[1;1H\u{1b}[2Jcleared the screen\nplain",
+    }];
+    let rows = art(
+        &Expanded {
+            shown: &shown,
+            from: 0,
+        },
+        40,
+        20,
+    );
+
+    for row in &rows {
+        assert!(!row.contains('\u{1b}'), "{row:?}");
+        assert!(!row.contains('\u{7}'), "{row:?}");
+    }
+    assert!(
+        rows.iter()
+            .any(|row| row.trim_end() == "cleared the screen"),
+        "{rows:?}"
+    );
+}

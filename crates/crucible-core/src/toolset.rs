@@ -764,7 +764,8 @@ impl ToolSnapshot {
     /// # Errors
     ///
     /// [`ToolsetError`] if the snapshot is too large or contains two entries
-    /// with one provider-visible name.
+    /// whose provider-visible names are one name to a permission rule, which
+    /// reads them without case.
     pub fn new(entries: impl IntoIterator<Item = ToolEntry>) -> Result<Self, ToolsetError> {
         let entries: Vec<ToolEntry> = entries.into_iter().collect();
         if entries.len() > TOOL_SNAPSHOT_ENTRIES {
@@ -784,11 +785,18 @@ impl ToolSnapshot {
                 });
             }
 
-            if let Some(first) = entries
-                .iter()
-                .take(at)
-                .find(|first| first.descriptor().name() == entry.descriptor().name())
-            {
+            // Ignoring case, because that is how a permission rule reads a
+            // name: `Rule::names` matches without it, so two tools spelled
+            // apart only by case are one tool to every rule anybody could write
+            // about them — and a verdict given for the first would be spent on
+            // the second without ever having been asked about it. A roster that
+            // cannot be written rules about is refused instead.
+            if let Some(first) = entries.iter().take(at).find(|first| {
+                first
+                    .descriptor()
+                    .name()
+                    .eq_ignore_ascii_case(entry.descriptor().name())
+            }) {
                 return Err(ToolsetError::Duplicate {
                     name: entry.descriptor().name().into(),
                     first: first.descriptor().provenance().clone(),
@@ -1093,6 +1101,56 @@ mod tests {
 
         assert_eq!(conservative.effect(), ToolEffect::NonIdempotent);
         assert_eq!(read_only.effect(), ToolEffect::ReadOnly);
+    }
+
+    #[test]
+    fn two_names_one_permission_rule_reads_alike_are_one_name_to_a_snapshot() {
+        // A rule matches a tool name without case, so `search` and `Search` are
+        // one name to every rule anybody could write. A snapshot holding both
+        // would spend a verdict given for one on the other, so it is refused —
+        // here rather than only where a particular source reads its own names,
+        // because every source arrives through this door.
+        use crate::{Summary, ToolContext};
+
+        // Named and never asked anything: the roster is refused while it is
+        // being built, so nothing here is ever reached.
+        struct Inert;
+        impl Tool for Inert {
+            fn validate(&self, _args: &ToolArgs) -> Result<(), ToolError> {
+                panic!("named, never called")
+            }
+
+            fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
+                panic!("named, never called")
+            }
+
+            fn summary(&self, _args: &ToolArgs) -> Summary {
+                panic!("named, never called")
+            }
+
+            fn run(
+                &self,
+                _approved: Approved,
+                _context: &ToolContext<'_>,
+            ) -> Result<ToolOutput, ToolError> {
+                panic!("named, never called")
+            }
+        }
+
+        let entry = |name: &str| {
+            ToolEntry::new(
+                ToolDescriptor::new(name, "{}", source(name)).unwrap(),
+                Arc::new(Inert) as Arc<dyn Tool>,
+            )
+        };
+
+        let refused = ToolSnapshot::new([entry("search"), entry("Search")])
+            .expect_err("one name to every rule");
+
+        assert!(
+            matches!(&refused, ToolsetError::Duplicate { name, .. } if &**name == "Search"),
+            "{refused:?}"
+        );
     }
 
     #[test]

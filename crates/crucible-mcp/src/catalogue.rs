@@ -52,6 +52,13 @@ pub const ABOUT_BYTES: usize = 4 * 1024;
 /// The most bytes one tool's input schema may carry.
 pub const SCHEMA_BYTES: usize = 64 * 1024;
 
+/// The most bytes the cursor to a further page may carry.
+///
+/// Opaque to crucible and chosen by the server, which is exactly why it is
+/// held: a value that is only ever handed back is a value nothing about would
+/// have noticed growing.
+pub const CURSOR_BYTES: usize = 4 * 1024;
+
 /// Why a server could not be greeted, or its catalogue read.
 #[derive(Debug, thiserror::Error)]
 pub enum Rebuffed {
@@ -82,7 +89,7 @@ pub enum Rebuffed {
     },
 
     /// A retained spelling ran past its ceiling.
-    #[error("the server offered a tool whose {field} is {actual} bytes; the maximum is {maximum}")]
+    #[error("the server answered with a {field} of {actual} bytes; the maximum is {maximum}")]
     TooLong {
         /// Which field.
         field: &'static str,
@@ -115,7 +122,12 @@ pub enum Rebuffed {
     /// Refused, because a name is what the model acts on: two meanings for one
     /// of them is a call whose outcome depends on which the reader happened to
     /// keep.
-    #[error("the server offers two tools called {name}")]
+    ///
+    /// One name, ignoring case: a permission rule reads a tool's name without
+    /// it, so `search` and `Search` are two tools here and one name to every
+    /// rule anybody could write about them — and a verdict given for the first
+    /// would be spent on the second.
+    #[error("the server offers two tools called {name}, give or take the case of it")]
     Twice {
         /// The name they share.
         name: Box<str>,
@@ -275,7 +287,10 @@ pub fn tools<R: BufRead, W: Write>(
         };
         for held in listed {
             let offered = one(held)?;
-            if read.iter().any(|kept| kept.name() == offered.name()) {
+            if read
+                .iter()
+                .any(|kept| kept.name().eq_ignore_ascii_case(offered.name()))
+            {
                 return Err(Rebuffed::Twice {
                     name: offered.name.clone(),
                 });
@@ -287,7 +302,10 @@ pub fn tools<R: BufRead, W: Write>(
         }
 
         match page.get("nextCursor").and_then(Value::as_str) {
-            Some(next) => cursor = Some(next.into()),
+            Some(next) => {
+                bounded("nextCursor", next.len(), CURSOR_BYTES)?;
+                cursor = Some(next.into());
+            }
             None => return Ok(read),
         }
     }

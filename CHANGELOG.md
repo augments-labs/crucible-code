@@ -20,12 +20,79 @@ change in any release with no deprecation period.
 
 - **`restarts` is now acted on.** A server whose process had already gone when
   crucible tried to write the call is started again, up to the number the
-  record names, and the same call is sent once — the frame never left crucible,
-  so nothing over there half-happened. Every other ending has a request
-  outstanding and is refused whatever the ceiling says. A restarted server has
-  to come back offering the tool under the same name and the same schema, or it
-  is stopped and the tool reported gone. The default of `0` is unchanged: one
-  start and no more.
+  record names, and the same call is sent once — the frame can be proven not to
+  have left crucible, so nothing over there half-happened. Every other ending
+  has a request outstanding and is refused whatever the ceiling says. A
+  restarted server has to come back offering every tool this run published,
+  each under the same name and the same schema, or it is stopped and the tool
+  reported gone. The default of `0` is unchanged: one start and no more.
+
+### Fixed
+
+- **The crate-graph check now reads the manifests it was written for.** It
+  looked for a dependency key spelled out to an `=`, and every member writes
+  `crucible-core.workspace = true`, so it matched nothing in any crate and
+  compared the empty set against the allowed layering. It also read
+  `[workspace.dependencies]` as edges of the root package, which would have
+  given the root every edge in the workspace. Both are corrected, and the
+  layering it was always meant to enforce is enforced.
+
+### Security
+
+Everything below is crucible reading what somebody else's program said. None of
+it is a report from the field; it is the result of auditing the boundary the
+`mcp` block opened.
+
+- **Nothing a tool, a server or a model writes can steer the terminal any
+  more.** Escape sequences are taken out of every span at the one place spans
+  are built, so a tool named `bash\e[2A`, a directory a server printed, and a
+  block of output that clears the screen are shown as words rather than obeyed.
+  A control character becomes a space, which keeps the row's measured width
+  honest.
+
+- **Two tool names that differ only in case are refused.** A permission rule
+  matches a name without case, so a verdict given for `search` would be spent
+  on `Search`. The catalogue refuses the pair where it reads it, and the tool
+  snapshot refuses it again for any other source of tools.
+
+- **A restarted server is checked against everything it published, not the tool
+  in hand.** The model can see the whole catalogue that went out at start-up
+  and may call any of it next, so a server that comes back having reshaped a
+  tool nobody has called yet is stopped just the same.
+
+- **An exchange now has a ceiling over the whole of it.** `requestSeconds` was
+  spent on a single quiet stretch and handed back whenever anything moved, so a
+  server that said one byte just short of it and then went quiet again was
+  never silent long enough to be given up on. The handshake and the catalogue
+  read also end at an interrupt now, as a call already did.
+
+- **A write that ran out of patience is no longer counted as never sent.** Those
+  bytes are with the thread that owns the pipe and may yet be read; treating
+  that as unasked would let a restart repeat a call the server had already
+  taken. Only the endings that can be proven not to have reached the far end
+  count as unsent.
+
+- **Answers crucible cannot read are read as failures.** A result whose
+  `isError` is written in something other than a boolean is reported failed,
+  because a working result called a failure costs a call and a failure called a
+  result is the model told a thing happened that did not.
+
+- **Two more retained spellings are bounded.** A `nextCursor` is opaque to
+  crucible and handed straight back, which is exactly why nothing about it
+  would have noticed it growing; an unreadable JSON-RPC `id` was quoted into a
+  message whole, and a frame is a megabyte.
+
+- **A backend's lost connection is no longer reported as a key nobody
+  pressed.** The sandbox reader keeps `ConnectionAborted` for its own giving-up,
+  so a backend raising it was crucible telling the turn the user had
+  interrupted.
+
+Two findings are disclosed rather than fixed. `SandboxResourceLimits::default()`
+sets no CPU, memory, disk, process, descriptor, output or wall-time ceiling, so
+a confined command is bounded by the sandbox and not by a quota — that is
+workspace-wide policy for every confined command rather than anything the `mcp`
+block introduced, and it is owned separately. And `deny.toml` states no `[bans]`
+section, so no gate refuses a duplicate or unwanted crate.
 
 ## [0.36.0] - 2026-09-03
 

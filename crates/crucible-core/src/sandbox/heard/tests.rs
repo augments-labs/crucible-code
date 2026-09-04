@@ -309,3 +309,123 @@ fn a_reader_handed_no_token_waits_out_a_silence_it_was_told_to_abandon_before() 
         "a spent press must not end the exchange after it"
     );
 }
+
+/// A stream that always has one more byte and never ends a frame.
+///
+/// The shape a patience cannot answer: it is never quiet for long enough to be
+/// given up on, so a reader measuring silences alone waits on it for as long as
+/// it cares to keep typing.
+struct Dribbles;
+
+impl SandboxOutput for Dribbles {
+    fn read_ready(&mut self, buffer: &mut [u8]) -> io::Result<SandboxRead> {
+        std::thread::sleep(Duration::from_millis(1));
+        let Some(byte) = buffer.first_mut() else {
+            return Ok(SandboxRead::Pending);
+        };
+        // Not a newline: this is a frame that goes on forever, not a slow one.
+        *byte = b'x';
+        Ok(SandboxRead::Bytes(1))
+    }
+}
+
+/// Reads one line from `reader` on a thread of its own, and gives up on the
+/// whole test after `waiting`.
+///
+/// A reader that will not stop cannot be asked whether it stopped, so the
+/// waiting happens here rather than in the reader: what comes back is either
+/// the ending or the absence of one.
+fn ended(mut reader: Heard<Dribbles>, waiting: Duration) -> Option<(io::Result<usize>, Duration)> {
+    let (done, ending) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let began = Instant::now();
+        let mut line = String::new();
+        let read = reader.read_line(&mut line);
+        drop(done.send((read, began.elapsed())));
+    });
+    ending.recv_timeout(waiting).ok()
+}
+
+#[test]
+fn a_reader_given_a_deadline_gives_up_on_a_peer_that_never_stops_typing() {
+    let mut reader = Heard::with_pause(Dribbles, Duration::from_secs(30), PAUSE);
+    reader.bounded_until(Instant::now().checked_add(Duration::from_millis(100)));
+
+    let (read, waited) = ended(reader, Duration::from_secs(5)).expect(
+        "a deadline is a deadline however busy the far end is; without one this reader \
+         is still going",
+    );
+
+    let ending = read.expect_err("a frame that never ended is not a line");
+    assert_eq!(
+        ending.kind(),
+        io::ErrorKind::TimedOut,
+        "it is the far end that failed to answer in the time it was given, which is \
+         what a reader says about a peer that ran out of it: {ending}"
+    );
+    assert!(
+        waited < Duration::from_secs(5),
+        "and it ended at the deadline rather than at the patience thirty seconds away: \
+         {waited:?}"
+    );
+}
+
+#[test]
+fn a_reader_asked_to_stop_while_bytes_keep_arriving_stops_anyway() {
+    let cancel = Cancel::new();
+    cancel.request();
+    let mut reader = Heard::with_pause(Dribbles, Duration::from_secs(30), PAUSE);
+    reader.abandoned_when(Some(cancel));
+
+    let (read, waited) = ended(reader, Duration::from_secs(5))
+        .expect("a press is answered whether or not the far end is saying anything");
+
+    let ending = read.expect_err("a reader that was asked to stop did not finish the line");
+    assert_eq!(
+        ending.kind(),
+        io::ErrorKind::ConnectionAborted,
+        "a press ends the wait as the near end letting go, not as a slow peer: {ending}"
+    );
+    assert!(
+        waited < Duration::from_secs(5),
+        "and it is answered at the press rather than once the far end pauses for \
+         breath: {waited:?}"
+    );
+}
+
+/// A stream whose own read fails the way an abandonment is spelled.
+struct Aborts;
+
+impl SandboxOutput for Aborts {
+    fn read_ready(&mut self, _buffer: &mut [u8]) -> io::Result<SandboxRead> {
+        Err(io::Error::new(
+            io::ErrorKind::ConnectionAborted,
+            "the connection was aborted",
+        ))
+    }
+}
+
+#[test]
+fn a_connection_the_backend_lost_is_not_reported_as_a_press_nobody_made() {
+    // The kind that says crucible let go is crucible's to set, and a backend
+    // that happens to fail with it would otherwise be indistinguishable from
+    // the reader being asked to stop. What is decided on that difference is
+    // whether a call in flight was abandoned by the near end or lost with the
+    // far one.
+    let mut reader = Heard::with_pause(Aborts, PATIENCE, PAUSE);
+    let mut line = String::new();
+
+    let ending = reader
+        .read_line(&mut line)
+        .expect_err("a stream that will not read is not a line");
+
+    assert_eq!(
+        ending.kind(),
+        io::ErrorKind::BrokenPipe,
+        "the far end went, and nobody pressed anything"
+    );
+    assert!(
+        ending.to_string().contains("the connection was aborted"),
+        "the backend's own account of it survives: {ending}"
+    );
+}
