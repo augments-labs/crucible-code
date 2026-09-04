@@ -24,6 +24,7 @@
 //! has no equivalent kernel boundary, and the shipped documentation says so
 //! rather than implying otherwise.
 
+use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -113,6 +114,28 @@ struct Held {
     ended: Vec<Ended>,
     counted: usize,
     reserved: usize,
+}
+
+impl Held {
+    /// An abandoned result cannot be accepted again, but failed cleanup still
+    /// needs the registry's bounded owner and the panel's retry control.
+    fn abandon(&mut self, number: usize) {
+        let Some(at) = self
+            .left
+            .iter()
+            .position(|left| left.number == number && left.accepting)
+        else {
+            return;
+        };
+        let Some(left) = self.left.get_mut(at) else {
+            return;
+        };
+        if super::output::end(left.process.as_mut()).is_ok() {
+            self.left.remove(at);
+        } else {
+            left.accepting = false;
+        }
+    }
 }
 
 impl Drop for Held {
@@ -312,15 +335,24 @@ impl Background {
     /// Silent about a number nothing answers to: the panel is drawn from a list
     /// that may be a frame old, and a key pressed against a command that has just
     /// exited has got what it asked for.
-    pub fn stop(&self, number: usize) {
-        let Ok(mut standing) = self.standing.lock() else {
-            return;
-        };
+    ///
+    /// # Errors
+    ///
+    /// Registry ownership is unavailable or process cleanup failed. A command
+    /// whose cleanup failed keeps its entry and capacity for another attempt.
+    pub fn stop(&self, number: usize) -> io::Result<()> {
+        let mut standing = self
+            .standing
+            .lock()
+            .map_err(|_| io::Error::other("background registry ownership is unavailable"))?;
 
-        if let Some(at) = standing.left.iter().position(|left| left.number == number) {
-            let mut left = standing.left.remove(at);
-            let _ = super::output::end(left.process.as_mut());
+        if let Some(at) = standing.left.iter().position(|left| left.number == number)
+            && let Some(left) = standing.left.get_mut(at)
+        {
+            super::output::end(left.process.as_mut())?;
+            standing.left.remove(at);
         }
+        Ok(())
     }
 
     /// Every command that has ended and not yet been reported to the model.
@@ -365,7 +397,10 @@ impl Background {
                 Ok(Some(status)) => {
                     // The shell has gone; its descendants have not necessarily,
                     // and this is the one path where nothing else will end them.
-                    let _ = super::output::end(left.process.as_mut());
+                    if super::output::end(left.process.as_mut()).is_err() {
+                        still.push(left);
+                        continue;
+                    }
                     let (lines, _) = left.counted();
 
                     ended.push(Ended {
@@ -427,21 +462,12 @@ impl Drop for Kept {
         let Ok(mut standing) = self.standing.lock() else {
             return;
         };
-        let Some(at) = standing
-            .left
-            .iter()
-            .position(|left| left.number == self.number && left.accepting)
-        else {
-            return;
-        };
-        let mut left = standing.left.remove(at);
-        drop(standing);
-        let _ = super::output::end(left.process.as_mut());
+        standing.abandon(self.number);
         self.accepting = false;
     }
 }
 
-/// Removes and stops a command unless runner finalization binds its receipt.
+/// Stops a command unless runner finalization binds its receipt.
 struct Acceptance {
     standing: Arc<Mutex<Held>>,
     number: usize,
@@ -479,16 +505,7 @@ impl Drop for Acceptance {
         let Ok(mut standing) = self.standing.lock() else {
             return;
         };
-        let Some(at) = standing
-            .left
-            .iter()
-            .position(|left| left.number == self.number && left.accepting)
-        else {
-            return;
-        };
-        let mut left = standing.left.remove(at);
-        drop(standing);
-        let _ = super::output::end(left.process.as_mut());
+        standing.abandon(self.number);
         self.armed = false;
     }
 }
@@ -582,3 +599,6 @@ impl Left {
         said
     }
 }
+
+#[cfg(test)]
+mod tests;
