@@ -168,9 +168,16 @@ pub(super) struct SpawnPlan {
 
 /// Starts one command under an already negotiated process plan.
 pub(super) fn spawn(
-    mut command: Command,
+    command: Command,
     plan: SpawnPlan,
 ) -> Result<Box<dyn SandboxProcess>, crucible_core::SandboxError> {
+    spawn_local(command, plan).map(|process| Box::new(process) as Box<dyn SandboxProcess>)
+}
+
+fn spawn_local(
+    mut command: Command,
+    plan: SpawnPlan,
+) -> Result<LocalProcess, crucible_core::SandboxError> {
     let SpawnPlan {
         inspection,
         reservation,
@@ -288,7 +295,7 @@ pub(super) fn spawn(
         return Err(crucible_core::SandboxError::Audit(source));
     }
 
-    Ok(Box::new(LocalProcess {
+    Ok(LocalProcess {
         child,
         scope,
         stdin,
@@ -309,7 +316,11 @@ pub(super) fn spawn(
         invocation,
         call_result_key,
         background_acceptance: BackgroundAcceptance::None,
-    }))
+        #[cfg(test)]
+        test_stop: stop_scope,
+        #[cfg(test)]
+        test_reap: reap,
+    })
 }
 
 /// Shared hard-limit state used by both output streams and the supervisor.
@@ -557,6 +568,11 @@ struct LocalProcess {
     invocation: SandboxInvocationMode,
     call_result_key: Option<CallResultKey>,
     background_acceptance: BackgroundAcceptance,
+    /// Per-instance failure injection leaves production builds and other tests unchanged.
+    #[cfg(test)]
+    test_stop: fn(&Scope, &mut Child) -> io::Result<()>,
+    #[cfg(test)]
+    test_reap: fn(&mut Child, &mut Option<ExitStatus>) -> io::Result<()>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -649,6 +665,10 @@ impl SandboxProcess for LocalProcess {
     }
 
     fn stop(&mut self) -> io::Result<()> {
+        #[cfg(test)]
+        let stop_scope = self.test_stop;
+        #[cfg(test)]
+        let reap = self.test_reap;
         if self.stopped {
             return self.control.failure().map_or(Ok(()), Err);
         }
@@ -798,6 +818,15 @@ pub(crate) fn testing(
     command: Command,
     speech: crucible_core::SandboxSpeech,
 ) -> Result<Box<dyn SandboxProcess>, crucible_core::SandboxError> {
+    testing_local(command, speech, None).map(|process| Box::new(process) as Box<dyn SandboxProcess>)
+}
+
+#[cfg(all(test, unix))]
+fn testing_local(
+    command: Command,
+    speech: crucible_core::SandboxSpeech,
+    stage: Option<Stage>,
+) -> Result<LocalProcess, crucible_core::SandboxError> {
     use crucible_core::{
         Ancestry, SandboxAudit, SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance,
         SandboxCapabilities, SandboxCleanup, SandboxFilesystemAccess, SandboxFilesystemProvenance,
@@ -844,12 +873,12 @@ pub(crate) fn testing(
     let active = Arc::new(AtomicUsize::new(0));
     let reservation = Reservation::take(active, 1)?;
     let sandbox = inspection.id();
-    spawn(
+    spawn_local(
         command,
         SpawnPlan {
             inspection,
             reservation,
-            stage: None,
+            stage,
             limits: SandboxResourceLimits::default(),
             audit: SandboxAudit::new(Ancestry::new(), ToolId::new("test-process")),
             sandbox,
@@ -862,6 +891,9 @@ pub(crate) fn testing(
         },
     )
 }
+
+#[cfg(all(test, target_os = "linux"))]
+mod cleanup_tests;
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
