@@ -159,6 +159,25 @@ impl Bwrap {
         })
     }
 
+    /// A backend that is never spawned, for tests that read the plan.
+    ///
+    /// `build` reads only the path, and a test that asserts what goes into the
+    /// argument list must not need a root-owned Bubblewrap on the machine
+    /// running it — that is the very thing it cannot assume.
+    #[cfg(test)]
+    pub(super) fn unspawned(path: PathBuf) -> Result<Self, SandboxError> {
+        let id = SandboxBackendId::new("linux-bubblewrap")
+            .map_err(|_| unavailable("invalid built-in Linux backend identity"))?;
+        let identity =
+            SandboxBackendIdentity::new(id, "0.0.0", SandboxBackendProvenance::System, None)
+                .map_err(|_| unavailable("invalid test backend identity"))?;
+        Ok(Self {
+            path,
+            identity,
+            capabilities: capabilities(),
+        })
+    }
+
     pub(super) fn path(&self) -> &Path {
         &self.path
     }

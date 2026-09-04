@@ -1172,6 +1172,8 @@ fn materialization(problem: &'static str, source: Option<std::io::Error>) -> San
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::File;
+
     use crucible_core::{
         Ancestry, SandboxId, SandboxManifest, SandboxMode, SandboxPolicy, SandboxRequest, ToolId,
     };
@@ -1200,21 +1202,81 @@ mod tests {
 
     #[test]
     fn a_confined_command_carries_the_standard_ceilings_to_the_broker() {
+        // The policy stating a ceiling and the broker being told about it are
+        // two different things, and only the second one bounds anything. This
+        // reads the whole assembled plan rather than the one helper that
+        // spells the flags, so removing the call is as red as mistranslating
+        // it.
         let sample = Sample::new("sandbox-standard-ceilings");
-        let policy = SandboxPolicy::standard(&sample.workspace()).expect("policy");
-        let mut process = Command::new("/nonexistent");
-        append_resource_limits(&mut process, policy.limits());
+        let read_only = SandboxPolicy::new(
+            SandboxMode::Required,
+            [SandboxFilesystemRule::new(
+                sample.root().clone(),
+                SandboxFilesystemAccess::ReadOnly,
+                crucible_core::SandboxFilesystemProvenance::Workspace,
+            )
+            .expect("read-only rule")],
+            sample.root().clone(),
+            SandboxNetworkPolicy::Closed,
+            crucible_core::SandboxResourceLimits::confining(),
+        )
+        .expect("a confining read-only policy");
+        let request = SandboxRequest::new(
+            SandboxId::new(),
+            Ancestry::new(),
+            ToolId::new("sandbox"),
+            read_only,
+            SandboxManifest::empty(),
+        );
+        let view = prepare(&request).expect("a view of the sample");
+        let command = SandboxCommand::new(
+            "/bin/sh",
+            [
+                std::ffi::OsString::from("-c"),
+                std::ffi::OsString::from(":"),
+            ],
+            crucible_core::SandboxEnvironment::empty(),
+        )
+        .expect("a command to confine");
+        let backend = Bwrap::unspawned(PathBuf::from("/nonexistent/bwrap")).expect("a backend");
+        let image = File::open("/dev/null").expect("a file to stand in for the broker");
+        let broker = Broker::unexecuted(PathBuf::from("/nonexistent/broker"), image);
+        let status = File::open("/dev/null").expect("a file to stand in for the status pipe");
+
+        let process = build(Plan {
+            backend: &backend,
+            broker: &broker,
+            request: &request,
+            command: &command,
+            view: &view,
+            materialization: None,
+            projection: None,
+            status_descriptor: status.as_raw_fd(),
+        })
+        .expect("a plan for a read-only confined command");
+
         let argv: Vec<_> = process
             .get_args()
             .map(|argument| argument.to_string_lossy().into_owned())
             .collect();
+        for (flag, value) in [
+            ("--limit-cpu-seconds", "3600"),
+            ("--limit-open-files", "4096"),
+        ] {
+            let at = argv
+                .iter()
+                .position(|argument| argument == flag)
+                .unwrap_or_else(|| panic!("{flag} is missing from {argv:?}"));
+            assert_eq!(argv.get(at + 1).map(String::as_str), Some(value), "{flag}");
+        }
 
-        // The policy stating a ceiling and the broker being told about it are
-        // two different things, and only the second one bounds anything.
-        assert_eq!(
-            argv,
-            ["--limit-cpu-seconds", "3600", "--limit-open-files", "4096"],
-            "the standard policy's ceilings reach the broker's argv"
+        // Stated nowhere, so asked for nowhere: a ceiling the broker cannot
+        // apply would be refused before it ever got this far.
+        assert!(
+            !argv
+                .iter()
+                .any(|argument| argument == "--limit-memory-bytes"),
+            "{argv:?}"
         );
     }
 

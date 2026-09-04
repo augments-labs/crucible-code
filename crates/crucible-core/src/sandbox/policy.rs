@@ -1327,12 +1327,20 @@ mod tests {
 
     #[test]
     fn a_mode_that_accepts_a_backend_which_does_not_confine_asks_it_for_no_ceilings() {
+        // Memory is not one of the ceilings `confining` states, so a policy
+        // that only used those could not tell whether `with_mode` took it off
+        // or whether it was never there. A host that did ask for it says both.
         let confining = policy_with(
             SandboxMode::Required,
             vec![rule("/workspace", SandboxFilesystemAccess::ReadWrite)],
-            SandboxResourceLimits::confining(),
+            SandboxResourceLimits {
+                memory_bytes: Some(1 << 30),
+                command_time: Some(Duration::from_secs(30)),
+                ..SandboxResourceLimits::confining()
+            },
         );
         assert_eq!(confining.limits().cpu_seconds, Some(CPU_SECONDS));
+        assert_eq!(confining.limits().memory_bytes, Some(1 << 30));
 
         for accepted in [SandboxMode::Degraded, SandboxMode::Off] {
             // The compatibility backend applies no rlimit. Carrying the numbers
@@ -1342,6 +1350,14 @@ mod tests {
             assert_eq!(relaxed.limits().cpu_seconds, None, "{accepted:?}");
             assert_eq!(relaxed.limits().open_files, None, "{accepted:?}");
             assert_eq!(relaxed.limits().memory_bytes, None, "{accepted:?}");
+
+            // What the caller asked for over one command is not the
+            // confinement's, and stays exactly as it was.
+            assert_eq!(
+                relaxed.limits().command_time,
+                Some(Duration::from_secs(30)),
+                "{accepted:?}"
+            );
         }
     }
 
