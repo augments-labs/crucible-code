@@ -833,11 +833,12 @@ fn the_box_and_the_mode_stand_under_a_turn_that_is_still_being_written() {
         rows.get(at + 1).is_some_and(String::is_empty),
         "the row did not stand clear of the box: {rows:?}"
     );
-    // The window reading stands on the row above the box, and the box under it.
+    // The row the window reading stands on is above the box, and says nothing
+    // while no window is known.
     assert!(
         rows.get(at + 2)
-            .is_some_and(|row| row.contains("window unknown") || row.contains("window left")),
-        "the reading was not over the box: {rows:?}"
+            .is_some_and(|row| row.trim().is_empty() || row.contains("window left")),
+        "the reading's row was not over the box: {rows:?}"
     );
     assert!(
         rows.get(at + 3)

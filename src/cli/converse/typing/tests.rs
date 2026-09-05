@@ -1036,14 +1036,6 @@ fn a_running_turn_keeps_its_turn_start_window_reading_before_the_first_event() {
         "{:?}",
         footed.boxed
     );
-    assert!(
-        footed
-            .boxed
-            .iter()
-            .all(|row| !row.text().contains("window unknown")),
-        "{:?}",
-        footed.boxed
-    );
 }
 
 #[test]

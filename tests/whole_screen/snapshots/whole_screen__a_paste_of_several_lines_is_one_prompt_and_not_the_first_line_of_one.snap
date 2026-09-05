@@ -19,7 +19,7 @@ expression: window.picture()
 |Then use /model to select a model.                                              |
 |                                                                                |
 |                                                                                |
-|                                                                  window unknown|
+|                                                                                |
 |╭──────────────────────────────────────────────────────────────────────────────╮|
 |│ › first line                                                                 │|
 |│   second line                                                                │|

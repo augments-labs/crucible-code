@@ -17,7 +17,7 @@ expression: window.picture()
 |select a model.                                     |
 |                                                    |
 |                                                    |
-|                                      window unknown|
+|                                                    |
 |╭──────────────────────────────────────────────────╮|
 |│ › the quick brown fox jumps over the lazy dog    │|
 |╰──────────────────────────────────────────────────╯|
