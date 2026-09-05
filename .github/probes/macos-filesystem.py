@@ -22,6 +22,7 @@ image = base / 'fixture.dmg'
 mount = base / 'volume'
 mount.mkdir()
 print('FIXTURE ' + str(base), flush=True)
+owned_pids = []
 
 
 def command(argv, allowed=(0,), timeout=30):
@@ -30,6 +31,8 @@ def command(argv, allowed=(0,), timeout=30):
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             close_fds=True, start_new_session=True,
                             env={'PATH': '/usr/bin:/bin:/usr/sbin:/sbin', 'LANG': 'C'})
+    if len(argv) > 1 and str(argv[0]) == str(worker) and argv[1] == 'launch':
+        owned_pids.append(proc.pid)
     data = bytearray()
     deadline = time.monotonic() + timeout
     try:
@@ -124,29 +127,43 @@ disks = [entry['dev-entry'] for entry in entities if entry.get('content-hint') =
 assert len(disks) == 1 and disks[0].startswith('/dev/disk')
 command(['/sbin/mount', '-u', '-o', 'nosuid,nodev', mount])
 command([worker, 'flags', mount])
-operations = ['allowed-read', 'allowed-write', 'source-read', 'source-write', 'readonly-write',
-              'protected-write', 'protected-unlink', 'protected-rename', 'ancestor-rename',
-              'protected-link', 'protected-symlink', 'source-symlink', 'unreadable-read',
-              'unreadable-alias', 'unreadable-case', 'unreadable-create', 'unreadable-rename', 'device', 'setuid']
-failures = []
-sequence = 0
-for mode in ('control', 'confined'):
-    for operation in operations:
-        command([worker, 'empty'])
-        root, outside = make_case(sequence)
-        policy = base / ('profile-' + str(sequence) + '.sb')
-        policy.write_text(profile_for(root))
-        os.chmod(policy, 0o644)
-        code, data = command([worker, 'launch', mode, policy, operation, root, outside], allowed=range(-128, 256))
-        # Every guest fixture is single-process, including exec of the setuid worker.
-        # The parent wait reaps it. A new case requires an error-checked empty UID.
-        command([worker, 'empty'])
-        if code:
-            failures.append({'mode': mode, 'operation': operation, 'status': code})
-        print('RESULT ' + json.dumps({'mode': mode, 'operation': operation, 'status': code}), flush=True)
-        sequence += 1
+cache_candidates = ['/System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld',
+                    '/System/Library/dyld', '/private/var/db/dyld',
+                    '/System/Volumes/Preboot/Cryptexes/OS/usr/lib']
+cache_roots = []
+for candidate in cache_candidates:
+    path = pathlib.Path(candidate)
+    if path.is_dir():
+        actual = path.resolve(strict=True)
+        entries = sorted(entry.name for entry in path.iterdir())
+        assert len(entries) <= 256
+        cache_roots.append(actual)
+        print('RUNTIME ' + json.dumps({'path': str(path), 'canonical': str(actual), 'entries': entries}), flush=True)
+results = []
+for sequence, variant in enumerate(['baseline', 'runtime', 'metadata', 'runtime-metadata', 'read-all', 'no-file-deny']):
+    command([worker, 'empty'])
+    root, outside = make_case(sequence)
+    policy = base / ('profile-' + str(sequence) + '.sb')
+    text = profile_for(root)
+    if variant in ('runtime', 'runtime-metadata'):
+        text += '(allow file-read* ' + ' '.join('(subpath ' + json.dumps(str(path)) + ')' for path in cache_roots) + ')\n'
+    if variant in ('metadata', 'runtime-metadata'):
+        text += '(allow file-read-metadata)\n'
+    if variant == 'read-all':
+        text += '(allow file-read*)\n'
+    if variant == 'no-file-deny':
+        text = '(version 1)\n(allow default)\n(deny network*)\n(deny mach-lookup)\n(deny mach-register)\n'
+    policy.write_text(text)
+    os.chmod(policy, 0o644)
+    code, data = command([worker, 'launch', 'confined', policy, 'allowed-read', root, outside], allowed=range(-128, 256))
+    command([worker, 'empty'])
+    observation = {'variant': variant, 'status': code, 'entered': b'GUEST entered' in data}
+    results.append(observation)
+    print('DIAGNOSTIC ' + json.dumps(observation), flush=True)
 command([worker, 'unmount', mount])
 command(['/usr/bin/hdiutil', 'detach', disks[0]])
-print('COMPLETE cases=' + str(sequence) + ' failures=' + json.dumps(failures) + ' uid_empty=1 nonforced_detach=1', flush=True)
-assert not failures, failures
-# Retain exact owned fixture until disposable VM destruction; never generic cleanup.
+print('DIAGNOSTICS-COMPLETE ' + json.dumps(results) + ' uid_empty=1 nonforced_detach=1', flush=True)
+assert len(owned_pids) == 6 and all(isinstance(pid, int) and pid > 1 for pid in owned_pids)
+predicate = ' OR '.join('eventMessage CONTAINS "worker(' + str(pid) + ')"' for pid in owned_pids)
+command(['/usr/bin/log', 'show', '--last', '2m', '--style', 'compact', '--predicate', predicate], allowed=(0, 1))
+# Diagnostics do not define a full filesystem pass; broad grants never become product policy.
