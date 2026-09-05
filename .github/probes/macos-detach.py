@@ -86,6 +86,8 @@ def attachments(image):
 
 
 try:
+    success(['/usr/bin/sw_vers'])
+    success(['/usr/bin/uname', '-a'])
     for case in ['no-held-device', 'held-readonly-device']:
         image = base / (case + '.dmg')
         mount = base / (case + '-volume')
@@ -99,8 +101,10 @@ try:
                         'on', '-mountpoint', mount, '-plist'])
         receipt = plistlib.loads(data)['system-entities']
         disks = [item['dev-entry'] for item in receipt
-                 if re.fullmatch(r'/dev/disk[0-9]+', item.get('dev-entry', ''))]
+                 if item.get('content-hint') == 'GUID_partition_scheme'
+                 and re.fullmatch(r'/dev/disk[0-9]+', item.get('dev-entry', ''))]
         assert len(disks) == 1
+        assert sum(item.get('mount-point') == str(mount) for item in receipt) == 1
         disk = disks[0]
         device = os.stat(disk, follow_symlinks=False)
         assert stat.S_ISBLK(device.st_mode)
