@@ -1,8 +1,8 @@
 ---
 source: tests/whole_screen/main.rs
-expression: window.picture()
+expression: picture
 ---
-80x24 cursor 20,8 scrolled 0
+80x24 cursor 20,4 scrolled 0
 |│                                  │ ───────────────────────────────────────── │|
 |│  /…/workspace                    │                                           │|
 |│                                  │ Tips                                      │|
@@ -17,13 +17,13 @@ expression: window.picture()
 |Warning: No models available. Use /login or set an API key environment variable.|
 |Then use /model to select a model.                                              |
 |                                                                                |
+|› /login                                                                        |
+|⎿ cancelled, nothing signed in                                                  |
+|                                                                                |
 |                                                                                |
 |                                                                                |
 |╭──────────────────────────────────────────────────────────────────────────────╮|
-|│ › one                                                                        │|
-|│   two                                                                        │|
-|│   three                                                                      │|
-|│   four                                                                       │|
+|│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                                                |
 |                                                               transcript map → |

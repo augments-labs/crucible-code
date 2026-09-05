@@ -1,12 +1,8 @@
 ---
 source: tests/whole_screen/main.rs
-expression: window.picture()
+expression: picture
 ---
-80x24 cursor 20,8 scrolled 0
-|│                                  │ ───────────────────────────────────────── │|
-|│  /…/workspace                    │                                           │|
-|│                                  │ Tips                                      │|
-|│                                  │                                           │|
+80x24 cursor 20,4 scrolled 0
 |│                                  │ · /          opens the command list       │|
 |│                                  │ · \ enter    adds a line without sending  │|
 |│                                  │ · shift+tab  steps the permission mode    │|
@@ -17,13 +13,17 @@ expression: window.picture()
 |Warning: No models available. Use /login or set an API key environment variable.|
 |Then use /model to select a model.                                              |
 |                                                                                |
+|› /login                                                                        |
+|────────────────────────────────────────────────────────────────────────────────|
 |                                                                                |
+|Log in                                                                          |
 |                                                                                |
-|╭──────────────────────────────────────────────────────────────────────────────╮|
-|│ › one                                                                        │|
-|│   two                                                                        │|
-|│   three                                                                      │|
-|│   four                                                                       │|
+|› Anthropic — provide your own API key                                          |
+|                                                                                |
+|Paste or type the key. It goes to crucible's protected store and is never shown.|
+|                                                                                |
+|╭── Anthropic API key ─────────────────────────────────────────────────────────╮|
+|│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
-|ask mode on (shift+tab to cycle)                                                |
-|                                                               transcript map → |
+|paste or type your API key · esc to cancel                                      |
+|                                                                                |

@@ -38,7 +38,7 @@
 use std::borrow::Cow;
 use std::time::Duration;
 
-use crucible_auth::{LoginAttempt, LoginUpdate};
+use crucible_auth::{AuthError, LoginAttempt, LoginUpdate};
 use crucible_runner::Runner;
 use crucible_tui::{
     Caret, Glyphs, Key, Offered, Panel, Pressed, Renderer, Row, Slot, Terminal, characters, clip,
@@ -46,18 +46,20 @@ use crucible_tui::{
 };
 
 use crate::cli::converse::picking::{self, Picked, Taken};
-use crate::cli::converse::secret;
+use crate::cli::converse::secret::{self, Asked};
 use crate::cli::subscription::{Account, Route};
 use crate::cli::{Fatal, Served, offered, remember};
 
 use super::{Terms, about, say};
 
 /// One way Crucible can receive a credential.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Way {
+    /// The name at the left of its row.
     shown: &'static str,
-    plan: &'static str,
-    says: &'static str,
+    /// What the row says at its right: what the reader holds and how it is
+    /// billed.
+    says: String,
     reaches: Reaches,
 }
 
@@ -72,10 +74,15 @@ enum Reaches {
 const HOW: &str = "Choose how crucible signs its requests.";
 
 /// The sentence under the provider panel.
-const SAID: &str = concat!(
-    "Choose the provider whose API key you have. The key is typed into a box ",
-    "that does not echo it, and signs requests from the next turn on."
-);
+const SAID: &str = "Choose the provider whose API key you have.";
+
+/// The row that leads to a key of the reader's own, and what it says.
+pub(super) const KEY_ROUTE_SHOWN: &str = "Provide your own API key";
+pub(super) const KEY_ROUTE_SAYS: &str = "API usage billing";
+
+/// What follows the plan on an account row: the reader is billed through a
+/// subscription they already hold.
+const SUBSCRIBED: &str = "with your subscription";
 
 /// The one key worth naming on either panel: the arrows and Enter are what a
 /// list with a mark on it is already saying.
@@ -83,6 +90,33 @@ const CANCEL: &str = "esc to cancel";
 
 /// What escape leaves behind, in place of the rows it used to write.
 const LEFT: &str = "cancelled, nothing signed in";
+
+/// What the box's absence leaves behind, when the window had no room for it.
+///
+/// Not [`LEFT`]: nothing was asked, so nothing was cancelled, and the way in
+/// is the one thing this can say that the reader does not already know.
+const CRAMPED: &str = "the window has no room for the key box; make it taller and try /login again";
+
+/// What stopped, when the key could not be written down.
+pub(super) const STORE_FAILED: &str = "the key could not be saved";
+
+/// The way back in, when the store's directory or file would not open.
+///
+/// Fixed words: the error behind it names the path and what the operating
+/// system said, and neither belongs on a row under a command.
+pub(super) const STORE_UNWRITABLE: &str =
+    "crucible cannot write its login store; try /login again after fixing the permissions";
+
+/// The way back in, when another crucible held the store's lock too long.
+const STORE_BUSY: &str =
+    "another crucible is writing its login store; try /login again in a moment";
+
+/// The way back in, when the store is there and cannot be read.
+///
+/// Writing over it would replace the only copy of whatever else it holds, so
+/// the store declines; moving it aside is what makes the next write safe.
+const STORE_UNREADABLE: &str =
+    "crucible cannot read its login store; move it aside and try /login again";
 
 /// Manual callback input is transient credential material. It has the same
 /// bound as the key box and is never committed or echoed.
@@ -204,31 +238,23 @@ fn ways(terms: &Terms) -> Vec<Way> {
         .iter()
         .map(|account| Way {
             shown: account.shown,
-            plan: account.plan,
-            says: account.says,
+            says: format!("{} {SUBSCRIBED}", account.plan),
             reaches: Reaches::Account(*account),
         })
         .collect();
     ways.push(Way {
-        shown: "Console account",
-        plan: "API usage billing",
-        says: "enter a provider API key",
+        shown: KEY_ROUTE_SHOWN,
+        says: KEY_ROUTE_SAYS.to_owned(),
         reaches: Reaches::Console,
     });
     ways
 }
 
-/// What each way says at the right of its row: the plan the account is billed
-/// under, and what taking the row does.
-///
-/// Joined here rather than written out whole, so the mark between the two
-/// halves is the one the setting names — the same mark that stands between a
-/// command and the sentence about it in the listing a run with no keyboard is
-/// given.
-fn sentences(ways: &[Way], glyphs: Glyphs) -> Vec<String> {
-    ways.iter()
-        .map(|way| about(way.plan, way.says, glyphs))
-        .collect()
+/// What a provider row says: the variable the same key can be set in instead,
+/// which is the one thing that differs between rows that would otherwise read
+/// identically.
+fn variable_row(one: &Served) -> String {
+    format!("set {}", one.key)
 }
 
 /// Stands the account-kind panel.
@@ -237,13 +263,11 @@ fn asked<T: Terminal>(
     terms: &Terms,
     ways: &[Way],
 ) -> Result<Picked, Fatal> {
-    let says = sentences(ways, terms.style().glyphs());
     let shown: Vec<_> = ways
         .iter()
-        .zip(&says)
-        .map(|(way, says)| Offered {
+        .map(|way| Offered {
             name: way.shown,
-            says,
+            says: &way.says,
         })
         .collect();
     picking::pick(
@@ -292,12 +316,7 @@ fn chosen<T: Terminal>(
     renderer: &mut Renderer<T>,
     terms: &Terms,
 ) -> Result<Picked, Fatal> {
-    // Where else the same key can come from — and the one thing that differs
-    // between rows that would otherwise read identically.
-    let says: Vec<String> = offering
-        .iter()
-        .map(|one| format!("typed here, or set in {}", one.key))
-        .collect();
+    let says: Vec<String> = offering.iter().map(variable_row).collect();
 
     let shown: Vec<Offered<'_>> = offering
         .iter()
@@ -443,6 +462,7 @@ impl LoginView {
                 self.following = after;
                 Ok(true)
             }
+            Pressed::Pasted(text) => Ok(self.pasted(&text)),
             Pressed::Key(Key::Backspace) if self.accepts_manual => {
                 self.limited = false;
                 Ok(self.manual.pop().is_some())
@@ -460,6 +480,24 @@ impl LoginView {
             }
             _ => Ok(false),
         }
+    }
+
+    /// Takes a pasted line into the box the way typed characters go in, and
+    /// says whether the picture changed.
+    ///
+    /// Whole or not at all: half a callback is worth less than none, and the
+    /// row beneath the box says why nothing grew.
+    fn pasted(&mut self, text: &str) -> bool {
+        if !self.accepts_manual {
+            return false;
+        }
+        let text = secret::pasted(text);
+        let room = MAX_MANUAL.saturating_sub(self.manual.len());
+        self.limited = text.len() > room;
+        if !self.limited {
+            self.manual.push_str(&text);
+        }
+        true
     }
 
     fn show<T: Terminal>(
@@ -532,25 +570,61 @@ impl LoginView {
     }
 }
 
-/// Asks for a key, writes it down, and sets this session up with it.
+/// Asks for a key, writes it down, and sets this session up with it — or
+/// says why nothing was written: the box was left, or never stood.
 fn given<T: Terminal>(
     named: Served,
     renderer: &mut Renderer<T>,
     runner: &mut Runner,
     terms: &Terms,
 ) -> Result<(), Fatal> {
-    let Some(key) = secret::ask(renderer, terms.style(), &format!("{} api key", named.name))?
-    else {
-        return say(renderer, "nothing was written");
-    };
+    match secret::ask(renderer, terms.style(), named.shown)? {
+        Asked::Key(key) => written(named, &key, renderer, runner, terms),
+        Asked::Left => say(renderer, LEFT),
+        Asked::Cramped => say(renderer, CRAMPED),
+    }
+}
 
-    match terms.logins.keep(named.name, &key) {
+/// Writes `key` down as `named`'s and sets this session up with it, or says
+/// what stopped.
+///
+/// The error names the path, and for a file that would not open what the
+/// operating system said about it; the row under the command carries neither.
+/// The path is in the reader's own home, and what the system said is what
+/// looking at it will say again. The
+/// key is still in hand and the box is gone, so there is nothing to retry
+/// from — which is why the row says the way back in, chosen by what stopped
+/// ([`remedy`]). Nothing else hears the error: this session has no channel a
+/// command's failure is logged through.
+fn written<T: Terminal>(
+    named: Served,
+    key: &str,
+    renderer: &mut Renderer<T>,
+    runner: &mut Runner,
+    terms: &Terms,
+) -> Result<(), Fatal> {
+    match terms.logins.keep(named.name, key) {
         Ok(()) => taken(named, renderer, runner, terms),
+        Err(failed) => say(
+            renderer,
+            &format!(
+                "! {}",
+                about(STORE_FAILED, remedy(&failed), terms.style().glyphs())
+            ),
+        ),
+    }
+}
 
-        // The key is still in hand and the box is gone, so there is nothing to
-        // retry from — which is why this says what stopped rather than only
-        // that something did.
-        Err(problem) => say(renderer, &format!("! {problem}")),
+/// The way back in, by what stopped the store.
+///
+/// Three sentences for four causes: a store too large to parse and one that
+/// will not parse are the same thing to the reader, a file crucible cannot
+/// read and will not write over.
+fn remedy(failed: &AuthError) -> &'static str {
+    match failed {
+        AuthError::Unwritable { .. } => STORE_UNWRITABLE,
+        AuthError::Busy { .. } => STORE_BUSY,
+        AuthError::Unreadable { .. } | AuthError::TooLarge { .. } => STORE_UNREADABLE,
     }
 }
 
@@ -741,6 +815,181 @@ mod tests {
     }
 
     #[test]
+    fn a_store_that_cannot_be_written_is_said_without_its_path() {
+        // The store's own error names the file and quotes the operating
+        // system, which is right for a log and wrong for a row under a
+        // command: the row says what stopped and the way back in, and the
+        // reader's home stays off the screen.
+        let sample = Sample::new("login-store-failed");
+        let terms = in_force(&sample);
+        std::fs::create_dir_all(sample.root().join("auth.json"))
+            .expect("a directory where the store's file goes");
+        let mut runner = asking("claude-test-1");
+        let mut renderer = Renderer::new(Recording::new(80, 24));
+
+        let named = offered(&terms.providers.snapshot())
+            .find(|served| served.name == "anthropic")
+            .expect("a provider this build has an arm for");
+        written(
+            named,
+            "sk-ant-not-a-key",
+            &mut renderer,
+            &mut runner,
+            &terms,
+        )
+        .expect("the terminal to be written");
+
+        // Folded at the window's width, so read back as rows joined by the
+        // space a fold stands in for.
+        let written = renderer.terminal().picture().said().join(" ");
+        assert!(
+            written.contains(
+                "! the key could not be saved — crucible cannot write its login store; try /login again after fixing the permissions"
+            ),
+            "{written}"
+        );
+        assert!(!written.contains("auth.json"), "{written}");
+        assert!(!written.contains("directory"), "{written}");
+        assert!(
+            !written.contains(&sample.root().display().to_string()),
+            "{written}"
+        );
+        assert!(!written.contains("sk-ant"), "{written}");
+    }
+
+    #[test]
+    fn a_store_that_cannot_be_read_is_answered_with_moving_it_aside() {
+        // The permissions are not what stopped this one: the store is there
+        // and writable, and cannot be parsed. Telling the reader to fix the
+        // permissions would send them to check a thing that is fine, and the
+        // way back in is the one the store's own error gives — move it aside.
+        let sample = Sample::new("login-store-unreadable");
+        let terms = in_force(&sample);
+        std::fs::write(sample.root().join("auth.json"), "not json {")
+            .expect("a store that will not parse");
+        let mut runner = asking("claude-test-1");
+        let mut renderer = Renderer::new(Recording::new(80, 24));
+
+        let named = offered(&terms.providers.snapshot())
+            .find(|served| served.name == "anthropic")
+            .expect("a provider this build has an arm for");
+        written(
+            named,
+            "sk-ant-not-a-key",
+            &mut renderer,
+            &mut runner,
+            &terms,
+        )
+        .expect("the terminal to be written");
+
+        let written = renderer.terminal().picture().said().join(" ");
+        assert!(
+            written.contains(
+                "! the key could not be saved — crucible cannot read its login store; move it aside and try /login again"
+            ),
+            "{written}"
+        );
+        assert!(!written.contains("permissions"), "{written}");
+        assert!(!written.contains("auth.json"), "{written}");
+        assert!(!written.contains("sk-ant"), "{written}");
+    }
+
+    #[test]
+    fn a_store_past_its_byte_ceiling_is_answered_the_way_an_unreadable_one_is() {
+        // Too large to parse is not read either, and the store refuses to
+        // write over what it could not read. The reader is told the same
+        // thing as for a store that will not parse: move it aside.
+        let sample = Sample::new("login-store-too-large");
+        let terms = in_force(&sample);
+        std::fs::write(sample.root().join("auth.json"), "x".repeat(64 * 1024 + 1))
+            .expect("a store past the ceiling");
+        let mut runner = asking("claude-test-1");
+        let mut renderer = Renderer::new(Recording::new(80, 24));
+
+        let named = offered(&terms.providers.snapshot())
+            .find(|served| served.name == "anthropic")
+            .expect("a provider this build has an arm for");
+        written(
+            named,
+            "sk-ant-not-a-key",
+            &mut renderer,
+            &mut runner,
+            &terms,
+        )
+        .expect("the terminal to be written");
+
+        let written = renderer.terminal().picture().said().join(" ");
+        assert!(
+            written.contains(
+                "! the key could not be saved — crucible cannot read its login store; move it aside and try /login again"
+            ),
+            "{written}"
+        );
+        assert!(!written.contains("byte"), "{written}");
+        assert!(!written.contains("auth.json"), "{written}");
+        assert!(!written.contains("sk-ant"), "{written}");
+    }
+
+    #[test]
+    fn the_way_back_in_is_chosen_by_what_stopped_the_store() {
+        // The one the store cannot be made to produce cheaply from here is a
+        // lock held past its five seconds; the other three are here beside it
+        // so the whole table is read in one place. Each arrives with a path,
+        // and no sentence carries one.
+        let path = std::path::PathBuf::from("/somebody/.crucible/auth.json");
+        let busy = AuthError::Busy { path: path.clone() };
+        let too_large = AuthError::TooLarge {
+            path: path.clone(),
+            maximum: 1,
+        };
+        let unreadable = AuthError::Unreadable { path: path.clone() };
+        let unwritable = AuthError::Unwritable {
+            path,
+            source: std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+        };
+
+        assert_eq!(
+            remedy(&busy),
+            "another crucible is writing its login store; try /login again in a moment"
+        );
+        assert_eq!(remedy(&too_large), remedy(&unreadable));
+        assert_eq!(
+            remedy(&unreadable),
+            "crucible cannot read its login store; move it aside and try /login again"
+        );
+        assert_eq!(remedy(&unwritable), STORE_UNWRITABLE);
+        for failed in [&busy, &too_large, &unreadable, &unwritable] {
+            assert!(!remedy(failed).contains("somebody"), "{}", remedy(failed));
+        }
+    }
+
+    #[test]
+    fn a_window_too_short_for_the_key_box_says_so_rather_than_cancelled() {
+        // Two rows: not even the box's own three. Nothing was asked and
+        // nothing could have been typed, so "cancelled" would report a choice
+        // the reader never made — and hide the one thing that would let them
+        // in, which is a taller window.
+        let sample = Sample::new("login-cramped");
+        let terms = in_force(&sample);
+        let mut runner = asking("claude-test-1");
+        let mut renderer = Renderer::new(Recording::new(80, 2));
+
+        let named = offered(&terms.providers.snapshot())
+            .find(|served| served.name == "anthropic")
+            .expect("a provider this build has an arm for");
+        given(named, &mut renderer, &mut runner, &terms).expect("the terminal to be written");
+
+        let written = renderer.terminal().picture().said().join(" ");
+        assert!(
+            written.contains(
+                "the window has no room for the key box; make it taller and try /login again"
+            ),
+            "{written}"
+        );
+        assert!(!written.contains("cancelled"), "{written}");
+    }
+
+    #[test]
     fn a_credential_stored_for_the_provider_in_force_keeps_its_model() {
         // Re-entering a key for the provider already answering is a renewal,
         // not a switch: the new credential signs the next request, and the
@@ -781,6 +1030,56 @@ mod tests {
     }
 
     #[test]
+    fn the_callback_box_takes_a_pasted_code_the_way_it_takes_typed_characters() {
+        // A callback URL is copied out of a browser, and arrives with the
+        // newline the address bar hands over with it. What is held is the code
+        // alone, one mark per character, exactly as if it had been typed.
+        let mut view = LoginView::new(Glyphs::Unicode);
+        view.page = Some(("http://localhost:1455/launch".into(), None));
+        view.accepts_manual = true;
+
+        let redraw = view.pasted("  http://localhost:1455/callback?code=abc\n");
+
+        assert!(redraw);
+        assert_eq!(view.manual, "http://localhost:1455/callback?code=abc");
+        assert!(!view.limited);
+
+        let (rows, _) = view.frame(80, "Log in to ChatGPT", Glyphs::Unicode);
+        let text: Vec<_> = rows.iter().map(Row::text).collect();
+        let input = text.iter().find(|row| row.starts_with("› ")).unwrap();
+        assert_eq!(input.chars().skip(2).count(), view.manual.chars().count());
+        assert!(!text.iter().any(|row| row.contains("code=abc")));
+    }
+
+    #[test]
+    fn a_paste_past_the_callback_box_ceiling_is_refused_whole_and_the_row_beneath_says_so() {
+        // Unlike the key box, this one has a status row beneath it, and the
+        // row says why nothing grew. What was held before the paste is held
+        // after it, untouched.
+        let mut view = LoginView::new(Glyphs::Unicode);
+        view.page = Some(("http://localhost:1455/launch".into(), None));
+        view.accepts_manual = true;
+        view.manual = "x".repeat(MAX_MANUAL - 1);
+
+        let redraw = view.pasted("ab");
+
+        assert!(redraw);
+        assert!(view.limited);
+        assert_eq!(view.manual.len(), MAX_MANUAL - 1);
+        let (rows, _) = view.frame(80, "Log in to ChatGPT", Glyphs::Unicode);
+        assert!(
+            rows.iter()
+                .map(Row::text)
+                .any(|row| row.contains("limited")),
+            "the row beneath says why"
+        );
+
+        assert!(view.pasted("a"), "one byte still fits");
+        assert!(!view.limited);
+        assert_eq!(view.manual.len(), MAX_MANUAL);
+    }
+
+    #[test]
     fn the_paste_box_draws_its_mark_and_its_dots_out_of_the_glyph_set() {
         // A second box a line is typed into, so it takes the same mark the
         // prompt takes and hides what is typed with the same one the key box
@@ -810,26 +1109,40 @@ mod tests {
     }
 
     #[test]
-    fn what_parts_the_plan_from_what_taking_a_row_does_comes_out_of_the_glyph_set() {
-        // The row names the plan the account is billed under and what taking it
-        // does, and the mark is what says they are two. A terminal that cannot
-        // draw it gets a question mark in the middle of the sentence somebody
-        // is reading to decide how they are about to sign in.
-        let ways = [Way {
-            shown: "Console account",
-            plan: "API usage billing",
-            says: "enter a provider API key",
-            reaches: Reaches::Console,
-        }];
+    fn every_way_is_named_by_what_the_reader_holds_and_how_it_is_billed() {
+        // The row under an account names the plan and whose it is; the row
+        // under the key names how a key is billed. Neither is a sentence about
+        // what pressing Enter does — the reader is choosing between things they
+        // have, and a future account row inherits the same shape.
+        let sample = Sample::new("login-ways");
+        let terms = in_force(&sample);
+        let ways = ways(&terms);
 
+        let shown: Vec<&str> = ways.iter().map(|way| way.shown).collect();
+        let says: Vec<&str> = ways.iter().map(|way| way.says.as_str()).collect();
+
+        assert_eq!(shown, ["OpenAI", "MoonshotAI", KEY_ROUTE_SHOWN]);
         assert_eq!(
-            sentences(&ways, Glyphs::Unicode),
-            ["API usage billing — enter a provider API key"]
+            says,
+            [
+                "ChatGPT plan with your subscription",
+                "Kimi Code plan with your subscription",
+                "API usage billing",
+            ]
         );
-        assert_eq!(
-            sentences(&ways, Glyphs::Ascii),
-            ["API usage billing -- enter a provider API key"]
-        );
+    }
+
+    #[test]
+    fn a_provider_row_says_which_variable_to_set() {
+        // The one thing that differs between provider rows, and the whole of
+        // what somebody who would rather not type a key needs to read.
+        let terms = in_force(&Sample::new("login-variables"));
+        let providers = terms.providers.snapshot();
+        let anthropic = offered(&providers)
+            .find(|served| served.name == "anthropic")
+            .expect("a provider this build has an arm for");
+
+        assert_eq!(variable_row(&anthropic), "set ANTHROPIC_API_KEY");
     }
 
     #[test]

@@ -409,8 +409,12 @@ impl Prompt<'_> {
             // long as the box is. The spaces reaching it to the edge are
             // written on its left rather than its right — like the status
             // row, it holds no edge up, so trailing spaces would be bytes
-            // written every keystroke to draw nothing.
-            let reading = Row::new().then(Slot::Quiet, format!("{:>columns$}", self.reading()));
+            // written every keystroke to draw nothing. While no window is
+            // known the row says nothing, and keeps its place and its edge:
+            // the box does not move the moment a reading arrives, and every
+            // framed row ends at the last column.
+            let reading = self.reading().unwrap_or_default();
+            let reading = Row::new().then(Slot::Quiet, format!("{reading:>columns$}"));
 
             let mut rows = vec![
                 reading,
@@ -807,7 +811,9 @@ impl Prompt<'_> {
             return self.session_status(columns, glyphs);
         }
 
-        let reading = self.bare_reading(columns);
+        let Some(reading) = self.bare_reading(columns) else {
+            return self.session_status(columns, glyphs);
+        };
         let wide = width::columns(&reading);
         let gap = APART.min(columns.saturating_sub(wide));
         let room = columns.saturating_sub(wide + gap);
@@ -905,30 +911,27 @@ impl Prompt<'_> {
         }
     }
 
-    /// The usable-window fact in its full spelling.
-    fn reading(&self) -> String {
-        self.left.get().map_or_else(
-            || "window unknown".to_owned(),
-            |left| format!("{left}% window left"),
-        )
+    /// The usable-window fact in its full spelling, or nothing while no
+    /// window is known: a reading that says only that carries no fact.
+    fn reading(&self) -> Option<String> {
+        self.left.get().map(|left| format!("{left}% window left"))
     }
 
-    /// The longest usable-window spelling a bare row can hold.
-    fn bare_reading(&self, columns: usize) -> String {
-        let full = self.reading();
+    /// The longest usable-window spelling a bare row can hold, or nothing
+    /// while no window is known.
+    fn bare_reading(&self, columns: usize) -> Option<String> {
+        let left = self.left.get()?;
+        let full = format!("{left}% window left");
         if width::columns(&full) <= columns {
-            return full;
+            return Some(full);
         }
 
-        let compact = self.left.get().map(|left| format!("{left}%"));
-        if compact
-            .as_deref()
-            .is_some_and(|compact| width::columns(compact) <= columns)
-        {
-            return compact.unwrap_or_default();
+        let compact = format!("{left}%");
+        if width::columns(&compact) <= columns {
+            return Some(compact);
         }
 
-        width::clip("?", columns).to_owned()
+        Some(width::clip("?", columns).to_owned())
     }
 
     /// The rows of the line the box has room for, and where the cursor sits

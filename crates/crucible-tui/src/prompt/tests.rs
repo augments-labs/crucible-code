@@ -169,15 +169,17 @@ fn every_row_of_a_framed_box_ends_at_its_last_column() {
 }
 
 #[test]
-fn an_unknown_window_is_named_on_a_row_above_the_box() {
+fn an_unknown_window_leaves_the_row_above_the_box_empty() {
+    // A reading that says only that nothing is known carries no fact. The row
+    // keeps its place, so the box does not move when a reading arrives.
     let prompt = typed("");
     let rows = prompt.rows(80, Glyphs::Unicode);
 
     assert!(
-        rows.first()
-            .is_some_and(|row| row.text().contains("window unknown"))
+        rows.first().is_some_and(|row| row.text().trim().is_empty()),
+        "{rows:?}"
     );
-    assert_eq!(rows.len(), 5, "the reading took a row of its own");
+    assert_eq!(rows.len(), 5, "the reading kept a row of its own");
 }
 
 #[test]
@@ -261,9 +263,15 @@ fn a_bare_prompt_keeps_the_window_fact_and_degrades_it_in_place() {
     assert!(row(&known, 1, 10, Glyphs::Unicode).ends_with("75%"));
     assert_eq!(row(&known, 1, 2, Glyphs::Unicode), " ?");
 
+    // Unknown, the row ends with the session facts and nothing stands in for
+    // the reading — not a word, not a mark, not the spaces up to where one
+    // would have been.
     let unknown = typed("");
-    assert!(row(&unknown, 1, 23, Glyphs::Unicode).contains("window unknown"));
-    assert_eq!(row(&unknown, 1, 1, Glyphs::Unicode), "?");
+    let status = row(&unknown, 1, 23, Glyphs::Unicode);
+    assert!(!status.contains("window"), "{status:?}");
+    assert!(!status.contains('?'), "{status:?}");
+    assert_eq!(status.trim_end(), status);
+    assert!(!row(&unknown, 1, 1, Glyphs::Unicode).contains('?'));
 }
 
 #[test]

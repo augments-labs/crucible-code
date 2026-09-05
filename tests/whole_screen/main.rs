@@ -1092,6 +1092,134 @@ fn logging_in_writes_down_which_provider_to_ask_from_the_next_run_on() {
 }
 
 #[test]
+fn the_login_panel_offers_the_plans_the_reader_may_hold_and_a_key_of_their_own() {
+    // The first panel is a choice between things the reader has: a ChatGPT or
+    // Kimi Code subscription, or an API key of their own. Each row is named
+    // for that and the row under it says whose plan or whose bill it is —
+    // never "console", which names a vendor's product rather than what is in
+    // the reader's hands.
+    let mut window = Watched::open("login-ways", 80, 24);
+
+    window.types_until("/login\r", "Provide your own API key");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn the_key_box_stands_empty_under_the_provider_it_is_for() {
+    // The third screen of the walk, before anything is typed: a breadcrumb
+    // saying whose key and which way here, one sentence saying where the key
+    // goes, a labelled frame with nothing in it yet, and a footer that says
+    // paste or type. Nothing of the prompt is on it — no window reading, no
+    // model, no map — because a key box is not a turn.
+    let mut window = Watched::open("login-key-empty", 80, 24);
+
+    window.types_until("/login\r", "Provide your own API key");
+    window.types_until(
+        "\x1b[B\x1b[B\r",
+        "Choose the provider whose API key you have.",
+    );
+    window.types_until("\r", "paste or type your API key");
+
+    let picture = window.picture();
+    assert!(!picture.contains("window"), "{picture}");
+    assert!(!picture.contains('%'), "{picture}");
+    assert!(!picture.contains("transcript"), "{picture}");
+    assert!(!picture.contains("claude"), "{picture}");
+    insta::assert_snapshot!(picture);
+}
+
+#[test]
+fn a_pasted_key_draws_one_mark_per_character_and_offers_to_save() {
+    // A key arrives by paste. The box shows how many characters it holds and
+    // not one of them, and the footer turns from how to give a key into how to
+    // keep it.
+    let key = format!("sk-ant-{}", "k".repeat(55));
+    let mut window = Watched::open("login-key-pasted", 80, 24);
+
+    window.types_until("/login\r", "Provide your own API key");
+    window.types_until(
+        "\x1b[B\x1b[B\r",
+        "Choose the provider whose API key you have.",
+    );
+    window.types_until("\r", "paste or type your API key");
+    window.types_until(&format!("\x1b[200~{key}\x1b[201~"), "enter to save");
+
+    let picture = window.picture();
+    assert!(!picture.contains("sk-ant"), "{picture}");
+    assert!(picture.contains(&"•".repeat(62)), "{picture}");
+    assert!(!picture.contains("window"), "{picture}");
+    assert!(!picture.contains('%'), "{picture}");
+    insta::assert_snapshot!(picture);
+}
+
+/// The row directly under the one that reads `› {command}`, without the
+/// picture's edges.
+fn under(picture: &str, command: &str) -> String {
+    let rows: Vec<&str> = picture.lines().collect();
+    let at = rows
+        .iter()
+        .position(|row| row.starts_with(&format!("|› {command}")))
+        .unwrap_or_else(|| panic!("no row reads › {command}: {picture}"));
+    let Some(row) = rows.get(at + 1) else {
+        panic!("nothing under › {command}: {picture}")
+    };
+    row.trim_matches('|').trim_end().to_owned()
+}
+
+#[test]
+fn leaving_the_key_box_says_nothing_was_signed_in() {
+    // Escape in the box is the same leaving as escape on either panel before
+    // it, and is answered on the same row: hung under the command, one
+    // sentence, nothing about what was or was not typed.
+    let mut window = Watched::open("login-key-left", 80, 24);
+
+    window.types_until("/login\r", "Provide your own API key");
+    window.types_until(
+        "\x1b[B\x1b[B\r",
+        "Choose the provider whose API key you have.",
+    );
+    window.types_until("\r", "paste or type your API key");
+    window.types_until("\x1b", "cancelled, nothing signed in");
+
+    let picture = window.picture();
+    assert_eq!(under(&picture, "/login"), "⎿ cancelled, nothing signed in");
+    insta::assert_snapshot!(picture);
+}
+
+#[test]
+fn a_key_that_cannot_be_written_down_is_said_without_a_path() {
+    // A home the store cannot be written into: the row under the command says
+    // what stopped and the way back in, and names no file, no directory and
+    // nothing the operating system said. The one `/` on it is the command.
+    let key = format!("sk-ant-{}", "k".repeat(55));
+    let mut window = Watched::open("login-store-failed", 80, 24);
+    std::fs::create_dir_all(window.home().join("auth.json"))
+        .expect("a directory where the store's file goes");
+
+    window.types_until("/login\r", "Provide your own API key");
+    window.types_until(
+        "\x1b[B\x1b[B\r",
+        "Choose the provider whose API key you have.",
+    );
+    window.types_until("\r", "paste or type your API key");
+    window.types_until(&format!("\x1b[200~{key}\x1b[201~\r"), "could not be saved");
+
+    let picture = window.picture();
+    let said = under(&picture, "/login");
+    assert!(
+        said.starts_with("⎿ ! the key could not be saved — "),
+        "{said}"
+    );
+    assert!(!picture.contains("sk-ant"), "{picture}");
+    assert!(!picture.contains("auth.json"), "{picture}");
+    assert!(!picture.contains("directory"), "{picture}");
+    assert!(!said.contains('~'), "{said}");
+    assert_eq!(said.replace("/login", "").matches('/').count(), 0, "{said}");
+    insta::assert_snapshot!(picture);
+}
+
+#[test]
 fn openai_account_login_offers_browser_and_device_code_methods() {
     // Provider first, method second. Browser sign-in is the ordinary local
     // path; device code stays visible for a remote terminal or another device.

@@ -1,12 +1,14 @@
 //! What the keys do to a line nobody can see.
 
+use crucible_tui::Glyphs;
+
 use super::*;
 
 /// The line after every one of `keys` has been pressed against it, and what the
 /// last of them did.
-fn typed(keys: &[Pressed]) -> (String, Typing) {
+fn typed(keys: &[Pressed]) -> (String, Moved) {
     let mut held = String::new();
-    let mut last = Typing::Still;
+    let mut last = Moved::Still;
 
     for key in keys {
         last = typing(key.clone(), &mut held);
@@ -25,7 +27,7 @@ fn what_is_typed_is_held_and_a_mark_follows_each_character() {
     let (held, last) = typed(&[character('s'), character('k'), character('-')]);
 
     assert_eq!(held, "sk-");
-    assert_eq!(last, Typing::Redraw);
+    assert_eq!(last, Moved::Redraw);
 }
 
 #[test]
@@ -36,9 +38,9 @@ fn backspace_rubs_out_from_the_end_and_costs_no_frame_at_the_start() {
     let (held, last) = typed(&[character('a'), character('b'), Pressed::Key(Key::Backspace)]);
 
     assert_eq!(held, "a");
-    assert_eq!(last, Typing::Redraw);
+    assert_eq!(last, Moved::Redraw);
 
-    assert_eq!(typed(&[Pressed::Key(Key::Backspace)]).1, Typing::Still);
+    assert_eq!(typed(&[Pressed::Key(Key::Backspace)]).1, Moved::Still);
 }
 
 #[test]
@@ -50,13 +52,16 @@ fn the_keys_that_would_move_a_cursor_move_nothing() {
         let (held, last) = typed(&[character('a'), Pressed::Key(moving), character('b')]);
 
         assert_eq!(held, "ab", "{moving:?}");
-        assert_eq!(last, Typing::Redraw, "{moving:?}");
+        assert_eq!(last, Moved::Redraw, "{moving:?}");
     }
 }
 
 #[test]
-fn return_finishes_the_line_and_the_keys_that_end_a_session_leave_it() {
-    assert_eq!(typed(&[Pressed::Key(Key::Enter)]).1, Typing::Done);
+fn return_finishes_a_held_line_and_the_keys_that_end_a_session_leave_it() {
+    assert_eq!(
+        typed(&[character('a'), Pressed::Key(Key::Enter)]).1,
+        Moved::Took
+    );
 
     for leaving in [
         Pressed::Escape,
@@ -65,7 +70,7 @@ fn return_finishes_the_line_and_the_keys_that_end_a_session_leave_it() {
     ] {
         assert_eq!(
             typed(&[character('a'), leaving.clone()]).1,
-            Typing::Left,
+            Moved::Left,
             "{leaving:?}"
         );
     }
@@ -76,26 +81,51 @@ fn a_window_that_changed_size_is_answered_by_drawing_again() {
     let (held, last) = typed(&[character('a'), Pressed::Resized]);
 
     assert_eq!(held, "a", "a resize is not an edit");
-    assert_eq!(last, Typing::Redraw);
+    assert_eq!(last, Moved::Redraw);
 }
 
 #[test]
-fn a_secret_past_the_box_ceiling_is_refused_and_said_so_beneath_it() {
+fn a_character_past_the_box_ceiling_is_refused_and_nothing_is_said() {
     // The bound exists so a pasted file cannot become secret-shaped process
-    // memory: what does not fit is not retained, and the refusal is the one
-    // thing drawn about it.
+    // memory: what does not fit is not retained, and the box says nothing
+    // about it. No row of prose beneath the frame, no row anywhere: the rows
+    // after the refusal are the rows before it.
     let mut held = "x".repeat(MAX_BYTES);
+    let before = standing("Anthropic", &held, 80, 24, Glyphs::Unicode);
 
     assert_eq!(
         typing(character('x'), &mut held),
-        Typing::Refused,
+        Moved::Still,
         "one past the ceiling"
     );
     assert_eq!(held.len(), MAX_BYTES, "the refusal retains nothing more");
+    assert_eq!(
+        standing("Anthropic", &held, 80, 24, Glyphs::Unicode),
+        before
+    );
+}
 
-    let mut renderer = Renderer::new(crucible_tui::Recording::new(80, 24));
-    standing(&mut renderer, Style::plain(), "paste key", 0, true).expect("the refusal to be drawn");
-    assert!(renderer.terminal().written().contains(LIMITED));
+#[test]
+fn a_multi_byte_character_is_one_mark_and_is_refused_whole_at_the_ceiling() {
+    // The bound is in bytes, the marks are in characters, and a character can
+    // be more of the one than the other. A key with an accented character in
+    // it draws one mark for it, not one per byte; and at the ceiling such a
+    // character is refused whole rather than sliced through the middle.
+    let (held, _) = typed(&[character('c'), character('l'), character('é')]);
+    assert_eq!(held.chars().count(), 3);
+    let (rows, _) = standing("Anthropic", &held, 80, 24, Glyphs::Unicode);
+    let input = rows
+        .iter()
+        .map(Row::text)
+        .find(|row| row.starts_with("│ › "))
+        .expect("the input row");
+    let marks = input.chars().filter(|&mark| mark == '•').count();
+    assert_eq!(marks, 3, "one mark a character: {input}");
+
+    let mut held = "x".repeat(MAX_BYTES - 1);
+    assert_eq!(typing(character('é'), &mut held), Moved::Still);
+    assert_eq!(held.len(), MAX_BYTES - 1, "nothing of it is retained");
+    assert!(held.is_char_boundary(held.len()));
 }
 
 #[test]
@@ -104,35 +134,37 @@ fn what_stands_in_for_a_character_comes_out_of_the_glyph_set() {
     // line, so a terminal whose font has no dot draws a row of hollow squares
     // over a key being pasted — on the one row where there is nothing else to
     // check what was typed against.
-    for (glyphs, mark) in [
-        (crucible_tui::Glyphs::Unicode, "•"),
-        (crucible_tui::Glyphs::Ascii, "*"),
-    ] {
-        let mut renderer = Renderer::new(crucible_tui::Recording::new(80, 24));
-        standing(&mut renderer, Style::drawn(glyphs), "paste key", 3, false)
-            .expect("the box to be drawn");
+    for (glyphs, mark) in [(Glyphs::Unicode, "•"), (Glyphs::Ascii, "*")] {
+        let (rows, _) = standing("Anthropic", "abc", 80, 24, glyphs);
 
         assert!(
-            renderer.terminal().written().contains(&mark.repeat(3)),
+            rows.iter().any(|row| row.text().contains(&mark.repeat(3))),
             "{glyphs:?}"
         );
     }
 }
 
 #[test]
+fn no_row_of_the_standing_screen_carries_the_key() {
+    // The count is all the panel is handed, so the characters have nowhere
+    // to reach a row from. Checked anyway, on the one screen where a slip
+    // would put a key in a terminal's scrollback.
+    let key = "sk-ant-secret-1234";
+    let (rows, _) = standing("Anthropic", key, 80, 24, Glyphs::Unicode);
+
+    assert!(rows.iter().all(|row| !row.text().contains("secret")));
+    assert!(rows.iter().all(|row| !row.text().contains("sk-ant")));
+    assert!(!format!("{rows:?}").contains(key));
+}
+
+#[test]
 fn unicode_hidden_marks_leave_the_caret_after_every_mark() {
-    let mut renderer = Renderer::new(crucible_tui::Recording::new(80, 24));
+    // The mark is one column wide in either set and more than one byte in
+    // one of them; the caret is counted in characters, not bytes.
+    let (rows, caret) = standing("Anthropic", "ab", 80, 24, Glyphs::Unicode);
 
-    standing(
-        &mut renderer,
-        Style::drawn(crucible_tui::Glyphs::Unicode),
-        "paste key",
-        2,
-        false,
-    )
-    .expect("the box to be drawn");
-
-    assert_eq!(renderer.terminal().picture().caret().1, 6);
+    assert_eq!(caret, Some(Caret { row: 9, column: 6 }));
+    assert!(rows.get(9).is_some_and(|row| row.text().contains("••")));
 }
 
 #[test]
@@ -148,4 +180,74 @@ fn a_key_with_surrounding_whitespace_is_trimmed() {
     for blank in ["", "   ", "\n"] {
         assert_eq!(taken(blank), None, "{blank:?}");
     }
+}
+
+/// One paste, the way a bracketed terminal sends it.
+fn pasted(text: &str) -> Pressed {
+    Pressed::Pasted(text.into())
+}
+
+#[test]
+fn a_paste_is_held_whole_and_draws_one_mark_per_character() {
+    // A key reaches this box by paste more often than by typing, and comes
+    // with what a clipboard carries: the spaces and the newline around it, and
+    // now and then a control character. What is held is the key alone, so what
+    // Enter hands over is what the provider expects.
+    let key = format!("sk-ant-{}", "k".repeat(55));
+    let (held, last) = typed(&[pasted(&format!("  {key}\n"))]);
+
+    assert_eq!(held, key);
+    assert_eq!(last, Moved::Redraw);
+    assert_eq!(taken(&held).as_deref(), Some(key.as_str()));
+    let (rows, _) = standing("Anthropic", &held, 80, 24, Glyphs::Unicode);
+    assert!(rows.iter().any(|row| row.text().contains(&"•".repeat(62))));
+
+    let (held, _) = typed(&[pasted("ab\u{7}c\r")]);
+    assert_eq!(held, "abc", "control characters are dropped");
+}
+
+#[test]
+fn return_on_an_empty_box_does_nothing_and_the_box_goes_on_standing() {
+    // Nothing to save is nothing to do: the box stays exactly as it was, and
+    // the next key is read against it.
+    assert_eq!(typed(&[Pressed::Key(Key::Enter)]).1, Moved::Still);
+    assert_eq!(
+        typed(&[character(' '), Pressed::Key(Key::Enter)]).1,
+        Moved::Still,
+        "blank is empty"
+    );
+
+    let (held, last) = typed(&[
+        Pressed::Key(Key::Enter),
+        character('a'),
+        Pressed::Key(Key::Enter),
+    ]);
+    assert_eq!(held, "a");
+    assert_eq!(last, Moved::Took);
+}
+
+#[test]
+fn a_paste_that_is_only_whitespace_and_control_characters_holds_nothing() {
+    // A clipboard can hand over nothing but the newline it picked up. That is
+    // not a key, so the box stays empty and does not redraw for it.
+    let (held, last) = typed(&[pasted("\r\n\u{7} \t")]);
+
+    assert_eq!(held, "");
+    assert_eq!(last, Moved::Still);
+}
+
+#[test]
+fn a_paste_past_the_box_ceiling_is_refused_whole_and_nothing_is_said() {
+    // What does not fit is not retained, none of it: a paste is one unit, and
+    // half a key is worth less than no key. The box says nothing about it —
+    // no supported credential comes near the bound, so what was pasted was
+    // not a key, and the marks not growing is the whole of the answer.
+    let before = "x".repeat(MAX_BYTES - 1);
+    let mut held = before.clone();
+
+    let rows = standing("Anthropic", &held, 80, 24, Glyphs::Unicode);
+
+    assert_eq!(typing(pasted("yy"), &mut held), Moved::Still);
+    assert_eq!(held, before, "the refusal retains nothing");
+    assert_eq!(standing("Anthropic", &held, 80, 24, Glyphs::Unicode), rows);
 }

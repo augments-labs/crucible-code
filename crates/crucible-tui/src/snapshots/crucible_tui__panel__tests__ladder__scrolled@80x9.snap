@@ -7,7 +7,7 @@ expression: "picture(&panel.within(columns, room, Glyphs::Unicode), columns)"
 <Strong>Log in</>
 
 <Accent>›</> <Strong>Anthropic</>
-  <Quiet>typed here, or set in ANTHROPIC_API_KEY</>
+  <Quiet>set ANTHROPIC_API_KEY</>
   <Quiet>· 5 more</>
 
 <Quiet>esc to cancel</>

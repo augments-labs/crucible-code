@@ -74,9 +74,9 @@ impl Picked {
     /// mapped into. Written as a lookup that can rather than as an assertion
     /// nobody would read again, and a miss falls to the answer a caller has for
     /// a panel it could not stand, which is the one that draws something.
-    pub(super) fn of<T: Copy>(self, all: &[T]) -> Taken<T> {
+    pub(super) fn of<T: Clone>(self, all: &[T]) -> Taken<T> {
         match self {
-            Self::Took(at) => all.get(at).copied().map_or(Taken::Cramped, Taken::Took),
+            Self::Took(at) => all.get(at).cloned().map_or(Taken::Cramped, Taken::Took),
             Self::Left => Taken::Left,
             Self::Cramped => Taken::Cramped,
         }

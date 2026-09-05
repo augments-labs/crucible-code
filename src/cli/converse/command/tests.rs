@@ -341,3 +341,23 @@ fn the_report_of_what_is_registered_names_every_command_and_its_source() {
         assert_eq!(row.source().kind(), SourceKind::Builtin);
     }
 }
+
+#[test]
+fn what_is_said_back_folds_short_of_the_mark_it_will_hang_under() {
+    // Every answer a command says is hung under the command afterwards, and
+    // the mark and its space take two columns off the row. A sentence folded
+    // to the whole width is two columns too wide once hung, and the window
+    // clips it — in the middle of whatever word was last, which for a sentence
+    // ending in a command name is the command name.
+    let mut renderer = Renderer::new(crucible_tui::Recording::new(80, 24));
+    let said = "! the key could not be saved — crucible cannot write its login store; try /login again after fixing the permissions";
+
+    say(&mut renderer, said).expect("the terminal to be written");
+
+    let rows = renderer.terminal().picture().said();
+    assert!(
+        rows.iter().all(|row| crucible_tui::columns(row) <= 78),
+        "{rows:?}"
+    );
+    assert_eq!(rows.join(" "), said, "nothing of the sentence is lost");
+}

@@ -16,8 +16,8 @@
 //!
 //! **What clips and what folds.** A description is a label, so it is cut and
 //! ended in the ellipsis. The sentence is prose, so it folds — half an
-//! explanation explains nothing, and this one runs to two rows at eighty
-//! columns. A display name does neither: it is cut where a column ends and
+//! explanation explains nothing, and a sentence that outruns the window is
+//! carried onto a second row. A display name does neither: it is cut where a column ends and
 //! never given an ellipsis, because a name is what has to be typed and an
 //! ellipsis inside one would be typed with it.
 //!
@@ -316,9 +316,13 @@ mod tests {
 
     use super::*;
 
-    /// The sentence the login panel opens with, which is prose and runs to two
-    /// rows at eighty columns.
-    const SAID: &str = concat!(
+    /// The sentence the login panel opens with: one row at eighty columns.
+    const SAID: &str = "Choose the provider whose API key you have.";
+
+    /// A sentence long enough to fold — two rows at eighty columns — for the
+    /// cases about folding, which the login panel's own sentence no longer
+    /// exercises at that width.
+    const PROSE: &str = concat!(
         "Choose the provider whose API key you have. The key is typed into a ",
         "box that does not echo it, and signs requests from the next turn on."
     );
@@ -329,23 +333,51 @@ mod tests {
     /// the list under the reader, and any ranking of vendors is one this
     /// project would have to argue for.
     ///
-    /// A description says where the key can come from, which is the part that
-    /// differs between otherwise identical rows.
+    /// A description says which variable the key can be set in instead, which
+    /// is the part that differs between otherwise identical rows.
     fn offered() -> [Offered<'static>; 3] {
         [
             Offered {
                 name: "Anthropic",
-                says: "typed here, or set in ANTHROPIC_API_KEY",
+                says: "set ANTHROPIC_API_KEY",
             },
             Offered {
                 name: "MoonshotAI",
-                says: "typed here, or set in MOONSHOT_API_KEY",
+                says: "set MOONSHOT_API_KEY",
             },
             Offered {
                 name: "OpenAI",
-                says: "typed here, or set in OPENAI_API_KEY",
+                says: "set OPENAI_API_KEY",
             },
         ]
+    }
+
+    /// The same list with descriptions too long for a narrow window, for the
+    /// cases about where a description is cut.
+    fn wordy() -> [Offered<'static>; 3] {
+        [
+            Offered {
+                name: "Anthropic",
+                says: "read from ANTHROPIC_API_KEY whenever that variable is set",
+            },
+            Offered {
+                name: "MoonshotAI",
+                says: "read from MOONSHOT_API_KEY whenever that variable is set",
+            },
+            Offered {
+                name: "OpenAI",
+                says: "read from OPENAI_API_KEY whenever that variable is set",
+            },
+        ]
+    }
+
+    /// A panel over `shown` whose sentence is [`PROSE`], with the mark on the
+    /// first entry.
+    fn folding<'a>(shown: &'a [Offered<'a>]) -> Panel<'a> {
+        Panel {
+            said: Some(PROSE),
+            ..login(shown, 0)
+        }
     }
 
     /// A longer list, for the rungs that only exist because a list can outgrow
@@ -424,13 +456,13 @@ mod tests {
 
         assert_eq!(rows.first().map(String::as_str), Some(&"─".repeat(80)[..]));
         assert_eq!(rows.get(2).map(String::as_str), Some("Log in"));
-        assert_eq!(rows.get(7).map(|row| row.trim_end()), Some("› Anthropic"));
-        assert_eq!(rows.get(10).map(|row| row.trim_end()), Some("  MoonshotAI"));
-        assert_eq!(rows.get(13).map(|row| row.trim_end()), Some("  OpenAI"));
+        assert_eq!(rows.get(6).map(|row| row.trim_end()), Some("› Anthropic"));
+        assert_eq!(rows.get(9).map(|row| row.trim_end()), Some("  MoonshotAI"));
+        assert_eq!(rows.get(12).map(|row| row.trim_end()), Some("  OpenAI"));
 
         // The blanks that part the panel's parts.
         let parting = |at: &usize| rows.get(*at).is_some_and(|row| row.trim().is_empty());
-        assert!([1, 3, 6, 9, 12, 15].iter().all(parting), "{rows:?}");
+        assert!([1, 3, 5, 8, 11, 14].iter().all(parting), "{rows:?}");
         assert_eq!(rows.last().map(String::as_str), Some("esc to cancel"));
     }
 
@@ -442,21 +474,18 @@ mod tests {
         let first = art(&login(&shown, 0), 80, Glyphs::Unicode);
         let second = art(&login(&shown, 1), 80, Glyphs::Unicode);
 
-        assert_eq!(first.get(7).map(|row| row.trim_end()), Some("› Anthropic"));
-        assert_eq!(second.get(7).map(|row| row.trim_end()), Some("  Anthropic"));
+        assert_eq!(first.get(6).map(|row| row.trim_end()), Some("› Anthropic"));
+        assert_eq!(second.get(6).map(|row| row.trim_end()), Some("  Anthropic"));
+        assert_eq!(first.get(9).map(|row| row.trim_end()), Some("  MoonshotAI"));
         assert_eq!(
-            first.get(10).map(|row| row.trim_end()),
-            Some("  MoonshotAI")
-        );
-        assert_eq!(
-            second.get(10).map(|row| row.trim_end()),
+            second.get(9).map(|row| row.trim_end()),
             Some("› MoonshotAI")
         );
     }
 
     #[test]
     fn a_window_too_narrow_for_a_description_ends_it_in_an_ellipsis() {
-        let shown = offered();
+        let shown = wordy();
         let rows = art(&login(&shown, 0), 34, Glyphs::Unicode);
         // Found under its name rather than at a row number, because how far
         // down it sits is how far the title's own sentence folded at this
@@ -469,7 +498,7 @@ mod tests {
 
         assert!(says.ends_with('…'), "{says:?}");
         assert!(wide(says) <= 34, "{says:?}");
-        assert!(says.starts_with("  typed here, or set in"), "{says:?}");
+        assert!(says.starts_with("  read from "), "{says:?}");
     }
 
     #[test]
@@ -500,7 +529,7 @@ mod tests {
         let shown = offered();
         let rows = login(&shown, 0).rows(80, Glyphs::Unicode);
 
-        for at in [8, 11, 14] {
+        for at in [7, 10, 13] {
             let says = rows.get(at).expect("a description row");
             assert_eq!(slots(says), [Slot::Plain, Slot::Quiet], "{says:?}");
         }
@@ -514,7 +543,7 @@ mod tests {
         // the name and what it is.
         let shown = offered();
         let rows = login(&shown, 0).rows(80, Glyphs::Unicode);
-        let passed = rows.get(10).expect("the name of a passed-over entry");
+        let passed = rows.get(9).expect("the name of a passed-over entry");
 
         assert!(slots(passed).contains(&Slot::Plain), "{passed:?}");
         assert!(!slots(passed).contains(&Slot::Quiet), "{passed:?}");
@@ -537,7 +566,7 @@ mod tests {
         // is the name that carries it rather than the whole entry.
         let shown = offered();
         let rows = login(&shown, 0).rows(80, Glyphs::Unicode);
-        let chosen = rows.get(7).expect("the name of the chosen entry");
+        let chosen = rows.get(6).expect("the name of the chosen entry");
 
         assert!(slots(chosen).contains(&Slot::Strong), "{chosen:?}");
     }
@@ -550,8 +579,8 @@ mod tests {
         let rows = art(&login(&shown, 1), 80, Glyphs::Ascii);
 
         assert_eq!(rows.first().map(String::as_str), Some(&"-".repeat(80)[..]));
-        assert_eq!(rows.get(7).map(|row| row.trim_end()), Some("  Anthropic"));
-        assert_eq!(rows.get(10).map(|row| row.trim_end()), Some("> MoonshotAI"));
+        assert_eq!(rows.get(6).map(|row| row.trim_end()), Some("  Anthropic"));
+        assert_eq!(rows.get(9).map(|row| row.trim_end()), Some("> MoonshotAI"));
     }
 
     #[test]
@@ -581,10 +610,10 @@ mod tests {
         // cut; this is prose, and it is two rows at eighty columns before any
         // terminal has narrowed.
         let shown = offered();
-        let rows = art(&login(&shown, 0), 80, Glyphs::Unicode);
+        let rows = art(&folding(&shown), 80, Glyphs::Unicode);
         let folded = rows.get(4..6).expect("the sentence");
 
-        assert_eq!(folded.join(" "), SAID);
+        assert_eq!(folded.join(" "), PROSE);
         assert!(
             folded.iter().all(|row| !row.contains('…')),
             "nothing was cut: {folded:?}"
@@ -640,9 +669,9 @@ mod tests {
     fn a_narrow_window_folds_the_sentence_and_ends_a_description() {
         // Thirty-four columns: half of the narrowest terminal anyone opens, and
         // the width at which the two ways this panel loses text both show.
-        let shown = offered();
+        let shown = wordy();
 
-        pictured("narrow", &login(&shown, 0), 34, Glyphs::Unicode);
+        pictured("narrow", &folding(&shown), 34, Glyphs::Unicode);
     }
 
     #[test]

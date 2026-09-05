@@ -3,7 +3,6 @@ source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
 80x24 cursor 20,4 scrolled 0
-|│                                  │ Recent sessions                           │|
 |│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
 |│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No recent sessions                        │|
 |│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
@@ -18,7 +17,8 @@ expression: window.picture()
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
 |› /logout                                                                       |
-|⎿ anthropic still uses ANTHROPIC_API_KEY; unset it in the shell before restartin|
+|⎿ anthropic still uses ANTHROPIC_API_KEY; unset it in the shell before          |
+|  restarting                                                                    |
 |                                                                                |
 |                                                                                |
 |                                                                100% window left|

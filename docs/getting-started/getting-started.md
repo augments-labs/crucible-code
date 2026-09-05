@@ -101,19 +101,23 @@ exact routes and precedence.
 export ANTHROPIC_API_KEY=...
 ```
 
-Type `/login` to choose an account or console-key route. ChatGPT offers a local
-browser callback and a device code for remote terminals; Kimi Code offers a
-device code. The live panel opens the authorization page, shows only the safe
-page and one-time code, stays cancellable with Escape, and takes a masked
-paste-back fallback for ChatGPT browser login. Anthropic has no account route;
-choose Console account and enter an Anthropic API key.
+Type `/login` to choose how crucible signs its requests: a ChatGPT plan, a Kimi
+Code plan, or *Provide your own API key*. ChatGPT offers a local browser
+callback and a device code for remote terminals; Kimi Code offers a device code.
+The live panel opens the authorization page, shows only the safe page and
+one-time code, stays cancellable with Escape, and takes a masked paste-back
+fallback for ChatGPT browser login. Anthropic has no account route; choose
+*Provide your own API key*, then Anthropic from the provider list. That list
+names each provider with the variable it reads from, `set ANTHROPIC_API_KEY`
+and so on, for anyone who would rather export a key than store one.
 
-`/login anthropic` is the direct API-key shortcut. The box draws a dot per
-character and never the key. Account tokens and API keys go to
-`~/.crucible/auth.json`, a file only you can read. The session asks that
-provider from the next turn on — there is nothing to restart. Authentication
-never chooses a model or effort; both stay explicit choices, and `/model` is
-where they are asked together.
+`/login anthropic` is the direct API-key shortcut. The key goes into its own
+labelled box, which takes a paste as readily as typing and draws a dot per
+character, never the key. Enter saves it; Enter on an empty box does nothing.
+Account tokens and API keys go to `~/.crucible/auth.json`, a file only you can
+read. The session asks that provider from the next turn on — there is nothing to
+restart. Authentication never chooses a model or effort; both stay explicit
+choices, and `/model` is where they are asked together.
 
 You do not have to know that command to find it. A run holding no key for any
 provider says so under the welcome and names both halves of setting one up:
@@ -843,20 +847,25 @@ of being offered a ladder that cannot be answered. A session with no model
 chosen is sent to `/model` first, since a rung is asked of a model.
 
 `/login <provider>` opens a box for the key — never the command line, which
-would put it in your shell's history and in the process listing. Escape leaves
-it without writing anything.
+would put it in your shell's history and in the process listing. The box is
+labelled with the provider it is for and takes a paste whole. Escape leaves it
+without writing anything and says so: `cancelled, nothing signed in`. A store
+that cannot be written is answered with `the key could not be saved` and what to
+fix — the permissions, another crucible still writing, or a store that cannot
+be read and should be moved aside — never with the path or the key. A window
+too short for the box says so instead, and asks for a taller one.
 
 `/login` on its own asks how crucible should sign its requests, which is a
 different question from which vendor: somebody paying for a ChatGPT plan and
 somebody holding an OpenAI console key are two people, and only one of them has a
-key to type. So the panel offers three ways — OpenAI's ChatGPT Plus, Pro,
-Business and Enterprise plans; MoonshotAI's Kimi Code; and a console account
-billed by API usage. The two plans connect: ChatGPT opens a browser
-authorization, or a device code from a terminal with no browser to reach, and
-Kimi Code a device code — either writes a renewable credential to the same
-protected store a key goes to. The console account asks whose console before
-opening the box, and is the route an Anthropic key takes, Anthropic having no
-account route.
+key to type. So the panel offers three ways — OpenAI's ChatGPT plan with your
+subscription; MoonshotAI's Kimi Code plan with your subscription; and *Provide
+your own API key*, billed by API usage. The two plans connect: ChatGPT opens a
+browser authorization, or a device code from a terminal with no browser to
+reach, and Kimi Code a device code — either writes a renewable credential to the
+same protected store a key goes to. The key route asks whose key you have before
+opening the box, each provider shown with the variable it reads from, and is the
+route an Anthropic key takes, Anthropic having no account route.
 
 A run with no keyboard to walk that panel — and a window with no room to stand
 one in — gets the provider names as rows instead, with the variable each reads

@@ -10,6 +10,17 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **The prompt no longer draws `window unknown`.** Before a model has said how
+  much of its window a session has used, the reading row keeps its place and
+  says nothing; the bare status row ends at the session facts. The box that
+  takes a key is its own screen and carries none of the prompt's chrome.
+
+- **A command's answer is no longer clipped by the mark it hangs under.** An
+  answer that reached the window's edge lost its last word once the corner
+  mark was put in front of it; it now folds short of the mark, so the `/logout`
+  answer about an environment key and the `/login` answer about a store that
+  cannot be written are read whole.
+
 - **Unsupported sandbox errors no longer recommend a removed setting.** The
   native-backend refusal no longer suggests the rejected `sandbox.mode` key.
 
@@ -82,6 +93,18 @@ change in any release with no deprecation period.
 
 
 ### Changed
+
+- **`/login` asks for a key in a labelled box that takes a paste.** The first
+  panel offers the ChatGPT and Kimi Code plans and *Provide your own API key*,
+  which replaces *Console account*; the provider list names each provider with
+  the variable it reads from, `set ANTHROPIC_API_KEY` and so on. The key box is
+  framed and labelled with the provider, takes a pasted key whole, draws a dot
+  per character, and saves on Enter only once something is held. A store that
+  cannot be written is answered with `the key could not be saved` and the way
+  back in for what stopped it — the permissions, another crucible holding the
+  store, or a store that cannot be read and should be moved aside — never with
+  a path. Leaving the box says `cancelled, nothing signed in`; a window too
+  short to stand the box says so and asks for a taller one.
 
 - **OS sandboxing is now opt-in through `sandbox.enabled` only.** Set it to
   `true` to require confinement; omitted settings default to off, and project

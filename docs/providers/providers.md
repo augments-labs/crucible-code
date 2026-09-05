@@ -293,9 +293,10 @@ needs nothing from your shell afterwards:
 ```
 
 `/login <provider>` inside a session is the direct API-key route. It writes
-from a box that draws a dot per character rather than the key. `/login` on its
-own offers the account plans and a Console account; the console route then
-opens the provider list and the same box.
+from a labelled box that takes a paste and draws a dot per character rather
+than the key. `/login` on its own offers the account plans and *Provide your
+own API key*; that route then opens the provider list, each row naming the
+variable the provider reads from, and the same box.
 
 The command reports that the key was stored, not that it was verified. Provider
 authentication is established by the next request; a rejected key stays stored
@@ -371,8 +372,8 @@ never allowed to receive either token.
 
 Anthropic subscription OAuth is deliberately absent: Claude subscription tokens
 are not a third-party authentication contract. Anthropic is reached with a
-Console API key instead. The generic Console account route also stores API keys
-for OpenAI and MoonshotAI.
+Console API key instead. The *Provide your own API key* route also stores API
+keys for OpenAI and MoonshotAI.
 
 Moonshot authorization and model requests identify the host truthfully as
 crucible with a stable protected device id. They do not reuse another harness's
