@@ -80,6 +80,11 @@ pub enum SandboxFilesystemAccess {
     /// Readable and writable.
     ReadWrite,
     /// Readable but immutable even beneath a writable ancestor.
+    ///
+    /// Filesystem-equivalent spellings name the same protected object. A
+    /// backend must keep every such spelling protected even when a
+    /// case-preserving filesystem lets the spelling of its directory entry
+    /// change without replacing the object.
     Protected,
 }
 

@@ -144,12 +144,17 @@ fn seatbelt_writes_only_the_workspace_and_protects_repository_metadata() {
     let fixture = Fixture::new("filesystem");
     fs::write(fixture.workspace.join(".git/config"), "protected\n").expect("protected file");
     fs::create_dir_all(fixture.workspace.join("nested/.git")).expect("nested repository");
+    let case_equivalent = fixture.workspace.join(".GIT").is_dir();
     let script = "printf 'allowed\\n' > \"$1\" || exit 70; \
                   if printf denied > \"$2\" 2>/dev/null; then exit 71; fi; \
                   if printf denied > \"$3\" 2>/dev/null; then exit 72; fi; \
-                  if /bin/mv \"$4\" \"$5\" 2>/dev/null; then exit 73; fi; \
+                  protected=\"$4\"; \
+                  if /bin/mv \"$4\" \"$5\" 2>/dev/null; then protected=\"$5\"; fi; \
+                  if printf denied > \"$protected/config\" 2>/dev/null; then exit 73; fi; \
                   if /bin/mv \"$6\" \"$7\" 2>/dev/null; then exit 74; fi; \
-                  if /bin/ln \"$3\" \"$8\" 2>/dev/null; then exit 75; fi";
+                  if /bin/ln \"$protected/config\" \"$8\" 2>/dev/null; then exit 75; fi; \
+                  if /bin/mv \"$protected\" \"$9\" 2>/dev/null; then exit 76; fi; \
+                  if printf denied > \"$protected/new\" 2>/dev/null; then exit 77; fi";
     let arguments = [
         OsString::from("-c"),
         OsString::from(script),
@@ -162,6 +167,7 @@ fn seatbelt_writes_only_the_workspace_and_protects_repository_metadata() {
         fixture.workspace.join("nested").into_os_string(),
         fixture.workspace.join("moved").into_os_string(),
         fixture.workspace.join("config-alias").into_os_string(),
+        fixture.workspace.join("renamed-control").into_os_string(),
     ];
     let (status, _, errors) = finish(start(
         fixture.request("macos-filesystem"),
@@ -178,20 +184,29 @@ fn seatbelt_writes_only_the_workspace_and_protects_repository_metadata() {
         "allowed\n"
     );
     assert!(!fixture.outside.join("denied.txt").exists());
-    assert_eq!(
-        fs::read_to_string(fixture.workspace.join(".git/config")).expect("protected file"),
-        "protected\n"
-    );
-    assert!(fixture.workspace.join(".git").is_dir());
     let names: Vec<_> = fs::read_dir(&fixture.workspace)
         .expect("workspace entries")
         .map(|entry| entry.expect("workspace entry").file_name())
         .collect();
-    assert!(names.contains(&OsString::from(".git")));
-    assert!(!names.contains(&OsString::from(".GIT")));
+    let protected_names: Vec<_> = names
+        .iter()
+        .filter(|name| name.to_string_lossy().eq_ignore_ascii_case(".git"))
+        .collect();
+    assert_eq!(protected_names.len(), 1, "one protected directory object");
+    if !case_equivalent {
+        assert_eq!(protected_names[0], &OsString::from(".git"));
+    }
+    let protected = fixture.workspace.join(protected_names[0]);
+    assert!(protected.is_dir());
+    assert_eq!(
+        fs::read_to_string(protected.join("config")).expect("protected file"),
+        "protected\n"
+    );
     assert!(fixture.workspace.join("nested/.git").is_dir());
     assert!(!fixture.workspace.join("moved").exists());
     assert!(!fixture.workspace.join("config-alias").exists());
+    assert!(!fixture.workspace.join("renamed-control").exists());
+    assert!(!protected.join("new").exists());
 }
 
 #[test]

@@ -68,11 +68,16 @@ writes only declared read-write roots, carves protected and unreadable paths
 back out, and denies networking. Declared grants and exact carve-outs are
 supplied as Seatbelt parameters. Case-insensitive protected-name and unreadable
 pattern predicates are escaped and anchored to validated roots in the generated
-profile so an APFS spelling alias cannot reopen them. Each command receives one
-private mode-0700 temporary directory through `TMPDIR`; Crucible owns and
-removes it with the command lifecycle. Empty manifests are supported, while a
-request to materialize files or mounts is refused before the temporary
-directory is created.
+profile so an APFS spelling alias cannot reopen them. On a case-insensitive,
+case-preserving APFS volume, macOS 26 may accept a case-only rename such as
+`.git` to `.GIT` even though Seatbelt denies the protected object and both
+rename operation classes. The spelling can change, but it remains the same
+single protected object: every case-equivalent spelling stays readable and
+non-writable, cannot be moved to an unprotected name, and cannot be hard-linked
+into writable space. Each command receives one private mode-0700 temporary
+directory through `TMPDIR`; Crucible owns and removes it with the command
+lifecycle. Empty manifests are supported, while a request to materialize files
+or mounts is refused before the temporary directory is created.
 
 Seatbelt policy inheritance keeps descendants confined after fork and exec.
 macOS has no PID namespace or cgroup-equivalent process census here, so cleanup

@@ -24,6 +24,11 @@ change in any release with no deprecation period.
 - **Unsupported sandbox errors no longer recommend a removed setting.** The
   native-backend refusal no longer suggests the rejected `sandbox.mode` key.
 
+- **Protected names remain protected across macOS filesystem aliases.** The
+  Seatbelt policy matches repository and Crucible metadata names without case,
+  so a case-only APFS directory rename cannot make their contents writable or
+  move them outside the protected namespace.
+
 - **Sandbox reports preserve fractional time limits.** Command and session
   ceilings retain their exact duration instead of rounding down to whole seconds.
 
