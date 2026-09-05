@@ -191,6 +191,11 @@ impl Link {
 /// reference at all is not known until something that is not a digit turns up.
 #[derive(Debug, Clone, Default)]
 struct Reference {
+    /// The word the answer put in front of the number to say what kind of
+    /// thing it counts -- `PR `, `issue ` -- where it put one. Peeled off the
+    /// run for the reason the repository is: it is part of what the reader
+    /// takes the reference to be, so it is part of the words they click.
+    lead: Option<Box<str>>,
     /// The repository the reference named in front of its hash, where it named
     /// one. Peeled off the run rather than read here, because it arrived
     /// before the hash that said it was a repository at all.
@@ -210,6 +215,39 @@ const DIGITS: usize = 12;
 /// What a repository is named with, either side of the slash.
 fn named(character: char) -> bool {
     character.is_alphanumeric() || matches!(character, '.' | '_' | '-')
+}
+
+/// The words an answer puts in front of a number to say what it counts.
+///
+/// Matched without regard to case, and only as whole words: `PR #12` and
+/// `issue #12` are read the way they are written, as one thing, where `prepr
+/// #12` names nothing. Short, on purpose -- a word here goes into the link's
+/// words, so each is one a reader would expect to be part of the reference.
+const LEADS: [&str; 3] = ["pull request", "issue", "pr"];
+
+/// How many bytes at the end of `pending` are a lead word and the one space
+/// after it, where they are.
+///
+/// Zero where there is none. Whatever is in front of the word has to be a word
+/// boundary -- the start of the run, or a character no word is spelled with --
+/// so the end of a longer word is not taken for the lead it happens to end in.
+fn lead(pending: &str) -> usize {
+    let Some(words) = pending.strip_suffix(' ') else {
+        return 0;
+    };
+    let lower = words.to_ascii_lowercase();
+
+    LEADS
+        .into_iter()
+        .filter(|one| lower.ends_with(one))
+        .map(|one| one.len() + 1)
+        .find(|back| {
+            words
+                .get(..words.len() + 1 - back)
+                .and_then(|before| before.chars().next_back())
+                .is_none_or(|before| !before.is_alphanumeric())
+        })
+        .unwrap_or(0)
 }
 
 /// How many bytes at the end of `pending` name a repository, where they do.
@@ -512,8 +550,12 @@ impl Markdown {
                 // words the reader clicks are the words the answer wrote.
                 let pending = delta.get(run..at).unwrap_or_default();
                 let (text, slug) = pending.split_at(pending.len() - back);
+                // The word saying what the number counts is the reference's
+                // too, where the answer wrote one, and for the same reason.
+                let (text, lead) = text.split_at(text.len() - lead(text));
                 self.say(text, say);
                 self.reference = Some(Reference {
+                    lead: (!lead.is_empty()).then(|| lead.into()),
                     slug: (!slug.is_empty()).then(|| slug.into()),
                     number: String::new(),
                 });
@@ -840,7 +882,7 @@ impl Markdown {
         }
 
         self.line.marked = Marked::Drawn;
-        say(Slot::Quiet, self.glyphs.dot(), None);
+        say(Slot::Quiet, self.glyphs.bullet(), None);
         say(Slot::Quiet, " ", None);
     }
 
@@ -1065,8 +1107,9 @@ impl Markdown {
         reference: &Reference,
         say: &mut dyn FnMut(Slot, &str, Option<&str>),
     ) {
+        let lead = reference.lead.as_deref().unwrap_or_default();
         let slug = reference.slug.as_deref().unwrap_or_default();
-        let words = format!("{slug}#{}", reference.number);
+        let words = format!("{lead}{slug}#{}", reference.number);
         self.previous = words.chars().next_back().unwrap_or('#');
         self.started = true;
 
@@ -1091,13 +1134,14 @@ impl Markdown {
 
     /// Hands on a link that arrived whole.
     ///
-    /// The words wear the link's own slot and the address follows them in
-    /// brackets, quietly. Both, because a terminal is where the address is the
-    /// part that can be acted on -- copied, or clicked by a terminal that finds
-    /// its own links -- and words alone would be a destination the reader
-    /// cannot reach. Neither is ever written as anything but text: an address
-    /// is bytes a model chose, and the rule this file opens with is that none
-    /// of them leaves as an instruction.
+    /// The words wear the link's own slot and carry the address, which is not
+    /// written out beside them: the sentence the answer wrote goes on reading
+    /// as a sentence, and the address is the row's to hand to a terminal that
+    /// opens links -- which is how a reader reaches it, the same way they
+    /// reach one on any page. A link with no words is its address, since that
+    /// is the one thing there is to show. Nothing here is ever written as
+    /// anything but text: an address is bytes a model chose, and the rule this
+    /// file opens with is that none of them leaves as an instruction.
     fn wrote_link(&mut self, link: &Link, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
         self.pay(say);
 
@@ -1110,16 +1154,6 @@ impl Markdown {
 
         say(Slot::Link, words, (!target.is_empty()).then_some(target));
         self.previous = words.chars().next_back().unwrap_or(')');
-
-        // Said once. A link written `[https://example.com](https://example.com)`
-        // is the address twice, and so is one whose words a model copied out of
-        // it.
-        if !target.is_empty() && target != words {
-            say(Slot::Quiet, " (", None);
-            say(Slot::Quiet, target, None);
-            say(Slot::Quiet, ")", None);
-            self.previous = ')';
-        }
     }
 
     /// Lets go of whatever was still being held when the message ended.
