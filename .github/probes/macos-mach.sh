@@ -1,5 +1,5 @@
 #!/bin/sh
-# macos-runtime-v1: deny-default runtime/Mach prerequisite, not a backend.
+# macos-runtime-v2: bounded output-mapping diagnostic, not a backend.
 # No native execution by the author. Root reviews source/manifest before CI.
 set -eu
 umask 022
@@ -33,7 +33,7 @@ mkdir "$probe_root/runtime" "$probe_root/runtime/rust"
 cp -R "$probe_toolchain/bin" "$probe_toolchain/lib" "$probe_root/runtime/rust/"
 chmod -R a+rX "$probe_root/runtime"
 python3 - "$probe_root" "$probe_developer" <<'PY'
-import json, pathlib, sys
+import json, os, pathlib, sys
 root, developer = (pathlib.Path(value).resolve(strict=True) for value in sys.argv[1:])
 trees = [root, developer, pathlib.Path('/System/Library'), pathlib.Path('/usr/lib'), pathlib.Path('/bin')]
 files = [pathlib.Path(value) for value in ('/usr/bin/tr', '/usr/bin/true', '/dev/null')]
@@ -49,10 +49,14 @@ lines = ['(version 1)', '(deny default)', '(deny network*)', '(deny mach-lookup 
          ' ' + ' '.join('(literal ' + quote(path) + ')' for path in files) + ')',
          '(allow file-write* (subpath ' + quote(root) + ') (literal "/dev/null"))',
          '(allow sysctl-read ' + ' '.join('(sysctl-name ' + quote(name) + ')' for name in sysctls) + ')']
+variant = os.environ['CRUCIBLE_RUNTIME_PROBE_VARIANT']
+assert variant in ('baseline', 'file-map')
+if variant == 'file-map':
+    lines.append('(allow file-map-executable (subpath ' + quote(root) + '))')
 profile = '\n'.join(lines) + '\n'
 assert len(profile.encode()) < 16384 and '(allow default)' not in profile
 (root / 'profile.sb').write_text(profile)
-print('RUNTIME-PROFILE ' + json.dumps({'trees': [str(p) for p in trees], 'files': [str(p) for p in files], 'sysctls': sysctls}))
+print('RUNTIME-PROFILE ' + json.dumps({'variant': variant, 'trees': [str(p) for p in trees], 'files': [str(p) for p in files], 'sysctls': sysctls}))
 PY
 cat > "$probe_root/hello.c" <<'C'
 int main(void) { return 0; }
@@ -558,7 +562,8 @@ int main(int argc,char **argv) {
                setenv("RUSTC",rustc,1)||setenv("RUSTDOC",rustdoc,1)||setenv("PROBE_CARGO",cargobin,1)||
                setenv("PROBE_CLANG",argv[2],1)||setenv("SDKROOT",argv[3],1)||setenv("DEVELOPER_DIR",argv[4],1)||setenv("PROBE_GIT",argv[5],1)||
                setenv("CARGO_ENCODED_RUSTFLAGS",linker,1)||setenv("CARGO_ENCODED_RUSTDOCFLAGS",linker,1)||
-               setenv("GIT_CONFIG_NOSYSTEM","1",1)||setenv("GIT_CONFIG_GLOBAL","/dev/null",1)) die("clean environment");
+               setenv("GIT_CONFIG_NOSYSTEM","1",1)||setenv("GIT_CONFIG_GLOBAL","/dev/null",1)||
+               setenv("GIT_ATTR_NOSYSTEM","1",1)||setenv("OPENSSL_CONF","/dev/null",1)) die("clean environment");
             check_seed(expected_seed,"environment");
             char *error=NULL;
             if(sandbox_init(profile,0,&error)) { fprintf(stderr,"PROFILE-REFUSED %.256s\n",error?error:"no diagnostic"); if(error) sandbox_free_error(error); exit(77); }

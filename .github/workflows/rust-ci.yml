@@ -5,7 +5,7 @@ permissions:
   contents: read
 jobs:
   macos-runtime:
-    name: macOS deny-default runtime (${{ matrix.os }})
+    name: macOS runtime mapping diagnostic (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -17,4 +17,26 @@ jobs:
       with:
         persist-credentials: false
     - shell: bash
-      run: sh .github/probes/macos-mach.sh
+      run: |
+        set -eu
+        for variant in baseline file-map; do
+          printf 'DIAGNOSTIC-BEGIN variant=%s\n' "$variant"
+          probe_log=$(mktemp /tmp/crucible-runtime-diagnostic.XXXXXX)
+          if CRUCIBLE_RUNTIME_PROBE_VARIANT="$variant" sh .github/probes/macos-mach.sh > "$probe_log" 2>&1; then
+            result=0
+          else
+            result=$?
+          fi
+          python3 - "$probe_log" <<'PY'
+        import pathlib, sys
+        with pathlib.Path(sys.argv[1]).open('rb') as stream:
+            output = stream.read(4 * 1024**2 + 1)
+        assert len(output) <= 4 * 1024**2, 'output bound; abort further variants'
+        sys.stdout.buffer.write(output)
+        assert b'MACH-PREREQUISITE-RESULT cases=10 ' in output, 'incomplete attempt; abort further variants'
+        results = [line for line in output.splitlines() if line.startswith(b'RESULT case=')]
+        assert len(results) == 10 and all(line.endswith(b'uid_empty=1') for line in results)
+        PY
+          printf 'DIAGNOSTIC-END variant=%s status=%s\n' "$variant" "$result"
+          test "$result" -eq 0 || test "$result" -eq 77
+        done
