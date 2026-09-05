@@ -4,6 +4,7 @@ import hashlib
 import os
 import pathlib
 import plistlib
+import re
 import shutil
 import select
 import time
@@ -25,7 +26,7 @@ mount.mkdir()
 print('FIXTURE ' + str(base), flush=True)
 
 
-def command(argv, allowed=(0,), timeout=30):
+def command(argv, allowed=(0,), timeout=30, private=False):
     print('COMMAND ' + json.dumps([str(x) for x in argv]), flush=True)
     proc = subprocess.Popen(argv, cwd=base, stdin=subprocess.DEVNULL,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -58,7 +59,8 @@ def command(argv, allowed=(0,), timeout=30):
     finally:
         proc.stdout.close()
     data = bytes(data)
-    print(data.decode(errors='replace'), end='', flush=True)
+    if not private:
+        print(data.decode(errors='replace'), end='', flush=True)
     assert result in allowed, (str(argv[0]), result)
     return result, data
 
@@ -118,6 +120,8 @@ command(['/usr/bin/sw_vers'])
 command(['/usr/bin/uname', '-a'])
 command([worker, 'empty'])
 command(['/usr/bin/hdiutil', 'create', '-size', '128m', '-fs', 'APFS', '-volname', 'CrucibleFSFixture', image])
+backing = image.lstat()
+assert stat.S_ISREG(backing.st_mode) and backing.st_uid == 0 and backing.st_nlink == 1
 _, data = command(['/usr/bin/hdiutil', 'attach', image, '-nobrowse', '-owners', 'on', '-mountpoint', mount, '-plist'])
 entities = plistlib.loads(data)['system-entities']
 mounted = [entry for entry in entities if entry.get('mount-point') == str(mount)]
@@ -127,7 +131,9 @@ info = plistlib.loads(data)
 assert info.get('FilesystemType') == 'apfs' and info.get('MountPoint') == str(mount)
 assert info.get('DeviceNode') == mounted[0].get('dev-entry')
 disks = [entry['dev-entry'] for entry in entities if entry.get('content-hint') == 'GUID_partition_scheme']
-assert len(disks) == 1 and disks[0].startswith('/dev/disk')
+assert len(disks) == 1 and re.fullmatch(r'/dev/disk[0-9]+', disks[0])
+device = os.stat(disks[0], follow_symlinks=False)
+assert stat.S_ISBLK(device.st_mode)
 command(['/sbin/mount', '-u', '-o', 'nosuid,nodev', mount])
 command([worker, 'flags', mount])
 def protected_state(root):
@@ -175,7 +181,34 @@ for mode in ('control', 'confined'):
         print('RESULT ' + json.dumps({'mode': mode, 'operation': operation, 'status': code}), flush=True)
         sequence += 1
 command([worker, 'unmount', mount])
-command(['/usr/bin/hdiutil', 'detach', disks[0]])
+def attached():
+    _, data = command(['/usr/bin/hdiutil', 'info', '-plist'], private=True)
+    matches = [entry for entry in plistlib.loads(data)['images']
+               if pathlib.Path(entry['image-path']).resolve() == image]
+    assert len(matches) <= 1, 'ambiguous image identity; quarantine'
+    return matches
+
+
+detached = False
+for attempt in range(1, 4):
+    current = image.lstat()
+    assert stat.S_ISREG(current.st_mode)
+    assert (current.st_dev, current.st_ino) == (backing.st_dev, backing.st_ino)
+    matches = attached()
+    assert len(matches) == 1, 'attachment missing before attempt; quarantine'
+    entries = matches[0]['system-entities']
+    assert sum(entry.get('dev-entry') == disks[0] for entry in entries) == 1
+    assert not any(entry.get('mount-point') for entry in entries)
+    current_device = os.stat(disks[0], follow_symlinks=False)
+    assert stat.S_ISBLK(current_device.st_mode) and current_device.st_rdev == device.st_rdev
+    code, _ = command(['/usr/bin/hdiutil', 'detach', disks[0]], allowed=(0, 16))
+    print('DETACH ' + json.dumps({'attempt': attempt, 'status': code, 'identity_reconciled': True}), flush=True)
+    if code == 0:
+        assert not attached(), 'successful detach still has attachment; quarantine'
+        detached = True
+        break
+    time.sleep(0.2)
+assert detached, 'bounded detach exhausted; image quarantined'
 print('COMPLETE cases=' + str(sequence) + ' failures=' + json.dumps(failures) + ' uid_empty=1 nonforced_detach=1', flush=True)
 assert not failures, failures
 # Retain exact owned fixture until disposable VM destruction; never generic cleanup.
