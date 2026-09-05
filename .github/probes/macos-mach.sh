@@ -1,5 +1,5 @@
 #!/bin/sh
-# mac-mach-v11: disposable VM capability-inheritance prerequisite, not a backend.
+# mac-mach-v12: disposable VM capability-inheritance prerequisite, not a backend.
 # No native execution by the author. Root reviews source/manifest before CI.
 set -eu
 umask 022
@@ -432,7 +432,19 @@ int main(int argc,char **argv) {
         errno=0; if(fcntl(high,F_GETFD)!=-1||errno!=EBADF) return 77;
         puts("DARWIN-FD-CLOSE-SELFTEST-PASS"); return 0;
     }
-    if(argc==7&&!strcmp(argv[1],"guest")) return guest((uid_t)atoi(argv[2]),atoi(argv[3]),atoi(argv[4]),argv[5],argv[6]);
+    if(argc==7&&!strcmp(argv[1],"guest")) {
+        uid_t uid=(uid_t)atoi(argv[2]); int sanitized=atoi(argv[3]),route=atoi(argv[4]);
+        /* This program image was freshly exec'd under the final policy.
+         * Fork now exercises descendants of the confined guest, never code
+         * inside the privileged launcher's inherited runtime. */
+        if(route==1) {
+            pid_t child=fork(); if(child<0) die("confined guest fork");
+            if(!child) _exit(guest(uid,sanitized,route,argv[5],argv[6]));
+            int status=0; if(!reap(child,now()+18,&status)) return 77;
+            return WIFEXITED(status)?WEXITSTATUS(status):77;
+        }
+        return guest(uid,sanitized,route,argv[5],argv[6]);
+    }
     if(argc!=6||geteuid()!=0) { fputs("root coordinator requires fixture/clang/sdk/developer/git\n",stderr); return 77; }
     close_extra_fds(); signal(SIGINT,stop); signal(SIGTERM,stop);
     const char *root=argv[1]; struct stat st; const char *prefix="/private/tmp/crucible-macos-mach.";
@@ -473,7 +485,7 @@ int main(int argc,char **argv) {
     port_kind(mach_task_self(),"parent_task_control");
     kr(task_set_exception_ports(mach_task_self(),EXC_MASK_ALL,MACH_PORT_NULL,EXCEPTION_DEFAULT,THREAD_STATE_NONE),"clear coordinator exceptions");
     kr(task_set_exception_ports(mach_task_self(),EXC_MASK_BREAKPOINT,service,EXCEPTION_DEFAULT,THREAD_STATE_NONE),"install coordinator transport");
-    const char *names[]={"exec","fork","posix_spawn","exec","fork","posix_spawn","shell","git","clang","cargo"};
+    const char *names[]={"exec","exec_then_fork","posix_spawn","exec","exec_then_fork","posix_spawn","shell","git","clang","cargo"};
     unsigned failed_cases=0;
     for(int c=0;c<10;c++) {
         if(stopped || empty(uid)!=1) { cleanup(uid); return 77; }
@@ -531,12 +543,6 @@ int main(int argc,char **argv) {
              * context. Thereafter only direct kernel Mach APIs precede exec. */
             seed_slots(); if(sanitized) sanitize();
             char *args[]={self,"guest",ids,mode,route_text,(char *)names[c],(char *)root,NULL};
-            if(route==1) {
-                pid_t child=fork(); if(child<0) die("guest fork");
-                if(!child) exit(guest(uid,sanitized,route,names[c],root));
-                int status=0; if(!reap(child,now()+18,&status)) exit(77);
-                exit(WIFEXITED(status)?WEXITSTATUS(status):77);
-            }
             if(route==2) {
                 pid_t child; int e=posix_spawn(&child,self,NULL,NULL,args,environ); if(e) { errno=e; die("guest spawn"); }
                 int status=0; if(!reap(child,now()+18,&status)) exit(77);
