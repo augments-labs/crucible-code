@@ -11,7 +11,7 @@ import sys
 import tempfile
 
 assert os.geteuid() == 0
-base = pathlib.Path(tempfile.mkdtemp(prefix='crucible-apfs-publication-'))
+base = pathlib.Path(tempfile.mkdtemp(prefix='crucible-apfs-publication-')).resolve(strict=True)
 os.chmod(base, 0o700)
 image = base / 'fixture.dmg'
 rw = base / 'rw'
