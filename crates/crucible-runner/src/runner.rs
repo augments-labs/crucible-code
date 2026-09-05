@@ -33,8 +33,8 @@ use crucible_core::{
     PromptCacheResourceState, PromptCacheRetentionClass, PromptCacheScopeDigest,
     PromptCacheUsageFact, PromptCacheUsageReporting, Provider, ProviderError, ProviderUsage,
     Reporter, Request, Room, RunItem, SandboxAuditRegistry, SessionStore, Spend, Steer, StopReason,
-    Summary, ToolCall, ToolGeneration, ToolSchema, ToolSnapshot, Toolset, ToolsetContext,
-    Transcript, TurnError, TurnId, UsageCost,
+    Summary, ToolCall, ToolError, ToolGeneration, ToolSchema, ToolSnapshot, Toolset,
+    ToolsetContext, Transcript, TurnError, TurnId, UsageCost,
 };
 
 use crucible_session::{Pruned, Session};
@@ -1025,9 +1025,8 @@ impl Runner {
         }
     }
 
-    fn flush_sandbox_audits(&self, events: Reporter<'_>) -> Result<(), TurnError> {
+    fn flush_sandbox_audits(&self, events: Reporter<'_>) -> Result<(), ToolError> {
         work::report_sandbox_registry(&self.sandbox_audits, events, &self.session)
-            .map_err(TurnError::from)
     }
 
     /// Writes one normalized cache fact to the durable framework journal and
@@ -1215,8 +1214,11 @@ impl Runner {
         // provider without passing through `turn` has to take the ceiling
         // itself, the way [`Runner::compact`] does.
 
-        let toolsets = ToolsetContext::new(run.ancestry(), run.cancel().clone(), None);
-        let ran = match self.toolset.prepare(&toolsets) {
+        let toolsets = ToolsetContext::new(run.ancestry(), run.cancel().clone(), None)
+            .with_sandbox_audits(self.sandbox_audits.clone());
+        let prepared = self.toolset.prepare(&toolsets).map_err(TurnError::from);
+        let prepared = combine_sandbox_audit(prepared, self.flush_sandbox_audits(run.reporting()));
+        let ran = match prepared {
             Ok(()) => {
                 // The turn's own running totals. A bound only where somebody asked for
                 // one: a turn that runs long because there is work in it is not a turn
@@ -1239,10 +1241,10 @@ impl Runner {
                     .drive(&mut counting)
                     .map(|stop| RunResult::new(run.run(), stop, counting.spent))
             }
-            Err(problem) => Err(TurnError::Toolset(problem)),
+            Err(problem) => Err(problem),
         };
 
-        match (ran, self.toolset.dispose(&toolsets)) {
+        let finished = match (ran, self.toolset.dispose(&toolsets)) {
             (Ok(result), Ok(())) => Ok(result),
             (Ok(_), Err(cleanup)) => Err(TurnError::Toolset(cleanup)),
             (Err(primary), Ok(())) => Err(primary),
@@ -1250,7 +1252,8 @@ impl Runner {
                 primary: Box::new(primary),
                 cleanup,
             }),
-        }
+        };
+        combine_sandbox_audit(finished, self.flush_sandbox_audits(run.reporting()))
     }
 
     /// Makes room, and says what the turn may do next.
@@ -1881,6 +1884,22 @@ fn merge_usage(
         provider,
         problem: format!("invalid cumulative usage accounting: {problem}").into(),
     })
+}
+
+/// A failed audit cannot replace the primary failure or turn a successful
+/// operation into an apparently successful, unaudited lifecycle.
+fn combine_sandbox_audit<T>(
+    result: Result<T, TurnError>,
+    audit: Result<(), ToolError>,
+) -> Result<T, TurnError> {
+    match (result, audit) {
+        (result, Ok(())) => result,
+        (Ok(_), Err(audit)) => Err(TurnError::Tool(audit)),
+        (Err(primary), Err(audit)) => Err(TurnError::SandboxAudit {
+            primary: Box::new(primary),
+            audit,
+        }),
+    }
 }
 
 #[cfg(test)]

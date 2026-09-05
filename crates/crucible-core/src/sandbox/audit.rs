@@ -194,13 +194,14 @@ impl SandboxAudit {
     ///
     /// # Errors
     ///
-    /// A poisoned or full collector fails closed instead of silently omitting
-    /// a capability-claimed audit record.
+    /// An invalid call identity or a poisoned/full collector fails closed
+    /// instead of retaining an undeliverable audit record.
     pub fn record(
         &self,
         sandbox: SandboxId,
         kind: SandboxFactKind,
     ) -> Result<(), SandboxAuditError> {
+        validate_call(&self.call)?;
         let mut facts = self
             .facts
             .lock()
@@ -279,12 +280,14 @@ impl SandboxAuditRegistry {
     ///
     /// # Errors
     ///
-    /// The registry is unavailable or its live-lifecycle ceiling is reached.
+    /// The call identity is empty or oversized, the registry is unavailable,
+    /// or its live-lifecycle ceiling is reached.
     pub fn collector(
         &self,
         ancestry: Ancestry,
         call: ToolId,
     ) -> Result<SandboxAudit, SandboxAuditError> {
+        validate_call(&call)?;
         let mut audits = self
             .audits
             .lock()
@@ -361,9 +364,20 @@ impl std::fmt::Debug for SandboxAuditRegistry {
     }
 }
 
+fn validate_call(call: &ToolId) -> Result<(), SandboxAuditError> {
+    if call.as_str().is_empty() || call.as_str().len() > crate::TOOL_CALL_ID_BYTES {
+        Err(SandboxAuditError::InvalidCall)
+    } else {
+        Ok(())
+    }
+}
+
 /// Why a bounded fact could not be retained.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum SandboxAuditError {
+    /// A call identity cannot cross the framework journal boundary.
+    #[error("sandbox audit call identity is empty or oversized")]
+    InvalidCall,
     /// The fixed per-call fact ceiling was reached.
     #[error("sandbox audit reached its bounded fact ceiling")]
     Full,
@@ -381,6 +395,50 @@ pub enum SandboxAuditError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invalid_call_identity_is_refused_before_registry_or_fact_retention() {
+        let registry = SandboxAuditRegistry::new();
+        for id in [String::new(), "x".repeat(crate::TOOL_CALL_ID_BYTES + 1)] {
+            let call = ToolId::new(id);
+            assert!(registry.collector(Ancestry::new(), call.clone()).is_err());
+            assert!(registry.audits.lock().expect("registry").is_empty());
+            let direct = SandboxAudit::new(Ancestry::new(), call);
+            assert!(
+                direct
+                    .record(
+                        SandboxId::new(),
+                        SandboxFactKind::Lifecycle(SandboxLifecycle::Prepared),
+                    )
+                    .is_err()
+            );
+            assert!(direct.records().expect("no undeliverable facts").is_empty());
+        }
+        let valid = registry
+            .collector(
+                Ancestry::new(),
+                ToolId::new("x".repeat(crate::TOOL_CALL_ID_BYTES)),
+            )
+            .expect("maximum valid identity");
+        valid
+            .record(
+                SandboxId::new(),
+                SandboxFactKind::Lifecycle(SandboxLifecycle::Prepared),
+            )
+            .expect("valid fact");
+        let records = registry.take_records().expect("valid drain");
+        let [record] = records.as_ref() else {
+            panic!("exactly one valid fact")
+        };
+        assert!(
+            crate::RunItem::sandbox(
+                record.ancestry(),
+                record.call().clone(),
+                record.fact().clone()
+            )
+            .is_ok()
+        );
+    }
 
     #[test]
     fn attribution_is_fixed_and_debug_redacts_the_call() {

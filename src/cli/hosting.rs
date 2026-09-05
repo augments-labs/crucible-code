@@ -1,7 +1,8 @@
 //! Selected MCP servers, offered as tools beside the built-in ones.
 //!
-//! A server here is somebody else's program. It is started confined, spoken to
-//! over its own standard input and output, asked once what it offers, and what
+//! A server here is somebody else's program. It starts under its selected
+//! sandbox policy, is spoken to over its own standard input and output, asked
+//! once what it offers, and what
 //! comes back becomes descriptors the model can call. This is where that meets
 //! the roster crucible compiled in: the runner drives one live toolset, so the
 //! two have to arrive as one generation or not at all.
@@ -61,9 +62,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use crucible_core::{
-    Ancestry, Approved, Cancel, Command, Finish, SandboxCommand, SandboxEnvironment, SandboxId,
-    SandboxManifest, SandboxPolicy, SandboxRequest, SandboxService, Sensitivity, Summary, Tool,
-    ToolArgs, ToolContext, ToolDescriptor, ToolEntry, ToolError, ToolId, ToolOutput,
+    Ancestry, Approved, Cancel, Command, Finish, SandboxAudit, SandboxCommand, SandboxEnvironment,
+    SandboxId, SandboxManifest, SandboxPolicy, SandboxRequest, SandboxService, Sensitivity,
+    Summary, Tool, ToolArgs, ToolContext, ToolDescriptor, ToolEntry, ToolError, ToolId, ToolOutput,
     ToolProvenance, ToolSnapshot, ToolSourceKind, Toolset, ToolsetContext, ToolsetError,
 };
 use crucible_extension::{Ambiguity, Restarts};
@@ -207,6 +208,7 @@ fn start(
     chosen: &Chosen,
     sandbox: &dyn SandboxService,
     ancestry: Ancestry,
+    audit: &SandboxAudit,
     interrupt: Option<&Cancel>,
 ) -> Result<Started, Box<str>> {
     let refused = |problem: &dyn std::fmt::Display| -> Box<str> { problem.to_string().into() };
@@ -220,7 +222,9 @@ fn start(
         ToolId::new(format!("{NAMESPACE}{OF}{}", chosen.name)),
         chosen.policy.clone(),
         SandboxManifest::empty(),
-    );
+    )
+    .with_audit(audit.clone())
+    .map_err(|error| refused(&error))?;
     let mut session = sandbox.prepare(request).map_err(|e| refused(&e))?;
     session.materialize().map_err(|e| refused(&e))?;
     let command = SandboxCommand::new(
@@ -278,6 +282,8 @@ struct Server {
     sandbox: Arc<dyn SandboxService>,
     /// Whose run this process belongs to, for the audit a restart also owes.
     ancestry: Ancestry,
+    /// The host registry keeps this attribution through restart and cleanup.
+    audit: SandboxAudit,
     /// Every tool this run published for it, as it was offered at start-up.
     ///
     /// The whole catalogue rather than the tool a call is about, because a
@@ -327,10 +333,22 @@ impl Hosting {
         chosen: &Arc<Chosen>,
         context: &ToolsetContext,
     ) -> Result<(Arc<Server>, Vec<ToolEntry>), ToolsetError> {
+        let provenance = ToolProvenance::new(
+            ToolSourceKind::Mcp,
+            format!("{NAMESPACE}{OF}{}", chosen.name),
+            format!("MCP server {} at {}", chosen.name, chosen.program.display()),
+        )?;
+        let audit = context
+            .sandbox_audit(ToolId::new(format!("{NAMESPACE}{OF}{}", chosen.name)))
+            .map_err(|error| ToolsetError::Source {
+                id: chosen.name.clone(),
+                problem: error.to_string().into(),
+            })?;
         let Started { hosted, offered } = start(
             chosen,
             self.sandbox.as_ref(),
             context.ancestry(),
+            &audit,
             Some(context.cancel()),
         )
         .map_err(|problem| ToolsetError::Source {
@@ -338,17 +356,13 @@ impl Hosting {
             problem,
         })?;
 
-        let provenance = ToolProvenance::new(
-            ToolSourceKind::Mcp,
-            format!("{NAMESPACE}{OF}{}", chosen.name),
-            format!("MCP server {} at {}", chosen.name, chosen.program.display()),
-        )?;
         let program: Box<str> = chosen.program.display().to_string().into();
         let server = Arc::new(Server {
             name: chosen.name.clone(),
             chosen: Arc::clone(chosen),
             sandbox: Arc::clone(&self.sandbox),
             ancestry: context.ancestry(),
+            audit,
             published: offered.clone(),
             live: Mutex::new(Conversation {
                 hosted: Some(hosted),
@@ -459,6 +473,7 @@ impl Server {
             &self.chosen,
             self.sandbox.as_ref(),
             self.ancestry,
+            &self.audit,
             interrupt,
         )
         .map_err(|problem| {
