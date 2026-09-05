@@ -21,10 +21,11 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crucible_core::{
-    Ancestry, SandboxCommand, SandboxEnvironment, SandboxFilesystemProvenance, SandboxId,
-    SandboxManifest, SandboxMode, SandboxNetworkPolicy, SandboxOutput, SandboxPolicy,
-    SandboxProcess, SandboxRead, SandboxRequest, SandboxResourceLimits, SandboxService,
-    SandboxUnreadablePattern, ToolId, Workspace,
+    Ancestry, SandboxCommand, SandboxEnvironment, SandboxFilesystemAccess,
+    SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxId, SandboxManifest, SandboxMode,
+    SandboxNetworkPolicy, SandboxOutput, SandboxPolicy, SandboxProcess, SandboxRead,
+    SandboxRequest, SandboxResourceLimits, SandboxService, SandboxUnreadablePattern, ToolId,
+    Workspace,
 };
 use crucible_tools::LocalSandbox;
 
@@ -167,7 +168,11 @@ fn seatbelt_writes_only_the_workspace_and_protects_repository_metadata() {
         command("/bin/sh", arguments),
     ));
 
-    assert!(status.success(), "{}", String::from_utf8_lossy(&errors));
+    assert!(
+        status.success(),
+        "{status:?}: {}",
+        String::from_utf8_lossy(&errors)
+    );
     assert_eq!(
         fs::read_to_string(fixture.workspace.join("allowed.txt")).expect("allowed write"),
         "allowed\n"
@@ -178,7 +183,12 @@ fn seatbelt_writes_only_the_workspace_and_protects_repository_metadata() {
         "protected\n"
     );
     assert!(fixture.workspace.join(".git").is_dir());
-    assert!(!fixture.workspace.join(".GIT").exists());
+    let names: Vec<_> = fs::read_dir(&fixture.workspace)
+        .expect("workspace entries")
+        .map(|entry| entry.expect("workspace entry").file_name())
+        .collect();
+    assert!(names.contains(&OsString::from(".git")));
+    assert!(!names.contains(&OsString::from(".GIT")));
     assert!(fixture.workspace.join("nested/.git").is_dir());
     assert!(!fixture.workspace.join("moved").exists());
     assert!(!fixture.workspace.join("config-alias").exists());
@@ -386,6 +396,34 @@ fn seatbelt_hides_paths_selected_by_unreadable_patterns() {
     assert_eq!(String::from_utf8_lossy(&output), "visible\n");
     assert!(!fixture.workspace.join("nested/new.PEM").exists());
     assert!(!fixture.workspace.join("nested/renamed.pem").exists());
+}
+
+#[test]
+fn seatbelt_hides_a_private_var_path_through_its_system_alias() {
+    let fixture = Fixture::new("private-var-alias");
+    let workspace = Workspace::open(&fixture.workspace).expect("workspace");
+    let base = SandboxPolicy::standard(&workspace).expect("policy");
+    let unreadable = SandboxFilesystemRule::new(
+        "/private/var/select",
+        SandboxFilesystemAccess::Unreadable,
+        SandboxFilesystemProvenance::Descendant,
+    )
+    .expect("unreadable rule");
+    let policy = SandboxPolicy::new(
+        SandboxMode::Required,
+        base.filesystem().iter().cloned().chain([unreadable]),
+        &fixture.workspace,
+        SandboxNetworkPolicy::Closed,
+        SandboxResourceLimits::confining(),
+    )
+    .expect("unreadable policy");
+    let script = "if /bin/ls /var/select >/dev/null 2>&1; then exit 71; fi";
+    let (status, _, errors) = finish(start(
+        Fixture::request_with_policy("macos-private-var-alias", policy),
+        command("/bin/sh", [OsString::from("-c"), OsString::from(script)]),
+    ));
+
+    assert!(status.success(), "{}", String::from_utf8_lossy(&errors));
 }
 
 #[test]
