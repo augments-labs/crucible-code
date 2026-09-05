@@ -599,11 +599,11 @@ pub(super) fn run<T: Terminal>(
         return Ok(Ran::Leave);
     }
 
-    // A blank row on each side, the same as under the welcome: what separates
-    // one block from the next is a row with nothing on it, and both of this
-    // block's neighbours — the line that asked, the box below — are rows the
-    // eye is already resting on.
-    renderer.commit("")?;
+    // Directly under the line that asked, with nothing between: the answer is
+    // hung off that line by the mark in front of it, and a blank row between
+    // the two would leave the mark pointing at nothing. The blank goes after,
+    // where the next block starts — the box below is already parted from it,
+    // and the next thing said belongs under the pair rather than in it.
     let start = renderer.lines();
     let making = answer(wanted, renderer, runner, held, terms)?;
     renderer.subordinate(start, terms.style().glyphs())?;
@@ -739,14 +739,20 @@ fn moded<T: Terminal>(
     Ok(())
 }
 
-/// Says one line back, quietly, clipped to the window it is said in.
+/// Says one thing back, quietly, wrapped to the window it is said in.
 ///
 /// What `/login` and `/logout` answer with when there is one thing to say: a
-/// credential was stored, removed, or left alone with the reason why.
+/// credential was stored, removed, or left alone with the reason why. Wrapped
+/// rather than cut, because the reason is at the end of the sentence and is
+/// the part somebody asked for; the caller that hangs the answer under the
+/// command indents whatever ran over.
 fn say<T: Terminal>(renderer: &mut Renderer<T>, said: &str) -> Result<(), Fatal> {
-    let row = Row::new().then(Slot::Quiet, clip(said, renderer.columns()));
+    let rows: Vec<Row> = fold(said, renderer.columns())
+        .into_iter()
+        .map(|part| Row::new().then(Slot::Quiet, part))
+        .collect();
 
-    Ok(renderer.present(&[row])?)
+    Ok(renderer.present(&rows)?)
 }
 
 /// A thing and what is said about it, parted by the mark that says they are two.

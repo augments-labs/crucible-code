@@ -1213,9 +1213,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     let opening = draw::opening(
         &mut renderer,
         &Opening {
-            credential: launch.credential.as_ref(),
             model: launch.model.as_deref(),
-            provider: terms.provider.get(),
             unasked: launch.unasked,
             trouble: keys.trouble(),
             workspace: &workspace,
@@ -1303,7 +1301,6 @@ struct Launch {
     serving: Option<Served>,
     model: Option<Box<str>>,
     effort: Option<Effort>,
-    credential: Option<CredentialSource>,
     unasked: &'static str,
 }
 
@@ -1324,7 +1321,6 @@ fn launch(
     Ok(Launch {
         model: wanted(&choice, auth.settings, serving),
         effort: thinking(cli.effort, auth.settings, serving),
-        credential: serving.and_then(|named| credential_source(named, auth)),
         unasked: opening_unasked(serving, available(providers, auth).next().is_some()),
         serving,
     })

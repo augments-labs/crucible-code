@@ -450,9 +450,10 @@ fn the_slots_without_a_hue_are_the_ones_that_meant_not_to_have_one() {
     // on this ground", which is the one judgement worth deferring to. Cut is
     // whichever of those two the pointer has made it, so it has no hue of its
     // own at either end. The other
-    // four are that same foreground with an attribute on it -- weight, a slant,
-    // a line under it, and a line through it -- so what they are legible
-    // against is whatever Plain was. The band takes a ground and writes no ink
+    // three are that same foreground with an attribute on it -- weight, a
+    // slant, and a line through it -- so what they are legible against is
+    // whatever Plain was. A link is not among them: it wears the accent under
+    // its line, and is checked with the hues. The band takes a ground and writes no ink
     // at all, so the words on it stay theirs — its mark is the one slot here
     // that does carry a hue and is checked with the band instead. The six code
     // slots are a syntax theme's to fill — empty until one is read, and never
@@ -478,7 +479,6 @@ fn the_slots_without_a_hue_are_the_ones_that_meant_not_to_have_one() {
             Slot::Plain,
             Slot::Quiet,
             Slot::Cut,
-            Slot::Link,
             Slot::Emphasis,
             Slot::Struck,
             Slot::Doing,
@@ -817,4 +817,31 @@ fn a_table_that_spends_less_does_not_make_the_next_one_spend_less() {
         "{:?}",
         walked.open(Slot::Prompt).as_str()
     );
+}
+
+#[test]
+fn a_link_is_the_accent_with_a_line_under_it_in_every_theme() {
+    // The link's ink is written out by hand beside the accent's, because the
+    // render path may not allocate one. This is what keeps the two from
+    // drifting apart when a theme is re-tuned: the same colour, underlined.
+    for theme in THEMES {
+        let tones = theme.tones();
+        let underlined = |sequence: &str| sequence.replacen("\x1b[", "\x1b[4;", 1);
+
+        assert_eq!(
+            tones.link.exact,
+            underlined(tones.accent.exact),
+            "{theme:?}"
+        );
+        assert_eq!(
+            tones.link.indexed,
+            underlined(tones.accent.indexed),
+            "{theme:?}"
+        );
+        assert_eq!(
+            tones.link.basic,
+            underlined(tones.accent.basic),
+            "{theme:?}"
+        );
+    }
 }

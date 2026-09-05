@@ -29,7 +29,7 @@ use crate::color::Palette;
 use std::ops::Range;
 
 use crate::row::Row;
-use crate::select::{self, Taken};
+use crate::select::{self, Taken, View};
 
 use super::frame::Frame;
 
@@ -46,6 +46,9 @@ pub(crate) struct Painted {
     lit: String,
     /// What the reader has selected, if anything.
     taken: Option<Taken>,
+    /// Where the transcript band is and what it shows, which is what puts a
+    /// selection's ends on window rows.
+    view: View,
     /// Structural columns on each row, absent from highlights and copied text.
     structural: Vec<Vec<Range<usize>>>,
     /// How wide the window is, which is how far a covered row reaches.
@@ -77,36 +80,24 @@ impl Painted {
         self.frame.open();
     }
 
-    /// Draws the rows `taken` covers as selected, until told otherwise.
-    pub(crate) fn selects(&mut self, taken: Option<Taken>) {
+    /// Draws the rows `taken` covers as selected, until told otherwise, with
+    /// the window laid out as `view` says.
+    pub(crate) fn selects(&mut self, taken: Option<Taken>, view: View) {
         self.taken = taken;
+        self.view = view;
     }
 
-    /// The text of what is selected, read back off the screen.
+    /// The text under the columns `covered` of screen row `at`, read back off
+    /// the screen.
     ///
     /// Off the screen rather than out of the record, so that what reaches a
     /// clipboard is what the reader was looking at — the same clipping, the
     /// same folding, and the box and the turn band included, none of which the
-    /// record holds. Each row is trimmed of the blank it was padded out with,
-    /// because that padding is screen and not text.
-    pub(crate) fn read(&self) -> String {
-        let Some(taken) = self.taken else {
-            return String::new();
-        };
-
-        let mut lines: Vec<&str> = Vec::new();
-        let said: Vec<String> = taken
-            .rows()
-            .filter_map(|at| {
-                let covered = taken.covers(at, self.columns)?;
-                let was = self.was.get(at)?.as_deref().unwrap_or_default();
-                let structural = self.structural.get(at).map_or(&[][..], Vec::as_slice);
-                Some(select::said(was, &covered, structural))
-            })
-            .collect();
-
-        lines.extend(said.iter().map(|line| line.trim_end()));
-        lines.join("\n")
+    /// record holds. `None` for a row nothing has drawn on.
+    pub(crate) fn said(&self, at: usize, covered: &Range<usize>) -> Option<String> {
+        let was = self.was.get(at)?.as_deref()?;
+        let structural = self.structural.get(at).map_or(&[][..], Vec::as_slice);
+        Some(select::said(was, covered, structural))
     }
 
     /// Forgets what is on screen, so the next frame writes every row of it.
@@ -147,7 +138,10 @@ impl Painted {
 
     /// Whichever of the three above ends up writing a row, selection and all.
     fn show(&mut self, at: usize, painted: &str) {
-        let Some(covered) = self.taken.and_then(|taken| taken.covers(at, self.columns)) else {
+        let Some(covered) = self
+            .taken
+            .and_then(|taken| taken.covers(at, self.columns, &self.view))
+        else {
             self.set(at, painted);
             return;
         };
@@ -343,8 +337,8 @@ mod tests {
 
     /// A drag, spelled as the two ends a reader would describe it by.
     fn dragged(from: (usize, usize), to: (usize, usize)) -> Taken {
-        let mut taken = Taken::opened(from.0, from.1);
-        taken.reaches(to.0, to.1);
+        let mut taken = Taken::opened(from.0, from.1, &View::default());
+        taken.reaches(to.0, to.1, &View::default());
         taken
     }
 
@@ -360,7 +354,7 @@ mod tests {
         }
         painted.sealed();
 
-        painted.selects(Some(dragged((0, 0), (0, 2))));
+        painted.selects(Some(dragged((0, 0), (0, 2))), View::default());
         painted.open(3, WIDE);
         for (at, text) in ["one", "two", "three"].iter().enumerate() {
             painted.paint(at, &Row::plain(*text), &plain());
@@ -384,17 +378,21 @@ mod tests {
         painted.paint(0, &Row::plain("first row"), &worn());
         painted.paint(1, &Row::plain("second row"), &worn());
 
-        painted.selects(Some(dragged((0, 6), (1, 5))));
+        let taken = dragged((0, 6), (1, 5));
+        painted.selects(Some(taken), View::default());
 
-        assert_eq!(painted.read(), "row\nsecond");
+        let covered = taken.covers(0, WIDE, &View::default()).unwrap();
+        assert_eq!(painted.said(0, &covered).as_deref(), Some("row"));
+        let covered = taken.covers(1, WIDE, &View::default()).unwrap();
+        assert_eq!(painted.said(1, &covered).as_deref(), Some("second"));
     }
 
     #[test]
-    fn nothing_is_read_back_from_a_screen_nobody_dragged_over() {
+    fn nothing_is_read_back_from_a_row_nobody_drew_on() {
         let mut painted = Painted::new();
-        painted.open(1, WIDE);
-        painted.paint(0, &Row::plain("untouched"), &plain());
+        painted.open(2, WIDE);
+        painted.paint(0, &Row::plain("drawn"), &plain());
 
-        assert_eq!(painted.read(), String::new());
+        assert_eq!(painted.said(1, &(0..WIDE)), None);
     }
 }

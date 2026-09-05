@@ -32,10 +32,10 @@ pub(crate) struct Output {
     pub(crate) syntax: Option<String>,
 }
 
-/// How much of a tool's arguments a compact line shows.
+/// The measure a compact line of a tool's arguments wraps at.
 const ARGS: usize = 56;
 
-/// How much of a tool's output a compact line shows.
+/// The measure a compact line of a tool's output wraps at.
 const OUTPUT: usize = 96;
 
 /// The variable every command-line tool is expected to honour.
@@ -249,28 +249,29 @@ impl Style {
         self.glyphs
     }
 
-    /// How much of a tool's arguments to show, in a terminal this wide.
+    /// How wide a tool's arguments may run, in a terminal this wide.
     ///
     /// For the line that says a call is about to run, and not for the question
-    /// that asks whether it may. That one is wrapped to the window instead: a
-    /// report is read at a glance and can afford a ceiling, and a decision
-    /// cannot — a command padded past the cut would be consented to by its
-    /// leading columns and do whatever the rest of it does.
+    /// that asks whether it may. That one is wrapped to the whole window
+    /// instead: a report is read at a glance and can afford a measure, and a
+    /// decision is read to the end.
     pub(crate) fn args(self, columns: usize) -> usize {
         self.width(ARGS, columns)
     }
 
-    /// How much of a tool's output, or of an error, to show.
+    /// How wide a tool's output, or an error, may run.
     pub(crate) fn output(self, columns: usize) -> usize {
         self.width(OUTPUT, columns)
     }
 
     /// One width, according to the detail asked for.
     ///
-    /// `full` is the terminal's width rather than no limit at all, so one event
-    /// stays about one row either way. The renderer wraps a longer line
-    /// correctly — it measures what it commits — so this is about how much of
-    /// the screen a tool call is allowed to take, not about drawing it right.
+    /// A measure the words wrap at rather than a place they are cut: a line
+    /// longer than it goes onto rows under the first, so the setting decides how
+    /// far across a wide screen a call's rows reach and never how much of the
+    /// call is shown. `full` is the terminal's width rather than no limit at
+    /// all, because a row wider than the window is one the terminal wraps and
+    /// this process never counted.
     fn width(self, compact: usize, columns: usize) -> usize {
         match self.detail {
             ToolDetail::Compact => compact.min(columns),

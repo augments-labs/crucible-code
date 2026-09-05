@@ -384,7 +384,7 @@ you with no way to send at all.
 | `glyphs` | `unicode`, `ascii` | Which characters crucible draws with. `ascii` if box drawing shows as hollow squares. |
 | `theme` | `auto`, `dark`, `light`, `colourblind-dark`, `colourblind-light`, `ansi` | Which colours crucible draws with. |
 | `syntaxTheme` | a theme name | Which theme fenced code is drawn in. |
-| `toolDetail` | `compact`, `full` | How much of a tool call and its result one line shows. |
+| `toolDetail` | `compact`, `full` | How wide the line of a tool call and its result runs before it wraps: a readable measure, or the whole window. |
 
 `theme` is a table of what each colour on screen means, tuned to one background.
 `auto` asks the terminal what its background is and picks the dark or the light

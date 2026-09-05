@@ -34,9 +34,7 @@ pub(super) fn opening() -> draw::opening::Standing {
 
     draw::opening::Standing::new(
         &draw::Opening {
-            credential: None,
             model: Some("script"),
-            provider: None,
             unasked: crate::cli::NOTHING_TO_ASK,
             trouble: None,
             workspace: &workspace,

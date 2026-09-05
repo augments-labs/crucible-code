@@ -597,7 +597,7 @@ fn taken<T: Terminal>(
         drop(set);
         return say(
             renderer,
-            &format!("logged in to {}; /model switches to it", named.name),
+            &format!("login successful; /model switches to {}", named.name),
         );
     }
 
@@ -627,9 +627,9 @@ fn taken<T: Terminal>(
     }
 
     let said = if runner.model().is_empty() {
-        format!("logged in to {}; choose a model with /model", named.name)
+        "login successful; choose a model with /model".to_owned()
     } else {
-        format!("logged in to {}, asking {}", named.name, runner.model())
+        format!("login successful; asking {}", runner.model())
     };
 
     say(renderer, &said)

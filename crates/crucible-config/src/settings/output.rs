@@ -121,13 +121,17 @@ impl ThemeChoice {
     }
 }
 
-/// How much of a tool call and its result one line shows.
+/// How wide the line of a tool call and its result may run.
+///
+/// A measure rather than a cut: a line longer than it wraps onto rows under
+/// the first, so nothing a call or a result said is lost to the setting. What
+/// it decides is how far across a wide screen those rows reach.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ToolDetail {
-    /// Truncated to fit a line.
+    /// A readable measure, narrower than a wide terminal.
     #[default]
     Compact,
-    /// Whatever the terminal is wide enough for.
+    /// The whole width of the terminal.
     Full,
 }
 

@@ -17,9 +17,9 @@ use crucible_core::{
 };
 use crucible_runner::{Session, Tools};
 use crucible_tools::Ledger;
-use crucible_tui::{Recording, Renderer};
+use crucible_tui::{Prompt, Recording, Renderer};
 
-use crate::cli::converse::{Terms, converse};
+use crate::cli::converse::{Answers, Held, Terms, command, converse};
 use crate::cli::fake::Script;
 use crate::cli::sample::Sample;
 
@@ -684,4 +684,77 @@ fn leaving_ends_the_session_with_what_follows_it_unread() {
 
     assert_eq!(asked, 0, "{written}");
     assert!(!written.contains("answered"), "{written}");
+}
+
+/// The rows the window shows once `command` has been sent from the box and
+/// answered, blank ones kept: where the answer stands against the line that
+/// asked is what these tests read. The line goes in the way the box leaves it,
+/// as one responsive prompt row, because that is the row an answer hangs from
+/// on a run somebody is typing at.
+fn answered(command: &str) -> Vec<String> {
+    let terms = plain();
+    let opening = opening();
+    let mut input = std::io::empty();
+    let mut held = Held::new(
+        terms.plan.clone(),
+        terms.sending,
+        Answers {
+            input: &mut input,
+            keys: false,
+        },
+        &opening,
+    );
+    let mut runner = scripted(Script::new(vec![]), Tools::new());
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let style = terms.style();
+
+    renderer
+        .commit("what the last turn said")
+        .expect("a row to be committed");
+    renderer.apart().expect("a blank row");
+    let said = command.to_owned();
+    renderer
+        .responsive(
+            said.len(),
+            Box::new(move |columns| {
+                Prompt::committed(&said, columns, style.glyphs(), style.palette().bands())
+            }),
+        )
+        .expect("the prompt row to be committed");
+
+    let wanted = command::wanted(&terms.commands.snapshot(), command).expect("a command");
+    command::run(wanted, &mut renderer, &mut runner, &mut held, &terms)
+        .expect("the command to be answered");
+
+    renderer.terminal().picture().rows()
+}
+
+#[test]
+fn a_command_answer_hangs_directly_under_the_line_that_asked() {
+    // The mark in front of the answer points up at the command. With a blank
+    // row between the two it points at nothing, and the answer reads as a
+    // line of its own that happens to start with a corner. Every command that
+    // says something back is held to it, the refusals included.
+    let hangs = plain().style().glyphs().hangs();
+
+    for command in [
+        "/help",
+        "/mode",
+        "/login gemini",
+        "/hlep",
+        "/resume",
+        "/mode fly",
+    ] {
+        let rows = answered(command);
+        let at = rows
+            .iter()
+            .position(|row| row.contains(command))
+            .unwrap_or_else(|| panic!("{command} was never shown in {rows:#?}"));
+        let answer = rows.get(at + 1).cloned().unwrap_or_default();
+
+        assert!(
+            answer.trim_start().starts_with(hangs),
+            "{command} was answered with {answer:?}, in {rows:#?}"
+        );
+    }
 }

@@ -3,6 +3,8 @@ source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
 80x24 cursor 20,4 scrolled 0
+|│                                  │ Recent sessions                           │|
+|│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
 |│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No recent sessions                        │|
 |│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
 |│                                  │ ───────────────────────────────────────── │|
@@ -14,8 +16,6 @@ expression: window.picture()
 |│                                  │ · shift+tab  steps the permission mode    │|
 |│                                  │ · ctrl+c     clears the line typed so far │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
-|                                                                                |
-|authentication: anthropic · environment variable ANTHROPIC_API_KEY              |
 |                                                                                |
 |› what is 2+2                                                                   |
 |                                                                                |

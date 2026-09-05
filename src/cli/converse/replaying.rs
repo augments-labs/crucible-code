@@ -142,6 +142,10 @@ fn walked<T: Terminal>(
         said(renderer, against, kept, &mut folded, message)?;
     }
 
+    // A call the log never answered -- the session ended while it was out --
+    // still went down as a line the reader watched, so it goes down here too.
+    folded.unanswered(renderer, against.style)?;
+
     // Whatever the last message left live, ended: a session whose last turn was
     // the model talking leaves a tail in the region the renderer owns, and what
     // is said next belongs under it rather than in the middle of it.
@@ -200,6 +204,12 @@ fn said<T: Terminal>(
 ) -> Result<(), Fatal> {
     let columns = renderer.columns();
     let style = against.style;
+
+    // Whatever the batch before this one never answered goes down first, where
+    // the live path would have left it: a call line with nothing under it.
+    if !matches!(message, Message::ToolResults(_)) {
+        folded.unanswered(renderer, style)?;
+    }
 
     match message {
         // Harness facts belong in what the model reads, not in the transcript
@@ -264,7 +274,11 @@ fn said<T: Terminal>(
                     continue;
                 }
 
-                draw::returned(renderer, &line, style)?;
+                // Not drawn yet. Live, a call's line joins the transcript when
+                // the call answers, with the result directly under it -- so a
+                // batch of three reads as three pairs, not as three lines and
+                // then three results. Held until the answer comes past.
+                folded.named(call.id.clone(), line);
             }
 
             // An answer that did not end the way the model meant it to is worth
@@ -307,6 +321,12 @@ fn said<T: Terminal>(
                     continue;
                 }
 
+                // The call's own line, directly over its result: the pair the
+                // turn drew when the answer came in.
+                if let Some(line) = folded.answering(&result.id) {
+                    draw::returned(renderer, &line, style)?;
+                }
+
                 draw::came_back(renderer, kept, &result.id, output, style)?;
             }
         }
@@ -335,6 +355,10 @@ struct Folded {
     opens: Vec<(ToolId, String)>,
     /// The record row each run's line went down on, once it has.
     rows: Vec<Option<usize>>,
+    /// The calls with a row of their own whose row has not gone down yet, with
+    /// the line each will be drawn as. Drawn when the answer arrives, or when
+    /// the walk moves on without one.
+    waiting: Vec<(ToolId, String)>,
 }
 
 impl Folded {
@@ -427,13 +451,39 @@ impl Folded {
     fn at(&self, call: &ToolId) -> Option<usize> {
         self.rows.get(*self.run.get(call)?).copied().flatten()
     }
+
+    /// Holds a call's line back until its answer comes past.
+    fn named(&mut self, call: ToolId, line: String) {
+        self.waiting.push((call, line));
+    }
+
+    /// The line held for this call, taken out to be drawn over its answer.
+    fn answering(&mut self, call: &ToolId) -> Option<String> {
+        let at = self.waiting.iter().position(|(held, _)| held == call)?;
+        Some(self.waiting.remove(at).1)
+    }
+
+    /// Draws every line still held, in the order the calls were made.
+    ///
+    /// What the live path leaves where a batch is not answered: the call lines
+    /// stand, with nothing under them, and the reader can see what was asked.
+    fn unanswered<T: Terminal>(
+        &mut self,
+        renderer: &mut Renderer<T>,
+        style: Style,
+    ) -> Result<(), Fatal> {
+        for (_, line) in self.waiting.drain(..) {
+            draw::returned(renderer, &line, style)?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use crucible_core::{
-        AgentId, Effort, StopReason, ToolArgs, ToolCall, ToolId, ToolOutput, ToolResult,
-        Transcript, Workspace,
+        AgentId, Cancel, Effort, Host, Search, SearchResult, SourceError, StopReason, ToolArgs,
+        ToolCall, ToolId, ToolOutput, ToolResult, Transcript, Workspace,
     };
     use crucible_runner::{AgentSpec, Model, Session, Tools};
     use crucible_tui::Picture;
@@ -453,8 +503,32 @@ mod tests {
         }
     }
 
+    /// A search that never answers, for a tool whose call lines are all that
+    /// is asked of it.
+    struct Nowhere;
+
+    impl Search for Nowhere {
+        fn name(&self) -> &'static str {
+            "nowhere"
+        }
+
+        fn reaches(&self) -> Host {
+            Host::Named {
+                sent: "https://search.example/".into(),
+                host: "search.example".into(),
+            }
+        }
+
+        fn search(&self, _: &str, _: &Cancel) -> Result<Vec<SearchResult>, SourceError> {
+            Ok(Vec::new())
+        }
+    }
+
     /// A runner with the real `read` tool on it, so what a call is about is
     /// answered by the tool that owns the arguments rather than invented here.
+    /// And the real `web_search`, held back the way the build holds it back:
+    /// a session put back on the screen has to name calls to tools the model
+    /// looked up in a turn that is over.
     fn resumed(transcript: Transcript) -> Runner {
         let mut offered = Tools::new();
         offered
@@ -463,6 +537,9 @@ mod tests {
                     .expect("a workspace"),
                 crucible_tools::Ledger::default(),
             ))
+            .unwrap();
+        offered
+            .defer_builtin(crucible_tools::WebSearch::new(std::sync::Arc::new(Nowhere)))
             .unwrap();
 
         Runner::new(
@@ -881,6 +958,87 @@ mod tests {
             "no arguments on the call: {screen}"
         );
         assert!(screen.contains("crucible.json"), "{screen}");
+    }
+
+    /// A turn that searched the web twice in one batch and was answered.
+    fn searched_twice() -> Transcript {
+        let mut transcript = Transcript::new();
+        transcript.push(Message::said("what are people saying?"));
+        transcript.push(Message::Agent {
+            text: String::new().into(),
+            calls: vec![
+                ToolCall {
+                    id: ToolId::new("s-1"),
+                    name: "web_search".into(),
+                    args: ToolArgs::new(r#"{"query":"first question"}"#),
+                },
+                ToolCall {
+                    id: ToolId::new("s-2"),
+                    name: "web_search".into(),
+                    args: ToolArgs::new(r#"{"query":"second question"}"#),
+                },
+            ],
+            stop: Some(StopReason::WantsTools),
+        });
+        transcript.push(Message::ToolResults(vec![
+            ToolResult {
+                id: ToolId::new("s-1"),
+                output: ToolOutput::ok("1. First answer\n   https://a.example\n"),
+            },
+            ToolResult {
+                id: ToolId::new("s-2"),
+                output: ToolOutput::ok("1. Second answer\n   https://b.example\n"),
+            },
+        ]));
+        transcript
+    }
+
+    #[test]
+    fn a_call_to_a_tool_held_back_replays_with_what_it_was_about() {
+        // The model looked the tool up in a turn that is over, and the fresh
+        // session has not looked it up again. The call still happened, and it
+        // was still about something -- a bare name is what a refused call
+        // looks like, and this one was answered.
+        let screen = screen(searched_twice(), 80);
+        println!("\n{screen}");
+
+        assert!(screen.contains("first question"), "{screen}");
+        assert!(screen.contains("second question"), "{screen}");
+    }
+
+    #[test]
+    fn each_replayed_call_stands_directly_over_its_own_result() {
+        // Live, a call's line joins the transcript when it answers, with the
+        // result under it. Two lines and then two results would be a picture
+        // nobody watched, and would hang the second result under the wrong
+        // question.
+        let screen = screen(searched_twice(), 80);
+        println!("\n{screen}");
+
+        let at = |needle: &str| screen.find(needle).unwrap_or_else(|| panic!("{needle}"));
+        assert!(at("first question") < at("First answer"), "{screen}");
+        assert!(at("First answer") < at("second question"), "{screen}");
+        assert!(at("second question") < at("Second answer"), "{screen}");
+    }
+
+    #[test]
+    fn a_call_the_log_never_answered_still_goes_down() {
+        // The session ended while the call was out. The line the reader
+        // watched go up is still part of what they left, so it comes back.
+        let mut transcript = Transcript::new();
+        transcript.push(Message::said("what are people saying?"));
+        transcript.push(Message::Agent {
+            text: String::new().into(),
+            calls: vec![ToolCall {
+                id: ToolId::new("s-1"),
+                name: "web_search".into(),
+                args: ToolArgs::new(r#"{"query":"an open question"}"#),
+            }],
+            stop: Some(StopReason::WantsTools),
+        });
+        let screen = screen(transcript, 80);
+
+        assert!(screen.contains("an open question"), "{screen}");
     }
 
     #[test]

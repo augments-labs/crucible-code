@@ -767,6 +767,26 @@ impl Record {
         }
     }
 
+    /// The first line of the run of cut lines `at` is in, or `at` itself where
+    /// it is not in one.
+    ///
+    /// A result written down over several lines is one result, and the offer to
+    /// open it was made on the first of them. Nothing else is written down in
+    /// the middle of a result, so the run of lines wearing the cut slot around
+    /// `at` is that result and no other — the same reading the pointer's light
+    /// makes, so what lights under a click is what the click opens.
+    pub(crate) fn heads(&self, at: usize) -> usize {
+        if !self.wears(at, Slot::Cut) {
+            return at;
+        }
+
+        let mut first = at;
+        while first > self.gone && self.wears(first - 1, Slot::Cut) {
+            first -= 1;
+        }
+        first
+    }
+
     /// Move the band `by` display rows, and say whether it moved.
     ///
     /// Negative is towards the head of the session. A band that was following
@@ -785,6 +805,41 @@ impl Record {
         self.following = now == foot;
         self.top = now;
         now != was
+    }
+
+    /// The absolute display row shown on the first row of a band `rows` tall.
+    ///
+    /// What a selection's ends are named in, so that scrolling the band moves
+    /// the highlight with the words rather than leaving it over the rows.
+    pub(crate) fn top_row(&self, rows: usize) -> usize {
+        let from = if self.following {
+            self.foot(rows)
+        } else {
+            self.top
+        };
+        self.row_of(from)
+    }
+
+    /// The last absolute display row the record has, if it has any.
+    pub(crate) fn last_row(&self) -> Option<usize> {
+        self.ends
+            .back()
+            .and_then(|end| end.checked_sub(1))
+            .filter(|last| *last >= self.before)
+    }
+
+    /// The display row at absolute position `row`, if the record still holds
+    /// it.
+    ///
+    /// Folded on demand, for the rows a selection reached that the band is
+    /// not showing: a drag that scrolled past them still took them.
+    pub(crate) fn row_at(&self, row: usize) -> Option<Row> {
+        if row < self.before || self.last_row().is_none_or(|last| row > last) {
+            return None;
+        }
+        let spot = self.spot_at(row);
+        let line = self.lines.get(spot.line.checked_sub(self.gone)?)?;
+        self.fold(line).into_iter().nth(usize::from(spot.into))
     }
 
     /// The display-row range an absolute map can move the top of a band over.

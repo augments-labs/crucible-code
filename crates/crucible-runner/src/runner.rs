@@ -33,7 +33,7 @@ use crucible_core::{
     PromptCacheResourceState, PromptCacheRetentionClass, PromptCacheScopeDigest,
     PromptCacheUsageFact, PromptCacheUsageReporting, Provider, ProviderError, ProviderUsage,
     Reporter, Request, Room, RunItem, SandboxAuditRegistry, SessionStore, Spend, Steer, StopReason,
-    Summary, ToolCall, ToolError, ToolGeneration, ToolSchema, ToolSnapshot, Toolset,
+    Summary, ToolCall, ToolEntry, ToolError, ToolGeneration, ToolSchema, ToolSnapshot, Toolset,
     ToolsetContext, Transcript, TurnError, TurnId, UsageCost,
 };
 
@@ -666,14 +666,33 @@ impl Runner {
     /// go through here, because a call that read one way live and another way on
     /// the way back in is two calls as far as a reader is concerned.
     ///
+    /// Asked of every tool registered, not only of those the model may call
+    /// right now: a deferred tool looked up in an earlier turn is not one the
+    /// model may call until it looks it up again, but the call it made then is
+    /// still about what it was about. Nothing runs from the answer.
+    ///
     /// Empty for a name no tool answers to, which is what a call that was
     /// refused looks like from here.
     #[must_use]
     pub fn about(&self, call: &ToolCall) -> Summary {
-        self.tools.find(&call.name).map_or_else(
+        self.describing(&call.name).map_or_else(
             || Summary::new(""),
             |entry| entry.tool().summary(&call.args),
         )
+    }
+
+    /// The tool that owns a call's arguments, for saying what the call was.
+    ///
+    /// The visible generation first, because that is the tool the call ran
+    /// against where it ran this turn; then whatever the source has registered
+    /// under the name, for a call made against a generation that has since
+    /// closed -- a deferred tool the model looked up last time, say. Owned
+    /// rather than borrowed because the second answer is minted by the source.
+    fn describing(&self, name: &str) -> Option<ToolEntry> {
+        self.tools
+            .find(name)
+            .cloned()
+            .or_else(|| self.toolset.registered(name))
     }
 
     /// What kind of looking-around a call is, where it is only that.
@@ -689,8 +708,7 @@ impl Runner {
     /// over: a refused call is named rather than counted.
     #[must_use]
     pub fn folds(&self, call: &ToolCall) -> Option<Looking> {
-        self.tools
-            .find(&call.name)
+        self.describing(&call.name)
             .and_then(|entry| entry.tool().looking(&call.args))
     }
 

@@ -678,6 +678,16 @@ impl Toolset for Hosting {
         self.generation()
     }
 
+    fn registered(&self, name: &str) -> Option<ToolEntry> {
+        Toolset::registered(&self.builtin, name).or_else(|| {
+            let live = self.live.lock().unwrap_or_else(PoisonError::into_inner);
+            live.offered
+                .iter()
+                .find(|entry| entry.descriptor().name() == name)
+                .cloned()
+        })
+    }
+
     fn dispose(&self, context: &ToolsetContext) -> Result<(), ToolsetError> {
         let mut live = self.live.lock().unwrap_or_else(PoisonError::into_inner);
         live.offered.clear();

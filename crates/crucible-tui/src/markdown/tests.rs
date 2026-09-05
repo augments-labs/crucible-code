@@ -161,7 +161,7 @@ fn a_bullet_stays_a_bullet_rather_than_opening_emphasis() {
     // character; the space after it is the whole of the difference.
     let said = whole("* first\n* second\n");
 
-    assert_eq!(drawn(&said), "· first\n· second\n");
+    assert_eq!(drawn(&said), "• first\n• second\n");
     assert_eq!(
         slots(&said),
         vec![Slot::Quiet, Slot::Plain, Slot::Quiet, Slot::Plain]
@@ -339,18 +339,30 @@ fn a_block_read_a_character_at_a_time_says_the_same_thing() {
     assert_eq!(joined(&apart), joined(&together));
 }
 
-#[test]
-fn a_link_is_its_words_and_the_address_after_them() {
-    let said = whole("see [the guide](https://example.com/guide) for more");
+/// One whole answer with no repository behind it, with where each run points.
+fn pointing(answer: &str) -> Vec<(Slot, String, Option<String>)> {
+    let mut markdown = Markdown::default();
+    let mut said = Vec::new();
+    let mut into = |slot, text: &str, link: Option<&str>| {
+        said.push((slot, text.to_owned(), link.map(str::to_owned)));
+    };
+    markdown.read(answer, ROOM, &mut into);
+    markdown.finish(ROOM, &mut into);
+    said
+}
 
+#[test]
+fn a_link_is_its_words_carrying_the_address_rather_than_showing_it() {
+    // The sentence reads as the sentence the answer wrote. The address is not
+    // lost for that: it rides on the words, for a terminal that opens links.
+    let said = pointing("see [the guide](https://example.com/guide) for more");
+
+    assert_eq!(wrote(&said), "see the guide for more");
     assert_eq!(
-        drawn(&said),
-        "see the guide (https://example.com/guide) for more"
+        said.iter().map(|(slot, ..)| *slot).collect::<Vec<_>>(),
+        [Slot::Plain, Slot::Link, Slot::Plain]
     );
-    assert_eq!(
-        slots(&said),
-        vec![Slot::Plain, Slot::Link, Slot::Quiet, Slot::Plain]
-    );
+    assert_eq!(points(&said), [("the guide", "https://example.com/guide")]);
 }
 
 #[test]
@@ -371,9 +383,10 @@ fn a_link_with_no_words_is_its_address() {
 
 #[test]
 fn the_title_after_an_address_is_not_part_of_it() {
-    let said = whole("[a](<https://example.com> \"The title\")");
+    let said = pointing("[a](<https://example.com> \"The title\")");
 
-    assert_eq!(drawn(&said), "a (https://example.com)");
+    assert_eq!(wrote(&said), "a");
+    assert_eq!(points(&said), [("a", "https://example.com")]);
 }
 
 #[test]
@@ -392,7 +405,7 @@ fn a_bracket_that_was_never_a_link_is_left_exactly_as_it_was() {
 fn a_bracket_inside_a_span_of_code_is_an_index() {
     let said = whole("`arr[0](x)` and arr[1](y)");
 
-    assert_eq!(drawn(&said), "arr[0](x) and arr1 (y)");
+    assert_eq!(drawn(&said), "arr[0](x) and arr1");
 }
 
 #[test]
@@ -411,11 +424,7 @@ fn a_link_split_across_deltas_is_still_one_link() {
             said.push((slot, text.to_owned()));
         });
 
-        assert_eq!(
-            drawn(&said),
-            "see the guide (https://example.com) now",
-            "split at {at}"
-        );
+        assert_eq!(drawn(&said), "see the guide now", "split at {at}");
     }
 }
 
@@ -443,7 +452,7 @@ fn every_spelling_of_a_bullet_is_drawn_as_one_mark() {
     // meets one list, so one mark.
     let said = whole("- dash\n* star\n+ plus\n");
 
-    assert_eq!(drawn(&said), "· dash\n· star\n· plus\n");
+    assert_eq!(drawn(&said), "• dash\n• star\n• plus\n");
 }
 
 #[test]
@@ -452,7 +461,7 @@ fn a_bullet_keeps_the_indentation_that_nests_it() {
     // another one, and they arrive before anything is decided about the line.
     let said = whole("- one\n  - under it\n    - under that\n");
 
-    assert_eq!(drawn(&said), "· one\n  · under it\n    · under that\n");
+    assert_eq!(drawn(&said), "• one\n  • under it\n    • under that\n");
 }
 
 #[test]
@@ -520,7 +529,7 @@ fn a_bullet_split_across_two_deltas_is_still_one_bullet() {
     let rest = read(&mut markdown, " an item");
 
     assert_eq!(drawn(&opened), "");
-    assert_eq!(drawn(&rest), "· an item");
+    assert_eq!(drawn(&rest), "• an item");
 }
 
 #[test]
@@ -703,9 +712,12 @@ fn a_table_the_window_cannot_hold_gives_up_its_widest_column_first() {
         16,
     );
 
+    // The cell the column no longer holds is wrapped inside it rather than cut:
+    // what a column gives up is width, never words.
     assert_eq!(
         drawn(&said),
-        "a │ a very long…\n\
+        "a │ a very long \n\
+         \u{20} │ cell indeed \n\
          ──┼─────────────\n\
          b │ c           \n\n"
     );
@@ -715,6 +727,25 @@ fn a_table_the_window_cannot_hold_gives_up_its_widest_column_first() {
     for row in drawn(&said).lines().filter(|row| !row.is_empty()) {
         assert_eq!(crate::width::columns(row), 16, "{row:?}");
     }
+}
+
+#[test]
+fn a_wrapped_header_cell_is_the_header_on_every_line_of_it() {
+    let said = narrowed("| a | one two |\n| --- | --- |\n| b | c |\n\n", 9);
+    let header: Vec<&str> = said
+        .iter()
+        .filter(|(slot, text)| *slot == Slot::Strong && !text.trim().is_empty())
+        .map(|(_, text)| text.as_str())
+        .collect();
+
+    assert_eq!(header, ["a", "one", "two"]);
+    assert_eq!(
+        drawn(&said),
+        "a │ one  \n\
+         \u{20} │ two  \n\
+         ──┼──────\n\
+         b │ c    \n\n"
+    );
 }
 
 #[test]
@@ -824,7 +855,7 @@ fn a_task_nobody_has_started_reads_as_the_prose_around_it() {
 fn a_bracket_that_is_not_a_box_leaves_the_bullet_it_follows_alone() {
     let said = whole("- see [TODO] in the grammar\n");
 
-    assert_eq!(drawn(&said), "· see [TODO] in the grammar\n");
+    assert_eq!(drawn(&said), "• see [TODO] in the grammar\n");
 }
 
 #[test]
@@ -838,7 +869,7 @@ fn a_box_that_does_not_open_an_item_is_the_brackets_somebody_wrote() {
 fn a_link_that_opens_an_item_still_gets_its_bullet() {
     let said = whole("- [the page](https://example.invalid)\n");
 
-    assert_eq!(drawn(&said), "· the page (https://example.invalid)\n");
+    assert_eq!(drawn(&said), "• the page\n");
 }
 
 #[test]
@@ -1080,10 +1111,10 @@ fn an_address_inside_a_code_span_is_code_like_the_rest_of_it() {
 
 #[test]
 fn an_address_a_link_names_is_still_the_link_it_names() {
-    let said = ended("[the docs](https://example.com)");
+    let said = pointing("[the docs](https://example.com)");
 
-    assert_eq!(drawn(&said), "the docs (https://example.com)");
-    assert_eq!(slots(&said), [Slot::Link, Slot::Quiet]);
+    assert_eq!(wrote(&said), "the docs");
+    assert_eq!(points(&said), [("the docs", "https://example.com")]);
 }
 
 /// Every shape this file reads, as one answer each.
@@ -1145,7 +1176,7 @@ fn emphasis_nobody_closed_ends_with_the_paragraph() {
 fn emphasis_nobody_closed_ends_where_the_next_block_starts() {
     let said = ended("- **opened and left open\n- a second item\n");
 
-    assert_eq!(drawn(&said), "· opened and left open\n· a second item\n");
+    assert_eq!(drawn(&said), "• opened and left open\n• a second item\n");
     assert_eq!(
         slots(&said),
         vec![
@@ -1162,14 +1193,14 @@ fn emphasis_nobody_closed_ends_where_the_next_block_starts() {
 fn the_spaces_in_front_of_a_fence_go_with_it() {
     let said = ended("- item\n  ```rs\n  let a = 1;\n  ```\n- next\n");
 
-    assert_eq!(drawn(&said), "· item\n  let a = 1;\n· next\n");
+    assert_eq!(drawn(&said), "• item\n  let a = 1;\n• next\n");
 }
 
 #[test]
 fn the_spaces_in_front_of_a_nested_item_stay_where_they_were() {
     let said = ended("- item\n  - nested\n");
 
-    assert_eq!(drawn(&said), "· item\n  · nested\n");
+    assert_eq!(drawn(&said), "• item\n  • nested\n");
 }
 
 #[test]
@@ -1246,6 +1277,55 @@ fn a_number_that_named_a_repository_points_at_that_one() {
             "https://github.com/someone/else/issues/12"
         )]
     );
+}
+
+#[test]
+fn the_word_saying_what_a_number_counts_is_part_of_the_reference() {
+    // `PR #435` is one thing to the reader, and the words they click are the
+    // words the answer wrote it with. Whatever the case, and however the word
+    // is spelled out.
+    for (answer, words) in [
+        ("landed in PR #435 yesterday", "PR #435"),
+        ("landed in pr #435 yesterday", "pr #435"),
+        ("see issue #12 for why", "issue #12"),
+        ("see Issue #12 for why", "Issue #12"),
+        ("the pull request #7 that did it", "pull request #7"),
+    ] {
+        let said = counted(answer);
+
+        assert_eq!(wrote(&said), answer, "{answer:?}");
+        assert_eq!(
+            points(&said)
+                .iter()
+                .map(|(words, _)| *words)
+                .collect::<Vec<_>>(),
+            [words],
+            "{answer:?}"
+        );
+    }
+}
+
+#[test]
+fn a_word_that_only_ends_in_a_lead_is_not_one() {
+    // `prepr #12` ends in `pr`, and is not about a pull request.
+    let said = counted("run prepr #12 first");
+
+    assert_eq!(wrote(&said), "run prepr #12 first");
+    assert_eq!(
+        points(&said),
+        [(
+            "#12",
+            "https://github.com/augments-labs/crucible-code/issues/12"
+        )]
+    );
+}
+
+#[test]
+fn a_lead_with_no_repository_behind_the_session_is_left_where_it_was() {
+    let said = ended("landed in PR #435 yesterday");
+
+    assert_eq!(drawn(&said), "landed in PR #435 yesterday");
+    assert_eq!(slots(&said), [Slot::Plain]);
 }
 
 #[test]

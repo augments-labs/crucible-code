@@ -267,6 +267,12 @@ pub enum Theme {
 struct Tones {
     /// Borders, marks, rules.
     accent: Ink,
+    /// The accent with a line under it: words a reader can open.
+    ///
+    /// Spelled out rather than made from the accent at the point of use,
+    /// because an [`Ink`] is a whole sequence and the render path may not
+    /// allocate one. A test holds each to its accent.
+    link: Ink,
     /// The accent, emphasised.
     strong: Ink,
     /// The narrowest permission mode, and a task a plan has finished with.
@@ -293,6 +299,11 @@ const DARK: Tones = Tones {
         exact: "\x1b[38;2;18;137;127m",
         indexed: "\x1b[38;5;30m",
         basic: "\x1b[36m",
+    },
+    link: Ink {
+        exact: "\x1b[4;38;2;18;137;127m",
+        indexed: "\x1b[4;38;5;30m",
+        basic: "\x1b[4;36m",
     },
     // The accent again, emphasised rather than lightened: a terminal brightens
     // a bold colour on its own, and doing it here as well pushes the result off
@@ -362,6 +373,11 @@ const LIGHT: Tones = Tones {
         indexed: "\x1b[38;5;23m",
         basic: "\x1b[36m",
     },
+    link: Ink {
+        exact: "\x1b[4;38;2;13;107;98m",
+        indexed: "\x1b[4;38;5;23m",
+        basic: "\x1b[4;36m",
+    },
     strong: Ink {
         exact: "\x1b[1;38;2;13;107;98m",
         indexed: "\x1b[1;38;5;23m",
@@ -423,6 +439,11 @@ const COLOURBLIND_DARK: Tones = Tones {
         indexed: "\x1b[38;5;38m",
         basic: "\x1b[36m",
     },
+    link: Ink {
+        exact: "\x1b[4;38;2;63;167;196m",
+        indexed: "\x1b[4;38;5;38m",
+        basic: "\x1b[4;36m",
+    },
     strong: Ink {
         exact: "\x1b[1;38;2;63;167;196m",
         indexed: "\x1b[1;38;5;38m",
@@ -474,6 +495,11 @@ const COLOURBLIND_LIGHT: Tones = Tones {
         exact: "\x1b[38;2;15;95;120m",
         indexed: "\x1b[38;5;24m",
         basic: "\x1b[36m",
+    },
+    link: Ink {
+        exact: "\x1b[4;38;2;15;95;120m",
+        indexed: "\x1b[4;38;5;24m",
+        basic: "\x1b[4;36m",
     },
     strong: Ink {
         exact: "\x1b[1;38;2;15;95;120m",
@@ -528,6 +554,11 @@ const ANSI: Tones = Tones {
         exact: "\x1b[36m",
         indexed: "\x1b[36m",
         basic: "\x1b[36m",
+    },
+    link: Ink {
+        exact: "\x1b[4;36m",
+        indexed: "\x1b[4;36m",
+        basic: "\x1b[4;36m",
     },
     strong: Ink {
         exact: "\x1b[1;36m",
@@ -654,16 +685,13 @@ impl Slot {
                 indexed: "\x1b[3m",
                 basic: "\x1b[3m",
             },
-            // A line under the words, and no colour: underline is what a
-            // terminal has always meant a link by, it survives every rung
-            // unchanged, and the destination is written out beside the words
-            // anyway -- so the emphasis has one job, which is to say where the
-            // words end and the address begins.
-            Self::Link => Ink {
-                exact: "\x1b[4m",
-                indexed: "\x1b[4m",
-                basic: "\x1b[4m",
-            },
+            // A line under the words, in the accent: underline is what a
+            // terminal has always meant a link by, and the accent is the one
+            // colour the theme keeps for what it wants the reader's eye on.
+            // Both, because the address is no longer written out beside the
+            // words -- the words are all there is to find, and a line alone
+            // under the reader's own foreground is easy to read past.
+            Self::Link => tones.link,
             // A line through the words and nothing else. What a struck phrase
             // means is that the answer changed its mind in front of the reader,
             // so the words have to stay legible -- which is the whole reason

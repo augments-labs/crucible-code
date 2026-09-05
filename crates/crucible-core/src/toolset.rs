@@ -175,6 +175,22 @@ pub trait Toolset: Send + Sync {
     /// [`ToolsetError`] when cleanup could not be completed. A repeated call
     /// must not repeat an effect merely to reproduce the error.
     fn dispose(&self, context: &ToolsetContext) -> Result<(), ToolsetError>;
+
+    /// The tool registered under `name`, whether or not a snapshot would carry
+    /// it right now.
+    ///
+    /// For describing a call rather than for running one. A transcript keeps
+    /// the call and not what was said about it, so a session put back on the
+    /// screen asks the tool that owns the arguments what the call was about
+    /// -- and the tool it asks may be one the model looked up in a turn that
+    /// is over, or one a server that has since gone offered. Nothing is
+    /// admitted or run through this answer, which is why it may reach past
+    /// the visible generation. `None` where the source cannot say, which is
+    /// also the answer for a name nothing was ever registered under.
+    fn registered(&self, name: &str) -> Option<ToolEntry> {
+        let _ = name;
+        None
+    }
 }
 
 impl fmt::Debug for dyn Toolset {

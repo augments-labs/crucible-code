@@ -177,12 +177,26 @@ impl Glyphs {
         }
     }
 
-    /// The small mark that parts one thing on a row from the next, and that
-    /// opens an item in a list.
+    /// The small mark that parts one thing on a row from the next.
     #[must_use]
     pub fn dot(self) -> &'static str {
         match self {
             Self::Unicode => "·",
+            Self::Ascii => "-",
+        }
+    }
+
+    /// The mark that opens an item in a list.
+    ///
+    /// Heavier than [`Glyphs::dot`], on purpose: the dot parts two things on
+    /// one row and is meant to be read past, where this opens a row and is
+    /// meant to be found — a reader scanning down a list is looking for these
+    /// and nothing else in the margin. One column in both sets, like the dot,
+    /// so what an item is indented by does not depend on the font.
+    #[must_use]
+    pub fn bullet(self) -> &'static str {
+        match self {
+            Self::Unicode => "•",
             Self::Ascii => "-",
         }
     }

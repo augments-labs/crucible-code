@@ -3,6 +3,8 @@ source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
 80x24 cursor 20,4 scrolled 0
+|│                                  │ · shift+tab  steps the permission mode    │|
+|│                                  │ · ctrl+c     clears the line typed so far │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
 |                                                                                |
@@ -10,11 +12,9 @@ expression: window.picture()
 |Then use /model to select a model.                                              |
 |                                                                                |
 |› /login anthropic                                                              |
-|                                                                                |
-|⎿ logged in to anthropic; choose a model with /model                            |
+|⎿ login successful; choose a model with /model                                  |
 |                                                                                |
 |› /model claude-test-1                                                          |
-|                                                                                |
 |⎿ anthropic/claude-test-1                                                       |
 |                                                                                |
 |› what is 2+2                                                                   |
