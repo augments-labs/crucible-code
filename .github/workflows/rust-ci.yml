@@ -4,13 +4,28 @@ name: native-sandbox-experiment
 permissions:
   contents: read
 jobs:
-  windows-container-service:
-    name: Windows native container engine prerequisite
+  windows-compute-launch:
+    name: Native Windows compute launch prerequisite
     runs-on: windows-2025
-    timeout-minutes: 4
+    timeout-minutes: 10
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         persist-credentials: false
     - shell: pwsh
-      run: ./.github/probes/windows-container-service.ps1
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $service = Get-Service -Name docker
+        try {
+          Write-Output "DOCKER-SERVICE original=$($service.Status)"
+          if ($service.Status -ne 'Running') { throw 'Running engine prerequisite absent; no mutation' }
+          python .github/probes/windows-compute-launch.py
+          if ($LASTEXITCODE -ne 0) { throw 'QUARANTINE compute diagnostic incomplete' }
+        } finally {
+          try {
+            $service.Refresh()
+            if ($service.Status -ne 'Running') { throw 'Engine changed state; no service mutation attempted' }
+          } finally {
+            $service.Dispose()
+          }
+        }
