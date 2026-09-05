@@ -1,5 +1,5 @@
 #!/bin/sh
-# macos-mach-inventory-v1: bounded extra-rights survey, not a backend.
+# macos-mach-inventory-v2: locate and remove extra rights, not a backend.
 # No native execution by the author. Root reviews source/manifest before CI.
 set -eu
 umask 022
@@ -516,6 +516,7 @@ int main(int argc,char **argv) {
     const char *root=argv[1]; struct stat st; const char *prefix="/private/tmp/crucible-macos-mach.";
     if(lstat(root,&st)||!S_ISDIR(st.st_mode)||strncmp(root,prefix,strlen(prefix))) die("fixture root");
     if(chown(root,0,0)||chmod(root,0755)||chdir(root)) die("fixture ownership");
+    inventory("coordinator_entry");
     char profile[16384]; int profile_fd=open("profile.sb",O_RDONLY|O_NOFOLLOW);
     if(profile_fd<0 || fstat(profile_fd,&st) || !S_ISREG(st.st_mode) || st.st_size<=0 || st.st_size>=(off_t)sizeof profile) die("profile file");
     size_t profile_size=0;
@@ -587,7 +588,9 @@ int main(int argc,char **argv) {
             port_kind(mach_task_self(),"child_task_control");
             exception_boundary(expected_seed,"before_credentials");
             if(!ping(expected_seed,(unsigned)route,3)) exit(77);
+            inventory("before_credentials");
             drop(uid); if(chdir(work)) die("guest cwd");
+            inventory("after_credentials");
             exception_boundary(expected_seed,"after_credentials");
             check_seed(expected_seed,"credentials");
             char rustc[PATH_MAX],rustdoc[PATH_MAX],cargobin[PATH_MAX],envpath[PATH_MAX],linker[PATH_MAX+16];
@@ -602,6 +605,7 @@ int main(int argc,char **argv) {
                setenv("GIT_CONFIG_NOSYSTEM","1",1)||setenv("GIT_CONFIG_GLOBAL","/dev/null",1)||
                setenv("GIT_ATTR_NOSYSTEM","1",1)||setenv("OPENSSL_CONF","/dev/null",1)) die("clean environment");
             check_seed(expected_seed,"environment");
+            inventory("before_sandbox");
             char *error=NULL;
             if(sandbox_init(profile,0,&error)) { fprintf(stderr,"PROFILE-REFUSED %.256s\n",error?error:"no diagnostic"); if(error) sandbox_free_error(error); exit(77); }
             puts("PROFILE-APPLIED default=deny network=deny mach-lookup=deny mach-register=deny filesystem-isolation=untested");
@@ -609,6 +613,14 @@ int main(int argc,char **argv) {
             /* Compile/apply the profile before replacing the real bootstrap
              * context. Thereafter only direct kernel Mach APIs precede exec. */
             seed_slots(); if(sanitized) sanitize(); inventory("before_exec");
+            if(sanitized) {
+                const int removable[]={TASK_ACCESS_PORT,TASK_DEBUG_CONTROL_PORT};
+                for(unsigned i=0;i<sizeof removable/sizeof removable[0];i++) {
+                    kern_return_t removal=task_set_special_port(mach_task_self(),removable[i],MACH_PORT_NULL);
+                    printf("MACH-REMOVAL task_slot=%d result=%d\n",removable[i],removal);
+                }
+                inventory("after_removal");
+            }
             char *args[]={self,"guest",ids,mode,route_text,(char *)names[c],(char *)root,NULL};
             if(route==2) {
                 pid_t child; int e=posix_spawn(&child,self,NULL,NULL,args,environ); if(e) { errno=e; die("guest spawn"); }
