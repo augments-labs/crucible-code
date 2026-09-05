@@ -739,15 +739,21 @@ fn moded<T: Terminal>(
     Ok(())
 }
 
+/// The columns the mark an answer is hung under takes off every row of it:
+/// the mark, one column in either glyph set, and the space after it.
+const HUNG: usize = 2;
+
 /// Says one thing back, quietly, wrapped to the window it is said in.
 ///
 /// What `/login` and `/logout` answer with when there is one thing to say: a
 /// credential was stored, removed, or left alone with the reason why. Wrapped
 /// rather than cut, because the reason is at the end of the sentence and is
 /// the part somebody asked for; the caller that hangs the answer under the
-/// command indents whatever ran over.
+/// command indents whatever ran over. Wrapped short of the mark, too: the
+/// rows are hung after they are laid, and a row folded to the whole width is
+/// [`HUNG`] columns too wide once it is.
 fn say<T: Terminal>(renderer: &mut Renderer<T>, said: &str) -> Result<(), Fatal> {
-    let rows: Vec<Row> = fold(said, renderer.columns())
+    let rows: Vec<Row> = fold(said, renderer.columns().saturating_sub(HUNG))
         .into_iter()
         .map(|part| Row::new().then(Slot::Quiet, part))
         .collect();

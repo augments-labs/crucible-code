@@ -91,6 +91,15 @@ const CANCEL: &str = "esc to cancel";
 /// What escape leaves behind, in place of the rows it used to write.
 const LEFT: &str = "cancelled, nothing signed in";
 
+/// What stopped, when the key could not be written down.
+pub(super) const STORE_FAILED: &str = "the key could not be saved";
+
+/// Why, and the way back in. Fixed words: the error behind it names the path
+/// and what the operating system said, and neither belongs on a row under a
+/// command.
+pub(super) const STORE_REMEDY: &str =
+    "crucible cannot write its login store; try /login again after fixing the permissions";
+
 /// Manual callback input is transient credential material. It has the same
 /// bound as the key box and is never committed or echoed.
 const MAX_MANUAL: usize = 16 * 1024;
@@ -554,13 +563,34 @@ fn given<T: Terminal>(
         return say(renderer, LEFT);
     };
 
-    match terms.logins.keep(named.name, &key) {
-        Ok(()) => taken(named, renderer, runner, terms),
+    written(named, &key, renderer, runner, terms)
+}
 
-        // The key is still in hand and the box is gone, so there is nothing to
-        // retry from — which is why this says what stopped rather than only
-        // that something did.
-        Err(problem) => say(renderer, &format!("! {problem}")),
+/// Writes `key` down as `named`'s and sets this session up with it, or says
+/// what stopped.
+///
+/// The error names the path and what the operating system said about it, and
+/// the row under the command carries neither: the path is in the reader's own
+/// home, and what the system said is what looking at it will say again. The
+/// key is still in hand and the box is gone, so there is nothing to retry
+/// from — which is why the row says the way back in. Nothing else hears the
+/// error: this session has no channel a command's failure is logged through.
+fn written<T: Terminal>(
+    named: Served,
+    key: &str,
+    renderer: &mut Renderer<T>,
+    runner: &mut Runner,
+    terms: &Terms,
+) -> Result<(), Fatal> {
+    match terms.logins.keep(named.name, key) {
+        Ok(()) => taken(named, renderer, runner, terms),
+        Err(_) => say(
+            renderer,
+            &format!(
+                "! {}",
+                about(STORE_FAILED, STORE_REMEDY, terms.style().glyphs())
+            ),
+        ),
     }
 }
 
@@ -748,6 +778,49 @@ mod tests {
             !sample.root().join("unwritten-home.json").exists(),
             "which provider to open on is still the reader's standing choice"
         );
+    }
+
+    #[test]
+    fn a_store_that_cannot_be_written_is_said_without_its_path() {
+        // The store's own error names the file and quotes the operating
+        // system, which is right for a log and wrong for a row under a
+        // command: the row says what stopped and the way back in, and the
+        // reader's home stays off the screen.
+        let sample = Sample::new("login-store-failed");
+        let terms = in_force(&sample);
+        std::fs::create_dir_all(sample.root().join("auth.json"))
+            .expect("a directory where the store's file goes");
+        let mut runner = asking("claude-test-1");
+        let mut renderer = Renderer::new(Recording::new(80, 24));
+
+        let named = offered(&terms.providers.snapshot())
+            .find(|served| served.name == "anthropic")
+            .expect("a provider this build has an arm for");
+        written(
+            named,
+            "sk-ant-not-a-key",
+            &mut renderer,
+            &mut runner,
+            &terms,
+        )
+        .expect("the terminal to be written");
+
+        // Folded at the window's width, so read back as rows joined by the
+        // space a fold stands in for.
+        let written = renderer.terminal().picture().said().join(" ");
+        assert!(
+            written.contains(
+                "! the key could not be saved — crucible cannot write its login store; try /login again after fixing the permissions"
+            ),
+            "{written}"
+        );
+        assert!(!written.contains("auth.json"), "{written}");
+        assert!(!written.contains("directory"), "{written}");
+        assert!(
+            !written.contains(&sample.root().display().to_string()),
+            "{written}"
+        );
+        assert!(!written.contains("sk-ant"), "{written}");
     }
 
     #[test]

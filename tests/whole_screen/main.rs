@@ -1153,6 +1153,72 @@ fn a_pasted_key_draws_one_mark_per_character_and_offers_to_save() {
     insta::assert_snapshot!(picture);
 }
 
+/// The row directly under the one that reads `› {command}`, without the
+/// picture's edges.
+fn under(picture: &str, command: &str) -> String {
+    let rows: Vec<&str> = picture.lines().collect();
+    let at = rows
+        .iter()
+        .position(|row| row.starts_with(&format!("|› {command}")))
+        .unwrap_or_else(|| panic!("no row reads › {command}: {picture}"));
+    let Some(row) = rows.get(at + 1) else {
+        panic!("nothing under › {command}: {picture}")
+    };
+    row.trim_matches('|').trim_end().to_owned()
+}
+
+#[test]
+fn leaving_the_key_box_says_nothing_was_signed_in() {
+    // Escape in the box is the same leaving as escape on either panel before
+    // it, and is answered on the same row: hung under the command, one
+    // sentence, nothing about what was or was not typed.
+    let mut window = Watched::open("login-key-left", 80, 24);
+
+    window.types_until("/login\r", "Provide your own API key");
+    window.types_until(
+        "\x1b[B\x1b[B\r",
+        "Choose the provider whose API key you have.",
+    );
+    window.types_until("\r", "paste or type your API key");
+    window.types_until("\x1b", "cancelled, nothing signed in");
+
+    let picture = window.picture();
+    assert_eq!(under(&picture, "/login"), "⎿ cancelled, nothing signed in");
+    insta::assert_snapshot!(picture);
+}
+
+#[test]
+fn a_key_that_cannot_be_written_down_is_said_without_a_path() {
+    // A home the store cannot be written into: the row under the command says
+    // what stopped and the way back in, and names no file, no directory and
+    // nothing the operating system said. The one `/` on it is the command.
+    let key = format!("sk-ant-{}", "k".repeat(55));
+    let mut window = Watched::open("login-store-failed", 80, 24);
+    std::fs::create_dir_all(window.home().join("auth.json"))
+        .expect("a directory where the store's file goes");
+
+    window.types_until("/login\r", "Provide your own API key");
+    window.types_until(
+        "\x1b[B\x1b[B\r",
+        "Choose the provider whose API key you have.",
+    );
+    window.types_until("\r", "paste or type your API key");
+    window.types_until(&format!("\x1b[200~{key}\x1b[201~\r"), "could not be saved");
+
+    let picture = window.picture();
+    let said = under(&picture, "/login");
+    assert!(
+        said.starts_with("⎿ ! the key could not be saved — "),
+        "{said}"
+    );
+    assert!(!picture.contains("sk-ant"), "{picture}");
+    assert!(!picture.contains("auth.json"), "{picture}");
+    assert!(!picture.contains("directory"), "{picture}");
+    assert!(!said.contains('~'), "{said}");
+    assert_eq!(said.replace("/login", "").matches('/').count(), 0, "{said}");
+    insta::assert_snapshot!(picture);
+}
+
 #[test]
 fn openai_account_login_offers_browser_and_device_code_methods() {
     // Provider first, method second. Browser sign-in is the ordinary local
