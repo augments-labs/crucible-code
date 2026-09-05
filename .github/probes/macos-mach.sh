@@ -341,12 +341,27 @@ static int ping(mach_port_t service,unsigned route,unsigned slot_number) {
     b.m.magic=MAGIC; b.m.route=route; b.m.slot=slot_number; b.m.nonce=nonce_for(route,slot_number);
     mach_msg_return_t result=mach_msg(&b.m.h,MACH_SEND_MSG|MACH_SEND_TIMEOUT|MACH_RCV_MSG|MACH_RCV_TIMEOUT,
                                     sizeof(Message),sizeof b,reply,300,MACH_PORT_NULL);
-    printf("PING-REPLY result=%d size=%u id=%d bits=%u remote=%u local=%u magic=%u route=%u slot=%u nonce=%llu\n",result,b.m.h.msgh_size,b.m.h.msgh_id,b.m.h.msgh_bits,b.m.h.msgh_remote_port,b.m.h.msgh_local_port,b.m.magic,b.m.route,b.m.slot,(unsigned long long)b.m.nonce);
+    printf("PING-REPLY-HEADER result=%d size=%u id=%d bits=%u remote=%u local=%u\n",result,b.m.h.msgh_size,b.m.h.msgh_id,b.m.h.msgh_bits,b.m.h.msgh_remote_port,b.m.h.msgh_local_port);
     int ok=result==MACH_MSG_SUCCESS && b.m.h.msgh_size==sizeof(Message) && b.m.h.msgh_id==PING_ID+1 &&
         !(b.m.h.msgh_bits&MACH_MSGH_BITS_COMPLEX) && b.m.magic==(MAGIC^UINT32_C(0xa5a5a5a5)) && b.m.route==route && b.m.slot==slot_number && b.m.nonce==nonce_for(route,slot_number);
     kr(mach_port_destroy(mach_task_self(),reply),"reply destroy");
     printf("PING route=%u slot=%u acknowledged=%d result=%d\n",route,slot_number,ok,result);
     return ok;
+}
+/* Calibrate the exact message layout and owned queue without fork, slots,
+ * credentials, a reply right, or sandbox policy. */
+static void calibrate(mach_port_t service,const char *label) {
+    Buffer sent={0},received={0};
+    sent.m.h.msgh_bits=MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND,0);
+    sent.m.h.msgh_size=sizeof(Message); sent.m.h.msgh_remote_port=service; sent.m.h.msgh_id=PING_ID;
+    sent.m.magic=MAGIC; sent.m.route=17; sent.m.slot=2; sent.m.nonce=nonce_for(17,2);
+    mach_msg_return_t tx=mach_msg(&sent.m.h,MACH_SEND_MSG|MACH_SEND_TIMEOUT,sizeof(Message),0,MACH_PORT_NULL,100,MACH_PORT_NULL);
+    mach_msg_return_t rx=mach_msg(&received.m.h,MACH_RCV_MSG|MACH_RCV_TIMEOUT,0,sizeof received,service,100,MACH_PORT_NULL);
+    int ok=tx==MACH_MSG_SUCCESS && rx==MACH_MSG_SUCCESS && received.m.h.msgh_size==sizeof(Message) &&
+        received.m.h.msgh_id==PING_ID && !(received.m.h.msgh_bits&MACH_MSGH_BITS_COMPLEX) &&
+        received.m.magic==MAGIC && received.m.route==17 && received.m.slot==2 && received.m.nonce==nonce_for(17,2);
+    printf("QUEUE-CALIBRATION kind=%s tx=%d rx=%d size=%u id=%d exact_payload=%d\n",label,tx,rx,received.m.h.msgh_size,received.m.h.msgh_id,ok);
+    if(!ok) exit(77);
 }
 static int receive_ping(mach_port_t service,unsigned route,unsigned *seen,int permitted) {
     Buffer b={0}; mach_msg_return_t result=mach_msg(&b.m.h,MACH_RCV_MSG|MACH_RCV_TIMEOUT,0,sizeof b,service,10,MACH_PORT_NULL);
@@ -443,6 +458,12 @@ int main(int argc,char **argv) {
     mach_port_options_t options={0}; options.flags=MPO_EXCEPTION_PORT;
     kr(mach_port_construct(mach_task_self(),&options,0,&service),"owned exception service receive");
     kr(mach_port_insert_right(mach_task_self(),service,service,MACH_MSG_TYPE_MAKE_SEND),"owned service send");
+    mach_port_t ordinary=MACH_PORT_NULL;
+    kr(mach_port_allocate(mach_task_self(),MACH_PORT_RIGHT_RECEIVE,&ordinary),"ordinary calibration receive");
+    kr(mach_port_insert_right(mach_task_self(),ordinary,ordinary,MACH_MSG_TYPE_MAKE_SEND),"ordinary calibration send");
+    calibrate(ordinary,"ordinary");
+    kr(mach_port_destroy(mach_task_self(),ordinary),"ordinary calibration destroy");
+    calibrate(service,"exception");
     const char *names[]={"exec","fork","posix_spawn","exec","fork","posix_spawn","shell","git","clang","cargo"};
     for(int c=0;c<10;c++) {
         if(stopped || empty(uid)!=1) { cleanup(uid); return 77; }
@@ -469,8 +490,8 @@ int main(int argc,char **argv) {
             mach_port_t expected_seed=slot(0); if(!MACH_PORT_VALID(expected_seed)) exit(77);
             signal(SIGINT,SIG_DFL); signal(SIGTERM,SIG_DFL); alarm(18);
             if(dup2(output[1],1)<0||dup2(output[1],2)<0) die("guest output"); close_extra_fds();
-            if(!ping(expected_seed,(unsigned)route,3)) exit(77);
             exception_boundary(expected_seed,"before_credentials");
+            if(!ping(expected_seed,(unsigned)route,3)) exit(77);
             drop(uid); if(chdir(work)) die("guest cwd");
             exception_boundary(expected_seed,"after_credentials");
             check_seed(expected_seed,"credentials");
