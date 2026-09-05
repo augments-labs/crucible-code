@@ -15,6 +15,8 @@ mod guardrail_tests;
 #[cfg(test)]
 mod resource_tests;
 #[cfg(test)]
+mod startup_tests;
+#[cfg(test)]
 mod tests;
 
 use std::io;
@@ -249,15 +251,8 @@ impl SandboxSession for LinuxSession {
         );
         status_channel.close_writer();
         drop(materialization_sources);
-        let process = match spawned {
-            Ok(process) => process,
-            Err(problem) => {
-                self.record_start_failure(&problem)?;
-                return Err(problem);
-            }
-        };
-        let launch = LinuxLaunch {
-            process: Some(process),
+        let mut launch = LinuxLaunch {
+            process: None,
             projection: Some(projection),
             status_channel: Some(status_channel),
             inspection: self.inspection.clone(),
@@ -268,7 +263,17 @@ impl SandboxSession for LinuxSession {
             owner_transferred: false,
             released: false,
         };
+        // Materialization and admission already belong to spawn's process
+        // owner; the launch now owns the distinct projection and journal.
+        // Session Drop must not infer Complete from its emptied fields.
         self.transferred = true;
+        match spawned {
+            Ok(process) => launch.process = Some(process),
+            Err(problem) => {
+                launch.startup_failed(&problem);
+                return Err(problem);
+            }
+        }
         Ok(Box::new(launch))
     }
 }
@@ -427,6 +432,21 @@ impl Drop for LinuxLaunch {
 }
 
 impl LinuxLaunch {
+    fn startup_failed(&mut self, problem: &SandboxError) {
+        let _ = self.audit.record(
+            self.sandbox,
+            SandboxFactKind::Failed {
+                phase: SandboxFailurePhase::Start,
+                kind: problem.failure_kind(),
+            },
+        );
+        // Spawn preserves its original error only after proved cleanup. A
+        // Lifecycle error retains evidence through the existing refusal path.
+        let cleanup_proved = !matches!(problem, SandboxError::Lifecycle(_));
+        let _ = self.record_refusal(cleanup_proved);
+        self.finish_cleanup(cleanup_proved);
+    }
+
     fn record_refusal(&mut self, stopped: bool) -> io::Result<()> {
         let journaled = self
             .projection

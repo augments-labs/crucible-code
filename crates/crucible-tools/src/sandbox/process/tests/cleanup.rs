@@ -248,7 +248,9 @@ fn supervisor_failure(fixture: &mut Fixture) -> io::Result<()> {
     let process = fixture.process()?;
     process.supervisor = Some(Supervisor::start(
         Arc::clone(&process.control),
-        process.terminator,
+        process
+            .terminator
+            .ok_or_else(|| io::Error::other("fixture is uninitialized"))?,
         None,
         None,
         process.child.id(),

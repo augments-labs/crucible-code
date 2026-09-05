@@ -284,6 +284,13 @@ owner is dropped while cleanup is still uncertain, staging data is retained and
 the slot remains consumed for the lifetime of that sandbox service. A recorded
 supervisor failure stays visible even if later cleanup releases those resources.
 
+These ownership rules also apply when startup fails after a process has been
+spawned. Startup cleanup uses the same bounded stop and reap path. An uncertain
+result reports failed cleanup and retains its staging data and command slot;
+the enforcing Linux backend also retains its separate projection and journal
+for recovery. A failure to record another audit fact cannot replace the original
+startup or cleanup error.
+
 An uncatchable host/process kill cannot run user-space destructors. On enforcing
 Linux, loss of the broker status channel and Bubblewrap's parent-death boundary
 still terminate the PID-namespace workload. The next preparation replays the

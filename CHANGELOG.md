@@ -10,6 +10,11 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **Failed sandbox startup keeps uncertain cleanup visible.** Startup errors
+  stop and reap a spawned command within bounded waits. If cleanup cannot be
+  confirmed, Crucible retains staging data, Linux projection evidence and the
+  command slot instead of reporting successful cleanup or deleting the evidence.
+
 - **Background commands remain reachable when cleanup fails.** Their rows and
   command slots stay held until cleanup succeeds, including when the original
   result was abandoned. A failed stop keeps the panel open with
