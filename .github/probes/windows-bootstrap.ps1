@@ -1,5 +1,6 @@
-# windows-bootstrap-v8: disposable fresh Windows x64 VM only; no production claim.
+# windows-bootstrap-v9: disposable fresh Windows x64 VM only; no production claim.
 # Independently authored. V6 proved only the actual combined-token ACL primitive.
+# V9 adds bounded runtime step and exception HRESULT diagnostics only.
 # V8: initial-load required-import closure only; every delay edge is deferred and unvalidated.
 # V7 run33930343584: delay expansion hit 64 files at SCHANNEL.dll from webio.dll; caps stay unchanged.
 # This is a synthetic bootstrap prerequisite, not a complete cmd/native-tool execution contract.
@@ -19,7 +20,7 @@
 # API-set contracts are counted, not fabricated as files. Dynamic/registry/IPC dependencies remain unproved.
 # Three 12-second guest deadlines; 4-process kill-on-close jobs; require external CI timeout 5 minutes.
 $ErrorActionPreference = 'Stop'
-$buildRoot = Join-Path ([IO.Path]::GetTempPath()) ('crucible-bootstrap-v8-' + [Guid]::NewGuid().ToString('N'))
+$buildRoot = Join-Path ([IO.Path]::GetTempPath()) ('crucible-bootstrap-v9-' + [Guid]::NewGuid().ToString('N'))
 $native = @'
 #include <windows.h>
 static WCHAR image[32768],command[32772];
@@ -56,14 +57,18 @@ using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Security.Cryptography;
 using System.Threading;
-public static class CrucibleWindowsBootstrapProbeV8 {
+public static class CrucibleWindowsBootstrapProbeV9 {
     const uint TOKEN_QUERY = 8, TOKEN_DUPLICATE = 2, TOKEN_IMPERSONATE = 4, TOKEN_ASSIGN_PRIMARY = 1;
     const uint FILE_READ_DATA = 1, FILE_ALL_ACCESS = 0x001F01FF;
     const uint DACL = 4, PROTECTED_DACL = 0x80000000;
     const uint CREATE_SUSPENDED = 4, EXTENDED_STARTUPINFO_PRESENT = 0x80000;
     const uint CREATE_UNICODE_ENVIRONMENT = 0x400;
     static readonly IntPtr Invalid = new IntPtr(-1);
-    static string stage = "start", currentCase = "start";
+    static string stage = "start", currentCase = "start", runtimeFile = "none", runtimeStep = "none";
+    static void Managed(Exception error) {
+        string kind = error is UnauthorizedAccessException ? "access_denied" : error is IOException ? "io" : "other";
+        Record("{\"event\":\"probe_managed_failure\",\"stage\":\""+stage+"\",\"case\":\""+currentCase+"\",\"runtime_file\":\""+runtimeFile+"\",\"runtime_step\":\""+runtimeStep+"\",\"kind\":\""+kind+"\",\"hresult\":"+error.HResult+"}");
+    }
     [StructLayout(LayoutKind.Sequential)] struct SidAttr { public IntPtr Sid; public uint Attributes; }
     [StructLayout(LayoutKind.Sequential)] struct GroupsOne { public uint Count; public SidAttr First; }
     [StructLayout(LayoutKind.Sequential)] struct SecurityCapabilities {
@@ -343,7 +348,7 @@ public static class CrucibleWindowsBootstrapProbeV8 {
             if(descendant!=IntPtr.Zero) { if(WaitForSingleObject(descendant,0)!=0) throw new ProbeFailure(13); Need(GetExitCodeProcess(descendant,out descendantCode)); }
             success=pending.Length==0&&(name=="native_entry" ? entry&&exitCode==41 : self&&child&&childOk&&descendantCode==42&&exitCode==0&&(name!="staged_cmd"||cmdReady&&cmdOk));
             Record("{\"event\":\"bootstrap_result\",\"entry_marker\":"+B(entry)+",\"child_audited\":"+B(child)+",\"child_completed\":"+B(childOk&&descendantCode==42)+",\"cmd_markers\":"+B(cmdReady&&cmdOk)+",\"exit_status\":"+exitCode+",\"pass\":"+B(success)+"}");
-        } catch(ProbeFailure f) { Event("probe_api_failure",f.Code); } catch(Exception) { Event("probe_managed_failure",0); }
+        } catch(ProbeFailure f) { Event("probe_api_failure",f.Code); } catch(Exception error) { Managed(error); }
         finally {
             stage="scope_stop"; bool empty=!spawned;
             if(spawned) {
@@ -359,7 +364,7 @@ public static class CrucibleWindowsBootstrapProbeV8 {
         return success&&cleaned;
     }
     public static int Run(string buildRoot,string[] sourceFiles,string compilerIdentity) {
-        string profile="crucible.bootstrap.v8."+Guid.NewGuid().ToString("N"),root=null; bool profileOwned=false,rootOwned=false,cleanup=true; int result=1;
+        string profile="crucible.bootstrap.v9."+Guid.NewGuid().ToString("N"),root=null; bool profileOwned=false,rootOwned=false,cleanup=true; int result=1;
         IntPtr package=IntPtr.Zero,session=IntPtr.Zero,baseToken=IntPtr.Zero,restricted=IntPtr.Zero,entry=IntPtr.Zero;
         try {
             currentCase="setup"; VerifyLayouts(); stage="profile";
@@ -375,10 +380,12 @@ public static class CrucibleWindowsBootstrapProbeV8 {
                 string name=Path.GetFileName(source),parent=Path.GetDirectoryName(Path.GetFullPath(source)); bool fixture=name=="fixture.exe"&&String.Equals(parent,buildRoot,StringComparison.OrdinalIgnoreCase);
                 if(!fixture&&!String.Equals(parent,sys,StringComparison.OrdinalIgnoreCase)) throw new ProbeFailure(13);
                 if(!System.Text.RegularExpressions.Regex.IsMatch(name,@"\A[A-Za-z0-9_.-]+\z")||!names.Add(name)) throw new ProbeFailure(13);
+                runtimeFile=name.Length<=128?name:"label_too_long"; runtimeStep="source_attributes";
                 if((File.GetAttributes(source)&FileAttributes.ReparsePoint)!=0) throw new ProbeFailure(13);
-                long length=new FileInfo(source).Length; total+=length; if(length<=0||total>134217728) throw new ProbeFailure(122);
-                string destination=Path.Combine(root,name),hash=Digest(source); File.Copy(source,destination,false); if(Digest(destination)!=hash) throw new ProbeFailure(13);
-                Acl(destination,user,Grant(p)+Grant(s)); manifest+=name+" "+length+" "+hash+"\n";
+                runtimeStep="source_length"; long length=new FileInfo(source).Length; total+=length; if(length<=0||total>134217728) throw new ProbeFailure(122);
+                runtimeStep="source_hash"; string destination=Path.Combine(root,name),hash=Digest(source);
+                runtimeStep="copy"; File.Copy(source,destination,false); runtimeStep="destination_hash"; if(Digest(destination)!=hash) throw new ProbeFailure(13);
+                runtimeStep="destination_acl"; Acl(destination,user,Grant(p)+Grant(s)); manifest+=name+" "+length+" "+hash+"\n";
                 Record("{\"event\":\"runtime_file\",\"fixture\":\""+name+"\",\"source_identity\":\""+(fixture?"compiled_fixture":"native_system_directory")+"\",\"bytes\":"+length+",\"sha256\":\""+hash+"\"}");
             }
             string manifestHash; using(SHA256 hash=SHA256.Create()) manifestHash=BitConverter.ToString(hash.ComputeHash(System.Text.Encoding.UTF8.GetBytes(manifest))).Replace("-","").ToLowerInvariant();
@@ -395,7 +402,7 @@ public static class CrucibleWindowsBootstrapProbeV8 {
             if(!Execute("native_child",exe,"\""+exe+"\" P",root,env,restricted,package,session,out clean)) {cleanup=clean; throw new ProbeFailure(13);}
             if(!Execute("staged_cmd",cmd,"\""+cmd+"\" /d /q /c \"echo CMD_READY&fixture.exe P&&echo CMD_OK\"",root,env,restricted,package,session,out clean)) {cleanup=clean; throw new ProbeFailure(13);}
             result=0;
-        } catch(ProbeFailure f) {Event("probe_api_failure",f.Code);} catch(Exception) {Event("probe_managed_failure",0);}
+        } catch(ProbeFailure f) {Event("probe_api_failure",f.Code);} catch(Exception error) {Managed(error);}
         finally {
             Close(ref restricted); Close(ref baseToken); if(entry!=IntPtr.Zero) Marshal.FreeHGlobal(entry); if(session!=IntPtr.Zero) LocalFree(session); if(package!=IntPtr.Zero) FreeSid(package);
             if(cleanup&&rootOwned) try { Directory.Delete(root,true); } catch(Exception) {cleanup=false;}
@@ -551,11 +558,11 @@ try {
     Write-Output ('{"event":"host_compile","success":true,"required_api_set_contract_count":'+$contracts.Count+'}')
     $hostStage="compile_host"; Add-Type -TypeDefinition $source -Language CSharp -ErrorAction Stop
     [string[]]$sources=@($files.Values | Sort-Object { [IO.Path]::GetFileName($_).ToLowerInvariant() })
-    $hostStage="invoke_host"; $result=[CrucibleWindowsBootstrapProbeV8]::Run($buildRoot,$sources,(Get-FileHash -LiteralPath $cl -Algorithm SHA256).Hash.ToLowerInvariant())
+    $hostStage="invoke_host"; $result=[CrucibleWindowsBootstrapProbeV9]::Run($buildRoot,$sources,(Get-FileHash -LiteralPath $cl -Algorithm SHA256).Hash.ToLowerInvariant())
 } catch {
     $failure=$_; $reason='unclassified_exception'; $message=$failure.Exception.Message
     if($message -cin @('x64_required','unique_root_collision','msvc_missing','source_reparse','runtime_bound','fixture_import_policy','tool_start','tool_deadline','tool_output_cap','tool_failed','dependency_metadata_failed','deferred_edge_cap','dependency_queue_cap') -or $message -cmatch '^parser_(?:text_cap|line_cap|ambiguous_header|unknown_header|orphan_dll|ambiguous_dll|invalid_dll|incomplete|self_test|unknown_kind)$') { $reason=$message }
     @{event='host_setup_failure';stage=$hostStage;hresult=$failure.Exception.HResult;reason=$reason;accepted_file_count=$manifestCount;candidate_total_bytes=$manifestBytes;current_file=(Safe-ManifestLabel $manifestFile);current_import=(Safe-ManifestLabel $manifestImport);importing_parent=(Safe-ManifestLabel $manifestParent);import_kind=$manifestKind;metadata_hresult=$metadataStatus;parsed_import_count=$manifestImportCount;deferred_delay_edge_count=$deferredCount;file_cap=64;byte_cap=134217728} | ConvertTo-Json -Compress | Out-Host; $result=90
 }
-finally { if($hostToolUnsettled) { $result=3 }; if($buildOwned -and $result -ne 3) { try { Remove-Item -LiteralPath $buildRoot -Recurse -Force -ErrorAction Stop } catch { Write-Output '{"event":"build_cleanup","complete":false}'; $result=3 } } }
+finally { if($hostToolUnsettled) { $result=3 }; if($buildOwned -and $result -ne 3) { try { Remove-Item -LiteralPath $buildRoot -Recurse -Force -ErrorAction Stop } catch { @{event='build_cleanup';complete=$false;hresult=$_.Exception.GetBaseException().HResult} | ConvertTo-Json -Compress | Out-Host; $result=3 } } }
 exit $result

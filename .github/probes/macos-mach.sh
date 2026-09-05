@@ -1,5 +1,5 @@
 #!/bin/sh
-# mac-mach-v1: disposable VM capability-inheritance prerequisite, not a backend.
+# mac-mach-v2: disposable VM capability-inheritance prerequisite, not a backend.
 # No native execution by the author. Root reviews source/manifest before CI.
 set -eu
 umask 022
@@ -407,7 +407,10 @@ int main(int argc,char **argv) {
     printf("UID-LEASE uid=%u assumption=exclusive-disposable-VM-only\n",uid);
     guarded_uid=uid; if(atexit(emergency_cleanup)) die("cleanup registration");
     mach_port_t service=MACH_PORT_NULL;
-    kr(mach_port_allocate(mach_task_self(),MACH_PORT_RIGHT_RECEIVE,&service),"owned service receive");
+    /* Current XNU rejects ordinary immovable receive ports as exception
+     * anchors. Use its designated exception port type for this fixture. */
+    mach_port_options_t options={0}; options.flags=MPO_EXCEPTION_PORT;
+    kr(mach_port_construct(mach_task_self(),&options,0,&service),"owned exception service receive");
     kr(mach_port_insert_right(mach_task_self(),service,service,MACH_MSG_TYPE_MAKE_SEND),"owned service send");
     const char *names[]={"exec","fork","posix_spawn","exec","fork","posix_spawn","shell","git","clang","cargo"};
     for(int c=0;c<10;c++) {
