@@ -193,10 +193,14 @@ fn seatbelt_writes_only_the_workspace_and_protects_repository_metadata() {
         .filter(|name| name.to_string_lossy().eq_ignore_ascii_case(".git"))
         .collect();
     assert_eq!(protected_names.len(), 1, "one protected directory object");
+    let protected_name = protected_names
+        .into_iter()
+        .next()
+        .expect("single protected directory object");
     if !case_equivalent {
-        assert_eq!(protected_names[0], &OsString::from(".git"));
+        assert_eq!(protected_name, &OsString::from(".git"));
     }
-    let protected = fixture.workspace.join(protected_names[0]);
+    let protected = fixture.workspace.join(protected_name);
     assert!(protected.is_dir());
     assert_eq!(
         fs::read_to_string(protected.join("config")).expect("protected file"),
