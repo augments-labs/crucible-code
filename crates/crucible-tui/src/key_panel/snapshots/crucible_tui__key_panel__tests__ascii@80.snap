@@ -1,0 +1,16 @@
+---
+source: crates/crucible-tui/src/key_panel/tests.rs
+expression: "picture(&anthropic(62).rows(80, Glyphs::Ascii), 80)"
+---
+<Accent>--------------------------------------------------------------------------------</>
+
+<Strong>Log in</>
+
+<Accent>></> Anthropic -- provide your own API key
+
+Paste or type the key. It goes to crucible's protected store and is never shown.
+
+<Quiet>+-- Anthropic API key ---------------------------------------------------------+</>
+<Quiet>|</> <Accent>></> **************************************************************             <Quiet>|</>
+<Quiet>+------------------------------------------------------------------------------+</>
+<Quiet>enter to save - esc to cancel</>

@@ -33,6 +33,7 @@ use crate::asking::Question;
 use crate::color::Slot;
 use crate::expanded::{Expanded, Shown};
 use crate::glyphs::Glyphs;
+use crate::key_panel::KeyPanel;
 use crate::ladder::Ladder;
 use crate::menu::{Listed, Menu};
 use crate::notice::Notice;
@@ -172,6 +173,18 @@ fn a_panel_fits_the_window_it_stands_in() {
     down("a panel", |columns, room, glyphs| {
         panel.within(columns, room, glyphs)
     });
+}
+
+#[test]
+fn a_key_panel_fits_the_window_it_stands_in() {
+    // A name too long for any label, and more held than any frame can show.
+    for (provider, held) in [("anthropic", 0), (LONG, 3), (LONG, 4096)] {
+        let panel = KeyPanel { provider, held };
+        across("a key panel", |columns, glyphs| panel.rows(columns, glyphs));
+        down("a key panel", |columns, room, glyphs| {
+            panel.within(columns, room, glyphs).0
+        });
+    }
 }
 
 #[test]
