@@ -4,13 +4,17 @@ name: native-sandbox-experiment
 permissions:
   contents: read
 jobs:
-  windows-container-service:
-    name: Windows native container engine prerequisite
-    runs-on: windows-2025
-    timeout-minutes: 4
+  macos-special-port-denial:
+    name: macOS task-port query policy (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15-intel, macos-26]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 3
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         persist-credentials: false
-    - shell: pwsh
-      run: ./.github/probes/windows-container-service.ps1
+    - shell: bash
+      run: sh .github/probes/macos-special-port-denial.sh
