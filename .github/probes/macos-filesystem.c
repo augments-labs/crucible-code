@@ -54,6 +54,7 @@ static void launch(int argc, char **argv) {
        setrlimit(RLIMIT_FSIZE,&size) || setrlimit(RLIMIT_CORE,&core) ||
        setgroups(1,&group) || setgid(guest_uid) || setuid(guest_uid)) fail("permanent drop");
     identity(); alarm(10);
+    if(!strcmp(argv[1],"launch-cwd") && chdir(argv[5])) fail("private cwd");
     struct proc_fdinfo descriptors[128];
     int bytes=proc_pidinfo(getpid(),PROC_PIDLISTFDS,0,descriptors,sizeof(descriptors));
     if(bytes<=0 || bytes>=(int)sizeof(descriptors) || bytes%(int)sizeof(descriptors[0])) fail("descriptor inventory");
@@ -112,7 +113,7 @@ int main(int argc,char **argv) {
         return (fs.f_flags&(MNT_NOSUID|MNT_NODEV))==(MNT_NOSUID|MNT_NODEV)?0:77;
     }
     if(argc==3 && !strcmp(argv[1],"unmount")) { if(unmount(argv[2],0)) fail("nonforced unmount"); return 0; }
-    if(argc>1 && !strcmp(argv[1],"launch")) launch(argc,argv);
+    if(argc>1 && (!strcmp(argv[1],"launch") || !strcmp(argv[1],"launch-cwd"))) launch(argc,argv);
     if(argc!=6 || strcmp(argv[1],"guest")) return 77;
     puts("GUEST entered");
     alarm(10); identity();

@@ -31,7 +31,7 @@ def command(argv, allowed=(0,), timeout=30):
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             close_fds=True, start_new_session=True,
                             env={'PATH': '/usr/bin:/bin:/usr/sbin:/sbin', 'LANG': 'C'})
-    if len(argv) > 1 and str(argv[0]) == str(worker) and argv[1] == 'launch':
+    if len(argv) > 1 and str(argv[0]) == str(worker) and argv[1] in ('launch', 'launch-cwd'):
         owned_pids.append(proc.pid)
     data = bytearray()
     deadline = time.monotonic() + timeout
@@ -127,35 +127,22 @@ disks = [entry['dev-entry'] for entry in entities if entry.get('content-hint') =
 assert len(disks) == 1 and disks[0].startswith('/dev/disk')
 command(['/sbin/mount', '-u', '-o', 'nosuid,nodev', mount])
 command([worker, 'flags', mount])
-cache_candidates = ['/System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld',
-                    '/System/Library/dyld', '/private/var/db/dyld',
-                    '/System/Volumes/Preboot/Cryptexes/OS/usr/lib']
-cache_roots = []
-for candidate in cache_candidates:
-    path = pathlib.Path(candidate)
-    if path.is_dir():
-        actual = path.resolve(strict=True)
-        entries = sorted(entry.name for entry in path.iterdir())
-        assert len(entries) <= 256
-        cache_roots.append(actual)
-        print('RUNTIME ' + json.dumps({'path': str(path), 'canonical': str(actual), 'entries': entries}), flush=True)
 results = []
-for sequence, variant in enumerate(['baseline', 'runtime', 'metadata', 'runtime-metadata', 'read-all', 'no-file-deny']):
+for sequence, variant in enumerate(['baseline', 'root-path-read', 'devices-read', 'system-read', 'shared-runtime-read', 'private-read', 'private-cwd', 'read-all-control']):
     command([worker, 'empty'])
     root, outside = make_case(sequence)
     policy = base / ('profile-' + str(sequence) + '.sb')
     text = profile_for(root)
-    if variant in ('runtime', 'runtime-metadata'):
-        text += '(allow file-read* ' + ' '.join('(subpath ' + json.dumps(str(path)) + ')' for path in cache_roots) + ')\n'
-    if variant in ('metadata', 'runtime-metadata'):
-        text += '(allow file-read-metadata)\n'
-    if variant == 'read-all':
+    diagnostic_roots = {'root-path-read': '/', 'devices-read': '/dev',
+                        'system-read': '/System', 'shared-runtime-read': '/usr/share',
+                        'private-read': '/private'}
+    if variant in diagnostic_roots:
+        text += '(allow file-read* (subpath ' + json.dumps(diagnostic_roots[variant]) + '))\n'
+    if variant == 'read-all-control':
         text += '(allow file-read*)\n'
-    if variant == 'no-file-deny':
-        text = '(version 1)\n(allow default)\n(deny network*)\n(deny mach-lookup)\n(deny mach-register)\n'
     policy.write_text(text)
     os.chmod(policy, 0o644)
-    code, data = command([worker, 'launch', 'confined', policy, 'allowed-read', root, outside], allowed=range(-128, 256))
+    code, data = command([worker, 'launch-cwd' if variant == 'private-cwd' else 'launch', 'confined', policy, 'allowed-read', root, outside], allowed=range(-128, 256))
     command([worker, 'empty'])
     observation = {'variant': variant, 'status': code, 'entered': b'GUEST entered' in data}
     results.append(observation)
@@ -163,7 +150,7 @@ for sequence, variant in enumerate(['baseline', 'runtime', 'metadata', 'runtime-
 command([worker, 'unmount', mount])
 command(['/usr/bin/hdiutil', 'detach', disks[0]])
 print('DIAGNOSTICS-COMPLETE ' + json.dumps(results) + ' uid_empty=1 nonforced_detach=1', flush=True)
-assert len(owned_pids) == 6 and all(isinstance(pid, int) and pid > 1 for pid in owned_pids)
+assert len(owned_pids) == 8 and all(isinstance(pid, int) and pid > 1 for pid in owned_pids)
 predicate = ' OR '.join('eventMessage CONTAINS "worker(' + str(pid) + ')"' for pid in owned_pids)
-command(['/usr/bin/log', 'show', '--last', '2m', '--style', 'compact', '--predicate', predicate], allowed=(0, 1))
+command(['/usr/bin/log', 'show', '--last', '2m', '--info', '--debug', '--style', 'compact', '--predicate', predicate], allowed=(0, 1))
 # Diagnostics do not define a full filesystem pass; broad grants never become product policy.
