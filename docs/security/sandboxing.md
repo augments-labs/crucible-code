@@ -267,7 +267,10 @@ snapshot, refresh or disposal fails. An audit delivery failure ends the turn
 without hiding an operation or cleanup failure that also occurred. MCP restart
 requires confirmed cleanup of the previous process scope. Unconfirmed cleanup
 remains a disposal failure and blocks another preparation, including when a
-later server failed during partial preparation.
+later server failed during partial preparation. Missing pipes and failed
+handshake or catalogue exchanges also require explicit cleanup. An optional
+server can be skipped only when its cleanup is confirmed; otherwise preparation
+stops and later disposal retains the failure.
 
 Inspection retains backend ID/version/provenance, capability claims, separate
 hashed requested and effective policies and redacted plans, manifest,

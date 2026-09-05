@@ -855,7 +855,10 @@ a catalogue that moved retires the server instead. The default of `0` is one
 start and no more. Replacement also requires confirmed cleanup of the old
 process scope. If cleanup cannot be confirmed, disposal keeps reporting the
 failure and that toolset refuses another preparation; repeating disposal does
-not turn an uncertain stop into success.
+not turn an uncertain stop into success. This also applies to missing pipes,
+failed handshakes and invalid catalogues during startup. Even a server with
+`required: false` ends preparation when its cleanup cannot be confirmed; an
+ordinary startup refusal with confirmed cleanup can still be skipped.
 
 Every key in `mcp.servers` is read **only** from `~/.crucible/config.json`. A
 committed `.crucible/config.json` naming a server would be choosing whose

@@ -19,6 +19,7 @@
 //! configuration file or registering an adapter reaches this module.
 
 use std::fmt;
+use std::io;
 use std::time::{Duration, Instant};
 
 use crucible_core::{
@@ -54,7 +55,8 @@ impl Hosted {
     /// # Errors
     ///
     /// [`Unstarted`] where the process has no pipe to speak over or none to
-    /// listen to. The process is stopped before either is returned: a peer
+    /// listen to. Stopping the process is attempted before either is returned, and
+    /// [`Unstarted::Unreaped`] preserves an unconfirmed stop: a peer
     /// crucible cannot hold a conversation with is one it has no way to end
     /// politely later.
     pub fn over(
@@ -250,14 +252,15 @@ impl fmt::Debug for Hosted {
     }
 }
 
-/// Stops a process that will not be hosted after all, keeping the first reason.
-///
-/// Whatever went wrong stopping it is the second thing that went wrong, and the
-/// caller can do nothing about either; the one worth returning is the one that
-/// says why there is no server.
+/// Stops a process that will not be hosted, preserving both refusal and cleanup.
 fn abandon(process: &mut Box<dyn SandboxProcess>, why: Unstarted) -> Unstarted {
-    drop(process.stop());
-    why
+    match process.stop() {
+        Ok(()) => why,
+        Err(cleanup) => Unstarted::Unreaped {
+            cause: Box::new(why),
+            cleanup,
+        },
+    }
 }
 
 /// Why a process could not host a server.
@@ -276,6 +279,19 @@ pub enum Unstarted {
          answer to wait for"
     )]
     Unheard,
+
+    /// Hosting failed, and the backend could not confirm process-scope cleanup.
+    ///
+    /// Construction retains the original missing-pipe cause and the stop error;
+    /// it emits one wrapper, never a chain of cleanup attempts.
+    #[error("{cause}; process cleanup remains unconfirmed: {cleanup}")]
+    Unreaped {
+        /// Why the process could not be hosted.
+        #[source]
+        cause: Box<Self>,
+        /// Why the backend could not confirm cleanup.
+        cleanup: io::Error,
+    },
 }
 
 /// Everything an ended server leaves behind.
