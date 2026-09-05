@@ -24,6 +24,11 @@ change in any release with no deprecation period.
 - **Unsupported sandbox errors no longer recommend a removed setting.** The
   native-backend refusal no longer suggests the rejected `sandbox.mode` key.
 
+- **Protected names remain protected across macOS filesystem aliases.** The
+  Seatbelt policy matches repository and Crucible metadata names without case,
+  so a case-only APFS directory rename cannot make their contents writable or
+  move them outside the protected namespace.
+
 - **Sandbox reports preserve fractional time limits.** Command and session
   ceilings retain their exact duration instead of rounding down to whole seconds.
 
@@ -113,6 +118,14 @@ change in any release with no deprecation period.
   either explicit behavior if you previously used `degraded`.
 
 ### Added
+
+- **macOS can now enforce the opt-in sandbox with Seatbelt.** The native
+  backend denies network access and writes outside declared roots, protects
+  repository metadata, closes inherited descriptors, applies the open-file
+  limit, and uses a private temporary directory. Intel and Apple silicon CI
+  now require its native confinement tests to pass. The security guide records
+  the trusted macOS code-validation metadata effect and the authority checks
+  that remain mandatory before release.
 
 - **Windows cleanup tests exercise failed observation and recovery.** Native
   job tests cover a refused state query after termination, a live job that

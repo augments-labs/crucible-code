@@ -24,8 +24,9 @@ files left by a check. Ignored build output is outside that invariant.
 Every Linux job that runs the Rust gate first runs
 `.github/actions/enforcing-sandbox` and sets
 `CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX`, so the enforcing sandbox tests are
-exercised there rather than skipped. The release gate and `rust-ci.yml` share
-that one action so they cannot drift apart.
+exercised there rather than skipped. The Intel and Apple silicon macOS jobs set
+the same requirement and exercise the built-in Seatbelt backend. The release
+gate and `rust-ci.yml` share the Linux setup action so they cannot drift apart.
 
 Actions are pinned to full commit SHAs. A trailing comment records the release
 name for maintainers; the SHA is what executes.
