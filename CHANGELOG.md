@@ -15,6 +15,10 @@ change in any release with no deprecation period.
   confirmed, Crucible retains staging data, Linux projection evidence and the
   command slot instead of reporting successful cleanup or deleting the evidence.
 
+- **Unavailable audit collectors no longer discard earlier records.** If one
+  collector cannot be read, the registry retains every undelivered sandbox fact
+  and returns an error.
+
 - **Background commands remain reachable when cleanup fails.** Their rows and
   command slots stay held until cleanup succeeds, including when the original
   result was abandoned. A failed stop keeps the panel open with
