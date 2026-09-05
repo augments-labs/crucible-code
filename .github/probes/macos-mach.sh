@@ -1,5 +1,5 @@
 #!/bin/sh
-# macos-runtime-v2: bounded output-mapping diagnostic, not a backend.
+# macos-runtime-v3: exact SSL and page-size diagnostics, not a backend.
 # No native execution by the author. Root reviews source/manifest before CI.
 set -eu
 umask 022
@@ -37,10 +37,16 @@ import json, os, pathlib, sys
 root, developer = (pathlib.Path(value).resolve(strict=True) for value in sys.argv[1:])
 trees = [root, developer, pathlib.Path('/System/Library'), pathlib.Path('/usr/lib'), pathlib.Path('/bin')]
 files = [pathlib.Path(value) for value in ('/usr/bin/tr', '/usr/bin/true', '/dev/null')]
+variant = os.environ['CRUCIBLE_RUNTIME_PROBE_VARIANT']
+assert variant in ('baseline', 'ssl-config', 'ssl-pagesize')
+if variant != 'baseline':
+    files.append(pathlib.Path('/private/etc/ssl/openssl.cnf'))
 quote = lambda value: json.dumps(str(value))
 ancestors = sorted({parent for path in trees + files for parent in path.parents})
 sysctls = ['hw.ncpu', 'hw.memsize', 'hw.pagesize', 'hw.cputype', 'hw.cpusubtype',
            'hw.cpufamily', 'kern.osrelease', 'kern.osversion', 'kern.argmax']
+if variant == 'ssl-pagesize':
+    sysctls.append('hw.pagesize_compat')
 lines = ['(version 1)', '(deny default)', '(deny network*)', '(deny mach-lookup mach-register)',
          '(allow process-exec process-fork)', '(allow signal (target same-sandbox))',
          '(allow process-info* (target same-sandbox))', '(allow file-read-data (literal "/"))',
@@ -49,10 +55,6 @@ lines = ['(version 1)', '(deny default)', '(deny network*)', '(deny mach-lookup 
          ' ' + ' '.join('(literal ' + quote(path) + ')' for path in files) + ')',
          '(allow file-write* (subpath ' + quote(root) + ') (literal "/dev/null"))',
          '(allow sysctl-read ' + ' '.join('(sysctl-name ' + quote(name) + ')' for name in sysctls) + ')']
-variant = os.environ['CRUCIBLE_RUNTIME_PROBE_VARIANT']
-assert variant in ('baseline', 'file-map')
-if variant == 'file-map':
-    lines.append('(allow file-map-executable (subpath ' + quote(root) + '))')
 profile = '\n'.join(lines) + '\n'
 assert len(profile.encode()) < 16384 and '(allow default)' not in profile
 (root / 'profile.sb').write_text(profile)
@@ -429,6 +431,8 @@ static void guest_credentials(uid_t uid) {
 }
 static int guest(uid_t uid,int sanitized,int route,const char *name,const char *root) {
     guest_credentials(uid); alarm(18);
+    errno=0; int page_size=getpagesize(), page_errno=errno;
+    printf("RUNTIME-PAGESIZE value=%d errno=%d\n",page_size,page_errno);
     for(int s=0;s<3;s++) {
         mach_port_t port=slot(s);
         printf("CAP-OBS mode=%s route=%s slot=%d present=%d\n",sanitized?"sanitized":"control",name,s,MACH_PORT_VALID(port));
@@ -608,7 +612,7 @@ chmod a+r "$probe_root/profile.sb" "$probe_root/smoke.sh" "$probe_root/hello.c"
 /usr/bin/uname -mrv
 printf 'ADAPTER git=%s clang=%s sdk=%s developer=%s\n' "$probe_git" "$probe_clang" "$probe_sdk" "$probe_developer"
 printf 'BOUNDS cases=10 wall_per_case=20 cleanup=8 reap=3 output_per_case=65536 protocol_bytes=512 controls_messages=3\n'
-printf 'SCOPE kernel-slot inheritance/removal and adapted smoke only; profile permits default filesystem operations; CPU enforcement not tested\n'
+printf 'SCOPE kernel-slot inheritance/removal and adapted smoke only; profile is default deny with finite runtime reads; complete filesystem isolation and CPU enforcement not tested\n'
 # Evidence is retained inside the unique fixture; native parent CI also archives it.
 /usr/bin/shasum -a 256 "$probe_root/mach.c" "$probe_root/mach" "$probe_root/profile.sb" "$probe_root/smoke.sh" "$probe_root/hello.c" "$probe_git" "$probe_clang" > "$probe_root/manifest.sha256"
 find "$probe_root/runtime" -type f -exec /usr/bin/shasum -a 256 {} + > "$probe_root/runtime.sha256"
@@ -620,4 +624,5 @@ sudo -n /usr/bin/env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin "$probe_root/mach" "$
 probe_status=$?
 set -e
 printf 'FIXTURE-RESULT status=%s retained=%s\n' "$probe_status" "$probe_root"
+python3 .github/probes/macos-runtime-logs.py
 exit "$probe_status"

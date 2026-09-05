@@ -5,7 +5,7 @@ permissions:
   contents: read
 jobs:
   macos-runtime:
-    name: macOS runtime mapping diagnostic (${{ matrix.os }})
+    name: macOS runtime SSL/page-size diagnostic (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -19,7 +19,7 @@ jobs:
     - shell: bash
       run: |
         set -eu
-        for variant in baseline file-map; do
+        for variant in baseline ssl-config ssl-pagesize; do
           printf 'DIAGNOSTIC-BEGIN variant=%s\n' "$variant"
           probe_log=$(mktemp /tmp/crucible-runtime-diagnostic.XXXXXX)
           if CRUCIBLE_RUNTIME_PROBE_VARIANT="$variant" sh .github/probes/macos-mach.sh > "$probe_log" 2>&1; then
