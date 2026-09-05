@@ -1,5 +1,4 @@
 /* One fixed cross-UID signature request; never a production sandbox. */
-#define _DARWIN_C_SOURCE 1
 #include <bsm/libbsm.h>
 #include <errno.h>
 #include <libproc.h>
@@ -15,9 +14,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/resource.h>
-#include <sys/syscall.h>
 #include <unistd.h>
 #include "nonce.h"
+#if defined(_DARWIN_C_SOURCE) || defined(_DARWIN_UNLIMITED_GETGROUPS)
+#error The diagnostic requires the ordinary kernel getgroups binding
+#endif
 typedef struct { mach_msg_header_t header; NDR_record_t ndr; int32_t pid; } Request;
 typedef struct { mach_msg_header_t header; NDR_record_t ndr; kern_return_t status; } Reply;
 static int foreign_task(pid_t target,const char *stage) {
@@ -39,23 +40,23 @@ int main(int argc,char **argv) {
     struct proc_bsdshortinfo info;gid_t groups[8];
     if(proc_pidinfo(getpid(),PROC_PIDT_SHORTBSDINFO,0,&info,sizeof info)!=(int)sizeof info) return 77;
     if(!getuid()||getuid()!=geteuid()||info.pbsi_svuid!=getuid()||getgid()!=getegid()||info.pbsi_svgid!=getgid()) return 77;
-    if(syscall(SYS_getgroups,8,groups)!=1||groups[0]!=getgid()) return 77;
+    if(getgroups(8,groups)!=1||groups[0]!=getgid()) return 77;
     errno=0;if(setuid(0)!=-1||errno!=EPERM) return 77;
     printf("CALLER nonce=%s uid=%u gid=%u permanent_nonroot=1\n",PROBE_NONCE,(unsigned)getuid(),(unsigned)getgid());
     mach_port_t endpoint=MACH_PORT_NULL,named=MACH_PORT_NULL,reply=MACH_PORT_NULL;int outcome=77;
     if(task_get_special_port(mach_task_self(),TASK_ACCESS_PORT,&endpoint)||!MACH_PORT_VALID(endpoint)) goto done;
     if(bootstrap_look_up(bootstrap_port,"com.apple.taskgated",&named)||endpoint!=named) goto done;
     char *diagnostic=NULL;
-    /* Seatbelt is the selected diagnostic mechanism; this one entry point is deprecated. */
+    /* Seatbelt is the selected diagnostic mechanism; its init/error-release pair is deprecated. */
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
     int applied=sandbox_init("(version 1)(deny default)(allow process-info* (target self))",0,&diagnostic);
-#pragma clang diagnostic pop
     if(applied) {
         fprintf(stderr,"PROFILE-UNAVAILABLE %.256s\n",diagnostic?diagnostic:"unknown");
         if(diagnostic) sandbox_free_error(diagnostic);
         goto done;
     }
+#pragma clang diagnostic pop
     puts("CALLER-PROFILE default_deny=1 inherited_endpoint_matches_bootstrap=1");
     if(foreign_task(target,"before")) goto done;
     if(mach_port_allocate(mach_task_self(),MACH_PORT_RIGHT_RECEIVE,&reply)) goto done;
