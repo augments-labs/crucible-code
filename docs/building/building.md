@@ -87,6 +87,7 @@ scripts/check.sh
 
 The compatibility command runs the deterministic Rust and repository checks
 expected on a contributor machine. CI calls those named gates independently,
-runs Rust tests on macOS and Windows, and supplies dependency and performance
-jobs of its own; [workflow ownership](../../.github/workflows/README.md) has the
-map. You can also [build for another platform yourself](cross-compiling.md).
+runs Rust tests on Intel and Apple silicon macOS plus Windows, and supplies
+dependency and performance jobs of its own;
+[workflow ownership](../../.github/workflows/README.md) has the map. You can
+also [build for another platform yourself](cross-compiling.md).

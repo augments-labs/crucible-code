@@ -185,11 +185,12 @@ pub enum SandboxFeature {
     NetworkAllowlist,
     /// No host descriptors other than declared standard streams.
     DescriptorIsolation,
-    /// User, PID, IPC, and network namespaces or an equivalent isolation set.
+    /// Descendants inherit OS confinement and cannot reach undeclared host
+    /// process, IPC, or network authority.
     ProcessIsolation,
-    /// Minimal procfs and device view.
+    /// Kernel and device control surfaces are absent or policy-restricted.
     KernelSurface,
-    /// No-new-privileges and dropped process capabilities.
+    /// A workload cannot acquire authority that bypasses its effective policy.
     PrivilegeIsolation,
     /// Bounded inert manifest staging.
     Materialization,

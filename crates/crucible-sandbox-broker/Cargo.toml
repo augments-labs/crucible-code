@@ -1,6 +1,6 @@
 [package]
 name = "crucible-sandbox-broker"
-description = "Minimal PID 1 supervisor for one confined Crucible command."
+description = "Minimal native launcher and supervisor for one confined Crucible command."
 publish.workspace = true
 version.workspace = true
 edition.workspace = true

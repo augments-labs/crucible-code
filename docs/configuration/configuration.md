@@ -274,10 +274,11 @@ bounds and lifecycle accounting still apply.
 
 `enabled: true` resolves to `required`: every requested hard boundary must be
 enforced before a command starts. It never silently falls back to an ordinary
-subprocess. The currently implemented enforcing backend is Linux Bubblewrap
-(0.11.0 or newer with the required features). macOS and Windows enforcing
-backends are not yet implemented; enabling confinement there refuses command
-execution. See the [current platform status](../security/sandboxing.md#platform-support).
+subprocess. Linux uses Bubblewrap 0.11.0 or newer with the required features.
+macOS uses the built-in Seatbelt framework through the fixed system
+`/usr/bin/sandbox-exec` launcher. Windows does not yet have an enforcing
+backend; enabling confinement there refuses command execution. See the
+[current platform status](../security/sandboxing.md#platform-support).
 
 `sandbox.enabled` is the only configuration switch. The former `sandbox.mode`
 key is rejected; replace `required` with `enabled: true`, and replace `off`
@@ -289,12 +290,11 @@ set `enabled: true`, which strengthens the user choice regardless of document
 order. Project `enabled: false` is refused. A project, tool, extension, skill,
 agent, or descendant cannot weaken confinement chosen above it.
 
-Under `required`, a command also runs under resource ceilings the confining
-backend applies: an hour of processor time per process, and 4096 open files at
-once. They are not a budget you are meant to work within — a long build and a
-program that opens a great many files both pass — but the point past which a
-command has stopped being a command. They are not configurable, and a command
-may narrow them but not drop them.
+Under `required`, Linux applies an hour of processor time per process and a
+4096-open-file ceiling. macOS applies the open-file ceiling; Darwin's catchable
+CPU signal is not advertised as a hard limit. These ceilings are not a budget
+you are meant to work within. They are not configurable, and a command may
+narrow a supported ceiling but not drop it.
 
 With confinement disabled, commands retain guardrails, deadlines, output bounds,
 usage and audit records, but their inspection report says `confined: false`.

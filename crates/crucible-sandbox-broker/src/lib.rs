@@ -1,5 +1,9 @@
 //! Fixed protocol shared by the host launcher and the minimal PID 1 broker.
 
+/// Internal macOS launcher mode. It closes inherited descriptors and applies
+/// hard limits before entering the system Seatbelt executable.
+pub const MACOS_LAUNCH_MODE: &str = "--macos-seatbelt-launch";
+
 /// Bytes in one native-endian Linux wait status.
 pub const WAIT_STATUS_BYTES: usize = size_of::<i32>();
 
