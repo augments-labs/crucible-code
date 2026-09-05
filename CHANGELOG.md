@@ -10,6 +10,11 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **MCP sandbox audit records reach the session journal.** Preparation, restart
+  and cleanup retain their run attribution, including lifecycle failures.
+  Audit delivery happens before the next provider request and after disposal;
+  a delivery error preserves the original operation and cleanup failures.
+
 - **Failed sandbox startup keeps uncertain cleanup visible.** Startup errors
   stop and reap a spawned command within bounded waits. If cleanup cannot be
   confirmed, Crucible retains staging data, Linux projection evidence and the

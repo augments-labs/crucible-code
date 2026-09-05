@@ -1,7 +1,8 @@
 //! Selected MCP servers, offered as tools beside the built-in ones.
 //!
-//! A server here is somebody else's program. It is started confined, spoken to
-//! over its own standard input and output, asked once what it offers, and what
+//! A server here is somebody else's program. It starts under its selected
+//! sandbox policy, is spoken to over its own standard input and output, asked
+//! once what it offers, and what
 //! comes back becomes descriptors the model can call. This is where that meets
 //! the roster crucible compiled in: the runner drives one live toolset, so the
 //! two have to arrive as one generation or not at all.
@@ -61,9 +62,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use crucible_core::{
-    Ancestry, Approved, Cancel, Command, Finish, SandboxCommand, SandboxEnvironment, SandboxId,
-    SandboxManifest, SandboxPolicy, SandboxRequest, SandboxService, Sensitivity, Summary, Tool,
-    ToolArgs, ToolContext, ToolDescriptor, ToolEntry, ToolError, ToolId, ToolOutput,
+    Ancestry, Approved, Cancel, Command, Finish, SandboxAudit, SandboxCommand, SandboxEnvironment,
+    SandboxId, SandboxManifest, SandboxPolicy, SandboxRequest, SandboxService, Sensitivity,
+    Summary, Tool, ToolArgs, ToolContext, ToolDescriptor, ToolEntry, ToolError, ToolId, ToolOutput,
     ToolProvenance, ToolSnapshot, ToolSourceKind, Toolset, ToolsetContext, ToolsetError,
 };
 use crucible_extension::{Ambiguity, Restarts};
@@ -207,6 +208,7 @@ fn start(
     chosen: &Chosen,
     sandbox: &dyn SandboxService,
     ancestry: Ancestry,
+    audit: &SandboxAudit,
     interrupt: Option<&Cancel>,
 ) -> Result<Started, Box<str>> {
     let refused = |problem: &dyn std::fmt::Display| -> Box<str> { problem.to_string().into() };
@@ -220,7 +222,9 @@ fn start(
         ToolId::new(format!("{NAMESPACE}{OF}{}", chosen.name)),
         chosen.policy.clone(),
         SandboxManifest::empty(),
-    );
+    )
+    .with_audit(audit.clone())
+    .map_err(|error| refused(&error))?;
     let mut session = sandbox.prepare(request).map_err(|e| refused(&e))?;
     session.materialize().map_err(|e| refused(&e))?;
     let command = SandboxCommand::new(
@@ -301,7 +305,9 @@ struct Conversation {
     /// This is the whole of a handle's validity: a handle that finds nothing
     /// here is one whose server has ended, and there is no second flag beside
     /// it to disagree with.
-    hosted: Option<Hosted>,
+    /// The collector shares the live conversation's lifetime, so an old
+    /// published executor cannot retain audit capacity after disposal.
+    hosted: Option<(Hosted, SandboxAudit)>,
     /// How many more times it may be started again.
     restarts: Restarts,
 }
@@ -327,10 +333,22 @@ impl Hosting {
         chosen: &Arc<Chosen>,
         context: &ToolsetContext,
     ) -> Result<(Arc<Server>, Vec<ToolEntry>), ToolsetError> {
+        let provenance = ToolProvenance::new(
+            ToolSourceKind::Mcp,
+            format!("{NAMESPACE}{OF}{}", chosen.name),
+            format!("MCP server {} at {}", chosen.name, chosen.program.display()),
+        )?;
+        let audit = context
+            .sandbox_audit(ToolId::new(format!("{NAMESPACE}{OF}{}", chosen.name)))
+            .map_err(|error| ToolsetError::Source {
+                id: chosen.name.clone(),
+                problem: error.to_string().into(),
+            })?;
         let Started { hosted, offered } = start(
             chosen,
             self.sandbox.as_ref(),
             context.ancestry(),
+            &audit,
             Some(context.cancel()),
         )
         .map_err(|problem| ToolsetError::Source {
@@ -338,11 +356,6 @@ impl Hosting {
             problem,
         })?;
 
-        let provenance = ToolProvenance::new(
-            ToolSourceKind::Mcp,
-            format!("{NAMESPACE}{OF}{}", chosen.name),
-            format!("MCP server {} at {}", chosen.name, chosen.program.display()),
-        )?;
         let program: Box<str> = chosen.program.display().to_string().into();
         let server = Arc::new(Server {
             name: chosen.name.clone(),
@@ -351,7 +364,7 @@ impl Hosting {
             ancestry: context.ancestry(),
             published: offered.clone(),
             live: Mutex::new(Conversation {
-                hosted: Some(hosted),
+                hosted: Some((hosted, audit)),
                 restarts: Restarts::ceiling(chosen.restarts),
             }),
         });
@@ -419,7 +432,14 @@ impl Server {
             .unwrap_or_else(PoisonError::into_inner)
             .hosted
             .take();
-        self.reaped(taken)
+        match taken {
+            Some((hosted, audit)) => {
+                let finished = self.reaped(Some(hosted));
+                drop(audit);
+                finished
+            }
+            None => Ok(()),
+        }
     }
 
     /// The same, for a conversation already taken out from under the lock.
@@ -453,12 +473,16 @@ impl Server {
     fn restart(&self, after: Ambiguity, interrupt: Option<&Cancel>) -> Result<(), Box<str>> {
         let mut live = self.live.lock().unwrap_or_else(PoisonError::into_inner);
         let permitted = live.restarts.again(after).map_err(|no| no.to_string())?;
-        drop(self.reaped(live.hosted.take()));
+        let Some((previous, audit)) = live.hosted.take() else {
+            return Err("the server lifecycle has ended".into());
+        };
+        drop(self.reaped(Some(previous)));
 
         let Started { hosted, offered } = start(
             &self.chosen,
             self.sandbox.as_ref(),
             self.ancestry,
+            &audit,
             interrupt,
         )
         .map_err(|problem| {
@@ -492,7 +516,7 @@ impl Server {
             .into_boxed_str());
         }
 
-        live.hosted = Some(hosted);
+        live.hosted = Some((hosted, audit));
         Ok(())
     }
 }
@@ -679,7 +703,7 @@ impl Calling {
             .live
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        let Some(hosted) = live.hosted.as_mut() else {
+        let Some((hosted, _)) = live.hosted.as_mut() else {
             // The lifecycle that read this catalogue has ended, or a call
             // before this one left the conversation somewhere it could not come
             // back from.

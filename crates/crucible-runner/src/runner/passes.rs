@@ -121,10 +121,14 @@ impl<'a> AgentLoop<'a> {
             // estimate cannot count one set and send another.
             let tools = if self.first_tools {
                 self.first_tools = false;
-                self.runner.toolset.snapshot(self.toolsets)?
+                self.runner.toolset.snapshot(self.toolsets)
             } else {
-                self.runner.toolset.refresh(self.toolsets)?
+                self.runner.toolset.refresh(self.toolsets)
             };
+            let tools = super::combine_sandbox_audit(
+                tools.map_err(TurnError::from),
+                self.runner.flush_sandbox_audits(events),
+            )?;
             self.runner.tools = tools.clone();
             let advertised = tools.advertised();
 

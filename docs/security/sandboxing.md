@@ -259,6 +259,13 @@ written to the framework journal before their live events. Detached commands
 retain the same fixed attribution; facts produced after the starting tool call
 returns are drained at the next runner boundary.
 
+Selected MCP servers use the same audit registry. Their preparation, restarts
+and cleanup keep the lifecycle's run ancestry and `mcp:server` identity, with a
+new sandbox ID for each preparation. The runner delivers lifecycle facts before
+the next provider request and after disposal, including when preparation,
+snapshot, refresh or disposal fails. An audit delivery failure ends the turn
+without hiding an operation or cleanup failure that also occurred.
+
 Inspection retains backend ID/version/provenance, capability claims, separate
 hashed requested and effective policies and redacted plans, manifest,
 working-directory and root identities, root access/provenance, network shape,

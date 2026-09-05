@@ -25,6 +25,8 @@ use serde_json::{Value, json};
 
 use super::{Chosen, Hosting};
 
+mod audit;
+
 /// How long a test lets one silence run before it gives up on a server.
 ///
 /// Long enough that a loaded machine does not fail a test about composition,
@@ -161,6 +163,8 @@ struct Watched {
     /// Whether the process behind this one has stopped reading, so that a write
     /// runs out of patience with the bytes already gone from crucible's hands.
     deafened: AtomicBool,
+    /// Optional lifecycle evidence for the audit transport fixture.
+    audit: Mutex<Option<(SandboxId, crucible_core::SandboxAudit)>>,
 }
 
 impl Watched {
@@ -259,6 +263,16 @@ impl Fake {
         if !self.reaped {
             self.reaped = true;
             self.watched.ended.fetch_add(1, Ordering::Relaxed);
+            if let Some((id, audit)) = self.watched.audit.lock().unwrap().take() {
+                audit
+                    .record(
+                        id,
+                        crucible_core::SandboxFactKind::Cleanup(
+                            crucible_core::SandboxCleanup::Complete,
+                        ),
+                    )
+                    .unwrap();
+            }
         }
     }
 }

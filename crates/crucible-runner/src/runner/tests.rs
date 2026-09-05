@@ -60,6 +60,7 @@ mod attribution;
 mod compaction;
 mod context;
 mod lifecycle;
+mod lifecycle_audit;
 mod outcome;
 mod pick_up;
 mod preserved;

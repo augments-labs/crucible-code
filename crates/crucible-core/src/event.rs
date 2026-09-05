@@ -59,6 +59,15 @@ pub enum TurnError {
         cleanup: ToolsetError,
     },
 
+    /// Work failed and its bounded sandbox audit could not be delivered either.
+    #[error("{primary}; sandbox audit also failed: {audit}")]
+    SandboxAudit {
+        /// The failure that ended the work or cleanup.
+        primary: Box<TurnError>,
+        /// The independent audit failure, preserving its typed cause.
+        audit: ToolError,
+    },
+
     /// The model asked for a tool the user refused.
     #[error("{0} was not allowed")]
     Refused(Box<str>),

@@ -18,8 +18,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::{
-    Ancestry, Approved, Cancel, RunId, Sensitivity, TOOL_RESULT_MIN_BYTES, Tool, ToolArgs,
-    ToolCall, ToolEffect, ToolError, ToolOutput, ToolOutputRetention, ToolSchema,
+    Ancestry, Approved, Cancel, RunId, SandboxAudit, SandboxAuditError, SandboxAuditRegistry,
+    Sensitivity, TOOL_RESULT_MIN_BYTES, Tool, ToolArgs, ToolCall, ToolEffect, ToolError, ToolId,
+    ToolOutput, ToolOutputRetention, ToolSchema,
 };
 
 /// The most bytes a provider-visible tool name may retain.
@@ -56,13 +57,15 @@ pub const TOOL_SNAPSHOT_BYTES: usize = 16 * 1024 * 1024;
 /// The run-scoped capabilities a live toolset may use while materializing.
 ///
 /// Deliberately narrower than the runner's context: discovery and cleanup can
-/// observe cancellation and a monotonic deadline, but cannot emit arbitrary
+/// observe cancellation and a monotonic deadline, and collect fixed-attribution
+/// sandbox facts for the runner to journal, but cannot emit arbitrary
 /// run events, steer the agent, mutate permission state, or reach a session.
 #[derive(Clone)]
 pub struct ToolsetContext {
     ancestry: Ancestry,
     cancel: Cancel,
     deadline: Option<Instant>,
+    sandbox_audits: SandboxAuditRegistry,
 }
 
 impl ToolsetContext {
@@ -73,7 +76,25 @@ impl ToolsetContext {
             ancestry,
             cancel,
             deadline,
+            sandbox_audits: SandboxAuditRegistry::new(),
         }
+    }
+
+    /// Shares the host's bounded owner for current and late sandbox facts.
+    #[must_use]
+    pub fn with_sandbox_audits(mut self, audits: SandboxAuditRegistry) -> Self {
+        self.sandbox_audits = audits;
+        self
+    }
+
+    /// Registers a collector under this lifecycle's fixed run ancestry.
+    ///
+    /// # Errors
+    ///
+    /// Invalid call identities, unavailable collectors, and a full registry
+    /// are refused before a sandbox request is prepared.
+    pub fn sandbox_audit(&self, call: ToolId) -> Result<SandboxAudit, SandboxAuditError> {
+        self.sandbox_audits.collector(self.ancestry, call)
     }
 
     /// The run this materialization belongs to.
@@ -107,6 +128,7 @@ impl fmt::Debug for ToolsetContext {
             .field("ancestry", &self.ancestry)
             .field("cancelled", &self.cancel.requested())
             .field("deadline", &self.deadline)
+            .field("sandbox_audits", &self.sandbox_audits)
             .finish()
     }
 }
