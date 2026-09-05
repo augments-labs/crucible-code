@@ -784,6 +784,30 @@ fn a_click_on_the_transcript_names_the_line_under_it() {
 }
 
 #[test]
+fn a_click_on_any_row_of_a_cut_result_names_the_row_that_offered_it() {
+    // A result long enough to wrap is laid as several rows wearing the cut
+    // slot, and the offer to open it was kept against the first. A reader
+    // pointing at the second row of the sentence is pointing at the sentence,
+    // so every row of it answers with the first — and the rows either side of
+    // the result, which do not wear the slot, still answer for themselves.
+    let mut drawn = Drawn::new(40, 10);
+    drawn.commit("the call").unwrap();
+    let offered = drawn.lines();
+    drawn
+        .present(&[
+            Row::new().then(Slot::Cut, "the first row of what came back"),
+            Row::new().then(Slot::Cut, "and the second row of it"),
+        ])
+        .unwrap();
+    drawn.commit("the answer").unwrap();
+
+    assert_eq!(drawn.aimed(0), Some(Aimed::Line(offered - 1)));
+    assert_eq!(drawn.aimed(1), Some(Aimed::Line(offered)));
+    assert_eq!(drawn.aimed(2), Some(Aimed::Line(offered)));
+    assert_eq!(drawn.aimed(3), Some(Aimed::Line(offered + 2)));
+}
+
+#[test]
 fn a_click_below_the_last_line_names_nothing() {
     let mut drawn = Drawn::new(40, 10);
     drawn.commit("only line").unwrap();

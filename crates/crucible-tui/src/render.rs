@@ -1402,6 +1402,11 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// `None` for a row in a band nothing is drawn in, and for one below the
     /// last line the transcript is showing.
+    ///
+    /// A line of a result that was written down over several is answered as
+    /// the first of them: the offer to open the result was made on that one,
+    /// and a reader pointing at the second row of a sentence is pointing at the
+    /// sentence.
     #[must_use]
     pub fn aimed(&self, at: usize) -> Option<Aimed> {
         let bands = self.bands();
@@ -1411,7 +1416,7 @@ impl<T: Terminal> Renderer<T> {
             return self
                 .record
                 .at(into, bands.transcript.len())
-                .map(Aimed::Line);
+                .map(|line| Aimed::Line(self.record.heads(line)));
         }
 
         if bands.turn.contains(&at) {

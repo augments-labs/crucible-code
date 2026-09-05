@@ -359,9 +359,9 @@ impl Row {
     /// test picturing a component has to see the slot the component *chose*,
     /// where paint shows the hue a palette settled on for one terminal — so
     /// this is how [`crate::dump`] writes a run's job into the picture beside
-    /// the run. Tests only: shipped code has a palette in hand and asks for
-    /// paint.
-    #[cfg(test)]
+    /// the run. Shipped code has a palette in hand and asks for paint; the one
+    /// exception is a table, which folds a cell through a row and has to hand
+    /// the pieces back to the scanner as the runs they are.
     pub(crate) fn spans(&self) -> impl Iterator<Item = (Slot, &str)> {
         self.0.iter().map(|span| (span.slot, span.text.as_str()))
     }

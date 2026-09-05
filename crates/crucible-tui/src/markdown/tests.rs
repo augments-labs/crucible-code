@@ -362,10 +362,7 @@ fn a_link_is_its_words_carrying_the_address_rather_than_showing_it() {
         said.iter().map(|(slot, ..)| *slot).collect::<Vec<_>>(),
         [Slot::Plain, Slot::Link, Slot::Plain]
     );
-    assert_eq!(
-        points(&said),
-        [("the guide", "https://example.com/guide")]
-    );
+    assert_eq!(points(&said), [("the guide", "https://example.com/guide")]);
 }
 
 #[test]
@@ -427,11 +424,7 @@ fn a_link_split_across_deltas_is_still_one_link() {
             said.push((slot, text.to_owned()));
         });
 
-        assert_eq!(
-            drawn(&said),
-            "see the guide now",
-            "split at {at}"
-        );
+        assert_eq!(drawn(&said), "see the guide now", "split at {at}");
     }
 }
 
@@ -719,9 +712,12 @@ fn a_table_the_window_cannot_hold_gives_up_its_widest_column_first() {
         16,
     );
 
+    // The cell the column no longer holds is wrapped inside it rather than cut:
+    // what a column gives up is width, never words.
     assert_eq!(
         drawn(&said),
-        "a │ a very long…\n\
+        "a │ a very long \n\
+         \u{20} │ cell indeed \n\
          ──┼─────────────\n\
          b │ c           \n\n"
     );
@@ -731,6 +727,25 @@ fn a_table_the_window_cannot_hold_gives_up_its_widest_column_first() {
     for row in drawn(&said).lines().filter(|row| !row.is_empty()) {
         assert_eq!(crate::width::columns(row), 16, "{row:?}");
     }
+}
+
+#[test]
+fn a_wrapped_header_cell_is_the_header_on_every_line_of_it() {
+    let said = narrowed("| a | one two |\n| --- | --- |\n| b | c |\n\n", 9);
+    let header: Vec<&str> = said
+        .iter()
+        .filter(|(slot, text)| *slot == Slot::Strong && !text.trim().is_empty())
+        .map(|(_, text)| text.as_str())
+        .collect();
+
+    assert_eq!(header, ["a", "one", "two"]);
+    assert_eq!(
+        drawn(&said),
+        "a │ one  \n\
+         \u{20} │ two  \n\
+         ──┼──────\n\
+         b │ c    \n\n"
+    );
 }
 
 #[test]
@@ -1280,7 +1295,10 @@ fn the_word_saying_what_a_number_counts_is_part_of_the_reference() {
 
         assert_eq!(wrote(&said), answer, "{answer:?}");
         assert_eq!(
-            points(&said).iter().map(|(words, _)| *words).collect::<Vec<_>>(),
+            points(&said)
+                .iter()
+                .map(|(words, _)| *words)
+                .collect::<Vec<_>>(),
             [words],
             "{answer:?}"
         );
@@ -1295,7 +1313,10 @@ fn a_word_that_only_ends_in_a_lead_is_not_one() {
     assert_eq!(wrote(&said), "run prepr #12 first");
     assert_eq!(
         points(&said),
-        [("#12", "https://github.com/augments-labs/crucible-code/issues/12")]
+        [(
+            "#12",
+            "https://github.com/augments-labs/crucible-code/issues/12"
+        )]
     );
 }
 

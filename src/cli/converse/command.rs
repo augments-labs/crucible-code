@@ -739,14 +739,20 @@ fn moded<T: Terminal>(
     Ok(())
 }
 
-/// Says one line back, quietly, clipped to the window it is said in.
+/// Says one thing back, quietly, wrapped to the window it is said in.
 ///
 /// What `/login` and `/logout` answer with when there is one thing to say: a
-/// credential was stored, removed, or left alone with the reason why.
+/// credential was stored, removed, or left alone with the reason why. Wrapped
+/// rather than cut, because the reason is at the end of the sentence and is
+/// the part somebody asked for; the caller that hangs the answer under the
+/// command indents whatever ran over.
 fn say<T: Terminal>(renderer: &mut Renderer<T>, said: &str) -> Result<(), Fatal> {
-    let row = Row::new().then(Slot::Quiet, clip(said, renderer.columns()));
+    let rows: Vec<Row> = fold(said, renderer.columns())
+        .into_iter()
+        .map(|part| Row::new().then(Slot::Quiet, part))
+        .collect();
 
-    Ok(renderer.present(&[row])?)
+    Ok(renderer.present(&rows)?)
 }
 
 /// A thing and what is said about it, parted by the mark that says they are two.

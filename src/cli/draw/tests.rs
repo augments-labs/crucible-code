@@ -85,7 +85,18 @@ fn unicode() -> Glyphs {
 /// it: how much of a wide one a result may take is the style's answer, and the
 /// row takes its own marks off whatever that leaves.
 fn hung(output: &ToolOutput, window: usize, style: Style) -> String {
-    finished(output, beyond(output), window, style).text()
+    finished(output, beyond(output), window, style)
+        .iter()
+        .map(Row::text)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The one row a result short enough for one takes.
+fn one(output: &ToolOutput, window: usize, style: Style) -> Row {
+    let rows = finished(output, beyond(output), window, style);
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    rows.into_iter().next().unwrap_or_default()
 }
 
 /// One tool answering with `text`, drawn and held the way a turn does both.
@@ -178,6 +189,18 @@ fn committed(said: &str, window: usize, style: Style) -> String {
     returned(&mut renderer, said, style).expect("the call to commit");
 
     renderer.terminal().written().to_string()
+}
+
+/// The rows the window shows once the line of a call has settled, trailing
+/// blanks dropped: what [`committed`] writes, read back as a picture rather than
+/// as the bytes that painted it.
+fn pictured(said: &str, window: usize, style: Style) -> Vec<String> {
+    let mut renderer = Renderer::new(Recording::new(window, 24));
+    renderer.wears(style.palette());
+
+    returned(&mut renderer, said, style).expect("the call to commit");
+
+    renderer.terminal().picture().said()
 }
 
 #[test]
@@ -301,13 +324,102 @@ fn a_tool_the_model_names_with_underscores_is_written_as_one_word() {
 }
 
 #[test]
-fn a_long_summary_is_clipped_rather_than_wrapped() {
+fn a_long_summary_is_cut_on_the_footing_which_is_redrawn_every_frame() {
     let long = "x".repeat(200);
 
     let line = words(&long, WIDE, Style::plain()).text();
 
     assert!(line.ends_with('…'), "{line}");
     assert!(line.chars().count() <= args(), "{line}");
+}
+
+#[test]
+fn a_long_call_line_is_wrapped_rather_than_cut_once_it_has_settled() {
+    // The footing above is redrawn every frame and has one row to do it in;
+    // the line the call settles on is written once, so it has as many rows as
+    // its words take. Nothing is lost at the end of it — which is where the
+    // arguments that say what the call was actually for tend to be.
+    let long = format!(
+        "Bash({})",
+        (1..=40)
+            .map(|n| format!("w{n}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+
+    let rows = pictured(&long, WIDE, Style::plain());
+    let whole = rows.join("\n");
+
+    assert!(!whole.contains('…'), "{whole}");
+    assert!(whole.contains("w40)"), "{whole}");
+    assert!(rows.len() > 1, "{whole}");
+}
+
+#[test]
+fn the_rows_a_call_line_wraps_onto_are_indented_under_its_words() {
+    let long = format!(
+        "Bash({})",
+        (1..=40)
+            .map(|n| format!("w{n}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+
+    let rows = pictured(&long, WIDE, Style::plain());
+    let mut rows = rows.iter();
+    let first = rows.next().map(String::as_str).unwrap_or_default();
+    let indent = first
+        .find("Bash")
+        .and_then(|at| first.get(..at))
+        .map(crucible_tui::columns)
+        .unwrap_or_default();
+
+    assert!(indent > 0, "{first:?}");
+    for row in rows {
+        assert!(row.starts_with(&" ".repeat(indent)), "{row:?}");
+        assert!(!row.trim_start().is_empty(), "{row:?}");
+    }
+}
+
+#[test]
+fn a_long_result_is_wrapped_and_still_offers_the_rest() {
+    // The first line of a result, wrapped to the room, with the offer on the
+    // end of the last row of it — and the whole of the line there, because a
+    // reader deciding whether to open a result decides on what it said.
+    let first = (1..=30)
+        .map(|n| format!("word{n}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let output = ToolOutput::ok(format!("{first}\ntwo\nthree"));
+
+    let text = hung(&output, WIDE, Style::plain());
+
+    assert!(!text.contains('…'), "{text}");
+    assert!(text.contains("word30"), "{text}");
+    assert!(text.ends_with("(+2 lines · ctrl+o to expand)"), "{text}");
+    assert!(text.lines().count() > 1, "{text}");
+    for row in text.lines().skip(1) {
+        assert!(row.starts_with("    "), "{row:?}");
+    }
+}
+
+#[test]
+fn every_row_of_a_wrapped_result_says_the_result_was_cut() {
+    // The light under the pointer and the click that opens it both run along
+    // the rows wearing the cut slot, so a row of the result that did not wear
+    // it would be a row the reader can point at and get nothing from.
+    let first = (1..=30)
+        .map(|n| format!("word{n}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let output = ToolOutput::ok(format!("{first}\ntwo\nthree"));
+
+    let rows = finished(&output, beyond(&output), WIDE, Style::plain());
+
+    assert!(rows.len() > 1, "{rows:?}");
+    for row in &rows {
+        assert!(row.kinds().any(|slot| slot == Slot::Cut), "{row:?}");
+    }
 }
 
 #[test]
@@ -385,7 +497,7 @@ fn a_cut_result_says_it_is_one_by_the_slot_its_words_are_in() {
     // a time and for the whole screen at once — this row's job is to say which
     // run of it is the part a reader can have more of.
     let output = ToolOutput::ok("one\ntwo\nthree");
-    let row = finished(&output, beyond(&output), WIDE, Style::plain());
+    let row = one(&output, WIDE, Style::plain());
 
     // The slots in the order the row asked for them, which is what says *which*
     // run carries what: the indent, the corner, its ordinary separator, the
@@ -412,10 +524,16 @@ fn a_window_too_narrow_for_the_offer_still_says_the_result_was_cut() {
     // cut: the key still works, and a row that dropped the slot with it would
     // say the whole result is there.
     let output = ToolOutput::ok("one\ntwo\nthree");
-    let row = finished(&output, beyond(&output), 24, Style::plain());
+    let rows = finished(&output, beyond(&output), 24, Style::plain());
+    let text = hung(&output, 24, Style::plain());
 
-    assert!(!row.text().contains("ctrl+o"), "{row:?}");
-    assert!(row.kinds().any(|slot| slot == Slot::Cut), "{row:?}");
+    assert!(!text.contains("ctrl+o"), "{text:?}");
+    assert!(
+        rows.iter()
+            .flat_map(Row::kinds)
+            .any(|slot| slot == Slot::Cut),
+        "{rows:?}"
+    );
 }
 
 #[test]
@@ -425,7 +543,7 @@ fn a_row_with_nothing_cut_lights_nothing() {
     // whole on the screen above it — and the words go down as quiet as any
     // other line, which is what leaves the cut ones standing out.
     let output = ToolOutput::ok("done");
-    let row = finished(&output, beyond(&output), WIDE, Style::plain());
+    let row = one(&output, WIDE, Style::plain());
 
     assert!(!row.kinds().any(|slot| slot == Slot::Accent), "{row:?}");
     assert!(!row.kinds().any(|slot| slot == Slot::Cut), "{row:?}");
@@ -498,20 +616,49 @@ fn a_clipped_line_stays_inside_the_window_in_both_glyph_sets() {
 
 #[test]
 fn a_call_line_stays_inside_the_window_mark_and_all() {
-    // The mark and the space after it are columns of the row, so a line clipped
-    // to the whole window and then given a mark is two columns past it. Both
-    // sets and both marks, since the ascii one is a different width and the
-    // ellipsis behind it is three columns rather than one.
+    // The mark and the space after it are columns of the row, so a line
+    // wrapped to the whole window and then given a mark is two columns past
+    // it. Both sets and both marks, since the ascii one is a different width.
+    // Nothing is lost either: a window too narrow for one word still gets
+    // every character of it, one row at a time.
     let long = format!("Read({})", "x".repeat(200));
 
     for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
         for window in [1, 2, 3, 4, 8, 40, WIDE] {
-            let written = committed(&long, window, Style::drawn(glyphs));
+            let rows = pictured(&long, window, Style::drawn(glyphs));
 
-            for row in written.lines().map(|row| row.trim_end_matches('\r')) {
+            for row in &rows {
                 assert!(
                     crucible_tui::columns(row) <= window,
                     "{glyphs:?} at {window}: {row:?}"
+                );
+            }
+            // A window of 24 rows holds only so much of a line wrapped one
+            // character at a time, so what is counted is what a window with
+            // room for the whole of it shows.
+            if window >= 40 {
+                let whole = rows.join("");
+                assert_eq!(
+                    whole.matches('x').count(),
+                    200,
+                    "{glyphs:?} at {window}: {rows:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_result_row_stays_inside_the_window_whatever_the_window() {
+    let output = ToolOutput::ok(format!("{}\nmore", "y".repeat(300)));
+
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        for window in [1, 2, 4, 8, 12, 40, WIDE] {
+            for row in finished(&output, beyond(&output), window, Style::drawn(glyphs)) {
+                assert!(
+                    row.columns() <= window.max(columns(glyphs.called()) + 4),
+                    "{glyphs:?} at {window}: {:?}",
+                    row.text()
                 );
             }
         }
@@ -1333,7 +1480,7 @@ fn ending(called: &str, said: &str, code: Option<i32>, columns: usize) -> String
     )
     .expect("the ending to draw");
 
-    renderer.terminal().written().to_string()
+    renderer.terminal().picture().said().join("\n")
 }
 
 /// The same, for a call that said nothing about itself and exited cleanly.
@@ -1381,7 +1528,9 @@ fn a_command_long_enough_to_fill_the_row_still_says_how_it_ended() {
     // The failure this is written against: the sentence was clipped whole, so a
     // command somebody typed at length took every column and what the row exists
     // to report — how it ended, how much it printed — was the part cut off. The
-    // count under the box had gone down and nothing on screen said why.
+    // count under the box had gone down and nothing on screen said why. Now the
+    // sentence wraps, so the end of the command is there as well as the end of
+    // the sentence, and the rows after the first hang under the words.
     let said = ended_on(
         "for i in $(seq 1 120); do printf 'tick %d/120\\n' \"$i\"; sleep 1; done; echo complete",
         80,
@@ -1390,7 +1539,11 @@ fn a_command_long_enough_to_fill_the_row_still_says_how_it_ended() {
     assert!(said.contains("exit status 0"), "{said}");
     assert!(said.contains("120 lines"), "{said}");
     assert!(said.contains("Bash(for i in"), "{said}");
-    assert!(said.contains(unicode().ellipsis()), "{said}");
+    assert!(said.contains("echo complete)"), "{said}");
+    assert!(!said.contains(unicode().ellipsis()), "{said}");
+    for row in said.lines().skip(1) {
+        assert!(row.starts_with("  "), "{row:?}");
+    }
 }
 
 #[test]
@@ -1406,10 +1559,10 @@ fn a_command_the_row_has_room_for_is_written_out_whole() {
 
 #[test]
 fn a_window_with_no_room_for_the_words_either_still_fits_the_window() {
-    // The tail is kept ahead of the command, and a window narrower than the
-    // tail alone has room for neither. What may not happen is a row wider than
-    // the window: the terminal would wrap it, and the row under it would be a
-    // row further down than every live tail counted on.
+    // A window narrower than one word of the sentence gets it a character at a
+    // time. What may not happen is a row wider than the window: the terminal
+    // would wrap it, and the row under it would be a row further down than
+    // every live tail counted on.
     for columns in 1..40 {
         let said = ended_on("npm run dev", columns);
         let widest = said

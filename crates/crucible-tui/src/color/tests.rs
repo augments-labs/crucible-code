@@ -828,8 +828,20 @@ fn a_link_is_the_accent_with_a_line_under_it_in_every_theme() {
         let tones = theme.tones();
         let underlined = |sequence: &str| sequence.replacen("\x1b[", "\x1b[4;", 1);
 
-        assert_eq!(tones.link.exact, underlined(tones.accent.exact), "{theme:?}");
-        assert_eq!(tones.link.indexed, underlined(tones.accent.indexed), "{theme:?}");
-        assert_eq!(tones.link.basic, underlined(tones.accent.basic), "{theme:?}");
+        assert_eq!(
+            tones.link.exact,
+            underlined(tones.accent.exact),
+            "{theme:?}"
+        );
+        assert_eq!(
+            tones.link.indexed,
+            underlined(tones.accent.indexed),
+            "{theme:?}"
+        );
+        assert_eq!(
+            tones.link.basic,
+            underlined(tones.accent.basic),
+            "{theme:?}"
+        );
     }
 }

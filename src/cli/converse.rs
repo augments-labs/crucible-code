@@ -651,7 +651,7 @@ pub(crate) fn converse<T: Terminal>(
     if let Some(problem) = &problem
         && !held.told
     {
-        draw::trouble(renderer, problem, terms.style())?;
+        draw::trouble(renderer, problem)?;
     }
 
     renderer.settle()?;
@@ -672,11 +672,10 @@ pub(crate) fn converse<T: Terminal>(
 fn troubled<T: Terminal>(
     renderer: &mut Renderer<T>,
     runner: &Runner,
-    style: Style,
     told: &mut bool,
 ) -> Result<(), Fatal> {
     if !*told && let Some(problem) = runner.session().trouble() {
-        draw::trouble(renderer, &problem, style)?;
+        draw::trouble(renderer, &problem)?;
         *told = true;
     }
 
@@ -754,7 +753,7 @@ fn ran<T: Terminal>(
     let took = take(runner, renderer, terms, work, held)?;
     let style = terms.style();
 
-    troubled(renderer, &took.runner, style, &mut held.told)?;
+    troubled(renderer, &took.runner, &mut held.told)?;
 
     // Neither of the two that changed nothing posted anything, because neither
     // took anything: a compaction reports what it replaced, and these replaced

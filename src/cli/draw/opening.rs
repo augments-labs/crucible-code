@@ -9,9 +9,7 @@ use std::time::SystemTime;
 
 use crucible_core::Workspace;
 use crucible_runner::Recorded;
-use crucible_tui::{
-    Notice, Recent, Renderer, Row, Slot, Terminal, TerminalError, Welcome, fold,
-};
+use crucible_tui::{Notice, Recent, Renderer, Row, Slot, Terminal, TerminalError, Welcome, fold};
 
 use crate::cli::release::Newer;
 use crate::cli::style::Style;

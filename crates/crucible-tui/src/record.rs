@@ -767,6 +767,26 @@ impl Record {
         }
     }
 
+    /// The first line of the run of cut lines `at` is in, or `at` itself where
+    /// it is not in one.
+    ///
+    /// A result written down over several lines is one result, and the offer to
+    /// open it was made on the first of them. Nothing else is written down in
+    /// the middle of a result, so the run of lines wearing the cut slot around
+    /// `at` is that result and no other — the same reading the pointer's light
+    /// makes, so what lights under a click is what the click opens.
+    pub(crate) fn heads(&self, at: usize) -> usize {
+        if !self.wears(at, Slot::Cut) {
+            return at;
+        }
+
+        let mut first = at;
+        while first > self.gone && self.wears(first - 1, Slot::Cut) {
+            first -= 1;
+        }
+        first
+    }
+
     /// Move the band `by` display rows, and say whether it moved.
     ///
     /// Negative is towards the head of the session. A band that was following

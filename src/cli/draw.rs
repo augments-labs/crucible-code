@@ -278,12 +278,6 @@ pub(crate) fn gone<T: Terminal>(
         None => (glyphs.failed(), "killed".to_owned()),
     };
 
-    // The command is what gives up room, and the words after it are what the
-    // row is for. A command is as long as somebody typed it, so clipping the
-    // sentence whole is clipping the end of it — and the end is how it ended
-    // and how much it printed, which is the part nobody can go back and ask
-    // for. So the tail is measured first and kept, and the command is cut to
-    // what is left.
     let tail = format!(
         " ended on its own {} {how} {} {} lines",
         glyphs.dot(),
@@ -300,17 +294,19 @@ pub(crate) fn gone<T: Terminal>(
         ended.said.trim().to_owned()
     };
 
-    let room = style.output(renderer.columns()).saturating_sub(2);
-    let called = clipped(named, room.saturating_sub(columns(&tail)), glyphs);
-
-    // Clipped again, because a window narrower than the tail alone has room
-    // for neither and the row still may not be wider than the window it is
-    // drawn on.
-    let said = clipped(format!("{called}{tail}"), room, glyphs);
+    // Wrapped rather than cut, because the end of the sentence is how the
+    // command ended and how much it printed, which is the part nobody can go
+    // back and ask for — and a command is as long as somebody typed it.
+    let window = renderer.columns();
+    let lead = Row::plain(format!("{mark} "));
+    let room = style
+        .output(window)
+        .min(window.saturating_sub(lead.columns()));
+    let rows = hung_off(lead, &Row::plain(flattened(format!("{named}{tail}"))), room);
 
     renderer.settle()?;
     renderer.apart()?;
-    renderer.commit(&format!("{mark} {said}"))
+    renderer.present(&rows)
 }
 
 /// Says that there is nothing to ask, where a prompt was typed anyway.
@@ -534,14 +530,11 @@ pub(crate) fn answered<T: Terminal>(
 pub(crate) fn trouble<T: Terminal>(
     renderer: &mut Renderer<T>,
     problem: &str,
-    style: Style,
 ) -> Result<(), TerminalError> {
-    let width = style.output(renderer.columns());
-
     renderer.settle()?;
     renderer.commit(&format!(
         "! this session has stopped being recorded: {}",
-        clipped(problem, width, style.glyphs())
+        flattened(problem)
     ))
 }
 
@@ -743,14 +736,55 @@ pub(crate) fn words(said: &str, window: usize, style: Style) -> Row {
         .args(window)
         .min(window.saturating_sub(columns(glyphs.called()) + 1));
 
-    let said = clipped(said, room, glyphs);
+    named(&clipped(said, room, glyphs))
+}
 
+/// A call's words in the two slots they are read in: the tool's name where the
+/// eye lands, and what it was asked to do, quieter, after it.
+///
+/// The whole of `said` and none of the layout — how much of it a row shows is
+/// the caller's: the footing cuts it to one row because it is redrawn every
+/// frame, and the settled line wraps it because it is written once.
+fn named(said: &str) -> Row {
     match said.split_once('(') {
         Some((name, about)) => Row::new()
             .then(Slot::Strong, name)
             .then(Slot::Quiet, format!("({about}")),
         None => Row::new().then(Slot::Strong, said),
     }
+}
+
+/// `words` hung off `lead`, wrapped at `room` rather than cut to it.
+///
+/// The first row is the lead with as much of the words as `room` holds after
+/// it; every row after is the rest, indented to the column the words began in,
+/// so a call or a result that ran past the window reads as one thing that went
+/// on rather than as a second thing under the first. The rows are laid, not
+/// committed, so the record does not fold them again — and each is measured
+/// against the room before it goes down, which is what keeps a laid row inside
+/// the window it is laid on.
+///
+/// A room of nothing is the lead alone: a window too narrow for one word of the
+/// sentence still says that something was said.
+fn hung_off(lead: Row, words: &Row, room: usize) -> Vec<Row> {
+    if room == 0 || words.is_empty() {
+        return vec![lead];
+    }
+
+    let indent = " ".repeat(lead.columns());
+    words
+        .fold(room)
+        .into_iter()
+        .enumerate()
+        .map(|(at, part)| {
+            let head = if at == 0 {
+                lead.clone()
+            } else {
+                Row::plain(indent.clone())
+            };
+            head.join(part)
+        })
+        .collect()
 }
 
 /// Writes the line of a call that has stopped being live.
@@ -764,18 +798,23 @@ pub(crate) fn returned<T: Terminal>(
     style: Style,
 ) -> Result<(), TerminalError> {
     let window = renderer.columns();
-    let words = words(said, window, style);
+    let glyphs = style.glyphs();
+    let words = named(&flattened(said));
 
     renderer.settle()?;
     renderer.apart()?;
 
-    let mut row = Row::new().then(Slot::Accent, style.glyphs().called());
-    if !words.is_empty() {
-        row.push(Slot::Plain, " ");
-        row = row.join(words);
+    let mark = Row::new().then(Slot::Accent, glyphs.called());
+    if words.is_empty() {
+        return renderer.present(&[mark]);
     }
 
-    renderer.present(&[row])
+    let lead = mark.then(Slot::Plain, " ");
+    let room = style
+        .args(window)
+        .min(window.saturating_sub(lead.columns()));
+
+    renderer.present(&hung_off(lead, &words, room))
 }
 
 /// Writes the one line a folded run of calls comes to.
@@ -804,22 +843,23 @@ pub(crate) fn gathered<T: Terminal>(
 ) -> Result<usize, TerminalError> {
     let glyphs = style.glyphs();
     let window = renderer.columns();
-    let mark = glyphs.called();
-    let room = window.saturating_sub(columns(mark) + 1);
 
     renderer.settle()?;
     renderer.apart()?;
 
-    let row = Row::new()
-        .then(Slot::Accent, mark)
-        .then(Slot::Plain, " ")
-        .then(Slot::Cut, clipped(said, room, glyphs));
+    let lead = Row::new()
+        .then(Slot::Accent, glyphs.called())
+        .then(Slot::Plain, " ");
+    let room = window.saturating_sub(lead.columns());
+    let rows = hung_off(lead, &Row::new().then(Slot::Cut, flattened(said)), room);
 
-    renderer.present(&[row])?;
+    renderer.present(&rows)?;
 
-    // Read after the row and not before it, because the row a result answers to
-    // is the one that has just gone down.
-    Ok(renderer.lines().saturating_sub(1))
+    // Read after the rows and not before them, because the row a result answers
+    // to is the first of the ones that have just gone down: a sentence wrapped
+    // over several is one row of the record as far as a click is concerned, and
+    // the record itself sends a click on any of them to the first.
+    Ok(renderer.lines().saturating_sub(rows.len()))
 }
 
 /// A call as a row spells it, from the tool's own name and what the call was
@@ -878,17 +918,17 @@ pub(crate) fn pascal(name: &str) -> String {
 /// in its answer to the model. Both are true of the same call, and only one is
 /// about the file: how many replacements `edit` made is a fact about the
 /// instruction it was sent, and the reader is looking at what is in the file.
-fn finished(output: &ToolOutput, beyond: usize, window: usize, style: Style) -> Row {
+fn finished(output: &ToolOutput, beyond: usize, window: usize, style: Style) -> Vec<Row> {
     let glyphs = style.glyphs();
-    let mut row = Row::new().then(Slot::Plain, " ".repeat(columns(glyphs.called()) + 1));
-    row.push_structural(Slot::Quiet, glyphs.hangs());
-    row.push(Slot::Quiet, " ");
+    let mut lead = Row::new().then(Slot::Plain, " ".repeat(columns(glyphs.called()) + 1));
+    lead.push_structural(Slot::Quiet, glyphs.hangs());
+    lead.push(Slot::Quiet, " ");
 
     if output.is_failed() {
-        row.push(Slot::Plain, format!("{} ", glyphs.failed()));
+        lead.push(Slot::Plain, format!("{} ", glyphs.failed()));
     }
 
-    // Measured off the row itself rather than worked out from the glyphs a
+    // Measured off the lead itself rather than worked out from the glyphs a
     // second time: the corner, the space after it and the cross a failure wears
     // are the window's columns rather than the words', and a row that spends
     // them without taking them off is one the terminal wraps and this process
@@ -896,50 +936,56 @@ fn finished(output: &ToolOutput, beyond: usize, window: usize, style: Style) -> 
     // answer; how much is there at all is the window's, and it wins.
     let room = style
         .output(window)
-        .min(window.saturating_sub(row.columns()));
+        .min(window.saturating_sub(lead.columns()));
 
     if let Some(counts) = changed(output) {
         counted(
-            &mut row,
+            &mut lead,
             counts,
             output.diff().map_or(0, Diff::dropped),
             room,
         );
-        return row;
+        return vec![lead];
     }
 
-    let said = summary(output.text());
+    let said = flattened(summary(output.text()));
 
     if beyond == 0 {
-        row.push(Slot::Quiet, clipped(said, room, glyphs));
-        return row;
+        return hung_off(lead, &Row::new().then(Slot::Quiet, said), room);
     }
 
-    // The tail comes off the room before the line does. It is the part of the
-    // row a reader is looking for — how much was cut, and the key that gives it
-    // back — so a first line long enough to push it past the window would be
-    // hiding the offer behind the thing being offered.
+    // The line goes down whole, wrapped to the room, and the offer after it —
+    // on the end of the last row where that row has room for it, and on a row
+    // of its own where it has not. It is the part of the row a reader is looking
+    // for, how much was cut and the key that gives it back, so it is never
+    // dropped to make the line fit; only a window too narrow for the offer
+    // alone goes without, and the key it names works whether or not the row had
+    // room to mention it. The cut slot stays either way, because what that slot
+    // says is that the result was cut, and a narrow window did not make it
+    // whole.
+    let indent = lead.columns();
+    let mut rows = hung_off(lead, &Row::new().then(Slot::Cut, said), room);
     let (counted, opens, shut) = offer(beyond, glyphs);
     let tail = columns(&counted)
         .saturating_add(columns(opens))
         .saturating_add(columns(shut));
 
-    // And where the window is too narrow for even that, the line is what the
-    // row keeps: an offer alone says nothing about what came back, and the key
-    // it names works whether or not the row had room to mention it. It keeps
-    // the cut slot with it, because what that slot says is that the result was
-    // cut, and a narrow window did not make it whole.
-    if tail >= room {
-        row.push(Slot::Cut, clipped(said, room, glyphs));
-        return row;
+    if tail > room {
+        return rows;
     }
 
-    row.push(Slot::Cut, clipped(said, room.saturating_sub(tail), glyphs));
-    row.push(Slot::Quiet, counted);
-    row.push(Slot::Accent, opens);
-    row.push(Slot::Quiet, shut);
+    let mut offered = match rows.last() {
+        Some(last) if last.columns().saturating_sub(indent).saturating_add(tail) <= room => {
+            rows.pop().unwrap_or_default()
+        }
+        _ => Row::plain(" ".repeat(indent)),
+    };
+    offered.push(Slot::Quiet, counted);
+    offered.push(Slot::Accent, opens);
+    offered.push(Slot::Quiet, shut);
+    rows.push(offered);
 
-    row
+    rows
 }
 
 /// One human-facing line from a tool's complete result.
@@ -1090,7 +1136,7 @@ fn offer(beyond: usize, glyphs: Glyphs) -> (String, &'static str, &'static str) 
 /// results as far as a reader is concerned.
 pub(crate) fn finished_rows(output: &ToolOutput, window: usize, style: Style) -> Vec<Row> {
     let glyphs = style.glyphs();
-    let mut rows = vec![finished(output, beyond(output), window, style)];
+    let mut rows = finished(output, beyond(output), window, style);
 
     if let Some(diff) = output.diff().filter(|diff| !diff.is_empty()) {
         rows.extend(block(diff, window, glyphs));

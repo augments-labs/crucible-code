@@ -15,6 +15,7 @@
 
 use crate::color::Slot;
 use crate::glyphs::Glyphs;
+use crate::row::Row;
 use crate::width;
 
 /// How much of a block may be held before it is written out as itself.
@@ -287,6 +288,11 @@ struct Laid {
 impl Laid {
     /// Draws one row of cells.
     ///
+    /// On as many lines as its tallest cell needs: a cell wider than its column
+    /// is wrapped inside the column rather than cut, and the cells beside it
+    /// are padded down to meet it, so the bars run unbroken and nothing a cell
+    /// said is lost to the width of the window.
+    ///
     /// `worn`, where it is given, is the slot every run of the row takes
     /// whatever its own markers said. That is the header, and only the header.
     fn row(
@@ -296,30 +302,42 @@ impl Laid {
         say: &mut dyn FnMut(Slot, &str, Option<&str>),
     ) {
         let empty = Cell::new();
+        let wrapped: Vec<Vec<Cell>> = self
+            .widths
+            .iter()
+            .enumerate()
+            .map(|(at, room)| folded(cells.get(at).unwrap_or(&empty), *room))
+            .collect();
+        let tall = wrapped.iter().map(Vec::len).max().unwrap_or(1).max(1);
 
-        for (at, room) in self.widths.iter().enumerate() {
-            if at > 0 {
-                say(Slot::Quiet, " ", None);
-                say(Slot::Quiet, self.glyphs.vertical(), None);
-                say(Slot::Quiet, " ", None);
+        for line in 0..tall {
+            for (at, room) in self.widths.iter().enumerate() {
+                if at > 0 {
+                    say(Slot::Quiet, " ", None);
+                    say(Slot::Quiet, self.glyphs.vertical(), None);
+                    say(Slot::Quiet, " ", None);
+                }
+
+                let cell = wrapped
+                    .get(at)
+                    .and_then(|parts| parts.get(line))
+                    .unwrap_or(&empty);
+                let side = self.sides.get(at).copied().unwrap_or_default();
+                let (before, after) = side.around(wide(cell), *room);
+
+                // The padding is the table's rather than the cell's, so it goes
+                // out quiet with the bars either side of it. Which slot a space
+                // wears decides nothing on screen and everything about how a
+                // row reads back in a test.
+                pad(before, say);
+                for (slot, text) in cell {
+                    say(worn.unwrap_or(*slot), text, None);
+                }
+                pad(after, say);
             }
 
-            let cell = clipped(cells.get(at).unwrap_or(&empty), *room, self.glyphs);
-            let side = self.sides.get(at).copied().unwrap_or_default();
-            let (before, after) = side.around(wide(&cell), *room);
-
-            // The padding is the table's rather than the cell's, so it goes out
-            // quiet with the bars either side of it. Which slot a space wears
-            // decides nothing on screen and everything about how a row reads
-            // back in a test.
-            pad(before, say);
-            for (slot, text) in &cell {
-                say(worn.unwrap_or(*slot), text, None);
-            }
-            pad(after, say);
+            say(Slot::Plain, "\n", None);
         }
-
-        say(Slot::Plain, "\n", None);
     }
 
     /// Draws the rule that separates the header from the body.
@@ -372,27 +390,25 @@ fn read(cell: &str, glyphs: Glyphs) -> Cell {
     runs
 }
 
-/// `cell` with at most `room` columns of it kept, and a sign where the rest was.
-fn clipped(cell: &Cell, room: usize, glyphs: Glyphs) -> Cell {
-    if wide(cell) <= room {
-        return cell.clone();
-    }
-
-    // The ellipsis is one column in both sets, as everything laid out against a
-    // column width has to be.
-    let ellipsis = glyphs.ellipsis();
-    let ceiling = room.saturating_sub(width::columns(ellipsis));
-    let mut kept = Cell::new();
-    let mut spent = 0;
-
+/// `cell` in as many lines as `room` columns hold it in, each keeping the slots
+/// it was written in.
+///
+/// Through [`Row`], because a row already knows how to fold a run of slots at
+/// the breaks plain text would take and cut a span in two without losing which
+/// slot either half was in; a table has no reason to work that out a second
+/// way. A cell that fits is one line, and an empty cell is one empty line.
+fn folded(cell: &Cell, room: usize) -> Vec<Cell> {
+    let mut row = Row::new();
     for (slot, text) in cell {
-        let text = width::clip(text, ceiling.saturating_sub(spent));
-        spent = spent.saturating_add(width::columns(text));
-        if !text.is_empty() {
-            kept.push((*slot, text.to_owned()));
-        }
+        row.push(*slot, text.as_str());
     }
-    kept.push((Slot::Quiet, ellipsis.to_owned()));
 
-    kept
+    row.fold(room)
+        .iter()
+        .map(|part| {
+            part.spans()
+                .map(|(slot, text)| (slot, text.to_owned()))
+                .collect()
+        })
+        .collect()
 }

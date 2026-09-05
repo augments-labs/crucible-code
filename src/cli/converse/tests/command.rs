@@ -737,7 +737,14 @@ fn a_command_answer_hangs_directly_under_the_line_that_asked() {
     // says something back is held to it, the refusals included.
     let hangs = plain().style().glyphs().hangs();
 
-    for command in ["/help", "/mode", "/login gemini", "/hlep", "/resume", "/mode fly"] {
+    for command in [
+        "/help",
+        "/mode",
+        "/login gemini",
+        "/hlep",
+        "/resume",
+        "/mode fly",
+    ] {
         let rows = answered(command);
         let at = rows
             .iter()
