@@ -97,6 +97,47 @@ effect rather than guest authority. The bounded TG2, TG3, and TG5 authority and
 effect checks remain a Phase 4B release gate on both supported macOS
 architectures; daemon resource-stress testing is outside that gate.
 
+## Windows setup maintenance
+
+Windows confinement uses a dedicated local account and machine firewall
+policy, so an administrator must provision them once before ordinary Crucible
+runs can use the native backend. From an Administrator PowerShell, run:
+
+```powershell
+crucible sandbox setup
+```
+
+The command does not auto-elevate and an ordinary Crucible run remains
+unelevated. If PowerShell was elevated with a different administrator account,
+name the developer account explicitly:
+
+```powershell
+crucible sandbox setup --owner 'MACHINE\person'
+```
+
+Setup creates one deterministic local sandbox account for that owner, stores
+its random password under machine-scope DPAPI in a protected HKLM record, and
+installs persistent Windows Filtering Platform rules that deny outbound IPv4
+and IPv6 connections and socket binding for that account. Re-running the
+command repairs the exact account, record, and filters. Concurrent maintenance
+for the same owner is serialized; an interrupted setup leaves bounded state
+that a later run can repair.
+
+To remove that state, use the same owner choice from an Administrator
+PowerShell:
+
+```powershell
+crucible sandbox uninstall
+```
+
+Removal disables the account before changing its firewall rules, then deletes
+the account and record. If cleanup fails, the disabled account and protected
+record remain so the command can be retried safely.
+
+This version contains the explicit maintenance boundary, while the enforcing
+Windows command launcher is still unavailable. Consequently,
+`sandbox.enabled: true` continues to refuse command execution on Windows.
+
 The exact endpoint allowlist is deliberately unsupported in this release. It
 requires a policy-bound proxy or equivalent mechanism with redirect, DNS,
 metadata, forwarding and outbound-byte enforcement. A requested exact rule is

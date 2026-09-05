@@ -1,10 +1,9 @@
-//! Entry point of the sandbox broker binary.
+//! Entry point of the platform sandbox broker binary.
 //!
-//! The broker is Linux-only: it is namespace PID 1 for one Bubblewrap-confined
-//! command. On macOS the same separately packaged, host-owned executable is the
-//! narrow pre-Seatbelt launcher: it closes inherited descriptors, installs
-//! hard limits and replaces itself with `/usr/bin/sandbox-exec`. Other uses
-//! refuse before starting a workload.
+//! On Linux the broker is namespace PID 1 for one Bubblewrap-confined command.
+//! On macOS it is the narrow pre-Seatbelt launcher. On Windows it owns explicit
+//! administrator setup state and, after setup, the restricted-account launch
+//! boundary. Every platform refuses modes owned by another platform.
 
 use std::process::ExitCode;
 
@@ -43,7 +42,20 @@ fn main() -> ExitCode {
     }
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(target_os = "windows")]
+fn main() -> ExitCode {
+    match crucible_sandbox_broker::run_windows_broker(std::env::args_os().skip(1)) {
+        Ok(message) => {
+            use std::io::Write as _;
+
+            let _ = writeln!(std::io::stdout().lock(), "{message}");
+            ExitCode::SUCCESS
+        }
+        Err(source) => refuse(&format!("{source}\n")),
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 fn main() -> ExitCode {
     refuse("crucible-sandbox-broker has no confinement role on this platform\n")
 }

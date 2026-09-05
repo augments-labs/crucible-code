@@ -2,9 +2,56 @@
 
 use std::io::{self, Read, Write};
 
+#[cfg(target_os = "windows")]
+mod windows;
+
 /// Internal macOS launcher mode. It closes inherited descriptors and applies
 /// hard limits before entering the system Seatbelt executable.
 pub const MACOS_LAUNCH_MODE: &str = "--macos-seatbelt-launch";
+
+/// Explicit elevated provisioning mode for the native Windows sandbox.
+pub const WINDOWS_SETUP_MODE: &str = "--windows-sandbox-setup";
+
+/// Explicit elevated removal mode for one native Windows sandbox identity.
+pub const WINDOWS_UNINSTALL_MODE: &str = "--windows-sandbox-uninstall";
+
+/// Read-only verification mode for the current user's Windows setup.
+pub const WINDOWS_PROBE_MODE: &str = "--windows-sandbox-probe";
+
+/// Runs one internal native-Windows broker maintenance mode.
+///
+/// # Errors
+///
+/// The mode is malformed or the requested operating-system operation fails.
+#[cfg(target_os = "windows")]
+pub fn run_windows_broker(
+    arguments: impl Iterator<Item = std::ffi::OsString>,
+) -> io::Result<String> {
+    windows::parse(arguments).and_then(windows::run)
+}
+
+/// Provisions or repairs native-Windows sandbox state for one user account.
+///
+/// `owner` defaults to the elevated process user. Supplying an account lets an
+/// administrator provision a standard user's deterministic sandbox identity.
+///
+/// # Errors
+///
+/// The process is not elevated or account, registry, DPAPI, or WFP setup fails.
+#[cfg(target_os = "windows")]
+pub fn setup_windows_sandbox(owner: Option<&std::ffi::OsStr>) -> io::Result<String> {
+    windows::setup(owner)
+}
+
+/// Removes native-Windows sandbox state for one user account.
+///
+/// # Errors
+///
+/// The process is not elevated or fail-closed policy removal cannot complete.
+#[cfg(target_os = "windows")]
+pub fn uninstall_windows_sandbox(owner: Option<&std::ffi::OsStr>) -> io::Result<String> {
+    windows::uninstall(owner)
+}
 
 /// Maximum UTF-8 bytes in one generated Seatbelt profile.
 pub const MACOS_MAX_PROFILE_BYTES: usize = 256 * 1024;

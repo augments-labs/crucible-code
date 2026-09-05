@@ -359,6 +359,7 @@ dependencies = [
  "crucible-privacy",
  "crucible-provider",
  "crucible-runner",
+ "crucible-sandbox-broker",
  "crucible-session",
  "crucible-tools",
  "crucible-tui",
@@ -445,6 +446,7 @@ version = "0.37.0"
 dependencies = [
  "rustix",
  "sha2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

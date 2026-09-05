@@ -820,6 +820,26 @@ fn resume_and_continue_cannot_be_asked_for_together() {
 }
 
 #[test]
+fn windows_sandbox_maintenance_is_an_exclusive_early_action() {
+    let setup = Cli::try_parse_from(["crucible", "sandbox", "setup", "--owner", r"MACHINE\person"])
+        .expect("targeted setup");
+    assert!(matches!(
+        setup.command,
+        Some(Command::Sandbox {
+            action: SandboxMaintenance::Setup { owner }
+        }) if owner.as_deref() == Some(std::ffi::OsStr::new(r"MACHINE\person"))
+    ));
+
+    for invalid in [
+        vec!["crucible", "sandbox", "--owner", "person"],
+        vec!["crucible", "sandbox", "setup", "uninstall"],
+        vec!["crucible", "--model", "some-model", "sandbox", "setup"],
+    ] {
+        assert!(Cli::try_parse_from(invalid).is_err());
+    }
+}
+
+#[test]
 fn resume_round_trip() {
     use crucible_runner::Session;
 

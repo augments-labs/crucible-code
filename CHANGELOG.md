@@ -119,6 +119,13 @@ change in any release with no deprecation period.
 
 ### Added
 
+- **Windows sandbox setup is explicit, repairable, and account-scoped.** Run
+  `crucible sandbox setup` once from an Administrator PowerShell to create a
+  dedicated local identity, protect its random credential with machine-scope
+  DPAPI, and install persistent outbound-deny WFP rules. Setup does not
+  auto-elevate, can target another developer with `--owner`, and
+  `crucible sandbox uninstall` disables the identity before removing it.
+
 - **macOS can now enforce the opt-in sandbox with Seatbelt.** The native
   backend denies network access and writes outside declared roots, protects
   repository metadata, closes inherited descriptors, applies the open-file
