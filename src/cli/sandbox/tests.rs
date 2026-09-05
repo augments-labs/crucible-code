@@ -110,6 +110,58 @@ fn a_ceiling_is_never_printed_without_the_claim_it_rests_on() {
 }
 
 #[test]
+fn fractional_time_ceilings_are_reported_without_rounding() {
+    let sample = Sample::new("sandbox-report-fractional-time");
+    let workspace = sample.workspace();
+    for (span, expected) in [
+        (std::time::Duration::from_nanos(1), "0.000000001s"),
+        (std::time::Duration::from_millis(1500), "1.5s"),
+        (std::time::Duration::new(60, 1000), "60.000001s"),
+        (std::time::Duration::from_mins(1), "1m"),
+        (
+            std::time::Duration::new(u64::MAX, 999_999_999),
+            "18446744073709551615.999999999s",
+        ),
+    ] {
+        let standard = SandboxPolicy::standard(&workspace).expect("policy");
+        let limits = SandboxResourceLimits {
+            command_time: Some(span),
+            session_time: Some(span),
+            ..standard.limits()
+        };
+        let policy = standard.with_limits(limits).expect("limits");
+        let capabilities = holding()
+            .with(
+                SandboxFeature::CommandTimeLimit,
+                SandboxCapability::Enforced,
+            )
+            .with(
+                SandboxFeature::SessionTimeLimit,
+                SandboxCapability::Observed,
+            );
+        let said = written(&sample, &policy, capabilities);
+        for (scope, claim) in [
+            ("per command", "enforced"),
+            (
+                "per session",
+                "observed, so it is recorded rather than imposed",
+            ),
+        ] {
+            let line = said
+                .lines()
+                .find(|line| line.contains(scope))
+                .expect("time ceiling");
+            assert!(
+                line.trim_start()
+                    .starts_with(&format!("{expected} {scope}")),
+                "{line}"
+            );
+            assert!(line.ends_with(claim), "{line}");
+        }
+    }
+}
+
+#[test]
 fn nothing_but_the_directory_that_was_asked_about_reaches_the_report() {
     // A component no digest could contain by accident and no fixed spelling in
     // the report could collide with.

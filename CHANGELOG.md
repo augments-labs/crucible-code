@@ -10,6 +10,12 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **Unsupported sandbox errors no longer recommend a removed setting.** The
+  native-backend refusal no longer suggests the rejected `sandbox.mode` key.
+
+- **Sandbox reports preserve fractional time limits.** Command and session
+  ceilings retain their exact duration instead of rounding down to whole seconds.
+
 - **A drag scrolls the transcript.** A drag resting at the top or foot of the
   transcript carries it a row at a time, and the wheel scrolls it while the
   button is held. The highlight stays on the words it began on, and a release

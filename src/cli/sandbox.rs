@@ -335,9 +335,20 @@ fn ceilings(said: &mut String, limits: SandboxResourceLimits, capabilities: &San
     }
 }
 
-/// A wall-clock span, in whole seconds, and what it is a span of.
+/// A wall-clock span without rounding, and what it is a span of.
 fn wall(span: Duration, of: &str) -> String {
-    format!("{} {of}", seconds(span.as_secs()))
+    if span.subsec_nanos() == 0 {
+        return format!("{} {of}", seconds(span.as_secs()));
+    }
+
+    // Integer fields preserve both nanoseconds and large durations; converting
+    // to floating-point seconds could round a stated ceiling to another value.
+    let fraction = format!("{:09}", span.subsec_nanos());
+    format!(
+        "{}.{}s {of}",
+        span.as_secs(),
+        fraction.trim_end_matches('0')
+    )
 }
 
 /// Whole seconds, in minutes where they divide evenly into them.
