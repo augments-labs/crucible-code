@@ -1,9 +1,27 @@
-//! The opt-in switch, its compatibility spelling, and the authority of each file.
+//! The opt-in switch and the authority of each configuration file.
 
 use crucible_core::SandboxMode;
 
 use crate::document::{Document, Origin};
 use crate::{ConfigError, Settings};
+
+#[test]
+fn sandbox_mode_is_an_unknown_key_in_every_configuration_layer() {
+    for origin in [Origin::User, Origin::Project, Origin::ProjectLocal] {
+        for mode in [r#""required""#, r#""degraded""#, r#""off""#, "true", "null"] {
+            for enabled in ["", r#""enabled":true,"#, r#""enabled":false,"#] {
+                let text = format!(r#"{{"sandbox":{{{enabled}"mode":{mode}}}}}"#);
+                let error = Document::parse(&text, "config.json", origin)
+                    .expect_err("sandbox.enabled is the only confinement setting");
+                assert!(
+                    matches!(&error, ConfigError::UnknownKey { path, .. } if &**path == "sandbox.mode"),
+                    "{origin:?}: {text}: {error}"
+                );
+                assert!(error.to_string().contains("enabled"), "{error}");
+            }
+        }
+    }
+}
 
 #[test]
 fn no_sandbox_choice_leaves_os_confinement_off() {
@@ -31,9 +49,6 @@ fn a_user_can_enable_required_confinement_or_explicitly_disable_it() {
     for (text, expected) in [
         (r#"{"sandbox":{"enabled":true}}"#, SandboxMode::Required),
         (r#"{"sandbox":{"enabled":false}}"#, SandboxMode::Off),
-        (r#"{"sandbox":{"mode":"required"}}"#, SandboxMode::Required),
-        (r#"{"sandbox":{"mode":"degraded"}}"#, SandboxMode::Degraded),
-        (r#"{"sandbox":{"mode":"off"}}"#, SandboxMode::Off),
         (
             r#"{"sandbox":{"enabled":true,"$comment":"explicit","$schema":"https://example.test/schema"}}"#,
             SandboxMode::Required,
@@ -57,62 +72,27 @@ fn enabling_does_not_accept_a_string_number_or_null() {
 }
 
 #[test]
-fn a_workspace_cannot_disable_confinement_with_either_spelling() {
+fn a_workspace_cannot_disable_confinement() {
     for origin in [Origin::Project, Origin::ProjectLocal] {
-        for text in [
-            r#"{"sandbox":{"enabled":false}}"#,
-            r#"{"sandbox":{"mode":"off"}}"#,
-            r#"{"sandbox":{"mode":"degraded"}}"#,
-        ] {
-            assert!(matches!(
-                Document::parse(text, "config.json", origin),
-                Err(ConfigError::Widening { .. })
-            ));
-        }
+        assert!(matches!(
+            Document::parse(r#"{"sandbox":{"enabled":false}}"#, "config.json", origin),
+            Err(ConfigError::Widening { path, .. }) if &*path == "sandbox.enabled"
+        ));
     }
 }
 
 #[test]
-fn workspace_requirement_wins_across_spellings_and_document_order() {
+fn workspace_requirement_wins_regardless_of_document_order() {
     for origin in [Origin::Project, Origin::ProjectLocal] {
-        for project in [
-            r#"{"sandbox":{"enabled":true}}"#,
-            r#"{"sandbox":{"mode":"required"}}"#,
+        let user = Document::sample(r#"{"sandbox":{"enabled":false}}"#, Origin::User);
+        let project = Document::sample(r#"{"sandbox":{"enabled":true}}"#, origin);
+        for documents in [
+            vec![user.clone(), project.clone()],
+            vec![project.clone(), user.clone()],
         ] {
-            for user in [
-                r#"{"sandbox":{"enabled":false}}"#,
-                r#"{"sandbox":{"mode":"degraded"}}"#,
-                r#"{"sandbox":{"mode":"off"}}"#,
-            ] {
-                let user = Document::sample(user, Origin::User);
-                let project = Document::sample(project, origin);
-                for documents in [
-                    vec![user.clone(), project.clone()],
-                    vec![project.clone(), user.clone()],
-                ] {
-                    assert_eq!(
-                        Settings::resolve(documents).sandbox_mode(),
-                        SandboxMode::Required
-                    );
-                }
-            }
-        }
-    }
-}
-
-#[test]
-fn neither_spelling_can_hide_a_second_choice_in_the_same_document() {
-    for enabled in [true, false] {
-        for mode in ["required", "degraded", "off"] {
-            let text = format!(r#"{{"sandbox":{{"enabled":{enabled},"mode":"{mode}"}}}}"#);
-            let error = Document::parse(&text, "config.json", Origin::User)
-                .expect_err("two choices must be refused");
-            let said = error.to_string();
-            assert!(
-                said.contains("sandbox.enabled")
-                    && said.contains("sandbox.mode")
-                    && said.contains("cannot be combined"),
-                "{said}"
+            assert_eq!(
+                Settings::resolve(documents).sandbox_mode(),
+                SandboxMode::Required
             );
         }
     }

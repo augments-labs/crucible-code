@@ -279,17 +279,15 @@ subprocess. The currently implemented enforcing backend is Linux Bubblewrap
 backends are not yet implemented; enabling confinement there refuses command
 execution. See the [current platform status](../security/sandboxing.md#platform-support).
 
-Explicit `sandbox.mode` remains supported: `required` has the same meaning as
-`enabled: true`; `off` has the same meaning as `enabled: false`; `degraded`
-prefers enforcement and permits a reported compatibility fallback only when
-the backend is unavailable. Write **either `enabled` or `mode` in one document**;
-using both is an error even when their values agree.
+`sandbox.enabled` is the only configuration switch. The former `sandbox.mode`
+key is rejected; replace `required` with `enabled: true`, and replace `off`
+with `enabled: false`. There is no configuration option that permits a fallback
+when confinement is unavailable.
 
-Only your home configuration may disable confinement or select `degraded`.
-Either project file may set `enabled: true` or `mode: "required"`, which
-strengthens the user choice regardless of which spelling either file uses.
-Project `enabled: false`, `off`, and `degraded` are refused. A project, tool,
-extension, skill, agent, or descendant cannot weaken confinement chosen above it.
+Only your home configuration may disable confinement. Either project file may
+set `enabled: true`, which strengthens the user choice regardless of document
+order. Project `enabled: false` is refused. A project, tool, extension, skill,
+agent, or descendant cannot weaken confinement chosen above it.
 
 Under `required`, a command also runs under resource ceilings the confining
 backend applies: an hour of processor time per process, and 4096 open files at
@@ -298,11 +296,10 @@ program that opens a great many files both pass — but the point past which a
 command has stopped being a command. They are not configurable, and a command
 may narrow them but not drop them.
 
-The compatibility modes retain command guardrails, deadlines, output bounds,
+With confinement disabled, commands retain guardrails, deadlines, output bounds,
 usage and audit records, but their inspection report says `confined: false`.
-They apply no resource ceiling, because the ceilings above are the confining
-backend's to apply: choosing `degraded` or `off` takes them off with it.
-Permission approval and a worktree are not a sandbox in any mode.
+The confinement-only resource ceilings do not apply. Permission approval and a
+worktree are not a sandbox.
 
 `crucible --sandbox` prints what a command in the directory you are standing in
 would actually run under — which backend enforces it, what that backend can and
@@ -788,7 +785,7 @@ it came from — the `docs` server's `search` tool is `mcp:docs/search` — so
 nothing a server offers can take over a name crucible already uses.
 
 A server is somebody else's program, so it runs confined the way a command run
-through `bash` does, under the same `sandbox.mode`. It starts in the workspace
+through `bash` does, under the same `sandbox.enabled` choice. It starts in the workspace
 unless the record names a `directory`, which is then a root it may write in as
 well as the place it starts. That path does not have to be inside the workspace
 and is not checked against it: naming one widens what the server may reach, and

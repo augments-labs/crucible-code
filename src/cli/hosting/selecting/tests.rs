@@ -320,7 +320,6 @@ fn selected_servers_share_the_runs_opt_in_confinement() {
         ("", SandboxMode::Off),
         (r#""sandbox":{"enabled":true},"#, SandboxMode::Required),
         (r#""sandbox":{"enabled":false},"#, SandboxMode::Off),
-        (r#""sandbox":{"mode":"degraded"},"#, SandboxMode::Degraded),
     ] {
         let settings = sample.user(&format!(
             r#"{{{sandbox}"mcp":{{"servers":{{"docs":{{"command":"docs-mcp"}}}}}}}}"#

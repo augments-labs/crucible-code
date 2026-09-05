@@ -49,17 +49,14 @@ change in any release with no deprecation period.
   before reporting completion. Unavailable job state is an error, and an
   explicit stop bounds its wait for an empty job.
 
-- **Sandbox configuration validates in SchemaStore's strict validator.** The
-  generated schema declares the keys used by its mutual-exclusion rule inside
-  that rule, so editors still reject combined `enabled` and `mode` settings
-  without the schema itself failing to compile.
 
 ### Changed
 
-- **OS sandboxing is now opt-in.** Set `sandbox.enabled` to `true` to require
-  confinement; absent settings default to off, while explicit `sandbox.mode`
-  settings retain their meaning. Project settings cannot disable confinement,
-  and specifying both keys in one file is rejected by the parser and schema.
+- **OS sandboxing is now opt-in through `sandbox.enabled` only.** Set it to
+  `true` to require confinement; omitted settings default to off, and project
+  settings cannot disable it. **Breaking:** `sandbox.mode` is rejected; replace
+  `required` with `enabled: true` and `off` with `enabled: false`, and choose
+  either explicit behavior if you previously used `degraded`.
 
 ### Added
 
