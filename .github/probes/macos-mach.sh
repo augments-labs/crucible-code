@@ -1,5 +1,5 @@
 #!/bin/sh
-# mac-mach-v10: disposable VM capability-inheritance prerequisite, not a backend.
+# mac-mach-v11: disposable VM capability-inheritance prerequisite, not a backend.
 # No native execution by the author. Root reviews source/manifest before CI.
 set -eu
 umask 022
@@ -474,6 +474,7 @@ int main(int argc,char **argv) {
     kr(task_set_exception_ports(mach_task_self(),EXC_MASK_ALL,MACH_PORT_NULL,EXCEPTION_DEFAULT,THREAD_STATE_NONE),"clear coordinator exceptions");
     kr(task_set_exception_ports(mach_task_self(),EXC_MASK_BREAKPOINT,service,EXCEPTION_DEFAULT,THREAD_STATE_NONE),"install coordinator transport");
     const char *names[]={"exec","fork","posix_spawn","exec","fork","posix_spawn","shell","git","clang","cargo"};
+    unsigned failed_cases=0;
     for(int c=0;c<10;c++) {
         if(stopped || empty(uid)!=1) { cleanup(uid); return 77; }
         int sanitized=c>=3, route=c<6?c%3:c;
@@ -554,9 +555,11 @@ int main(int argc,char **argv) {
         printf("RESULT case=%d mode=%s route=%s reaped_before_cleanup=%d status=%d server_mask=%u output_bytes=%zu uid_empty=%d\n",
                c,sanitized?"sanitized":"control",names[c],done,status,seen,bytes,clean);
         if(!clean) return 77;
-        if(!done||!observed||!WIFEXITED(status)||WEXITSTATUS(status)||seen!=(sanitized?8U:15U)) return 77;
+        if(!done||!observed||!WIFEXITED(status)||WEXITSTATUS(status)||seen!=(sanitized?8U:15U)) failed_cases++;
     }
     kr(mach_port_destroy(mach_task_self(),service),"owned service destroy");
+    printf("MACH-PREREQUISITE-RESULT cases=10 failed=%u named_lookup_tested=0 full_sandbox_tested=0\n",failed_cases);
+    if(failed_cases) return 77;
     puts("MACH-PREREQUISITE-PASS cases=10 controls=3 sanitized=3 smoke=4 slots=3 named_lookup_tested=0 full_sandbox_tested=0");
     return 0;
 }
