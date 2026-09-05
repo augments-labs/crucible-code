@@ -128,21 +128,23 @@ assert len(disks) == 1 and disks[0].startswith('/dev/disk')
 command(['/sbin/mount', '-u', '-o', 'nosuid,nodev', mount])
 command([worker, 'flags', mount])
 results = []
-for sequence, variant in enumerate(['baseline', 'root-path-read', 'devices-read', 'system-read', 'shared-runtime-read', 'private-read', 'private-cwd', 'read-all-control']):
+for sequence, variant in enumerate(['baseline', 'literal-root-read', 'literal-root-data', 'ancestor-directory-data', 'read-all-control']):
     command([worker, 'empty'])
     root, outside = make_case(sequence)
     policy = base / ('profile-' + str(sequence) + '.sb')
     text = profile_for(root)
-    diagnostic_roots = {'root-path-read': '/', 'devices-read': '/dev',
-                        'system-read': '/System', 'shared-runtime-read': '/usr/share',
-                        'private-read': '/private'}
-    if variant in diagnostic_roots:
-        text += '(allow file-read* (subpath ' + json.dumps(diagnostic_roots[variant]) + '))\n'
+    if variant == 'literal-root-read':
+        text += '(allow file-read* (literal "/"))\n'
+    if variant == 'literal-root-data':
+        text += '(allow file-read-data (literal "/"))\n'
+    if variant == 'ancestor-directory-data':
+        ancestors = {path for item in (root, worker, pathlib.Path('/usr/lib'), pathlib.Path('/System/Library'), pathlib.Path('/dev/null')) for path in item.parents}
+        text += '(allow file-read-data ' + ' '.join('(literal ' + json.dumps(str(path)) + ')' for path in sorted(ancestors)) + ')\n'
     if variant == 'read-all-control':
         text += '(allow file-read*)\n'
     policy.write_text(text)
     os.chmod(policy, 0o644)
-    code, data = command([worker, 'launch-cwd' if variant == 'private-cwd' else 'launch', 'confined', policy, 'allowed-read', root, outside], allowed=range(-128, 256))
+    code, data = command([worker, 'launch', 'confined', policy, 'allowed-read', root, outside], allowed=range(-128, 256))
     command([worker, 'empty'])
     observation = {'variant': variant, 'status': code, 'entered': b'GUEST entered' in data}
     results.append(observation)
@@ -150,7 +152,7 @@ for sequence, variant in enumerate(['baseline', 'root-path-read', 'devices-read'
 command([worker, 'unmount', mount])
 command(['/usr/bin/hdiutil', 'detach', disks[0]])
 print('DIAGNOSTICS-COMPLETE ' + json.dumps(results) + ' uid_empty=1 nonforced_detach=1', flush=True)
-assert len(owned_pids) == 8 and all(isinstance(pid, int) and pid > 1 for pid in owned_pids)
+assert len(owned_pids) == 5 and all(isinstance(pid, int) and pid > 1 for pid in owned_pids)
 predicate = ' OR '.join('eventMessage CONTAINS "worker(' + str(pid) + ')"' for pid in owned_pids)
 command(['/usr/bin/log', 'show', '--last', '2m', '--info', '--debug', '--style', 'compact', '--predicate', predicate], allowed=(0, 1))
 # Diagnostics do not define a full filesystem pass; broad grants never become product policy.
