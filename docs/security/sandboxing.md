@@ -81,6 +81,17 @@ hostile descendant which deliberately starts a new session has exited. Such a
 descendant retains the same Seatbelt filesystem and network restrictions and
 loses the command's removed private temporary path.
 
+Seatbelt also relies on trusted macOS code-validation services. Native
+feasibility testing observed that a confined non-root caller could ask the
+system `taskgated` service to attach code-validation metadata to a controlled
+foreign process when the existing signing policy allowed that metadata. The
+target's executable bytes and signing flags did not change, and the caller did
+not acquire its task port, credentials, entitlements, filesystem access, or
+network access. Crucible treats that validation bookkeeping as a trusted-OS
+effect rather than guest authority. The bounded TG2, TG3, and TG5 authority and
+effect checks remain a Phase 4B release gate on both supported macOS
+architectures; daemon resource-stress testing is outside that gate.
+
 The exact endpoint allowlist is deliberately unsupported in this release. It
 requires a policy-bound proxy or equivalent mechanism with redirect, DNS,
 metadata, forwarding and outbound-byte enforcement. A requested exact rule is
