@@ -10,6 +10,31 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **A drag scrolls the transcript.** A drag resting at the top or foot of the
+  transcript carries it a row at a time, and the wheel scrolls it while the
+  button is held. The highlight stays on the words it began on, and a release
+  copies what scrolled off the window along with what is still on it.
+
+- **Long call, result and table lines wrap instead of ending in an ellipsis.**
+  A tool call's arguments, the row its result hangs on, a command's answer and
+  a table cell now wrap under their first row, indented to where their words
+  began. `toolDetail` is the measure they wrap at rather than where they are cut.
+
+- **Links, bullets and references are drawn the way a reader finds them.** A
+  link is its underlined words carrying the address, without the address in
+  brackets after them; a list bullet is heavier than the dot that parts two
+  things on one row; `PR #435` and `issue #12` are one link, the word included.
+
+- **Command answers hang off the line that asked.** A slash command's answer
+  starts directly under the command with the corner mark in front of it, the
+  opening card no longer draws an `authentication:` row, a successful `/login`
+  says `login successful`, and a failed turn is drawn red without the mark.
+
+- **Replay draws tool calls as they were drawn live.** A resumed session names
+  calls to tools the model had looked up, such as web search and fetch, with
+  their arguments rather than as bare names, and draws each call line as its
+  result comes past rather than every line of a batch before any result.
+
 - **Failed server startup keeps cleanup failures visible.** MCP handshake and
   catalogue failures stop the process explicitly; optional servers are skipped
   only when cleanup is confirmed. Missing-pipe failures in the MCP and RPC

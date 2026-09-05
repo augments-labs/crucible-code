@@ -138,10 +138,8 @@ crucible
 ```
 
 It opens with a card naming the release and the root it is standing on, beside
-the last few sessions started in this directory. A separate row
-under the card names the active non-secret
-authentication source, such as a stored account or `OPENAI_API_KEY`. The card
-still opens when a remembered provider has lost that credential; its provider,
+the last few sessions started in this directory. The card
+still opens when a remembered provider has lost its credential; its provider,
 model and effort remain inactive until `/login` or `/model` makes them usable.
 The card fits itself to the terminal: two columns at eighty and above, one below
 that, and under forty-six there is no frame at all — just what it is and where.
@@ -254,8 +252,12 @@ you go, and letting go puts them on your clipboard. It runs over the whole
 window rather than over the transcript alone — an answer, the row above the box
 and the box itself are one drag if that is what you covered — and the first and
 last rows are taken from where you pressed and to where you let go, the way a
-selection in any other window behaves. Scrolling or resizing lets go of it,
-because both move the words out from under the two ends. Holding
+selection in any other window behaves. A drag that reaches the top or the foot
+of the transcript scrolls it a row at a time for as long as the pointer rests
+there, and the wheel scrolls it while the button is still down, so a selection
+can run past what one window shows: the highlight stays on the words it began
+on, and what scrolled off the window is copied with the rest. Resizing lets go
+of it, because a new width moves the words out from under the two ends. Holding
 <kbd>Shift</kbd> while you drag still hands the pointer back to your terminal,
 if its own selection is the one you wanted.
 
@@ -629,20 +631,21 @@ between the columns and one under the header, every column is as wide as the
 widest thing drawn in it, and `:--`, `--:` or `:-:` in the row of dashes says
 which side a column is drawn against. Where the window cannot hold it, the table
 gives up columns from whichever is widest until it fits, and a cell that no
-longer fits ends in an ellipsis — so every row is exactly the width of the
-window and the columns stay under each other. A window too narrow for even one
+longer fits wraps onto the rows under it — so every row is exactly the width of
+the window and the columns stay under each other. A window too narrow for even one
 column apiece gets the table as the model wrote it.
 
 A bar is only a table at the start of a line, and only where the line under it
 is the row of dashes that makes one. `a | b` in a shell, `Ok(_) | Err(_)` in a
 match and a line of bars with nothing under it are all left where they were.
 
-A link is read the same way, and keeps both halves of itself: the words are
-underlined and the address follows them in brackets, quietly, so it can be
-copied — or clicked, in a terminal that finds its own links. A bracket that was
-not a link is left exactly as it was written.
+A link is read the same way, and is drawn as its words: underlined in the
+accent and carrying the address, so a terminal that opens links opens it from
+the words without the address written out after them. A bracket that was not a
+link is left exactly as it was written.
 
-A bare `#487` is read the same way, and points at the repository you are in. The
+A bare `#487`, or `PR #487` and `issue #487` with the word included, is read the
+same way, and points at the repository you are in. The
 address comes out of the `origin` remote in `.git/config`, so a checkout cloned
 from GitHub or GitLab gets a number you can click and every other checkout gets
 the four characters it always had — a link to a repository nobody named would be
