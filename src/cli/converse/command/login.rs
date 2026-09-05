@@ -53,11 +53,13 @@ use crate::cli::{Fatal, Served, offered, remember};
 use super::{Terms, about, say};
 
 /// One way Crucible can receive a credential.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Way {
+    /// The name at the left of its row.
     shown: &'static str,
-    plan: &'static str,
-    says: &'static str,
+    /// What the row says at its right: what the reader holds and how it is
+    /// billed.
+    says: String,
     reaches: Reaches,
 }
 
@@ -72,10 +74,15 @@ enum Reaches {
 const HOW: &str = "Choose how crucible signs its requests.";
 
 /// The sentence under the provider panel.
-const SAID: &str = concat!(
-    "Choose the provider whose API key you have. The key is typed into a box ",
-    "that does not echo it, and signs requests from the next turn on."
-);
+const SAID: &str = "Choose the provider whose API key you have.";
+
+/// The row that leads to a key of the reader's own, and what it says.
+pub(super) const KEY_ROUTE_SHOWN: &str = "Provide your own API key";
+pub(super) const KEY_ROUTE_SAYS: &str = "API usage billing";
+
+/// What follows the plan on an account row: the reader is billed through a
+/// subscription they already hold.
+const SUBSCRIBED: &str = "with your subscription";
 
 /// The one key worth naming on either panel: the arrows and Enter are what a
 /// list with a mark on it is already saying.
@@ -204,31 +211,23 @@ fn ways(terms: &Terms) -> Vec<Way> {
         .iter()
         .map(|account| Way {
             shown: account.shown,
-            plan: account.plan,
-            says: account.says,
+            says: format!("{} {SUBSCRIBED}", account.plan),
             reaches: Reaches::Account(*account),
         })
         .collect();
     ways.push(Way {
-        shown: "Console account",
-        plan: "API usage billing",
-        says: "enter a provider API key",
+        shown: KEY_ROUTE_SHOWN,
+        says: KEY_ROUTE_SAYS.to_owned(),
         reaches: Reaches::Console,
     });
     ways
 }
 
-/// What each way says at the right of its row: the plan the account is billed
-/// under, and what taking the row does.
-///
-/// Joined here rather than written out whole, so the mark between the two
-/// halves is the one the setting names — the same mark that stands between a
-/// command and the sentence about it in the listing a run with no keyboard is
-/// given.
-fn sentences(ways: &[Way], glyphs: Glyphs) -> Vec<String> {
-    ways.iter()
-        .map(|way| about(way.plan, way.says, glyphs))
-        .collect()
+/// What a provider row says: the variable the same key can be set in instead,
+/// which is the one thing that differs between rows that would otherwise read
+/// identically.
+fn variable_row(one: &Served) -> String {
+    format!("set {}", one.key)
 }
 
 /// Stands the account-kind panel.
@@ -237,13 +236,11 @@ fn asked<T: Terminal>(
     terms: &Terms,
     ways: &[Way],
 ) -> Result<Picked, Fatal> {
-    let says = sentences(ways, terms.style().glyphs());
     let shown: Vec<_> = ways
         .iter()
-        .zip(&says)
-        .map(|(way, says)| Offered {
+        .map(|way| Offered {
             name: way.shown,
-            says,
+            says: &way.says,
         })
         .collect();
     picking::pick(
@@ -292,12 +289,7 @@ fn chosen<T: Terminal>(
     renderer: &mut Renderer<T>,
     terms: &Terms,
 ) -> Result<Picked, Fatal> {
-    // Where else the same key can come from — and the one thing that differs
-    // between rows that would otherwise read identically.
-    let says: Vec<String> = offering
-        .iter()
-        .map(|one| format!("typed here, or set in {}", one.key))
-        .collect();
+    let says: Vec<String> = offering.iter().map(variable_row).collect();
 
     let shown: Vec<Offered<'_>> = offering
         .iter()
@@ -810,26 +802,40 @@ mod tests {
     }
 
     #[test]
-    fn what_parts_the_plan_from_what_taking_a_row_does_comes_out_of_the_glyph_set() {
-        // The row names the plan the account is billed under and what taking it
-        // does, and the mark is what says they are two. A terminal that cannot
-        // draw it gets a question mark in the middle of the sentence somebody
-        // is reading to decide how they are about to sign in.
-        let ways = [Way {
-            shown: "Console account",
-            plan: "API usage billing",
-            says: "enter a provider API key",
-            reaches: Reaches::Console,
-        }];
+    fn every_way_is_named_by_what_the_reader_holds_and_how_it_is_billed() {
+        // The row under an account names the plan and whose it is; the row
+        // under the key names how a key is billed. Neither is a sentence about
+        // what pressing Enter does — the reader is choosing between things they
+        // have, and a future account row inherits the same shape.
+        let sample = Sample::new("login-ways");
+        let terms = in_force(&sample);
+        let ways = ways(&terms);
 
+        let shown: Vec<&str> = ways.iter().map(|way| way.shown).collect();
+        let says: Vec<&str> = ways.iter().map(|way| way.says.as_str()).collect();
+
+        assert_eq!(shown, ["OpenAI", "MoonshotAI", KEY_ROUTE_SHOWN]);
         assert_eq!(
-            sentences(&ways, Glyphs::Unicode),
-            ["API usage billing — enter a provider API key"]
+            says,
+            [
+                "ChatGPT plan with your subscription",
+                "Kimi Code plan with your subscription",
+                "API usage billing",
+            ]
         );
-        assert_eq!(
-            sentences(&ways, Glyphs::Ascii),
-            ["API usage billing -- enter a provider API key"]
-        );
+    }
+
+    #[test]
+    fn a_provider_row_says_which_variable_to_set() {
+        // The one thing that differs between provider rows, and the whole of
+        // what somebody who would rather not type a key needs to read.
+        let terms = in_force(&Sample::new("login-variables"));
+        let providers = terms.providers.snapshot();
+        let anthropic = offered(&providers)
+            .find(|served| served.name == "anthropic")
+            .expect("a provider this build has an arm for");
+
+        assert_eq!(variable_row(&anthropic), "set ANTHROPIC_API_KEY");
     }
 
     #[test]

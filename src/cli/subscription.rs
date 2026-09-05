@@ -36,8 +36,6 @@ pub(crate) struct Account {
     pub(crate) shown: &'static str,
     /// The plan the account is billed under, at the right.
     pub(crate) plan: &'static str,
-    /// What taking the row does, after the plan.
-    pub(crate) says: &'static str,
 }
 
 /// One authorization method inside a provider account.
@@ -82,13 +80,11 @@ impl Subscriptions {
                     provider: "openai",
                     shown: "OpenAI",
                     plan: "ChatGPT plan",
-                    says: "authorize an account",
                 },
                 Account {
                     provider: "moonshot",
                     shown: "MoonshotAI",
                     plan: "Kimi Code plan",
-                    says: "authorize an account",
                 },
             ]),
             routes: Arc::new([

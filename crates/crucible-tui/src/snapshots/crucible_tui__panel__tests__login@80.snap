@@ -6,16 +6,15 @@ expression: "picture(&panel.rows(columns, glyphs), columns)"
 
 <Strong>Log in</>
 
-Choose the provider whose API key you have. The key is typed into a box that
-does not echo it, and signs requests from the next turn on.
+Choose the provider whose API key you have.
 
 <Accent>›</> <Strong>Anthropic</>
-  <Quiet>typed here, or set in ANTHROPIC_API_KEY</>
+  <Quiet>set ANTHROPIC_API_KEY</>
 
   MoonshotAI
-  <Quiet>typed here, or set in MOONSHOT_API_KEY</>
+  <Quiet>set MOONSHOT_API_KEY</>
 
   OpenAI
-  <Quiet>typed here, or set in OPENAI_API_KEY</>
+  <Quiet>set OPENAI_API_KEY</>
 
 <Quiet>esc to cancel</>

@@ -7,12 +7,12 @@ expression: "picture(&panel.within(columns, room, Glyphs::Unicode), columns)"
 <Strong>Log in</>
 
 <Accent>›</> <Strong>Anthropic</>
-  <Quiet>typed here, or set in ANTHROPIC_API_KEY</>
+  <Quiet>set ANTHROPIC_API_KEY</>
 
   MoonshotAI
-  <Quiet>typed here, or set in MOONSHOT_API_KEY</>
+  <Quiet>set MOONSHOT_API_KEY</>
 
   OpenAI
-  <Quiet>typed here, or set in OPENAI_API_KEY</>
+  <Quiet>set OPENAI_API_KEY</>
 
 <Quiet>esc to cancel</>

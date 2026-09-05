@@ -13,12 +13,12 @@ signs requests from the next turn
 on.
 
 <Accent>›</> <Strong>Anthropic</>
-  <Quiet>typed here, or set in ANTHROPIC…</>
+  <Quiet>read from ANTHROPIC_API_KEY whe…</>
 
   MoonshotAI
-  <Quiet>typed here, or set in MOONSHOT_…</>
+  <Quiet>read from MOONSHOT_API_KEY when…</>
 
   OpenAI
-  <Quiet>typed here, or set in OPENAI_AP…</>
+  <Quiet>read from OPENAI_API_KEY whenev…</>
 
 <Quiet>esc to cancel</>

@@ -1092,6 +1092,20 @@ fn logging_in_writes_down_which_provider_to_ask_from_the_next_run_on() {
 }
 
 #[test]
+fn the_login_panel_offers_the_plans_the_reader_may_hold_and_a_key_of_their_own() {
+    // The first panel is a choice between things the reader has: a ChatGPT or
+    // Kimi Code subscription, or an API key of their own. Each row is named
+    // for that and the row under it says whose plan or whose bill it is —
+    // never "console", which names a vendor's product rather than what is in
+    // the reader's hands.
+    let mut window = Watched::open("login-ways", 80, 24);
+
+    window.types_until("/login\r", "Provide your own API key");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
 fn openai_account_login_offers_browser_and_device_code_methods() {
     // Provider first, method second. Browser sign-in is the ordinary local
     // path; device code stays visible for a remote terminal or another device.
