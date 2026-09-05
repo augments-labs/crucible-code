@@ -4,18 +4,13 @@ name: native-sandbox-experiment
 permissions:
   contents: read
 jobs:
-  macos-mach:
-    name: macOS inherited Mach capabilities (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-        - macos-15-intel
-        - macos-26
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 12
+  windows-runtime-acl:
+    name: Windows runtime object ACL feasibility
+    runs-on: windows-latest
+    timeout-minutes: 5
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         persist-credentials: false
-    - run: sh .github/probes/macos-mach.sh
+    - shell: pwsh
+      run: .github/probes/windows-runtime-acl.ps1
