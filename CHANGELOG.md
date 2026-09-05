@@ -10,6 +10,9 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **`/login` no longer draws `window unknown`.** The box that takes a key is
+  its own screen and carries none of the prompt's chrome.
+
 - **Unsupported sandbox errors no longer recommend a removed setting.** The
   native-backend refusal no longer suggests the rejected `sandbox.mode` key.
 
@@ -82,6 +85,16 @@ change in any release with no deprecation period.
 
 
 ### Changed
+
+- **`/login` asks for a key in a labelled box that takes a paste.** The first
+  panel offers the ChatGPT and Kimi Code plans and *Provide your own API key*,
+  which replaces *Console account*; the provider list names each provider with
+  the variable it reads from, `set ANTHROPIC_API_KEY` and so on. The key box is
+  framed and labelled with the provider, takes a pasted key whole, draws a dot
+  per character, and saves on Enter only once something is held. A store that
+  cannot be written is answered with `the key could not be saved — crucible
+  cannot write its login store; try /login again after fixing the permissions`,
+  never with a path; leaving the box says `cancelled, nothing signed in`.
 
 - **OS sandboxing is now opt-in through `sandbox.enabled` only.** Set it to
   `true` to require confinement; omitted settings default to off, and project
