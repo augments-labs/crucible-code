@@ -7,12 +7,13 @@ use std::process::{Command, ExitCode};
 
 use rustix::process::{Resource, Rlimit};
 
+use crucible_sandbox_broker::{
+    MACOS_MAX_DEFINITIONS, MACOS_MAX_LAUNCH_ARGUMENT_BYTES, MACOS_MAX_PROFILE_BYTES,
+};
+
 use crate::BROKER_ERROR_EXIT;
 
 const SEATBELT: &str = "/usr/bin/sandbox-exec";
-const MAX_PROFILE_BYTES: usize = 256 * 1024;
-const MAX_DEFINITIONS: usize = 256;
-
 pub(super) fn launch() -> ExitCode {
     match Request::parse(std::env::args_os().skip(2)) {
         Ok(request) => request.exec(),
@@ -33,7 +34,17 @@ struct Request {
 }
 
 impl Request {
-    fn parse(mut arguments: impl Iterator<Item = OsString>) -> io::Result<Self> {
+    fn parse(arguments: impl Iterator<Item = OsString>) -> io::Result<Self> {
+        let arguments: Vec<_> = arguments.collect();
+        let bytes = arguments.iter().fold(0_usize, |total, argument| {
+            total
+                .saturating_add(argument.as_encoded_bytes().len())
+                .saturating_add(1)
+        });
+        if bytes > MACOS_MAX_LAUNCH_ARGUMENT_BYTES {
+            return Err(invalid("macOS launcher arguments are oversized"));
+        }
+        let mut arguments = arguments.into_iter();
         named(&mut arguments, "--cpu-seconds")?;
         let cpu_seconds = limit_number(&value(&mut arguments, "CPU limit")?)?;
         named(&mut arguments, "--open-files")?;
@@ -42,7 +53,7 @@ impl Request {
         let profile = value(&mut arguments, "Seatbelt profile")?
             .into_string()
             .map_err(|_| invalid("Seatbelt profile is not UTF-8"))?;
-        if profile.is_empty() || profile.len() > MAX_PROFILE_BYTES {
+        if profile.is_empty() || profile.len() > MACOS_MAX_PROFILE_BYTES {
             return Err(invalid("Seatbelt profile is empty or oversized"));
         }
 
@@ -55,7 +66,7 @@ impl Request {
             if argument != OsStr::new("--definition") {
                 return Err(invalid("unexpected macOS launcher argument"));
             }
-            if definitions.len() >= MAX_DEFINITIONS {
+            if definitions.len() >= MACOS_MAX_DEFINITIONS {
                 return Err(invalid("too many Seatbelt definitions"));
             }
             let definition = value(&mut arguments, "Seatbelt definition")?;

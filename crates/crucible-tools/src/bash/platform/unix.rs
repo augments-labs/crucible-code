@@ -45,30 +45,18 @@ impl Scope {
         child: &mut Child,
         terminator: Terminator,
     ) -> io::Result<Option<ExitStatus>> {
-        #[cfg(target_os = "linux")]
-        {
-            use rustix::process::{WaitId, WaitIdOptions};
+        use rustix::process::{WaitId, WaitIdOptions};
 
-            let raw = i32::try_from(child.id())
-                .map_err(|_| io::Error::other("command process id does not fit this platform"))?;
-            let pid = rustix::process::Pid::from_raw(raw)
-                .ok_or_else(|| io::Error::other("command process id cannot be observed"))?;
-            let options = WaitIdOptions::NOHANG | WaitIdOptions::EXITED | WaitIdOptions::NOWAIT;
-            if rustix::process::waitid(WaitId::Pid(pid), options)?.is_none() {
-                return Ok(None);
-            }
-            terminator.stop()?;
-            child.try_wait()
+        let raw = i32::try_from(child.id())
+            .map_err(|_| io::Error::other("command process id does not fit this platform"))?;
+        let pid = rustix::process::Pid::from_raw(raw)
+            .ok_or_else(|| io::Error::other("command process id cannot be observed"))?;
+        let options = WaitIdOptions::NOHANG | WaitIdOptions::EXITED | WaitIdOptions::NOWAIT;
+        if rustix::process::waitid(WaitId::Pid(pid), options)?.is_none() {
+            return Ok(None);
         }
-
-        #[cfg(not(target_os = "linux"))]
-        {
-            let status = child.try_wait()?;
-            if status.is_some() {
-                terminator.stop()?;
-            }
-            Ok(status)
-        }
+        terminator.stop()?;
+        child.try_wait()
     }
 
     /// Stops the shell and every descendant still in its inherited group.

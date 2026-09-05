@@ -16,6 +16,7 @@ use std::net::TcpListener;
 use std::os::fd::AsRawFd as _;
 use std::os::unix::net::UnixListener;
 use std::path::PathBuf;
+use std::process::Command as HostCommand;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -133,6 +134,10 @@ fn read(stream: &mut Option<Box<dyn SandboxOutput>>, retained: &mut Vec<u8>) {
     }
 }
 
+fn native_matrix_requires_fixture() -> bool {
+    std::env::var_os("CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX").is_some()
+}
+
 #[test]
 fn seatbelt_writes_only_the_workspace_and_protects_repository_metadata() {
     let fixture = Fixture::new("filesystem");
@@ -142,7 +147,8 @@ fn seatbelt_writes_only_the_workspace_and_protects_repository_metadata() {
                   if printf denied > \"$2\" 2>/dev/null; then exit 71; fi; \
                   if printf denied > \"$3\" 2>/dev/null; then exit 72; fi; \
                   if /bin/mv \"$4\" \"$5\" 2>/dev/null; then exit 73; fi; \
-                  if /bin/mv \"$6\" \"$7\" 2>/dev/null; then exit 74; fi";
+                  if /bin/mv \"$6\" \"$7\" 2>/dev/null; then exit 74; fi; \
+                  if /bin/ln \"$3\" \"$8\" 2>/dev/null; then exit 75; fi";
     let arguments = [
         OsString::from("-c"),
         OsString::from(script),
@@ -154,6 +160,7 @@ fn seatbelt_writes_only_the_workspace_and_protects_repository_metadata() {
         fixture.workspace.join(".GIT").into_os_string(),
         fixture.workspace.join("nested").into_os_string(),
         fixture.workspace.join("moved").into_os_string(),
+        fixture.workspace.join("config-alias").into_os_string(),
     ];
     let (status, _, errors) = finish(start(
         fixture.request("macos-filesystem"),
@@ -174,6 +181,7 @@ fn seatbelt_writes_only_the_workspace_and_protects_repository_metadata() {
     assert!(!fixture.workspace.join(".GIT").exists());
     assert!(fixture.workspace.join("nested/.git").is_dir());
     assert!(!fixture.workspace.join("moved").exists());
+    assert!(!fixture.workspace.join("config-alias").exists());
 }
 
 #[test]
@@ -203,6 +211,115 @@ fn seatbelt_denies_loopback_network_connections() {
         listener.accept(),
         Err(problem) if problem.kind() == std::io::ErrorKind::WouldBlock
     ));
+}
+
+#[test]
+fn seatbelt_denies_signals_to_host_processes() {
+    let fixture = Fixture::new("host-process");
+    let mut bystander = HostCommand::new("/bin/sleep")
+        .arg("30")
+        .spawn()
+        .expect("host bystander");
+    let script = "if /bin/kill -0 \"$1\" 2>/dev/null; then exit 71; fi";
+    let (status, _, errors) = finish(start(
+        fixture.request("macos-host-process"),
+        command(
+            "/bin/sh",
+            [
+                OsString::from("-c"),
+                OsString::from(script),
+                OsString::from("crucible-test"),
+                OsString::from(bystander.id().to_string()),
+            ],
+        ),
+    ));
+    let _ = bystander.kill();
+    let _ = bystander.wait();
+
+    assert!(status.success(), "{}", String::from_utf8_lossy(&errors));
+}
+
+#[test]
+fn seatbelt_does_not_inherit_the_host_environment() {
+    let fixture = Fixture::new("environment");
+    let (status, output, errors) = finish(start(
+        fixture.request("macos-environment"),
+        command("/usr/bin/env", []),
+    ));
+
+    assert!(status.success(), "{}", String::from_utf8_lossy(&errors));
+    let environment = String::from_utf8(output).expect("UTF-8 environment");
+    let entries: Vec<_> = environment.lines().collect();
+    assert_eq!(entries.len(), 1, "unexpected environment: {environment}");
+    assert!(
+        entries
+            .first()
+            .is_some_and(|entry| entry.starts_with("TMPDIR=/")),
+        "{environment}"
+    );
+}
+
+#[test]
+fn seatbelt_blocks_the_runners_passwordless_privilege_path() {
+    let positive = HostCommand::new("/usr/bin/sudo")
+        .args(["-n", "/usr/bin/true"])
+        .status()
+        .expect("sudo positive control");
+    if !positive.success() {
+        assert!(
+            !native_matrix_requires_fixture(),
+            "the required macOS CI runner has no passwordless sudo fixture"
+        );
+        return;
+    }
+
+    let fixture = Fixture::new("privilege");
+    let (status, _, _) = finish(start(
+        fixture.request("macos-privilege"),
+        command(
+            "/usr/bin/sudo",
+            [OsString::from("-n"), OsString::from("/usr/bin/true")],
+        ),
+    ));
+
+    assert!(
+        !status.success(),
+        "a confined command acquired sudo authority"
+    );
+}
+
+#[test]
+fn owned_process_group_cleanup_stops_a_background_descendant() {
+    let fixture = Fixture::new("process-cleanup");
+    let script = "/bin/sleep 30 </dev/null >/dev/null 2>/dev/null & echo $!";
+    let (status, output, errors) = finish(start(
+        fixture.request("macos-process-cleanup"),
+        command("/bin/sh", [OsString::from("-c"), OsString::from(script)]),
+    ));
+
+    assert!(status.success(), "{}", String::from_utf8_lossy(&errors));
+    let pid = String::from_utf8(output)
+        .expect("UTF-8 pid")
+        .trim()
+        .parse::<u32>()
+        .expect("background pid");
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let alive = HostCommand::new("/bin/kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .is_ok_and(|status| status.success());
+        if !alive {
+            break;
+        }
+        if Instant::now() >= deadline {
+            let _ = HostCommand::new("/bin/kill")
+                .args(["-9", &pid.to_string()])
+                .status();
+            panic!("background descendant survived owned-group cleanup");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
 }
 
 #[test]
