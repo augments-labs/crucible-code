@@ -50,7 +50,7 @@ int main(int argc, char **argv) {
     int exception = !strcmp(argv[1], "exception");
     int initialized = !strcmp(argv[2], "lookup");
     if (initialized) { (void)getpwuid(getuid()); (void)getgrgid(getgid()); }
-    printf("CASE kind=%s initialization=%s\n", argv[1], argv[2]);
+    printf("CASE kind=%s initialization=%s uid=%u euid=%u\n", argv[1], argv[2], getuid(), geteuid());
     mach_port_t service = MACH_PORT_NULL;
     if (exception) {
         mach_port_options_t options = {0}; options.flags = MPO_EXCEPTION_PORT;
@@ -73,6 +73,7 @@ int main(int argc, char **argv) {
         exception_mask_t masks[32]; mach_port_t ports[32];
         exception_behavior_t behavior[32]; thread_state_flavor_t flavor[32]; mach_msg_type_number_t count = 32;
         kern_return_t lookup = task_get_exception_ports(mach_task_self(), EXC_MASK_BREAKPOINT, masks, &count, ports, behavior, flavor);
+        printf("CHILD-LOOKUP result=%d count=%u first_valid=%d first_mask=%u\n", lookup, count, !lookup && count ? MACH_PORT_VALID(ports[0]) : -1, !lookup && count ? masks[0] : 0);
         if (lookup || count != 1 || !(masks[0] & EXC_MASK_BREAKPOINT) || !MACH_PORT_VALID(ports[0])) _exit(77);
         destination = ports[0];
         kern_return_t setting = exception ? task_set_exception_ports(mach_task_self(), EXC_MASK_BREAKPOINT, destination, EXCEPTION_DEFAULT, THREAD_STATE_NONE) : KERN_SUCCESS;
