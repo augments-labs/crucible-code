@@ -264,7 +264,10 @@ and cleanup keep the lifecycle's run ancestry and `mcp:server` identity, with a
 new sandbox ID for each preparation. The runner delivers lifecycle facts before
 the next provider request and after disposal, including when preparation,
 snapshot, refresh or disposal fails. An audit delivery failure ends the turn
-without hiding an operation or cleanup failure that also occurred.
+without hiding an operation or cleanup failure that also occurred. MCP restart
+requires confirmed cleanup of the previous process scope. Unconfirmed cleanup
+remains a disposal failure and blocks another preparation, including when a
+later server failed during partial preparation.
 
 Inspection retains backend ID/version/provenance, capability claims, separate
 hashed requested and effective policies and redacted plans, manifest,

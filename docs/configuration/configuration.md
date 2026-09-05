@@ -852,7 +852,10 @@ for the turn whatever the ceiling says. A server started again has to come back
 offering the tool under the same name and the same schema, because the
 description the model wrote its arguments against is the one this run published;
 a catalogue that moved retires the server instead. The default of `0` is one
-start and no more.
+start and no more. Replacement also requires confirmed cleanup of the old
+process scope. If cleanup cannot be confirmed, disposal keeps reporting the
+failure and that toolset refuses another preparation; repeating disposal does
+not turn an uncertain stop into success.
 
 Every key in `mcp.servers` is read **only** from `~/.crucible/config.json`. A
 committed `.crucible/config.json` naming a server would be choosing whose

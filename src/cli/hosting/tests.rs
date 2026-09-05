@@ -26,6 +26,7 @@ use serde_json::{Value, json};
 use super::{Chosen, Hosting};
 
 mod audit;
+mod cleanup;
 
 /// How long a test lets one silence run before it gives up on a server.
 ///
@@ -165,6 +166,9 @@ struct Watched {
     deafened: AtomicBool,
     /// Optional lifecycle evidence for the audit transport fixture.
     audit: Mutex<Option<(SandboxId, crucible_core::SandboxAudit)>>,
+    /// A backend that cannot confirm the process scope ended.
+    cleanup_refused: AtomicBool,
+    stop_attempts: AtomicUsize,
 }
 
 impl Watched {
@@ -293,6 +297,9 @@ impl SandboxProcess for Fake {
     }
 
     fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        if self.watched.cleanup_refused.load(Ordering::Relaxed) {
+            return Err(io::Error::other("injected cleanup observation failure"));
+        }
         // Running until it is told otherwise, which is what a server does. A
         // process that reported an exit before anything asked it to finish
         // would let a disposal that stopped nothing look like one that worked.
@@ -304,6 +311,10 @@ impl SandboxProcess for Fake {
     }
 
     fn stop(&mut self) -> io::Result<()> {
+        self.watched.stop_attempts.fetch_add(1, Ordering::Relaxed);
+        if self.watched.cleanup_refused.load(Ordering::Relaxed) {
+            return Err(io::Error::other("injected unconfirmed cleanup"));
+        }
         self.end();
         Ok(())
     }
@@ -390,6 +401,8 @@ impl SandboxSession for Prepared {
 enum Answers {
     /// It starts, and says these frames in order.
     Says(Vec<Value>),
+    /// It talks normally but its process scope cannot be confirmed stopped.
+    Unreapable(Vec<Value>),
     /// The same, but it thinks for a while before the `n`th of them.
     Slowly(Vec<Value>, usize, Duration),
     /// It refuses to start at all.
@@ -450,17 +463,21 @@ impl SandboxService for Pretend {
             .lock()
             .expect("the scripts a test wrote")
             .pop_front();
-        let (frames, slow) = match script {
+        let (frames, slow, cleanup_refused) = match script {
             None | Some(Answers::Refuses) => {
                 return Err(SandboxError::Lifecycle(io::Error::other(
                     "this machine has no such program",
                 )));
             }
-            Some(Answers::Says(frames)) => (frames, None),
-            Some(Answers::Slowly(frames, nth, held)) => (frames, Some((nth, held))),
+            Some(Answers::Says(frames)) => (frames, None, false),
+            Some(Answers::Unreapable(frames)) => (frames, None, true),
+            Some(Answers::Slowly(frames, nth, held)) => (frames, Some((nth, held)), false),
         };
 
-        let watched = Arc::new(Watched::default());
+        let watched = Arc::new(Watched {
+            cleanup_refused: AtomicBool::new(cleanup_refused),
+            ..Watched::default()
+        });
         self.watched
             .lock()
             .expect("the servers it started")
