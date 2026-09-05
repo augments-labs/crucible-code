@@ -20,6 +20,13 @@ sha2.workspace = true
 # system-call boundary.
 rustix = { workspace = true, features = ["process"] }
 
+[target.'cfg(windows)'.dependencies]
+# The Windows broker is the trusted bridge between the host process and the
+# dedicated low-privilege account. Raw platform bindings are required for
+# account setup, encrypted state, WFP policy and maintenance serialization; the
+# exact version and feature surface are pinned at workspace root.
+windows-sys.workspace = true
+
 [[bin]]
 name = "crucible-sandbox-broker"
 path = "src/main.rs"

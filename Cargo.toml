@@ -236,16 +236,24 @@ rustix = { version = "=1.1.4", features = ["fs"] }
 # The WDK file-system surface contributes the one ntdll rename call whose
 # directory-relative contract the Win32 wrapper does not honor consistently;
 # JobObjects, ToolHelp and Pipes contain and poll spawned command descendants.
+# Native sandbox setup additionally uses the local-account, DPAPI, Windows
+# Filtering Platform, registry and synchronization APIs. The bindings add no
+# runtime library; every call stays behind a target-gated Crucible boundary.
 windows-sys = { version = "=0.61.2", features = [
     "Wdk_Storage_FileSystem",
     "Win32_Foundation",
+    "Win32_NetworkManagement_NetManagement",
+    "Win32_NetworkManagement_WindowsFilteringPlatform",
     "Win32_Security",
     "Win32_Security_Authorization",
+    "Win32_Security_Cryptography",
     "Win32_Storage_FileSystem",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_IO",
     "Win32_System_JobObjects",
     "Win32_System_Pipes",
+    "Win32_System_Registry",
+    "Win32_System_Rpc",
     "Win32_System_Threading",
 ] }
 
@@ -361,6 +369,11 @@ crucible-mcp.workspace = true
 crucible-privacy.workspace = true
 crucible-provider.workspace = true
 crucible-runner.workspace = true
+# The main binary exposes the explicit Windows administrator setup and removal
+# commands from the same audited crate that owns the native broker. Running the
+# already-selected Crucible image directly avoids elevating a mutable sibling
+# helper or a command assembled through a shell.
+crucible-sandbox-broker.workspace = true
 crucible-tools.workspace = true
 crucible-tui.workspace = true
 image.workspace = true

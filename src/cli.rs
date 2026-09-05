@@ -37,11 +37,12 @@ mod style;
 mod subscription;
 
 use std::cell::{Cell, RefCell};
+use std::ffi::OsString;
 use std::fmt;
 use std::io::{self, Write as _};
 use std::process::ExitCode;
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use crucible_auth::{Store, StoredCredentials};
 use crucible_config::{ConfigError, Home, Settings};
 use crucible_core::{
@@ -644,7 +645,8 @@ run, and may be repeated. A configuration file is a list of servers you could \
 run; nothing is started until a run names one. What a hosted server offers is \
 called as mcp:<server>/<tool>, and it runs confined the way a command does.
 
-Flags, session files and config are unstable for the whole 0.x line."
+Flags, session files and config are unstable for the whole 0.x line.",
+    args_conflicts_with_subcommands = true
 )]
 struct Cli {
     /// Carry on the most recent session for this directory.
@@ -687,6 +689,38 @@ struct Cli {
         conflicts_with_all = ["continue", "resume", "model", "effort", "with_mcp", "extensions"]
     )]
     sandbox: bool,
+
+    /// Explicit one-time operating-system maintenance commands.
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Debug, Subcommand)]
+enum Command {
+    /// Provision or remove native sandbox support.
+    Sandbox {
+        #[command(subcommand)]
+        action: SandboxMaintenance,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum SandboxMaintenance {
+    /// Provision or repair the native Windows sandbox. Run once from an
+    /// Administrator PowerShell; ordinary Crucible runs stay unelevated.
+    Setup {
+        /// User account to provision. Left off, it is the elevated process
+        /// owner.
+        #[arg(long, value_name = "ACCOUNT")]
+        owner: Option<OsString>,
+    },
+    /// Remove the native Windows account, network policy, and setup record.
+    Uninstall {
+        /// User account whose setup is removed. Left off, it is the elevated
+        /// process owner.
+        #[arg(long, value_name = "ACCOUNT")]
+        owner: Option<OsString>,
+    },
 }
 
 /// Why crucible could not run, or could not carry on.
@@ -732,6 +766,10 @@ pub(crate) enum Fatal {
     /// crucible's own files could not be found or read.
     #[error(transparent)]
     Config(#[from] ConfigError),
+
+    /// Native sandbox provisioning or removal could not complete.
+    #[error("Windows sandbox maintenance failed: {0}")]
+    SandboxMaintenance(io::Error),
 
     /// No confinement could be built for this directory at all.
     ///
@@ -867,16 +905,40 @@ pub(crate) enum Fatal {
 pub(crate) fn start() -> ExitCode {
     let cli = Cli::parse();
 
-    let done = match (cli.extensions, cli.sandbox) {
-        (true, _) => listed(),
-        (_, true) => confined(),
-        _ => run(&cli),
+    let done = match (&cli.command, cli.extensions, cli.sandbox) {
+        (Some(Command::Sandbox { action }), _, _) => maintain_sandbox(action),
+        (None, true, _) => listed(),
+        (None, _, true) => confined(),
+        (None, _, _) => run(&cli),
     };
 
     match done {
         Ok(()) => ExitCode::SUCCESS,
         Err(problem) => fail(&problem),
     }
+}
+
+#[cfg(target_os = "windows")]
+fn maintain_sandbox(action: &SandboxMaintenance) -> Result<(), Fatal> {
+    let result = match action {
+        SandboxMaintenance::Setup { owner } => {
+            crucible_sandbox_broker::setup_windows_sandbox(owner.as_deref())
+        }
+        SandboxMaintenance::Uninstall { owner } => {
+            crucible_sandbox_broker::uninstall_windows_sandbox(owner.as_deref())
+        }
+    };
+    let message = result.map_err(Fatal::SandboxMaintenance)?;
+    let _ = writeln!(io::stdout().lock(), "{message}");
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn maintain_sandbox(_action: &SandboxMaintenance) -> Result<(), Fatal> {
+    Err(Fatal::SandboxMaintenance(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "the native Windows sandbox is available only on Windows",
+    )))
 }
 
 /// Writes what is installed to standard output, and stops.
