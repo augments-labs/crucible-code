@@ -118,7 +118,9 @@ change in any release with no deprecation period.
   backend denies network access and writes outside declared roots, protects
   repository metadata, closes inherited descriptors, applies the open-file
   limit, and uses a private temporary directory. Intel and Apple silicon CI
-  now require its native confinement tests to pass.
+  now require its native confinement tests to pass. The security guide records
+  the trusted macOS code-validation metadata effect and the authority checks
+  that remain mandatory before release.
 
 - **Windows cleanup tests exercise failed observation and recovery.** Native
   job tests cover a refused state query after termination, a live job that
