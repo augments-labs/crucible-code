@@ -4,8 +4,8 @@ name: native-sandbox-experiment
 permissions:
   contents: read
 jobs:
-  macos-resource-feasibility:
-    name: macOS native resource feasibility (${{ matrix.os }})
+  macos-system-service:
+    name: macOS system task-access identity (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -17,4 +17,4 @@ jobs:
       with:
         persist-credentials: false
     - shell: bash
-      run: sh .github/probes/macos-resource-feasibility.sh
+      run: sh .github/probes/macos-system-service.sh
