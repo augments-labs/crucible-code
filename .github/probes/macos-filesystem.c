@@ -67,11 +67,14 @@ static void launch(int argc, char **argv) {
         void (*free_error)(char *)=dlsym(RTLD_DEFAULT,"sandbox_free_error");
         if(!initialize || !free_error) fail("sandbox API unavailable");
         char *error=NULL;
+        puts("LAUNCH before-profile");
         if(initialize(profile,0,&error)) { fprintf(stderr,"PROFILE %.256s\n",error?error:"unknown"); if(error)free_error(error); exit(77); }
+        puts("LAUNCH after-profile");
     } else if(strcmp(argv[2],"control")!=0) exit(77);
     /* No untrusted code runs in this pre-policy image. Fresh exec is mandatory. */
     char *args[]={argv[0],"guest",argv[2],argv[4],argv[5],argv[6],NULL};
     char *environment[]={"PATH=/usr/bin:/bin","LANG=C",NULL};
+    puts("LAUNCH before-exec");
     execve(argv[0],args,environment); fail("guest exec");
 }
 static int operation(const char *name, const char *root, const char *outside) {
@@ -111,6 +114,7 @@ int main(int argc,char **argv) {
     if(argc==3 && !strcmp(argv[1],"unmount")) { if(unmount(argv[2],0)) fail("nonforced unmount"); return 0; }
     if(argc>1 && !strcmp(argv[1],"launch")) launch(argc,argv);
     if(argc!=6 || strcmp(argv[1],"guest")) return 77;
+    puts("GUEST entered");
     alarm(10); identity();
     errno=0; int result=operation(argv[3],argv[4],argv[5]); int error=errno;
     int allow=!strcmp(argv[2],"control") || !strcmp(argv[3],"allowed-read") || !strcmp(argv[3],"allowed-write");

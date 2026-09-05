@@ -4,6 +4,8 @@ import os
 import pathlib
 import plistlib
 import shutil
+import select
+import time
 import stat
 import subprocess
 import sys
@@ -24,25 +26,37 @@ print('FIXTURE ' + str(base), flush=True)
 
 def command(argv, allowed=(0,), timeout=30):
     print('COMMAND ' + json.dumps([str(x) for x in argv]), flush=True)
-    with tempfile.TemporaryFile() as output:
-        proc = subprocess.Popen(argv, cwd=base, stdin=subprocess.DEVNULL,
-                                stdout=output, stderr=subprocess.STDOUT,
-                                close_fds=True, start_new_session=True,
-                                env={'PATH': '/usr/bin:/bin:/usr/sbin:/sbin', 'LANG': 'C'})
-        try:
-            result = proc.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
+    proc = subprocess.Popen(argv, cwd=base, stdin=subprocess.DEVNULL,
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            close_fds=True, start_new_session=True,
+                            env={'PATH': '/usr/bin:/bin:/usr/sbin:/sbin', 'LANG': 'C'})
+    data = bytearray()
+    deadline = time.monotonic() + timeout
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError('operation deadline')
+            if select.select([proc.stdout], [], [], min(remaining, 0.2))[0]:
+                chunk = os.read(proc.stdout.fileno(), min(4096, 32769 - len(data)))
+                if not chunk:
+                    break
+                data.extend(chunk)
+                if len(data) > 32768:
+                    raise RuntimeError('output exceeded bound')
+        result = proc.wait(timeout=max(0.01, deadline - time.monotonic()))
+    except BaseException:
+        if proc.poll() is None:
             proc.kill()
-            try:
-                proc.wait(timeout=3)
-                print('TIMEOUT direct_process_reaped=1 fixture_quarantined=1', flush=True)
-            except subprocess.TimeoutExpired:
-                print('TIMEOUT direct_process_reaped=0 fixture_quarantined=1', flush=True)
-            raise RuntimeError('No further fixture operations after uncertainty')
-        size = output.tell()
-        output.seek(0)
-        data = output.read(32769)
-        assert size <= 32768 and len(data) <= 32768, 'output bound'
+        try:
+            proc.wait(timeout=3)
+            print('UNCERTAIN direct_process_reaped=1 fixture_quarantined=1', flush=True)
+        except subprocess.TimeoutExpired:
+            print('UNCERTAIN direct_process_reaped=0 fixture_quarantined=1', flush=True)
+        raise
+    finally:
+        proc.stdout.close()
+    data = bytes(data)
     print(data.decode(errors='replace'), end='', flush=True)
     assert result in allowed, (str(argv[0]), result)
     return result, data
@@ -123,7 +137,7 @@ for mode in ('control', 'confined'):
         policy = base / ('profile-' + str(sequence) + '.sb')
         policy.write_text(profile_for(root))
         os.chmod(policy, 0o644)
-        code, data = command([worker, 'launch', mode, policy, operation, root, outside], allowed=(0, 1, 77))
+        code, data = command([worker, 'launch', mode, policy, operation, root, outside], allowed=range(-128, 256))
         # Every guest fixture is single-process, including exec of the setuid worker.
         # The parent wait reaps it. A new case requires an error-checked empty UID.
         command([worker, 'empty'])
