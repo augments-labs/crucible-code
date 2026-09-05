@@ -282,7 +282,7 @@ mod tests {
             super::validate(&policy)
                 .expect("validated tree")
                 .protected()
-                .contains(&sample.root().join("nested/.git"))
+                .contains(&policy.working_directory().join("nested/.git"))
         );
     }
 
@@ -315,10 +315,20 @@ mod tests {
             .join(format!("common-git-{}", std::process::id()));
         let target = common.join("worktrees/fixture");
         std::fs::create_dir_all(&target).expect("linked git directory");
+        let common = common.canonicalize().expect("canonical common directory");
+        let target = target
+            .canonicalize()
+            .expect("canonical linked git directory");
         sample.write(".git", &format!("gitdir: {}\n", target.display()));
         std::fs::write(
             target.join("gitdir"),
-            sample.root().join(".git").display().to_string(),
+            sample
+                .root()
+                .canonicalize()
+                .expect("canonical fixture root")
+                .join(".git")
+                .display()
+                .to_string(),
         )
         .expect("back-reference");
         std::fs::write(target.join("commondir"), "../..\n").expect("common reference");

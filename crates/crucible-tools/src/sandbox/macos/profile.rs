@@ -452,10 +452,14 @@ mod tests {
     #[test]
     fn an_unreadable_glob_denies_new_case_aliases_and_descendants() {
         let sample = Sample::new("macos-seatbelt-unreadable-pattern");
+        let root = sample
+            .root()
+            .canonicalize()
+            .expect("canonical fixture root");
         let policy = SandboxPolicy::standard(&sample.workspace())
             .expect("standard policy")
             .with_unreadable_patterns([SandboxUnreadablePattern::new(
-                sample.root().join("**/*.pem"),
+                root.join("**/*.pem"),
                 SandboxFilesystemProvenance::Descendant,
             )
             .expect("unreadable pattern")])

@@ -121,15 +121,19 @@ mod tests {
         let sample = crate::sample::Sample::new("macos-unreadable-expansion");
         sample.write("nested/secret.pem", "secret");
         sample.write("nested/visible.txt", "visible");
+        let root = sample
+            .root()
+            .canonicalize()
+            .expect("canonical fixture root");
         let pattern = SandboxUnreadablePattern::new(
-            sample.root().join("**/*.pem"),
+            root.join("**/*.pem"),
             SandboxFilesystemProvenance::Descendant,
         )
         .expect("pattern");
 
         assert_eq!(
             super::expand(&[pattern]).expect("expanded"),
-            [sample.root().join("nested/secret.pem")]
+            [root.join("nested/secret.pem")]
         );
     }
 }
