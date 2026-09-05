@@ -570,7 +570,8 @@ impl LoginView {
     }
 }
 
-/// Asks for a key, writes it down, and sets this session up with it.
+/// Asks for a key, writes it down, and sets this session up with it — or
+/// says why nothing was written: the box was left, or never stood.
 fn given<T: Terminal>(
     named: Served,
     renderer: &mut Renderer<T>,
@@ -587,9 +588,10 @@ fn given<T: Terminal>(
 /// Writes `key` down as `named`'s and sets this session up with it, or says
 /// what stopped.
 ///
-/// The error names the path and what the operating system said about it, and
-/// the row under the command carries neither: the path is in the reader's own
-/// home, and what the system said is what looking at it will say again. The
+/// The error names the path, and for a file that would not open what the
+/// operating system said about it; the row under the command carries neither.
+/// The path is in the reader's own home, and what the system said is what
+/// looking at it will say again. The
 /// key is still in hand and the box is gone, so there is nothing to retry
 /// from — which is why the row says the way back in, chosen by what stopped
 /// ([`remedy`]). Nothing else hears the error: this session has no channel a
@@ -893,10 +895,47 @@ mod tests {
     }
 
     #[test]
+    fn a_store_past_its_byte_ceiling_is_answered_the_way_an_unreadable_one_is() {
+        // Too large to parse is not read either, and the store refuses to
+        // write over what it could not read. The reader is told the same
+        // thing as for a store that will not parse: move it aside.
+        let sample = Sample::new("login-store-too-large");
+        let terms = in_force(&sample);
+        std::fs::write(sample.root().join("auth.json"), "x".repeat(64 * 1024 + 1))
+            .expect("a store past the ceiling");
+        let mut runner = asking("claude-test-1");
+        let mut renderer = Renderer::new(Recording::new(80, 24));
+
+        let named = offered(&terms.providers.snapshot())
+            .find(|served| served.name == "anthropic")
+            .expect("a provider this build has an arm for");
+        written(
+            named,
+            "sk-ant-not-a-key",
+            &mut renderer,
+            &mut runner,
+            &terms,
+        )
+        .expect("the terminal to be written");
+
+        let written = renderer.terminal().picture().said().join(" ");
+        assert!(
+            written.contains(
+                "! the key could not be saved — crucible cannot read its login store; move it aside and try /login again"
+            ),
+            "{written}"
+        );
+        assert!(!written.contains("byte"), "{written}");
+        assert!(!written.contains("auth.json"), "{written}");
+        assert!(!written.contains("sk-ant"), "{written}");
+    }
+
+    #[test]
     fn the_way_back_in_is_chosen_by_what_stopped_the_store() {
-        // The two the store cannot be made to produce cheaply from here: a
-        // lock held past its five seconds, and a store past its byte ceiling.
-        // Each arrives with a path, and no sentence carries one.
+        // The one the store cannot be made to produce cheaply from here is a
+        // lock held past its five seconds; the other three are here beside it
+        // so the whole table is read in one place. Each arrives with a path,
+        // and no sentence carries one.
         let path = std::path::PathBuf::from("/somebody/.crucible/auth.json");
         let busy = AuthError::Busy { path: path.clone() };
         let too_large = AuthError::TooLarge {

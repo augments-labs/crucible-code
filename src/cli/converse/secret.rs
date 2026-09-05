@@ -59,6 +59,9 @@ pub(super) fn ask<T: Terminal>(
     )?;
 
     Ok(match ended {
+        // `typing` takes only a line `taken` accepts, so the empty arm is not
+        // reached; it is what keeps a change to `typing` from handing over a
+        // key with nothing in it.
         Ended::Took => taken(&held).map_or(Asked::Left, Asked::Key),
         Ended::Left => Asked::Left,
         Ended::Cramped => Asked::Cramped,
@@ -73,9 +76,11 @@ pub(super) fn ask<T: Terminal>(
 /// second reports a choice nobody made, and hides the one thing that would let
 /// them in.
 pub(super) enum Asked {
-    /// The line, trimmed. Never empty.
+    /// The line, trimmed. Built only by [`ask`], which hands over nothing
+    /// shorter than one character.
     Key(String),
-    /// Escape, or Return over a line with nothing on it.
+    /// Escape, or a key that ends the session. Return over an empty line is
+    /// not this: the box goes on standing.
     Left,
     /// The window had no room for the box, so nothing was asked.
     Cramped,
