@@ -11,7 +11,7 @@ public static class Availability {
     public static extern bool FreeLibrary(IntPtr module);
 }
 '@
-Write-Output ('OS version=' + [Environment]::OSVersion.Version.ToString())
+Write-Output ('OS version=' + [Environment]::OSVersion.Version.ToString() + ' architecture=' + [Runtime.InteropServices.RuntimeInformation]::OSArchitecture)
 $probeModule = [Availability]::LoadLibraryExW('processmodel.dll', [IntPtr]::Zero, 0x800)
 if ($probeModule -eq [IntPtr]::Zero) {
     Write-Output ('API module_present=false error=' + [Runtime.InteropServices.Marshal]::GetLastWin32Error())
@@ -29,8 +29,9 @@ $probeSystem = [Environment]::GetFolderPath([Environment+SpecialFolder]::System)
 Write-Output ('WSB executable_present=' + (Test-Path -LiteralPath (Join-Path $probeSystem 'wsb.exe') -PathType Leaf))
 foreach ($probeFeature in @('Microsoft-Hyper-V-All', 'Containers-DisposableClientVM', 'Containers')) {
     try {
-        $probeState = Get-WindowsOptionalFeature -Online -FeatureName $probeFeature -ErrorAction Stop
-        Write-Output ('FEATURE name=' + $probeFeature + ' state=' + $probeState.State)
+        $probeStates = @(Get-WindowsOptionalFeature -Online -FeatureName $probeFeature -ErrorAction Stop)
+        if ($probeStates.Count -ne 1 -or [String]::IsNullOrWhiteSpace([String]$probeStates[0].State)) { throw 'ambiguous or missing optional-feature result' }
+        Write-Output ('FEATURE name=' + $probeFeature + ' state=' + $probeStates[0].State)
     } catch {
         Write-Output ('FEATURE name=' + $probeFeature + ' query_unavailable=true')
     }
