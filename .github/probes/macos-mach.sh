@@ -1,5 +1,5 @@
 #!/bin/sh
-# mac-mach-v4: disposable VM capability-inheritance prerequisite, not a backend.
+# mac-mach-v5: disposable VM capability-inheritance prerequisite, not a backend.
 # No native execution by the author. Root reviews source/manifest before CI.
 set -eu
 umask 022
@@ -279,6 +279,18 @@ static void exception_boundary(mach_port_t service,const char *boundary) {
     printf("EXCEPTION-BOUNDARY boundary=%s result=%d\n",boundary,result);
     if(result==KERN_SUCCESS) kr(task_set_exception_ports(mach_task_self(),EXC_MASK_BREAKPOINT,MACH_PORT_NULL,EXCEPTION_DEFAULT,THREAD_STATE_NONE),"diagnostic exception clear");
 }
+static void parent_registration(mach_port_t service) {
+    mach_port_array_t ports=NULL; mach_msg_type_number_t count=0;
+    kr(mach_ports_lookup(mach_task_self(),&ports,&count),"parent registration oracle");
+    if(count>16) exit(77);
+    int correct=count>0 && ports[0]==service;
+    printf("PARENT-REGISTRATION owned=%u count=%u first=%u match=%d\n",service,count,count?ports[0]:0,correct);
+    for(mach_msg_type_number_t i=0;i<count;i++) {
+        if(i && MACH_PORT_VALID(ports[i])) correct=0;
+        release(ports[i]);
+    }
+    free_ports(ports,count); if(!correct) exit(77);
+}
 static void no_user_reference(mach_port_t port) {
     mach_port_type_t type=0; kern_return_t result=mach_port_type(mach_task_self(),port,&type);
     if(result!=KERN_INVALID_NAME) {
@@ -329,8 +341,9 @@ static int ping(mach_port_t service,unsigned route,unsigned slot_number) {
     b.m.magic=MAGIC; b.m.route=route; b.m.slot=slot_number; b.m.nonce=nonce_for(route,slot_number);
     mach_msg_return_t result=mach_msg(&b.m.h,MACH_SEND_MSG|MACH_SEND_TIMEOUT|MACH_RCV_MSG|MACH_RCV_TIMEOUT,
                                     sizeof(Message),sizeof b,reply,300,MACH_PORT_NULL);
+    printf("PING-REPLY result=%d size=%u id=%d bits=%u remote=%u local=%u magic=%u route=%u slot=%u nonce=%llu\n",result,b.m.h.msgh_size,b.m.h.msgh_id,b.m.h.msgh_bits,b.m.h.msgh_remote_port,b.m.h.msgh_local_port,b.m.magic,b.m.route,b.m.slot,(unsigned long long)b.m.nonce);
     int ok=result==MACH_MSG_SUCCESS && b.m.h.msgh_size==sizeof(Message) && b.m.h.msgh_id==PING_ID+1 &&
-        !(b.m.h.msgh_bits&MACH_MSGH_BITS_COMPLEX) && b.m.magic==MAGIC && b.m.route==route && b.m.slot==slot_number && b.m.nonce==nonce_for(route,slot_number);
+        !(b.m.h.msgh_bits&MACH_MSGH_BITS_COMPLEX) && b.m.magic==(MAGIC^UINT32_C(0xa5a5a5a5)) && b.m.route==route && b.m.slot==slot_number && b.m.nonce==nonce_for(route,slot_number);
     kr(mach_port_destroy(mach_task_self(),reply),"reply destroy");
     printf("PING route=%u slot=%u acknowledged=%d result=%d\n",route,slot_number,ok,result);
     return ok;
@@ -339,6 +352,7 @@ static int receive_ping(mach_port_t service,unsigned route,unsigned *seen,int pe
     Buffer b={0}; mach_msg_return_t result=mach_msg(&b.m.h,MACH_RCV_MSG|MACH_RCV_TIMEOUT,0,sizeof b,service,10,MACH_PORT_NULL);
     if(result==MACH_RCV_TIMED_OUT) return 1;
     if(result!=MACH_MSG_SUCCESS) { fprintf(stderr,"SERVER-ERROR result=%d\n",result); return 0; }
+    printf("SERVER-RX size=%u id=%d bits=%u remote=%u local=%u magic=%u route=%u slot=%u nonce=%llu\n",b.m.h.msgh_size,b.m.h.msgh_id,b.m.h.msgh_bits,b.m.h.msgh_remote_port,b.m.h.msgh_local_port,b.m.magic,b.m.route,b.m.slot,(unsigned long long)b.m.nonce);
     if((!permitted && b.m.slot!=3) || b.m.h.msgh_size!=sizeof(Message) || (b.m.h.msgh_bits&MACH_MSGH_BITS_COMPLEX) ||
        b.m.h.msgh_id!=PING_ID || !MACH_PORT_VALID(b.m.h.msgh_remote_port) ||
        MACH_MSGH_BITS_REMOTE(b.m.h.msgh_bits)!=MACH_MSG_TYPE_PORT_SEND_ONCE ||
@@ -349,7 +363,9 @@ static int receive_ping(mach_port_t service,unsigned route,unsigned *seen,int pe
     *seen|=1U<<b.m.slot;
     b.m.h.msgh_bits=MACH_MSGH_BITS(MACH_MSG_TYPE_MOVE_SEND_ONCE,0);
     b.m.h.msgh_local_port=MACH_PORT_NULL; b.m.h.msgh_id=PING_ID+1; b.m.h.msgh_size=sizeof(Message);
+    b.m.magic=MAGIC^UINT32_C(0xa5a5a5a5);
     result=mach_msg(&b.m.h,MACH_SEND_MSG|MACH_SEND_TIMEOUT,sizeof(Message),0,MACH_PORT_NULL,100,MACH_PORT_NULL);
+    printf("SERVER-TX result=%d\n",result);
     if(result!=MACH_MSG_SUCCESS) { mach_msg_destroy(&b.m.h); return 0; }
     return 1;
 }
@@ -440,6 +456,7 @@ int main(int argc,char **argv) {
         mach_port_array_t saved=NULL; mach_msg_type_number_t saved_count=0;
         kr(mach_ports_lookup(mach_task_self(),&saved,&saved_count),"save parent registered"); if(saved_count>16) exit(77);
         kr(mach_ports_register(mach_task_self(),&service,1),"transport service to trusted launcher");
+        parent_registration(service);
         pid_t p=fork();
         if(p>0) { guarded_leader=p; guarded=1; }
         if(p!=0) {
