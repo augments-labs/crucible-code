@@ -4,8 +4,8 @@ name: native-sandbox-experiment
 permissions:
   contents: read
 jobs:
-  macos-task-access-identity:
-    name: macOS task-access endpoint provenance (${{ matrix.os }})
+  macos-task-access-rpc:
+    name: macOS task-access message policy (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -17,4 +17,4 @@ jobs:
       with:
         persist-credentials: false
     - shell: bash
-      run: sh .github/probes/macos-task-access-identity.sh
+      run: sh .github/probes/macos-task-access-rpc.sh
