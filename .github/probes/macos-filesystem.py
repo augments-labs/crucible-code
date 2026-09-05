@@ -22,7 +22,6 @@ image = base / 'fixture.dmg'
 mount = base / 'volume'
 mount.mkdir()
 print('FIXTURE ' + str(base), flush=True)
-owned_pids = []
 
 
 def command(argv, allowed=(0,), timeout=30):
@@ -31,8 +30,6 @@ def command(argv, allowed=(0,), timeout=30):
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             close_fds=True, start_new_session=True,
                             env={'PATH': '/usr/bin:/bin:/usr/sbin:/sbin', 'LANG': 'C'})
-    if len(argv) > 1 and str(argv[0]) == str(worker) and argv[1] in ('launch', 'launch-cwd'):
-        owned_pids.append(proc.pid)
     data = bytearray()
     deadline = time.monotonic() + timeout
     try:
@@ -82,6 +79,7 @@ def make_case(sequence):
         owned_file(root / suffix)
     outside = base / ('host-source-' + str(sequence))
     owned_file(outside)
+    owned_file(pathlib.Path(str(outside) + '-sibling'))
     os.symlink(root / 'rw/nested/.git/config', root / 'rw/protected-alias')
     os.symlink(root / 'rw/secret', root / 'rw/secret-alias')
     os.symlink(outside, root / 'rw/source-alias')
@@ -102,6 +100,7 @@ def profile_for(root):
         '(version 1)', '(allow default)', '(deny network*)',
         '(deny mach-lookup)', '(deny mach-register)',
         '(deny file-read*)', '(deny file-write*)',
+        '(allow file-read-data (literal "/"))',
         '(allow file-read-metadata ' + metadata + ')',
         '(allow file-read* (subpath "/System/Library") (subpath "/usr/lib") (literal "/dev/null") (literal ' + q(worker) + ') (subpath ' + q(root) + '))',
         '(allow file-write* (subpath ' + q(root / 'rw') + '))',
@@ -127,32 +126,29 @@ disks = [entry['dev-entry'] for entry in entities if entry.get('content-hint') =
 assert len(disks) == 1 and disks[0].startswith('/dev/disk')
 command(['/sbin/mount', '-u', '-o', 'nosuid,nodev', mount])
 command([worker, 'flags', mount])
-results = []
-for sequence, variant in enumerate(['baseline', 'literal-root-read', 'literal-root-data', 'ancestor-directory-data', 'read-all-control']):
-    command([worker, 'empty'])
-    root, outside = make_case(sequence)
-    policy = base / ('profile-' + str(sequence) + '.sb')
-    text = profile_for(root)
-    if variant == 'literal-root-read':
-        text += '(allow file-read* (literal "/"))\n'
-    if variant == 'literal-root-data':
-        text += '(allow file-read-data (literal "/"))\n'
-    if variant == 'ancestor-directory-data':
-        ancestors = {path for item in (root, worker, pathlib.Path('/usr/lib'), pathlib.Path('/System/Library'), pathlib.Path('/dev/null')) for path in item.parents}
-        text += '(allow file-read-data ' + ' '.join('(literal ' + json.dumps(str(path)) + ')' for path in sorted(ancestors)) + ')\n'
-    if variant == 'read-all-control':
-        text += '(allow file-read*)\n'
-    policy.write_text(text)
-    os.chmod(policy, 0o644)
-    code, data = command([worker, 'launch', 'confined', policy, 'allowed-read', root, outside], allowed=range(-128, 256))
-    command([worker, 'empty'])
-    observation = {'variant': variant, 'status': code, 'entered': b'GUEST entered' in data}
-    results.append(observation)
-    print('DIAGNOSTIC ' + json.dumps(observation), flush=True)
+operations = ['allowed-read', 'allowed-write', 'source-read', 'source-write', 'sibling-read', 'sibling-write', 'readonly-write',
+              'protected-write', 'protected-replace', 'protected-unlink', 'protected-rename', 'ancestor-rename',
+              'protected-link', 'protected-symlink', 'source-symlink', 'unreadable-read',
+              'unreadable-alias', 'unreadable-case', 'unreadable-create', 'unreadable-rename', 'device', 'setuid']
+failures = []
+sequence = 0
+for mode in ('control', 'confined'):
+    for operation in operations:
+        command([worker, 'empty'])
+        root, outside = make_case(sequence)
+        policy = base / ('profile-' + str(sequence) + '.sb')
+        policy.write_text(profile_for(root))
+        os.chmod(policy, 0o644)
+        code, data = command([worker, 'launch', mode, policy, operation, root, outside], allowed=range(-128, 256))
+        # Every guest fixture is single-process, including exec of the setuid worker.
+        # The parent wait reaps it. A new case requires an error-checked empty UID.
+        command([worker, 'empty'])
+        if code:
+            failures.append({'mode': mode, 'operation': operation, 'status': code})
+        print('RESULT ' + json.dumps({'mode': mode, 'operation': operation, 'status': code}), flush=True)
+        sequence += 1
 command([worker, 'unmount', mount])
 command(['/usr/bin/hdiutil', 'detach', disks[0]])
-print('DIAGNOSTICS-COMPLETE ' + json.dumps(results) + ' uid_empty=1 nonforced_detach=1', flush=True)
-assert len(owned_pids) == 5 and all(isinstance(pid, int) and pid > 1 for pid in owned_pids)
-predicate = ' OR '.join('eventMessage CONTAINS "worker(' + str(pid) + ')"' for pid in owned_pids)
-command(['/usr/bin/log', 'show', '--last', '2m', '--info', '--debug', '--style', 'compact', '--predicate', predicate], allowed=(0, 1))
-# Diagnostics do not define a full filesystem pass; broad grants never become product policy.
+print('COMPLETE cases=' + str(sequence) + ' failures=' + json.dumps(failures) + ' uid_empty=1 nonforced_detach=1', flush=True)
+assert not failures, failures
+# Retain exact owned fixture until disposable VM destruction; never generic cleanup.

@@ -54,7 +54,6 @@ static void launch(int argc, char **argv) {
        setrlimit(RLIMIT_FSIZE,&size) || setrlimit(RLIMIT_CORE,&core) ||
        setgroups(1,&group) || setgid(guest_uid) || setuid(guest_uid)) fail("permanent drop");
     identity(); alarm(10);
-    if(!strcmp(argv[1],"launch-cwd") && chdir(argv[5])) fail("private cwd");
     struct proc_fdinfo descriptors[128];
     int bytes=proc_pidinfo(getpid(),PROC_PIDLISTFDS,0,descriptors,sizeof(descriptors));
     if(bytes<=0 || bytes>=(int)sizeof(descriptors) || bytes%(int)sizeof(descriptors[0])) fail("descriptor inventory");
@@ -84,6 +83,12 @@ static int operation(const char *name, const char *root, const char *outside) {
     if(!strcmp(name,"allowed-write")) { path(a,root,"rw/new"); return open(a,O_CREAT|O_EXCL|O_WRONLY,0600); }
     if(!strcmp(name,"source-read")) return open(outside,O_RDONLY);
     if(!strcmp(name,"source-write")) return open(outside,O_WRONLY);
+    if(!strcmp(name,"sibling-read") || !strcmp(name,"sibling-write")) {
+        int n=snprintf(a,sizeof(a),"%s-sibling",outside);
+        if(n<0 || n>=(int)sizeof(a)) { errno=ENAMETOOLONG; return -1; }
+        return open(a,!strcmp(name,"sibling-read")?O_RDONLY:O_WRONLY);
+    }
+    if(!strcmp(name,"protected-replace")) { path(a,root,"rw/plain"); path(b,root,"rw/nested/.git/config"); return rename(a,b); }
     if(!strcmp(name,"readonly-write")) { path(a,root,"ro/payload"); return open(a,O_WRONLY); }
     if(!strcmp(name,"protected-write")) { path(a,root,"rw/nested/.git/config"); return open(a,O_WRONLY); }
     if(!strcmp(name,"protected-unlink")) { path(a,root,"rw/nested/.git/config"); return unlink(a); }
@@ -113,7 +118,7 @@ int main(int argc,char **argv) {
         return (fs.f_flags&(MNT_NOSUID|MNT_NODEV))==(MNT_NOSUID|MNT_NODEV)?0:77;
     }
     if(argc==3 && !strcmp(argv[1],"unmount")) { if(unmount(argv[2],0)) fail("nonforced unmount"); return 0; }
-    if(argc>1 && (!strcmp(argv[1],"launch") || !strcmp(argv[1],"launch-cwd"))) launch(argc,argv);
+    if(argc>1 && !strcmp(argv[1],"launch")) launch(argc,argv);
     if(argc!=6 || strcmp(argv[1],"guest")) return 77;
     puts("GUEST entered");
     alarm(10); identity();
