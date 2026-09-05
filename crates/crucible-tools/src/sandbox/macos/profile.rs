@@ -171,6 +171,10 @@ impl Profile {
                     text,
                     "(deny file-read* file-write* file-link (regex #\"{regex}\"))"
                 );
+                let _ = writeln!(
+                    text,
+                    "(deny file-write-unlink file-write-create (regex #\"{regex}\"))"
+                );
             }
         }
 
@@ -185,6 +189,10 @@ impl Profile {
             for path in paths_with_system_alias(rule.path()) {
                 let regex = protected_metadata_regex(&path)?;
                 let _ = writeln!(text, "(deny file-write* file-link (regex #\"{regex}\"))");
+                let _ = writeln!(
+                    text,
+                    "(deny file-write-unlink file-write-create (regex #\"{regex}\"))"
+                );
             }
         }
 
@@ -277,6 +285,10 @@ fn push_deny_path(
         let _ = writeln!(
             text,
             "(deny {operations} (require-any (literal (param \"{key}\")) (subpath (param \"{key}\"))))"
+        );
+        let _ = writeln!(
+            text,
+            "(deny file-write-unlink file-write-create (require-any (literal (param \"{key}\")) (subpath (param \"{key}\"))))"
         );
         *count = count.saturating_add(1);
     }
@@ -505,6 +517,9 @@ mod tests {
                 .policy
                 .contains("file-write-unlink file-write-create")
         );
+        assert!(profile.policy.contains(
+            "(deny file-write-unlink file-write-create (require-any (literal (param \"DENY_WRITE_0\")) (subpath (param \"DENY_WRITE_0\"))))"
+        ));
         assert!(
             !profile.policy.contains("\"#)"),
             "Seatbelt regex literals have an opening sharp marker only"
@@ -620,6 +635,12 @@ mod tests {
                     .policy
                     .contains(&format!("(require-not (regex #\"{regex}\"))")),
                 "writable rule does not exclude alias {root:?}"
+            );
+            assert!(
+                profile.policy.contains(&format!(
+                    "(deny file-write-unlink file-write-create (regex #\"{regex}\"))"
+                )),
+                "protected-name moves are not explicitly denied for {root:?}"
             );
         }
     }
