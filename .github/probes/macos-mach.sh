@@ -1,5 +1,5 @@
 #!/bin/sh
-# mac-mach-v5: disposable VM capability-inheritance prerequisite, not a backend.
+# mac-mach-v8: disposable VM capability-inheritance prerequisite, not a backend.
 # No native execution by the author. Root reviews source/manifest before CI.
 set -eu
 umask 022
@@ -471,6 +471,7 @@ int main(int argc,char **argv) {
     calibrate(service,"exception");
     port_kind(service,"parent_owned_queue");
     port_kind(mach_task_self(),"parent_task_control");
+    kr(task_set_exception_ports(mach_task_self(),EXC_MASK_ALL,MACH_PORT_NULL,EXCEPTION_DEFAULT,THREAD_STATE_NONE),"clear coordinator exceptions");
     exception_boundary(service,"parent_owned_queue");
     const char *names[]={"exec","fork","posix_spawn","exec","fork","posix_spawn","shell","git","clang","cargo"};
     for(int c=0;c<10;c++) {
@@ -482,23 +483,22 @@ int main(int argc,char **argv) {
         owned_dir(home,uid); owned_dir(tmp,uid); owned_dir(cargo,uid); path(self,root,"mach");
         snprintf(ids,sizeof ids,"%u",uid); snprintf(mode,sizeof mode,"%d",sanitized); snprintf(route_text,sizeof route_text,"%d",route);
         int output[2]; if(pipe(output)||fcntl(output[0],F_SETFL,O_NONBLOCK)) die("bounded output pipe");
-        mach_port_array_t saved=NULL; mach_msg_type_number_t saved_count=0;
-        kr(mach_ports_lookup(mach_task_self(),&saved,&saved_count),"save parent registered"); if(saved_count>16) exit(77);
-        kr(mach_ports_register(mach_task_self(),&service,1),"transport service to trusted launcher");
-        parent_registration(service);
         pid_t p=fork();
         if(p>0) { guarded_leader=p; guarded=1; }
         if(p!=0) {
-            kr(mach_ports_register(mach_task_self(),saved,saved_count),"restore parent registered");
-            for(mach_msg_type_number_t i=0;i<saved_count;i++) { release(saved[i]); } free_ports(saved,saved_count);
             close(output[1]);
         }
         if(p<0) { close(output[0]); cleanup(uid); die("launcher fork"); }
         if(!p) {
-            mach_port_t expected_seed=slot(0); if(!MACH_PORT_VALID(expected_seed)) exit(77);
+            /* Ordinary fork owns the runtime's registered slots. The owned
+             * exception anchor is the calibrated transport; seed registered
+             * slots explicitly only after the trusted child has arrived. */
+            mach_port_t expected_seed=slot(1); if(!MACH_PORT_VALID(expected_seed)) exit(77);
+            kr(mach_ports_register(mach_task_self(),&expected_seed,1),"seed child registered");
+            parent_registration(expected_seed);
             signal(SIGINT,SIG_DFL); signal(SIGTERM,SIG_DFL); alarm(18);
             if(dup2(output[1],1)<0||dup2(output[1],2)<0) die("guest output"); close_extra_fds();
-            port_kind(expected_seed,"child_registered");
+            port_kind(expected_seed,"child_exception_transport");
             port_kind(mach_task_self(),"child_task_control");
             exception_boundary(expected_seed,"before_credentials");
             if(!ping(expected_seed,(unsigned)route,3)) exit(77);
