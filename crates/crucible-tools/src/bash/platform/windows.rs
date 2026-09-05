@@ -158,6 +158,11 @@ impl Scope {
                 .ok_or(problem)
         });
         job_result.and(child_result)?;
+        self.wait_empty()
+    }
+
+    /// Waits for observed extinction without changing the job's membership.
+    fn wait_empty(&self) -> io::Result<()> {
         let deadline = Instant::now() + STOP_WAIT;
         loop {
             if self.empty()? {
