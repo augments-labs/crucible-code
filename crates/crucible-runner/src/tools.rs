@@ -221,6 +221,20 @@ impl Tools {
             .map(|offered| &offered.entry)
     }
 
+    /// The tool registered under `name`, whether or not the model may call it.
+    ///
+    /// For questions about a call rather than for running one: what a call
+    /// was about, and how it folds, are read off the tool that owns the
+    /// arguments, and a session put back on the screen asks them of calls the
+    /// model looked up in a turn that is over. Nothing runs from this answer,
+    /// so the reveal gate in [`Self::find`] has nothing to protect here.
+    #[must_use]
+    pub fn registered(&self, name: &str) -> Option<&ToolEntry> {
+        self.offered()
+            .find(|offered| offered.entry.descriptor().name() == name)
+            .map(|offered| &offered.entry)
+    }
+
     /// What the model is shown: every tool that is not deferred, and every
     /// deferred one it has looked up.
     ///
@@ -317,6 +331,10 @@ impl Toolset for Tools {
 
     fn dispose(&self, _context: &ToolsetContext) -> Result<(), ToolsetError> {
         Ok(())
+    }
+
+    fn registered(&self, name: &str) -> Option<ToolEntry> {
+        Self::registered(self, name).cloned()
     }
 }
 
@@ -506,6 +524,25 @@ mod tests {
                 .map(|entry| entry.descriptor().name()),
             Some("web_fetch")
         );
+    }
+
+    #[test]
+    fn a_deferred_tool_is_registered_before_it_is_looked_up() {
+        // The gate is on running, not on knowing. A session put back on the
+        // screen asks what a call it replays was about, and the tool that
+        // owns the arguments is the only thing that can say -- whether or not
+        // the model may call it again in the turn that is starting.
+        let revealed = Revealed::new();
+        let mut tools = Tools::looking_up(revealed.clone());
+        tools.defer_builtin(Fixed::new("web_fetch")).unwrap();
+
+        assert_eq!(
+            tools
+                .registered("web_fetch")
+                .map(|entry| entry.descriptor().name()),
+            Some("web_fetch")
+        );
+        assert!(tools.registered("nothing").is_none());
     }
 
     #[test]
