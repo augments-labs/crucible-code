@@ -12,7 +12,17 @@
 //! drag cross all three — which is the point of a selection the reader can
 //! start in a tool result and finish in the prompt box.
 //!
-//! Two answers come off the same walk over those bytes. [`lit`] is what the
+//! The two ends of a drag are kept as a [`Place`] rather than a window row,
+//! because the transcript moves under a drag: the pointer resting at the top
+//! of the band scrolls it back, and a wheel turned with the button still down
+//! scrolls it either way. An end in the transcript names the display row of
+//! the record it went down on, so the highlight stays on those words wherever
+//! the band carries them — off the window included, since what a reader
+//! dragged past on the way down is still part of what they took. An end in
+//! the bands below names the window row, which is all there is to name: the
+//! box and the turn do not scroll.
+//!
+//! Two answers come off the same walk over painted bytes. [`lit`] is what the
 //! reader sees: the same row with reverse video turned on for the columns the
 //! drag covers. [`said`] is what they get when the button comes up: the
 //! characters under those columns, with the sequences dropped, because a
@@ -35,31 +45,87 @@ const DIM: &str = "\x1b[27m";
 /// [`LIT`] off in passing.
 const ATTRIBUTES: char = 'm';
 
+/// Where the transcript band is on the window, and what it is showing.
+///
+/// What turns a window row into a [`Place`] and back. Worked out per frame by
+/// whoever lays the bands out, because both halves of it move: the band's
+/// rows as the box grows, the record row at its top as the reader scrolls.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct View {
+    /// The window rows the transcript band covers.
+    pub(crate) band: Range<usize>,
+    /// The absolute display row of the record shown on the band's first row.
+    pub(crate) top: usize,
+}
+
+impl View {
+    /// What window row `row` is a place for.
+    pub(crate) fn place(&self, row: usize) -> Place {
+        if self.band.contains(&row) {
+            Place::Said(self.top + (row - self.band.start))
+        } else {
+            Place::Stood(row)
+        }
+    }
+
+    /// The window row showing `place`, if the window is showing it.
+    pub(crate) fn row(&self, place: Place) -> Option<usize> {
+        match place {
+            Place::Said(at) => at
+                .checked_sub(self.top)
+                .filter(|into| *into < self.band.len())
+                .map(|into| self.band.start + into),
+            Place::Stood(row) => Some(row),
+        }
+    }
+
+    /// The record rows the band is showing.
+    fn showing(&self) -> Range<usize> {
+        self.top..self.top + self.band.len()
+    }
+}
+
+/// A row a drag can have an end on, in the order the text runs.
+///
+/// Derived order is the order on the window: the transcript band stands over
+/// every other band, so a record row comes before any row that stood below it,
+/// and within a kind the row number decides.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Place {
+    /// A display row of the record, absolute.
+    ///
+    /// Stable through scrolling and through the record spilling its oldest
+    /// lines, which is what lets a drag keep the words it began on.
+    Said(usize),
+    /// A window row outside the transcript band, which does not scroll.
+    Stood(usize),
+}
+
 /// A drag over the window, from where the button went down to where the
 /// pointer has reached.
 ///
-/// Screen rows and columns, absolute, because a drag crosses bands and the
-/// bands are laid out per frame. What it covers is worked out against the
-/// window every frame rather than stored, so a selection made before a turn
-/// grew still covers the same screen it was drawn on.
+/// Two places and the column at each. What it covers is worked out against
+/// the window every frame rather than stored, so the same drag lights the
+/// right rows after the band it began in has scrolled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Taken {
     /// Where the button went down.
-    from: (usize, usize),
+    from: (Place, usize),
     /// Where the pointer has reached.
-    to: (usize, usize),
+    to: (Place, usize),
 }
 
 impl Taken {
-    /// A button going down, which covers nothing until it moves.
-    pub(crate) fn opened(row: usize, column: usize) -> Self {
-        let at = (row, column);
+    /// A button going down on window row `row`, which covers nothing until it
+    /// moves.
+    pub(crate) fn opened(row: usize, column: usize, view: &View) -> Self {
+        let at = (view.place(row), column);
         Self { from: at, to: at }
     }
 
-    /// The pointer has reached `row`, `column`.
-    pub(crate) fn reaches(&mut self, row: usize, column: usize) {
-        self.to = (row, column);
+    /// The pointer has reached window row `row`, `column`.
+    pub(crate) fn reaches(&mut self, row: usize, column: usize, view: &View) {
+        self.to = (view.place(row), column);
     }
 
     /// Whether the drag covers anything at all.
@@ -75,7 +141,7 @@ impl Taken {
     ///
     /// Which is not the order they arrived in: a drag upwards ends where it
     /// began, and the text it covers still runs down the screen.
-    fn ends(self) -> ((usize, usize), (usize, usize)) {
+    fn ends(self) -> ((Place, usize), (Place, usize)) {
         if self.from <= self.to {
             (self.from, self.to)
         } else {
@@ -83,14 +149,13 @@ impl Taken {
         }
     }
 
-    /// Every screen row the drag reaches.
-    pub(crate) fn rows(self) -> RangeInclusive<usize> {
-        let ((top, _), (foot, _)) = self.ends();
-        top..=foot
+    /// Which columns of window row `at` the drag covers, in a window `columns`
+    /// wide showing `view`.
+    pub(crate) fn covers(self, at: usize, columns: usize, view: &View) -> Option<Range<usize>> {
+        self.covering(view.place(at), columns)
     }
 
-    /// Which columns of screen row `at` the drag covers, in a window `columns`
-    /// wide.
+    /// Which columns of `place` the drag covers, in a window `columns` wide.
     ///
     /// Flowing rather than rectangular: the first row is covered from where the
     /// button went down to the end of the window, the last from the start of it
@@ -100,21 +165,63 @@ impl Taken {
     ///
     /// The column under the pointer is covered, at both ends. A reader dragging
     /// over a word expects the letter they stopped on to come with it.
-    pub(crate) fn covers(self, at: usize, columns: usize) -> Option<Range<usize>> {
+    fn covering(self, place: Place, columns: usize) -> Option<Range<usize>> {
         if self.empty() {
             return None;
         }
 
         let ((top, opened), (foot, reached)) = self.ends();
-        if at < top || at > foot {
+        if place < top || place > foot {
             return None;
         }
 
-        let start = if at == top { opened } else { 0 };
-        let end = if at == foot { reached + 1 } else { columns };
+        let start = if place == top { opened } else { 0 };
+        let end = if place == foot { reached + 1 } else { columns };
         let end = end.min(columns);
 
         (start < end).then_some(start..end)
+    }
+
+    /// Every place the drag covers, top to bottom, with the columns covered at
+    /// each, for a window `columns` wide showing `view` of a record whose last
+    /// display row is `last`.
+    ///
+    /// What a release reads: the rows on the window and, where the band has
+    /// carried an end off it, the record rows between. A drag that ended below
+    /// the band takes the record down to the last row the band shows — what
+    /// the reader could see between the two ends — and then the rows that
+    /// stood under it.
+    pub(crate) fn places(
+        self,
+        columns: usize,
+        view: &View,
+        last: Option<usize>,
+    ) -> Vec<(Place, Range<usize>)> {
+        if self.empty() {
+            return Vec::new();
+        }
+
+        let ((top, _), (foot, _)) = self.ends();
+        // Empty where the drag has no end of that kind: `first..=until` with
+        // `until` under `first` yields nothing, which is the answer wanted.
+        let said: RangeInclusive<usize> = match (top, foot) {
+            (Place::Said(first), Place::Said(until)) => first..=until,
+            (Place::Said(first), Place::Stood(_)) => {
+                let shown = view.showing().end.saturating_sub(1);
+                first..=last.map_or(shown, |last| last.min(shown))
+            }
+            (Place::Stood(_), _) => RangeInclusive::new(1, 0),
+        };
+        let stood: RangeInclusive<usize> = match (top, foot) {
+            (Place::Stood(first), Place::Stood(until)) => first..=until,
+            (Place::Said(_), Place::Stood(until)) => view.band.end..=until,
+            (_, Place::Said(_)) => RangeInclusive::new(1, 0),
+        };
+
+        said.map(Place::Said)
+            .chain(stood.map(Place::Stood))
+            .filter_map(|place| Some((place, self.covering(place, columns)?)))
+            .collect()
     }
 }
 
@@ -252,9 +359,14 @@ mod tests {
 
     /// A drag, spelled as the two ends a reader would describe it by.
     fn dragged(from: (usize, usize), to: (usize, usize)) -> Taken {
-        let mut taken = Taken::opened(from.0, from.1);
-        taken.reaches(to.0, to.1);
+        let mut taken = Taken::opened(from.0, from.1, &View::default());
+        taken.reaches(to.0, to.1, &View::default());
         taken
+    }
+
+    /// A window whose first `band` rows show the record from display row `top`.
+    fn showing(band: usize, top: usize) -> View {
+        View { band: 0..band, top }
     }
 
     /// What `lit` makes of a row, for a test that only wants to read it.
@@ -269,19 +381,19 @@ mod tests {
         // A click is not a selection. One cell of reverse video under the
         // pointer is a highlight nobody asked for, and it would arrive on every
         // click a loop underneath was answering for its own reasons.
-        let taken = Taken::opened(3, 10);
+        let taken = Taken::opened(3, 10, &View::default());
 
         assert!(taken.empty());
-        assert_eq!(taken.covers(3, 80), None);
+        assert_eq!(taken.covers(3, 80, &View::default()), None);
     }
 
     #[test]
     fn a_drag_across_one_row_covers_its_two_ends_and_what_is_between_them() {
         let taken = dragged((2, 4), (2, 8));
 
-        assert_eq!(taken.covers(2, 80), Some(4..9));
-        assert_eq!(taken.covers(1, 80), None);
-        assert_eq!(taken.covers(3, 80), None);
+        assert_eq!(taken.covers(2, 80, &View::default()), Some(4..9));
+        assert_eq!(taken.covers(1, 80, &View::default()), None);
+        assert_eq!(taken.covers(3, 80, &View::default()), None);
     }
 
     #[test]
@@ -292,7 +404,11 @@ mod tests {
         let up = dragged((4, 9), (1, 3));
 
         for at in 0..6 {
-            assert_eq!(up.covers(at, 80), down.covers(at, 80), "row {at}");
+            assert_eq!(
+                up.covers(at, 80, &View::default()),
+                down.covers(at, 80, &View::default()),
+                "row {at}"
+            );
         }
     }
 
@@ -300,9 +416,9 @@ mod tests {
     fn a_drag_over_several_rows_takes_the_ends_ragged_and_the_middle_whole() {
         let taken = dragged((1, 12), (3, 5));
 
-        assert_eq!(taken.covers(1, 40), Some(12..40));
-        assert_eq!(taken.covers(2, 40), Some(0..40));
-        assert_eq!(taken.covers(3, 40), Some(0..6));
+        assert_eq!(taken.covers(1, 40, &View::default()), Some(12..40));
+        assert_eq!(taken.covers(2, 40, &View::default()), Some(0..40));
+        assert_eq!(taken.covers(3, 40, &View::default()), Some(0..6));
     }
 
     #[test]
@@ -312,7 +428,109 @@ mod tests {
         // padded past the edge, which the terminal wraps itself.
         let taken = dragged((0, 2), (0, 500));
 
-        assert_eq!(taken.covers(0, 40), Some(2..40));
+        assert_eq!(taken.covers(0, 40, &View::default()), Some(2..40));
+    }
+
+    #[test]
+    fn a_drag_in_the_transcript_stays_on_its_words_when_the_band_scrolls() {
+        // The end went down on record row 12, shown on window row 2. Three rows
+        // of scrolling back carry that row to window row 5, and the highlight
+        // goes with it: the rows it covers are the rows showing those words.
+        let mut taken = Taken::opened(2, 4, &showing(8, 10));
+        taken.reaches(3, 1, &showing(8, 10));
+
+        let scrolled = showing(8, 7);
+        assert_eq!(taken.covers(2, 40, &scrolled), None);
+        assert_eq!(taken.covers(5, 40, &scrolled), Some(4..40));
+        assert_eq!(taken.covers(6, 40, &scrolled), Some(0..2));
+    }
+
+    #[test]
+    fn an_end_carried_off_the_window_still_covers_every_row_down_to_the_pointer() {
+        // Opened on record row 10 at the top of the band, then the band
+        // scrolled on by five while the pointer stayed on window row 3. The
+        // words the button went down on are above the window now, and every
+        // row from the top of the band to the pointer is between them.
+        let mut taken = Taken::opened(0, 6, &showing(8, 10));
+        taken.reaches(3, 2, &showing(8, 15));
+
+        assert_eq!(taken.covers(0, 40, &showing(8, 15)), Some(0..40));
+        assert_eq!(taken.covers(3, 40, &showing(8, 15)), Some(0..3));
+        assert_eq!(taken.covers(4, 40, &showing(8, 15)), None);
+
+        let places = taken.places(40, &showing(8, 15), Some(99));
+        let expected: Vec<Place> = (10..=18).map(Place::Said).collect();
+        assert_eq!(
+            places.iter().map(|(place, _)| *place).collect::<Vec<_>>(),
+            expected
+        );
+        assert_eq!(
+            places.first().map(|(_, covered)| covered.clone()),
+            Some(6..40)
+        );
+        assert_eq!(
+            places.last().map(|(_, covered)| covered.clone()),
+            Some(0..3)
+        );
+    }
+
+    #[test]
+    fn an_end_carried_below_the_band_covers_the_band_and_none_of_the_box() {
+        // Opened on record row 17, shown on the band's last row, then the band
+        // scrolled back by four with the pointer on window row 2. The words
+        // are under the box now; the box is not between the two ends and is
+        // not lit.
+        let mut taken = Taken::opened(7, 3, &showing(8, 10));
+        taken.reaches(2, 5, &showing(8, 6));
+
+        assert_eq!(taken.covers(2, 40, &showing(8, 6)), Some(5..40));
+        assert_eq!(taken.covers(7, 40, &showing(8, 6)), Some(0..40));
+        assert_eq!(taken.covers(8, 40, &showing(8, 6)), None);
+        assert_eq!(taken.covers(9, 40, &showing(8, 6)), None);
+
+        let places = taken.places(40, &showing(8, 6), Some(99));
+        assert_eq!(places.len(), 10);
+        assert_eq!(places.last(), Some(&(Place::Said(17), 0..4)));
+    }
+
+    #[test]
+    fn a_drag_from_the_transcript_into_the_box_takes_what_stood_between() {
+        // The band shows record rows 10..18 on window rows 0..8, and the box
+        // stands on rows 8..11. What is between row 12 and the box is the rest
+        // of the band, and then the rows of the box down to the pointer.
+        let view = showing(8, 10);
+        let mut taken = Taken::opened(2, 0, &view);
+        taken.reaches(9, 3, &view);
+
+        let places = taken.places(40, &view, Some(99));
+        let expected: Vec<Place> = (12..18)
+            .map(Place::Said)
+            .chain((8..=9).map(Place::Stood))
+            .collect();
+        assert_eq!(
+            places.iter().map(|(place, _)| *place).collect::<Vec<_>>(),
+            expected
+        );
+        assert_eq!(
+            places.last().map(|(_, covered)| covered.clone()),
+            Some(0..4)
+        );
+    }
+
+    #[test]
+    fn a_drag_below_the_band_ends_where_the_record_does() {
+        // A record two rows long on an eight-row band: the rows under it are
+        // blank window, and a drag into the box takes no record row that
+        // does not exist.
+        let view = showing(8, 0);
+        let mut taken = Taken::opened(0, 0, &view);
+        taken.reaches(8, 1, &view);
+
+        let places = taken.places(40, &view, Some(1));
+        assert_eq!(
+            places.iter().map(|(place, _)| *place).collect::<Vec<_>>(),
+            vec![Place::Said(0), Place::Said(1), Place::Stood(8)]
+        );
     }
 
     #[test]

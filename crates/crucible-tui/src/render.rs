@@ -36,7 +36,7 @@ use crate::glyphs::Glyphs;
 use crate::markdown::Markdown;
 use crate::record::Record;
 use crate::row::Row;
-use crate::select::Taken;
+use crate::select::{self, Place, Taken, View};
 use crate::terminal::keys::{Pressed, pressed, waiting};
 use crate::terminal::{Size, Terminal, TerminalError};
 use crate::transcript_map::{self, TranscriptMap};
@@ -56,6 +56,14 @@ use painted::Painted;
 /// reporting rather than like a setting waiting to be made. Three rows is a
 /// short paragraph, which is enough to see the picture move.
 const NOTCH: i32 = 3;
+
+/// How often a drag resting at an edge of the transcript carries it another
+/// row.
+///
+/// Slow enough that a reader who overshot the top row by a hair can bring the
+/// pointer back before more than a line or two has gone, quick enough that a
+/// reader who wants the paragraph above gets there without letting go.
+const CREEP: Duration = Duration::from_millis(60);
 
 /// Where the cursor rests inside a band.
 ///
@@ -270,11 +278,20 @@ pub struct Renderer<T: Terminal> {
     notch: i32,
     /// What the reader has dragged over, if anything.
     ///
-    /// Screen rows and columns, and therefore only ever true of the frame it
-    /// was made against. Dropped by anything that moves the picture out from
-    /// under it — a scroll, a resize — because a selection that stayed put
-    /// while its words moved is a highlight over the wrong text.
+    /// Its ends in the transcript are record rows, so a scroll carries the
+    /// highlight with the words. Dropped by anything that changes what a
+    /// record row is — a resize refolds every line — and by anything that
+    /// replaces the record under it.
     taken: Option<Taken>,
+    /// Where the pointer is while a button is held down, from the press to the
+    /// release.
+    ///
+    /// What lets a wheel turned mid-drag extend the drag to the words that have
+    /// just arrived under the pointer, and what a drag resting at an edge of
+    /// the transcript scrolls towards.
+    held: Option<(usize, usize)>,
+    /// When a drag resting at an edge of the transcript next carries it a row.
+    creeps: Option<Instant>,
     /// Which window row and column the pointer was last reported on.
     ///
     /// A place rather than what is on it, and kept across everything that moves
@@ -318,6 +335,8 @@ impl<T: Terminal> Renderer<T> {
             map: TranscriptMap::default(),
             notch: NOTCH,
             taken: None,
+            held: None,
+            creeps: None,
             pointing: None,
         }
     }
@@ -450,15 +469,26 @@ impl<T: Terminal> Renderer<T> {
             // reader puts a selection away: click, anywhere.
             Pressed::Clicked { row, column } => {
                 let had = self.taken.is_some_and(|taken| !taken.empty());
-                self.taken = Some(Taken::opened(row, column));
+                let view = self.view(&bands);
+                self.taken = Some(Taken::opened(row, column, &view));
+                self.held = Some((row, column));
+                self.creeps = None;
                 if had {
                     self.draw()?;
                 }
                 Ok(Some(arrived))
             }
             Pressed::Dragged { row, column } => {
-                if let Some(taken) = &mut self.taken {
-                    taken.reaches(row, column);
+                self.held = Some((row, column));
+                if self.taken.is_some() {
+                    // The band scrolls a row towards a pointer at its edge
+                    // before the drag is placed, so the words that arrive
+                    // under the pointer are the words it reaches.
+                    if self.creeps.is_none() {
+                        self.creeps = Some(Instant::now());
+                    }
+                    self.crept()?;
+                    self.reached();
                     self.draw()?;
                 }
                 Ok(None)
@@ -467,14 +497,120 @@ impl<T: Terminal> Renderer<T> {
             // where it did not: a button coming up after a plain click is not
             // an empty clipboard, it is nothing at all.
             Pressed::Released { .. } => {
+                self.held = None;
+                self.creeps = None;
                 if self.taken.is_some_and(|taken| !taken.empty()) {
-                    let said = self.painted.read();
+                    let said = self.selected();
                     self.copied(&said)?;
                 }
                 Ok(None)
             }
+            // A wheel turned with the button down is part of the drag: the
+            // band moves and the drag reaches the words now under the pointer.
+            // Answered here so the loop underneath does not scroll it twice.
+            Pressed::Scrolled { back } if self.held.is_some() && self.taken.is_some() => {
+                self.notched(back)?;
+                self.reached();
+                self.draw()?;
+                Ok(None)
+            }
             _ => Ok(Some(arrived)),
         }
+    }
+
+    /// The transcript band as it stands, for placing a drag's ends.
+    fn view(&self, bands: &Bands) -> View {
+        View {
+            band: bands.transcript.clone(),
+            top: self.record.top_row(bands.transcript.len()),
+        }
+    }
+
+    /// Extends the drag to wherever the held pointer is on the window now.
+    fn reached(&mut self) {
+        let Some((row, column)) = self.held else {
+            return;
+        };
+        let bands = self.bands();
+        let view = self.view(&bands);
+        if let Some(taken) = &mut self.taken {
+            taken.reaches(row, column, &view);
+        }
+    }
+
+    /// Scrolls the transcript a row towards a held pointer resting at its
+    /// edge, if its next step is due.
+    ///
+    /// A pointer on the band's first row asks for the row above it and a
+    /// pointer on its last row, or anywhere below the band, for the row under
+    /// it. The step is rescheduled while the band still has that way to go,
+    /// so a drag left resting there keeps going, and forgotten the moment it
+    /// does not — a pointer resting in the box after the band reached its foot
+    /// is the drag a reader wanted, not a clock to keep.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be written to.
+    fn crept(&mut self) -> Result<bool, TerminalError> {
+        let (Some((row, _)), Some(due)) = (self.held, self.creeps) else {
+            self.creeps = None;
+            return Ok(false);
+        };
+        let now = Instant::now();
+        if now < due {
+            return Ok(false);
+        }
+        let bands = self.bands();
+        let by = if row <= bands.transcript.start {
+            -1
+        } else if row + 1 >= bands.transcript.end {
+            1
+        } else {
+            self.creeps = None;
+            return Ok(false);
+        };
+        if !self.record.scroll(by, bands.transcript.len()) {
+            self.creeps = None;
+            return Ok(false);
+        }
+        self.creeps = now.checked_add(CREEP);
+        self.refresh_map();
+        self.reached();
+        self.draw()?;
+        Ok(true)
+    }
+
+    /// The text of what is selected, in the order the reader reads it.
+    ///
+    /// Rows the window is showing are read off the screen, so the box and the
+    /// turn band come along and a folded row comes as folded. Record rows a
+    /// drag scrolled off the window are folded again from the record, because
+    /// a reader who dragged past them took them. Each row is trimmed of the
+    /// blank it was padded out with, because that padding is screen and not
+    /// text.
+    fn selected(&self) -> String {
+        let Some(taken) = self.taken else {
+            return String::new();
+        };
+        let bands = self.bands();
+        let view = self.view(&bands);
+        let mut painted = String::new();
+        let lines: Vec<String> = taken
+            .places(self.size.columns, &view, self.record.last_row())
+            .into_iter()
+            .filter_map(|(place, covered)| match (view.row(place), place) {
+                (Some(row), _) => self.painted.said(row, &covered),
+                (None, Place::Said(at)) => {
+                    let row = self.record.row_at(at)?;
+                    painted.clear();
+                    row.paint_into(&self.palette, &mut painted);
+                    Some(select::said(&painted, &covered, &row.structural()))
+                }
+                (None, Place::Stood(_)) => None,
+            })
+            .map(|line| line.trim_end().to_owned())
+            .collect();
+        lines.join("\n")
     }
 
     /// Where the pointer was last reported, as a window row and column.
@@ -567,7 +703,7 @@ impl<T: Terminal> Renderer<T> {
     /// move.
     fn unselects(&mut self) {
         self.taken = None;
-        self.painted.selects(None);
+        self.painted.selects(None, View::default());
     }
 
     /// Tells this renderer which palette the run resolved.
@@ -622,21 +758,31 @@ impl<T: Terminal> Renderer<T> {
         self.record.landmark();
     }
 
-    /// How long an input wait may sleep before the map restores the identity
-    /// row. `None` where no map is standing or a drag is still held.
+    /// How long an input wait may sleep before something here is due: the map
+    /// restoring the identity row, or a drag resting at an edge of the
+    /// transcript carrying it another row. `None` where neither is pending.
     #[must_use]
     fn rests_in(&self) -> Option<Duration> {
-        self.map.remaining(Instant::now())
+        let now = Instant::now();
+        let map = self.map.remaining(now);
+        let creep = self.creeps.map(|due| due.saturating_duration_since(now));
+        match (map, creep) {
+            (Some(map), Some(creep)) => Some(map.min(creep)),
+            (map, creep) => map.or(creep),
+        }
     }
 
-    /// Restores the bottom-row control if the map has been idle long enough.
+    /// Does whatever fell due while an input wait slept: restores the map's
+    /// bottom-row control once it has been idle long enough, and carries the
+    /// transcript a row towards a drag resting at its edge.
     ///
     /// # Errors
     ///
-    /// [`TerminalError::Io`] if the restored row could not be drawn.
+    /// [`TerminalError::Io`] if the frame could not be drawn.
     fn repose(&mut self) -> Result<bool, TerminalError> {
+        let crept = self.crept()?;
         if !self.map.repose(Instant::now()) {
-            return Ok(false);
+            return Ok(crept);
         }
         self.draw()?;
         Ok(true)
@@ -1271,7 +1417,6 @@ impl<T: Terminal> Renderer<T> {
             return Ok(false);
         }
 
-        self.unselects();
         self.refresh_map();
         self.draw()?;
         Ok(true)
@@ -1524,7 +1669,8 @@ impl<T: Terminal> Renderer<T> {
         let lit = self.pointed();
         let palette = self.palette;
         let pointed = self.palette.pointing(true);
-        self.painted.selects(self.taken);
+        let view = self.view(&bands);
+        self.painted.selects(self.taken, view);
         self.painted.open(self.size.rows, self.size.columns);
 
         let showing = self.record.view(bands.transcript.len());

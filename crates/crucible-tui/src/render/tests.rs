@@ -1230,23 +1230,152 @@ fn a_press_that_never_moved_reaches_the_loop_and_copies_nothing() {
     assert!(!drawn.take().contains("\x1b]52;"));
 }
 
-#[test]
-fn a_scroll_lets_go_of_a_selection_rather_than_holding_it_over_other_words() {
-    // The two ends are screen rows. Moving the picture under them without
-    // dropping them leaves a highlight over text nobody dragged over, and a
-    // release would copy it.
+/// Forty one-row lines on an eight-row window with nothing else standing in
+/// it: following the foot, the band shows `line 32` to `line 39`.
+fn forty_lines() -> Drawn {
     let mut drawn = Drawn::new(40, 8);
     for line in 0..40 {
         drawn.commit(&format!("line {line}")).unwrap();
     }
+    drawn.take();
+    drawn
+}
+
+#[test]
+fn a_scroll_carries_a_selection_with_the_words_it_covered() {
+    // The two ends name record rows, not window rows. Moving the band under
+    // them moves the highlight with the text, and a release copies the words
+    // the reader dragged over rather than whatever has arrived under the rows.
+    let mut drawn = forty_lines();
 
     drawn.took(Pressed::Clicked { row: 0, column: 0 }).unwrap();
     drawn.took(Pressed::Dragged { row: 1, column: 4 }).unwrap();
-    assert!(drawn.scrolled(-3).unwrap());
-    drawn.take();
     drawn.took(Pressed::Released { row: 1, column: 4 }).unwrap();
+    drawn.take();
 
-    assert!(!drawn.take().contains("\x1b]52;"));
+    assert!(drawn.scrolled(-3).unwrap());
+    assert_eq!(drawn.screen().row(3), "line 32");
+    let frame = drawn.take();
+    assert!(frame.contains("\x1b[7mline 32"), "{frame:?}");
+    assert!(!frame.contains("\x1b[7mline 29"), "{frame:?}");
+}
+
+#[test]
+fn a_wheel_turned_with_the_button_down_scrolls_and_reaches_the_words_under_the_pointer() {
+    // Answered here rather than handed on: the loop underneath would scroll it
+    // a second time, and the drag would be left short of the rows that just
+    // arrived under the pointer.
+    let mut drawn = forty_lines();
+
+    drawn.took(Pressed::Clicked { row: 2, column: 0 }).unwrap();
+    drawn.took(Pressed::Dragged { row: 3, column: 4 }).unwrap();
+    assert_eq!(
+        drawn.took(Pressed::Scrolled { back: true }).unwrap(),
+        None,
+        "the wheel reached the loop underneath"
+    );
+    assert_eq!(drawn.screen().row(0), "line 29");
+    drawn.take();
+
+    drawn.took(Pressed::Released { row: 3, column: 4 }).unwrap();
+    let wrote = drawn.take();
+    assert!(
+        wrote.contains(&onto_the_clipboard(" 32\nline 33\nl")),
+        "{wrote:?}"
+    );
+}
+
+#[test]
+fn a_wheel_turned_after_the_button_came_up_is_the_loops_to_answer() {
+    let mut drawn = forty_lines();
+
+    drawn.took(Pressed::Clicked { row: 2, column: 0 }).unwrap();
+    drawn.took(Pressed::Dragged { row: 3, column: 4 }).unwrap();
+    drawn.took(Pressed::Released { row: 3, column: 4 }).unwrap();
+
+    assert_eq!(
+        drawn.took(Pressed::Scrolled { back: true }).unwrap(),
+        Some(Pressed::Scrolled { back: true })
+    );
+}
+
+#[test]
+fn a_drag_reaching_the_top_of_the_transcript_scrolls_it_back_a_row() {
+    let mut drawn = forty_lines();
+
+    drawn.took(Pressed::Clicked { row: 3, column: 0 }).unwrap();
+    drawn.took(Pressed::Dragged { row: 0, column: 0 }).unwrap();
+
+    assert_eq!(drawn.screen().row(0), "line 31");
+    // The row the button went down on has moved with the words.
+    assert_eq!(drawn.screen().row(4), "line 35");
+    let frame = drawn.take();
+    assert!(frame.contains("\x1b[7mline 31"), "{frame:?}");
+    assert!(frame.contains("\x1b[7ml\x1b[27mine 35"), "{frame:?}");
+}
+
+#[test]
+fn a_drag_resting_at_the_top_of_the_transcript_keeps_scrolling_it_back() {
+    // Nothing more arrives from the terminal while the pointer rests, so the
+    // input wait wakes at the creep's deadline and takes the next row itself.
+    let mut drawn = forty_lines();
+
+    drawn.took(Pressed::Clicked { row: 3, column: 0 }).unwrap();
+    drawn.took(Pressed::Dragged { row: 0, column: 0 }).unwrap();
+    assert_eq!(drawn.screen().row(0), "line 31");
+
+    assert!(
+        drawn.rests_in().is_some_and(|rest| rest <= CREEP),
+        "no wake was scheduled for the resting drag"
+    );
+    drawn.render.creeps = Some(Instant::now());
+    assert!(drawn.render.repose().unwrap());
+    assert_eq!(drawn.screen().row(0), "line 30");
+
+    // Released, the pointer is nobody's clock.
+    drawn.took(Pressed::Released { row: 0, column: 0 }).unwrap();
+    assert_eq!(drawn.rests_in(), None);
+}
+
+#[test]
+fn a_drag_reaching_the_foot_of_the_transcript_scrolls_it_on_until_the_record_ends() {
+    let mut drawn = forty_lines();
+    assert!(drawn.scrolled(-10).unwrap());
+    assert_eq!(drawn.screen().row(0), "line 22");
+
+    drawn.took(Pressed::Clicked { row: 2, column: 0 }).unwrap();
+    drawn.took(Pressed::Dragged { row: 7, column: 3 }).unwrap();
+    assert_eq!(drawn.screen().row(0), "line 23");
+
+    for _ in 0..20 {
+        drawn.render.creeps = Some(Instant::now());
+        drawn.render.repose().unwrap();
+    }
+    assert_eq!(drawn.screen().row(0), "line 32");
+    assert_eq!(drawn.rests_in(), None, "the foot is not a clock to keep");
+}
+
+#[test]
+fn what_a_drag_scrolled_off_the_window_is_copied_with_the_rest() {
+    // The button went down on `line 22`, and the band was carried on until
+    // that row was above the window. The reader dragged over everything
+    // between, so everything between is what they get.
+    let mut drawn = forty_lines();
+    assert!(drawn.scrolled(-10).unwrap());
+
+    drawn.took(Pressed::Clicked { row: 0, column: 0 }).unwrap();
+    drawn.took(Pressed::Dragged { row: 6, column: 6 }).unwrap();
+    assert!(drawn.scrolled(5).unwrap());
+    drawn.took(Pressed::Dragged { row: 6, column: 6 }).unwrap();
+    drawn.take();
+    drawn.took(Pressed::Released { row: 6, column: 6 }).unwrap();
+
+    let expected: Vec<String> = (22..=33).map(|line| format!("line {line}")).collect();
+    let wrote = drawn.take();
+    assert!(
+        wrote.contains(&onto_the_clipboard(&expected.join("\n"))),
+        "{wrote:?}"
+    );
 }
 
 #[test]
