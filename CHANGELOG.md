@@ -10,6 +10,9 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **Unsupported sandbox errors no longer recommend a removed setting.** The
+  native-backend refusal no longer suggests the rejected `sandbox.mode` key.
+
 - **Sandbox reports preserve fractional time limits.** Command and session
   ceilings retain their exact duration instead of rounding down to whole seconds.
 
