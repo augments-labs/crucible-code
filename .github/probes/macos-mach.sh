@@ -274,6 +274,11 @@ static void check_seed(mach_port_t expected,const char *boundary) {
            boundary,expected,actual,expected==actual,expected_type,actual_type);
     int same=expected==actual; release(actual); if(!same) exit(77);
 }
+static void port_kind(mach_port_t port,const char *boundary) {
+    unsigned kind=0;
+    kern_return_t result=mach_port_kernel_object(mach_task_self(),port,&kind,NULL);
+    printf("PORT-KIND boundary=%s result=%d type=%u\n",boundary,result,kind);
+}
 static void exception_boundary(mach_port_t service,const char *boundary) {
     kern_return_t result=task_set_exception_ports(mach_task_self(),EXC_MASK_BREAKPOINT,service,EXCEPTION_DEFAULT,THREAD_STATE_NONE);
     printf("EXCEPTION-BOUNDARY boundary=%s result=%d\n",boundary,result);
@@ -464,6 +469,9 @@ int main(int argc,char **argv) {
     calibrate(ordinary,"ordinary");
     kr(mach_port_destroy(mach_task_self(),ordinary),"ordinary calibration destroy");
     calibrate(service,"exception");
+    port_kind(service,"parent_owned_queue");
+    port_kind(mach_task_self(),"parent_task_control");
+    exception_boundary(service,"parent_owned_queue");
     const char *names[]={"exec","fork","posix_spawn","exec","fork","posix_spawn","shell","git","clang","cargo"};
     for(int c=0;c<10;c++) {
         if(stopped || empty(uid)!=1) { cleanup(uid); return 77; }
@@ -490,6 +498,8 @@ int main(int argc,char **argv) {
             mach_port_t expected_seed=slot(0); if(!MACH_PORT_VALID(expected_seed)) exit(77);
             signal(SIGINT,SIG_DFL); signal(SIGTERM,SIG_DFL); alarm(18);
             if(dup2(output[1],1)<0||dup2(output[1],2)<0) die("guest output"); close_extra_fds();
+            port_kind(expected_seed,"child_registered");
+            port_kind(mach_task_self(),"child_task_control");
             exception_boundary(expected_seed,"before_credentials");
             if(!ping(expected_seed,(unsigned)route,3)) exit(77);
             drop(uid); if(chdir(work)) die("guest cwd");
