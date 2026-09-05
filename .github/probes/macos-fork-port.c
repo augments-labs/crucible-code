@@ -63,16 +63,18 @@ int main(int argc, char **argv) {
     checked(mach_msg(&calibration.message.head, MACH_RCV_MSG | MACH_RCV_TIMEOUT, 0, sizeof calibration, service, 500, MACH_PORT_NULL), "calibration receive");
     if (calibration.message.head.msgh_size != sizeof(Message) || calibration.message.head.msgh_id != 901 || calibration.message.payload != sent.payload) return 77;
     puts("CALIBRATION exact_payload=1");
-    mach_port_t saved = MACH_PORT_NULL;
-    checked(task_get_special_port(mach_task_self(), TASK_BOOTSTRAP_PORT, &saved), "save bootstrap");
-    checked(task_set_special_port(mach_task_self(), TASK_BOOTSTRAP_PORT, service), "bootstrap transport");
+    checked(task_set_exception_ports(mach_task_self(), EXC_MASK_ALL, MACH_PORT_NULL, EXCEPTION_DEFAULT, THREAD_STATE_NONE), "clear original exceptions");
+    checked(task_set_exception_ports(mach_task_self(), EXC_MASK_BREAKPOINT, service, EXCEPTION_DEFAULT, THREAD_STATE_NONE), "exception transport");
     pid_t child = fork();
     if (child < 0) return 77;
     if (!child) {
         alarm(3);
         mach_port_t destination = MACH_PORT_NULL;
-        kern_return_t lookup = task_get_special_port(mach_task_self(), TASK_BOOTSTRAP_PORT, &destination);
-        if (lookup || !MACH_PORT_VALID(destination)) _exit(77);
+        exception_mask_t masks[32]; mach_port_t ports[32];
+        exception_behavior_t behavior[32]; thread_state_flavor_t flavor[32]; mach_msg_type_number_t count = 32;
+        kern_return_t lookup = task_get_exception_ports(mach_task_self(), EXC_MASK_BREAKPOINT, masks, &count, ports, behavior, flavor);
+        if (lookup || count != 1 || !(masks[0] & EXC_MASK_BREAKPOINT) || !MACH_PORT_VALID(ports[0])) _exit(77);
+        destination = ports[0];
         kern_return_t setting = exception ? task_set_exception_ports(mach_task_self(), EXC_MASK_BREAKPOINT, destination, EXCEPTION_DEFAULT, THREAD_STATE_NONE) : KERN_SUCCESS;
         mach_port_t reply = MACH_PORT_NULL;
         if (mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &reply)) _exit(77);
@@ -82,8 +84,8 @@ int main(int argc, char **argv) {
         printf("CHILD lookup=%d exception_set=%d receive=%d size=%u id=%d ack=%d\n", lookup, setting, result, b.message.head.msgh_size, b.message.head.msgh_id, ack);
         _exit(ack && !setting ? 0 : 77);
     }
-    // Parent keeps its original receive right and restores its bootstrap context.
-    kern_return_t restored = task_set_special_port(mach_task_self(), TASK_BOOTSTRAP_PORT, saved);
+    // Parent retains its owned queue while clearing only its synthetic exception anchor.
+    kern_return_t restored = task_set_exception_ports(mach_task_self(), EXC_MASK_BREAKPOINT, MACH_PORT_NULL, EXCEPTION_DEFAULT, THREAD_STATE_NONE);
     int observed = 0, done = 0, status = 0; double end = now() + 5;
     while (now() < end) {
         Buffer b = {0};

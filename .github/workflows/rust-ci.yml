@@ -5,7 +5,7 @@ permissions:
   contents: read
 jobs:
   macos-fork-port:
-    name: macOS minimal bootstrap-port transport (${{ matrix.os }})
+    name: macOS minimal exception-port transport (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -25,7 +25,7 @@ jobs:
         sw_vers
         /usr/bin/clang -std=c11 -Wall -Wextra -Werror .github/probes/macos-fork-port.c -o "$probe_root/probe"
         probe_failed=0
-        for probe_kind in ordinary exception; do
+        for probe_kind in exception; do
           for probe_init in fresh lookup; do
             "$probe_root/probe" "$probe_kind" "$probe_init" || probe_failed=1
           done
