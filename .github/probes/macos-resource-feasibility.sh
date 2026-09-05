@@ -130,7 +130,7 @@ static int reap(pid_t p, double deadline, int *status) {
     }
     return 0;
 }
-static int cleanup(uid_t uid) {
+static int cleanup(uid_t uid,int expected) {
     double end=now()+8;
     do {
         int reaped_status; while(waitpid(-1,&reaped_status,WNOHANG)>0) {}
@@ -139,6 +139,11 @@ static int cleanup(uid_t uid) {
         pid_t worker=fork(); if (worker<0) break;
         if (!worker) {
             alarm(2); close_extra_fds(); drop(uid,64,256);
+            if(expected) {
+                int a=scan(uid,PROC_UID_ONLY,0),b=scan(uid,PROC_RUID_ONLY,0);
+                printf("RESOURCE-WORKER-AT-CAPACITY expected=%d effective=%d real=%d\n",expected+1,a,b);
+                if(a!=expected+1||b!=expected+1) _exit(77);
+            }
             errno=0; int r=kill(-1,SIGKILL);
             _exit(r==0 || errno==ESRCH ? 0 : 77);
         }
@@ -205,8 +210,12 @@ static int resource(uid_t uid,const char *mode,const char *self) {
         count++;
     }
     int control=!strcmp(mode,"nproc-control");
-    printf("RESOURCE-NPROC mode=%s children=%d errno=%d parent_exits_with_live_children=1\n",mode,count,error);
-    return control?(count==12&&!error?0:77):(count==7&&error==EAGAIN?0:77);
+    printf("RESOURCE-NPROC mode=%s children=%d errno=%d parent_holds_with_live_children=1\n",mode,count,error);
+    int valid=control?(count==12&&!error):(count==7&&error==EAGAIN);
+    if(!valid) return 77;
+    int ready=open("ready",O_WRONLY|O_CREAT|O_EXCL,0600);if(ready<0) die("ready marker open");
+    if(write(ready,"ready\n",6)!=6) {close(ready);return 77;}if(close(ready)) return 77;
+    puts("RESOURCE-NPROC-HOLD leader_and_children_alive=1");for(;;) pause();
 }
 int main(int argc,char **argv) {
     setvbuf(stdout,NULL,_IONBF,0);
@@ -231,20 +240,35 @@ int main(int argc,char **argv) {
         if(stopped||empty(uid)!=1) {puts("QUARANTINE before next cell");return 77;}
         char work[PATH_MAX],self[PATH_MAX],prof[PATH_MAX],ids[32];
         path(work,root,cases[c]);owned_dir(work,uid);path(self,root,"resources");path(prof,root,"network-deny.sb");snprintf(ids,sizeof ids,"%u",uid);
-        pid_t p=fork();if(p<0) {cleanup(uid);die("guest fork");}
+        pid_t p=fork();if(p<0) {cleanup(uid,0);die("guest fork");}
         if(!p) {
             signal(SIGINT,SIG_DFL);signal(SIGTERM,SIG_DFL);close_extra_fds();
             rlim_t np=c==4||c==5?8:64,nf=c==0?256:4096;drop(uid,np,nf);
             if(chdir(work)) die("guest cwd");char *clean[]={NULL};environ=clean;
             alarm(8);execl("/usr/bin/sandbox-exec","sandbox-exec","-f",prof,self,"resource",ids,cases[c],(char *)NULL);die("guest exec");
         }
-        int status=0,done=0;double end=now()+10;
-        while(now()<end&&!stopped) {pid_t r=waitpid(p,&status,WNOHANG);if(r==p) {done=1;break;}if(r<0&&errno!=EINTR) break;usleep(20000);}
+        int status=0,done=0,held=0;double end=now()+10;
+        while(now()<end&&!stopped) {
+            pid_t r=waitpid(p,&status,WNOHANG);if(r==p) {done=1;break;}if(r<0&&errno!=EINTR) break;
+            if(c>=3) {
+                char marker[PATH_MAX];path(marker,work,"ready");int fd=open(marker,O_RDONLY|O_NOFOLLOW);
+                if(fd>=0) {
+                    char bytes[7];ssize_t n=read(fd,bytes,sizeof bytes);int closed=close(fd);
+                    if(n==6&&!closed&&!memcmp(bytes,"ready\n",6)) {
+                        int expected=c==3?13:8,a=scan(uid,PROC_UID_ONLY,0),b=scan(uid,PROC_RUID_ONLY,0);
+                        held=a==expected&&b==expected;
+                        printf("RESOURCE-NPROC-BEFORE-CLEANUP case=%s expected=%d effective=%d real=%d full_scope_held=%d\n",cases[c],expected,a,b,held);break;
+                    }
+                    if(n<0||closed) break;
+                } else if(errno!=ENOENT) break;
+            }
+            usleep(20000);
+        }
         int code=done&&WIFEXITED(status)?WEXITSTATUS(status):-1;
         printf("RESOURCE-RESULT case=%s reaped=%d exit=%d signal=%d\n",cases[c],done,code,done&&WIFSIGNALED(status)?WTERMSIG(status):0);
-        int clean=cleanup(uid);
+        int clean=cleanup(uid,held?(c==3?13:8):0);
         if(!done) {pid_t r=waitpid(p,&status,WNOHANG);if(r!=p&&!(r<0&&errno==ECHILD)&&!reap(p,now()+3,&status)) {puts("QUARANTINE unreaped direct child");return 77;}}
-        if(!clean||!done||code) return 77;
+        if(!clean||(c>=3?!held:(!done||code))) return 77;
         printf("RESOURCE-CASE-CLEAN case=%s uid_empty=1\n",cases[c]);
     }
     puts("RESOURCE-FEASIBILITY-COMPLETE cases=6 full_sandbox_tested=0");return 0;
