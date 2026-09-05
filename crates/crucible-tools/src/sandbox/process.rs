@@ -186,7 +186,7 @@ pub(super) struct SpawnPlan {
 ///
 /// A cleanup failure retains both the stage and its bounded admission slot so
 /// a later command cannot reuse authority whose disposal was not confirmed.
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", all(test, target_os = "linux")))]
 pub(super) fn cleanup_prepared_owners(
     stage: &mut Option<Stage>,
     reservation: &mut Option<Reservation>,

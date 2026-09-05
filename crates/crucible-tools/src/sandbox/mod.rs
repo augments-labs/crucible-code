@@ -18,7 +18,7 @@ pub mod conformance;
 #[cfg(target_os = "linux")]
 mod linux;
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", all(test, target_os = "linux")))]
 mod macos;
 
 pub use local::LocalSandbox;

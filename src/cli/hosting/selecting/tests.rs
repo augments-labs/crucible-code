@@ -331,10 +331,13 @@ fn selected_servers_share_the_runs_opt_in_confinement() {
             panic!("one server was named");
         };
         assert_eq!(chosen.policy.mode(), expected);
+        #[cfg(not(target_os = "macos"))]
         assert_eq!(
             chosen.policy.limits().cpu_seconds,
             (expected == SandboxMode::Required).then_some(3600)
         );
+        #[cfg(target_os = "macos")]
+        assert_eq!(chosen.policy.limits().cpu_seconds, None);
         assert_eq!(
             chosen.policy.limits().open_files,
             (expected == SandboxMode::Required).then_some(4096)
