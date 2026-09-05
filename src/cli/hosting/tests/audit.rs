@@ -8,6 +8,38 @@ use crucible_core::{
 
 use super::*;
 
+#[test]
+fn disposed_snapshots_do_not_consume_live_audit_capacity() {
+    let sandbox = Pretend::new(
+        (0..=MAX_SANDBOX_AUDIT_LIFECYCLES)
+            .map(|_| Answers::Says(opening("docs", &json!([offers("search")])))),
+    );
+    let registry = SandboxAuditRegistry::new();
+    let hosting = Hosting::new(
+        builtin(&[]),
+        sandbox.clone() as Arc<dyn SandboxService>,
+        vec![chosen("docs")],
+    );
+    let mut snapshots = Vec::new();
+    for _ in 0..=MAX_SANDBOX_AUDIT_LIFECYCLES {
+        let context = lifecycle().with_sandbox_audits(registry.clone());
+        hosting
+            .prepare(&context)
+            .expect("disposed lifecycle releases its audit slot");
+        snapshots.push(hosting.snapshot(&context).unwrap());
+        hosting.dispose(&context).unwrap();
+        assert!(registry.take_records().unwrap().is_empty());
+    }
+    assert_eq!(sandbox.started(), MAX_SANDBOX_AUDIT_LIFECYCLES + 1);
+    for snapshot in &snapshots {
+        let entry = snapshot.find("mcp:docs/search").unwrap();
+        assert!(matches!(
+            calls(entry.tool(), "mcp:docs/search", "{}", &Cancel::new()),
+            Err(ToolError::StaleGeneration { .. })
+        ));
+    }
+}
+
 struct Recording {
     inner: Arc<Pretend>,
     seen: Mutex<Vec<(SandboxId, SandboxAudit)>>,

@@ -282,8 +282,6 @@ struct Server {
     sandbox: Arc<dyn SandboxService>,
     /// Whose run this process belongs to, for the audit a restart also owes.
     ancestry: Ancestry,
-    /// The host registry keeps this attribution through restart and cleanup.
-    audit: SandboxAudit,
     /// Every tool this run published for it, as it was offered at start-up.
     ///
     /// The whole catalogue rather than the tool a call is about, because a
@@ -307,7 +305,9 @@ struct Conversation {
     /// This is the whole of a handle's validity: a handle that finds nothing
     /// here is one whose server has ended, and there is no second flag beside
     /// it to disagree with.
-    hosted: Option<Hosted>,
+    /// The collector shares the live conversation's lifetime, so an old
+    /// published executor cannot retain audit capacity after disposal.
+    hosted: Option<(Hosted, SandboxAudit)>,
     /// How many more times it may be started again.
     restarts: Restarts,
 }
@@ -362,10 +362,9 @@ impl Hosting {
             chosen: Arc::clone(chosen),
             sandbox: Arc::clone(&self.sandbox),
             ancestry: context.ancestry(),
-            audit,
             published: offered.clone(),
             live: Mutex::new(Conversation {
-                hosted: Some(hosted),
+                hosted: Some((hosted, audit)),
                 restarts: Restarts::ceiling(chosen.restarts),
             }),
         });
@@ -433,7 +432,14 @@ impl Server {
             .unwrap_or_else(PoisonError::into_inner)
             .hosted
             .take();
-        self.reaped(taken)
+        match taken {
+            Some((hosted, audit)) => {
+                let finished = self.reaped(Some(hosted));
+                drop(audit);
+                finished
+            }
+            None => Ok(()),
+        }
     }
 
     /// The same, for a conversation already taken out from under the lock.
@@ -467,13 +473,16 @@ impl Server {
     fn restart(&self, after: Ambiguity, interrupt: Option<&Cancel>) -> Result<(), Box<str>> {
         let mut live = self.live.lock().unwrap_or_else(PoisonError::into_inner);
         let permitted = live.restarts.again(after).map_err(|no| no.to_string())?;
-        drop(self.reaped(live.hosted.take()));
+        let Some((previous, audit)) = live.hosted.take() else {
+            return Err("the server lifecycle has ended".into());
+        };
+        drop(self.reaped(Some(previous)));
 
         let Started { hosted, offered } = start(
             &self.chosen,
             self.sandbox.as_ref(),
             self.ancestry,
-            &self.audit,
+            &audit,
             interrupt,
         )
         .map_err(|problem| {
@@ -507,7 +516,7 @@ impl Server {
             .into_boxed_str());
         }
 
-        live.hosted = Some(hosted);
+        live.hosted = Some((hosted, audit));
         Ok(())
     }
 }
@@ -694,7 +703,7 @@ impl Calling {
             .live
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        let Some(hosted) = live.hosted.as_mut() else {
+        let Some((hosted, _)) = live.hosted.as_mut() else {
             // The lifecycle that read this catalogue has ended, or a call
             // before this one left the conversation somewhere it could not come
             // back from.
