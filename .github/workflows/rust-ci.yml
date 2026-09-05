@@ -4,13 +4,30 @@ name: native-sandbox-experiment
 permissions:
   contents: read
 jobs:
-  windows-runtime-acl:
-    name: Windows runtime object ACL feasibility
-    runs-on: windows-latest
+  macos-fork-port:
+    name: macOS minimal registered-port transport (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15-intel, macos-26]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 5
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         persist-credentials: false
-    - shell: pwsh
-      run: .github/probes/windows-runtime-acl.ps1
+    - shell: bash
+      run: |
+        set -eu
+        umask 022
+        probe_root=$(mktemp -d /tmp/crucible-macos-fork-port.XXXXXX)
+        uname -a
+        sw_vers
+        /usr/bin/clang -std=c11 -Wall -Wextra -Werror .github/probes/macos-fork-port.c -o "$probe_root/probe"
+        probe_failed=0
+        for probe_kind in ordinary exception; do
+          for probe_init in fresh lookup; do
+            "$probe_root/probe" "$probe_kind" "$probe_init" || probe_failed=1
+          done
+        done
+        exit "$probe_failed"
