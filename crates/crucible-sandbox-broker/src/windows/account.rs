@@ -1,6 +1,7 @@
 //! Lifecycle of the dedicated local low-privilege sandbox account.
 
 use std::io;
+use std::ptr::NonNull;
 use std::ptr::{null, null_mut};
 
 use windows_sys::Win32::Foundation::CloseHandle;
@@ -158,10 +159,6 @@ pub(super) fn delete(name: &str) -> io::Result<()> {
     }
 }
 
-#[allow(
-    clippy::cast_ptr_alignment,
-    reason = "NetUserGetInfo allocates and aligns the level-1 structure even though its ABI exposes a byte pointer"
-)]
 fn read_flags(name: &str) -> io::Result<Option<u32>> {
     let name = wide(name);
     let mut buffer = null_mut::<u8>();
@@ -172,20 +169,38 @@ fn read_flags(name: &str) -> io::Result<Option<u32>> {
         return Ok(None);
     }
     net_success("NetUserGetInfo", status)?;
-    if buffer.is_null() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "NetUserGetInfo returned no account record",
-        ));
+    let buffer = NetBuffer::<USER_INFO_1>::new(buffer.cast())?;
+    Ok(Some(buffer.get().usri1_flags))
+}
+
+struct NetBuffer<T>(NonNull<T>);
+
+impl<T> NetBuffer<T> {
+    fn new(pointer: *mut T) -> io::Result<Self> {
+        NonNull::new(pointer).map(Self).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "NetUserGetInfo returned no account record",
+            )
+        })
     }
-    // SAFETY: a successful level-1 query returns an aligned `USER_INFO_1` in
-    // the NetAPI allocation, which remains live until the free below.
-    let flags = unsafe { (*buffer.cast::<USER_INFO_1>()).usri1_flags };
-    // SAFETY: `buffer` is the allocation returned by `NetUserGetInfo`.
-    unsafe {
-        NetApiBufferFree(buffer.cast());
+
+    fn get(&self) -> &T {
+        // SAFETY: a successful NetUserGetInfo call returned a non-null,
+        // correctly aligned allocation containing the requested level's
+        // structure. This wrapper retains that allocation for this borrow.
+        unsafe { self.0.as_ref() }
     }
-    Ok(Some(flags))
+}
+
+impl<T> Drop for NetBuffer<T> {
+    fn drop(&mut self) {
+        // SAFETY: this is the one release of the NetAPI allocation accepted by
+        // `new`; `T` is only a typed view over that allocation.
+        unsafe {
+            NetApiBufferFree(self.0.as_ptr().cast());
+        }
+    }
 }
 
 fn net_success(operation: &str, status: u32) -> io::Result<()> {

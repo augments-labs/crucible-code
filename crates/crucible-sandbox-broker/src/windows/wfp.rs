@@ -2,6 +2,7 @@
 
 use std::ffi::c_void;
 use std::io;
+use std::ptr::NonNull;
 use std::ptr::{null, null_mut};
 
 use windows_sys::Win32::Foundation::{
@@ -99,40 +100,33 @@ pub(super) fn probe(identity: &SetupIdentity, account: &str) -> io::Result<()> {
         if status != 0 {
             return Err(wfp_error("FwpmFilterGetByKey0", status));
         }
-        let valid = if filter.is_null() {
-            false
-        } else {
-            // SAFETY: the successful get call returned a live FWPM_FILTER0.
-            let filter = unsafe { &*filter };
-            let condition = if filter.numFilterConditions == 1 && !filter.filterCondition.is_null()
-            {
-                // SAFETY: the returned filter reports one condition and a
-                // non-null pointer owned by the same WFP allocation.
-                Some(unsafe { &*filter.filterCondition })
-            } else {
-                None
-            };
-            !filter.providerKey.is_null()
-                // SAFETY: the pointer was checked non-null and belongs to the
-                // still-live returned WFP filter allocation.
-                && guid_eq(unsafe { &*filter.providerKey }, &PROVIDER_KEY)
-                && guid_eq(&filter.filterKey, key)
-                && guid_eq(&filter.layerKey, &spec.layer)
-                && guid_eq(&filter.subLayerKey, &SUBLAYER_KEY)
-                && filter.flags == FWPM_FILTER_FLAG_PERSISTENT
-                && filter.action.r#type == FWP_ACTION_BLOCK
-                && condition.is_some_and(|condition| {
-                    guid_eq(&condition.fieldKey, &FWPM_CONDITION_ALE_USER_ID)
-                        && condition.matchType == FWP_MATCH_EQUAL
-                        && condition.conditionValue.r#type == FWP_SECURITY_DESCRIPTOR_TYPE
-                        && condition_matches_user(condition, &user)
-                })
-        };
-        // SAFETY: WFP returned this allocation through `filter`; the pointer
-        // variable is passed exactly as FwpmFreeMemory0 requires.
-        unsafe {
-            FwpmFreeMemory0((&raw mut filter).cast::<*mut c_void>());
-        }
+        let filter = WfpMemory::new(filter, "FwpmFilterGetByKey0")?;
+        let filter = filter.get();
+        let condition = (filter.numFilterConditions == 1)
+            .then(|| NonNull::new(filter.filterCondition))
+            .flatten()
+            .map(|pointer| {
+                // SAFETY: WFP reports exactly one condition and the pointer is
+                // non-null inside the still-live filter allocation.
+                unsafe { pointer.as_ref() }
+            });
+        let provider = NonNull::new(filter.providerKey).map(|pointer| {
+            // SAFETY: the non-null provider key belongs to the still-live WFP
+            // filter allocation.
+            unsafe { pointer.as_ref() }
+        });
+        let valid = provider.is_some_and(|provider| guid_eq(provider, &PROVIDER_KEY))
+            && guid_eq(&filter.filterKey, key)
+            && guid_eq(&filter.layerKey, &spec.layer)
+            && guid_eq(&filter.subLayerKey, &SUBLAYER_KEY)
+            && filter.flags == FWPM_FILTER_FLAG_PERSISTENT
+            && filter.action.r#type == FWP_ACTION_BLOCK
+            && condition.is_some_and(|condition| {
+                guid_eq(&condition.fieldKey, &FWPM_CONDITION_ALE_USER_ID)
+                    && condition.matchType == FWP_MATCH_EQUAL
+                    && condition.conditionValue.r#type == FWP_SECURITY_DESCRIPTOR_TYPE
+                    && condition_matches_user(condition, &user)
+            });
         if !valid {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
@@ -351,21 +345,12 @@ fn verify_provider(engine: HANDLE) -> io::Result<()> {
     if status != 0 {
         return Err(wfp_error("FwpmProviderGetByKey0", status));
     }
-    let valid = if provider.is_null() {
-        false
-    } else {
-        // SAFETY: the successful get returned a live FWPM_PROVIDER0.
-        let provider = unsafe { &*provider };
-        guid_eq(&provider.providerKey, &PROVIDER_KEY)
-            && provider.flags == FWPM_PROVIDER_FLAG_PERSISTENT
-            && provider.providerData.size == 0
-            && provider.serviceName.is_null()
-    };
-    // SAFETY: WFP returned this allocation through `provider`; the pointer
-    // variable is passed exactly as FwpmFreeMemory0 requires.
-    unsafe {
-        FwpmFreeMemory0((&raw mut provider).cast::<*mut c_void>());
-    }
+    let provider = WfpMemory::new(provider, "FwpmProviderGetByKey0")?;
+    let provider = provider.get();
+    let valid = guid_eq(&provider.providerKey, &PROVIDER_KEY)
+        && provider.flags == FWPM_PROVIDER_FLAG_PERSISTENT
+        && provider.providerData.size == 0
+        && provider.serviceName.is_null();
     if valid {
         Ok(())
     } else {
@@ -386,25 +371,18 @@ fn verify_sublayer(engine: HANDLE) -> io::Result<()> {
     if status != 0 {
         return Err(wfp_error("FwpmSubLayerGetByKey0", status));
     }
-    let valid = if sublayer.is_null() {
-        false
-    } else {
-        // SAFETY: the successful get returned a live FWPM_SUBLAYER0.
-        let sublayer = unsafe { &*sublayer };
-        !sublayer.providerKey.is_null()
-            // SAFETY: the provider pointer was checked non-null and belongs
-            // to the still-live WFP sublayer allocation.
-            && guid_eq(unsafe { &*sublayer.providerKey }, &PROVIDER_KEY)
-            && guid_eq(&sublayer.subLayerKey, &SUBLAYER_KEY)
-            && sublayer.flags == FWPM_SUBLAYER_FLAG_PERSISTENT
-            && sublayer.providerData.size == 0
-            && sublayer.weight == u16::MAX
-    };
-    // SAFETY: WFP returned this allocation through `sublayer`; the pointer
-    // variable is passed exactly as FwpmFreeMemory0 requires.
-    unsafe {
-        FwpmFreeMemory0((&raw mut sublayer).cast::<*mut c_void>());
-    }
+    let sublayer = WfpMemory::new(sublayer, "FwpmSubLayerGetByKey0")?;
+    let sublayer = sublayer.get();
+    let provider = NonNull::new(sublayer.providerKey).map(|pointer| {
+        // SAFETY: the non-null provider key belongs to the still-live WFP
+        // sublayer allocation.
+        unsafe { pointer.as_ref() }
+    });
+    let valid = provider.is_some_and(|provider| guid_eq(provider, &PROVIDER_KEY))
+        && guid_eq(&sublayer.subLayerKey, &SUBLAYER_KEY)
+        && sublayer.flags == FWPM_SUBLAYER_FLAG_PERSISTENT
+        && sublayer.providerData.size == 0
+        && sublayer.weight == u16::MAX;
     if valid {
         Ok(())
     } else {
@@ -507,6 +485,37 @@ fn empty_blob() -> FWP_BYTE_BLOB {
     }
 }
 
+struct WfpMemory<T>(NonNull<T>);
+
+impl<T> WfpMemory<T> {
+    fn new(pointer: *mut T, operation: &str) -> io::Result<Self> {
+        NonNull::new(pointer).map(Self).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("{operation} returned no object"),
+            )
+        })
+    }
+
+    fn get(&self) -> &T {
+        // SAFETY: a successful WFP get operation returned a non-null pointer
+        // to the requested structure. This wrapper retains the complete WFP
+        // allocation for the duration of the borrow.
+        unsafe { self.0.as_ref() }
+    }
+}
+
+impl<T> Drop for WfpMemory<T> {
+    fn drop(&mut self) {
+        let mut pointer = self.0.as_ptr().cast::<c_void>();
+        // SAFETY: this is the one release of the allocation accepted by
+        // `new`, passed through the pointer-to-pointer shape WFP requires.
+        unsafe {
+            FwpmFreeMemory0(&raw mut pointer);
+        }
+    }
+}
+
 fn empty_value() -> FWP_VALUE0 {
     FWP_VALUE0 {
         r#type: FWP_EMPTY,
@@ -524,11 +533,12 @@ fn guid_eq(left: &GUID, right: &GUID) -> bool {
 fn condition_matches_user(condition: &FWPM_FILTER_CONDITION0, expected: &UserCondition) -> bool {
     // SAFETY: the caller checked that the tagged union contains an SD blob.
     let actual = unsafe { condition.conditionValue.Anonymous.sd };
-    if actual.is_null() {
+    let Some(actual) = NonNull::new(actual) else {
         return false;
-    }
-    // SAFETY: WFP returned the pointed-to blob as part of the live filter.
-    let actual = unsafe { &*actual };
+    };
+    // SAFETY: the tagged union contains a non-null SD blob owned by the live
+    // filter allocation retained by the caller.
+    let actual = unsafe { actual.as_ref() };
     if actual.size != expected.blob.size
         || actual.size == 0
         || actual.size > MAX_SECURITY_DESCRIPTOR_BYTES
