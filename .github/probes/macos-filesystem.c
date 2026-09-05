@@ -92,6 +92,12 @@ static int operation(const char *name, const char *root, const char *outside) {
     if(!strcmp(name,"readonly-write")) { path(a,root,"ro/payload"); return open(a,O_WRONLY); }
     if(!strcmp(name,"protected-read")) { path(a,root,"rw/nested/.git/config"); return open(a,O_RDONLY); }
     if(!strcmp(name,"protected-case-write")) { path(a,root,"rw/NESTED/.GIT/CONFIG"); return open(a,O_WRONLY); }
+    if(!strcmp(name,"protected-clear-rename")) {
+        path(a,root,"rw/nested/.git"); path(b,root,"rw/nested/.GIT");
+        errno=0; int cleared=chflags(a,0); int why=errno;
+        printf("FLAGS-CLEAR result=%d errno=%d\n",cleared,why);
+        errno=0; return rename(a,b);
+    }
     if(!strcmp(name,"protected-case-rename")) { path(a,root,"rw/nested/.git"); path(b,root,"rw/nested/.GIT"); return rename(a,b); }
     if(!strcmp(name,"unreadable-create-case")) { path(a,root,"rw/ABSENT-SECRET"); return open(a,O_CREAT|O_EXCL|O_WRONLY,0600); }
     if(!strcmp(name,"unreadable-rename-case")) { path(a,root,"rw/plain"); path(b,root,"rw/ABSENT-SECRET"); return rename(a,b); }

@@ -1,5 +1,6 @@
 """Finite synthetic native filesystem tests; experiment branch only."""
 import json
+import hashlib
 import os
 import pathlib
 import plistlib
@@ -129,29 +130,53 @@ disks = [entry['dev-entry'] for entry in entities if entry.get('content-hint') =
 assert len(disks) == 1 and disks[0].startswith('/dev/disk')
 command(['/sbin/mount', '-u', '-o', 'nosuid,nodev', mount])
 command([worker, 'flags', mount])
-operations = ['allowed-read', 'allowed-write', 'source-read', 'source-write', 'sibling-read', 'sibling-write', 'readonly-write',
-              'protected-read', 'protected-case-write', 'protected-case-rename', 'protected-write', 'protected-replace', 'protected-unlink', 'protected-rename', 'ancestor-rename',
-              'protected-link', 'protected-symlink', 'source-symlink', 'unreadable-read',
-              'unreadable-alias', 'unreadable-case', 'unreadable-create', 'unreadable-rename', 'unreadable-create-case', 'unreadable-rename-case', 'unreadable-mkdir-case', 'device', 'setuid', 'ordinary-exec']
-failures = []
+def observed(root):
+    nested = root / 'rw/nested'
+    names = sorted(entry.name for entry in nested.iterdir())
+    assert len(names) == 1
+    protected = nested / names[0]
+    config = protected / 'config'
+    result = {'names': names}
+    for name, path in [('directory', protected), ('file', config)]:
+        info = path.lstat()
+        result[name] = {'inode': info.st_ino, 'mode': info.st_mode, 'uid': info.st_uid, 'flags': info.st_flags}
+    result['sha256'] = hashlib.sha256(config.read_bytes()).hexdigest()
+    return result
+
+
+results = []
 sequence = 0
 for mode in ('control', 'confined'):
-    for operation in operations:
-        command([worker, 'empty'])
-        root, outside = make_case(sequence)
-        policy = base / ('profile-' + str(sequence) + '.sb')
-        policy.write_text(profile_for(root))
-        os.chmod(policy, 0o644)
-        code, data = command([worker, 'launch', mode, policy, operation, root, outside], allowed=range(-128, 256))
-        # Every guest fixture is single-process, including exec of the setuid worker.
-        # The parent wait reaps it. A new case requires an error-checked empty UID.
-        command([worker, 'empty'])
-        if code:
-            failures.append({'mode': mode, 'operation': operation, 'status': code})
-        print('RESULT ' + json.dumps({'mode': mode, 'operation': operation, 'status': code}), flush=True)
-        sequence += 1
+    for protection in ('original', 'root-owned', 'root-immutable'):
+        for operation in ('protected-case-rename', 'protected-clear-rename', 'protected-read'):
+            command([worker, 'empty'])
+            root, outside = make_case(sequence)
+            protected = root / 'rw/nested/.git'
+            if protection != 'original':
+                for path, bits in [(protected / 'config', 0o444), (protected, 0o555)]:
+                    os.chown(path, 0, 0)
+                    os.chmod(path, bits)
+                    if protection == 'root-immutable':
+                        os.chflags(path, stat.UF_IMMUTABLE)
+            before = observed(root)
+            policy = base / ('profile-' + str(sequence) + '.sb')
+            policy.write_text(profile_for(root))
+            os.chmod(policy, 0o644)
+            code, data = command([worker, 'launch', mode, policy, operation, root, outside], allowed=range(-128, 256))
+            command([worker, 'empty'])
+            after = observed(root)
+            observation = {'mode': mode, 'protection': protection, 'operation': operation,
+                           'status': code, 'before': before, 'after': after, 'unchanged': before == after}
+            results.append(observation)
+            print('CASE-DIAGNOSTIC ' + json.dumps(observation), flush=True)
+            sequence += 1
 command([worker, 'unmount', mount])
 command(['/usr/bin/hdiutil', 'detach', disks[0]])
-print('COMPLETE cases=' + str(sequence) + ' failures=' + json.dumps(failures) + ' uid_empty=1 nonforced_detach=1', flush=True)
-assert not failures, failures
-# Retain exact owned fixture until disposable VM destruction; never generic cleanup.
+print('DIAGNOSTIC-COMPLETE cases=' + str(sequence) + ' uid_empty=1 nonforced_detach=1', flush=True)
+assert sequence == 18
+for result in results:
+    if result['protection'] == 'root-immutable':
+        assert result['unchanged'], result
+        if result['operation'] == 'protected-read':
+            assert result['status'] == 0, result
+# Raw operation and flag-clear receipts remain necessary; not a full-backend pass.
