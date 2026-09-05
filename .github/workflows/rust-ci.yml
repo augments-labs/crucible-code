@@ -4,19 +4,17 @@ name: native-sandbox-experiment
 permissions:
   contents: read
 jobs:
-  macos-mach-inventory:
-    name: macOS extra Mach rights inventory (${{ matrix.os }})
+  windows-hcs-availability:
+    name: Windows HCS/container prerequisite inventory (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15-intel, macos-26]
+        os: [windows-2025, windows-11-arm]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 8
+    timeout-minutes: 4
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         persist-credentials: false
-    - shell: bash
-      run: |
-        set -eu
-        CRUCIBLE_RUNTIME_PROBE_VARIANT=ssl-pagesize sh .github/probes/macos-mach.sh
+    - shell: pwsh
+      run: ./.github/probes/windows-hcs-availability.ps1
