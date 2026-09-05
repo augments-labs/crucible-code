@@ -5,7 +5,7 @@ permissions:
   contents: read
 jobs:
   macos-fork-port:
-    name: macOS minimal registered-port transport (${{ matrix.os }})
+    name: macOS minimal bootstrap-port transport (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
