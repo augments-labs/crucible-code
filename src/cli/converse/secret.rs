@@ -34,10 +34,10 @@ const MAX_BYTES: usize = 16 * 1024;
 /// draws a line.
 ///
 /// `provider` is the display name the breadcrumb and the frame's label spell.
-/// `None` comes back from a box that was left, and from one there was no room
-/// to stand — a key was asked for and none was given, either way. Enter with
-/// nothing in the box is not a way out of it: there is nothing to hand over, so
-/// the box goes on standing.
+/// A box that was left and one there was no room to stand both come back
+/// without a key, as two different [`Asked`]: the caller answers them with
+/// different sentences. Enter with nothing in the box is not a way out of it:
+/// there is nothing to hand over, so the box goes on standing.
 ///
 /// # Errors
 ///
@@ -46,7 +46,7 @@ pub(super) fn ask<T: Terminal>(
     renderer: &mut Renderer<T>,
     style: Style,
     provider: &str,
-) -> Result<Option<String>, Fatal> {
+) -> Result<Asked, Fatal> {
     let glyphs = style.glyphs();
     let mut held = String::new();
 
@@ -59,9 +59,26 @@ pub(super) fn ask<T: Terminal>(
     )?;
 
     Ok(match ended {
-        Ended::Took => taken(&held),
-        Ended::Left | Ended::Cramped => None,
+        Ended::Took => taken(&held).map_or(Asked::Left, Asked::Key),
+        Ended::Left => Asked::Left,
+        Ended::Cramped => Asked::Cramped,
     })
+}
+
+/// How asking ended.
+///
+/// Two of these are empty-handed, and the caller has to tell them apart: after
+/// [`Asked::Left`] the reader chose to go, and after [`Asked::Cramped`] they
+/// were never shown a box to type into. A sentence saying "cancelled" over the
+/// second reports a choice nobody made, and hides the one thing that would let
+/// them in.
+pub(super) enum Asked {
+    /// The line, trimmed. Never empty.
+    Key(String),
+    /// Escape, or Return over a line with nothing on it.
+    Left,
+    /// The window had no room for the box, so nothing was asked.
+    Cramped,
 }
 
 /// The rows the box stands as while `held` is what it holds.

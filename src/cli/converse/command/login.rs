@@ -38,7 +38,7 @@
 use std::borrow::Cow;
 use std::time::Duration;
 
-use crucible_auth::{LoginAttempt, LoginUpdate};
+use crucible_auth::{AuthError, LoginAttempt, LoginUpdate};
 use crucible_runner::Runner;
 use crucible_tui::{
     Caret, Glyphs, Key, Offered, Panel, Pressed, Renderer, Row, Slot, Terminal, characters, clip,
@@ -46,7 +46,7 @@ use crucible_tui::{
 };
 
 use crate::cli::converse::picking::{self, Picked, Taken};
-use crate::cli::converse::secret;
+use crate::cli::converse::secret::{self, Asked};
 use crate::cli::subscription::{Account, Route};
 use crate::cli::{Fatal, Served, offered, remember};
 
@@ -91,14 +91,32 @@ const CANCEL: &str = "esc to cancel";
 /// What escape leaves behind, in place of the rows it used to write.
 const LEFT: &str = "cancelled, nothing signed in";
 
+/// What the box's absence leaves behind, when the window had no room for it.
+///
+/// Not [`LEFT`]: nothing was asked, so nothing was cancelled, and the way in
+/// is the one thing this can say that the reader does not already know.
+const CRAMPED: &str = "the window has no room for the key box; make it taller and try /login again";
+
 /// What stopped, when the key could not be written down.
 pub(super) const STORE_FAILED: &str = "the key could not be saved";
 
-/// Why, and the way back in. Fixed words: the error behind it names the path
-/// and what the operating system said, and neither belongs on a row under a
-/// command.
-pub(super) const STORE_REMEDY: &str =
+/// The way back in, when the store's directory or file would not open.
+///
+/// Fixed words: the error behind it names the path and what the operating
+/// system said, and neither belongs on a row under a command.
+pub(super) const STORE_UNWRITABLE: &str =
     "crucible cannot write its login store; try /login again after fixing the permissions";
+
+/// The way back in, when another crucible held the store's lock too long.
+const STORE_BUSY: &str =
+    "another crucible is writing its login store; try /login again in a moment";
+
+/// The way back in, when the store is there and cannot be read.
+///
+/// Writing over it would replace the only copy of whatever else it holds, so
+/// the store declines; moving it aside is what makes the next write safe.
+const STORE_UNREADABLE: &str =
+    "crucible cannot read its login store; move it aside and try /login again";
 
 /// Manual callback input is transient credential material. It has the same
 /// bound as the key box and is never committed or echoed.
@@ -559,11 +577,11 @@ fn given<T: Terminal>(
     runner: &mut Runner,
     terms: &Terms,
 ) -> Result<(), Fatal> {
-    let Some(key) = secret::ask(renderer, terms.style(), named.shown)? else {
-        return say(renderer, LEFT);
-    };
-
-    written(named, &key, renderer, runner, terms)
+    match secret::ask(renderer, terms.style(), named.shown)? {
+        Asked::Key(key) => written(named, &key, renderer, runner, terms),
+        Asked::Left => say(renderer, LEFT),
+        Asked::Cramped => say(renderer, CRAMPED),
+    }
 }
 
 /// Writes `key` down as `named`'s and sets this session up with it, or says
@@ -573,8 +591,9 @@ fn given<T: Terminal>(
 /// the row under the command carries neither: the path is in the reader's own
 /// home, and what the system said is what looking at it will say again. The
 /// key is still in hand and the box is gone, so there is nothing to retry
-/// from — which is why the row says the way back in. Nothing else hears the
-/// error: this session has no channel a command's failure is logged through.
+/// from — which is why the row says the way back in, chosen by what stopped
+/// ([`remedy`]). Nothing else hears the error: this session has no channel a
+/// command's failure is logged through.
 fn written<T: Terminal>(
     named: Served,
     key: &str,
@@ -584,13 +603,26 @@ fn written<T: Terminal>(
 ) -> Result<(), Fatal> {
     match terms.logins.keep(named.name, key) {
         Ok(()) => taken(named, renderer, runner, terms),
-        Err(_) => say(
+        Err(failed) => say(
             renderer,
             &format!(
                 "! {}",
-                about(STORE_FAILED, STORE_REMEDY, terms.style().glyphs())
+                about(STORE_FAILED, remedy(&failed), terms.style().glyphs())
             ),
         ),
+    }
+}
+
+/// The way back in, by what stopped the store.
+///
+/// Three sentences for four causes: a store too large to parse and one that
+/// will not parse are the same thing to the reader, a file crucible cannot
+/// read and will not write over.
+fn remedy(failed: &AuthError) -> &'static str {
+    match failed {
+        AuthError::Unwritable { .. } => STORE_UNWRITABLE,
+        AuthError::Busy { .. } => STORE_BUSY,
+        AuthError::Unreadable { .. } | AuthError::TooLarge { .. } => STORE_UNREADABLE,
     }
 }
 
@@ -821,6 +853,101 @@ mod tests {
             "{written}"
         );
         assert!(!written.contains("sk-ant"), "{written}");
+    }
+
+    #[test]
+    fn a_store_that_cannot_be_read_is_answered_with_moving_it_aside() {
+        // The permissions are not what stopped this one: the store is there
+        // and writable, and cannot be parsed. Telling the reader to fix the
+        // permissions would send them to check a thing that is fine, and the
+        // way back in is the one the store's own error gives — move it aside.
+        let sample = Sample::new("login-store-unreadable");
+        let terms = in_force(&sample);
+        std::fs::write(sample.root().join("auth.json"), "not json {")
+            .expect("a store that will not parse");
+        let mut runner = asking("claude-test-1");
+        let mut renderer = Renderer::new(Recording::new(80, 24));
+
+        let named = offered(&terms.providers.snapshot())
+            .find(|served| served.name == "anthropic")
+            .expect("a provider this build has an arm for");
+        written(
+            named,
+            "sk-ant-not-a-key",
+            &mut renderer,
+            &mut runner,
+            &terms,
+        )
+        .expect("the terminal to be written");
+
+        let written = renderer.terminal().picture().said().join(" ");
+        assert!(
+            written.contains(
+                "! the key could not be saved — crucible cannot read its login store; move it aside and try /login again"
+            ),
+            "{written}"
+        );
+        assert!(!written.contains("permissions"), "{written}");
+        assert!(!written.contains("auth.json"), "{written}");
+        assert!(!written.contains("sk-ant"), "{written}");
+    }
+
+    #[test]
+    fn the_way_back_in_is_chosen_by_what_stopped_the_store() {
+        // The two the store cannot be made to produce cheaply from here: a
+        // lock held past its five seconds, and a store past its byte ceiling.
+        // Each arrives with a path, and no sentence carries one.
+        let path = std::path::PathBuf::from("/somebody/.crucible/auth.json");
+        let busy = AuthError::Busy { path: path.clone() };
+        let too_large = AuthError::TooLarge {
+            path: path.clone(),
+            maximum: 1,
+        };
+        let unreadable = AuthError::Unreadable { path: path.clone() };
+        let unwritable = AuthError::Unwritable {
+            path,
+            source: std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+        };
+
+        assert_eq!(
+            remedy(&busy),
+            "another crucible is writing its login store; try /login again in a moment"
+        );
+        assert_eq!(remedy(&too_large), remedy(&unreadable));
+        assert_eq!(
+            remedy(&unreadable),
+            "crucible cannot read its login store; move it aside and try /login again"
+        );
+        assert_eq!(remedy(&unwritable), STORE_UNWRITABLE);
+        for failed in [&busy, &too_large, &unreadable, &unwritable] {
+            assert!(!remedy(failed).contains("somebody"), "{}", remedy(failed));
+        }
+    }
+
+    #[test]
+    fn a_window_too_short_for_the_key_box_says_so_rather_than_cancelled() {
+        // Two rows: not even the box's own three. Nothing was asked and
+        // nothing could have been typed, so "cancelled" would report a choice
+        // the reader never made — and hide the one thing that would let them
+        // in, which is a taller window.
+        let sample = Sample::new("login-cramped");
+        let terms = in_force(&sample);
+        let mut runner = asking("claude-test-1");
+        let mut renderer = Renderer::new(Recording::new(80, 2));
+
+        let named = offered(&terms.providers.snapshot())
+            .find(|served| served.name == "anthropic")
+            .expect("a provider this build has an arm for");
+        given(named, &mut renderer, &mut runner, &terms).expect("the terminal to be written");
+
+        let written = renderer.terminal().picture().said().join(" ");
+        assert!(
+            written.contains(
+                "the window has no room for the key box; make it taller and try /login again"
+            ),
+            "{written}"
+        );
+        assert!(!written.contains("cancelled"), "{written}");
     }
 
     #[test]

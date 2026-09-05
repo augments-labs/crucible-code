@@ -100,9 +100,11 @@ change in any release with no deprecation period.
   the variable it reads from, `set ANTHROPIC_API_KEY` and so on. The key box is
   framed and labelled with the provider, takes a pasted key whole, draws a dot
   per character, and saves on Enter only once something is held. A store that
-  cannot be written is answered with `the key could not be saved — crucible
-  cannot write its login store; try /login again after fixing the permissions`,
-  never with a path; leaving the box says `cancelled, nothing signed in`.
+  cannot be written is answered with `the key could not be saved` and the way
+  back in for what stopped it — the permissions, another crucible holding the
+  store, or a store that cannot be read and should be moved aside — never with
+  a path. Leaving the box says `cancelled, nothing signed in`; a window too
+  short to stand the box says so and asks for a taller one.
 
 - **OS sandboxing is now opt-in through `sandbox.enabled` only.** Set it to
   `true` to require confinement; omitted settings default to off, and project

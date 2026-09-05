@@ -851,7 +851,9 @@ would put it in your shell's history and in the process listing. The box is
 labelled with the provider it is for and takes a paste whole. Escape leaves it
 without writing anything and says so: `cancelled, nothing signed in`. A store
 that cannot be written is answered with `the key could not be saved` and what to
-fix, never with the path or the key.
+fix — the permissions, another crucible still writing, or a store that cannot
+be read and should be moved aside — never with the path or the key. A window
+too short for the box says so instead, and asks for a taller one.
 
 `/login` on its own asks how crucible should sign its requests, which is a
 different question from which vendor: somebody paying for a ChatGPT plan and
