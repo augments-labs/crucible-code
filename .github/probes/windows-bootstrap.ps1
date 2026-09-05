@@ -1,6 +1,7 @@
-# windows-bootstrap-v10: disposable fresh Windows x64 VM only; no production claim.
+# windows-bootstrap-v11: disposable fresh Windows x64 VM only; no production claim.
 # Independently authored. V6 proved only the actual combined-token ACL primitive.
-# V10 retains inheritable host-user access on the owned build directory.
+# V11 observes fixed KnownDll object access with a duplicate of the suspended child token.
+# V10 fixed owned build-directory inheritance; final-token native entry exits STATUS_ACCESS_DENIED.
 # V9 diagnosed fixture.exe source_hash access denied after changing the parent ACL.
 # V8: initial-load required-import closure only; every delay edge is deferred and unvalidated.
 # V7 run33930343584: delay expansion hit 64 files at SCHANNEL.dll from webio.dll; caps stay unchanged.
@@ -21,7 +22,7 @@
 # API-set contracts are counted, not fabricated as files. Dynamic/registry/IPC dependencies remain unproved.
 # Three 12-second guest deadlines; 4-process kill-on-close jobs; require external CI timeout 5 minutes.
 $ErrorActionPreference = 'Stop'
-$buildRoot = Join-Path ([IO.Path]::GetTempPath()) ('crucible-bootstrap-v10-' + [Guid]::NewGuid().ToString('N'))
+$buildRoot = Join-Path ([IO.Path]::GetTempPath()) ('crucible-bootstrap-v11-' + [Guid]::NewGuid().ToString('N'))
 $native = @'
 #include <windows.h>
 static WCHAR image[32768],command[32772];
@@ -58,7 +59,7 @@ using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Security.Cryptography;
 using System.Threading;
-public static class CrucibleWindowsBootstrapProbeV10 {
+public static class CrucibleWindowsBootstrapProbeV11 {
     const uint TOKEN_QUERY = 8, TOKEN_DUPLICATE = 2, TOKEN_IMPERSONATE = 4, TOKEN_ASSIGN_PRIMARY = 1;
     const uint FILE_READ_DATA = 1, FILE_ALL_ACCESS = 0x001F01FF;
     const uint DACL = 4, PROTECTED_DACL = 0x80000000;
@@ -106,6 +107,16 @@ public static class CrucibleWindowsBootstrapProbeV10 {
     [StructLayout(LayoutKind.Sequential)] struct AttributeHeader {
         public ushort Version, Reserved; public uint Count; public IntPtr Attributes;
     }
+    [StructLayout(LayoutKind.Sequential)] struct ObjectAttributes {
+        public uint Length; public IntPtr Root, Name; public uint Attributes;
+        public IntPtr SecurityDescriptor, SecurityQos;
+    }
+    [DllImport("ntdll.dll", ExactSpelling=true)] static extern uint NtOpenDirectoryObject(out IntPtr handle,uint access,ref ObjectAttributes attributes);
+    [DllImport("ntdll.dll", ExactSpelling=true)] static extern uint NtOpenSection(out IntPtr handle,uint access,ref ObjectAttributes attributes);
+    [DllImport("advapi32.dll", SetLastError=true)] static extern bool DuplicateTokenEx(IntPtr token,uint access,IntPtr attributes,int level,int type,out IntPtr duplicate);
+    [DllImport("advapi32.dll", SetLastError=true)] static extern bool SetThreadToken(IntPtr thread,IntPtr token);
+    [DllImport("advapi32.dll", SetLastError=true)] static extern bool RevertToSelf();
+    [DllImport("kernel32.dll")] static extern IntPtr GetCurrentThread();
     [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
     [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern uint GetSystemDirectoryW(System.Text.StringBuilder buffer,uint size);
     [DllImport("shell32.dll", ExactSpelling=true)] static extern int SHGetKnownFolderPath(ref Guid id,uint flags,IntPtr token,out IntPtr path);
@@ -158,7 +169,8 @@ public static class CrucibleWindowsBootstrapProbeV10 {
             && Marshal.SizeOf(typeof(ProcessInfo))==(x64?24:16)
             && Marshal.SizeOf(typeof(NativeName))==(x64?16:8)
             && Marshal.SizeOf(typeof(TokenAttribute))==(x64?40:24)
-            && Marshal.SizeOf(typeof(AttributeHeader))==(x64?16:12);
+            && Marshal.SizeOf(typeof(AttributeHeader))==(x64?16:12)
+            && Marshal.SizeOf(typeof(ObjectAttributes))==(x64?48:24);
         Record("{\"event\":\"abi_layout\",\"matches_windows_sdk\":"+B(valid)+",\"host_64_bit\":"+B(x64)+"}");
         if(!valid) throw new ProbeFailure(13);
     }
@@ -296,6 +308,42 @@ public static class CrucibleWindowsBootstrapProbeV10 {
             else { uint wrote; Need(WriteFile(input,new byte[]{1},1,out wrote,IntPtr.Zero)); if(wrote!=1) throw new ProbeFailure(13); self=true; }
         } finally { Close(ref thread); Close(ref process); }
     }
+    // Only fixed object names, read/query access and owned handles. No ACL change,
+    // mapping, enumeration, registry write, or guest token mutation occurs.
+    static uint OpenKnownObject(string name,bool directory,IntPtr impersonation) {
+        IntPtr text=IntPtr.Zero,native=IntPtr.Zero,handle=IntPtr.Zero; bool active=false;
+        try {
+            text=Marshal.StringToHGlobalUni(name); native=Marshal.AllocHGlobal(Marshal.SizeOf(typeof(NativeName)));
+            Marshal.StructureToPtr(new NativeName {Length=(ushort)(name.Length*2),MaximumLength=(ushort)(name.Length*2+2),Buffer=text},native,false);
+            ObjectAttributes attributes=new ObjectAttributes {Length=(uint)Marshal.SizeOf(typeof(ObjectAttributes)),Name=native,Attributes=0x40};
+            if(impersonation!=IntPtr.Zero) { Need(SetThreadToken(IntPtr.Zero,impersonation)); active=true; }
+            return directory?NtOpenDirectoryObject(out handle,3,ref attributes):NtOpenSection(out handle,12,ref attributes);
+        } finally {
+            // A failure to restore the host identity must not reach cleanup or
+            // resume the child. Whole disposable VM ownership remains retained.
+            if(active&&!RevertToSelf()) { TerminateProcess(GetCurrentProcess(),97); Environment.Exit(97); }
+            Close(ref handle); if(native!=IntPtr.Zero) Marshal.FreeHGlobal(native); if(text!=IntPtr.Zero) Marshal.FreeHGlobal(text);
+        }
+    }
+    static void KnownObjects(IntPtr child,IntPtr session) {
+        IntPtr token=IntPtr.Zero,copy=IntPtr.Zero,prior=IntPtr.Zero;
+        bool hasPrior=OpenThreadToken(GetCurrentThread(),TOKEN_QUERY,true,out prior);
+        uint priorError=unchecked((uint)Marshal.GetLastWin32Error()); Close(ref prior);
+        if(hasPrior||priorError!=1008) throw new ProbeFailure(13);
+        string[] objects={@"\KnownDlls",@"\KnownDlls\ntdll.dll",@"\KnownDlls\kernel32.dll"};
+        try {
+            Need(OpenProcessToken(child,TOKEN_QUERY|TOKEN_DUPLICATE,out token));
+            Need(DuplicateTokenEx(token,TOKEN_QUERY|TOKEN_IMPERSONATE,IntPtr.Zero,2,2,out copy));
+            if(!LpacInfo(copy)||!OnlySid(copy,session)||!BoolInfo(copy,29)||!IsTokenRestricted(copy)) throw new ProbeFailure(13);
+            IntPtr capabilities=Info(copy,30);
+            try {if(Marshal.ReadInt32(capabilities)!=0) throw new ProbeFailure(13);} finally {Marshal.FreeHGlobal(capabilities);}
+            for(int mode=0;mode<2;mode++) for(int i=0;i<objects.Length;i++) {
+                uint status=OpenKnownObject(objects[i],i==0,mode==0?IntPtr.Zero:copy);
+                Record("{\"event\":\"known_object_access\",\"mode\":\""+(mode==0?"host_control":"actual_token_duplicate")+"\",\"object_index\":"+i+",\"ntstatus\":"+status+"}");
+                if(mode==0&&status!=0) throw new ProbeFailure(RtlNtStatusToDosError(status));
+            }
+        } finally {Close(ref copy);Close(ref token);}
+    }
     static bool Execute(string name,string application,string command,string root,string env,IntPtr restricted,IntPtr package,IntPtr session,out bool cleaned) {
         currentCase=name; stage="job_create"; cleaned=false; bool success=false,listReady=false,spawned=false;
         IntPtr job=IntPtr.Zero,list=IntPtr.Zero,cap=IntPtr.Zero,lpac=IntPtr.Zero,jobs=IntPtr.Zero,handles=IntPtr.Zero,environment=IntPtr.Zero;
@@ -325,6 +373,7 @@ public static class CrucibleWindowsBootstrapProbeV10 {
             Record("{\"event\":\"launch_result\",\"success\":"+B(spawned)+",\"status\":"+(spawned?0:error)+"}"); if(!spawned) throw new ProbeFailure(error);
             Close(ref inputRead); Close(ref outputWrite); stage="before_first_instruction";
             Audit(pi.Process,pi.Thread,job,package,session,"root_before_resume");
+            if(name=="native_entry") KnownObjects(pi.Process,session);
             if(ResumeThread(pi.Thread)!=1) throw new ProbeFailure(13);
             stage="guest_execution"; Stopwatch deadline=Stopwatch.StartNew(); byte[] buffer=new byte[4096]; string pending="";
             int total=0; bool entry=false,self=false,child=false,childOk=false,cmdReady=false,cmdOk=false;
@@ -365,7 +414,7 @@ public static class CrucibleWindowsBootstrapProbeV10 {
         return success&&cleaned;
     }
     public static int Run(string buildRoot,string[] sourceFiles,string compilerIdentity) {
-        string profile="crucible.bootstrap.v10."+Guid.NewGuid().ToString("N"),root=null; bool profileOwned=false,rootOwned=false,cleanup=true; int result=1;
+        string profile="crucible.bootstrap.v11."+Guid.NewGuid().ToString("N"),root=null; bool profileOwned=false,rootOwned=false,cleanup=true; int result=1;
         IntPtr package=IntPtr.Zero,session=IntPtr.Zero,baseToken=IntPtr.Zero,restricted=IntPtr.Zero,entry=IntPtr.Zero;
         try {
             currentCase="setup"; VerifyLayouts(); stage="profile";
@@ -559,7 +608,7 @@ try {
     Write-Output ('{"event":"host_compile","success":true,"required_api_set_contract_count":'+$contracts.Count+'}')
     $hostStage="compile_host"; Add-Type -TypeDefinition $source -Language CSharp -ErrorAction Stop
     [string[]]$sources=@($files.Values | Sort-Object { [IO.Path]::GetFileName($_).ToLowerInvariant() })
-    $hostStage="invoke_host"; $result=[CrucibleWindowsBootstrapProbeV10]::Run($buildRoot,$sources,(Get-FileHash -LiteralPath $cl -Algorithm SHA256).Hash.ToLowerInvariant())
+    $hostStage="invoke_host"; $result=[CrucibleWindowsBootstrapProbeV11]::Run($buildRoot,$sources,(Get-FileHash -LiteralPath $cl -Algorithm SHA256).Hash.ToLowerInvariant())
 } catch {
     $failure=$_; $reason='unclassified_exception'; $message=$failure.Exception.Message
     if($message -cin @('x64_required','unique_root_collision','msvc_missing','source_reparse','runtime_bound','fixture_import_policy','tool_start','tool_deadline','tool_output_cap','tool_failed','dependency_metadata_failed','deferred_edge_cap','dependency_queue_cap') -or $message -cmatch '^parser_(?:text_cap|line_cap|ambiguous_header|unknown_header|orphan_dll|ambiguous_dll|invalid_dll|incomplete|self_test|unknown_kind)$') { $reason=$message }

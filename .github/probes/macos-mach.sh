@@ -1,5 +1,5 @@
 #!/bin/sh
-# mac-mach-v3: disposable VM capability-inheritance prerequisite, not a backend.
+# mac-mach-v4: disposable VM capability-inheritance prerequisite, not a backend.
 # No native execution by the author. Root reviews source/manifest before CI.
 set -eu
 umask 022
@@ -274,6 +274,11 @@ static void check_seed(mach_port_t expected,const char *boundary) {
            boundary,expected,actual,expected==actual,expected_type,actual_type);
     int same=expected==actual; release(actual); if(!same) exit(77);
 }
+static void exception_boundary(mach_port_t service,const char *boundary) {
+    kern_return_t result=task_set_exception_ports(mach_task_self(),EXC_MASK_BREAKPOINT,service,EXCEPTION_DEFAULT,THREAD_STATE_NONE);
+    printf("EXCEPTION-BOUNDARY boundary=%s result=%d\n",boundary,result);
+    if(result==KERN_SUCCESS) kr(task_set_exception_ports(mach_task_self(),EXC_MASK_BREAKPOINT,MACH_PORT_NULL,EXCEPTION_DEFAULT,THREAD_STATE_NONE),"diagnostic exception clear");
+}
 static void no_user_reference(mach_port_t port) {
     mach_port_type_t type=0; kern_return_t result=mach_port_type(mach_task_self(),port,&type);
     if(result!=KERN_INVALID_NAME) {
@@ -334,10 +339,10 @@ static int receive_ping(mach_port_t service,unsigned route,unsigned *seen,int pe
     Buffer b={0}; mach_msg_return_t result=mach_msg(&b.m.h,MACH_RCV_MSG|MACH_RCV_TIMEOUT,0,sizeof b,service,10,MACH_PORT_NULL);
     if(result==MACH_RCV_TIMED_OUT) return 1;
     if(result!=MACH_MSG_SUCCESS) { fprintf(stderr,"SERVER-ERROR result=%d\n",result); return 0; }
-    if(!permitted || b.m.h.msgh_size!=sizeof(Message) || (b.m.h.msgh_bits&MACH_MSGH_BITS_COMPLEX) ||
+    if((!permitted && b.m.slot!=3) || b.m.h.msgh_size!=sizeof(Message) || (b.m.h.msgh_bits&MACH_MSGH_BITS_COMPLEX) ||
        b.m.h.msgh_id!=PING_ID || !MACH_PORT_VALID(b.m.h.msgh_remote_port) ||
        MACH_MSGH_BITS_REMOTE(b.m.h.msgh_bits)!=MACH_MSG_TYPE_PORT_SEND_ONCE ||
-       b.m.magic!=MAGIC || b.m.route!=route || b.m.slot>=3 ||
+       b.m.magic!=MAGIC || b.m.route!=route || b.m.slot>=4 ||
        b.m.nonce!=nonce_for(route,b.m.slot) || (*seen&(1U<<b.m.slot))) {
         mach_msg_destroy(&b.m.h); fputs("UNEXPECTED-OWNED-SERVICE-MESSAGE\n",stderr); return 0;
     }
@@ -447,7 +452,10 @@ int main(int argc,char **argv) {
             mach_port_t expected_seed=slot(0); if(!MACH_PORT_VALID(expected_seed)) exit(77);
             signal(SIGINT,SIG_DFL); signal(SIGTERM,SIG_DFL); alarm(18);
             if(dup2(output[1],1)<0||dup2(output[1],2)<0) die("guest output"); close_extra_fds();
+            if(!ping(expected_seed,(unsigned)route,3)) exit(77);
+            exception_boundary(expected_seed,"before_credentials");
             drop(uid); if(chdir(work)) die("guest cwd");
+            exception_boundary(expected_seed,"after_credentials");
             check_seed(expected_seed,"credentials");
             char rustc[PATH_MAX],rustdoc[PATH_MAX],cargobin[PATH_MAX],envpath[PATH_MAX],linker[PATH_MAX+16];
             path(rustc,root,"runtime/rust/bin/rustc"); path(rustdoc,root,"runtime/rust/bin/rustdoc"); path(cargobin,root,"runtime/rust/bin/cargo");
@@ -463,7 +471,7 @@ int main(int argc,char **argv) {
             char *error=NULL;
             if(sandbox_init(profile,0,&error)) { fprintf(stderr,"PROFILE-REFUSED %.256s\n",error?error:"no diagnostic"); if(error) sandbox_free_error(error); exit(77); }
             puts("PROFILE-APPLIED network=deny mach-lookup=deny mach-register=deny filesystem-isolation=untested");
-            check_seed(expected_seed,"profile"); release(expected_seed);
+            check_seed(expected_seed,"profile"); exception_boundary(expected_seed,"after_profile"); release(expected_seed);
             /* Compile/apply the profile before replacing the real bootstrap
              * context. Thereafter only direct kernel Mach APIs precede exec. */
             seed_slots(); if(sanitized) sanitize();
@@ -492,7 +500,7 @@ int main(int argc,char **argv) {
         printf("RESULT case=%d mode=%s route=%s reaped_before_cleanup=%d status=%d server_mask=%u output_bytes=%zu uid_empty=%d\n",
                c,sanitized?"sanitized":"control",names[c],done,status,seen,bytes,clean);
         if(!clean) return 77;
-        if(!done||!observed||!WIFEXITED(status)||WEXITSTATUS(status)||seen!=(sanitized?0U:7U)) return 77;
+        if(!done||!observed||!WIFEXITED(status)||WEXITSTATUS(status)||seen!=(sanitized?8U:15U)) return 77;
     }
     kr(mach_port_destroy(mach_task_self(),service),"owned service destroy");
     puts("MACH-PREREQUISITE-PASS cases=10 controls=3 sanitized=3 smoke=4 slots=3 named_lookup_tested=0 full_sandbox_tested=0");
