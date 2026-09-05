@@ -1,5 +1,5 @@
 #!/bin/sh
-# mac-mach-v8: disposable VM capability-inheritance prerequisite, not a backend.
+# mac-mach-v9: disposable VM capability-inheritance prerequisite, not a backend.
 # No native execution by the author. Root reviews source/manifest before CI.
 set -eu
 umask 022
@@ -493,7 +493,13 @@ int main(int argc,char **argv) {
             /* Ordinary fork owns the runtime's registered slots. The owned
              * exception anchor is the calibrated transport; seed registered
              * slots explicitly only after the trusted child has arrived. */
-            mach_port_t expected_seed=slot(1); if(!MACH_PORT_VALID(expected_seed)) exit(77);
+            exception_mask_t transport_masks[32]; mach_port_t transport_ports[32];
+            exception_behavior_t transport_behavior[32]; thread_state_flavor_t transport_flavor[32];
+            mach_msg_type_number_t transport_count=32;
+            kern_return_t transport_result=task_get_exception_ports(mach_task_self(),EXC_MASK_BREAKPOINT,transport_masks,&transport_count,transport_ports,transport_behavior,transport_flavor);
+            printf("TRANSPORT-LOOKUP result=%d count=%u\n",transport_result,transport_count);
+            if(transport_result || transport_count!=1 || !(transport_masks[0]&EXC_MASK_BREAKPOINT) || !MACH_PORT_VALID(transport_ports[0])) exit(77);
+            mach_port_t expected_seed=transport_ports[0];
             kr(mach_ports_register(mach_task_self(),&expected_seed,1),"seed child registered");
             parent_registration(expected_seed);
             signal(SIGINT,SIG_DFL); signal(SIGTERM,SIG_DFL); alarm(18);
