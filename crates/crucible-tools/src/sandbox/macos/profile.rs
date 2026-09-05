@@ -7,6 +7,9 @@ use std::path::{Path, PathBuf};
 
 use crucible_core::{SandboxError, SandboxFilesystemAccess, SandboxPolicy};
 
+// macOS 26 resolves some system utilities through `/var/select` even when the
+// requested executable lives under `/bin`. This fixed system runtime is
+// readable only; a request-level unreadable rule still overrides it.
 const BASE_POLICY: &str = "\
 (version 1)\n\
 (deny default)\n\
@@ -30,6 +33,7 @@ const BASE_POLICY: &str = "\
 (allow file-read-metadata file-test-existence\n\
   (literal \"/\")\n\
   (literal \"/var\")\n\
+  (literal \"/var/select\")\n\
   (literal \"/private\")\n\
   (literal \"/private/etc\")\n\
   (literal \"/private/etc/ssl\"))\n\
@@ -46,6 +50,8 @@ const BASE_POLICY: &str = "\
     (subpath \"/nix/store\")\n\
     (literal \"/private/etc/ssl/openssl.cnf\")\n\
     (subpath \"/private/var/db/timezone\")\n\
+    (subpath \"/private/var/select\")\n\
+    (subpath \"/var/select\")\n\
     (literal \"/dev/null\")\n\
     (literal \"/dev/zero\")\n\
     (literal \"/dev/random\")\n\
@@ -83,9 +89,17 @@ impl Profile {
                 SandboxFilesystemAccess::ReadWrite => {
                     let key = format!("WRITE_{writes}");
                     push_definition(&mut definitions, &key, rule.path())?;
+                    let exclusions = paths_with_system_alias(rule.path())
+                        .into_iter()
+                        .map(|path| {
+                            protected_metadata_regex(&path)
+                                .map(|regex| format!("(require-not (regex #\"{regex}\"))"))
+                        })
+                        .collect::<Result<Vec<_>, _>>()?
+                        .join(" ");
                     let _ = write!(
                         text,
-                        "(allow file-write* (require-any (literal (param \"{key}\")) (subpath (param \"{key}\"))))\n\
+                        "(allow file-write* (require-all (require-any (literal (param \"{key}\")) (subpath (param \"{key}\"))) {exclusions}))\n\
                          (deny file-write-unlink file-write-create (require-all (literal (param \"{key}\")) (vnode-type DIRECTORY)))\n"
                     );
                     writes = writes.saturating_add(1);
@@ -455,8 +469,8 @@ mod tests {
         assert!(!profile.policy.contains("(allow file-read*)"));
         assert!(profile.policy.contains("(allow process-exec)"));
         assert!(profile.policy.contains("(allow process-fork)"));
-        assert!(!profile.policy.contains("(subpath \"/var/select\")"));
-        assert!(!profile.policy.contains("(subpath \"/private/var/select\")"));
+        assert!(profile.policy.contains("(subpath \"/var/select\")"));
+        assert!(profile.policy.contains("(subpath \"/private/var/select\")"));
         assert!(!profile.policy.contains("(allow mach-lookup"));
         assert!(!profile.policy.contains("(allow network"));
         assert!(profile.policy.contains("(deny network*)"));
@@ -601,6 +615,12 @@ mod tests {
         ] {
             let regex = protected_metadata_regex(root).expect("protected-name regex");
             assert!(profile.policy.contains(&regex), "missing alias {root:?}");
+            assert!(
+                profile
+                    .policy
+                    .contains(&format!("(require-not (regex #\"{regex}\"))")),
+                "writable rule does not exclude alias {root:?}"
+            );
         }
     }
 }
