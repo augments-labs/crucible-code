@@ -96,13 +96,13 @@ fn document(vendor: Option<&Vendor>, allowed: Option<&str>) -> String {
 ///
 /// These cases exercise terminal composition through real child processes, not
 /// Linux namespace support. The setting is written into the disposable
-/// user-owned document so production still defaults to required confinement
-/// and no project layer is allowed to weaken it.
+/// user-owned document so the fixture does not depend on the application default
+/// and no project layer is allowed to weaken confinement.
 fn fixture_document(document: &str) -> String {
     let rest = document
         .strip_prefix("{\n")
         .expect("a whole-screen configuration object");
-    format!("{{\n  \"sandbox\": {{\"mode\": \"off\"}},\n{rest}")
+    format!("{{\n  \"sandbox\": {{\"enabled\": false}},\n{rest}")
 }
 
 /// A kept tail no session started by a case here can reach past, in tokens.

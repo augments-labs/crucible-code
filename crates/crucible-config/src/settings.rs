@@ -278,7 +278,7 @@ impl Settings {
     }
 
     /// Effective operating-system confinement mode, off unless a document
-    /// opts in with `sandbox.enabled` or explicitly selects `sandbox.mode`.
+    /// opts in with `sandbox.enabled`.
     /// Workspace layers may require confinement but cannot disable it.
     /// Core policy constructors remain conservative; hosts apply this choice.
     #[must_use]
@@ -425,8 +425,8 @@ mod tests {
     }
 
     #[test]
-    fn explicit_confinement_modes_remain_subject_to_user_authority() {
-        let user = Document::sample(r#"{"sandbox":{"mode":"off"}}"#, Origin::User);
+    fn disabling_confinement_requires_user_authority() {
+        let user = Document::sample(r#"{"sandbox":{"enabled":false}}"#, Origin::User);
         assert_eq!(
             Settings::resolve(vec![user]).sandbox_mode(),
             crucible_core::SandboxMode::Off
@@ -434,7 +434,7 @@ mod tests {
 
         for origin in [Origin::Project, Origin::ProjectLocal] {
             let error = Document::parse(
-                r#"{"sandbox":{"mode":"degraded"}}"#,
+                r#"{"sandbox":{"enabled":false}}"#,
                 ".crucible/config.json",
                 origin,
             )
@@ -445,8 +445,8 @@ mod tests {
 
     #[test]
     fn a_project_may_strengthen_a_users_confinement_choice() {
-        let user = Document::sample(r#"{"sandbox":{"mode":"off"}}"#, Origin::User);
-        let project = Document::sample(r#"{"sandbox":{"mode":"required"}}"#, Origin::Project);
+        let user = Document::sample(r#"{"sandbox":{"enabled":false}}"#, Origin::User);
+        let project = Document::sample(r#"{"sandbox":{"enabled":true}}"#, Origin::Project);
 
         assert_eq!(
             Settings::resolve(vec![project, user]).sandbox_mode(),

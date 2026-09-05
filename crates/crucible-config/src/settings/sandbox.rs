@@ -20,39 +20,25 @@ pub(crate) fn read(
     text: &str,
     origin: Origin,
 ) -> Result<Option<SandboxLayer>, ConfigError> {
-    let Some(block) = value.get("sandbox") else {
+    let Some(enabled) = value
+        .get("sandbox")
+        .and_then(|block| block.get("enabled"))
+        .and_then(Value::as_bool)
+    else {
         return Ok(None);
     };
-    // The shape walk has already proved that only one spelling was supplied.
-    // Convert at this boundary so all runtime consumers still receive one mode.
-    let (mode, key) = if let Some(enabled) = block.get("enabled").and_then(Value::as_bool) {
-        (
-            if enabled {
-                SandboxMode::Required
-            } else {
-                SandboxMode::Off
-            },
-            "enabled",
-        )
-    } else if let Some(written) = block.get("mode").and_then(Value::as_str) {
-        let mode = match written {
-            "required" => SandboxMode::Required,
-            "degraded" => SandboxMode::Degraded,
-            "off" => SandboxMode::Off,
-            // The shape walk already proves this cannot occur.
-            _ => return Ok(None),
-        };
-        (mode, "mode")
-    } else {
-        return Ok(None);
-    };
-    if origin.in_the_workspace() && mode != SandboxMode::Required {
+    if origin.in_the_workspace() && !enabled {
         return Err(ConfigError::Widening {
             file: file.into(),
-            path: format!("sandbox.{key}").into(),
-            at: At::of(key, text),
+            path: "sandbox.enabled".into(),
+            at: At::of("enabled", text),
         });
     }
+    let mode = if enabled {
+        SandboxMode::Required
+    } else {
+        SandboxMode::Off
+    };
     Ok(Some(SandboxLayer { origin, mode }))
 }
 

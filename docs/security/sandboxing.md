@@ -9,10 +9,9 @@ inputs; and only then launches the process.
 OS confinement is disabled by default. Enable it with
 `{"sandbox":{"enabled":true}}`; `enabled: false` in your home configuration
 selects unconfined execution. Approval, minimal environment, command deadlines,
-output bounds and audit remain active in either mode. Existing explicit
-`sandbox.mode` settings retain their meaning, but cannot appear beside
-`enabled` in the same document. Project settings can require confinement and
-cannot disable it. See [configuration](../configuration/configuration.md#sandbox).
+output bounds and audit remain active in either mode. `sandbox.enabled` is the
+only configuration switch; the former `sandbox.mode` key is rejected. Project
+settings can require confinement and cannot disable it. See [configuration](../configuration/configuration.md#sandbox).
 
 When enabled, the production Linux backend uses a
 canonical, root-owned, non-writable system Bubblewrap executable reached only
@@ -81,8 +80,8 @@ SDK policies or inherited child authority.
 
 `enforced` is a hard boundary, `observed` is bounded measurement only, and
 `unsupported` is rejected whenever the effective policy explicitly requires
-that feature. `degraded` and `off` relax only the documented baseline kernel
-isolation; they cannot turn an explicit limit, manifest, exact network rule,
+that feature. The SDK policies `degraded` and `off` relax only the documented
+baseline kernel isolation; they cannot turn an explicit limit, manifest, exact network rule,
 persistence request or snapshot request into best-effort behavior.
 
 | Capability | Linux Bubblewrap | Compatibility |
@@ -208,21 +207,22 @@ directory it owns and get the same verdicts from the same table, before it is
 wired to anything. Nothing is materialized and no command is started: each
 session is prepared to see whether it can be, and dropped.
 
-## Compatibility modes
+## Unconfined execution
 
-Only home/user configuration may choose `degraded` or `off`; project and
+Only home/user configuration may explicitly disable confinement. Project and
 descendant policy may preserve or strengthen that choice but never weaken it.
-`degraded` tries the enforcing Linux backend first and uses the compatibility
-backend only when enforcement is unavailable. `off` selects compatibility
-directly. When compatibility is selected, inspection and audit records say
-`confined: false`, name the degradation, and retain the exact compatibility
-capability snapshot.
+When confinement is off, inspection and audit records say `confined: false`,
+name the disabled boundary and retain the exact compatibility capability snapshot.
 
 There is no enforcing backend on macOS, Windows or FreeBSD yet. Commands run
 through compatibility by default and are reported as unconfined. Enabling the
 sandbox on those systems refuses a command before it starts; it does not fall
-back silently. A user can explicitly choose `sandbox.enabled: false` or the
-legacy `sandbox.mode: degraded` to allow compatibility execution.
+back silently.
+
+SDK callers may separately construct a `SandboxMode::Degraded` policy, which
+tries the enforcing Linux backend first and permits a reported compatibility
+fallback when enforcement is unavailable. This is a typed SDK policy, not a
+JSON configuration setting.
 
 Compatibility still clears and explicitly rebuilds the command environment,
 checks requested and transformed command guardrails, enforces command deadlines,
