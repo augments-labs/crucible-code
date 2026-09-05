@@ -29,6 +29,8 @@ const BASE_POLICY: &str = "\
 (allow file-read-data (literal \"/\"))\n\
 (allow file-read-metadata file-test-existence\n\
   (literal \"/\")\n\
+  (literal \"/var\")\n\
+  (literal \"/var/select\")\n\
   (literal \"/private\")\n\
   (literal \"/private/etc\")\n\
   (literal \"/private/etc/ssl\"))\n\
@@ -46,6 +48,7 @@ const BASE_POLICY: &str = "\
     (literal \"/private/etc/ssl/openssl.cnf\")\n\
     (subpath \"/private/var/db/timezone\")\n\
     (subpath \"/private/var/select\")\n\
+    (subpath \"/var/select\")\n\
     (literal \"/dev/null\")\n\
     (literal \"/dev/zero\")\n\
     (literal \"/dev/random\")\n\
@@ -86,40 +89,41 @@ impl Profile {
                     let _ = write!(
                         text,
                         "(allow file-write* (require-any (literal (param \"{key}\")) (subpath (param \"{key}\"))))\n\
-                         (deny file-write-unlink (require-all (literal (param \"{key}\")) (vnode-type DIRECTORY)))\n"
+                         (deny file-write-unlink file-write-create (require-all (literal (param \"{key}\")) (vnode-type DIRECTORY)))\n"
                     );
                     writes = writes.saturating_add(1);
                 }
                 SandboxFilesystemAccess::Protected => {
-                    let key = format!("DENY_WRITE_{denied_writes}");
-                    push_definition(&mut definitions, &key, rule.path())?;
-                    let _ = writeln!(
-                        text,
-                        "(deny file-write* (require-any (literal (param \"{key}\")) (subpath (param \"{key}\"))))"
-                    );
-                    denied_writes = denied_writes.saturating_add(1);
+                    push_deny_path(
+                        &mut text,
+                        &mut definitions,
+                        rule.path(),
+                        ("DENY_WRITE", &mut denied_writes, "file-write* file-link"),
+                    )?;
                 }
                 SandboxFilesystemAccess::Unreadable => {
-                    let key = format!("DENY_READ_{denied_reads}");
-                    push_definition(&mut definitions, &key, rule.path())?;
-                    let _ = writeln!(
-                        text,
-                        "(deny file-read* file-write* (require-any (literal (param \"{key}\")) (subpath (param \"{key}\"))))"
-                    );
-                    denied_reads = denied_reads.saturating_add(1);
+                    push_deny_path(
+                        &mut text,
+                        &mut definitions,
+                        rule.path(),
+                        (
+                            "DENY_READ",
+                            &mut denied_reads,
+                            "file-read* file-write* file-link",
+                        ),
+                    )?;
                 }
                 SandboxFilesystemAccess::ReadOnly => {}
             }
         }
 
         for path in discovered_protected {
-            let key = format!("DENY_WRITE_{denied_writes}");
-            push_definition(&mut definitions, &key, path)?;
-            let _ = writeln!(
-                text,
-                "(deny file-write* (require-any (literal (param \"{key}\")) (subpath (param \"{key}\"))))"
-            );
-            denied_writes = denied_writes.saturating_add(1);
+            push_deny_path(
+                &mut text,
+                &mut definitions,
+                path,
+                ("DENY_WRITE", &mut denied_writes, "file-write* file-link"),
+            )?;
         }
 
         for path in linked_metadata {
@@ -129,27 +133,34 @@ impl Profile {
                 text,
                 "(allow file-read* (require-any (literal (param \"{read_key}\")) (subpath (param \"{read_key}\"))))"
             );
-            let write_key = format!("DENY_WRITE_{denied_writes}");
-            push_definition(&mut definitions, &write_key, path)?;
-            let _ = writeln!(
-                text,
-                "(deny file-write* (require-any (literal (param \"{write_key}\")) (subpath (param \"{write_key}\"))))"
-            );
-            denied_writes = denied_writes.saturating_add(1);
+            push_deny_path(
+                &mut text,
+                &mut definitions,
+                path,
+                ("DENY_WRITE", &mut denied_writes, "file-write* file-link"),
+            )?;
         }
 
         for path in expanded_unreadable {
-            let key = format!("DENY_READ_{denied_reads}");
-            push_definition(&mut definitions, &key, path)?;
-            let _ = writeln!(
-                text,
-                "(deny file-read* file-write* (require-any (literal (param \"{key}\")) (subpath (param \"{key}\"))))"
-            );
-            denied_reads = denied_reads.saturating_add(1);
+            push_deny_path(
+                &mut text,
+                &mut definitions,
+                path,
+                (
+                    "DENY_READ",
+                    &mut denied_reads,
+                    "file-read* file-write* file-link",
+                ),
+            )?;
         }
         for pattern in policy.unreadable_patterns() {
-            let regex = unreadable_pattern_regex(pattern.pattern())?;
-            let _ = writeln!(text, "(deny file-read* file-write* (regex #\"{regex}\"))");
+            for path in paths_with_system_alias(pattern.pattern()) {
+                let regex = unreadable_pattern_regex(&path)?;
+                let _ = writeln!(
+                    text,
+                    "(deny file-read* file-write* file-link (regex #\"{regex}\"))"
+                );
+            }
         }
 
         // Seatbelt's literal path filters have differed across case-insensitive
@@ -161,7 +172,7 @@ impl Profile {
             .filter(|rule| rule.access() == SandboxFilesystemAccess::ReadWrite)
         {
             let regex = protected_metadata_regex(rule.path())?;
-            let _ = writeln!(text, "(deny file-write* (regex #\"{regex}\"))");
+            let _ = writeln!(text, "(deny file-write* file-link (regex #\"{regex}\"))");
         }
 
         // Renaming an allowed ancestor would relocate a protected descendant
@@ -195,7 +206,7 @@ impl Profile {
             push_definition(&mut definitions, &key, &path)?;
             let _ = writeln!(
                 text,
-                "(deny file-write-unlink (require-all (vnode-type DIRECTORY) (literal (param \"{key}\"))))"
+                "(deny file-write-unlink file-write-create (require-all (vnode-type DIRECTORY) (literal (param \"{key}\"))))"
             );
         }
 
@@ -211,7 +222,7 @@ impl Profile {
         push_definition(&mut self.definitions, "SCRATCH", path)?;
         self.policy.push_str(
             "(allow file-write* (require-any (literal (param \"SCRATCH\")) (subpath (param \"SCRATCH\"))))\n\
-             (deny file-write-unlink (require-all (literal (param \"SCRATCH\")) (vnode-type DIRECTORY)))\n",
+             (deny file-write-unlink file-write-create (require-all (literal (param \"SCRATCH\")) (vnode-type DIRECTORY)))\n",
         );
         self.validate()?;
         Ok(self)
@@ -238,6 +249,42 @@ impl Profile {
     pub(super) fn definitions(&self) -> &[OsString] {
         &self.definitions
     }
+}
+
+fn push_deny_path(
+    text: &mut String,
+    definitions: &mut Vec<OsString>,
+    path: &Path,
+    deny: (&str, &mut usize, &str),
+) -> Result<(), SandboxError> {
+    let (prefix, count, operations) = deny;
+    for path in paths_with_system_alias(path) {
+        let key = format!("{prefix}_{}", *count);
+        push_definition(definitions, &key, &path)?;
+        let _ = writeln!(
+            text,
+            "(deny {operations} (require-any (literal (param \"{key}\")) (subpath (param \"{key}\"))))"
+        );
+        *count = count.saturating_add(1);
+    }
+    Ok(())
+}
+
+fn paths_with_system_alias(path: &Path) -> Vec<PathBuf> {
+    let mut paths = vec![path.to_path_buf()];
+    let aliases = [
+        (Path::new("/private/var"), Path::new("/var")),
+        (Path::new("/var"), Path::new("/private/var")),
+    ];
+    if let Some(alias) = aliases.iter().find_map(|(source, target)| {
+        path.strip_prefix(source)
+            .ok()
+            .map(|suffix| target.join(suffix))
+    }) && alias != path
+    {
+        paths.push(alias);
+    }
+    paths
 }
 
 fn protected_metadata_regex(root: &Path) -> Result<String, SandboxError> {
@@ -368,6 +415,8 @@ fn push_definition(
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsString;
+
     use crucible_core::{
         SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule,
         SandboxNetworkPolicy, SandboxPolicy, SandboxResourceLimits, SandboxUnreadablePattern,
@@ -407,6 +456,7 @@ mod tests {
         assert!(!profile.policy.contains("(allow file-read*)"));
         assert!(profile.policy.contains("(allow process-exec)"));
         assert!(profile.policy.contains("(allow process-fork)"));
+        assert!(profile.policy.contains("(subpath \"/var/select\")"));
         assert!(!profile.policy.contains("(allow mach-lookup"));
         assert!(!profile.policy.contains("(allow network"));
         assert!(profile.policy.contains("(deny network*)"));
@@ -435,6 +485,12 @@ mod tests {
         assert!(profile.policy.contains("(param \"SCRATCH\")"));
         assert!(profile.policy.contains("[gG][iI][tT]"));
         assert!(profile.policy.contains("([^/]+/)*"));
+        assert!(profile.policy.contains("file-write* file-link"));
+        assert!(
+            profile
+                .policy
+                .contains("file-write-unlink file-write-create")
+        );
         assert!(
             !profile.policy.contains("\"#)"),
             "Seatbelt regex literals have an opening sharp marker only"
@@ -475,7 +531,39 @@ mod tests {
         assert!(
             profile
                 .policy
-                .contains("(deny file-read* file-write* (regex")
+                .contains("(deny file-read* file-write* file-link (regex")
+        );
+    }
+
+    #[test]
+    fn an_unreadable_private_var_path_also_denies_its_system_alias() {
+        let readable = SandboxFilesystemRule::new(
+            "/private/var",
+            SandboxFilesystemAccess::ReadOnly,
+            SandboxFilesystemProvenance::Runtime,
+        )
+        .expect("readable rule");
+        let unreadable = SandboxFilesystemRule::new(
+            "/private/var/select",
+            SandboxFilesystemAccess::Unreadable,
+            SandboxFilesystemProvenance::Descendant,
+        )
+        .expect("unreadable rule");
+        let policy = SandboxPolicy::new(
+            crucible_core::SandboxMode::Required,
+            [readable, unreadable],
+            "/private/var",
+            SandboxNetworkPolicy::Closed,
+            SandboxResourceLimits::confining(),
+        )
+        .expect("effective policy");
+
+        let profile = Profile::build(&policy, &[], &[], &[]).expect("Seatbelt profile");
+
+        assert!(
+            profile
+                .definitions
+                .contains(&OsString::from("DENY_READ_1=/var/select"))
         );
     }
 }
