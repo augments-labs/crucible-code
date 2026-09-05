@@ -1,5 +1,5 @@
 #!/bin/sh
-# macos-runtime-v3: exact SSL and page-size diagnostics, not a backend.
+# macos-mach-inventory-v1: bounded extra-rights survey, not a backend.
 # No native execution by the author. Root reviews source/manifest before CI.
 set -eu
 umask 022
@@ -310,6 +310,39 @@ static void port_kind(mach_port_t port,const char *boundary) {
     kern_return_t result=mach_port_kernel_object(mach_task_self(),port,&kind,NULL);
     printf("PORT-KIND boundary=%s result=%d type=%u\n",boundary,result,kind);
 }
+/* Read-only survey. Null observations are not a complete closure proof.
+ * Query failures stay explicit; no failed query is relabeled absent. */
+static void inventory(const char *stage) {
+    const int slots[]={TASK_HOST_PORT,TASK_ACCESS_PORT,TASK_DEBUG_CONTROL_PORT,TASK_RESOURCE_NOTIFY_PORT};
+    int unresolved=0;
+    for(unsigned i=0;i<sizeof slots/sizeof slots[0];i++) {
+        mach_port_t port=MACH_PORT_NULL; unsigned kind=0;
+        kern_return_t result=task_get_special_port(mach_task_self(),slots[i],&port);
+        kern_return_t kind_result=KERN_INVALID_NAME;
+        if(result==KERN_SUCCESS&&MACH_PORT_VALID(port)) kind_result=mach_port_kernel_object(mach_task_self(),port,&kind,NULL);
+        printf("MACH-INVENTORY stage=%s task_slot=%d query=%d present=%d kind_query=%d kind=%u\n",stage,slots[i],result,MACH_PORT_VALID(port),kind_result,kind);
+        if(result!=KERN_SUCCESS || (slots[i]==TASK_HOST_PORT ? (!MACH_PORT_VALID(port)||kind_result!=KERN_SUCCESS||kind!=3) : MACH_PORT_VALID(port))) unresolved++;
+        release(port);
+    }
+    thread_t thread=mach_thread_self();
+    exception_mask_t masks[32]; mach_port_t ports[32]={0};
+    exception_behavior_t behavior[32]; thread_state_flavor_t flavor[32]; mach_msg_type_number_t count=32;
+    kern_return_t result=thread_get_exception_ports(thread,EXC_MASK_ALL,masks,&count,ports,behavior,flavor);
+    unsigned present=0;
+    if(count>32) { release(thread); fputs("INVENTORY-BOUND thread exceptions\n",stderr); exit(77); }
+    if(result==KERN_SUCCESS) for(mach_msg_type_number_t i=0;i<count;i++) {
+        if(MACH_PORT_VALID(ports[i])) present++;
+        release(ports[i]);
+    }
+    printf("MACH-INVENTORY stage=%s thread_exceptions_query=%d entries=%u present=%u\n",stage,result,count,present);
+    if(result!=KERN_SUCCESS||present) unresolved++;
+    mach_voucher_t voucher=MACH_PORT_NULL;
+    result=thread_get_mach_voucher(thread,0,&voucher);
+    printf("MACH-INVENTORY stage=%s voucher_query=%d present=%d\n",stage,result,MACH_PORT_VALID(voucher));
+    if(result!=KERN_SUCCESS||MACH_PORT_VALID(voucher)) unresolved++;
+    release(voucher); release(thread);
+    printf("MACH-INVENTORY-END stage=%s unresolved=%d full_closure_tested=0\n",stage,unresolved);
+}
 static void exception_boundary(mach_port_t service,const char *boundary) {
     kern_return_t result=task_set_exception_ports(mach_task_self(),EXC_MASK_BREAKPOINT,service,EXCEPTION_DEFAULT,THREAD_STATE_NONE);
     printf("EXCEPTION-BOUNDARY boundary=%s result=%d\n",boundary,result);
@@ -430,7 +463,7 @@ static void guest_credentials(uid_t uid) {
     printf("GUEST-CREDENTIALS uid=%u gid=%u kernel_groups=%d\n",uid,uid,n);
 }
 static int guest(uid_t uid,int sanitized,int route,const char *name,const char *root) {
-    guest_credentials(uid); alarm(18);
+    guest_credentials(uid); alarm(18); inventory("guest_entry");
     errno=0; int page_size=getpagesize(), page_errno=errno;
     printf("RUNTIME-PAGESIZE value=%d errno=%d\n",page_size,page_errno);
     for(int s=0;s<3;s++) {
@@ -575,7 +608,7 @@ int main(int argc,char **argv) {
             check_seed(expected_seed,"profile"); exception_boundary(expected_seed,"after_profile"); release(expected_seed);
             /* Compile/apply the profile before replacing the real bootstrap
              * context. Thereafter only direct kernel Mach APIs precede exec. */
-            seed_slots(); if(sanitized) sanitize();
+            seed_slots(); if(sanitized) sanitize(); inventory("before_exec");
             char *args[]={self,"guest",ids,mode,route_text,(char *)names[c],(char *)root,NULL};
             if(route==2) {
                 pid_t child; int e=posix_spawn(&child,self,NULL,NULL,args,environ); if(e) { errno=e; die("guest spawn"); }
