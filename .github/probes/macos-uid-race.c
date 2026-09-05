@@ -4,6 +4,7 @@
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <grp.h>
@@ -23,6 +24,7 @@
 #define UID 60000
 struct Oracle { _Atomic unsigned generation, acknowledgement, entered, route_hits; };
 static struct Oracle *oracle;
+static pid_t (*compat_vfork)(void);
 static char self[PATH_MAX];
 static char *guest_env[] = { "PATH=/usr/bin:/bin", NULL };
 static double now(void) {
@@ -67,7 +69,7 @@ static void *creator(void *argument) {
             int result=posix_spawn(&child,self,NULL,NULL,args,guest_env);
             if (result) { errno=result; _exit(96); }
         } else if (!strcmp(route,"vfork")) {
-            child=vfork();
+            child=compat_vfork();
             if (!child) { execle(self,self,"guest","leaf",(char *)NULL,guest_env); _exit(97); }
             if (child<0) _exit(98);
         } else {
@@ -120,6 +122,11 @@ static void stop_scope(pid_t leader, int *leader_reaped) {
 }
 int main(int argc,char **argv) {
     setvbuf(stdout,NULL,_IONBF,0);
+    // vfork is deliberately part of this compatibility challenge despite its
+    // deprecation for new applications. Resolve the actual native symbol;
+    // absence is a failed prerequisite, never a replacement with fork/spawn.
+    compat_vfork=(pid_t (*)(void))dlsym(RTLD_DEFAULT,"vfork");
+    if (!compat_vfork) return 111;
     if (!realpath(argv[0],self)) fail("program path");
     if (argc==3&&!strcmp(argv[1],"guest")) return guest(argv[2]);
     if (argc!=2||geteuid()!=0) return 105;
