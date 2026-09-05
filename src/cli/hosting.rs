@@ -52,7 +52,9 @@
 //! **A handle is dead the moment its lifecycle is.** Disposal stops every
 //! server and marks it gone, so an executor still held from an earlier turn
 //! refuses rather than speaking into a pipe that now belongs to nothing. The
-//! next turn prepares again and mints its own.
+//! next turn prepares again and mints its own after confirmed cleanup. An
+//! unconfirmed stop keeps disposal failed and prevents another preparation or
+//! replacement server, even after the backend consumes its process handle.
 
 use std::ffi::OsString;
 use std::fmt::Write as _;
@@ -298,16 +300,20 @@ struct Server {
 }
 
 /// What a server is, between one call and the next.
-struct Conversation {
-    /// Taken at disposal, because stopping consumes it, and taken when a call
-    /// leaves the two ends disagreeing about what was asked.
-    ///
-    /// This is the whole of a handle's validity: a handle that finds nothing
-    /// here is one whose server has ended, and there is no second flag beside
-    /// it to disagree with.
-    /// The collector shares the live conversation's lifetime, so an old
-    /// published executor cannot retain audit capacity after disposal.
-    hosted: Option<(Hosted, SandboxAudit)>,
+enum Conversation {
+    /// Only a live conversation can send calls or spend restart authority.
+    Active(Box<ActiveConversation>),
+    /// The conversation ended and its process scope was confirmed stopped.
+    Closed,
+    /// The backend consumed its process handle without confirming cleanup.
+    /// Repeating disposal must keep reporting that uncertainty.
+    Unreaped,
+}
+
+/// The process and its audit collector have the same live ownership boundary.
+struct ActiveConversation {
+    hosted: Hosted,
+    audit: SandboxAudit,
     /// How many more times it may be started again.
     restarts: Restarts,
 }
@@ -363,10 +369,11 @@ impl Hosting {
             sandbox: Arc::clone(&self.sandbox),
             ancestry: context.ancestry(),
             published: offered.clone(),
-            live: Mutex::new(Conversation {
-                hosted: Some((hosted, audit)),
+            live: Mutex::new(Conversation::Active(Box::new(ActiveConversation {
+                hosted,
+                audit,
                 restarts: Restarts::ceiling(chosen.restarts),
-            }),
+            }))),
         });
 
         let mut entries = Vec::with_capacity(offered.len());
@@ -423,38 +430,51 @@ impl Hosting {
 impl Server {
     /// Stops the conversation and the process behind it, once.
     ///
-    /// Taking it is what ends it, so a second call reaches a server that is
-    /// already gone and does nothing to it.
+    /// Taking it ends the conversation. Cleanup uncertainty stays explicit,
+    /// because a consumed process handle is not proof its scope has ended.
     fn release(&self) -> Result<(), ToolsetError> {
-        let taken = self
-            .live
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .hosted
-            .take();
-        match taken {
-            Some((hosted, audit)) => {
-                let finished = self.reaped(Some(hosted));
-                drop(audit);
+        let mut live = self.live.lock().unwrap_or_else(PoisonError::into_inner);
+        match std::mem::replace(&mut *live, Conversation::Closed) {
+            Conversation::Active(active) => {
+                let finished = self.reaped(&mut live, active.hosted);
+                drop(active.audit);
                 finished
             }
-            None => Ok(()),
+            Conversation::Closed => Ok(()),
+            Conversation::Unreaped => {
+                *live = Conversation::Unreaped;
+                Err(self.unconfirmed())
+            }
         }
     }
 
-    /// The same, for a conversation already taken out from under the lock.
-    fn reaped(&self, taken: Option<Hosted>) -> Result<(), ToolsetError> {
-        let Some(hosted) = taken else {
-            return Ok(());
-        };
-
+    /// Records the outcome while the caller holds the conversation lock.
+    fn reaped(&self, live: &mut Conversation, hosted: Hosted) -> Result<(), ToolsetError> {
         match hosted.stop(self.chosen.grace).finish {
             Finish::Exited(_) | Finish::Stopped => Ok(()),
-            Finish::Unreaped(problem) => Err(ToolsetError::Source {
-                id: self.name.clone(),
-                problem: problem.to_string().into(),
-            }),
+            Finish::Unreaped(problem) => {
+                *live = Conversation::Unreaped;
+                Err(ToolsetError::Source {
+                    id: self.name.clone(),
+                    problem: problem.to_string().into(),
+                })
+            }
         }
+    }
+
+    /// Retains a bounded failure category, not an opaque backend diagnostic.
+    fn unconfirmed(&self) -> ToolsetError {
+        ToolsetError::Source {
+            id: self.name.clone(),
+            problem: "prior server cleanup remains unconfirmed".into(),
+        }
+    }
+
+    fn unreaped(&self) -> bool {
+        matches!(
+            *self.live.lock().unwrap_or_else(PoisonError::into_inner),
+            Conversation::Unreaped
+        )
     }
 
     /// Starts this server again, if the ending permits it and the budget has
@@ -472,17 +492,24 @@ impl Server {
     /// beside its replacement would leave a server nothing will ever reap.
     fn restart(&self, after: Ambiguity, interrupt: Option<&Cancel>) -> Result<(), Box<str>> {
         let mut live = self.live.lock().unwrap_or_else(PoisonError::into_inner);
-        let permitted = live.restarts.again(after).map_err(|no| no.to_string())?;
-        let Some((previous, audit)) = live.hosted.take() else {
+        let Conversation::Active(active) = &mut *live else {
             return Err("the server lifecycle has ended".into());
         };
-        drop(self.reaped(Some(previous)));
+        let permitted = active.restarts.again(after).map_err(|no| no.to_string())?;
+        let previous = std::mem::replace(&mut *live, Conversation::Closed);
+        let Conversation::Active(active) = previous else {
+            // No other thread can change the state while this lock is held.
+            *live = previous;
+            return Err("the server lifecycle has ended".into());
+        };
+        self.reaped(&mut live, active.hosted)
+            .map_err(|error| error.to_string())?;
 
         let Started { hosted, offered } = start(
             &self.chosen,
             self.sandbox.as_ref(),
             self.ancestry,
-            &audit,
+            &active.audit,
             interrupt,
         )
         .map_err(|problem| {
@@ -507,16 +534,23 @@ impl Server {
                 .any(|now| now.name() == then.name() && now.schema() == then.schema())
         });
         if let Some(moved) = moved {
-            drop(self.reaped(Some(hosted)));
+            let cleanup = self.reaped(&mut live, hosted);
             return Err(format!(
                 "it came back without {}, or offering it under a different schema, so the \
-                 tools this run published no longer describe it",
-                moved.name()
+                 tools this run published no longer describe it{}",
+                moved.name(),
+                cleanup
+                    .err()
+                    .map_or_else(String::new, |error| format!("; {error}"))
             )
             .into_boxed_str());
         }
 
-        live.hosted = Some((hosted, audit));
+        *live = Conversation::Active(Box::new(ActiveConversation {
+            hosted,
+            audit: active.audit,
+            restarts: active.restarts,
+        }));
         Ok(())
     }
 }
@@ -525,6 +559,9 @@ impl Toolset for Hosting {
     fn prepare(&self, context: &ToolsetContext) -> Result<(), ToolsetError> {
         Toolset::prepare(&self.builtin, context)?;
         let mut live = self.live.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(server) = live.servers.iter().find(|server| server.unreaped()) {
+            return Err(server.unconfirmed());
+        }
         if !live.servers.is_empty() {
             return Ok(());
         }
@@ -543,11 +580,12 @@ impl Toolset for Hosting {
                 // machine that is missing a program into a refused run.
                 Err(_) if !chosen.required => {}
                 Err(problem) => {
-                    // Whatever did start belongs to a lifecycle that will now
-                    // never exist, so it is stopped here: disposal reaches only
-                    // what preparation recorded, and this record is discarded.
-                    for started in &servers {
-                        drop(started.release());
+                    // Stop partial preparation immediately. Retain uncertain
+                    // cleanup so disposal can report it alongside this cause.
+                    for started in servers {
+                        if started.release().is_err() {
+                            live.servers.push(started);
+                        }
                     }
                     return Err(problem);
                 }
@@ -569,21 +607,20 @@ impl Toolset for Hosting {
     }
 
     fn dispose(&self, context: &ToolsetContext) -> Result<(), ToolsetError> {
-        let servers = {
-            let mut live = self.live.lock().unwrap_or_else(PoisonError::into_inner);
-            live.offered.clear();
-            live.merged = None;
-            std::mem::take(&mut live.servers)
-        };
+        let mut live = self.live.lock().unwrap_or_else(PoisonError::into_inner);
+        live.offered.clear();
+        live.merged = None;
 
         // Every one of them, and the first refusal afterwards: a server that
         // could not be reaped must not leave the ones after it running.
         let mut refused = None;
-        for server in &servers {
+        for server in &live.servers {
             if let Err(problem) = server.release() {
                 refused = refused.or(Some(problem));
             }
         }
+        live.servers.retain(|server| server.unreaped());
+        drop(live);
         Toolset::dispose(&self.builtin, context)?;
         refused.map_or(Ok(()), Err)
     }
@@ -703,13 +740,14 @@ impl Calling {
             .live
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        let Some((hosted, _)) = live.hosted.as_mut() else {
+        let Conversation::Active(active) = &mut *live else {
             // The lifecycle that read this catalogue has ended, or a call
             // before this one left the conversation somewhere it could not come
             // back from.
             return Err(Refusal::Gone);
         };
-        hosted
+        active
+            .hosted
             .call(&self.offered, arguments, Some(context.cancel()))
             .map_err(Refusal::Unanswered)
     }

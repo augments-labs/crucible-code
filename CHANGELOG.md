@@ -10,6 +10,11 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **MCP servers are replaced only after confirmed cleanup.** An unconfirmed
+  stop remains a disposal failure and prevents another preparation or restart.
+  Failed partial preparation retains cleanup failures for the runner to report,
+  while disposal still attempts every started server.
+
 - **MCP sandbox audit records reach the session journal.** Preparation, restart
   and cleanup retain their run attribution, including lifecycle failures.
   Audit delivery happens before the next provider request and after disposal;
