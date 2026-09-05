@@ -3,6 +3,8 @@ Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
 public static class Availability {
+    [UnmanagedFunctionPointer(CallingConvention.Winapi, SetLastError=true)]
+    public delegate int QuerySandbox(out ulong capabilities);
     [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
     public static extern IntPtr LoadLibraryExW(string name, IntPtr file, uint flags);
     [DllImport("kernel32.dll", CharSet=CharSet.Ansi, ExactSpelling=true, SetLastError=true)]
@@ -17,9 +19,19 @@ if ($probeModule -eq [IntPtr]::Zero) {
     Write-Output ('API module_present=false error=' + [Runtime.InteropServices.Marshal]::GetLastWin32Error())
 } else {
     try {
-        foreach ($probeExport in @('Experimental_CreateProcessInSandbox', 'Experimental_CreateProcessAsUserInSandbox')) {
+        foreach ($probeExport in @('Experimental_CreateProcessInSandbox', 'Experimental_CreateProcessAsUserInSandbox', 'Experimental_QuerySandboxSupport', 'CreateProcessSecurityEnvironment', 'QueryProcessSecurityEnvironmentSupport', 'CloseProcessSecurityEnvironment')) {
             $probeAddress = [Availability]::GetProcAddress($probeModule, $probeExport)
             Write-Output ('API name=' + $probeExport + ' present=' + ($probeAddress -ne [IntPtr]::Zero))
+        }
+        $probeQueryAddress = [Availability]::GetProcAddress($probeModule, 'Experimental_QuerySandboxSupport')
+        if ($probeQueryAddress -ne [IntPtr]::Zero) {
+            $probeQuery = [Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer($probeQueryAddress, [Type][Availability+QuerySandbox])
+            [UInt64]$probeCapabilities = 0
+            $probeSucceeded = $probeQuery.Invoke([ref]$probeCapabilities)
+            $probeQueryError = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+            Write-Output ('CAPABILITY query_return=' + $probeSucceeded + ' bits=' + $probeCapabilities + ' error_if_failed=' + $probeQueryError)
+        } else {
+            Write-Output 'CAPABILITY query_absent=true availability_unproven=true'
         }
     } finally {
         if (-not [Availability]::FreeLibrary($probeModule)) { throw 'FreeLibrary failed' }
