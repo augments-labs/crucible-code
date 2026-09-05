@@ -422,7 +422,7 @@ mod tests {
         SandboxNetworkPolicy, SandboxPolicy, SandboxResourceLimits, SandboxUnreadablePattern,
     };
 
-    use super::Profile;
+    use super::{Profile, paths_with_system_alias};
     use crate::sample::Sample;
 
     #[test]
@@ -495,7 +495,10 @@ mod tests {
             !profile.policy.contains("\"#)"),
             "Seatbelt regex literals have an opening sharp marker only"
         );
-        assert_eq!(profile.definitions.len(), 6);
+        let aliases = paths_with_system_alias(sample.root())
+            .len()
+            .saturating_sub(1);
+        assert_eq!(profile.definitions.len(), 6 + aliases.saturating_mul(2));
     }
 
     #[test]
