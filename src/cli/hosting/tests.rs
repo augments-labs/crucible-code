@@ -27,6 +27,7 @@ use super::{Chosen, Hosting};
 
 mod audit;
 mod cleanup;
+mod startup;
 
 /// How long a test lets one silence run before it gives up on a server.
 ///
@@ -169,6 +170,8 @@ struct Watched {
     /// A backend that cannot confirm the process scope ended.
     cleanup_refused: AtomicBool,
     stop_attempts: AtomicUsize,
+    missing_input: bool,
+    missing_output: bool,
 }
 
 impl Watched {
@@ -283,10 +286,14 @@ impl Fake {
 
 impl SandboxProcess for Fake {
     fn take_stdin(&mut self) -> Option<Box<dyn Write + Send>> {
-        Some(Box::new(Input(Arc::clone(&self.watched))))
+        (!self.watched.missing_input)
+            .then(|| Box::new(Input(Arc::clone(&self.watched))) as Box<dyn Write + Send>)
     }
 
     fn take_stdout(&mut self) -> Option<Box<dyn SandboxOutput>> {
+        if self.watched.missing_output {
+            return None;
+        }
         self.stdout
             .take()
             .map(|says| Box::new(says) as Box<dyn SandboxOutput>)
@@ -403,6 +410,9 @@ enum Answers {
     Says(Vec<Value>),
     /// It talks normally but its process scope cannot be confirmed stopped.
     Unreapable(Vec<Value>),
+    /// Construction lacks a pipe and stopping the process also fails.
+    MissingInput,
+    MissingOutput,
     /// The same, but it thinks for a while before the `n`th of them.
     Slowly(Vec<Value>, usize, Duration),
     /// It refuses to start at all.
@@ -463,6 +473,8 @@ impl SandboxService for Pretend {
             .lock()
             .expect("the scripts a test wrote")
             .pop_front();
+        let missing_input = matches!(script, Some(Answers::MissingInput));
+        let missing_output = matches!(script, Some(Answers::MissingOutput));
         let (frames, slow, cleanup_refused) = match script {
             None | Some(Answers::Refuses) => {
                 return Err(SandboxError::Lifecycle(io::Error::other(
@@ -471,11 +483,14 @@ impl SandboxService for Pretend {
             }
             Some(Answers::Says(frames)) => (frames, None, false),
             Some(Answers::Unreapable(frames)) => (frames, None, true),
+            Some(Answers::MissingInput | Answers::MissingOutput) => (Vec::new(), None, true),
             Some(Answers::Slowly(frames, nth, held)) => (frames, Some((nth, held)), false),
         };
 
         let watched = Arc::new(Watched {
             cleanup_refused: AtomicBool::new(cleanup_refused),
+            missing_input,
+            missing_output,
             ..Watched::default()
         });
         self.watched

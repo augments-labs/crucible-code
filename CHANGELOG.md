@@ -10,6 +10,11 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **Failed server startup keeps cleanup failures visible.** MCP handshake and
+  catalogue failures stop the process explicitly; optional servers are skipped
+  only when cleanup is confirmed. Missing-pipe failures in the MCP and RPC
+  hosts preserve the original cause and stop error in `Unstarted::Unreaped`.
+
 - **MCP servers are replaced only after confirmed cleanup.** An unconfirmed
   stop remains a disposal failure and prevents another preparation or restart.
   Failed partial preparation retains cleanup failures for the runner to report,

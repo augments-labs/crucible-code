@@ -502,3 +502,41 @@ fn an_extension_the_sandbox_stopped_says_what_it_was_stopped_for() {
         ended.finish
     );
 }
+
+#[test]
+fn missing_input_retains_failed_cleanup() {
+    let (mut process, watched) = Fake::new([], Ending::Unreapable);
+    process.speaks = false;
+    let refused = Hosted::<()>::over(process, PATIENCE).unwrap_err();
+    let message = refused.to_string();
+    assert!(message.contains("input"), "{message}");
+    assert!(
+        message.contains("the scope could not be reaped"),
+        "{message}"
+    );
+    assert_eq!(watched.stopped.load(Ordering::Relaxed), 1);
+    let Unstarted::Unreaped { cause, cleanup } = refused else {
+        panic!("cleanup uncertainty must be typed");
+    };
+    assert!(matches!(*cause, Unstarted::Unspeakable));
+    assert_eq!(cleanup.kind(), io::ErrorKind::Other);
+}
+
+#[test]
+fn missing_output_retains_failed_cleanup() {
+    let (mut process, watched) = Fake::new([], Ending::Unreapable);
+    process.stdout = None;
+    let refused = Hosted::<()>::over(process, PATIENCE).unwrap_err();
+    let message = refused.to_string();
+    assert!(message.contains("output"), "{message}");
+    assert!(
+        message.contains("the scope could not be reaped"),
+        "{message}"
+    );
+    assert_eq!(watched.stopped.load(Ordering::Relaxed), 1);
+    let Unstarted::Unreaped { cause, cleanup } = refused else {
+        panic!("cleanup uncertainty must be typed");
+    };
+    assert!(matches!(*cause, Unstarted::Unheard));
+    assert_eq!(cleanup.kind(), io::ErrorKind::Other);
+}

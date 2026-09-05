@@ -54,7 +54,9 @@
 //! refuses rather than speaking into a pipe that now belongs to nothing. The
 //! next turn prepares again and mints its own after confirmed cleanup. An
 //! unconfirmed stop keeps disposal failed and prevents another preparation or
-//! replacement server, even after the backend consumes its process handle.
+//! replacement server, even after the backend consumes its process handle. A
+//! refused startup has the same obligation: an optional server is skippable
+//! only when its process cleanup is confirmed.
 
 use std::ffi::OsString;
 use std::fmt::Write as _;
@@ -200,6 +202,38 @@ struct Started {
     offered: Vec<Offered>,
 }
 
+/// An ordinary refusal may be optional; uncertain process cleanup never is.
+enum StartFailure {
+    Refused(ToolsetError),
+    Unreaped(ToolsetError),
+}
+
+impl From<ToolsetError> for StartFailure {
+    fn from(error: ToolsetError) -> Self {
+        Self::Refused(error)
+    }
+}
+
+impl StartFailure {
+    fn refused(chosen: &Chosen, problem: &dyn std::fmt::Display) -> Self {
+        Self::Refused(ToolsetError::Source {
+            id: chosen.name.clone(),
+            problem: problem.to_string().into(),
+        })
+    }
+
+    /// Ends the conversation before returning its protocol refusal.
+    fn after(chosen: &Chosen, problem: &dyn std::fmt::Display, hosted: Hosted) -> Self {
+        match hosted.stop(chosen.grace).finish {
+            Finish::Exited(_) | Finish::Stopped => Self::refused(chosen, problem),
+            Finish::Unreaped(cleanup) => Self::Unreaped(ToolsetError::Source {
+                id: chosen.name.clone(),
+                problem: format!("{problem}; unconfirmed cleanup: {cleanup}").into(),
+            }),
+        }
+    }
+}
+
 /// Starts `chosen` confined, agrees a version, and reads what it offers.
 ///
 /// Free of [`Hosting`] because it is also what a restart does, and a restart
@@ -212,8 +246,8 @@ fn start(
     ancestry: Ancestry,
     audit: &SandboxAudit,
     interrupt: Option<&Cancel>,
-) -> Result<Started, Box<str>> {
-    let refused = |problem: &dyn std::fmt::Display| -> Box<str> { problem.to_string().into() };
+) -> Result<Started, StartFailure> {
+    let refused = |problem: &dyn std::fmt::Display| StartFailure::refused(chosen, problem);
 
     // A call identity of its own rather than the run's: what the audit is
     // about here is the server, and every tool it later offers is one call
@@ -241,14 +275,29 @@ fn start(
     .spoken_to();
     let process = session.start(command).map_err(|e| refused(&e))?;
 
-    let mut hosted = Hosted::over(process, chosen.handshake).map_err(|e| refused(&e))?;
-    let greeting = hosted.greet(interrupt).map_err(|e| refused(&e))?;
+    let mut hosted = Hosted::over(process, chosen.handshake).map_err(|error| {
+        let problem = ToolsetError::Source {
+            id: chosen.name.clone(),
+            problem: error.to_string().into(),
+        };
+        match error {
+            crucible_mcp::Unstarted::Unreaped { .. } => StartFailure::Unreaped(problem),
+            crucible_mcp::Unstarted::Unspeakable | crucible_mcp::Unstarted::Unheard => {
+                StartFailure::Refused(problem)
+            }
+        }
+    })?;
+    let greeting = match hosted.greet(interrupt) {
+        Ok(greeting) => greeting,
+        Err(problem) => return Err(StartFailure::after(chosen, &problem, hosted)),
+    };
     // Under the other number from here on: the greeting was a peer reading
     // from a table, and everything after it is a peer doing work.
     hosted.patient_for(chosen.request);
-    let offered = hosted
-        .catalogue(&greeting, interrupt)
-        .map_err(|e| refused(&e))?;
+    let offered = match hosted.catalogue(&greeting, interrupt) {
+        Ok(offered) => offered,
+        Err(problem) => return Err(StartFailure::after(chosen, &problem, hosted)),
+    };
     Ok(Started { hosted, offered })
 }
 
@@ -263,6 +312,9 @@ pub(crate) struct Hosting {
 /// What one prepared lifecycle is holding.
 #[derive(Default)]
 struct Live {
+    /// One failed startup whose consumed process handle did not confirm cleanup.
+    /// No subsequent preparation can append another failure or start a server.
+    unreaped_start: Option<Box<str>>,
     /// Every server started for this lifecycle, in selection order.
     servers: Vec<Arc<Server>>,
     /// The entries their catalogues produced, fixed at preparation.
@@ -338,12 +390,13 @@ impl Hosting {
         &self,
         chosen: &Arc<Chosen>,
         context: &ToolsetContext,
-    ) -> Result<(Arc<Server>, Vec<ToolEntry>), ToolsetError> {
+    ) -> Result<(Arc<Server>, Vec<ToolEntry>), StartFailure> {
         let provenance = ToolProvenance::new(
             ToolSourceKind::Mcp,
             format!("{NAMESPACE}{OF}{}", chosen.name),
             format!("MCP server {} at {}", chosen.name, chosen.program.display()),
-        )?;
+        )
+        .map_err(ToolsetError::from)?;
         let audit = context
             .sandbox_audit(ToolId::new(format!("{NAMESPACE}{OF}{}", chosen.name)))
             .map_err(|error| ToolsetError::Source {
@@ -356,11 +409,7 @@ impl Hosting {
             context.ancestry(),
             &audit,
             Some(context.cancel()),
-        )
-        .map_err(|problem| ToolsetError::Source {
-            id: chosen.name.clone(),
-            problem,
-        })?;
+        )?;
 
         let program: Box<str> = chosen.program.display().to_string().into();
         let server = Arc::new(Server {
@@ -381,7 +430,8 @@ impl Hosting {
             let called: Box<str> =
                 format!("{NAMESPACE}{OF}{}{WITHIN}{}", chosen.name, one.name()).into();
             let descriptor =
-                ToolDescriptor::new(called.clone(), one.schema().to_string(), provenance.clone())?;
+                ToolDescriptor::new(called.clone(), one.schema().to_string(), provenance.clone())
+                    .map_err(ToolsetError::from)?;
             entries.push(ToolEntry::new(
                 descriptor,
                 Arc::new(Calling {
@@ -464,10 +514,7 @@ impl Server {
 
     /// Retains a bounded failure category, not an opaque backend diagnostic.
     fn unconfirmed(&self) -> ToolsetError {
-        ToolsetError::Source {
-            id: self.name.clone(),
-            problem: "prior server cleanup remains unconfirmed".into(),
-        }
+        unconfirmed(&self.name)
     }
 
     fn unreaped(&self) -> bool {
@@ -512,7 +559,14 @@ impl Server {
             &active.audit,
             interrupt,
         )
-        .map_err(|problem| {
+        .map_err(|failure| {
+            let problem = match failure {
+                StartFailure::Refused(problem) => problem,
+                StartFailure::Unreaped(problem) => {
+                    *live = Conversation::Unreaped;
+                    problem
+                }
+            };
             format!("restart {} did not start it: {problem}", permitted.nth()).into_boxed_str()
         })?;
 
@@ -555,10 +609,21 @@ impl Server {
     }
 }
 
+/// A bounded retained failure identifies its server without keeping backend text.
+fn unconfirmed(name: &str) -> ToolsetError {
+    ToolsetError::Source {
+        id: name.into(),
+        problem: "prior server cleanup remains unconfirmed".into(),
+    }
+}
+
 impl Toolset for Hosting {
     fn prepare(&self, context: &ToolsetContext) -> Result<(), ToolsetError> {
         Toolset::prepare(&self.builtin, context)?;
         let mut live = self.live.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(name) = &live.unreaped_start {
+            return Err(unconfirmed(name));
+        }
         if let Some(server) = live.servers.iter().find(|server| server.unreaped()) {
             return Err(server.unconfirmed());
         }
@@ -578,8 +643,15 @@ impl Toolset for Hosting {
                 // without: its tools are simply not offered, and the turn goes
                 // ahead with the rest. Saying `required` is what turns a
                 // machine that is missing a program into a refused run.
-                Err(_) if !chosen.required => {}
-                Err(problem) => {
+                Err(StartFailure::Refused(_)) if !chosen.required => {}
+                Err(failure) => {
+                    let problem = match failure {
+                        StartFailure::Refused(problem) => problem,
+                        StartFailure::Unreaped(problem) => {
+                            live.unreaped_start = Some(chosen.name.clone());
+                            problem
+                        }
+                    };
                     // Stop partial preparation immediately. Retain uncertain
                     // cleanup so disposal can report it alongside this cause.
                     for started in servers {
@@ -613,7 +685,7 @@ impl Toolset for Hosting {
 
         // Every one of them, and the first refusal afterwards: a server that
         // could not be reaped must not leave the ones after it running.
-        let mut refused = None;
+        let mut refused = live.unreaped_start.as_deref().map(unconfirmed);
         for server in &live.servers {
             if let Err(problem) = server.release() {
                 refused = refused.or(Some(problem));

@@ -41,10 +41,17 @@ fn startup_unconfirmed_cleanup_retains_linux_projection_and_audits_failed() -> i
         .join(transaction::stage_name(request.id()));
     // This separate fixture owner removes only our unique root after every
     // assertion, including when the intentionally broken candidate panics.
-    let _rescue = Stage::new(root.clone());
+    let rescue = Stage::new(root.clone());
     let view = command::prepare(&request).map_err(io::Error::other)?;
     let projection =
         projection::Projection::prepare(&request, &view, None, None).map_err(io::Error::other)?;
+    // This test deliberately closes the WAL while retaining a quarantined
+    // stage. Keep other test admissions outside that interval. Tuple fields
+    // drop in order, so even a panic removes our fixture before unlocking.
+    let _fixture = (
+        rescue,
+        transaction::RegistryLease::acquire(&request).map_err(io::Error::other)?,
+    );
     let audit = request.audit().clone();
     let mut launch = LinuxLaunch {
         process: None,
