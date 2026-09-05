@@ -98,7 +98,7 @@ command(['/usr/bin/sw_vers'])
 command(['/usr/bin/uname', '-a'])
 command([worker, 'empty'])
 command(['/usr/bin/hdiutil', 'create', '-size', '128m', '-fs', 'APFS', '-volname', 'CrucibleFSFixture', image])
-_, data = command(['/usr/bin/hdiutil', 'attach', image, '-nobrowse', '-owners', 'on', '-mountOptions', 'nosuid,nodev', '-mountpoint', mount, '-plist'])
+_, data = command(['/usr/bin/hdiutil', 'attach', image, '-nobrowse', '-owners', 'on', '-mountpoint', mount, '-plist'])
 entities = plistlib.loads(data)['system-entities']
 mounted = [entry for entry in entities if entry.get('mount-point') == str(mount)]
 assert len(mounted) == 1
@@ -108,6 +108,7 @@ assert info.get('FilesystemType') == 'apfs' and info.get('MountPoint') == str(mo
 assert info.get('DeviceNode') == mounted[0].get('dev-entry')
 disks = [entry['dev-entry'] for entry in entities if entry.get('content-hint') == 'GUID_partition_scheme']
 assert len(disks) == 1 and disks[0].startswith('/dev/disk')
+command(['/sbin/mount', '-u', '-o', 'nosuid,nodev', mount])
 command([worker, 'flags', mount])
 operations = ['allowed-read', 'allowed-write', 'source-read', 'source-write', 'readonly-write',
               'protected-write', 'protected-unlink', 'protected-rename', 'ancestor-rename',
