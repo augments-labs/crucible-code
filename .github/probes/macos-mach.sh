@@ -1,5 +1,5 @@
 #!/bin/sh
-# mac-mach-v12: disposable VM capability-inheritance prerequisite, not a backend.
+# macos-runtime-v1: deny-default runtime/Mach prerequisite, not a backend.
 # No native execution by the author. Root reviews source/manifest before CI.
 set -eu
 umask 022
@@ -7,6 +7,16 @@ test "$(uname -s)" = Darwin || { echo 'Requires native macOS' >&2; exit 77; }
 test "$(id -u)" != 0 || { echo 'Start as the fresh VM runner' >&2; exit 77; }
 probe_rustc=$(rustup which --toolchain stable rustc)
 probe_toolchain=$(dirname "$(dirname "$probe_rustc")")
+python3 - "$probe_toolchain" <<'PY'
+import os, pathlib, sys
+total = 0
+for name in ('bin', 'lib'):
+    for root, directories, files in os.walk(pathlib.Path(sys.argv[1]) / name):
+        for filename in files:
+            total += (pathlib.Path(root) / filename).stat().st_size
+            assert total <= 4 * 1024**3, 'runtime copy exceeds experiment bound'
+print('RUNTIME-COPY-BOUND bytes=' + str(total))
+PY
 probe_developer=$(/usr/bin/xcode-select --print-path)
 case "$probe_developer" in /*) ;; *) exit 77 ;; esac
 probe_developer=$(cd "$probe_developer" && pwd -P)
@@ -22,13 +32,28 @@ printf 'FIXTURE %s\n' "$probe_root"
 mkdir "$probe_root/runtime" "$probe_root/runtime/rust"
 cp -R "$probe_toolchain/bin" "$probe_toolchain/lib" "$probe_root/runtime/rust/"
 chmod -R a+rX "$probe_root/runtime"
-cat > "$probe_root/profile.sb" <<'SB'
-(version 1)
-(allow default)
-(deny network*)
-(deny mach-lookup)
-(deny mach-register)
-SB
+python3 - "$probe_root" "$probe_developer" <<'PY'
+import json, pathlib, sys
+root, developer = (pathlib.Path(value).resolve(strict=True) for value in sys.argv[1:])
+trees = [root, developer, pathlib.Path('/System/Library'), pathlib.Path('/usr/lib'), pathlib.Path('/bin')]
+files = [pathlib.Path(value) for value in ('/usr/bin/tr', '/usr/bin/true', '/dev/null')]
+quote = lambda value: json.dumps(str(value))
+ancestors = sorted({parent for path in trees + files for parent in path.parents})
+sysctls = ['hw.ncpu', 'hw.memsize', 'hw.pagesize', 'hw.cputype', 'hw.cpusubtype',
+           'hw.cpufamily', 'kern.osrelease', 'kern.osversion', 'kern.argmax']
+lines = ['(version 1)', '(deny default)', '(deny network*)', '(deny mach-lookup mach-register)',
+         '(allow process-exec process-fork)', '(allow signal (target same-sandbox))',
+         '(allow process-info* (target same-sandbox))', '(allow file-read-data (literal "/"))',
+         '(allow file-read-metadata ' + ' '.join('(literal ' + quote(path) + ')' for path in ancestors) + ')',
+         '(allow file-read* ' + ' '.join('(subpath ' + quote(path) + ')' for path in trees) +
+         ' ' + ' '.join('(literal ' + quote(path) + ')' for path in files) + ')',
+         '(allow file-write* (subpath ' + quote(root) + ') (literal "/dev/null"))',
+         '(allow sysctl-read ' + ' '.join('(sysctl-name ' + quote(name) + ')' for name in sysctls) + ')']
+profile = '\n'.join(lines) + '\n'
+assert len(profile.encode()) < 16384 and '(allow default)' not in profile
+(root / 'profile.sb').write_text(profile)
+print('RUNTIME-PROFILE ' + json.dumps({'trees': [str(p) for p in trees], 'files': [str(p) for p in files], 'sysctls': sysctls}))
+PY
 cat > "$probe_root/hello.c" <<'C'
 int main(void) { return 0; }
 C
@@ -450,7 +475,7 @@ int main(int argc,char **argv) {
     const char *root=argv[1]; struct stat st; const char *prefix="/private/tmp/crucible-macos-mach.";
     if(lstat(root,&st)||!S_ISDIR(st.st_mode)||strncmp(root,prefix,strlen(prefix))) die("fixture root");
     if(chown(root,0,0)||chmod(root,0755)||chdir(root)) die("fixture ownership");
-    char profile[1024]; int profile_fd=open("profile.sb",O_RDONLY|O_NOFOLLOW);
+    char profile[16384]; int profile_fd=open("profile.sb",O_RDONLY|O_NOFOLLOW);
     if(profile_fd<0 || fstat(profile_fd,&st) || !S_ISREG(st.st_mode) || st.st_size<=0 || st.st_size>=(off_t)sizeof profile) die("profile file");
     size_t profile_size=0;
     while(profile_size<(size_t)st.st_size) {
@@ -537,7 +562,7 @@ int main(int argc,char **argv) {
             check_seed(expected_seed,"environment");
             char *error=NULL;
             if(sandbox_init(profile,0,&error)) { fprintf(stderr,"PROFILE-REFUSED %.256s\n",error?error:"no diagnostic"); if(error) sandbox_free_error(error); exit(77); }
-            puts("PROFILE-APPLIED network=deny mach-lookup=deny mach-register=deny filesystem-isolation=untested");
+            puts("PROFILE-APPLIED default=deny network=deny mach-lookup=deny mach-register=deny filesystem-isolation=untested");
             check_seed(expected_seed,"profile"); exception_boundary(expected_seed,"after_profile"); release(expected_seed);
             /* Compile/apply the profile before replacing the real bootstrap
              * context. Thereafter only direct kernel Mach APIs precede exec. */

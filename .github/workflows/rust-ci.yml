@@ -4,8 +4,8 @@ name: native-sandbox-experiment
 permissions:
   contents: read
 jobs:
-  macos-filesystem:
-    name: macOS private filesystem boundary (${{ matrix.os }})
+  macos-runtime:
+    name: macOS deny-default runtime (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -17,4 +17,4 @@ jobs:
       with:
         persist-credentials: false
     - shell: bash
-      run: sh .github/probes/macos-filesystem.sh
+      run: sh .github/probes/macos-mach.sh
