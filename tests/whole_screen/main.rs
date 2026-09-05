@@ -1106,6 +1106,54 @@ fn the_login_panel_offers_the_plans_the_reader_may_hold_and_a_key_of_their_own()
 }
 
 #[test]
+fn the_key_box_stands_empty_under_the_provider_it_is_for() {
+    // The third screen of the walk, before anything is typed: a breadcrumb
+    // saying whose key and which way here, one sentence saying where the key
+    // goes, a labelled frame with nothing in it yet, and a footer that says
+    // paste or type. Nothing of the prompt is on it — no window reading, no
+    // model, no map — because a key box is not a turn.
+    let mut window = Watched::open("login-key-empty", 80, 24);
+
+    window.types_until("/login\r", "Provide your own API key");
+    window.types_until(
+        "\x1b[B\x1b[B\r",
+        "Choose the provider whose API key you have.",
+    );
+    window.types_until("\r", "paste or type your API key");
+
+    let picture = window.picture();
+    assert!(!picture.contains("window"), "{picture}");
+    assert!(!picture.contains('%'), "{picture}");
+    assert!(!picture.contains("transcript"), "{picture}");
+    assert!(!picture.contains("claude"), "{picture}");
+    insta::assert_snapshot!(picture);
+}
+
+#[test]
+fn a_pasted_key_draws_one_mark_per_character_and_offers_to_save() {
+    // A key arrives by paste. The box shows how many characters it holds and
+    // not one of them, and the footer turns from how to give a key into how to
+    // keep it.
+    let key = format!("sk-ant-{}", "k".repeat(55));
+    let mut window = Watched::open("login-key-pasted", 80, 24);
+
+    window.types_until("/login\r", "Provide your own API key");
+    window.types_until(
+        "\x1b[B\x1b[B\r",
+        "Choose the provider whose API key you have.",
+    );
+    window.types_until("\r", "paste or type your API key");
+    window.types_until(&format!("\x1b[200~{key}\x1b[201~"), "enter to save");
+
+    let picture = window.picture();
+    assert!(!picture.contains("sk-ant"), "{picture}");
+    assert!(picture.contains(&"•".repeat(62)), "{picture}");
+    assert!(!picture.contains("window"), "{picture}");
+    assert!(!picture.contains('%'), "{picture}");
+    insta::assert_snapshot!(picture);
+}
+
+#[test]
 fn openai_account_login_offers_browser_and_device_code_methods() {
     // Provider first, method second. Browser sign-in is the ordinary local
     // path; device code stays visible for a remote terminal or another device.

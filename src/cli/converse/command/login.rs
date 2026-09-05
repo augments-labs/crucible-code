@@ -435,6 +435,7 @@ impl LoginView {
                 self.following = after;
                 Ok(true)
             }
+            Pressed::Pasted(text) => Ok(self.pasted(&text)),
             Pressed::Key(Key::Backspace) if self.accepts_manual => {
                 self.limited = false;
                 Ok(self.manual.pop().is_some())
@@ -452,6 +453,24 @@ impl LoginView {
             }
             _ => Ok(false),
         }
+    }
+
+    /// Takes a pasted line into the box the way typed characters go in, and
+    /// says whether the picture changed.
+    ///
+    /// Whole or not at all: half a callback is worth less than none, and the
+    /// row beneath the box says why nothing grew.
+    fn pasted(&mut self, text: &str) -> bool {
+        if !self.accepts_manual {
+            return false;
+        }
+        let text = secret::pasted(text);
+        let room = MAX_MANUAL.saturating_sub(self.manual.len());
+        self.limited = text.len() > room;
+        if !self.limited {
+            self.manual.push_str(&text);
+        }
+        true
     }
 
     fn show<T: Terminal>(
@@ -531,9 +550,8 @@ fn given<T: Terminal>(
     runner: &mut Runner,
     terms: &Terms,
 ) -> Result<(), Fatal> {
-    let Some(key) = secret::ask(renderer, terms.style(), &format!("{} api key", named.name))?
-    else {
-        return say(renderer, "nothing was written");
+    let Some(key) = secret::ask(renderer, terms.style(), named.shown)? else {
+        return say(renderer, LEFT);
     };
 
     match terms.logins.keep(named.name, &key) {
@@ -770,6 +788,28 @@ mod tests {
         assert!(!text.iter().any(|row| row.contains("secret-callback")));
         assert!(!text.iter().any(|row| row.contains("oauth/authorize")));
         assert_eq!(caret.row, rows.len() - 2);
+    }
+
+    #[test]
+    fn the_callback_box_takes_a_pasted_code_the_way_it_takes_typed_characters() {
+        // A callback URL is copied out of a browser, and arrives with the
+        // newline the address bar hands over with it. What is held is the code
+        // alone, one mark per character, exactly as if it had been typed.
+        let mut view = LoginView::new(Glyphs::Unicode);
+        view.page = Some(("http://localhost:1455/launch".into(), None));
+        view.accepts_manual = true;
+
+        let redraw = view.pasted("  http://localhost:1455/callback?code=abc\n");
+
+        assert!(redraw);
+        assert_eq!(view.manual, "http://localhost:1455/callback?code=abc");
+        assert!(!view.limited);
+
+        let (rows, _) = view.frame(80, "Log in to ChatGPT", Glyphs::Unicode);
+        let text: Vec<_> = rows.iter().map(Row::text).collect();
+        let input = text.iter().find(|row| row.starts_with("› ")).unwrap();
+        assert_eq!(input.chars().skip(2).count(), view.manual.chars().count());
+        assert!(!text.iter().any(|row| row.contains("code=abc")));
     }
 
     #[test]

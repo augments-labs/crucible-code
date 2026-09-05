@@ -788,24 +788,6 @@ impl<T: Terminal> Renderer<T> {
         Ok(true)
     }
 
-    /// Restores the bottom-row control now.
-    ///
-    /// Used before a secret box takes the keyboard, where no pointer action is
-    /// offered to the renderer and an open map would otherwise have no clock.
-    ///
-    /// # Errors
-    ///
-    /// [`TerminalError::Io`] if the restored row could not be drawn.
-    pub fn identifies(&mut self) -> Result<bool, TerminalError> {
-        let changed = self.map.close() || self.map_pointed;
-        if !changed {
-            return Ok(false);
-        }
-        self.map_pointed = false;
-        self.draw()?;
-        Ok(true)
-    }
-
     /// Tells this renderer how far one notch of the wheel moves the transcript.
     ///
     /// Said once, at startup. The wheel arrives as a count of notches and

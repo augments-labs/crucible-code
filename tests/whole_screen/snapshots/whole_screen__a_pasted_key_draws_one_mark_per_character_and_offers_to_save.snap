@@ -1,0 +1,29 @@
+---
+source: tests/whole_screen/main.rs
+expression: picture
+---
+80x24 cursor 20,66 scrolled 0
+|│                                  │ · /          opens the command list       │|
+|│                                  │ · \ enter    adds a line without sending  │|
+|│                                  │ · shift+tab  steps the permission mode    │|
+|│                                  │ · ctrl+c     clears the line typed so far │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|                                                                                |
+|                                                                                |
+|Warning: No models available. Use /login or set an API key environment variable.|
+|Then use /model to select a model.                                              |
+|                                                                                |
+|› /login                                                                        |
+|────────────────────────────────────────────────────────────────────────────────|
+|                                                                                |
+|Log in                                                                          |
+|                                                                                |
+|› Anthropic — provide your own API key                                          |
+|                                                                                |
+|Paste or type the key. It goes to crucible's protected store and is never shown.|
+|                                                                                |
+|╭── Anthropic API key ─────────────────────────────────────────────────────────╮|
+|│ › ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••             │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|enter to save · esc to cancel                                                   |
+|                                                                                |

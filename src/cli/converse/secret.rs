@@ -1,10 +1,11 @@
 //! A line typed where the screen says how much of it there is and nothing else.
 //!
-//! The box is the one the prompt uses, given one mark per character instead of
-//! what was typed. That is deliberate: what somebody is looking at while they
-//! paste a key is the same shape as what they were looking at a moment before,
-//! so the one thing that changed is the one thing that matters — the characters
-//! are not coming back.
+//! The box stands where the prompt box stood, one mark per character instead of
+//! what was typed, under a breadcrumb saying whose key it is and a sentence
+//! saying where the key goes. Nothing of the prompt is on the screen with it —
+//! no window reading, no model, no door to the commands — because a key being
+//! pasted in is not a turn, and a fact about the next turn drawn over it would
+//! say it was about to be sent somewhere.
 //!
 //! There is no cursor to move, so the keys that move one do nothing. A secret
 //! is a value being handed over rather than a sentence being composed, and an
@@ -12,51 +13,31 @@
 //! would then have to guess the position of. Rubbing out from the end is the
 //! one edit that needs no sight of the line.
 //!
-//! What is typed lives in a `String` for as long as it takes to reach the store
-//! and is never drawn, committed or put in an error. The marks are counted from
-//! it and are the only thing about it that reaches the terminal. At sixteen KiB
-//! the box refuses another character and says why beneath itself; no supported
-//! credential is close to that boundary.
+//! What is typed or pasted lives in a `String` for as long as it takes to reach
+//! the store and is never drawn, committed or put in an error. The marks are
+//! counted from it, and the count is the only thing about it that reaches the
+//! panel. At sixteen KiB the box refuses more, whole and silently: no supported
+//! credential is close to that boundary, so what did not fit was not a key.
 
-use crucible_tui::{
-    CommandCount, Draft, Key, Pressed, Prompt, Recalled, Remaining, Renderer, Slot, Terminal,
-    characters, pressed,
-};
+use crucible_tui::{Caret, Glyphs, Key, KeyPanel, Pressed, Renderer, Row, Terminal};
 
 use crate::cli::Fatal;
 use crate::cli::style::Style;
 
-/// The row under the box, which says the one key that is not Enter.
-const CANCEL: &str = "esc to cancel";
-
-/// What a key box says after refusing input it cannot retain.
-const LIMITED: &str = "key is limited to 16 KiB";
+use super::region::{self, Ended, Moved};
 
 /// More than any supported credential needs, and small enough that a pasted
 /// file cannot become secret-shaped process memory.
 const MAX_BYTES: usize = 16 * 1024;
 
-/// What one key does to a secret being typed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Typing {
-    /// What is drawn no longer matches what is held.
-    Redraw,
-    /// Nothing changed, so nothing is drawn.
-    Still,
-    /// The edit would retain more secret input than the box accepts.
-    Refused,
-    /// The line is finished.
-    Done,
-    /// The box was left with nothing given.
-    Left,
-}
-
-/// Reads one, drawing a mark per character where the prompt draws a line.
+/// Reads a key for `provider`, drawing a mark per character where the prompt
+/// draws a line.
 ///
-/// `asking` stands where the mode stands on the prompt, because it is the same
-/// kind of fact: what this box is for, true until it closes. `None` comes back
-/// from a box that was left and from one finished with nothing in it — a key was
-/// asked for and none was given, either way.
+/// `provider` is the display name the breadcrumb and the frame's label spell.
+/// `None` comes back from a box that was left, and from one there was no room
+/// to stand — a key was asked for and none was given, either way. Enter with
+/// nothing in the box is not a way out of it: there is nothing to hand over, so
+/// the box goes on standing.
 ///
 /// # Errors
 ///
@@ -64,132 +45,73 @@ enum Typing {
 pub(super) fn ask<T: Terminal>(
     renderer: &mut Renderer<T>,
     style: Style,
-    asking: &str,
+    provider: &str,
 ) -> Result<Option<String>, Fatal> {
-    renderer.identifies()?;
+    let glyphs = style.glyphs();
     let mut held = String::new();
-    let mut changed = true;
-    let mut limited = false;
-    let mut following = None;
 
-    loop {
-        if changed {
-            standing(renderer, style, asking, held.chars().count(), limited)?;
-        }
+    let ended = region::stand(
+        renderer,
+        |_| style,
+        &mut held,
+        |held, columns, room| standing(provider, held, columns, room, glyphs),
+        typing,
+    )?;
 
-        // The one read in this session that is not offered to the selection
-        // first, and deliberately: what is on screen here is a secret being
-        // typed, and a drag over it would put it on a clipboard.
-        let arrived = match following.take() {
-            Some(arrived) => arrived,
-            None => pressed()?,
-        };
-
-        // The rows on screen were laid out for a window that is no longer this
-        // one. Taking them back is the renderer's; saying the picture no longer
-        // matches is the match below.
-        if arrived == Pressed::Resized {
-            renderer.resized()?;
-        }
-
-        let typed = match arrived {
-            Pressed::Key(Key::Char(first)) => {
-                let room = MAX_BYTES.saturating_sub(held.len());
-                let (text, refused, after) = characters(first, room)?.into_parts();
-                following = after;
-                insert_run(&mut held, &text, refused)
-            }
-            other => typing(other, &mut held),
-        };
-
-        match typed {
-            Typing::Redraw => {
-                changed = true;
-                limited = false;
-            }
-            Typing::Still => changed = false,
-            Typing::Refused => {
-                changed = true;
-                limited = true;
-            }
-            Typing::Done => {
-                renderer.settle()?;
-                return Ok(taken(&held));
-            }
-            Typing::Left => {
-                renderer.settle()?;
-                return Ok(None);
-            }
-        }
-    }
+    Ok(match ended {
+        Ended::Took => taken(&held),
+        Ended::Left | Ended::Cramped => None,
+    })
 }
 
-/// Draws the box with `hidden` characters accounted for.
-fn standing<T: Terminal>(
-    renderer: &mut Renderer<T>,
-    style: Style,
-    asking: &str,
-    hidden: usize,
-    limited: bool,
-) -> Result<(), Fatal> {
-    let glyphs = style.glyphs();
-    let said = glyphs.hidden().repeat(hidden);
-    let prompt = Prompt {
-        // The mark is one column wide in either set. Its byte length differs,
-        // so the cursor at the end comes from the source itself.
-        draft: Draft::at(&said, said.len()),
-        left: Remaining::default(),
-        // And nothing about the prompts this directory holds: the arrows walk
-        // them at the box a session is asked from, and a key being pasted into
-        // this one is not a prompt and never joins them.
-        history: Recalled::default(),
-        mode: asking,
-        // The border says what the box is for. Not a mode's colour: no mode is
-        // in force in here, and borrowing one would say a permission had
-        // changed because a key was being asked for.
-        tone: Slot::Accent,
-        hint: CANCEL,
-        // And nothing about what is running either, for the same reason: this box
-        // is a key being pasted in, and a door out of it to a list of commands is
-        // a door nobody wants while a secret is on screen.
-        commands: CommandCount::default(),
-        // Nothing about the vendor, the model or the rung, which are facts
-        // about the next turn. This box is not one: what is typed into it goes
-        // to no provider, and naming one over a key being pasted in would say
-        // it was about to be sent somewhere.
-        model: "",
-        provider: "",
-        effort: None,
-        asking: limited.then_some(LIMITED),
-        room: Prompt::room(renderer.rows()),
-    };
-
-    let rows = prompt.rows(renderer.columns(), glyphs);
-
-    renderer.live(&rows, prompt.caret(renderer.columns()), style.palette())?;
-    Ok(())
+/// The rows the box stands as while `held` is what it holds.
+///
+/// The count is all the panel is given: the characters stay here.
+fn standing(
+    provider: &str,
+    held: &str,
+    columns: usize,
+    room: usize,
+    glyphs: Glyphs,
+) -> (Vec<Row>, Option<Caret>) {
+    KeyPanel {
+        provider,
+        held: held.chars().count(),
+    }
+    .within(columns, room, glyphs)
 }
 
 /// What a finished line comes to.
 ///
 /// Trimmed, because a copied key commonly carries spaces around it, which every
 /// provider would otherwise refuse with a sentence about the key being wrong.
-/// A pasted newline arrives as Enter and submits before this function is called.
 fn taken(held: &str) -> Option<String> {
     let trimmed = held.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_owned())
 }
 
-/// Appends one already bounded character run and asks for at most one redraw.
-fn insert_run(held: &mut String, text: &str, refused: bool) -> Typing {
-    held.push_str(text);
-    if refused {
-        Typing::Refused
-    } else if text.is_empty() {
-        Typing::Still
-    } else {
-        Typing::Redraw
+/// What a pasted line comes to before it is held: the spaces and the newline a
+/// clipboard carries around a key are dropped, and so is every control
+/// character, which no key contains and no box should retain.
+pub(super) fn pasted(text: &str) -> String {
+    text.trim()
+        .chars()
+        .filter(|character| !character.is_control())
+        .collect()
+}
+
+/// Appends `text` whole, or not at all where it would take the line past the
+/// bound. Says whether the picture changed.
+///
+/// Whole, because half a key is worth less than no key; silently, because
+/// nothing a reader would paste as a key comes near the bound, and the marks
+/// not growing is the whole of the answer.
+fn appended(held: &mut String, text: &str) -> Moved {
+    if text.is_empty() || text.len() > MAX_BYTES.saturating_sub(held.len()) {
+        return Moved::Still;
     }
+    held.push_str(text);
+    Moved::Redraw
 }
 
 /// What `arrived` does to a line of `held` characters.
@@ -199,23 +121,23 @@ fn insert_run(held: &mut String, text: &str, refused: bool) -> Typing {
 // An event token is handed over, not lent: the handler takes the one thing
 // the reader produced, and a reference would say the caller kept a say in it.
 #[allow(clippy::needless_pass_by_value)]
-fn typing(arrived: Pressed, held: &mut String) -> Typing {
+fn typing(arrived: Pressed, held: &mut String) -> Moved {
     match arrived {
-        Pressed::Key(Key::Char(typed)) => {
-            if typed.len_utf8() > MAX_BYTES.saturating_sub(held.len()) {
-                return Typing::Refused;
-            }
-            held.push(typed);
-            Typing::Redraw
+        Pressed::Key(Key::Char(typed)) if !typed.is_control() => {
+            appended(held, typed.encode_utf8(&mut [0; 4]))
         }
+        Pressed::Pasted(text) => appended(held, &pasted(&text)),
         Pressed::Key(Key::Backspace) => match held.pop() {
-            Some(_) => Typing::Redraw,
-            None => Typing::Still,
+            Some(_) => Moved::Redraw,
+            None => Moved::Still,
         },
-        Pressed::Key(Key::Enter) => Typing::Done,
-        Pressed::Escape | Pressed::Key(Key::Interrupt | Key::Eof) => Typing::Left,
-        Pressed::Resized => Typing::Redraw,
-        _ => Typing::Still,
+        Pressed::Key(Key::Enter) => match taken(held) {
+            Some(_) => Moved::Took,
+            None => Moved::Still,
+        },
+        Pressed::Escape | Pressed::Key(Key::Interrupt | Key::Eof) => Moved::Left,
+        Pressed::Resized => Moved::Redraw,
+        _ => Moved::Still,
     }
 }
 
