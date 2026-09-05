@@ -22,3 +22,25 @@ fn a_broker_started_without_its_status_channel_exits_without_supervising() {
         "the broker speaks only over its status channel: {output:?}"
     );
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn the_macos_launcher_enters_seatbelt_and_runs_the_requested_program() {
+    let output = Command::new(env!("CARGO_BIN_EXE_crucible-sandbox-broker"))
+        .args([
+            crucible_sandbox_broker::MACOS_LAUNCH_MODE,
+            "--cpu-seconds",
+            "5",
+            "--open-files",
+            "64",
+            "--profile",
+            "(version 1)\n(allow default)\n",
+            "--",
+            "/usr/bin/true",
+        ])
+        .output()
+        .expect("macOS launcher runs");
+
+    assert!(output.status.success(), "{output:?}");
+    assert!(output.stdout.is_empty(), "{output:?}");
+}

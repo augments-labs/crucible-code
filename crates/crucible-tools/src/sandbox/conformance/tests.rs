@@ -1,4 +1,4 @@
-//! What the published suite asks, and what the two local backends answer.
+//! What the published suite asks, and what the local backends answer.
 
 use std::time::Duration;
 
@@ -24,6 +24,20 @@ const LINUX_ENFORCED: &[SandboxFeature] = &[
     SandboxFeature::Materialization,
     SandboxFeature::CpuLimit,
     SandboxFeature::MemoryLimit,
+    SandboxFeature::OpenFileLimit,
+    SandboxFeature::CommandTimeLimit,
+    SandboxFeature::OutputLimit,
+    SandboxFeature::ConcurrencyLimit,
+    SandboxFeature::Audit,
+];
+
+const MACOS_ENFORCED: &[SandboxFeature] = &[
+    SandboxFeature::Filesystem,
+    SandboxFeature::NetworkDeny,
+    SandboxFeature::DescriptorIsolation,
+    SandboxFeature::ProcessIsolation,
+    SandboxFeature::KernelSurface,
+    SandboxFeature::PrivilegeIsolation,
     SandboxFeature::OpenFileLimit,
     SandboxFeature::CommandTimeLimit,
     SandboxFeature::OutputLimit,
@@ -84,8 +98,18 @@ fn linux_matrix_is_complete_and_claims_only_implemented_boundaries() {
     assert_exact_matrix(&capabilities, &enforced, OBSERVED);
 }
 
+#[cfg(target_os = "macos")]
 #[test]
-fn published_capability_matrix_matches_both_declared_backends() {
+fn macos_matrix_is_complete_and_claims_only_implemented_boundaries() {
+    assert_exact_matrix(
+        &crate::sandbox::macos::declared_capabilities(),
+        MACOS_ENFORCED,
+        OBSERVED,
+    );
+}
+
+#[test]
+fn published_capability_matrix_matches_declared_backends() {
     let document = include_str!("../../../../../docs/security/sandboxing.md");
     for feature in SandboxFeature::ALL {
         // The one cell no single word states, because the answer belongs to the
@@ -95,8 +119,12 @@ fn published_capability_matrix_matches_both_declared_backends() {
             continue;
         }
         let linux = expected(feature, LINUX_ENFORCED, OBSERVED).as_str();
+        let macos = expected(feature, MACOS_ENFORCED, OBSERVED).as_str();
         let compatibility = expected(feature, COMPATIBILITY_ENFORCED, OBSERVED).as_str();
-        let row = format!("| `{}` | {linux} | {compatibility} |", feature.as_str());
+        let row = format!(
+            "| `{}` | {linux} | {macos} | {compatibility} |",
+            feature.as_str()
+        );
         assert_eq!(
             document.matches(&row).count(),
             1,
@@ -110,7 +138,7 @@ fn published_capability_matrix_matches_both_declared_backends() {
     )
     .as_str();
     let row = format!(
-        "| `{}` | enforced on Linux 5.14 or newer | {compatibility} |",
+        "| `{}` | enforced on Linux 5.14 or newer | unsupported | {compatibility} |",
         SandboxFeature::ProcessLimit.as_str()
     );
     assert_eq!(

@@ -13,7 +13,7 @@ output bounds and audit remain active in either mode. `sandbox.enabled` is the
 only configuration switch; the former `sandbox.mode` key is rejected. Project
 settings can require confinement and cannot disable it. See [configuration](../configuration/configuration.md#sandbox).
 
-When enabled, the production Linux backend uses a
+On Linux, the production backend uses a
 canonical, root-owned, non-writable system Bubblewrap executable reached only
 through root-owned, non-writable parent directories. Every bounded `PATH`
 candidate is tried until one passes its exact command-surface, numeric version,
@@ -53,6 +53,45 @@ networking has no usable host, loopback, Unix-socket, DNS, metadata-service or
 inherited-socket route. Killing the namespace owner also kills descendants that
 deliberately leave the original process group or session.
 
+On macOS, the production backend uses the built-in Seatbelt framework through
+the fixed `/usr/bin/sandbox-exec` executable. The launcher must be root-owned
+and non-writable. Crucible's separately packaged sandbox broker must be beside
+the main executable on a path writable only by root or the current user; it
+closes every inherited descriptor above standard input, output and error,
+applies the requested open-file limit, and then replaces itself with the system
+launcher. Darwin's CPU rlimit delivers a catchable signal and is therefore not
+advertised as a hard CPU ceiling.
+
+The generated Seatbelt profile is closed by default. It reads only fixed
+system-runtime directories plus the declared filesystem roots,
+writes only declared read-write roots, carves protected and unreadable paths
+back out, and denies networking. Declared grants and exact carve-outs are
+supplied as Seatbelt parameters. Case-insensitive protected-name and unreadable
+pattern predicates are escaped and anchored to validated roots in the generated
+profile so an APFS spelling alias cannot reopen them. Each command receives one
+private mode-0700 temporary directory through `TMPDIR`; Crucible owns and
+removes it with the command lifecycle. Empty manifests are supported, while a
+request to materialize files or mounts is refused before the temporary
+directory is created.
+
+Seatbelt policy inheritance keeps descendants confined after fork and exec.
+macOS has no PID namespace or cgroup-equivalent process census here, so cleanup
+can prove termination of Crucible's owned process group but cannot prove that a
+hostile descendant which deliberately starts a new session has exited. Such a
+descendant retains the same Seatbelt filesystem and network restrictions and
+loses the command's removed private temporary path.
+
+Seatbelt also relies on trusted macOS code-validation services. Native
+feasibility testing observed that a confined non-root caller could ask the
+system `taskgated` service to attach code-validation metadata to a controlled
+foreign process when the existing signing policy allowed that metadata. The
+target's executable bytes and signing flags did not change, and the caller did
+not acquire its task port, credentials, entitlements, filesystem access, or
+network access. Crucible treats that validation bookkeeping as a trusted-OS
+effect rather than guest authority. The bounded TG2, TG3, and TG5 authority and
+effect checks remain a Phase 4B release gate on both supported macOS
+architectures; daemon resource-stress testing is outside that gate.
+
 The exact endpoint allowlist is deliberately unsupported in this release. It
 requires a policy-bound proxy or equivalent mechanism with redirect, DNS,
 metadata, forwarding and outbound-byte enforcement. A requested exact rule is
@@ -63,12 +102,12 @@ rejected instead of being translated into broad egress.
 | Platform | Enforcing backend in this version | When enabled |
 | --- | --- | --- |
 | Linux | Verified system Bubblewrap | Runs only when the backend satisfies the requested policy |
-| macOS | Not implemented | Refuses command execution |
+| macOS | Built-in Seatbelt through `/usr/bin/sandbox-exec` | Runs only when the system launcher and packaged broker pass provenance and functional probes |
 | Windows | Not implemented | Refuses command execution |
 
-A normal unconfined command succeeding on macOS or Windows is not evidence of
-sandbox support. Their native enforcing backends are required follow-up work;
-this table describes the current implementation. An unavailable backend never
+A normal unconfined command succeeding on Windows is not evidence of sandbox
+support. Its native enforcing backend is required follow-up work; this table
+describes the current implementation. An unavailable backend never
 turns `enabled: true` into permission to run outside confinement.
 
 SDK callers constructing `SandboxPolicy::standard` or `Bash::new` still receive
@@ -84,38 +123,40 @@ that feature. The SDK policies `degraded` and `off` relax only the documented
 baseline kernel isolation; they cannot turn an explicit limit, manifest, exact network rule,
 persistence request or snapshot request into best-effort behavior.
 
-| Capability | Linux Bubblewrap | Compatibility |
-| --- | --- | --- |
-| `filesystem` | enforced | unsupported |
-| `network_deny` | enforced | unsupported |
-| `network_allowlist` | unsupported | unsupported |
-| `descriptor_isolation` | enforced | unsupported |
-| `process_isolation` | enforced | unsupported |
-| `kernel_surface` | enforced | unsupported |
-| `privilege_isolation` | enforced | unsupported |
-| `materialization` | enforced | unsupported |
-| `cpu_limit` | enforced | unsupported |
-| `memory_limit` | enforced | unsupported |
-| `disk_limit` | unsupported | unsupported |
-| `process_limit` | enforced on Linux 5.14 or newer | unsupported |
-| `open_file_limit` | enforced | unsupported |
-| `command_time_limit` | enforced | enforced |
-| `session_time_limit` | unsupported | unsupported |
-| `outbound_byte_limit` | unsupported | unsupported |
-| `output_limit` | enforced | enforced |
-| `concurrency_limit` | enforced | enforced |
-| `cost_limit` | unsupported | unsupported |
-| `pty` | unsupported | unsupported |
-| `file_operations` | unsupported | unsupported |
-| `persistence` | unsupported | unsupported |
-| `snapshot` | unsupported | unsupported |
-| `resume` | unsupported | unsupported |
-| `audit` | enforced | enforced |
-| `usage` | observed | observed |
+| Capability | Linux Bubblewrap | macOS Seatbelt | Compatibility |
+| --- | --- | --- | --- |
+| `filesystem` | enforced | enforced | unsupported |
+| `network_deny` | enforced | enforced | unsupported |
+| `network_allowlist` | unsupported | unsupported | unsupported |
+| `descriptor_isolation` | enforced | enforced | unsupported |
+| `process_isolation` | enforced | enforced | unsupported |
+| `kernel_surface` | enforced | enforced | unsupported |
+| `privilege_isolation` | enforced | enforced | unsupported |
+| `materialization` | enforced | unsupported | unsupported |
+| `cpu_limit` | enforced | unsupported | unsupported |
+| `memory_limit` | enforced | unsupported | unsupported |
+| `disk_limit` | unsupported | unsupported | unsupported |
+| `process_limit` | enforced on Linux 5.14 or newer | unsupported | unsupported |
+| `open_file_limit` | enforced | enforced | unsupported |
+| `command_time_limit` | enforced | enforced | enforced |
+| `session_time_limit` | unsupported | unsupported | unsupported |
+| `outbound_byte_limit` | unsupported | unsupported | unsupported |
+| `output_limit` | enforced | enforced | enforced |
+| `concurrency_limit` | enforced | enforced | enforced |
+| `cost_limit` | unsupported | unsupported | unsupported |
+| `pty` | unsupported | unsupported | unsupported |
+| `file_operations` | unsupported | unsupported | unsupported |
+| `persistence` | unsupported | unsupported | unsupported |
+| `snapshot` | unsupported | unsupported | unsupported |
+| `resume` | unsupported | unsupported | unsupported |
+| `audit` | enforced | enforced | enforced |
+| `usage` | observed | observed | observed |
 
 A capability being enforced says what a backend *can* apply, not what the
-default policy asks for. Under `required`, the standard policy states
-`cpu_limit` at one hour per process and `open_file_limit` at 4096; `bash` adds
+default policy asks for. Under `required`, Linux's standard policy states
+`cpu_limit` at one hour per process and `open_file_limit` at 4096; macOS states
+only the open-file ceiling because its catchable CPU signal is not a hard
+boundary. `bash` adds
 `command_time_limit`, `output_limit` and `concurrency_limit` for the one command
 it is running. `memory_limit` is enforced but not asked for: the knob is the
 address space a process may map rather than the memory it uses, and runtimes
@@ -177,8 +218,9 @@ executable, a kernel that will not give it namespaces — leaves the claim
 lies.
 
 Where there is no backend to probe at all, `audit` returns the probe's error
-instead of a table. macOS and Windows have no enforcing backend, and a Linux
-host may have no usable Bubblewrap, so a suite that reported those as faults
+instead of a table. Windows has no enforcing backend, while a macOS host may
+fail its Seatbelt or packaged-broker probe and a Linux host may have no usable
+Bubblewrap, so a suite that reported those as faults
 would be accusing an absent backend of overclaiming. Whether that error is a
 skip or a failure belongs to the caller: Crucible's own jobs treat it as a skip
 on a developer machine and a failure on the one job that installs a backend and
@@ -214,13 +256,13 @@ descendant policy may preserve or strengthen that choice but never weaken it.
 When confinement is off, inspection and audit records say `confined: false`,
 name the disabled boundary and retain the exact compatibility capability snapshot.
 
-There is no enforcing backend on macOS, Windows or FreeBSD yet. Commands run
-through compatibility by default and are reported as unconfined. Enabling the
-sandbox on those systems refuses a command before it starts; it does not fall
-back silently.
+There is no enforcing backend on Windows or FreeBSD yet. Commands run through
+compatibility by default and are reported as unconfined. Enabling the sandbox
+on those systems refuses a command before it starts; it does not fall back
+silently. macOS selects Seatbelt when confinement is enabled.
 
 SDK callers may separately construct a `SandboxMode::Degraded` policy, which
-tries the enforcing Linux backend first and permits a reported compatibility
+tries the enforcing native backend first and permits a reported compatibility
 fallback when enforcement is unavailable. This is a typed SDK policy, not a
 JSON configuration setting.
 
@@ -236,8 +278,9 @@ escapes the owned process group.
 ## Environment and credentials
 
 The command environment is an explicit, bounded map rather than a copy of the
-host environment. Linux supplies only a private `HOME` and `TMPDIR` plus the
-literal variables selected by the host. SSH/GPG agent sockets, inherited
+host environment. Linux supplies only a private `HOME` and `TMPDIR`; macOS
+supplies a private `TMPDIR`; both add only the literal variables selected by
+the host. SSH/GPG agent sockets, inherited
 descriptors, provider keys, cloud configuration and arbitrary host variables
 do not cross the boundary automatically. Values reach the command through the
 backend's cleared process environment, never through its argument list, which

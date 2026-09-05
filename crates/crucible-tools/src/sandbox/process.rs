@@ -86,18 +86,13 @@ pub(super) struct Stage {
     retained: bool,
 }
 
-/// Only the Linux backend builds a stage; every platform can still clean one up.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl Stage {
     pub(super) fn new(root: std::path::PathBuf) -> Self {
         Self {
             root,
             retained: false,
         }
-    }
-
-    pub(super) fn manifest(&self) -> std::path::PathBuf {
-        self.root.join("manifest")
     }
 
     pub(super) fn root(&self) -> &std::path::Path {
@@ -109,8 +104,17 @@ impl Stage {
         self.retained = true;
     }
 
+    #[cfg(target_os = "linux")]
     pub(super) fn retained(&self) -> bool {
         self.retained
+    }
+}
+
+/// Linux materialization owns additional state below its stage.
+#[cfg(target_os = "linux")]
+impl Stage {
+    pub(super) fn manifest(&self) -> std::path::PathBuf {
+        self.root.join("manifest")
     }
 }
 
@@ -176,6 +180,37 @@ pub(super) struct SpawnPlan {
     /// Whether crucible keeps the writing end of standard input. Decided with
     /// the command, because a pipe cannot be attached after a spawn.
     pub(super) speech: crucible_core::SandboxSpeech,
+}
+
+/// Cleans preparation owners that never reached a child process.
+///
+/// A cleanup failure retains both the stage and its bounded admission slot so
+/// a later command cannot reuse authority whose disposal was not confirmed.
+#[cfg(any(target_os = "macos", all(test, target_os = "linux")))]
+pub(super) fn cleanup_prepared_owners(
+    stage: &mut Option<Stage>,
+    reservation: &mut Option<Reservation>,
+) -> SandboxCleanup {
+    if stage.as_mut().map_or(Ok(()), Stage::cleanup).is_ok() {
+        stage.take();
+        reservation.take();
+        SandboxCleanup::Complete
+    } else {
+        if let Some(stage) = stage {
+            stage.retain();
+        }
+        if let Some(reservation) = reservation.take() {
+            reservation.quarantine();
+        }
+        SandboxCleanup::Failed
+    }
+}
+
+/// Disposes a launch plan that was abandoned before spawn.
+#[cfg(target_os = "macos")]
+pub(super) fn cleanup_unspawned(mut plan: SpawnPlan) -> SandboxCleanup {
+    let mut reservation = Some(plan.reservation);
+    cleanup_prepared_owners(&mut plan.stage, &mut reservation)
 }
 
 /// Starts one command under an already negotiated process plan.
@@ -1137,5 +1172,46 @@ mod tests {
         stage.cleanup().expect("idempotent cleanup");
 
         assert!(!root.exists());
+    }
+
+    #[test]
+    fn abandoned_preparation_releases_its_stage_and_reservation_together() {
+        let sample = crate::sample::Sample::new("sandbox-prepared-cleanup");
+        let root = sample.root().join("stage");
+        std::fs::create_dir(&root).expect("stage fixture");
+        let active = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut stage = Some(Stage::new(root.clone()));
+        let mut reservation =
+            Some(super::Reservation::take(std::sync::Arc::clone(&active), 1).expect("reservation"));
+
+        let cleanup = super::cleanup_prepared_owners(&mut stage, &mut reservation);
+
+        assert_eq!(cleanup, crucible_core::SandboxCleanup::Complete);
+        assert!(stage.is_none());
+        assert!(reservation.is_none());
+        assert!(!root.exists());
+        assert_eq!(active.load(std::sync::atomic::Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn uncertain_preparation_cleanup_quarantines_its_reservation() {
+        let sample = crate::sample::Sample::new("sandbox-prepared-quarantine");
+        let root = sample.root().join("stage");
+        std::fs::create_dir(&root).expect("stage fixture");
+        let active = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut retained = Stage::new(root.clone());
+        retained.retain();
+        let mut stage = Some(retained);
+        let mut reservation =
+            Some(super::Reservation::take(std::sync::Arc::clone(&active), 1).expect("reservation"));
+
+        let cleanup = super::cleanup_prepared_owners(&mut stage, &mut reservation);
+
+        assert_eq!(cleanup, crucible_core::SandboxCleanup::Failed);
+        assert!(stage.as_ref().is_some_and(Stage::retained));
+        assert!(reservation.is_none());
+        assert!(root.exists());
+        assert_eq!(active.load(std::sync::atomic::Ordering::Acquire), 1);
+        std::fs::remove_dir(&root).expect("remove quarantined test stage");
     }
 }

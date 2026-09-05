@@ -405,6 +405,12 @@ impl SandboxUnreadablePattern {
         &self.scan_root
     }
 
+    /// Original validated absolute pattern.
+    #[must_use]
+    pub fn pattern(&self) -> &Path {
+        &self.pattern
+    }
+
     /// Whether one absolute candidate has this exact wildcard shape.
     #[must_use]
     pub fn matches(&self, candidate: &Path) -> bool {
@@ -605,6 +611,7 @@ impl SandboxNetworkPolicy {
 /// An hour of it. Counted per process rather than per command, so a build
 /// spreading work over many compilers gets an hour each; what it catches is one
 /// process that has stopped making progress and not noticed.
+#[cfg(any(not(target_os = "macos"), test))]
 const CPU_SECONDS: u64 = 60 * 60;
 
 /// Files one confined process may hold open at once.
@@ -675,7 +682,13 @@ impl SandboxResourceLimits {
     #[must_use]
     pub const fn confining() -> Self {
         Self {
+            #[cfg(not(target_os = "macos"))]
             cpu_seconds: Some(CPU_SECONDS),
+            // Darwin delivers SIGXCPU but does not make the hard value an
+            // uncatchable ceiling. A handler can continue past it, so macOS
+            // must not state or advertise this as enforced.
+            #[cfg(target_os = "macos")]
+            cpu_seconds: None,
             open_files: Some(OPEN_FILES),
             memory_bytes: None,
             disk_bytes: None,
@@ -1318,7 +1331,10 @@ mod tests {
             .expect("the standard policy for a workspace")
             .limits();
 
+        #[cfg(not(target_os = "macos"))]
         assert_eq!(limits.cpu_seconds, Some(CPU_SECONDS));
+        #[cfg(target_os = "macos")]
+        assert_eq!(limits.cpu_seconds, None);
         assert_eq!(limits.open_files, Some(OPEN_FILES));
 
         // Stated only where a backend applies them. A ceiling nothing enforces
@@ -1344,7 +1360,10 @@ mod tests {
                 ..SandboxResourceLimits::confining()
             },
         );
+        #[cfg(not(target_os = "macos"))]
         assert_eq!(confining.limits().cpu_seconds, Some(CPU_SECONDS));
+        #[cfg(target_os = "macos")]
+        assert_eq!(confining.limits().cpu_seconds, None);
         assert_eq!(confining.limits().memory_bytes, Some(1 << 30));
 
         for accepted in [SandboxMode::Degraded, SandboxMode::Off] {

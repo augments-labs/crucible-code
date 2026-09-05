@@ -1,4 +1,4 @@
-//! Selection between enforcing Linux and explicit compatibility execution.
+//! Selection between an enforcing native backend and compatibility execution.
 
 use std::process::Command;
 use std::sync::Arc;
@@ -16,7 +16,7 @@ use super::process::{MAX_LOCAL_COMMANDS, Reservation};
 
 /// Host-owned local sandbox service.
 ///
-/// Linux `required` requests use only a verified system Bubblewrap backend.
+/// `required` requests use a verified native backend on Linux and macOS.
 /// `off`, and an explicitly selected `degraded` fallback, still pass through
 /// this service so lifecycle and inspection cannot be bypassed or mislabeled.
 #[derive(Debug, Clone, Default)]
@@ -38,7 +38,11 @@ impl SandboxService for LocalSandbox {
         {
             super::linux::probe(&[])
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_os = "macos")]
+        {
+            super::macos::probe()
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
             Err(SandboxError::BackendUnavailable {
                 reason: "no enforcing local sandbox backend for this operating system".into(),
@@ -73,7 +77,19 @@ impl SandboxService for LocalSandbox {
                         Err(error) => Err(error),
                     }
                 }
-                #[cfg(not(target_os = "linux"))]
+                #[cfg(target_os = "macos")]
+                {
+                    match super::macos::prepare(request.clone(), Arc::clone(&self.active)) {
+                        Ok(session) => Ok(session),
+                        Err(SandboxError::BackendUnavailable { .. }) => compatibility(
+                            request,
+                            Arc::clone(&self.active),
+                            "enforcing macOS sandbox unavailable; user selected degraded mode",
+                        ),
+                        Err(error) => Err(error),
+                    }
+                }
+                #[cfg(not(any(target_os = "linux", target_os = "macos")))]
                 {
                     compatibility(
                         request,
@@ -91,7 +107,12 @@ impl SandboxService for LocalSandbox {
                     kind: problem.failure_kind(),
                 },
             )?;
-            audit.record(id, SandboxFactKind::Cleanup(SandboxCleanup::Complete))?;
+            let cleanup = if matches!(problem, SandboxError::Lifecycle(_)) {
+                SandboxCleanup::Failed
+            } else {
+                SandboxCleanup::Complete
+            };
+            audit.record(id, SandboxFactKind::Cleanup(cleanup))?;
         }
         prepared
     }
@@ -105,7 +126,11 @@ fn enforcing(
     {
         super::linux::prepare(request, active)
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    {
+        super::macos::prepare(request, active)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         let _ = (request, active);
         Err(SandboxError::BackendUnavailable {
