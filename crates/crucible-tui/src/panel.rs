@@ -16,8 +16,8 @@
 //!
 //! **What clips and what folds.** A description is a label, so it is cut and
 //! ended in the ellipsis. The sentence is prose, so it folds — half an
-//! explanation explains nothing, and this one runs to two rows at eighty
-//! columns. A display name does neither: it is cut where a column ends and
+//! explanation explains nothing, and a sentence that outruns the window is
+//! carried onto a second row. A display name does neither: it is cut where a column ends and
 //! never given an ellipsis, because a name is what has to be typed and an
 //! ellipsis inside one would be typed with it.
 //!

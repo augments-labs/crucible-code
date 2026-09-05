@@ -886,6 +886,34 @@ mod tests {
     }
 
     #[test]
+    fn a_paste_past_the_callback_box_ceiling_is_refused_whole_and_the_row_beneath_says_so() {
+        // Unlike the key box, this one has a status row beneath it, and the
+        // row says why nothing grew. What was held before the paste is held
+        // after it, untouched.
+        let mut view = LoginView::new(Glyphs::Unicode);
+        view.page = Some(("http://localhost:1455/launch".into(), None));
+        view.accepts_manual = true;
+        view.manual = "x".repeat(MAX_MANUAL - 1);
+
+        let redraw = view.pasted("ab");
+
+        assert!(redraw);
+        assert!(view.limited);
+        assert_eq!(view.manual.len(), MAX_MANUAL - 1);
+        let (rows, _) = view.frame(80, "Log in to ChatGPT", Glyphs::Unicode);
+        assert!(
+            rows.iter()
+                .map(Row::text)
+                .any(|row| row.contains("limited")),
+            "the row beneath says why"
+        );
+
+        assert!(view.pasted("a"), "one byte still fits");
+        assert!(!view.limited);
+        assert_eq!(view.manual.len(), MAX_MANUAL);
+    }
+
+    #[test]
     fn the_paste_box_draws_its_mark_and_its_dots_out_of_the_glyph_set() {
         // A second box a line is typed into, so it takes the same mark the
         // prompt takes and hides what is typed with the same one the key box

@@ -765,9 +765,9 @@ fn say<T: Terminal>(renderer: &mut Renderer<T>, said: &str) -> Result<(), Fatal>
 ///
 /// The listing a run with no keyboard is given in place of a panel is read that
 /// way — a command down the left, what taking it would reach after the mark. So
-/// is a row of the sign-in's panel, which names the plan an account is billed
-/// under and then what taking the row does, and so is the row beneath a sign-in
-/// that has not finished, which is a state and the key that leaves it.
+/// is the row beneath a sign-in that has not finished, which is a state and the
+/// key that leaves it, and so is the answer to a key that could not be kept,
+/// which is what went wrong and then the way back in.
 ///
 /// They share this because a mark that differed between them would say they
 /// were different kinds of thing, on surfaces somebody meets one after another

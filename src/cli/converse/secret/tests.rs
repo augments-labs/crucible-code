@@ -106,6 +106,29 @@ fn a_character_past_the_box_ceiling_is_refused_and_nothing_is_said() {
 }
 
 #[test]
+fn a_multi_byte_character_is_one_mark_and_is_refused_whole_at_the_ceiling() {
+    // The bound is in bytes, the marks are in characters, and a character can
+    // be more of the one than the other. A key with an accented character in
+    // it draws one mark for it, not one per byte; and at the ceiling such a
+    // character is refused whole rather than sliced through the middle.
+    let (held, _) = typed(&[character('c'), character('l'), character('é')]);
+    assert_eq!(held.chars().count(), 3);
+    let (rows, _) = standing("Anthropic", &held, 80, 24, Glyphs::Unicode);
+    let input = rows
+        .iter()
+        .map(Row::text)
+        .find(|row| row.starts_with("│ › "))
+        .expect("the input row");
+    let marks = input.chars().filter(|&mark| mark == '•').count();
+    assert_eq!(marks, 3, "one mark a character: {input}");
+
+    let mut held = "x".repeat(MAX_BYTES - 1);
+    assert_eq!(typing(character('é'), &mut held), Moved::Still);
+    assert_eq!(held.len(), MAX_BYTES - 1, "nothing of it is retained");
+    assert!(held.is_char_boundary(held.len()));
+}
+
+#[test]
 fn what_stands_in_for_a_character_comes_out_of_the_glyph_set() {
     // One mark per character is the whole of what this box draws about the
     // line, so a terminal whose font has no dot draws a row of hollow squares
@@ -201,6 +224,16 @@ fn return_on_an_empty_box_does_nothing_and_the_box_goes_on_standing() {
     ]);
     assert_eq!(held, "a");
     assert_eq!(last, Moved::Took);
+}
+
+#[test]
+fn a_paste_that_is_only_whitespace_and_control_characters_holds_nothing() {
+    // A clipboard can hand over nothing but the newline it picked up. That is
+    // not a key, so the box stays empty and does not redraw for it.
+    let (held, last) = typed(&[pasted("\r\n\u{7} \t")]);
+
+    assert_eq!(held, "");
+    assert_eq!(last, Moved::Still);
 }
 
 #[test]
