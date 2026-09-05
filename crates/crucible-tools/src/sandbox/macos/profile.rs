@@ -7,8 +7,6 @@ use std::path::{Path, PathBuf};
 
 use crucible_core::{SandboxError, SandboxFilesystemAccess, SandboxPolicy};
 
-const MAX_DEFINITIONS: usize = 256;
-
 const BASE_POLICY: &str = "\
 (version 1)\n\
 (deny default)\n\
@@ -28,8 +26,6 @@ const BASE_POLICY: &str = "\
   (sysctl-name \"kern.argmax\")\n\
   (sysctl-name \"kern.osrelease\")\n\
   (sysctl-name \"kern.osversion\"))\n\
-(allow mach-lookup (global-name \"com.apple.system.opendirectoryd.libinfo\"))\n\
-(allow mach-lookup (global-name \"com.apple.PowerManagement.control\"))\n\
 (allow file-read-data (literal \"/\"))\n\
 (allow file-read-metadata file-test-existence\n\
   (literal \"/\")\n\
@@ -203,10 +199,12 @@ impl Profile {
             );
         }
 
-        Ok(Self {
+        let profile = Self {
             policy: text,
             definitions,
-        })
+        };
+        profile.validate()?;
+        Ok(profile)
     }
 
     pub(super) fn with_scratch(mut self, path: &std::path::Path) -> Result<Self, SandboxError> {
@@ -215,7 +213,20 @@ impl Profile {
             "(allow file-write* (require-any (literal (param \"SCRATCH\")) (subpath (param \"SCRATCH\"))))\n\
              (deny file-write-unlink (require-all (literal (param \"SCRATCH\")) (vnode-type DIRECTORY)))\n",
         );
+        self.validate()?;
         Ok(self)
+    }
+
+    fn validate(&self) -> Result<(), SandboxError> {
+        if self.policy.is_empty()
+            || self.policy.len() > crucible_sandbox_broker::MACOS_MAX_PROFILE_BYTES
+        {
+            return Err(SandboxError::Materialization {
+                problem: "macOS sandbox profile exceeds the backend bound".into(),
+                source: None,
+            });
+        }
+        Ok(())
     }
 
     #[cfg(target_os = "macos")]
@@ -345,7 +356,7 @@ fn push_definition(
     key: &str,
     path: &std::path::Path,
 ) -> Result<(), SandboxError> {
-    if definitions.len() >= MAX_DEFINITIONS {
+    if definitions.len() >= crucible_sandbox_broker::MACOS_MAX_DEFINITIONS {
         return Err(SandboxError::Materialization {
             problem: "macOS sandbox path definitions exceed the backend bound".into(),
             source: None,
@@ -396,6 +407,7 @@ mod tests {
         assert!(!profile.policy.contains("(allow file-read*)"));
         assert!(profile.policy.contains("(allow process-exec)"));
         assert!(profile.policy.contains("(allow process-fork)"));
+        assert!(!profile.policy.contains("(allow mach-lookup"));
         assert!(!profile.policy.contains("(allow network"));
         assert!(profile.policy.contains("(deny network*)"));
         assert!(
@@ -424,6 +436,17 @@ mod tests {
         assert!(profile.policy.contains("[gG][iI][tT]"));
         assert!(profile.policy.contains("([^/]+/)*"));
         assert_eq!(profile.definitions.len(), 6);
+    }
+
+    #[test]
+    fn the_final_profile_must_fit_the_broker_protocol() {
+        let sample = Sample::new("macos-seatbelt-profile-bound");
+        let profile = Profile {
+            policy: "x".repeat(crucible_sandbox_broker::MACOS_MAX_PROFILE_BYTES),
+            definitions: Vec::new(),
+        };
+
+        assert!(profile.with_scratch(sample.root()).is_err());
     }
 
     #[test]

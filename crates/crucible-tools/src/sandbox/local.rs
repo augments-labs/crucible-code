@@ -107,7 +107,12 @@ impl SandboxService for LocalSandbox {
                     kind: problem.failure_kind(),
                 },
             )?;
-            audit.record(id, SandboxFactKind::Cleanup(SandboxCleanup::Complete))?;
+            let cleanup = if matches!(problem, SandboxError::Lifecycle(_)) {
+                SandboxCleanup::Failed
+            } else {
+                SandboxCleanup::Complete
+            };
+            audit.record(id, SandboxFactKind::Cleanup(cleanup))?;
         }
         prepared
     }

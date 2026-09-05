@@ -1,6 +1,8 @@
 //! Native macOS confinement through the system Seatbelt launcher.
 
 #[cfg(target_os = "macos")]
+use std::ffi::OsStr;
+#[cfg(target_os = "macos")]
 use std::fs;
 #[cfg(target_os = "macos")]
 use std::os::unix::fs::PermissionsExt as _;
@@ -16,7 +18,8 @@ use crucible_core::{
     SandboxBackendIdentity, SandboxCapabilities, SandboxCleanup, SandboxCommand,
     SandboxCommandStage, SandboxError, SandboxFactKind, SandboxFailureKind, SandboxFailurePhase,
     SandboxFilesystemAccess, SandboxGuardrailDecision, SandboxInspection, SandboxInvocationMode,
-    SandboxLaunch, SandboxLifecycle, SandboxProcess, SandboxRequest, SandboxSession,
+    SandboxLaunch, SandboxLifecycle, SandboxProcess, SandboxRequest, SandboxResourceLimits,
+    SandboxSession,
 };
 
 #[cfg(target_os = "macos")]
@@ -63,14 +66,14 @@ pub(super) fn prepare(
 
     let protected = tree::validate(request.policy())?;
     let unreadable = unreadable::expand(request.policy().unreadable_patterns())?;
-    let scratch = create_scratch(&request)?;
+    let scratch_root = scratch_path(&request)?;
     let profile = profile::Profile::build(
         request.policy(),
         protected.protected(),
         protected.linked_metadata(),
         &unreadable,
     )?
-    .with_scratch(scratch.root())?;
+    .with_scratch(&scratch_root)?;
     let inspection = SandboxInspection::confined_for_request(
         backend.identity().clone(),
         backend.capabilities().clone(),
@@ -86,11 +89,30 @@ pub(super) fn prepare(
         .concurrent_commands
         .and_then(|value| usize::try_from(value).ok())
         .unwrap_or(MAX_LOCAL_COMMANDS);
-    let reservation = Reservation::take(active, maximum)?;
-    request.audit().record(
-        request.id(),
-        SandboxFactKind::Lifecycle(SandboxLifecycle::Prepared),
-    )?;
+    let mut reservation = Some(Reservation::take(active, maximum)?);
+    let mut scratch = None;
+    let setup = (|| {
+        create_scratch(&scratch_root, &mut scratch)?;
+        request.audit().record(
+            request.id(),
+            SandboxFactKind::Lifecycle(SandboxLifecycle::Prepared),
+        )?;
+        Ok(())
+    })();
+    if let Err(problem) = setup {
+        let cleanup = cleanup_prepared_owners(&mut scratch, &mut reservation);
+        return Err(preparation_failure(problem, cleanup));
+    }
+    let scratch = scratch.ok_or_else(|| {
+        SandboxError::Lifecycle(std::io::Error::other(
+            "prepared macOS scratch owner is unavailable",
+        ))
+    })?;
+    let reservation = reservation.ok_or_else(|| {
+        SandboxError::Lifecycle(std::io::Error::other(
+            "prepared macOS admission owner is unavailable",
+        ))
+    })?;
     Ok(Box::new(MacSession {
         request,
         broker,
@@ -132,7 +154,7 @@ fn validate_roots(request: &SandboxRequest) -> Result<(), SandboxError> {
 }
 
 #[cfg(target_os = "macos")]
-fn create_scratch(request: &SandboxRequest) -> Result<Stage, SandboxError> {
+fn scratch_path(request: &SandboxRequest) -> Result<std::path::PathBuf, SandboxError> {
     let base = std::env::temp_dir().canonicalize().map_err(|source| {
         materialization(
             "the system temporary directory is unavailable",
@@ -151,20 +173,35 @@ fn create_scratch(request: &SandboxRequest) -> Result<Stage, SandboxError> {
             None,
         ));
     }
-    fs::create_dir(&root).map_err(|source| {
+    Ok(root)
+}
+
+#[cfg(target_os = "macos")]
+fn create_scratch(root: &std::path::Path, owner: &mut Option<Stage>) -> Result<(), SandboxError> {
+    fs::create_dir(root).map_err(|source| {
         materialization(
             "the private sandbox temporary directory could not be created",
             Some(source),
         )
     })?;
-    if let Err(source) = fs::set_permissions(&root, fs::Permissions::from_mode(0o700)) {
-        let _ = fs::remove_dir(&root);
-        return Err(materialization(
+    *owner = Some(Stage::new(root.to_path_buf()));
+    fs::set_permissions(root, fs::Permissions::from_mode(0o700)).map_err(|source| {
+        materialization(
             "the private sandbox temporary directory could not be protected",
             Some(source),
-        ));
+        )
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn preparation_failure(problem: SandboxError, cleanup: SandboxCleanup) -> SandboxError {
+    if cleanup == SandboxCleanup::Complete {
+        problem
+    } else {
+        SandboxError::Lifecycle(std::io::Error::other(
+            "macOS sandbox preparation failed and cleanup could not be confirmed",
+        ))
     }
-    Ok(Stage::new(root))
 }
 
 #[cfg(target_os = "macos")]
@@ -231,6 +268,12 @@ impl SandboxSession for MacSession {
         }
 
         let limits = self.request.policy().limits();
+        if let Err(problem) =
+            validate_launch_arguments(&self.broker, &self.profile, &command, limits)
+        {
+            self.record_start_failure(problem.failure_kind())?;
+            return Err(problem);
+        }
         let mut process = Command::new(self.broker.path());
         process
             .arg(crucible_sandbox_broker::MACOS_LAUNCH_MODE)
@@ -288,6 +331,57 @@ impl SandboxSession for MacSession {
         self.transferred = true;
         Ok(Box::new(launch))
     }
+}
+
+#[cfg(target_os = "macos")]
+fn validate_launch_arguments(
+    broker: &broker::Broker,
+    profile: &profile::Profile,
+    command: &SandboxCommand,
+    limits: SandboxResourceLimits,
+) -> Result<(), SandboxError> {
+    let cpu_seconds = limits.cpu_seconds.unwrap_or(0).to_string();
+    let open_files = limits.open_files.unwrap_or(0).to_string();
+    let mut bytes = [
+        broker.path().as_os_str(),
+        OsStr::new(crucible_sandbox_broker::MACOS_LAUNCH_MODE),
+        OsStr::new("--cpu-seconds"),
+        OsStr::new(&cpu_seconds),
+        OsStr::new("--open-files"),
+        OsStr::new(&open_files),
+        OsStr::new("--profile"),
+        OsStr::new(profile.policy()),
+    ]
+    .into_iter()
+    .fold(0_usize, |total, argument| {
+        total
+            .saturating_add(argument.as_encoded_bytes().len())
+            .saturating_add(1)
+    });
+    for definition in profile.definitions() {
+        bytes = bytes
+            .saturating_add("--definition".len())
+            .saturating_add(1)
+            .saturating_add(definition.as_encoded_bytes().len())
+            .saturating_add(1);
+    }
+    bytes = bytes
+        .saturating_add("--".len())
+        .saturating_add(1)
+        .saturating_add(command.program().as_os_str().as_encoded_bytes().len())
+        .saturating_add(1);
+    bytes = command.arguments().iter().fold(bytes, |total, argument| {
+        total
+            .saturating_add(argument.as_encoded_bytes().len())
+            .saturating_add(1)
+    });
+    if bytes > crucible_sandbox_broker::MACOS_MAX_LAUNCH_ARGUMENT_BYTES {
+        return Err(materialization(
+            "macOS sandbox launcher arguments exceed the backend bound",
+            None,
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]

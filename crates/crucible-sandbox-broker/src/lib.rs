@@ -4,6 +4,19 @@
 /// hard limits before entering the system Seatbelt executable.
 pub const MACOS_LAUNCH_MODE: &str = "--macos-seatbelt-launch";
 
+/// Maximum UTF-8 bytes in one generated Seatbelt profile.
+pub const MACOS_MAX_PROFILE_BYTES: usize = 256 * 1024;
+
+/// Maximum path definitions passed to one Seatbelt invocation.
+pub const MACOS_MAX_DEFINITIONS: usize = 256;
+
+/// Maximum aggregate encoded bytes in the macOS launcher argument vector.
+///
+/// macOS counts the environment against its native exec limit too. Keeping the
+/// protocol below 512 KiB leaves room for Crucible's separately bounded 128
+/// KiB environment and the kernel's argument-pointer bookkeeping.
+pub const MACOS_MAX_LAUNCH_ARGUMENT_BYTES: usize = 512 * 1024;
+
 /// Bytes in one native-endian Linux wait status.
 pub const WAIT_STATUS_BYTES: usize = size_of::<i32>();
 
