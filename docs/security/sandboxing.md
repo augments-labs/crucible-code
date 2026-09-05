@@ -357,6 +357,9 @@ two read identically until they are on one line. The capability matrix lists
 every feature, including the ones this policy never asks for; it is what makes
 an `enforced` elsewhere in the report mean something.
 
+Time ceilings retain their exact value, including fractional seconds: a 1.5-second
+limit is shown as `1.5s`, and a limit below one second is never rounded down to `0s`.
+
 The workspace root is the only path printed. Roots, the working directory and
 the policies are named by the digests the record keeps, so a report can be
 pasted into an issue without pasting your tree with it. Two reports over the

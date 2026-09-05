@@ -10,6 +10,9 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **Sandbox reports preserve fractional time limits.** Command and session
+  ceilings retain their exact duration instead of rounding down to whole seconds.
+
 - **Failed server startup keeps cleanup failures visible.** MCP handshake and
   catalogue failures stop the process explicitly; optional servers are skipped
   only when cleanup is confirmed. Missing-pipe failures in the MCP and RPC
