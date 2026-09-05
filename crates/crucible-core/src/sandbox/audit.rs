@@ -316,16 +316,29 @@ impl SandboxAuditRegistry {
     ///
     /// # Errors
     ///
-    /// The registry or one collector became unavailable.
+    /// The registry or one collector became unavailable. No facts are consumed
+    /// when any collector is unavailable.
     pub fn take_records(&self) -> Result<Box<[SandboxAuditRecord]>, SandboxAuditError> {
         let mut audits = self
             .audits
             .lock()
             .map_err(|_| SandboxAuditError::Unavailable)?;
-        let mut records = Vec::new();
-        for audit in audits.iter() {
-            records.extend(audit.take_records()?);
-        }
+        // Lock every bounded collector before consuming any facts. A later
+        // unavailable collector must not discard earlier undelivered records.
+        let mut facts = audits
+            .iter()
+            .map(|audit| {
+                audit
+                    .facts
+                    .lock()
+                    .map_err(|_| SandboxAuditError::Unavailable)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let records = facts
+            .iter_mut()
+            .flat_map(|records| std::mem::take(&mut **records))
+            .collect::<Vec<_>>();
+        drop(facts);
         audits.retain(SandboxAudit::has_lifecycle_holder);
         Ok(records.into_boxed_slice())
     }
@@ -438,6 +451,68 @@ mod tests {
 
         drop(detached);
         assert!(registry.take_records().expect("retired drain").is_empty());
+    }
+
+    #[test]
+    fn unavailable_collector_cannot_discard_facts_drained_before_it() {
+        let registry = SandboxAuditRegistry::new();
+        let first = registry
+            .collector(Ancestry::new(), ToolId::new("first-call"))
+            .expect("first collector");
+        let second = registry
+            .collector(Ancestry::new(), ToolId::new("second-call"))
+            .expect("second collector");
+        let first_id = SandboxId::new();
+        for lifecycle in [
+            SandboxLifecycle::Prepared,
+            SandboxLifecycle::CommandFinished,
+        ] {
+            first
+                .record(first_id, SandboxFactKind::Lifecycle(lifecycle))
+                .expect("first fact");
+        }
+        second
+            .record(
+                SandboxId::new(),
+                SandboxFactKind::Cleanup(SandboxCleanup::Complete),
+            )
+            .expect("second fact");
+        let first_records = first.records().expect("first snapshot");
+        let mut expected = first_records.to_vec();
+        expected.extend(second.records().expect("second snapshot"));
+
+        let poisoned = Arc::clone(&second.facts);
+        assert!(
+            std::thread::spawn(move || {
+                let _guard = poisoned.lock().expect("available before injected failure");
+                panic!("injected collector owner failure");
+            })
+            .join()
+            .is_err()
+        );
+        assert_eq!(registry.take_records(), Err(SandboxAuditError::Unavailable));
+        assert_eq!(
+            first.records().expect("first remains available"),
+            first_records
+        );
+
+        // Recovery exists only in this fixture. A production poisoned collector
+        // stays unavailable; a failed drain must never consume another's facts.
+        second.facts.clear_poison();
+        assert_eq!(
+            registry.take_records().expect("recovered drain").as_ref(),
+            expected
+        );
+        assert!(
+            registry
+                .take_records()
+                .expect("no duplicate delivery")
+                .is_empty()
+        );
+        drop(first);
+        drop(second);
+        assert!(registry.take_records().expect("retired drain").is_empty());
+        assert!(registry.audits.lock().expect("registry").is_empty());
     }
 
     #[test]
