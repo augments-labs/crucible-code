@@ -103,7 +103,8 @@ def profile_for(root):
     ancestors = {path for item in (root, worker, pathlib.Path('/usr/lib'), pathlib.Path('/System/Library'), pathlib.Path('/dev/null')) for path in item.parents}
     metadata = ' '.join('(literal ' + q(path) + ')' for path in sorted(ancestors))
     return '\n'.join([
-        '(version 1)', '(allow default)', '(deny network*)',
+        '(version 1)', '(deny default)', '(deny network*)',
+        '(allow process-exec)', '(allow process-info* (target self))',
         '(deny mach-lookup)', '(deny mach-register)',
         '(deny file-read*)', '(deny file-write*)',
         '(allow file-read-data (literal "/"))',
