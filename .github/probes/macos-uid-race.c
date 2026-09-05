@@ -22,7 +22,7 @@
 #include <unistd.h>
 
 #define UID 60000
-struct Oracle { _Atomic unsigned generation, acknowledgement, entered, route_hits; };
+struct Oracle { _Atomic unsigned generation, acknowledgement, entered, route_hits, leader, exec_attempted, exec_entered; };
 static struct Oracle *oracle;
 static pid_t (*compat_vfork)(void);
 static char self[PATH_MAX];
@@ -88,12 +88,16 @@ static int guest(const char *route) {
     oracle=mmap(NULL,4096,PROT_READ|PROT_WRITE,MAP_SHARED,3,0);
     if (oracle==MAP_FAILED) return 101;
     if (!atomic_is_lock_free(&oracle->generation)) return 102;
-    if (!strcmp(route,"leaf")) leaf();
+    if (!strcmp(route,"leaf")) {
+        if ((unsigned)getpid()==atomic_load(&oracle->leader)) atomic_store(&oracle->exec_entered,1);
+        leaf();
+    }
     atomic_fetch_add(&oracle->entered,1);
     if (!strcmp(route,"exec")) {
         pthread_t first,second;
         if (pthread_create(&first,NULL,creator,"fork")||pthread_create(&second,NULL,creator,"spawn")) return 103;
         while (atomic_load(&oracle->route_hits)<2) { pulse(); usleep(20); }
+        atomic_store(&oracle->exec_attempted,1);
         execle(self,self,"guest","leaf",(char *)NULL,guest_env); return 104;
     }
     creator((void *)route);
@@ -142,12 +146,14 @@ int main(int argc,char **argv) {
         if(census()) fail("UID reused before empty");
         atomic_store(&oracle->generation,0); atomic_store(&oracle->acknowledgement,0);
         atomic_store(&oracle->entered,0); atomic_store(&oracle->route_hits,0);
+        atomic_store(&oracle->leader,0); atomic_store(&oracle->exec_attempted,0); atomic_store(&oracle->exec_entered,0);
         pid_t child=fork(); if(child<0) fail("leader fork");
         if(!child) {
             cap(RLIMIT_NPROC,48); cap(RLIMIT_NOFILE,128); cap(RLIMIT_FSIZE,1048576); cap(RLIMIT_CORE,0);
             if(fd!=3&&dup2(fd,3)!=3) _exit(109);
             for(int i=4;i<4096;i++) close(i);
             identities();
+            atomic_store(&oracle->leader,(unsigned)getpid());
             execle(self,self,"guest",routes[route],(char *)NULL,guest_env); _exit(110);
         }
         int reaped=0,ok=1;
@@ -162,6 +168,16 @@ int main(int argc,char **argv) {
         until=now()+1;
         while(atomic_load(&oracle->acknowledgement)!=control&&now()<until) usleep(100);
         if(atomic_load(&oracle->acknowledgement)!=control) ok=0;
+        // Confirm this route actually attempts the leader's exec; the first
+        // round additionally proves entry into its replacement image. Remaining
+        // rounds allow cleanup to overlap that transition without claiming a
+        // scheduler interleaving merely from the selected route name.
+        if (route==3) {
+            until=now()+1;
+            while ((!atomic_load(&oracle->exec_attempted)||(round==0&&!atomic_load(&oracle->exec_entered)))&&now()<until) usleep(20);
+            if (!atomic_load(&oracle->exec_attempted)||(round==0&&!atomic_load(&oracle->exec_entered))) ok=0;
+        }
+        unsigned attempted=atomic_load(&oracle->exec_attempted), entered=atomic_load(&oracle->exec_entered);
         // This coordinator never starts another guest until cleanup and the
         // post-zero window finish. Cleanup helpers cannot create guest work.
         stop_scope(child,&reaped);
@@ -174,8 +190,8 @@ int main(int argc,char **argv) {
             usleep(1000);
         }
         stop_scope(child,&reaped);
-        printf("route=%s round=%d positive=%u post_zero=%u ack=%u uid_empty=%d leader_reaped=%d pass=%d\n",
-            routes[route],round,control,challenge,atomic_load(&oracle->acknowledgement),!census(),reaped,ok);
+        printf("route=%s round=%d positive=%u post_zero=%u ack=%u uid_empty=%d leader_reaped=%d pass=%d exec_attempted=%u exec_entered=%u\n",
+            routes[route],round,control,challenge,atomic_load(&oracle->acknowledgement),!census(),reaped,ok,attempted,entered);
         if(!ok) return 77;
     }
     puts("all_32_cases_pass=1");
