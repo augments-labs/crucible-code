@@ -325,7 +325,13 @@ fn owned_process_group_cleanup_stops_a_background_descendant() {
 #[test]
 fn seatbelt_denies_unix_domain_socket_connections() {
     let fixture = Fixture::new("unix-network");
-    let socket = fixture.outside.join("listener.sock");
+    // Darwin's sockaddr_un path is much shorter than a GitHub runner's
+    // canonical temporary directory. Keep this host endpoint outside the
+    // workspace while making the test independent of TMPDIR length.
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| since.as_nanos());
+    let socket = PathBuf::from(format!("/tmp/cru-{}-{unique:x}.sock", std::process::id()));
     let listener = UnixListener::bind(&socket).expect("Unix listener");
     listener
         .set_nonblocking(true)
@@ -338,7 +344,7 @@ fn seatbelt_denies_unix_domain_socket_connections() {
             [
                 OsString::from("-c"),
                 OsString::from(script),
-                socket.into_os_string(),
+                socket.as_os_str().to_owned(),
             ],
         ),
     ));
@@ -348,6 +354,8 @@ fn seatbelt_denies_unix_domain_socket_connections() {
         listener.accept(),
         Err(problem) if problem.kind() == std::io::ErrorKind::WouldBlock
     ));
+    drop(listener);
+    fs::remove_file(socket).expect("remove Unix listener");
 }
 
 #[test]

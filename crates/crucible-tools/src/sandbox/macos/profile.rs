@@ -149,7 +149,7 @@ impl Profile {
         }
         for pattern in policy.unreadable_patterns() {
             let regex = unreadable_pattern_regex(pattern.pattern())?;
-            let _ = writeln!(text, "(deny file-read* file-write* (regex #\"{regex}\"#))");
+            let _ = writeln!(text, "(deny file-read* file-write* (regex #\"{regex}\"))");
         }
 
         // Seatbelt's literal path filters have differed across case-insensitive
@@ -161,7 +161,7 @@ impl Profile {
             .filter(|rule| rule.access() == SandboxFilesystemAccess::ReadWrite)
         {
             let regex = protected_metadata_regex(rule.path())?;
-            let _ = writeln!(text, "(deny file-write* (regex #\"{regex}\"#))");
+            let _ = writeln!(text, "(deny file-write* (regex #\"{regex}\"))");
         }
 
         // Renaming an allowed ancestor would relocate a protected descendant
@@ -435,6 +435,10 @@ mod tests {
         assert!(profile.policy.contains("(param \"SCRATCH\")"));
         assert!(profile.policy.contains("[gG][iI][tT]"));
         assert!(profile.policy.contains("([^/]+/)*"));
+        assert!(
+            !profile.policy.contains("\"#)"),
+            "Seatbelt regex literals have an opening sharp marker only"
+        );
         assert_eq!(profile.definitions.len(), 6);
     }
 
