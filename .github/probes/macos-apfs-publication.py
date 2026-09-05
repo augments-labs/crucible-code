@@ -84,7 +84,7 @@ def digest():
 
 command(['/usr/bin/sw_vers'])
 command(['/usr/bin/uname', '-a'])
-command(['/usr/bin/hdiutil', 'create', '-size', '128m', '-fs', 'APFS', '-volname', 'CrucibleFixture', '-format', 'UDRW', str(image)])
+command(['/usr/bin/hdiutil', 'create', '-size', '128m', '-fs', 'APFS', '-volname', 'CrucibleFixture', str(image)])
 expected_uuid = None
 for mode in ['read', 'write', 'mmap', 'cwd', 'aio']:
     uuid, disk = attach(rw)
