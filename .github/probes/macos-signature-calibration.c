@@ -37,7 +37,7 @@ static int lookup(void) {
     if(response.ndr.int_rep!=NDR_record.int_rep) goto done;
     printf("RPC service_status=%d\n",response.status);outcome=response.status==0?0:77;
  done:
-    if(MACH_PORT_VALID(reply)&&mach_port_destroy(mach_task_self(),reply)) outcome=77;
+    if(MACH_PORT_VALID(reply)&&mach_port_mod_refs(mach_task_self(),reply,MACH_PORT_RIGHT_RECEIVE,-1)) outcome=77;
     if(MACH_PORT_VALID(endpoint)&&mach_port_deallocate(mach_task_self(),endpoint)) outcome=77;
     return outcome;
 }
