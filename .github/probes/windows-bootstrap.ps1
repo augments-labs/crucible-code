@@ -1,6 +1,7 @@
-# windows-bootstrap-v9: disposable fresh Windows x64 VM only; no production claim.
+# windows-bootstrap-v10: disposable fresh Windows x64 VM only; no production claim.
 # Independently authored. V6 proved only the actual combined-token ACL primitive.
-# V9 adds bounded runtime step and exception HRESULT diagnostics only.
+# V10 retains inheritable host-user access on the owned build directory.
+# V9 diagnosed fixture.exe source_hash access denied after changing the parent ACL.
 # V8: initial-load required-import closure only; every delay edge is deferred and unvalidated.
 # V7 run33930343584: delay expansion hit 64 files at SCHANNEL.dll from webio.dll; caps stay unchanged.
 # This is a synthetic bootstrap prerequisite, not a complete cmd/native-tool execution contract.
@@ -20,7 +21,7 @@
 # API-set contracts are counted, not fabricated as files. Dynamic/registry/IPC dependencies remain unproved.
 # Three 12-second guest deadlines; 4-process kill-on-close jobs; require external CI timeout 5 minutes.
 $ErrorActionPreference = 'Stop'
-$buildRoot = Join-Path ([IO.Path]::GetTempPath()) ('crucible-bootstrap-v9-' + [Guid]::NewGuid().ToString('N'))
+$buildRoot = Join-Path ([IO.Path]::GetTempPath()) ('crucible-bootstrap-v10-' + [Guid]::NewGuid().ToString('N'))
 $native = @'
 #include <windows.h>
 static WCHAR image[32768],command[32772];
@@ -57,7 +58,7 @@ using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Security.Cryptography;
 using System.Threading;
-public static class CrucibleWindowsBootstrapProbeV9 {
+public static class CrucibleWindowsBootstrapProbeV10 {
     const uint TOKEN_QUERY = 8, TOKEN_DUPLICATE = 2, TOKEN_IMPERSONATE = 4, TOKEN_ASSIGN_PRIMARY = 1;
     const uint FILE_READ_DATA = 1, FILE_ALL_ACCESS = 0x001F01FF;
     const uint DACL = 4, PROTECTED_DACL = 0x80000000;
@@ -67,7 +68,7 @@ public static class CrucibleWindowsBootstrapProbeV9 {
     static string stage = "start", currentCase = "start", runtimeFile = "none", runtimeStep = "none";
     static void Managed(Exception error) {
         string kind = error is UnauthorizedAccessException ? "access_denied" : error is IOException ? "io" : "other";
-        Record("{\"event\":\"probe_managed_failure\",\"stage\":\""+stage+"\",\"case\":\""+currentCase+"\",\"runtime_file\":\""+runtimeFile+"\",\"runtime_step\":\""+runtimeStep+"\",\"kind\":\""+kind+"\",\"hresult\":"+error.HResult+"}");
+        Record("{\"event\":\"probe_managed_failure\",\"stage\":\""+stage+"\",\"runtime_file\":\""+runtimeFile+"\",\"runtime_step\":\""+runtimeStep+"\",\"kind\":\""+kind+"\",\"hresult\":"+error.HResult+"}");
     }
     [StructLayout(LayoutKind.Sequential)] struct SidAttr { public IntPtr Sid; public uint Attributes; }
     [StructLayout(LayoutKind.Sequential)] struct GroupsOne { public uint Count; public SidAttr First; }
@@ -232,10 +233,10 @@ public static class CrucibleWindowsBootstrapProbeV9 {
         return "S-1-5-21-"+BitConverter.ToUInt32(bytes,0)+"-"+BitConverter.ToUInt32(bytes,4)+"-"+BitConverter.ToUInt32(bytes,8)+"-"+BitConverter.ToUInt32(bytes,12);
     }
     static string SidText(IntPtr sid) { return new SecurityIdentifier(sid).Value; }
-    static void Acl(string path,string user,string extra) {
+    static void Acl(string path,string user,string extra,bool inheritUser=false) {
         IntPtr sd=IntPtr.Zero; uint size;
         try {
-            Need(ConvertStringSecurityDescriptorToSecurityDescriptorW("D:P(A;;FA;;;"+user+")"+extra,1,out sd,out size));
+            Need(ConvertStringSecurityDescriptorToSecurityDescriptorW("D:P(A;"+(inheritUser?"OICI":"")+";FA;;;"+user+")"+extra,1,out sd,out size));
             bool present,defaulted; IntPtr dacl;
             Need(GetSecurityDescriptorDacl(sd,out present,out dacl,out defaulted));
             if(!present) throw new ProbeFailure(13);
@@ -364,14 +365,14 @@ public static class CrucibleWindowsBootstrapProbeV9 {
         return success&&cleaned;
     }
     public static int Run(string buildRoot,string[] sourceFiles,string compilerIdentity) {
-        string profile="crucible.bootstrap.v9."+Guid.NewGuid().ToString("N"),root=null; bool profileOwned=false,rootOwned=false,cleanup=true; int result=1;
+        string profile="crucible.bootstrap.v10."+Guid.NewGuid().ToString("N"),root=null; bool profileOwned=false,rootOwned=false,cleanup=true; int result=1;
         IntPtr package=IntPtr.Zero,session=IntPtr.Zero,baseToken=IntPtr.Zero,restricted=IntPtr.Zero,entry=IntPtr.Zero;
         try {
             currentCase="setup"; VerifyLayouts(); stage="profile";
             Status(unchecked((uint)CreateAppContainerProfile(profile,"Crucible bootstrap probe","Disposable synthetic execution",IntPtr.Zero,0,out package))); profileOwned=true;
             string p=SidText(package),s=RandomSid(),user; using(WindowsIdentity identity=WindowsIdentity.GetCurrent()) user=identity.User.Value;
             Need(ConvertStringSidToSidW(s,out session)); root=Path.Combine(buildRoot,"runtime"); if(Directory.Exists(root)) throw new ProbeFailure(183);
-            Directory.CreateDirectory(root); rootOwned=true; Acl(buildRoot,user,Grant(p)+Grant(s)); Acl(root,user,Grant(p)+Grant(s));
+            Directory.CreateDirectory(root); rootOwned=true; Acl(buildRoot,user,Grant(p)+Grant(s),true); Acl(root,user,Grant(p)+Grant(s));
             stage="runtime_manifest"; System.Text.StringBuilder system=new System.Text.StringBuilder(32768); uint n=GetSystemDirectoryW(system,(uint)system.Capacity);
             Need(n!=0); if(n>=(uint)system.Capacity) throw new ProbeFailure(122); string sys=system.ToString(),win=Path.GetDirectoryName(sys);
             if(sourceFiles.Length<2||sourceFiles.Length>64) throw new ProbeFailure(122);
@@ -558,7 +559,7 @@ try {
     Write-Output ('{"event":"host_compile","success":true,"required_api_set_contract_count":'+$contracts.Count+'}')
     $hostStage="compile_host"; Add-Type -TypeDefinition $source -Language CSharp -ErrorAction Stop
     [string[]]$sources=@($files.Values | Sort-Object { [IO.Path]::GetFileName($_).ToLowerInvariant() })
-    $hostStage="invoke_host"; $result=[CrucibleWindowsBootstrapProbeV9]::Run($buildRoot,$sources,(Get-FileHash -LiteralPath $cl -Algorithm SHA256).Hash.ToLowerInvariant())
+    $hostStage="invoke_host"; $result=[CrucibleWindowsBootstrapProbeV10]::Run($buildRoot,$sources,(Get-FileHash -LiteralPath $cl -Algorithm SHA256).Hash.ToLowerInvariant())
 } catch {
     $failure=$_; $reason='unclassified_exception'; $message=$failure.Exception.Message
     if($message -cin @('x64_required','unique_root_collision','msvc_missing','source_reparse','runtime_bound','fixture_import_policy','tool_start','tool_deadline','tool_output_cap','tool_failed','dependency_metadata_failed','deferred_edge_cap','dependency_queue_cap') -or $message -cmatch '^parser_(?:text_cap|line_cap|ambiguous_header|unknown_header|orphan_dll|ambiguous_dll|invalid_dll|incomplete|self_test|unknown_kind)$') { $reason=$message }

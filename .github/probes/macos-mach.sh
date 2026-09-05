@@ -1,5 +1,5 @@
 #!/bin/sh
-# mac-mach-v2: disposable VM capability-inheritance prerequisite, not a backend.
+# mac-mach-v3: disposable VM capability-inheritance prerequisite, not a backend.
 # No native execution by the author. Root reviews source/manifest before CI.
 set -eu
 umask 022
@@ -264,6 +264,16 @@ static mach_port_t slot(int which) {
     } else kr(task_get_special_port(mach_task_self(),TASK_BOOTSTRAP_PORT,&found),"bootstrap lookup");
     return found;
 }
+/* Retain one owned reference while locating any replacement of the
+ * inherited slot by trusted runtime initialization. Never seed an unknown port. */
+static void check_seed(mach_port_t expected,const char *boundary) {
+    mach_port_t actual=slot(0); mach_port_type_t expected_type=0,actual_type=0;
+    kr(mach_port_type(mach_task_self(),expected,&expected_type),"expected seed type");
+    kr(mach_port_type(mach_task_self(),actual,&actual_type),"actual seed type");
+    printf("SEED-IDENTITY boundary=%s expected=%u actual=%u same=%d expected_type=%u actual_type=%u\n",
+           boundary,expected,actual,expected==actual,expected_type,actual_type);
+    int same=expected==actual; release(actual); if(!same) exit(77);
+}
 static void no_user_reference(mach_port_t port) {
     mach_port_type_t type=0; kern_return_t result=mach_port_type(mach_task_self(),port,&type);
     if(result!=KERN_INVALID_NAME) {
@@ -434,9 +444,11 @@ int main(int argc,char **argv) {
         }
         if(p<0) { close(output[0]); cleanup(uid); die("launcher fork"); }
         if(!p) {
+            mach_port_t expected_seed=slot(0); if(!MACH_PORT_VALID(expected_seed)) exit(77);
             signal(SIGINT,SIG_DFL); signal(SIGTERM,SIG_DFL); alarm(18);
             if(dup2(output[1],1)<0||dup2(output[1],2)<0) die("guest output"); close_extra_fds();
             drop(uid); if(chdir(work)) die("guest cwd");
+            check_seed(expected_seed,"credentials");
             char rustc[PATH_MAX],rustdoc[PATH_MAX],cargobin[PATH_MAX],envpath[PATH_MAX],linker[PATH_MAX+16];
             path(rustc,root,"runtime/rust/bin/rustc"); path(rustdoc,root,"runtime/rust/bin/rustdoc"); path(cargobin,root,"runtime/rust/bin/cargo");
             if(snprintf(envpath,sizeof envpath,"%s/runtime/rust/bin:/usr/bin:/bin:/usr/sbin:/sbin",root)>=(int)sizeof envpath ||
@@ -447,9 +459,11 @@ int main(int argc,char **argv) {
                setenv("PROBE_CLANG",argv[2],1)||setenv("SDKROOT",argv[3],1)||setenv("DEVELOPER_DIR",argv[4],1)||setenv("PROBE_GIT",argv[5],1)||
                setenv("CARGO_ENCODED_RUSTFLAGS",linker,1)||setenv("CARGO_ENCODED_RUSTDOCFLAGS",linker,1)||
                setenv("GIT_CONFIG_NOSYSTEM","1",1)||setenv("GIT_CONFIG_GLOBAL","/dev/null",1)) die("clean environment");
+            check_seed(expected_seed,"environment");
             char *error=NULL;
             if(sandbox_init(profile,0,&error)) { fprintf(stderr,"PROFILE-REFUSED %.256s\n",error?error:"no diagnostic"); if(error) sandbox_free_error(error); exit(77); }
             puts("PROFILE-APPLIED network=deny mach-lookup=deny mach-register=deny filesystem-isolation=untested");
+            check_seed(expected_seed,"profile"); release(expected_seed);
             /* Compile/apply the profile before replacing the real bootstrap
              * context. Thereafter only direct kernel Mach APIs precede exec. */
             seed_slots(); if(sanitized) sanitize();
