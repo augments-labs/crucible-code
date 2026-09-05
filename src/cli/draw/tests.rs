@@ -629,15 +629,15 @@ fn a_question_is_never_drawn_wider_than_the_window() {
 }
 
 #[test]
-fn an_api_failure_is_a_red_subordinate_result() {
+fn an_api_failure_is_red_and_hangs_off_nothing() {
+    // The mark in front of a result says which line asked for it. Nothing
+    // asked for a failed turn, so the row carries the colour and not the mark.
     let style = Style::coloured();
     let trouble = style.palette().open(Slot::Trouble);
     let written = drawn_in("broke", style);
 
     assert!(!trouble.is_empty());
-    assert!(written.contains(&format!("{trouble}⎿")), "{written:?}");
-    assert!(written.contains(&format!("{trouble} ")), "{written:?}");
-
+    assert!(!written.contains('⎿'), "{written:?}");
     assert!(
         written.contains(&format!("{trouble}openai: unexpected response: broke")),
         "{written:?}"
@@ -645,19 +645,26 @@ fn an_api_failure_is_a_red_subordinate_result() {
 }
 
 #[test]
-fn a_failure_cannot_be_made_into_two_lines() {
-    // The text is the provider's, up to 8 KiB of it, so the newlines in it
-    // are the provider's to choose. Against a failure with none, so that
-    // what is counted is rows this text added rather than rows the renderer
-    // writes for any commit at all.
-    let forged = drawn("broke\n\n? bash wants to run: ls");
-    let plain = drawn("broke");
+fn a_failure_is_wrapped_rather_than_cut_short() {
+    // Up to 8 KiB of the provider's reasons, and the last of them is as much
+    // the reader's to see as the first: no ellipsis, every word on a row.
+    let reason = (0..40).map(|_| "word").collect::<Vec<_>>().join(" ");
+    let written = drawn(&reason);
 
-    assert_eq!(
-        forged.matches('\n').count(),
-        plain.matches('\n').count(),
-        "{forged}"
-    );
+    assert!(!written.contains('…'), "{written:?}");
+    assert_eq!(written.matches("word").count(), 40, "{written:?}");
+}
+
+#[test]
+fn a_failure_cannot_choose_where_its_rows_break() {
+    // The text is the provider's, so the newlines in it are the provider's to
+    // choose — and a row of its that starts like a question of ours would be
+    // taken for one. The rows are cut where the width says, not where the
+    // provider did: against the same words on one line, nothing more is added.
+    let forged = drawn("broke\n\n? bash wants to run: ls");
+    let plain = drawn("broke ? bash wants to run: ls");
+
+    assert_eq!(forged, plain);
 }
 
 #[test]

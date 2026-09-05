@@ -34,9 +34,7 @@ use super::*;
 fn standing(sample: &Sample) -> Standing {
     Standing::new(
         &Opening {
-            credential: None,
             model: Some("script"),
-            provider: None,
             unasked: "",
             trouble: None,
             workspace: &sample.workspace(),

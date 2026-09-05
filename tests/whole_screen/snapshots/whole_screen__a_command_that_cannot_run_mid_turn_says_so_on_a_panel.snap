@@ -4,6 +4,8 @@ expression: window.picture()
 ---
 60x24 cursor 22,0 scrolled 0
 |│                                                          │|
+|│ ──────────────────────────────────────────────────────── │|
+|│                                                          │|
 |│ Tips                                                     │|
 |│                                                          │|
 |│ · /          opens the command list                      │|
@@ -11,8 +13,6 @@ expression: window.picture()
 |│ · shift+tab  steps the permission mode                   │|
 |│ · ctrl+c     clears the line typed so far                │|
 |╰──────────────────────────────────────────────────────────╯|
-|                                                            |
-|authentication: anthropic · environment variable ANTHROPIC_A|
 |                                                            |
 |› start it                                                  |
 |                                                            |

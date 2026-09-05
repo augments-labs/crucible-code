@@ -1034,7 +1034,7 @@ fn a_key_given_to_login_is_what_the_turn_after_it_is_sent_with() {
     let mut window = Watched::keyless("logged-in", 80, 24, &vendor);
 
     window.types("/login anthropic\r");
-    window.types_until("not-a-key-and-nothing-reads-it\r", "logged in to anthropic");
+    window.types_until("not-a-key-and-nothing-reads-it\r", "login successful");
     window.types("/model claude-test-1\r");
     window.types("what is 2+2\r");
 
@@ -1055,7 +1055,7 @@ fn the_provider_panel_reaches_a_turn_without_a_provider_being_named() {
     // panel asking whose console, and Enter again takes the one under the mark.
     window.types("\x1b[B\x1b[B\r");
     window.types("\r");
-    window.types_until("not-a-key-and-nothing-reads-it\r", "logged in to anthropic");
+    window.types_until("not-a-key-and-nothing-reads-it\r", "login successful");
     window.types("/model claude-test-1\r");
     window.types("what is 2+2\r");
 
@@ -1079,7 +1079,7 @@ fn logging_in_writes_down_which_provider_to_ask_from_the_next_run_on() {
     window.types("/login\r");
     window.types("\x1b[B\x1b[B\r");
     window.types("\r");
-    window.types_until("not-a-key-and-nothing-reads-it\r", "logged in to anthropic");
+    window.types_until("not-a-key-and-nothing-reads-it\r", "login successful");
 
     let held = std::fs::read_to_string(window.home().join("config.json"))
         .expect("the configuration file this case was given");
@@ -1117,7 +1117,7 @@ fn the_effort_ladder_stands_in_a_window_a_panel_of_the_same_five_would_fill() {
     let mut window = Watched::keyless("effort-ladder", 80, 24, &vendor);
 
     window.types("/login anthropic\r");
-    window.types_until("not-a-key-and-nothing-reads-it\r", "logged in to anthropic");
+    window.types_until("not-a-key-and-nothing-reads-it\r", "login successful");
     // Waited on rather than typed and left: a command is drawn in two frames
     // with the work between them, and quiet alone cannot tell that gap from the
     // end of the last frame. Without a mark this case reads the screen where

@@ -10,10 +10,9 @@ use std::time::SystemTime;
 use crucible_core::Workspace;
 use crucible_runner::Recorded;
 use crucible_tui::{
-    Notice, Recent, Renderer, Row, Slot, Terminal, TerminalError, Welcome, clip, fold,
+    Notice, Recent, Renderer, Row, Slot, Terminal, TerminalError, Welcome, fold,
 };
 
-use crate::cli::CredentialSource;
 use crate::cli::release::Newer;
 use crate::cli::style::Style;
 
@@ -24,17 +23,10 @@ use super::when;
 /// A struct rather than six parameters, because four of them are `&str`-shaped
 /// and a call with four of those in a row is one nobody can read.
 pub(crate) struct Opening<'a> {
-    /// The non-secret source authenticating this session. Drawn once so an
-    /// inherited environment key can never look like a stored account that
-    /// `/logout` could remove.
-    pub(crate) credential: Option<&'a CredentialSource>,
     /// The model this session will ask, or `None` where nothing chose one. Used
     /// only to decide whether the setup warning belongs under the card; the
     /// row under the prompt box owns model display.
     pub(crate) model: Option<&'a str>,
-    /// The vendor it will be asked of, or `None` where nothing chose one. Used
-    /// to name the active authentication source under the card.
-    pub(crate) provider: Option<&'a str>,
     /// What to say where there is none: which of the two halves of setting
     /// crucible up is the one still missing.
     pub(crate) unasked: &'a str,
@@ -68,8 +60,6 @@ pub(crate) struct Standing {
     /// long ago it was. Read once, at the one instant this was built, so four
     /// rows are four ages measured from one now.
     recent: Vec<(String, String)>,
-    /// The sentence naming the provider and where its key came from.
-    authentication: Option<String>,
     /// What a newer release is called and where to get it.
     update: Option<(String, String)>,
     /// What reading the logins could not do, where it could not.
@@ -99,17 +89,6 @@ impl Standing {
                     )
                 })
                 .collect(),
-            authentication: opening.provider.zip(opening.credential).map(
-                |(provider, credential)| {
-                    // The mark is the whole of what says the provider and the
-                    // place its key came from are two facts rather than one
-                    // long name.
-                    format!(
-                        "authentication: {provider} {} {credential}",
-                        opening.style.glyphs().dot()
-                    )
-                },
-            ),
             update: opening.update.map(|newer| {
                 (
                     format!(
@@ -157,11 +136,6 @@ impl Standing {
 
         let mut rows = welcome.rows(columns, glyphs);
         rows.push(Row::new());
-
-        if let Some(said) = &self.authentication {
-            rows.push(Row::new().then(Slot::Quiet, clip(said, columns)));
-            rows.push(Row::new());
-        }
 
         if let Some((said, from)) = &self.update {
             let notice = Notice {
@@ -254,7 +228,7 @@ mod tests {
     use crucible_runner::Session;
 
     use crate::cli::NOTHING_TO_ASK;
-    use crucible_tui::{Glyphs, Recording};
+    use crucible_tui::Recording;
 
     use super::*;
 
@@ -277,9 +251,7 @@ mod tests {
             columns,
             terminal,
             &Opening {
-                credential: Some(&CredentialSource::StoredKey),
                 model: Some("claude-sonnet-5"),
-                provider: Some("anthropic"),
                 unasked: NOTHING_TO_ASK,
                 workspace,
                 sessions,
@@ -422,9 +394,7 @@ mod tests {
             80,
             false,
             &Opening {
-                credential: None,
                 model: None,
-                provider: None,
                 unasked: NOTHING_TO_ASK,
                 workspace: &workspace,
                 sessions: &[],
@@ -439,92 +409,9 @@ mod tests {
     }
 
     #[test]
-    fn the_opening_names_an_environment_credential_without_a_secret() {
-        let workspace = Workspace::open(std::env::temp_dir()).expect("a temporary directory");
-        let source = CredentialSource::Environment("OPENAI_API_KEY".into());
-        let screen = shown(
-            80,
-            false,
-            &Opening {
-                credential: Some(&source),
-                model: Some("gpt-5.6-sol"),
-                provider: Some("openai"),
-                unasked: NOTHING_TO_ASK,
-                workspace: &workspace,
-                sessions: &[],
-                trouble: None,
-                update: None,
-                style: Style::plain(),
-            },
-        );
-
-        assert!(
-            screen.contains("authentication: openai · environment variable OPENAI_API_KEY"),
-            "{screen}"
-        );
-    }
-
-    #[test]
-    fn what_parts_a_provider_from_where_its_key_came_from_comes_out_of_the_glyph_set() {
-        // The one row of the opening that is a sentence rather than a frame,
-        // and the mark in it is the only thing saying the provider and the
-        // place its key was found are two facts. The rest of the opening is
-        // drawn from the setting already, so this was the row that would come
-        // out with a hollow square in the middle of an otherwise clean screen.
-        let workspace = Workspace::open(std::env::temp_dir()).expect("a temporary directory");
-        let source = CredentialSource::Environment("OPENAI_API_KEY".into());
-
-        for (glyphs, said) in [
-            (Glyphs::Unicode, "authentication: openai · environment"),
-            (Glyphs::Ascii, "authentication: openai - environment"),
-        ] {
-            let screen = shown(
-                80,
-                false,
-                &Opening {
-                    credential: Some(&source),
-                    model: Some("gpt-5.6-sol"),
-                    provider: Some("openai"),
-                    unasked: NOTHING_TO_ASK,
-                    workspace: &workspace,
-                    sessions: &[],
-                    trouble: None,
-                    update: None,
-                    style: Style::drawn(glyphs),
-                },
-            );
-
-            assert!(screen.contains(said), "{glyphs:?}: {screen}");
-        }
-    }
-
-    #[test]
-    fn authentication_is_not_drawn_without_a_credential_source() {
-        let workspace = Workspace::open(std::env::temp_dir()).expect("a temporary directory");
-        let screen = shown(
-            80,
-            false,
-            &Opening {
-                credential: None,
-                model: None,
-                provider: Some("anthropic"),
-                unasked: NOTHING_TO_ASK,
-                workspace: &workspace,
-                sessions: &[],
-                trouble: None,
-                update: None,
-                style: Style::plain(),
-            },
-        );
-
-        assert!(!screen.contains("anthropic"), "{screen}");
-    }
-
-    #[test]
     fn the_card_says_nothing_about_the_live_turn_selection() {
         // All three facts are on the row under the prompt box. `/model` and
         // `/effort` change them long after this card has joined the transcript.
-        // The provider may still be named by the separate authentication row.
         let screen = opened(80, false);
 
         assert!(!screen.contains("claude-sonnet-5"), "{screen}");
@@ -552,9 +439,7 @@ mod tests {
             80,
             false,
             &Opening {
-                credential: None,
                 model: None,
-                provider: None,
                 unasked: NOTHING_TO_ASK,
                 workspace: &workspace,
                 sessions: &[],

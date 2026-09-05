@@ -3,6 +3,7 @@ source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
 80x24 cursor 20,4 scrolled 0
+|│                                  │ ───────────────────────────────────────── │|
 |│  /…/workspace                    │                                           │|
 |│                                  │ Tips                                      │|
 |│                                  │                                           │|
@@ -17,7 +18,6 @@ expression: window.picture()
 |Then use /model to select a model.                                              |
 |                                                                                |
 |› /login                                                                        |
-|                                                                                |
 |⎿ cancelled, nothing signed in                                                  |
 |                                                                                |
 |                                                                                |

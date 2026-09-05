@@ -215,23 +215,27 @@ pub(crate) fn event<T: Terminal>(
             }
         }
 
-        // Clipped: a refusal carries up to 8 KiB of the provider's own words,
-        // and a response that failed part-way through carries whatever the
-        // provider said about why. Neither is this program's text, and neither
-        // may become extra rows.
+        // Wrapped rather than clipped: a refusal carries up to 8 KiB of the
+        // provider's own words, and a response that failed part-way through
+        // carries whatever the provider said about why. Every word of it is
+        // what the reader has to go on, and the type that carried it bounded
+        // it. The breaks are this program's, though: a newline in the
+        // provider's text is folded into a space first, so where one row ends
+        // and the next begins is never the provider's to choose, and a row
+        // of its shaped like a question of ours cannot be made on purpose.
+        // No mark in front of it either. The mark hangs a result off the line
+        // that asked for it, and a failed turn was asked for by nobody's line
+        // — it stands on its own, in the one colour kept for it.
         Event::Failed { error } => {
             renderer.settle()?;
             renderer.apart()?;
-            let glyphs = style.glyphs();
-            let mark = glyphs.hangs();
-            let room = style
-                .output(columns)
-                .min(columns.saturating_sub(crucible_tui::columns(mark) + 1));
-            let row = Row::new()
-                .then_structural(Slot::Trouble, mark)
-                .then(Slot::Trouble, " ")
-                .then(Slot::Trouble, clipped(error, room, glyphs));
-            renderer.present(&[row])
+            let said = error.to_string();
+            let flat = said.split_whitespace().collect::<Vec<_>>().join(" ");
+            let rows: Vec<Row> = fold(&flat, columns)
+                .into_iter()
+                .map(|row| Row::new().then(Slot::Trouble, row))
+                .collect();
+            renderer.present(&rows)
         }
     }
 }

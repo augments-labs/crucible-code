@@ -3,8 +3,8 @@ source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
 80x24 cursor 22,0 scrolled 0
-|                                                                                |
-|authentication: anthropic · environment variable ANTHROPIC_API_KEY              |
+|│                                  │ · ctrl+c     clears the line typed so far │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
 |› say something                                                                 |
 |                                                                                |

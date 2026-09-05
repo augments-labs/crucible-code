@@ -3,20 +3,20 @@ source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
 80x24 cursor 22,0 scrolled 0
+|│                                  │ · ctrl+c     clears the line typed so far │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|                                                                                |
 |                                                                                |
 |Warning: No models available. Use /login or set an API key environment variable.|
 |Then use /model to select a model.                                              |
 |                                                                                |
 |› /login anthropic                                                              |
-|                                                                                |
-|⎿ logged in to anthropic; choose a model with /model                            |
+|⎿ login successful; choose a model with /model                                  |
 |                                                                                |
 |› /model claude-test-1                                                          |
-|                                                                                |
 |⎿ anthropic/claude-test-1                                                       |
 |                                                                                |
 |› /effort                                                                       |
-|                                                                                |
 |────────────────────────────────────────────────────────────────────────────────|
 |                                                                                |
 |Effort · claude-test-1                                                          |

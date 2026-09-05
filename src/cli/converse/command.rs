@@ -599,11 +599,11 @@ pub(super) fn run<T: Terminal>(
         return Ok(Ran::Leave);
     }
 
-    // A blank row on each side, the same as under the welcome: what separates
-    // one block from the next is a row with nothing on it, and both of this
-    // block's neighbours — the line that asked, the box below — are rows the
-    // eye is already resting on.
-    renderer.commit("")?;
+    // Directly under the line that asked, with nothing between: the answer is
+    // hung off that line by the mark in front of it, and a blank row between
+    // the two would leave the mark pointing at nothing. The blank goes after,
+    // where the next block starts — the box below is already parted from it,
+    // and the next thing said belongs under the pair rather than in it.
     let start = renderer.lines();
     let making = answer(wanted, renderer, runner, held, terms)?;
     renderer.subordinate(start, terms.style().glyphs())?;
