@@ -4,29 +4,16 @@ name: native-sandbox-experiment
 permissions:
   contents: read
 jobs:
-  macos-fork-port:
-    name: macOS root exception inheritance (${{ matrix.os }})
+  macos-mach:
+    name: macOS inherited Mach capabilities (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
         os: [macos-15-intel, macos-26]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 5
+    timeout-minutes: 12
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         persist-credentials: false
-    - shell: bash
-      run: |
-        set -eu
-        umask 022
-        probe_root=$(mktemp -d /tmp/crucible-macos-fork-port.XXXXXX)
-        uname -a
-        sw_vers
-        /usr/bin/clang -std=c11 -Wall -Wextra -Werror .github/probes/macos-fork-port.c -o "$probe_root/probe"
-        probe_failed=0
-        for probe_init in fresh lookup; do
-          "$probe_root/probe" exception "$probe_init" || probe_failed=1
-          sudo -n /usr/bin/env -i PATH=/usr/bin:/bin "$probe_root/probe" exception "$probe_init" || probe_failed=1
-        done
-        exit "$probe_failed"
+    - run: sh .github/probes/macos-mach.sh

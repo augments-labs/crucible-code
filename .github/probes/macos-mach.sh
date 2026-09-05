@@ -1,5 +1,5 @@
 #!/bin/sh
-# mac-mach-v9: disposable VM capability-inheritance prerequisite, not a backend.
+# mac-mach-v10: disposable VM capability-inheritance prerequisite, not a backend.
 # No native execution by the author. Root reviews source/manifest before CI.
 set -eu
 umask 022
@@ -472,7 +472,7 @@ int main(int argc,char **argv) {
     port_kind(service,"parent_owned_queue");
     port_kind(mach_task_self(),"parent_task_control");
     kr(task_set_exception_ports(mach_task_self(),EXC_MASK_ALL,MACH_PORT_NULL,EXCEPTION_DEFAULT,THREAD_STATE_NONE),"clear coordinator exceptions");
-    exception_boundary(service,"parent_owned_queue");
+    kr(task_set_exception_ports(mach_task_self(),EXC_MASK_BREAKPOINT,service,EXCEPTION_DEFAULT,THREAD_STATE_NONE),"install coordinator transport");
     const char *names[]={"exec","fork","posix_spawn","exec","fork","posix_spawn","shell","git","clang","cargo"};
     for(int c=0;c<10;c++) {
         if(stopped || empty(uid)!=1) { cleanup(uid); return 77; }
