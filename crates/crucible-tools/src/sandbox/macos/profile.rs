@@ -30,7 +30,6 @@ const BASE_POLICY: &str = "\
 (allow file-read-metadata file-test-existence\n\
   (literal \"/\")\n\
   (literal \"/var\")\n\
-  (literal \"/var/select\")\n\
   (literal \"/private\")\n\
   (literal \"/private/etc\")\n\
   (literal \"/private/etc/ssl\"))\n\
@@ -47,8 +46,6 @@ const BASE_POLICY: &str = "\
     (subpath \"/nix/store\")\n\
     (literal \"/private/etc/ssl/openssl.cnf\")\n\
     (subpath \"/private/var/db/timezone\")\n\
-    (subpath \"/private/var/select\")\n\
-    (subpath \"/var/select\")\n\
     (literal \"/dev/null\")\n\
     (literal \"/dev/zero\")\n\
     (literal \"/dev/random\")\n\
@@ -171,8 +168,10 @@ impl Profile {
             .iter()
             .filter(|rule| rule.access() == SandboxFilesystemAccess::ReadWrite)
         {
-            let regex = protected_metadata_regex(rule.path())?;
-            let _ = writeln!(text, "(deny file-write* file-link (regex #\"{regex}\"))");
+            for path in paths_with_system_alias(rule.path()) {
+                let regex = protected_metadata_regex(&path)?;
+                let _ = writeln!(text, "(deny file-write* file-link (regex #\"{regex}\"))");
+            }
         }
 
         // Renaming an allowed ancestor would relocate a protected descendant
@@ -422,7 +421,7 @@ mod tests {
         SandboxNetworkPolicy, SandboxPolicy, SandboxResourceLimits, SandboxUnreadablePattern,
     };
 
-    use super::{Profile, paths_with_system_alias};
+    use super::{Profile, paths_with_system_alias, protected_metadata_regex};
     use crate::sample::Sample;
 
     #[test]
@@ -456,7 +455,8 @@ mod tests {
         assert!(!profile.policy.contains("(allow file-read*)"));
         assert!(profile.policy.contains("(allow process-exec)"));
         assert!(profile.policy.contains("(allow process-fork)"));
-        assert!(profile.policy.contains("(subpath \"/var/select\")"));
+        assert!(!profile.policy.contains("(subpath \"/var/select\")"));
+        assert!(!profile.policy.contains("(subpath \"/private/var/select\")"));
         assert!(!profile.policy.contains("(allow mach-lookup"));
         assert!(!profile.policy.contains("(allow network"));
         assert!(profile.policy.contains("(deny network*)"));
@@ -568,5 +568,39 @@ mod tests {
                 .definitions
                 .contains(&OsString::from("DENY_READ_1=/var/select"))
         );
+    }
+
+    #[test]
+    fn protected_names_are_denied_through_both_private_var_spellings() {
+        let writable = SandboxFilesystemRule::new(
+            "/private/var/folders/workspace",
+            SandboxFilesystemAccess::ReadWrite,
+            SandboxFilesystemProvenance::Workspace,
+        )
+        .expect("writable rule");
+        let protected = SandboxFilesystemRule::new(
+            "/private/var/folders/workspace/.git",
+            SandboxFilesystemAccess::Protected,
+            SandboxFilesystemProvenance::Workspace,
+        )
+        .expect("protected rule");
+        let policy = SandboxPolicy::new(
+            crucible_core::SandboxMode::Required,
+            [writable, protected],
+            "/private/var/folders/workspace",
+            SandboxNetworkPolicy::Closed,
+            SandboxResourceLimits::confining(),
+        )
+        .expect("effective policy");
+
+        let profile = Profile::build(&policy, &[], &[], &[]).expect("Seatbelt profile");
+
+        for root in [
+            std::path::Path::new("/private/var/folders/workspace"),
+            std::path::Path::new("/var/folders/workspace"),
+        ] {
+            let regex = protected_metadata_regex(root).expect("protected-name regex");
+            assert!(profile.policy.contains(&regex), "missing alias {root:?}");
+        }
     }
 }

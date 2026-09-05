@@ -346,20 +346,21 @@ fn seatbelt_denies_unix_domain_socket_connections() {
     listener
         .set_nonblocking(true)
         .expect("nonblocking listener");
-    let script = "import socket,sys\ns=socket.socket(socket.AF_UNIX)\ntry:\n s.connect(sys.argv[1])\nexcept OSError:\n sys.exit(0)\nsys.exit(71)";
-    let (status, _, errors) = finish(start(
+    let (status, _, _) = finish(start(
         fixture.request("macos-unix-network"),
         command(
-            "/usr/bin/python3",
+            "/usr/bin/nc",
             [
-                OsString::from("-c"),
-                OsString::from(script),
+                OsString::from("-z"),
+                OsString::from("-w"),
+                OsString::from("1"),
+                OsString::from("-U"),
                 socket.as_os_str().to_owned(),
             ],
         ),
     ));
 
-    assert!(status.success(), "{}", String::from_utf8_lossy(&errors));
+    assert!(!status.success(), "a closed network policy connected");
     assert!(matches!(
         listener.accept(),
         Err(problem) if problem.kind() == std::io::ErrorKind::WouldBlock
@@ -434,14 +435,17 @@ fn the_pre_seatbelt_launcher_closes_inherited_descriptors() {
     let flags = rustix::io::fcntl_getfd(&listener).expect("descriptor flags");
     rustix::io::fcntl_setfd(&listener, rustix::io::FdFlags::empty())
         .expect("make descriptor inheritable");
-    let script = format!(
-        "import os,sys\ntry:\n os.fstat({descriptor})\nexcept OSError:\n sys.exit(0)\nsys.exit(71)"
-    );
+    let script = "if (eval \": <&$1\") 2>/dev/null; then exit 71; fi";
     let started = start(
         fixture.request("macos-descriptors"),
         command(
-            "/usr/bin/python3",
-            [OsString::from("-c"), OsString::from(script)],
+            "/bin/sh",
+            [
+                OsString::from("-c"),
+                OsString::from(script),
+                OsString::from("crucible-test"),
+                OsString::from(descriptor.to_string()),
+            ],
         ),
     );
     rustix::io::fcntl_setfd(&listener, flags).expect("restore descriptor flags");
