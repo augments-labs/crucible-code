@@ -4,10 +4,10 @@ on:
 permissions:
   contents: read
 jobs:
-  macos-signature-calibration:
-    name: macOS self signature effect calibration (Intel)
+  macos-foreign-signature:
+    name: macOS controlled foreign signature effect (Intel)
     runs-on: macos-15-intel
     timeout-minutes: 3
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - run: sh .github/probes/macos-signature-calibration.sh
+      - run: sh .github/probes/macos-foreign-signature.sh
