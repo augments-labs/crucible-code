@@ -4,13 +4,16 @@ name: native-sandbox-experiment
 permissions:
   contents: read
 jobs:
-  windows-availability:
-    name: Windows 11 ARM native primitive availability
-    runs-on: windows-11-arm
-    timeout-minutes: 4
+  macos-uid-race:
+    name: macOS UID late-creator challenge (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15-intel, macos-26]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 8
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         persist-credentials: false
-    - shell: pwsh
-      run: .github/probes/windows-native-availability.ps1
+    - run: sh .github/probes/macos-uid-race.sh
