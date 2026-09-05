@@ -90,6 +90,13 @@ static int operation(const char *name, const char *root, const char *outside) {
     }
     if(!strcmp(name,"protected-replace")) { path(a,root,"rw/plain"); path(b,root,"rw/nested/.git/config"); return rename(a,b); }
     if(!strcmp(name,"readonly-write")) { path(a,root,"ro/payload"); return open(a,O_WRONLY); }
+    if(!strcmp(name,"protected-read")) { path(a,root,"rw/nested/.git/config"); return open(a,O_RDONLY); }
+    if(!strcmp(name,"protected-case-write")) { path(a,root,"rw/NESTED/.GIT/CONFIG"); return open(a,O_WRONLY); }
+    if(!strcmp(name,"protected-case-rename")) { path(a,root,"rw/nested/.git"); path(b,root,"rw/nested/.GIT"); return rename(a,b); }
+    if(!strcmp(name,"unreadable-create-case")) { path(a,root,"rw/ABSENT-SECRET"); return open(a,O_CREAT|O_EXCL|O_WRONLY,0600); }
+    if(!strcmp(name,"unreadable-rename-case")) { path(a,root,"rw/plain"); path(b,root,"rw/ABSENT-SECRET"); return rename(a,b); }
+    if(!strcmp(name,"unreadable-mkdir-case")) { path(a,root,"rw/ABSENT-SECRET"); return mkdir(a,0700); }
+    if(!strcmp(name,"ordinary-exec")) { path(a,root,"rw/native-worker"); execl(a,a,"identity",NULL); return -1; }
     if(!strcmp(name,"protected-write")) { path(a,root,"rw/nested/.git/config"); return open(a,O_WRONLY); }
     if(!strcmp(name,"protected-unlink")) { path(a,root,"rw/nested/.git/config"); return unlink(a); }
     if(!strcmp(name,"protected-rename")) { path(a,root,"rw/nested/.git"); path(b,root,"rw/moved-git"); return rename(a,b); }
@@ -111,7 +118,7 @@ static int operation(const char *name, const char *root, const char *outside) {
 int main(int argc,char **argv) {
     setvbuf(stdout,NULL,_IONBF,0);
     if(argc==2 && !strcmp(argv[1],"empty")) { empty_uid(); return 0; }
-    if(argc==2 && !strcmp(argv[1],"identity")) { alarm(10); identity(); puts("SETUID-REFUSED"); return 0; }
+    if(argc==2 && !strcmp(argv[1],"identity")) { alarm(10); identity(); puts("IDENTITY-STABLE"); return 0; }
     if(argc==3 && !strcmp(argv[1],"flags")) {
         struct statfs fs; if(statfs(argv[2],&fs)) fail("statfs");
         printf("FLAGS nosuid=%d nodev=%d readonly=%d\n",!!(fs.f_flags&MNT_NOSUID),!!(fs.f_flags&MNT_NODEV),!!(fs.f_flags&MNT_RDONLY));
@@ -123,7 +130,7 @@ int main(int argc,char **argv) {
     puts("GUEST entered");
     alarm(10); identity();
     errno=0; int result=operation(argv[3],argv[4],argv[5]); int error=errno;
-    int allow=!strcmp(argv[2],"control") || !strcmp(argv[3],"allowed-read") || !strcmp(argv[3],"allowed-write");
+    int allow=!strcmp(argv[2],"control") || !strcmp(argv[3],"allowed-read") || !strcmp(argv[3],"allowed-write") || !strcmp(argv[3],"protected-read") || !strcmp(argv[3],"ordinary-exec");
     if(!strcmp(argv[3],"device")) allow=0;
     /* setuid success replaces this process; only refusal to exec reaches here. */
     printf("CASE mode=%s name=%s result=%d errno=%d expected=%s\n",argv[2],argv[3],result,error,allow?"allow":"deny");

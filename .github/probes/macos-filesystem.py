@@ -83,6 +83,9 @@ def make_case(sequence):
     os.symlink(root / 'rw/nested/.git/config', root / 'rw/protected-alias')
     os.symlink(root / 'rw/secret', root / 'rw/secret-alias')
     os.symlink(outside, root / 'rw/source-alias')
+    shutil.copyfile(worker, root / 'rw/native-worker')
+    os.chown(root / 'rw/native-worker', 60000, 60000)
+    os.chmod(root / 'rw/native-worker', 0o755)
     shutil.copyfile(worker, root / 'rw/setuid-worker')
     os.chown(root / 'rw/setuid-worker', 0, 0)
     os.chmod(root / 'rw/setuid-worker', 0o4755)
@@ -127,9 +130,9 @@ assert len(disks) == 1 and disks[0].startswith('/dev/disk')
 command(['/sbin/mount', '-u', '-o', 'nosuid,nodev', mount])
 command([worker, 'flags', mount])
 operations = ['allowed-read', 'allowed-write', 'source-read', 'source-write', 'sibling-read', 'sibling-write', 'readonly-write',
-              'protected-write', 'protected-replace', 'protected-unlink', 'protected-rename', 'ancestor-rename',
+              'protected-read', 'protected-case-write', 'protected-case-rename', 'protected-write', 'protected-replace', 'protected-unlink', 'protected-rename', 'ancestor-rename',
               'protected-link', 'protected-symlink', 'source-symlink', 'unreadable-read',
-              'unreadable-alias', 'unreadable-case', 'unreadable-create', 'unreadable-rename', 'device', 'setuid']
+              'unreadable-alias', 'unreadable-case', 'unreadable-create', 'unreadable-rename', 'unreadable-create-case', 'unreadable-rename-case', 'unreadable-mkdir-case', 'device', 'setuid', 'ordinary-exec']
 failures = []
 sequence = 0
 for mode in ('control', 'confined'):
