@@ -126,6 +126,106 @@ fn answered() -> Message {
 }
 
 #[test]
+fn native_history_is_descriptive_when_switching_to_a_legacy_protocol_reader() {
+    let (origin, _) = provider(VENDOR, &sse(&events(&output(), true)));
+    let mut history = Transcript::new();
+    history.push(Message::said("first")).unwrap();
+    history.push(answer(&origin, request(&history))).unwrap();
+    history.push(answered()).unwrap();
+    for model in ["gpt-5.6", "claude-opus-5", "k3"] {
+        let replay = Arc::new(Replay::new(200, ""));
+        let credential = Box::new(HeaderKey::new(
+            ApiKey::new("synthetic-foreign-key"),
+            Header::bearer(),
+        ));
+        let transport = Box::new(Arc::clone(&replay));
+        let target: Box<dyn Provider> = match model {
+            "gpt-5.6" => Box::new(OpenAi::at(VENDOR, credential, transport)),
+            "claude-opus-5" => Box::new(crate::Anthropic::at(
+                crate::Anthropic::VENDOR,
+                credential,
+                transport,
+            )),
+            _ => Box::new(crate::Moonshot::at(
+                crate::Moonshot::PLATFORM,
+                credential,
+                transport,
+            )),
+        };
+        target
+            .stream(
+                Request {
+                    model,
+                    ..request(&history)
+                },
+                &Cancel::new(),
+            )
+            .unwrap();
+        let sent = replay.sent();
+        assert!(!sent.body.contains("private"));
+        let body: Value = serde_json::from_str(&sent.body).unwrap();
+        let messages = body
+            .get("input")
+            .or_else(|| body.get("messages"))
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert!(
+            messages
+                .iter()
+                .all(|message| message.get("role") == Some(&json!("user"))),
+            "foreign history was framed as native calls for {model}"
+        );
+        assert!(sent.body.contains("Historical tool request"));
+        assert!(sent.body.contains("Historical tool results"));
+    }
+}
+
+#[test]
+fn astra_known_usage_fields_reject_malformed_shapes_before_retaining_state() {
+    for usage in [
+        json!("private-not-usage"),
+        json!({"input_tokens":"private-not-a-count"}),
+        json!({"output_tokens":-1}),
+        json!({"total_tokens":1.5}),
+        json!({"input_tokens_details":[]}),
+        json!({"input_tokens_details":{"cached_tokens":true}}),
+        json!({"input_tokens_details":{"cache_write_tokens":"private-not-a-count"}}),
+        json!({"output_tokens_details":{"reasoning_tokens":{}}}),
+    ] {
+        let mut fixture = events(&output(), true);
+        fixture
+            .last_mut()
+            .unwrap()
+            .get_mut("response")
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .insert("usage".into(), usage);
+        let (provider, _) = provider(VENDOR, &sse(&fixture));
+        let transcript = Transcript::new();
+        let mut stream = provider
+            .stream(request(&transcript), &Cancel::new())
+            .unwrap();
+        let mut error = None;
+        while let Some(delta) = stream.next() {
+            match delta {
+                Err(problem) => {
+                    error = Some(problem);
+                    break;
+                }
+                Ok(Delta::Continuation(_)) => {
+                    panic!("malformed usage must not retain continuation")
+                }
+                _ => {}
+            }
+        }
+        let error = error.expect("malformed known usage field must fail");
+        assert!(!format!("{error:?} {error}").contains("private-not"));
+    }
+}
+
+#[test]
 fn astra_effort_changes_preserve_the_request_prefix_and_replay_update_positions() {
     for initial in [None, Some(Effort::Low)] {
         let (provider, replay) = provider(VENDOR, &sse(&events(&output(), true)));

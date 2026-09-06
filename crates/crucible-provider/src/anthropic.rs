@@ -13,6 +13,10 @@
 //! against recorded bytes.
 
 mod body;
+mod continuation;
+#[cfg(test)]
+mod continuation_tests;
+mod diagnostics;
 mod stream;
 mod wire;
 
@@ -39,6 +43,7 @@ const VENDOR: Endpoint = Endpoint::fixed("https://api.anthropic.com/v1/messages"
 /// The API version this speaks. Anthropic pins behaviour to it, so a new one is
 /// a deliberate change here rather than something that drifts.
 const VERSION: &str = "2023-06-01";
+pub(super) const FABLE_51: &str = "claude-fable-5-1";
 
 const ANTHROPIC_CACHE_CONTENT: &[PromptCacheContent] = &[
     PromptCacheContent::Text,
@@ -59,6 +64,7 @@ const ANTHROPIC_RETENTIONS: &[PromptCacheRetentionClass] = &[
 
 const USD: PricingCurrency = PricingCurrency::new("USD");
 const PRICING_REVIEWED: PricingDate = PricingDate::new(2026, 8, 31);
+const FABLE_51_REVIEWED: PricingDate = PricingDate::new(2026, 9, 6);
 const PRICING_SOURCE: &str = "https://platform.claude.com/docs/en/about-claude/pricing";
 
 const fn anthropic_rates(input: u64, read: u64, write: u64, output: u64) -> PromptCacheRates {
@@ -111,11 +117,17 @@ impl Anthropic {
     }
 
     /// The headers every request carries, including the secret.
-    fn headers(&self) -> Result<Outgoing, ProviderError> {
+    fn headers(&self, model: &str) -> Result<Outgoing, ProviderError> {
         let mut outgoing = Outgoing::new();
         outgoing.set_header("content-type", "application/json");
         outgoing.set_header("anthropic-version", VERSION);
         outgoing.set_header("accept", "text/event-stream");
+        if model == FABLE_51 {
+            outgoing.set_header(
+                "anthropic-beta",
+                "thinking-binding-controls-2026-08-01,mid-conversation-output-config-2026-07-01",
+            );
+        }
 
         self.credential
             .authorize(&mut outgoing)
@@ -150,6 +162,7 @@ impl Provider for Anthropic {
             return PromptCacheCapabilities::unknown("custom endpoint");
         }
         let (minimum, revision) = match model {
+            FABLE_51 => (512, FABLE_51),
             "claude-fable-5" => (512, "claude-fable-5"),
             "claude-opus-5" => (512, "claude-opus-5"),
             "claude-sonnet-5" => (1_024, "claude-sonnet-5"),
@@ -170,13 +183,18 @@ impl Provider for Anthropic {
             ANTHROPIC_CACHE_CONTENT,
         )
         .with_retentions(ANTHROPIC_RETENTIONS);
+        let (date, version) = if model == FABLE_51 {
+            ("2026-09-06", "anthropic-prompt-cache-2026-09-06")
+        } else {
+            ("2026-08-31", "anthropic-prompt-cache-2026-08-31")
+        };
         PromptCacheCapabilities::supported(
-            "anthropic-prompt-cache-2026-08-31",
+            version,
             Some(revision),
             PromptCacheProvenance::new(
                 "https://platform.claude.com/docs/en/build-with-claude/prompt-caching",
-                "2026-08-31",
-                "anthropic-prompt-cache-2026-08-31",
+                date,
+                version,
             ),
             StatefulTransportCapability::Unsupported,
             &[automatic, explicit],
@@ -192,7 +210,12 @@ impl Provider for Anthropic {
         retention: PromptCacheRetentionClass,
         at: PricingDate,
     ) -> Result<Option<PromptCachePricing>, PricingError> {
-        if self.endpoint != VENDOR || at < PRICING_REVIEWED || input_tokens.is_none() {
+        let reviewed = if model == FABLE_51 {
+            FABLE_51_REVIEWED
+        } else {
+            PRICING_REVIEWED
+        };
+        if self.endpoint != VENDOR || at < reviewed || input_tokens.is_none() {
             return Ok(None);
         }
         if !matches!(
@@ -205,6 +228,15 @@ impl Provider for Anthropic {
         }
         let (model, resolved_revision, input, read, short_write, extended_write, output) =
             match (model, revision) {
+                (FABLE_51, Some(FABLE_51)) => (
+                    FABLE_51,
+                    FABLE_51,
+                    10_000_000_000,
+                    250_000_000,
+                    12_500_000_000,
+                    20_000_000_000,
+                    50_000_000_000,
+                ),
                 ("claude-fable-5", Some("claude-fable-5")) => (
                     "claude-fable-5",
                     "claude-fable-5",
@@ -255,8 +287,12 @@ impl Provider for Anthropic {
                 "https://api.anthropic.com/v1/messages",
                 model,
                 Some(resolved_revision),
-                PRICING_REVIEWED,
-                if extended {
+                reviewed,
+                if model == FABLE_51 && extended {
+                    "anthropic-direct-1h-2026-09-06"
+                } else if model == FABLE_51 {
+                    "anthropic-direct-5m-2026-09-06"
+                } else if extended {
                     "anthropic-direct-1h-2026-08-31"
                 } else {
                     "anthropic-direct-5m-2026-08-31"
@@ -297,9 +333,11 @@ impl Provider for Anthropic {
             return Err(ProviderError::Cancelled(NAME));
         }
 
-        let outgoing = self.headers()?;
+        let outgoing = self.headers(request.model)?;
         let redactions = outgoing.redactions();
-        let body = body::serialize(&request);
+        let scope =
+            crucible_core::ContinuationScope::new(self.credential_scope, self.endpoint.as_str());
+        let body = body::serialize(&request, (request.model == FABLE_51).then_some(scope))?;
 
         let response = self
             .transport
@@ -307,19 +345,19 @@ impl Provider for Anthropic {
             .map_err(|problem| problem.for_provider(NAME).redacted(&redactions))?;
 
         if response.status != 200 {
-            return Err(refused(
-                NAME,
-                response.status,
-                response.body,
-                &redactions,
-                cancel,
-            ));
+            let error = refused(NAME, response.status, response.body, &redactions, cancel);
+            return Err(if request.model == FABLE_51 {
+                diagnostics::refusal(error)
+            } else {
+                error
+            });
         }
 
-        Ok(Box::new(Stream::new(
+        Ok(Box::new(Stream::with_wire(
             response.body,
             cancel.clone(),
             redactions,
+            wire::Messages::for_request(request.model, scope, request.effort)?,
         )))
     }
 }
@@ -351,6 +389,72 @@ mod tests {
             ),
             replay,
         )
+    }
+
+    #[test]
+    fn fable_51_requests_use_adaptive_prefix_binding_for_every_effort_and_omission() {
+        use crucible_core::{Effort, RequestPurpose};
+        use serde_json::{Value, json};
+        let (provider, replay) = provider(200, ANSWER);
+        let mut transcript = Transcript::new();
+        transcript.push(Message::said("hello")).unwrap();
+        for effort in [
+            None,
+            Some(Effort::Low),
+            Some(Effort::Medium),
+            Some(Effort::High),
+            Some(Effort::Xhigh),
+            Some(Effort::Max),
+        ] {
+            provider
+                .stream(
+                    Request {
+                        model: "claude-fable-5-1",
+                        purpose: RequestPurpose::Turn,
+                        transcript: &transcript,
+                        tools: &[],
+                        max_tokens: 8192,
+                        system: None,
+                        effort,
+                        attached: &[],
+                        prompt_cache: None,
+                    },
+                    &Cancel::new(),
+                )
+                .unwrap();
+            let sent = replay.sent();
+            assert_eq!(sent.url, "https://api.anthropic.com/v1/messages");
+            let body: Value = serde_json::from_str(&sent.body).unwrap();
+            assert_eq!(
+                body.get("model").and_then(Value::as_str),
+                Some("claude-fable-5-1")
+            );
+            assert_eq!(
+                body.get("thinking"),
+                Some(&json!({
+                    "type":"adaptive", "block_binding":{"prefix_mismatch_behavior":"drop_block"}
+                }))
+            );
+            assert_eq!(
+                body.pointer("/output_config/effort")
+                    .and_then(Value::as_str),
+                effort.map(Effort::as_str)
+            );
+            assert!(body.get("tool_choice").is_none());
+            assert_eq!(body.get("max_tokens").and_then(Value::as_u64), Some(8192));
+            assert!(sent.headers.iter().any(|(key, value)| {
+                key == "anthropic-beta"
+                    && value
+                        .split(',')
+                        .any(|part| part.trim() == "thinking-binding-controls-2026-08-01")
+            }));
+            assert!(
+                sent.headers
+                    .iter()
+                    .all(|(key, _)| !key.eq_ignore_ascii_case("authorization"))
+            );
+            assert!(!sent.body.contains(SECRET));
+        }
     }
 
     #[test]

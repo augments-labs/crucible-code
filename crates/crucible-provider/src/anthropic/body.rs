@@ -9,10 +9,13 @@
 //! builds a request may be one bad assumption away from taking the process
 //! down.
 
+mod effort;
+mod replay;
+
 use crucible_core::{
-    Attached, Content, Message, Modality, PromptCacheBoundary, PromptCacheEncoding,
-    PromptCacheIneligibleReason, PromptCacheMechanism, PromptCacheRetentionClass, Request,
-    StopReason, ToolResult, ToolSchema,
+    Attached, Content, ContinuationScope, Message, Modality, PromptCacheBoundary,
+    PromptCacheEncoding, PromptCacheIneligibleReason, PromptCacheMechanism,
+    PromptCacheRetentionClass, ProviderError, Request, StopReason, ToolResult, ToolSchema,
 };
 use serde_json::Value;
 #[cfg(test)]
@@ -21,20 +24,41 @@ use serde_json::json;
 use crate::json::{Array, Json, Object, described, object};
 
 /// The whole request body.
-pub(super) fn serialize(request: &Request<'_>) -> String {
+pub(super) fn serialize(
+    request: &Request<'_>,
+    scope: Option<ContinuationScope>,
+) -> Result<String, ProviderError> {
     let automatic = automatic_retention(request);
     let explicit = explicit_placement(request);
+    let mut efforts = scope
+        .filter(|_| request.purpose == crucible_core::RequestPurpose::Turn)
+        .map(|scope| effort::Efforts::new(request, scope))
+        .transpose()?;
+    let initial_effort = efforts
+        .as_ref()
+        .map_or(request.effort, effort::Efforts::initial);
     let mut json = Json::new();
+    let mut outcome = Ok(());
     json.object(|body| {
         body.text("model", request.model);
         body.number("max_tokens", request.max_tokens);
         body.boolean("stream", true);
+        if request.model == super::FABLE_51 {
+            // Intentional system/tool/history edits must not strand a session
+            // on prefix-bound thinking. Unchanged blocks remain usable.
+            body.object("thinking", |thinking| {
+                thinking.text("type", "adaptive");
+                thinking.object("block_binding", |binding| {
+                    binding.text("prefix_mismatch_behavior", "drop_block");
+                });
+            });
+        }
 
         if let Some(retention) = automatic {
             write_cache_control(body, retention);
         }
         body.array("messages", |messages| {
-            write_messages(messages, request, explicit);
+            outcome = write_messages(messages, request, explicit, scope, efforts.as_mut());
         });
 
         // Absent rather than null: the API rejects a null system prompt, and a
@@ -58,7 +82,7 @@ pub(super) fn serialize(request: &Request<'_>) -> String {
         // that reason and refused by the ones that do not, so sending it unasked
         // would turn "I never touched effort" into a 400 on whichever of them is
         // not on the list this week.
-        if let Some(effort) = request.effort {
+        if let Some(effort) = initial_effort {
             body.object("output_config", |config| {
                 config.text("effort", effort.as_str());
             });
@@ -80,7 +104,7 @@ pub(super) fn serialize(request: &Request<'_>) -> String {
             });
         }
     });
-    json.finish()
+    outcome.map(|()| json.finish())
 }
 
 /// The cache metadata [`serialize`] adds for this exact request.
@@ -147,6 +171,15 @@ fn explicit_placement(request: &Request<'_>) -> Option<ExplicitPlacement> {
         .boundaries()
         .iter()
         .rev()
+        .filter(|point| {
+            // Thinking cannot carry an explicit cache marker. A Fable response
+            // may contain nothing else, so use an earlier legal boundary and
+            // report only the marker the serializer can actually write.
+            request.model != super::FABLE_51 || !point.message()
+                .and_then(|index| usize::try_from(index).ok())
+                .and_then(|index| request.transcript.messages().get(index))
+                .is_some_and(|message| matches!(message, Message::Agent { text, calls, .. } if text.is_empty() && calls.is_empty()))
+        })
         .find(|point| capability.boundaries().contains(&point.kind()))
         .and_then(|point| match point.kind() {
             PromptCacheBoundary::AfterSystem => request
@@ -180,7 +213,8 @@ fn write_cache_control(parent: &mut Object<'_>, retention: PromptCacheRetentionC
 
 #[cfg(test)]
 fn build(request: &Request<'_>) -> Value {
-    serde_json::from_str(&serialize(request)).expect("request body is JSON")
+    serde_json::from_str(&serialize(request, None).expect("valid legacy request"))
+        .expect("request body is JSON")
 }
 
 /// Every message that has something in it, in order.
@@ -188,13 +222,64 @@ fn write_messages(
     messages: &mut Array<'_>,
     request: &Request<'_>,
     explicit: Option<ExplicitPlacement>,
-) {
+    scope: Option<ContinuationScope>,
+    mut efforts: Option<&mut effort::Efforts<'_>>,
+) -> Result<(), ProviderError> {
+    let mut pending: Option<std::collections::BTreeSet<&str>> = None;
+    let mut history = crate::history::LegacyHistory::default();
     for (nth, message) in request.transcript.messages().iter().enumerate() {
+        if let Some(efforts) = efforts.as_mut() {
+            efforts.before(messages, nth, message)?;
+        }
         let retention = match explicit {
             Some(ExplicitPlacement::Message(target, retention)) if target == nth => Some(retention),
             _ => None,
         };
-        if request.purpose == crucible_core::RequestPurpose::Recap {
+        let mut neutral = request.purpose == crucible_core::RequestPurpose::Recap
+            || (scope.is_none() && history.neutral(message));
+        if !neutral && let Some(scope) = scope {
+            if !matches!(message, Message::ToolResults(_)) {
+                replay::answered(pending.as_ref())?;
+            }
+            match message {
+                Message::Agent {
+                    text,
+                    calls,
+                    continuation,
+                    ..
+                } => {
+                    pending = None;
+                    if let Some(state) = continuation
+                        .as_ref()
+                        .filter(|state| replay::compatible(state, scope))
+                    {
+                        replay::Agent { state, text, calls }.write(
+                            messages,
+                            request.transcript.prefix_rewritten(nth),
+                            retention,
+                        )?;
+                        pending = Some(calls.iter().map(|call| call.id.as_str()).collect());
+                        continue;
+                    }
+                    neutral = true;
+                }
+                Message::ToolResults(results) => {
+                    if let Some(waiting) = pending.as_mut() {
+                        for result in results {
+                            if !waiting.remove(result.id.as_str()) {
+                                return Err(super::continuation::problem(
+                                    "tool result does not match an unanswered call",
+                                ));
+                            }
+                        }
+                    } else {
+                        neutral = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if neutral {
             messages.object(|item| {
                 item.text("role", "user");
                 if let Some(retention) = retention {
@@ -214,6 +299,7 @@ fn write_messages(
         }
         write_message(messages, message, nth, request.attached, retention);
     }
+    replay::answered(pending.as_ref())
 }
 
 /// One message, unless it would carry no content.
@@ -473,6 +559,10 @@ fn write_tool(
 
 #[cfg(test)]
 mod tests {
+    fn serialize(request: &crucible_core::Request<'_>) -> String {
+        super::serialize(request, None).expect("valid legacy request")
+    }
+
     use crucible_core::{
         Attached, Change, Changed, Content, Diff, Effort, Fragment, Line, Modality, ToolArgs,
         ToolCall, ToolId, ToolOutput, Transcript,

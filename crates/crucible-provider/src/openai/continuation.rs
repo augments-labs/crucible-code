@@ -169,7 +169,7 @@ impl Output {
             "response.completed" => return self.completed(&value),
             "response.incomplete" => {
                 self.stopped = true;
-                deltas.extend(super::wire::usage(&value, true)?);
+                deltas.extend(usage(&value)?);
                 deltas.push(Delta::Stopped(super::wire::cut(&value)));
             }
             "response.failed" | "error" => {
@@ -514,7 +514,7 @@ impl Output {
             return Err(problem("terminal output contradicts completed items"));
         }
         let mut deltas = Vec::new();
-        deltas.extend(super::wire::usage(value, true)?);
+        deltas.extend(usage(value)?);
         let stop = if self.calls.is_empty() {
             StopReason::Yielded
         } else {
@@ -659,6 +659,42 @@ pub(super) fn validate(value: &Value) -> Result<(), ProviderError> {
         }
         "web_search_call" => {}
         _ => return Err(problem("unsupported response item type")),
+    }
+    Ok(())
+}
+
+fn usage(value: &Value) -> Result<Option<Delta>, ProviderError> {
+    if let Some(usage) = value
+        .pointer("/response/usage")
+        .filter(|value| !value.is_null())
+    {
+        counts(usage, &["input_tokens", "output_tokens", "total_tokens"])?;
+        for (field, names) in [
+            (
+                "input_tokens_details",
+                &["cached_tokens", "cache_write_tokens"][..],
+            ),
+            ("output_tokens_details", &["reasoning_tokens"][..]),
+        ] {
+            if let Some(details) = usage.get(field).filter(|value| !value.is_null()) {
+                counts(details, names)?;
+            }
+        }
+    }
+    super::wire::usage(value, true)
+}
+
+fn counts(value: &Value, names: &[&str]) -> Result<(), ProviderError> {
+    let fields = value
+        .as_object()
+        .ok_or_else(|| problem("invalid usage object"))?;
+    for name in names {
+        if fields
+            .get(*name)
+            .is_some_and(|value| !value.is_null() && value.as_u64().is_none())
+        {
+            return Err(problem("invalid usage count"));
+        }
     }
     Ok(())
 }

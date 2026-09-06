@@ -206,8 +206,9 @@ fn served(request: &Request<'_>, serving: Serving) -> Value {
 
 /// The transcript, as the flat list of items this endpoint reads.
 fn write_input(items: &mut Array<'_>, request: &Request<'_>, explicit_message: Option<usize>) {
+    let mut history = crate::history::LegacyHistory::default();
     for (nth, message) in request.transcript.messages().iter().enumerate() {
-        if request.purpose == crucible_core::RequestPurpose::Recap {
+        if history.neutral(message) || request.purpose == crucible_core::RequestPurpose::Recap {
             items.object(|item| {
                 item.text("role", "user");
                 if explicit_message == Some(nth) {

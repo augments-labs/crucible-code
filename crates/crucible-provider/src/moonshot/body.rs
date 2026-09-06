@@ -108,6 +108,7 @@ fn build(request: &Request<'_>) -> Value {
 /// the model may answer the instructions rather than obey them — and it is the
 /// one this endpoint offers.
 fn write_messages(messages: &mut Array<'_>, request: &Request<'_>) {
+    let mut history = crate::history::LegacyHistory::default();
     if let Some(system) = request.system {
         messages.object(|message| {
             message.text("role", "system");
@@ -116,7 +117,7 @@ fn write_messages(messages: &mut Array<'_>, request: &Request<'_>) {
     }
 
     for (nth, message) in request.transcript.messages().iter().enumerate() {
-        if request.purpose == crucible_core::RequestPurpose::Recap {
+        if history.neutral(message) || request.purpose == crucible_core::RequestPurpose::Recap {
             messages.object(|item| {
                 item.text("role", "user");
                 item.text_with("content", |write| crate::history::visible(message, write));

@@ -6,6 +6,27 @@
 
 use crucible_core::{Message, StopReason};
 
+/// Older wire readers have no native continuation decoder. Preserve their
+/// existing unsigned history, but describe a foreign native answer and all of
+/// its following tool results rather than asserting that this model made it.
+#[derive(Default)]
+pub(crate) struct LegacyHistory {
+    foreign_results: bool,
+}
+
+impl LegacyHistory {
+    pub(crate) fn neutral(&mut self, message: &Message) -> bool {
+        match message {
+            Message::Agent { continuation, .. } => {
+                self.foreign_results = continuation.is_some();
+                self.foreign_results
+            }
+            Message::ToolResults(_) => self.foreign_results,
+            Message::User { .. } | Message::Context(_) => false,
+        }
+    }
+}
+
 pub(crate) fn visible(message: &Message, write: &mut dyn FnMut(&str)) {
     match message {
         Message::Context(fragment) => {
