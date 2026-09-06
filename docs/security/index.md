@@ -1,7 +1,7 @@
 # Security
 
 - [Operating-system confinement](sandboxing.md) — the `bash` process boundary,
-  backend capability matrix, compatibility modes, inspection and limits.
+  backend capability matrix, disabled confinement, inspection and limits.
 - [Permissions](../permissions/index.md) — which operations may be attempted.
 
 Permission and confinement answer different questions: permission decides

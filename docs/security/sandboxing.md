@@ -439,7 +439,7 @@ asked what it settled on, and dropped. Nothing is materialized and nothing is
 spawned.
 
 ```
-sandbox required in /home/you/project
+sandbox enabled in /home/you/project
   backend   linux-bubblewrap bubblewrap 0.11.1, system
   build     sha256:0abea81db798ebf6b4742ac0664802d97521547a353c2a0dbdc21d76cbbfd2c0
 
@@ -452,7 +452,7 @@ what this backend can hold:
   usage                 observed
 
 what a command would run under:
-  mode      required
+  enabled   true
   cwd       sha256:1e3ffb52af5c198fe9cc1d10392d3a4160db588bedefa3a7e740dbc2fc84d9af
   reach     4 places, named by digest
     read_write  workspace           sha256:d6407f95fd7d98352f3068e2dbdf96c0bef1fc9147c28a70ac2c2dfb2ecdd169
@@ -466,7 +466,6 @@ what a command would run under:
   outlives  no
   snapshots no
   confined  yes
-  gave up   nothing
   cleanup   pending; nothing was run and nothing was staged
   policy    sha256:51d8eb2751c012e44f287582830e063f5d960ef3cc896960e3555f84c90520d5
   manifest  sha256:72c169df3655f6857b163163b2618631ec65982557eea70b57ea1cb983ae0890

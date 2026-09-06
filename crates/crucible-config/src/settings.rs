@@ -52,7 +52,7 @@ pub struct Settings {
     /// intersection this security boundary requires.
     prompt_cache: PromptCachePolicy,
 
-    /// Host confinement mode, disabled unless configured and weakened only by
+    /// Host confinement enablement, disabled unless configured and weakened only by
     /// a user-originated layer.
     sandbox: bool,
     /// Every layer's rules together. Held apart from the value because a rule

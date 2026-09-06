@@ -133,7 +133,7 @@ pub(crate) fn journal(item: &RunItem) -> Option<String> {
         }),
     };
 
-    let line = json!({ "run_item": { "version": 1, "body": body } }).to_string();
+    let line = json!({ "run_item": { "version": 2, "body": body } }).to_string();
     (line.len() <= MAX_RUN_ITEM_BYTES).then_some(line)
 }
 
@@ -1252,7 +1252,7 @@ mod tests {
         let written = journal(&item).expect("bounded journal metadata");
 
         assert!(journaled(&written));
-        assert!(written.contains(r#""version":1"#));
+        assert!(written.contains(r#""version":2"#));
         assert!(written.contains(r#""kind":"message""#));
         assert!(!written.contains("prompt-plaintext-canary"));
         assert!(message(&written).is_none());
@@ -1340,6 +1340,10 @@ mod tests {
 
         assert!(written.contains(r#""kind":"sandbox""#));
         let value: serde_json::Value = serde_json::from_str(&written).unwrap();
+        assert_eq!(
+            value.pointer("/run_item/version"),
+            Some(&serde_json::json!(2))
+        );
         for name in ["requested_plan", "effective_plan"] {
             let plan = value
                 .pointer(&format!("/run_item/body/fact/{name}"))

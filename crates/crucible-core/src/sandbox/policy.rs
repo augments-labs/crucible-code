@@ -1311,6 +1311,29 @@ mod tests {
     }
 
     #[test]
+    fn policy_identity_versions_boolean_enablement() {
+        let rules = vec![rule("/workspace", SandboxFilesystemAccess::ReadWrite)];
+        let disabled = policy(false, rules.clone());
+        let enabled = policy(true, rules);
+        assert_ne!(disabled.digest(), enabled.digest());
+        // Fixed vectors bind the persisted identity to the v2 domain and to
+        // enablement even when all filesystem and resource limits are equal.
+        for (policy, expected) in [
+            (
+                disabled,
+                "842034099768d0182c014f30178b768be61d9d79d8c133e7ad09dd50acecb1d9",
+            ),
+            (
+                enabled,
+                "0c087a9983c6d5baeb62fa6791ded47fe999f8ef105d47a7d09a920091076f36",
+            ),
+        ] {
+            let actual = policy.digest().map(|byte| format!("{byte:02x}")).concat();
+            assert_eq!(actual, expected);
+        }
+    }
+
+    #[test]
     fn disabling_confinement_removes_only_its_kernel_ceilings() {
         // Memory is not one of the ceilings `confining` states, so a policy
         // that only used those could not tell whether `with_enabled` took it off

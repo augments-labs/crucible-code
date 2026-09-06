@@ -1069,7 +1069,7 @@ configuration with `{"sandbox":{"enabled":true}}`. On Linux this requires a
 verified Bubblewrap boundary with closed networking and only the declared
 filesystem view. An unavailable enforcing backend refuses execution. See
 [Operating-system confinement](../security/sandboxing.md) for the exact
-capability matrix and the explicitly unconfined compatibility modes.
+capability matrix and behavior with confinement disabled.
 
 `todo_write` is the one that reaches nothing at all. It puts down the plan the
 agent is working to — a list of at most 64 tasks, each of them a line, each one

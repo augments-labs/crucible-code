@@ -272,7 +272,7 @@ home configuration leaves commands unconfined by the operating system.
 Permissions, sensitive-call approval, environment filtering, deadlines, output
 bounds and lifecycle accounting still apply.
 
-`enabled: true` resolves to `required`: every requested hard boundary must be
+With `enabled: true`, every requested hard boundary must be
 enforced before a command starts. It never silently falls back to an ordinary
 subprocess. Linux uses Bubblewrap 0.11.0 or newer with the required features.
 macOS uses the built-in Seatbelt framework through the fixed system
@@ -291,7 +291,7 @@ set `enabled: true`, which strengthens the user choice regardless of document
 order. Project `enabled: false` is refused. A project, tool, extension, skill,
 agent, or descendant cannot weaken confinement chosen above it.
 
-Under `required`, Linux applies an hour of processor time per process and a
+When enabled, Linux applies an hour of processor time per process and a
 4096-open-file ceiling. macOS applies the open-file ceiling; Darwin's catchable
 CPU signal is not advertised as a hard limit. Windows applies an hour of
 aggregate Job processor time and has no handle-count ceiling. These ceilings
