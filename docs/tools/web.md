@@ -45,6 +45,9 @@ raw HTML. Neither operation uses a Google subscription login or remote
 interaction history. Incomplete, cancelled or malformed responses yield no
 partial result.
 
+A Google Search answer without usable source citations is reported as a source
+error, not as evidence that the query found no results.
+
 Google Search currently projects citation titles, URLs and cited text into the
 ordinary search-tool result. That text follows normal session storage,
 resumption, compaction and provider-switch behavior. Crucible does not render

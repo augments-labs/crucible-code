@@ -19,9 +19,9 @@ pub(super) fn write(
     request: &Request<'_>,
     scope: ContinuationScope,
 ) -> Result<(), ProviderError> {
-    // Borrow at most the128 IDs already validated by native(), not another
-    // history-sized index. Some(empty) still rejects a duplicate result after
-    // the native group has been fully answered; a foreign Agent resets it.
+    // Borrow at most the 128 IDs already validated by native(), not another
+    // history-sized index. Keep the empty set after answering a local call
+    // group so a later duplicate result is rejected; another Agent resets it.
     let mut pending: Option<BTreeSet<&str>> = None;
     for (nth, message) in request.transcript.messages().iter().enumerate() {
         if request.purpose == RequestPurpose::Turn {
@@ -130,8 +130,17 @@ pub(super) fn attachment(part: &mut Object<'_>, file: &Attached<'_>) -> Result<(
 fn compatible(state: &ProviderContinuation, scope: ContinuationScope, model: &str) -> bool {
     state.protocol() == PROTOCOL
         && state.scope() == scope
-        && state.model().starts_with("gemini-")
-        && model.starts_with("gemini-")
+        && replay_model(state.model())
+        && replay_model(model)
+}
+
+/// These models share the reviewed Interactions step contract. Other names use
+/// neutral history rather than inheriting signed-state compatibility by spelling.
+fn replay_model(model: &str) -> bool {
+    matches!(
+        model,
+        "gemini-3.8-flash" | "gemini-3.7-flash" | "gemini-3.6-flash" | "gemini-3.1-pro-preview"
+    )
 }
 
 fn native(

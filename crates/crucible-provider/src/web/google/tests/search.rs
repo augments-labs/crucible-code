@@ -90,11 +90,11 @@ fn google_search_requires_successful_matching_native_results_and_valid_citations
 }
 
 #[test]
-fn google_search_accepts_empty_results_only_after_a_native_search() {
+fn google_search_never_mistakes_missing_citations_for_zero_hits() {
     let mut steps = searched();
     steps.pop();
     let (source, _) = source(&steps);
-    assert!(source.search("Rust", &Cancel::new()).unwrap().is_empty());
+    assert!(source.search("Rust", &Cancel::new()).is_err());
     let (source, _) = super::source(&searched().into_iter().skip(2).collect::<Vec<_>>());
     assert!(source.search("Rust", &Cancel::new()).is_err());
 }
@@ -157,4 +157,72 @@ fn google_search_bounds_overlapping_citation_extracts_before_copying() {
     *steps.pointer_mut("/2/content/0/annotations").unwrap() = json!(citations);
     let (source, _) = source(steps.as_array().unwrap());
     assert!(source.search("Rust", &Cancel::new()).is_err());
+}
+
+#[test]
+fn google_web_citation_offsets_are_checked_utf8_bytes_for_astral_text() {
+    let text = "🦀 é😀";
+    for fetch in [false, true] {
+        for (start, end, valid) in [
+            (5, 11, true),
+            (0, 0, false),
+            (1, 4, false),
+            (0, 2, false),
+            (5, 6, false),
+            (5, 9, false),
+            (8, 11, false),
+        ] {
+            let mut steps = json!(if fetch {
+                fetched("https://example.com/page")
+            } else {
+                searched()
+            });
+            *steps.pointer_mut("/2/content/0/text").unwrap() = json!(text);
+            *steps
+                .pointer_mut("/2/content/0/annotations/0/start_index")
+                .unwrap() = json!(start);
+            *steps
+                .pointer_mut("/2/content/0/annotations/0/end_index")
+                .unwrap() = json!(end);
+            let (source, _) = source(steps.as_array().unwrap());
+            let result = if fetch {
+                source
+                    .fetch("https://example.com/page", &Cancel::new())
+                    .map(|page| page.text)
+            } else {
+                source
+                    .search("Rust", &Cancel::new())
+                    .map(|found| found.first().unwrap().extract.clone())
+            };
+            assert_eq!(result.is_ok(), valid, "{fetch}: {start}..{end}");
+            if valid {
+                assert_eq!(result.unwrap().as_ref(), if fetch { text } else { "é😀" });
+            }
+        }
+    }
+}
+
+#[test]
+fn google_search_citations_can_follow_multiple_text_deltas() {
+    let mut steps = searched();
+    steps.pop();
+    let mut body = answer(&steps);
+    body.truncate(
+        body.rfind("data: {\"event_type\":\"interaction.completed\"")
+            .unwrap(),
+    );
+    for event in [
+        json!({"event_type":"step.start","index":2,"step":{"type":"model_output","content":[{"type":"text","text":"🦀 "}]}}),
+        json!({"event_type":"step.delta","index":2,"delta":{"type":"text","text":"é"}}),
+        json!({"event_type":"step.delta","index":2,"delta":{"type":"text","text":"😀"}}),
+        json!({"event_type":"step.delta","index":2,"delta":{"type":"text_annotation_delta","annotations":[{"type":"url_citation","url":"https://rust-lang.org/","start_index":5,"end_index":11}]}}),
+        json!({"event_type":"step.stop","index":2}),
+        json!({"event_type":"interaction.completed","interaction":{"status":"completed"}}),
+    ] {
+        write!(body, "data: {event}\n\n").unwrap();
+    }
+    let (source, _) = source_body(200, body);
+    let found = source.search("Rust", &Cancel::new()).unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(&*found.first().unwrap().extract, "é😀");
 }

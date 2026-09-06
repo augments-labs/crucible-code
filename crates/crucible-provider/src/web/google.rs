@@ -86,9 +86,15 @@ impl GoogleWeb {
         let response = self
             .transport
             .post(self.endpoint.as_str(), outgoing, json.finish(), cancel)
-            .map_err(|error| SourceError::Transport {
-                named: NAME,
-                problem: redactions.redact(&error.to_string()).into(),
+            .map_err(|error| {
+                if cancel.requested() || matches!(error, crate::TransportError::Cancelled) {
+                    SourceError::Cancelled(NAME)
+                } else {
+                    SourceError::Transport {
+                        named: NAME,
+                        problem: redactions.redact(&error.to_string()).into(),
+                    }
+                }
             })?;
         if cancel.requested() {
             return Err(SourceError::Cancelled(NAME));

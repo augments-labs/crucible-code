@@ -75,6 +75,45 @@ fn google_search_normalizes_results_and_byte_citations_without_private_payloads(
 mod search;
 
 #[test]
+fn google_web_cancellation_during_request_setup_is_not_a_failed_tool_result() {
+    #[derive(Debug)]
+    struct DuringSetup;
+    impl Transport for DuringSetup {
+        fn post(
+            &self,
+            _: &str,
+            _: Outgoing,
+            _: String,
+            cancel: &Cancel,
+        ) -> Result<crate::Response, crate::TransportError> {
+            cancel.request();
+            Err(crate::TransportError::Cancelled)
+        }
+    }
+    for fetch in [false, true] {
+        let source = GoogleWeb::new(
+            Google::VENDOR,
+            Box::new(HeaderKey::new(
+                ApiKey::new("fixture-only"),
+                Header::bare("x-goog-api-key"),
+            )),
+            Box::new(DuringSetup),
+            "gemini-3.8-flash",
+        );
+        let cancel = Cancel::new();
+        let result = if fetch {
+            source.fetch("https://example.com/", &cancel).map(|_| ())
+        } else {
+            source.search("Rust", &cancel).map(|_| ())
+        };
+        assert!(
+            matches!(result, Err(SourceError::Cancelled("google"))),
+            "{result:?}"
+        );
+    }
+}
+
+#[test]
 fn google_fetch_requires_the_requested_retrieval_and_enables_no_search() {
     let url = "https://example.com/page";
     let (source, replay) = source(&[

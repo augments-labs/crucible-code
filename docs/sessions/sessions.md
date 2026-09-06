@@ -114,7 +114,8 @@ cannot resume format 12 logs.
 Continuation is bound to its producing protocol, model compatibility, credential
 and recipient. A changed key, endpoint or incompatible provider receives visible
 history and descriptive settled tool results, not another scope's native state.
-Google-compatible model switches preserve their native steps; Fable drops older
+Switches among the four bundled Gemini models preserve their native steps;
+other Gemini names use visible history without those private steps. Fable drops older
 thinking when compaction or pruning rewrites its bound prefix. `/clear` starts a
 new log and carries no old continuation.
 

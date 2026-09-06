@@ -10,6 +10,9 @@
 #[path = "provider_lifecycle/support.rs"]
 mod support;
 
+#[path = "provider_lifecycle/google_web.rs"]
+mod google_web;
+
 use crucible_core::{Compacting, Message, Room, Spend, StopReason, Transcript};
 use crucible_runner::Session;
 use support::*;

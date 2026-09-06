@@ -156,3 +156,30 @@ fn incomplete_foreign_and_recap_call_history_stays_neutral_context() {
         );
     }
 }
+
+#[test]
+fn unknown_gemini_names_do_not_make_private_state_compatible() {
+    for model in ["gemini-unknown", "gemini-2.5-flash"] {
+        let mut state = Continuation::new(super::super::PROTOCOL, model, scope()).unwrap();
+        state
+            .push(ContinuationPart::Opaque(
+                ContinuationData::new(
+                    r#"{"type":"thought","signature":"unreviewed-model-private-state"}"#,
+                )
+                .unwrap(),
+            ))
+            .unwrap();
+        let body = serialize(
+            vec![Message::Agent {
+                text: "".into(),
+                calls: vec![],
+                stop: Some(StopReason::Yielded),
+                continuation: Some(state.finish("", 0, Some(StopReason::Yielded)).unwrap()),
+            }],
+            RequestPurpose::Turn,
+            scope(),
+        )
+        .unwrap();
+        assert!(!body.contains("unreviewed-model-private-state"), "{model}");
+    }
+}

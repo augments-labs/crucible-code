@@ -92,6 +92,11 @@ pub(super) fn results(
     if !searched {
         return Err(problem("Google search returned no native results"));
     }
+    if found.is_empty() {
+        // Native grounding without usable citations is not evidence of zero
+        // search hits. Do not turn a failed projection into a factual answer.
+        return Err(problem("Google search returned no usable citations"));
+    }
     Ok(found)
 }
 
