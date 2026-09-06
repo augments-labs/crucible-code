@@ -133,13 +133,13 @@ Naming a provider this build does not have is a startup failure that says which
 ones it has:
 
 ```
-crucible: no provider called gemini; this build has anthropic, moonshot, openai
+crucible: no provider called gemini; this build has anthropic, google, moonshot, openai
 ```
 
 ## How much context is used
 
 A model's native maximum is not necessarily the session's context window.
-Without an explicit configuration, the window is 200,000 tokens for Anthropic,
+Without an explicit configuration, the window is 200,000 tokens for Anthropic and Google,
 272,000 for OpenAI, and 262,144 for Moonshot. A model with a smaller native limit
 stays smaller. The compaction reserve is separate and is subtracted when deciding
 whether another exchange fits.
@@ -236,6 +236,35 @@ model it has never heard of — one released since, or one typed rather than
 picked — is offered all five. What a stale entry costs is a missing row in a
 panel, never a refusal from the program that is not the one serving the model.
 
+Google is the encoder-level exception: its Interactions requests support
+`low`, `medium` and `high`, and reject `xhigh` or `max` before sending HTTP.
+A typed model switch to Google refuses an incompatible inherited effort without
+changing the current model. Pick a supported rung in `/model`, or change the
+current effort first. Nothing is silently mapped to a different rung.
+
+### New reasoning models
+
+| Provider | Exact model name | Offered effort |
+| --- | --- | --- |
+| Google | `gemini-3.8-flash` | low, medium, high |
+| Google | `gemini-3.7-flash` | low, medium, high |
+| Google | `gemini-3.6-flash` | low, medium, high |
+| Google | `gemini-3.1-pro-preview` | low, medium, high |
+| Anthropic | `claude-fable-5-1` | low, medium, high, xhigh, max |
+| OpenAI | `gpt-6-astra` | low, medium, high, xhigh, max |
+
+No configured effort means no effort field. Fable 5.1 still uses adaptive
+thinking, including the documented preserved-thinking and per-message effort
+controls. Preserved thinking requires a compatible Anthropic workspace data
+retention setting; consult [Anthropic's preserved-thinking guide](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking).
+Crucible does not change workspace retention on your behalf.
+
+Astra preserves ordered Responses reasoning, messages and function calls. Its
+documented effort updates are kept at their original user-message boundaries;
+when an unset effort or unsupported boundary cannot be represented by that
+mechanism, Crucible uses ordinary request-level effort instead of inventing a
+default. See [OpenAI reasoning](https://developers.openai.com/api/docs/guides/reasoning).
+
 ## Keys
 
 A key is read at startup and goes no further than the header it signs a request
@@ -244,6 +273,7 @@ with. Which variable is read follows from the provider:
 | Provider | Variable | Sent as |
 | --- | --- | --- |
 | `anthropic` | `ANTHROPIC_API_KEY` | `x-api-key` |
+| `google` | `GEMINI_API_KEY` | `x-goog-api-key` |
 | `moonshot` | `MOONSHOT_API_KEY` | `authorization: Bearer …` |
 | `openai` | `OPENAI_API_KEY` | `authorization: Bearer …` |
 
@@ -373,7 +403,14 @@ never allowed to receive either token.
 Anthropic subscription OAuth is deliberately absent: Claude subscription tokens
 are not a third-party authentication contract. Anthropic is reached with a
 Console API key instead. The *Provide your own API key* route also stores API
-keys for OpenAI and MoonshotAI.
+keys for OpenAI, Google and MoonshotAI. Google accepts a Gemini Developer API
+key only; Gemini product subscriptions are not an authentication route here.
+
+Google requests use `POST https://generativelanguage.googleapis.com/v1beta/interactions?alt=sse`
+with `stream:true`, `store:false`, and local input history, never
+`previous_interaction_id`. A custom `providers.google.baseUrl` is the complete
+Interactions endpoint, not a base path to which Crucible appends a route.
+See [Google's Interactions documentation](https://ai.google.dev/gemini-api/docs/interactions-overview).
 
 Moonshot authorization and model requests identify the host truthfully as
 crucible with a stable protected device id. They do not reuse another harness's
@@ -400,8 +437,9 @@ its own.
 
 Two consequences you can see:
 
-- Nothing is retained by the vendor. Requests are sent with `store` off, so a
-  response is not kept for later retrieval.
+- Responses are not stored for later retrieval through a response ID: requests
+  use `store:false`. This does not promise zero provider-side retention for
+  safety, billing or other purposes under the vendor's terms.
 - No token ceiling is sent. On that endpoint one number bounds the reasoning and
   the visible answer together, so a figure chosen for an answer is one the model
   can spend entirely on thinking; the model's own ceiling applies instead.

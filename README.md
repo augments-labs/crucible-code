@@ -20,7 +20,7 @@ continued later.
 
 ## Highlights
 
-- **Provider-independent sessions.** Anthropic, Moonshot and OpenAI are wire
+- **Provider-independent sessions.** Anthropic, Google, Moonshot and OpenAI are wire
   adapters; API keys and supported account logins are separate credentials.
 - **Permissioned tools.** Reads inside the workspace are available by default;
   file changes, commands and reads outside it are decided by rules and the
@@ -64,6 +64,9 @@ crucible
 You can instead start without an environment key and use `/login`. Authentication
 does not silently choose a model; `/model` selects the provider, model and
 supported reasoning effort explicitly.
+
+Google Gemini uses `GEMINI_API_KEY` or `/login google`; Google and Anthropic
+accept API keys only, not product subscription logins.
 
 Useful commands:
 

@@ -22,7 +22,8 @@ use crucible_core::{
     Transcript, Workspace,
 };
 use crucible_provider::{
-    Anthropic, AnthropicWeb, Endpoint, Https, Moonshot, MoonshotWeb, OpenAi, OpenAiWeb, Unavailable,
+    Anthropic, AnthropicWeb, Endpoint, Google, GoogleWeb, Https, Moonshot, MoonshotWeb, OpenAi,
+    OpenAiWeb, Unavailable,
 };
 use crucible_runner::{
     AgentSpec, Bounds, Compaction, ContextInputs, Model, RunPolicy, Runner, Session, Tools,
@@ -456,6 +457,20 @@ pub(crate) fn moonshot(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, Fatal> {
     )))
 }
 
+/// Gemini Interactions accepts an API key, never a product subscription login.
+pub(crate) fn google(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, Fatal> {
+    Ok(Box::new(Google::at(
+        wiring.sending.unwrap_or(Google::VENDOR),
+        key(
+            wiring.variable,
+            Header::bare("x-goog-api-key"),
+            wiring.auth.from,
+            wiring.auth.stored.get(wiring.named),
+        )?,
+        Box::new(Https::new()),
+    )))
+}
+
 /// OpenAI's Responses API, with a key or a plan login.
 pub(crate) fn openai(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, Fatal> {
     let (endpoint, credential) = credential(
@@ -609,6 +624,24 @@ pub(crate) fn anthropic_web(wiring: Wiring<'_>, model: &str) -> Reaching {
 
     Reaching::both(Arc::new(AnthropicWeb::new(
         wiring.sending.unwrap_or(Anthropic::VENDOR),
+        credential,
+        Box::new(Https::new()),
+        model,
+    )))
+}
+
+/// Native Gemini web tools use the same checked key and recipient as turns.
+pub(crate) fn google_web(wiring: Wiring<'_>, model: &str) -> Reaching {
+    let Ok(credential) = key(
+        wiring.variable,
+        Header::bare("x-goog-api-key"),
+        wiring.auth.from,
+        wiring.auth.stored.get(wiring.named),
+    ) else {
+        return Reaching::nothing();
+    };
+    Reaching::both(Arc::new(GoogleWeb::new(
+        wiring.sending.unwrap_or(Google::VENDOR),
         credential,
         Box::new(Https::new()),
         model,

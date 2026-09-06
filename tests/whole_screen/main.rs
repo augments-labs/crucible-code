@@ -584,11 +584,11 @@ fn a_model_picked_mid_turn_is_confirmed_then_held() {
 
     window.types_and_catches("start it\r", HELD_LAST_WORD);
 
-    // The picker opens, then a step down and Enter picks a model that is not
-    // the one in force. What stands next is the consequence, said and asked
-    // about before anything is held.
+    // Name the intended model so additions to the catalogue do not change
+    // which switch this case observes. What stands next is the consequence,
+    // said and asked about before anything is held.
     window.types_and_catches("/model\r", "Model");
-    window.types_and_catches("\x1b[B\r", "cached for the current model");
+    window.types_and_catches("claude-opus-5\r", "cached for the current model");
 
     insta::assert_snapshot!(window.picture());
 }
@@ -1226,6 +1226,37 @@ fn the_key_box_stands_empty_under_the_provider_it_is_for() {
     assert!(!picture.contains("transcript"), "{picture}");
     assert!(!picture.contains("claude"), "{picture}");
     insta::assert_snapshot!(picture);
+}
+
+#[test]
+fn google_login_and_model_selection_keep_keys_private_and_offer_three_efforts() {
+    for columns in [40, 80] {
+        let mut window = Watched::open(&format!("google-login-{columns}"), columns, 24);
+        window.types_until("/login google\r", "Google API key");
+        let login = window.picture();
+        assert!(login.contains("Google"));
+        assert!(!login.contains("ChatGPT"));
+        assert!(!login.contains("device code"));
+        assert!(login.contains("esc to cancel"));
+        insta::assert_snapshot!(format!("google_api_key_login_{columns}"), login);
+
+        let key = "synthetic-google-key-never-send";
+        window.types_until(key, "enter to save");
+        assert!(!window.picture().contains(key));
+        window.types_until("\r", "login successful");
+        window.types("/model\r");
+        window.types("gemini");
+        let models = window.picture();
+        assert!(models.contains("Google"));
+        assert!(models.contains("low"));
+        assert!(models.contains("medium"));
+        assert!(models.contains("high"));
+        assert!(!models.contains("xhigh"));
+        assert!(!models.contains("max"));
+        insta::assert_snapshot!(format!("google_model_effort_{columns}"), models);
+        window.types("\r");
+        assert!(window.picture().contains("gemini-3.8-flash"));
+    }
 }
 
 #[test]

@@ -42,6 +42,16 @@ pub(crate) const FACTS: &[Facts] = &[
     },
     Facts {
         provider: "anthropic",
+        model: "claude-fable-5-1",
+        window: 1_000_000,
+        output: 128_000,
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf),
+    },
+    Facts {
+        provider: "anthropic",
         model: "claude-haiku-4-5",
         window: 200_000,
         output: 64_000,
@@ -69,6 +79,54 @@ pub(crate) const FACTS: &[Facts] = &[
             .insert(Modality::Text)
             .insert(Modality::Image)
             .insert(Modality::Pdf),
+    },
+    Facts {
+        provider: "google",
+        model: "gemini-3.1-pro-preview",
+        window: 1_048_576,
+        output: 65_536,
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf)
+            .insert(Modality::Video)
+            .insert(Modality::Audio),
+    },
+    Facts {
+        provider: "google",
+        model: "gemini-3.6-flash",
+        window: 1_048_576,
+        output: 65_536,
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf)
+            .insert(Modality::Video)
+            .insert(Modality::Audio),
+    },
+    Facts {
+        provider: "google",
+        model: "gemini-3.7-flash",
+        window: 1_048_576,
+        output: 65_536,
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf)
+            .insert(Modality::Video)
+            .insert(Modality::Audio),
+    },
+    Facts {
+        provider: "google",
+        model: "gemini-3.8-flash",
+        window: 1_048_576,
+        output: 65_536,
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf)
+            .insert(Modality::Video)
+            .insert(Modality::Audio),
     },
     Facts {
         provider: "moonshot",
@@ -143,6 +201,16 @@ pub(crate) const FACTS: &[Facts] = &[
     Facts {
         provider: "openai",
         model: "gpt-5.6-terra",
+        window: 922_000,
+        output: 128_000,
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf),
+    },
+    Facts {
+        provider: "openai",
+        model: "gpt-6-astra",
         window: 922_000,
         output: 128_000,
         accepts: Modalities::empty()

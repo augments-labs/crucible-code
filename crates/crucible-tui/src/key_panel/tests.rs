@@ -232,6 +232,17 @@ fn the_footers_are_joined_with_the_dot_of_the_set_in_force() {
 }
 
 #[test]
+fn a_narrow_key_panel_keeps_the_cancel_hint_whole() {
+    for columns in [25, 28, 40] {
+        for held in [0, 1] {
+            let rows = art(&anthropic(held), columns, Glyphs::Unicode);
+            let footer = rows.last().unwrap();
+            assert!(footer.contains("esc to cancel"), "{columns}: {footer}");
+        }
+    }
+}
+
+#[test]
 fn the_colour_goes_where_the_panels_put_it() {
     let rows = anthropic(3).rows(80, Glyphs::Unicode);
     let at = |at: usize| rows.get(at).map(slots).unwrap_or_default();

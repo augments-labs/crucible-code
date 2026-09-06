@@ -104,6 +104,20 @@ to send a provider, so the replay ends before it and the file is cut to match.
 
 ## Conversation, journal and checkpoints
 
+New logs use format 12 and remain readable alongside formats 3–11. Format 12
+adds bounded provider continuation beside completed agent messages: signed
+thinking, encrypted reasoning and native ordering needed for subsequent tool
+passes. This private state is not rendered or given to the recap model, and a
+failed, incomplete or cancelled stream cannot commit it. Older Crucible builds
+cannot resume format 12 logs.
+
+Continuation is bound to its producing protocol, model compatibility, credential
+and recipient. A changed key, endpoint or incompatible provider receives visible
+history and descriptive settled tool results, not another scope's native state.
+Google-compatible model switches preserve their native steps; Fable drops older
+thinking when compaction or pruning rewrites its bound prefix. `/clear` starts a
+new log and carries no old continuation.
+
 The conversation a provider receives is deliberately a closed sequence of
 context, user, agent and tool-result messages. Framework facts live beside that
 conversation rather than becoming new provider messages. A format 11 session
@@ -460,7 +474,7 @@ One JSON object per line, in the order things happened. The first line says what
 the file is and where it belongs:
 
 ```json
-{"format":9,"session":"…","workspace":"/home/you/code/my-project","branch":"main"}
+{"format":12,"session":"…","workspace":"/home/you/code/my-project","branch":"main"}
 ```
 
 Then one line per message — what you typed, what the model said and asked to

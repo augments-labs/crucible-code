@@ -1,0 +1,29 @@
+---
+source: tests/whole_screen/main.rs
+expression: login
+---
+40x24 cursor 20,4 scrolled 0
+|CRUCIBLE                                |
+|/…/workspace                            |
+|                                        |
+|                                        |
+|Warning: No models available. Use /login|
+|or set an API key environment variable. |
+|Then use /model to select a model.      |
+|                                        |
+|› /login google                         |
+|────────────────────────────────────────|
+|                                        |
+|Log in                                  |
+|                                        |
+|› Google — provide your own API key     |
+|                                        |
+|Paste or type the key. It goes to       |
+|crucible's protected store and is never |
+|shown.                                  |
+|                                        |
+|╭── Google API key ────────────────────╮|
+|│ ›                                    │|
+|╰──────────────────────────────────────╯|
+|paste key · esc to cancel               |
+|                                        |

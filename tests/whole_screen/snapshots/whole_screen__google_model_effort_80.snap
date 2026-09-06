@@ -1,0 +1,29 @@
+---
+source: tests/whole_screen/main.rs
+expression: models
+---
+80x24 cursor 4,16 scrolled 0
+|› /model                                                                        |
+|Model                                                     now  nothing asked yet|
+|                                                                                |
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│ Search  gemini                                                               │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|                                                                                |
+|╭─────────────────────┬────────────────────────────────────────────────────────╮|
+|│  Providers          │  Models                                        4 of 18 │|
+|├─────────────────────┼────────────────────────────────────────────────────────┤|
+|│ › All             4 │ › Gemini 3.8 Flash         Google        200k          │|
+|│   Anthropic       · │   Gemini 3.7 Flash         Google        200k          │|
+|│   Google          4 │   Gemini 3.6 Flash         Google        200k          │|
+|│   MoonshotAI      · │   Gemini 3.1 Pro Preview   Google        200k          │|
+|│   OpenAI          · │                                                        │|
+|│                     │                                                        │|
+|│                     │                                                        │|
+|│                     │                                                        │|
+|╰─────────────────────┴────────────────────────────────────────────────────────╯|
+|                                                                                |
+|  Effort   ‹ low ›  medium   high                                               |
+|                                                                                |
+|  tab pane · ↑↓ model · ←→ effort · enter takes both · esc to cancel            |
+|                                                                                |

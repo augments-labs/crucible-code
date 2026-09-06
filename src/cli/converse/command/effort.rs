@@ -12,11 +12,10 @@
 //! better off not holding — what is left is short enough to read at a glance,
 //! which is the whole argument for a ladder over a list.
 //!
-//! What is typed is not narrowed. `/effort max` and `--effort max` go to the
-//! vendor whatever the table here says, because the table is read off somebody
-//! else's documentation and goes stale between releases: a rung it has not
-//! caught up with should cost a missing row in a panel, never a refusal from
-//! the program that is not the one serving the model.
+//! Typed choices normally go to the vendor even when the offer is stale.
+//! Google's Interactions encoder only supports low/medium/high, so a known
+//! Google model also rejects incompatible typed choices here before they can
+//! replace a working setting. The encoder checks every request independently.
 //!
 //! Which is why the ladder is stood over a model by name, and why a session
 //! with no model chosen is sent to `/model` instead of being asked this. A rung
@@ -107,12 +106,21 @@ pub(super) fn run<T: Terminal>(
 
     // Every rung for a model this build has not heard of, which is why this is
     // read before the word typed after the command rather than instead of it:
-    // what is typed goes to the vendor either way, and this decides only what
-    // gets offered and what gets listed back.
+    // unknown names still go to the vendor. Gemini's known narrow ladder is
+    // also checked for typed choices so an invalid word cannot poison later
+    // requests or the persisted setting.
     let rungs = rungs(&terms.providers.snapshot(), provider, runner.model());
 
     if !said.is_empty() {
         return match said.parse() {
+            Ok(effort) if provider == "google" && !rungs.contains(&effort) => say(
+                renderer,
+                &format!(
+                    "! {} does not support {} effort; use low, medium or high",
+                    runner.model(),
+                    effort.as_str()
+                ),
+            ),
             Ok(effort) => taken(effort, provider, renderer, runner, terms),
             Err(refused) => mistyped(&refused, renderer, &rungs),
         };

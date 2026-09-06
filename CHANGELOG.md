@@ -19,6 +19,28 @@ change in any release with no deprecation period.
   newest published installer lifecycle, and run baseline/candidate coding tasks
   without making external availability a pull-request verdict.
 
+- **Gemini joins the model picker with API-key authentication.** Choose Gemini
+  3.8 Flash, 3.7 Flash, 3.6 Flash or 3.1 Pro Preview using `GEMINI_API_KEY` or
+  `/login google`; Google subscription logins are not offered. Gemini supports
+  low, medium and high effort without changing the session's output ceiling.
+
+- **Gemini can answer web tools through native Google Search and URL context.**
+  Requests use the session's API key and existing web permissions; fetch returns
+  cited, model-extracted text. Google Search's suggestion-display and
+  grounding-specific retention limitations are documented under web tools.
+
+- **Claude Fable 5.1 and GPT-6 Astra preserve native reasoning across tool passes.**
+  Both offer low through max effort, with vendor-specific handling when effort
+  or context changes. New format 12 session logs retain bounded private
+  continuation; existing formats 3–11 still resume, but older builds cannot
+  resume the new format.
+
+### Fixed
+
+- **Stopping at the final stream read no longer commits private state or a recap.**
+  Cancellation is checked again after EOF, before tool execution or replacement
+  of the original session history.
+
 ## [0.38.0] - 2026-09-06
 
 ### Fixed
