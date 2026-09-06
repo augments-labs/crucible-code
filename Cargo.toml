@@ -341,6 +341,13 @@ authors.workspace = true
 # somebody who only wanted to start crucible.
 default-run = "crucible"
 
+# `crucible-session` is a dev-only feature edge: tests import the same crate
+# through `crucible-runner`'s deliberate re-export, while this declaration turns
+# on `proof` for the package graph. A source-name scanner cannot see a feature
+# activation as use, so this is the one explicit cargo-machete exception.
+[package.metadata.cargo-machete]
+ignored = ["crucible-session"]
+
 # One shipped binary. The short `cru` name is a symlink created by the
 # installer, not a second target — a second `[[bin]]` would compile and ship
 # the same code twice. Auxiliary binaries under `src/bin/` are bench probes and
