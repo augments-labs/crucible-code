@@ -22,7 +22,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crucible_core::{
     Ancestry, SandboxCommand, SandboxEnvironment, SandboxFilesystemAccess,
-    SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxId, SandboxManifest, SandboxMode,
+    SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxId, SandboxManifest,
     SandboxNetworkPolicy, SandboxOutput, SandboxPolicy, SandboxProcess, SandboxRead,
     SandboxRequest, SandboxResourceLimits, SandboxService, SandboxUnreadablePattern, ToolId,
     Workspace,
@@ -65,7 +65,7 @@ impl Fixture {
         let workspace = Workspace::open(&self.workspace).expect("workspace");
         let base = SandboxPolicy::standard(&workspace).expect("base policy");
         let policy = SandboxPolicy::new(
-            SandboxMode::Required,
+            true,
             base.filesystem().iter().cloned(),
             &self.workspace,
             SandboxNetworkPolicy::Closed,
@@ -430,7 +430,7 @@ fn seatbelt_hides_a_private_var_path_through_its_system_alias() {
     )
     .expect("unreadable rule");
     let policy = SandboxPolicy::new(
-        SandboxMode::Required,
+        true,
         base.filesystem().iter().cloned().chain([unreadable]),
         &fixture.workspace,
         SandboxNetworkPolicy::Closed,

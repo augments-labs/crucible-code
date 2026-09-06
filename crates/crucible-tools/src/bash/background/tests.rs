@@ -7,8 +7,8 @@ use std::sync::atomic::AtomicUsize;
 use crucible_core::{
     Cancel, SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance,
     SandboxCapabilities, SandboxCleanup, SandboxFilesystemAccess, SandboxFilesystemProvenance,
-    SandboxFilesystemRule, SandboxInspection, SandboxManifest, SandboxMode, SandboxNetworkPolicy,
-    SandboxOutput, SandboxPolicy, SandboxResourceLimits, SandboxUsage, SandboxViolation, Unwatched,
+    SandboxFilesystemRule, SandboxInspection, SandboxManifest, SandboxNetworkPolicy, SandboxOutput,
+    SandboxPolicy, SandboxResourceLimits, SandboxUsage, SandboxViolation, Unwatched,
 };
 
 use super::*;
@@ -97,7 +97,7 @@ fn keep(left: &Background, observed: &Arc<Observed>, accepting: bool) -> Kept {
     )
     .expect("workspace rule");
     let policy = SandboxPolicy::new(
-        SandboxMode::Off,
+        false,
         [rule],
         root,
         SandboxNetworkPolicy::Closed,

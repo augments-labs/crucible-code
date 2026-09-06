@@ -39,9 +39,9 @@ use std::time::Duration;
 
 pub use background::{Background, Ended, MOST, Standing};
 use crucible_core::{
-    Approved, DescribeTool, Looking, SandboxCommand, SandboxEnvironment, SandboxManifest,
-    SandboxMode, SandboxPolicy, SandboxRequest, SandboxResourceLimits, SandboxService, Sensitivity,
-    Summary, Tool, ToolArgs, ToolContext, ToolError, ToolOutput, Workspace,
+    Approved, DescribeTool, Looking, SandboxCommand, SandboxEnablement, SandboxEnvironment,
+    SandboxManifest, SandboxPolicy, SandboxRequest, SandboxResourceLimits, SandboxService,
+    Sensitivity, Summary, Tool, ToolArgs, ToolContext, ToolError, ToolOutput, Workspace,
 };
 
 use std::sync::LazyLock;
@@ -62,9 +62,9 @@ const TIMEOUT: &str = "timeout";
 /// How long a command may take when the call does not say, in seconds.
 const SECONDS: usize = 120;
 
-/// The longest a call may ask for, in seconds. A command that needs longer
-/// than this wants a different tool, not a bigger number.
-const CEILING: usize = 600;
+/// The largest representable call deadline; the effective host policy may
+/// impose a smaller ceiling.
+const CEILING: usize = 86400;
 
 /// Raw bytes a command may emit before its complete process scope is stopped.
 ///
@@ -131,7 +131,7 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
             name: TIMEOUT,
             about: format!(
                 "How many seconds to allow before stopping it. Defaults to {SECONDS}, and cannot \
-                 exceed {CEILING}. Cannot be sent with background."
+                 exceed {CEILING} or the configured command ceiling. Cannot be sent with background."
             ),
             needed: false,
             shape: Shape::Count(Whole {
@@ -184,6 +184,7 @@ pub struct Bash {
     /// Resolved once with the workspace. `Err` is retained so an unusually
     /// long host path fails before spawn without making construction panic.
     policy: Result<SandboxPolicy, Box<str>>,
+    enablement: Option<Arc<SandboxEnablement>>,
     /// How long a command asked to be left running is watched before the call
     /// answers. [`FIRST`] unless [`Bash::watching`] says otherwise.
     first: Duration,
@@ -204,6 +205,7 @@ impl std::fmt::Debug for Bash {
             .field("env", &Exported(&self.env))
             .field("sandbox", &self.sandbox)
             .field("policy", &self.policy)
+            .field("enablement", &self.enablement)
             .field("first", &self.first)
             .finish()
     }
@@ -224,7 +226,7 @@ impl std::fmt::Debug for Exported<'_> {
 
 impl Bash {
     /// Runs in `workspace`, requiring confinement unless the host explicitly
-    /// selects another mode through [`Self::sandboxing`]. The application's
+    /// disables confinement through [`Self::sandboxing`]. The application's
     /// opt-in configuration is applied by its composition root.
     #[must_use]
     pub fn new(workspace: Workspace) -> Self {
@@ -250,21 +252,49 @@ impl Bash {
             env: environment::inherited(lookup),
             sandbox: Arc::new(crate::LocalSandbox::new()),
             policy,
+            enablement: None,
             first: FIRST,
         }
     }
 
-    /// Replaces the local service and applies a host-authorized top-level mode.
+    /// Replaces the local service and applies the host-authorized enabled choice.
     ///
     /// The binary composition root uses this after configuration provenance has
-    /// established that only a user layer may select `degraded` or `off`.
+    /// established that only a user layer may disable confinement.
     /// Descendant/project narrowing happens before a policy reaches this tool.
     #[must_use]
-    pub fn sandboxing(mut self, service: Arc<dyn SandboxService>, mode: SandboxMode) -> Self {
+    pub fn sandboxing(mut self, service: Arc<dyn SandboxService>, enabled: bool) -> Self {
         self.sandbox = service;
+        self.enablement = None;
         if let Ok(policy) = &mut self.policy {
-            *policy = policy.clone().with_mode(mode);
+            *policy = policy.clone().with_enabled(enabled);
         }
+        self
+    }
+
+    /// Applies one complete policy assembled by the host from trusted settings.
+    ///
+    /// Commands can narrow these limits but cannot replace grants or remove
+    /// restrictions. The host must resolve document provenance before calling.
+    #[must_use]
+    pub fn under_policy(mut self, service: Arc<dyn SandboxService>, policy: SandboxPolicy) -> Self {
+        self.sandbox = service;
+        self.policy = Ok(policy);
+        self.enablement = None;
+        self
+    }
+
+    /// Samples a shared host choice for each new command.
+    ///
+    /// The policy supplied through [`Self::under_policy`] must be the enabled
+    /// template so disabling never discards the ceilings needed on re-enable.
+    #[must_use]
+    pub fn following_enablement(mut self, enablement: Arc<SandboxEnablement>) -> Self {
+        if self.policy.as_ref().is_ok_and(|policy| !policy.enabled()) {
+            self.policy =
+                Err("interactive sandbox enablement requires an enabled policy template".into());
+        }
+        self.enablement = Some(enablement);
         self
     }
 
@@ -564,14 +594,29 @@ impl Tool for Bash {
                 std::io::Error::other(problem.to_string()),
             )
         })?;
-        // Narrowing what the policy already states: the confinement's own
-        // ceilings stay as the policy left them, and this command adds the
-        // three that belong to one command rather than to the sandbox.
+        let sampled = self
+            .enablement
+            .as_ref()
+            .map(|control| base.clone().with_enabled(control.enabled()));
+        let base = sampled.as_ref().unwrap_or(base);
+        // Foreground callers may shorten the host's deadline. Background
+        // commands keep the configured ceiling even though they have no
+        // foreground timeout. Output and concurrency are host policy, not
+        // values a tool request may overwrite.
+        let inherited = base.limits();
         let limits = SandboxResourceLimits {
-            command_time: (!background).then_some(allowed),
-            output_bytes: Some(PROCESS_OUTPUT_BYTES),
-            concurrent_commands: Some(16),
-            ..base.limits()
+            command_time: if background {
+                inherited.command_time
+            } else {
+                Some(
+                    inherited
+                        .command_time
+                        .map_or(allowed, |ceiling| ceiling.min(allowed)),
+                )
+            },
+            output_bytes: inherited.output_bytes.or(Some(PROCESS_OUTPUT_BYTES)),
+            concurrent_commands: inherited.concurrent_commands.or(Some(16)),
+            ..inherited
         };
         let policy = base.clone().with_limits(limits).map_err(|error| {
             io(

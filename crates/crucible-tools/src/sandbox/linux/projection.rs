@@ -122,6 +122,10 @@ pub(super) struct Projection {
 }
 
 impl Projection {
+    pub(super) fn network_socket(&self) -> PathBuf {
+        self.stage.root().join("network.sock")
+    }
+
     pub(super) fn prepare(
         request: &SandboxRequest,
         view: &View,

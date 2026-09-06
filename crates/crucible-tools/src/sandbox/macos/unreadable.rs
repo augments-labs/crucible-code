@@ -43,11 +43,13 @@ pub(super) fn expand(patterns: &[SandboxUnreadablePattern]) -> Result<Vec<PathBu
         let device = named.dev();
         let mut pending = VecDeque::from([(root, 0_usize)]);
         while let Some((directory, depth)) = pending.pop_front() {
-            let mut entries = fs::read_dir(&directory)
-                .map_err(|source| failed("unreadable pattern scan failed", source))?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|source| failed("unreadable pattern entry could not be read", source))?;
-            entries.sort_by_key(fs::DirEntry::file_name);
+            let entries = fs::read_dir(&directory)
+                .map_err(|source| failed("unreadable pattern scan failed", source))?;
+            let entries =
+                super::super::directory_entries(entries, MAX_ENTRIES.saturating_sub(inspected))
+                    .map_err(|source| {
+                        failed("unreadable pattern entry could not be read", source)
+                    })?;
             for entry in entries {
                 inspected = inspected.saturating_add(1);
                 if inspected > MAX_ENTRIES {

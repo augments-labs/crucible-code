@@ -10,7 +10,7 @@ use crucible_core::RegistryRow;
 
 /// The built-in registry, as a session starts with it.
 fn commands() -> Commands {
-    builtins()
+    builtins(&std::sync::Arc::default())
         .expect("the built-in commands register")
         .snapshot()
 }
@@ -182,6 +182,7 @@ fn help_answers_with_a_name_and_what_it_does() {
             "/login     sign in to a provider account",
             "/logout    remove a stored account or API key",
             "/mode      ask · allowEdits · fullAccess",
+            "/sandbox   inspect or configure sandbox confinement",
             "/theme     pick the colours crucible draws with",
             "/resume    pick up an earlier session here",
             "/cache     inspect or clean prompt-cache state",
@@ -203,6 +204,7 @@ fn a_terminal_without_the_marks_gets_the_ring_punctuated_for_it() {
             "/login     sign in to a provider account",
             "/logout    remove a stored account or API key",
             "/mode      ask, allowEdits, fullAccess",
+            "/sandbox   inspect or configure sandbox confinement",
             "/theme     pick the colours crucible draws with",
             "/resume    pick up an earlier session here",
             "/cache     inspect or clean prompt-cache state",
@@ -274,7 +276,7 @@ fn the_registry_holds_every_command_once_in_the_order_help_lists_them() {
 
 #[test]
 fn a_second_command_under_a_taken_name_is_refused_naming_both_sources() {
-    let registry = builtins().expect("the built-in commands register");
+    let registry = builtins(&std::sync::Arc::default()).expect("the built-in commands register");
     let mut staged = registry.stage();
     let again = Slash::builtin(Command::Help).expect("a constant name fits");
 
@@ -304,7 +306,7 @@ fn what_is_read_is_the_generation_in_force_and_not_the_array_that_filled_it() {
     // A command taken out of the registry is not on the list, is not filtered
     // in, and a line naming it is a word that names none — which is the proof
     // that the three readers walk the registry, and not `EVERY` behind it.
-    let registry = builtins().expect("the built-in commands register");
+    let registry = builtins(&std::sync::Arc::default()).expect("the built-in commands register");
     let mut staged = registry.stage();
     staged.deregister("/cache").expect("/cache is registered");
     let without = registry.commit(staged).expect("the generation commits");
@@ -360,4 +362,22 @@ fn what_is_said_back_folds_short_of_the_mark_it_will_hang_under() {
         "{rows:?}"
     );
     assert_eq!(rows.join(" "), said, "nothing of the sentence is lost");
+}
+
+#[test]
+fn the_sandbox_menu_tracks_the_choice_without_rebuilding_the_registry() {
+    let control = std::sync::Arc::new(crucible_core::SandboxEnablement::default());
+    let commands = builtins(&control).unwrap().snapshot();
+    let shown = filtering(&commands, "/sandbox", Glyphs::Ascii);
+    assert_eq!(shown.len(), 1);
+    assert!(shown.first().unwrap().says.contains("disabled"));
+    control.set_enabled(true).unwrap();
+    assert!(
+        filtering(&commands, "/sandbox", Glyphs::Ascii)
+            .first()
+            .unwrap()
+            .says
+            .contains("enabled")
+    );
+    assert!(matches!(Command::Sandbox.mid_turn(), MidTurn::Refused(_)));
 }

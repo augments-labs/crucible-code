@@ -245,6 +245,48 @@ pub fn unasked(text: &str, file: &str) -> Result<String, ConfigError> {
     Ok(splice::over(text, was, WRITTEN))
 }
 
+/// Writes the boolean sandbox choice without changing any other setting.
+///
+/// # Errors
+///
+/// Refuses malformed or invalid current configuration and non-object containers.
+pub fn sandboxing(text: &str, file: &str, enabled: bool) -> Result<String, ConfigError> {
+    let text = if text.trim().is_empty() { "{}" } else { text };
+    let document = crate::document::Document::parse(text, file, crate::document::Origin::User)?;
+    let value = document.value();
+    let written = if enabled { "true" } else { "false" };
+    if value
+        .get("sandbox")
+        .and_then(|block| block.get("enabled"))
+        .and_then(Value::as_bool)
+        == Some(enabled)
+    {
+        return Ok(text.to_owned());
+    }
+    let refused = || ConfigError::Unspliceable {
+        file: file.into(),
+        at: "sandbox.enabled".into(),
+        written: written.into(),
+    };
+    let root = splice::root(text).ok_or_else(refused)?;
+    let Some(block) = value.get("sandbox") else {
+        return Ok(splice::insert(text, root, |indent| match indent {
+            Some(indent) => {
+                format!("\"sandbox\": {{\n{indent}  \"enabled\": {written}\n{indent}}}")
+            }
+            None => format!("\"sandbox\": {{\"enabled\": {written}}}"),
+        }));
+    };
+    let at = splice::member(text, root, "sandbox").ok_or_else(refused)?;
+    if block.get("enabled").is_none() {
+        return Ok(splice::insert(text, at, |_| {
+            format!("\"enabled\": {written}")
+        }));
+    }
+    let was = splice::member(text, at, "enabled").ok_or_else(refused)?;
+    Ok(splice::over(text, was, written))
+}
+
 /// The text of a configuration file that reads fenced code in `theme`.
 ///
 /// The same splice as [`drawing`], one key over. See it for what is preserved.

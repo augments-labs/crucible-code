@@ -9,9 +9,10 @@ inputs; and only then launches the process.
 OS confinement is disabled by default. Enable it with
 `{"sandbox":{"enabled":true}}`; `enabled: false` in your home configuration
 selects unconfined execution. Approval, minimal environment, command deadlines,
-output bounds and audit remain active in either mode. `sandbox.enabled` is the
-only configuration switch; the former `sandbox.mode` key is rejected. Project
-settings can require confinement and cannot disable it. See [configuration](../configuration/configuration.md#sandbox).
+output bounds and audit remain active whether confinement is enabled or disabled.
+Configure filesystem grants and restrictions, domain mediation, local sockets
+and command limits in the same block. Project settings can require confinement
+and narrow inherited authority. See [configuration](../configuration/configuration.md#sandbox).
 
 On Linux, the production backend uses a
 canonical, root-owned, non-writable system Bubblewrap executable reached only
@@ -26,7 +27,7 @@ Bubblewrap 0.11.0 or newer is needed: the view is built from descriptor binds
 and temporary overlays, which older releases do not offer. The probe checks the
 options themselves rather than the version, because distributions backport some
 of them. Ubuntu 24.04's 0.9.0 has the descriptor binds but not the overlays, so
-there `required` confinement reports an unavailable backend until a newer
+there enabled confinement reports an unavailable backend until a newer
 Bubblewrap is installed. Should a launch still be refused by the system
 Bubblewrap, its own message is quoted in the error.
 
@@ -162,6 +163,14 @@ unreadable roots or unreadable wildcard patterns are refused before the broker
 or workspace is touched. Linux and macOS retain their narrower filesystem
 views.
 
+The same limitation applies to configured `sandbox.filesystem.unreadable`
+paths. Native Windows also refuses domain policies, `allowLocalBinding: true`
+and nonempty `allowUnixSockets` before starting the command. It supports the
+`enabled` switch, writable/read-only/protected path rules, all three configured
+command limits and the `/sandbox` panel. Empty network lists with binding
+disabled keep WFP network denial. Run Crucible inside WSL2 to use Linux's richer
+filesystem and network policies on a Windows machine.
+
 ACL projection adds deterministic capability and account entries to the roots
 a command uses. They can remain after a command or uninstall because Windows
 provides no namespace-like per-process filesystem view to remove. A later
@@ -169,10 +178,15 @@ command using the same sandbox account can therefore retain the access those
 account entries grant. Uninstalling and reinstalling creates a new account SID,
 so entries for the deleted account become inert.
 
-The exact endpoint allowlist is deliberately unsupported in this release. It
-requires a policy-bound proxy or equivalent mechanism with redirect, DNS,
-metadata, forwarding and outbound-byte enforcement. A requested exact rule is
-rejected instead of being translated into broad egress.
+Linux and macOS mediate configured domains through a host-owned authenticated
+HTTP/CONNECT proxy. Linux exposes a pinned Unix endpoint only to its namespace
+broker, which relays it to private loopback. macOS permits only the host proxy's
+IPv4 loopback port. Direct connections remain denied; enabling local binding
+or selected Unix sockets adds only those separately declared operations.
+Proxy credentials are unique to a command, replace inherited proxy settings,
+and are masked in captured stdout and stderr without changing byte counts or
+MCP framing. Listener and relay cleanup belongs to the command lifecycle;
+failed cleanup retains its resources and admission slot for recovery.
 
 ## Platform support
 
@@ -186,7 +200,7 @@ An unavailable backend never turns `enabled: true` into permission to run
 outside confinement.
 
 SDK callers constructing `SandboxPolicy::standard` or `Bash::new` still receive
-a required policy. The application applies its resolved configuration explicitly;
+an enabled policy. The application applies its resolved configuration explicitly;
 changing the application's default does not weaken independently constructed
 SDK policies or inherited child authority.
 
@@ -194,15 +208,15 @@ SDK policies or inherited child authority.
 
 `enforced` is a hard boundary, `observed` is bounded measurement only, and
 `unsupported` is rejected whenever the effective policy explicitly requires
-that feature. The SDK policies `degraded` and `off` relax only the documented
-baseline kernel isolation; they cannot turn an explicit limit, manifest, exact network rule,
-persistence request or snapshot request into best-effort behavior.
+that feature. Disabling confinement with `SandboxPolicy::with_enabled(false)`
+removes the baseline kernel isolation. Explicit limits, manifests, network rules,
+persistence and snapshot requests still require an enforcing implementation.
 
 | Capability | Linux Bubblewrap | macOS Seatbelt | Windows native | Compatibility |
 | --- | --- | --- | --- | --- |
 | `filesystem` | enforced | enforced | enforced | unsupported |
 | `network_deny` | enforced | enforced | enforced | unsupported |
-| `network_allowlist` | unsupported | unsupported | unsupported | unsupported |
+| `network_allowlist` | enforced | enforced | unsupported | unsupported |
 | `descriptor_isolation` | enforced | enforced | enforced | unsupported |
 | `process_isolation` | enforced | enforced | enforced | unsupported |
 | `kernel_surface` | enforced | enforced | enforced | unsupported |
@@ -228,7 +242,7 @@ persistence request or snapshot request into best-effort behavior.
 | `usage` | observed | observed | observed | observed |
 
 A capability being enforced says what a backend *can* apply, not what the
-default policy asks for. Under `required`, Linux's standard policy states
+default policy asks for. With confinement enabled, Linux's standard policy states
 `cpu_limit` at one hour per process and `open_file_limit` at 4096. Windows
 states one hour of aggregate Job processor time and no handle-count limit.
 macOS states only the open-file ceiling because its catchable CPU signal is not
@@ -238,8 +252,8 @@ it is running. `memory_limit` is enforced but not asked for: the knob is the
 address space a process may map rather than the memory it uses, and runtimes
 that reserve enormously and touch little would be refused by any ceiling low
 enough to catch a real runaway. `disk_limit` is unsupported above, and a policy
-may not ask for a ceiling its backend cannot apply — which is also why lowering
-the mode takes the two confining ceilings off with it, rather than carrying
+may not ask for a ceiling its backend cannot apply — which is also why disabling
+confinement takes the two confining ceilings off with it, rather than carrying
 numbers the compatibility backend would have to refuse.
 
 `process_limit` is the one ceiling a policy does not have to ask for. The broker
@@ -253,7 +267,7 @@ two; it may not state more.
 Stating one is what the table's row is about, and it needs a kernel that counts
 processes per user namespace — Linux 5.14 and newer. Below that the kernel
 counts them for the real user across the whole machine, so a stated ceiling
-would bound the host's other work rather than the sandbox's, and `required`
+would bound the host's other work rather than the sandbox's, and enabled confinement
 refuses the policy instead of applying a number that means something else. The
 broker's own 1024 still applies there, and under the older counting it can bind
 before the sandbox has reached 1024 of its own — but the only thing it ever
@@ -329,7 +343,7 @@ session is prepared to see whether it can be, and dropped.
 
 Only home/user configuration may explicitly disable confinement. Project and
 descendant policy may preserve or strengthen that choice but never weaken it.
-When confinement is off, inspection and audit records say `confined: false`,
+When confinement is disabled, inspection and audit records say `confined: false`,
 name the disabled boundary and retain the exact compatibility capability snapshot.
 
 There is no enforcing backend on FreeBSD. Commands run through compatibility by
@@ -338,10 +352,11 @@ command before it starts; it does not fall back silently. Linux selects
 Bubblewrap, macOS selects Seatbelt, and Windows selects its native backend after
 the administrator setup passes verification.
 
-SDK callers may separately construct a `SandboxMode::Degraded` policy, which
-tries the enforcing native backend first and permits a reported compatibility
-fallback when enforcement is unavailable. This is a typed SDK policy, not a
-JSON configuration setting.
+The SDK uses the same boolean choice: `SandboxPolicy::enabled()` and
+`SandboxPolicy::with_enabled(bool)`. There are no sandbox modes or degraded
+fallbacks. Checkpoints use format 3 with a boolean `enabled` field; obsolete
+checkpoint formats are rejected. Sandbox audit plans also record `enabled`,
+and deliberately unconfined execution includes a bounded `disabled_reason`.
 
 Compatibility still clears and explicitly rebuilds the command environment,
 checks requested and transformed command guardrails, enforces command deadlines,
@@ -438,7 +453,7 @@ asked what it settled on, and dropped. Nothing is materialized and nothing is
 spawned.
 
 ```
-sandbox required in /home/you/project
+sandbox enabled in /home/you/project
   backend   linux-bubblewrap bubblewrap 0.11.1, system
   build     sha256:0abea81db798ebf6b4742ac0664802d97521547a353c2a0dbdc21d76cbbfd2c0
 
@@ -451,7 +466,7 @@ what this backend can hold:
   usage                 observed
 
 what a command would run under:
-  mode      required
+  enabled   true
   cwd       sha256:1e3ffb52af5c198fe9cc1d10392d3a4160db588bedefa3a7e740dbc2fc84d9af
   reach     4 places, named by digest
     read_write  workspace           sha256:d6407f95fd7d98352f3068e2dbdf96c0bef1fc9147c28a70ac2c2dfb2ecdd169
@@ -465,7 +480,6 @@ what a command would run under:
   outlives  no
   snapshots no
   confined  yes
-  gave up   nothing
   cleanup   pending; nothing was run and nothing was staged
   policy    sha256:51d8eb2751c012e44f287582830e063f5d960ef3cc896960e3555f84c90520d5
   manifest  sha256:72c169df3655f6857b163163b2618631ec65982557eea70b57ea1cb983ae0890

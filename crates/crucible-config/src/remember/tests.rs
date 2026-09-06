@@ -486,3 +486,27 @@ fn a_document_no_theme_can_be_written_into_says_what_to_type() {
         "{refused:?}"
     );
 }
+
+#[test]
+fn sandbox_choice_is_a_boolean_and_preserves_every_other_setting() {
+    let text = "{\n  \"sandbox\": {\"enabled\": false, \"limits\": {\"outputBytes\": 512}},\n  \"provider\": \"openai\"\n}\n";
+    assert_eq!(
+        super::sandboxing(text, "test", true).unwrap(),
+        text.replace("false", "true")
+    );
+    for text in [
+        "",
+        "{}",
+        r#"{"sandbox":{}}"#,
+        r#"{"sandbox":{"filesystem":{"readOnly":["vendor"]}}}"#,
+    ] {
+        let written = super::sandboxing(text, "test", true).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&written).unwrap();
+        assert_eq!(
+            value.pointer("/sandbox/enabled"),
+            Some(&serde_json::json!(true))
+        );
+        assert_eq!(super::sandboxing(&written, "test", true).unwrap(), written);
+    }
+    assert!(super::sandboxing(r#"{"sandbox":{"mode":"required"}}"#, "test", true).is_err());
+}

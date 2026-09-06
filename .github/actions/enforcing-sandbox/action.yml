@@ -18,13 +18,17 @@ runs:
     # depends only on glibc 2.38, libcap2 and libselinux1, all present here.
     - name: bubblewrap 0.11, for the enforcing sandbox tests
       shell: bash
-      env:
-        DEB_URL: https://launchpad.net/ubuntu/+archive/primary/+files/bubblewrap_0.11.0-2_amd64.deb
-        DEB_SHA256: 2d9dbcd473771ce18448f1d45e9107cdb28bb3325d171bb4145d79b0df6f3df6
       run: |
+        arch=$(dpkg --print-architecture)
+        case "$arch" in
+          amd64) digest=2d9dbcd473771ce18448f1d45e9107cdb28bb3325d171bb4145d79b0df6f3df6 ;;
+          arm64) digest=a45e9a6089607db4deca1adee606f8e616ec3770db23aa01ddc4952c7248a18a ;;
+          *) echo "No pinned Bubblewrap package for $arch" >&2; exit 1 ;;
+        esac
         deb="$RUNNER_TEMP/bubblewrap.deb"
-        curl --fail --silent --show-error --location --retry 3 --output "$deb" "$DEB_URL"
-        echo "$DEB_SHA256  $deb" | sha256sum --check
+        url="https://launchpad.net/ubuntu/+archive/primary/+files/bubblewrap_0.11.0-2_${arch}.deb"
+        curl --fail --silent --show-error --location --retry 3 --output "$deb" "$url"
+        echo "$digest  $deb" | sha256sum --check
         sudo dpkg --install "$deb"
         bwrap --version
     # Ubuntu 24.04 runners restrict unprivileged user namespaces through

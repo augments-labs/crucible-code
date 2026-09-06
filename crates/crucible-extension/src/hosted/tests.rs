@@ -11,9 +11,9 @@ use std::time::{Duration, Instant};
 use crucible_core::{
     Ancestry, Outcome, Over, SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance,
     SandboxCapabilities, SandboxFilesystemAccess, SandboxFilesystemProvenance,
-    SandboxFilesystemRule, SandboxId, SandboxInspection, SandboxManifest, SandboxMode,
-    SandboxNetworkPolicy, SandboxOutput, SandboxPolicy, SandboxProcess, SandboxRead,
-    SandboxRequest, SandboxResourceLimits, SandboxUsage, SandboxViolation, ToolId, Turn,
+    SandboxFilesystemRule, SandboxId, SandboxInspection, SandboxManifest, SandboxNetworkPolicy,
+    SandboxOutput, SandboxPolicy, SandboxProcess, SandboxRead, SandboxRequest,
+    SandboxResourceLimits, SandboxUsage, SandboxViolation, ToolId, Turn,
 };
 use serde_json::json;
 
@@ -51,7 +51,7 @@ const ROOT: &str = r"C:\workspace";
 /// A redacted inspection, which every process has to be able to show.
 fn inspection() -> SandboxInspection {
     let policy = SandboxPolicy::new(
-        SandboxMode::Required,
+        false,
         [SandboxFilesystemRule::new(
             ROOT,
             SandboxFilesystemAccess::ReadWrite,

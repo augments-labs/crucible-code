@@ -34,6 +34,7 @@ pub use input::Sending;
 pub use layers::{local, user};
 pub use mcp::McpServer;
 pub use output::{Color, Glyphs, ThemeChoice, ToolDetail};
+pub use sandbox::SandboxSettings;
 pub use updates::Updates;
 pub use variables::ScrollSpeed;
 
@@ -43,7 +44,7 @@ pub(crate) use variables::refused;
 ///
 /// Built once at startup and read from there on, so nothing on the turn path
 /// touches a file.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct Settings {
     value: Value,
 
@@ -52,25 +53,13 @@ pub struct Settings {
     /// intersection this security boundary requires.
     prompt_cache: PromptCachePolicy,
 
-    /// Host confinement mode, disabled unless configured and weakened only by
+    /// Host confinement enablement, disabled unless configured and weakened only by
     /// a user-originated layer.
-    sandbox: crucible_core::SandboxMode,
-
+    sandbox: SandboxSettings,
     /// Every layer's rules together. Held apart from the value because a rule
     /// is read where it is written — see [`Document::parse`] — and what survives
     /// the layering is the rule rather than its text.
     rules: Rules,
-}
-
-impl Default for Settings {
-    fn default() -> Self {
-        Self {
-            value: Value::default(),
-            prompt_cache: PromptCachePolicy::default(),
-            sandbox: sandbox::resolve(&[]),
-            rules: Rules::default(),
-        }
-    }
 }
 
 impl fmt::Debug for Settings {
@@ -110,7 +99,7 @@ impl Settings {
         documents.sort_by_key(|document| document.origin().nearness());
 
         let prompt_cache = prompt_cache::resolve(&documents)?;
-        let sandbox = sandbox::resolve(&documents);
+        let sandbox = sandbox::resolve(&documents)?;
 
         let mut value = Value::Object(Map::new());
         for document in &documents {
@@ -277,13 +266,19 @@ impl Settings {
             .unwrap_or_default()
     }
 
-    /// Effective operating-system confinement mode, off unless a document
+    /// Whether operating-system confinement is enabled, false unless a document
     /// opts in with `sandbox.enabled`.
     /// Workspace layers may require confinement but cannot disable it.
     /// Core policy constructors remain conservative; hosts apply this choice.
     #[must_use]
-    pub const fn sandbox_mode(&self) -> crucible_core::SandboxMode {
-        self.sandbox
+    pub fn sandbox_enabled(&self) -> bool {
+        self.sandbox.enabled()
+    }
+
+    /// Effective sandbox settings shared by command and extension hosts.
+    #[must_use]
+    pub const fn sandbox(&self) -> &SandboxSettings {
+        &self.sandbox
     }
 }
 
@@ -427,10 +422,7 @@ mod tests {
     #[test]
     fn disabling_confinement_requires_user_authority() {
         let user = Document::sample(r#"{"sandbox":{"enabled":false}}"#, Origin::User);
-        assert_eq!(
-            Settings::resolve(vec![user]).sandbox_mode(),
-            crucible_core::SandboxMode::Off
-        );
+        assert!(!Settings::resolve(vec![user]).sandbox_enabled());
 
         for origin in [Origin::Project, Origin::ProjectLocal] {
             let error = Document::parse(
@@ -448,10 +440,7 @@ mod tests {
         let user = Document::sample(r#"{"sandbox":{"enabled":false}}"#, Origin::User);
         let project = Document::sample(r#"{"sandbox":{"enabled":true}}"#, Origin::Project);
 
-        assert_eq!(
-            Settings::resolve(vec![project, user]).sandbox_mode(),
-            crucible_core::SandboxMode::Required
-        );
+        assert!(Settings::resolve(vec![project, user]).sandbox_enabled());
     }
 
     #[test]

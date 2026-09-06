@@ -16,6 +16,12 @@ globset.workspace = true
 grep-regex.workspace = true
 grep-searcher.workspace = true
 ignore.workspace = true
+httparse.workspace = true
+http.workspace = true
+# Ephemeral per-command proxy credentials use the existing random source and
+# standard Basic-auth encoder; they never enter persistence or diagnostics.
+getrandom.workspace = true
+base64.workspace = true
 serde_json.workspace = true
 
 # SHA-256 of a picture handed back, which is the record of what was attached: a

@@ -10,6 +10,13 @@ change in any release with no deprecation period.
 
 ### Added
 
+- **Release and repository checks catch more failures before publication.**
+  Installer tests cover platform discovery and downloads, while repository and
+  dependency checks reject exposed credentials, cross-crate wildcard exports
+  and unused direct dependencies. Terminal tests exercise idle quiescence and
+  active-turn responsiveness, and scheduled canaries check live provider APIs.
+  ([#592](https://github.com/augments-labs/crucible-code/pull/592))
+
 - **Performance and portability regressions now have native Crucible evidence.**
   The performance suite measures argument-only startup exits, deterministic
   filesystem and process tools, active-turn input latency and CPU, synchronized
@@ -18,28 +25,57 @@ change in any release with no deprecation period.
   incremental builds, exercise live provider tool and usage records, verify the
   newest published installer lifecycle, and run baseline/candidate coding tasks
   without making external availability a pull-request verdict.
+  ([#593](https://github.com/augments-labs/crucible-code/pull/593))
 
 - **Gemini joins the model picker with API-key authentication.** Choose Gemini
   3.8 Flash, 3.7 Flash, 3.6 Flash or 3.1 Pro Preview using `GEMINI_API_KEY` or
   `/login google`; Google subscription logins are not offered. Gemini supports
   low, medium and high effort without changing the session's output ceiling.
+  ([#594](https://github.com/augments-labs/crucible-code/pull/594))
 
 - **Gemini can answer web tools through native Google Search and URL context.**
   Requests use the session's API key and existing web permissions; fetch returns
   cited, model-extracted text. Google Search's suggestion-display and
-  grounding-specific retention limitations are documented under web tools.
+  grounding-specific retention limitations remain unresolved release blockers,
+  as documented under [web tools](docs/tools/web.md).
+  ([#594](https://github.com/augments-labs/crucible-code/pull/594))
 
 - **Claude Fable 5.1 and GPT-6 Astra preserve native reasoning across tool passes.**
   Both offer low through max effort, with vendor-specific handling when effort
   or context changes. New format 12 session logs retain bounded private
   continuation; existing formats 3–11 still resume, but older builds cannot
   resume the new format.
+  ([#594](https://github.com/augments-labs/crucible-code/pull/594))
+
+- **Configure and inspect the sandbox boundary.** `sandbox.filesystem`,
+  `sandbox.network` and `sandbox.limits` control path access, domain grants,
+  local sockets and command ceilings; native Windows rejects unreadable paths
+  and network grants, while Linux/WSL2 and macOS enforce them. `/sandbox` shows
+  the effective policy and platform prerequisites and lets you change persistent
+  enablement while idle.
+  ([#595](https://github.com/augments-labs/crucible-code/pull/595))
+
+### Changed
+
+- **Sandbox enablement is a boolean throughout the SDK.** Replaced the sandbox
+  mode enum with `enabled`, removed degraded execution fallback, and aligned
+  inspection, audit records and execution checkpoints with the configuration
+  switch. Enabled policies cannot report an unconfined backend; obsolete
+  checkpoint formats are rejected.
+  ([#595](https://github.com/augments-labs/crucible-code/pull/595))
 
 ### Fixed
 
 - **Stopping at the final stream read no longer commits private state or a recap.**
   Cancellation is checked again after EOF, before tool execution or replacement
   of the original session history.
+  ([#594](https://github.com/augments-labs/crucible-code/pull/594))
+
+- **Configured MCP working directories accept filesystem aliases.** Granted
+  roots and working directories are compared in their canonical spelling, so
+  a valid configured directory no longer fails sandbox preparation on platforms
+  that resolve it through an alias.
+  ([#595](https://github.com/augments-labs/crucible-code/pull/595))
 
 ## [0.38.0] - 2026-09-06
 

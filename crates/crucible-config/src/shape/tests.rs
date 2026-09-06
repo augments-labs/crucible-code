@@ -56,6 +56,8 @@ fn offering(
         Shape::Text
         | Shape::Choice(_)
         | Shape::Count
+        | Shape::Limit(_)
+        | Shape::TextSet { .. }
         | Shape::Flag
         | Shape::Whole(_)
         | Shape::List { .. }
@@ -67,7 +69,7 @@ fn offering(
 fn spelled(shape: &Shape, example: &str) -> Value {
     match shape {
         // Examples are elements, so one goes in a list of its own.
-        Shape::List { .. } => json!([example]),
+        Shape::List { .. } | Shape::TextSet { .. } => json!([example]),
         // True and false go into a document as themselves, never as the two
         // words that spell them.
         Shape::Flag => json!(
@@ -77,7 +79,7 @@ fn spelled(shape: &Shape, example: &str) -> Value {
         ),
         // A count goes into a document as a number, and a `Whole` beside it as
         // the string that one deliberately is.
-        Shape::Count => json!(
+        Shape::Count | Shape::Limit(_) => json!(
             example
                 .parse::<u64>()
                 .expect("a count is written down as a whole number")
@@ -98,8 +100,10 @@ fn spelled(shape: &Shape, example: &str) -> Value {
 /// pasted into half a block would fail here for the block rather than for
 /// itself.
 fn written(path: &[&str], shape: &Shape, example: &str) -> String {
-    let mut value = spelled(shape, example);
+    written_value(path, spelled(shape, example))
+}
 
+fn written_value(path: &[&str], mut value: Value) -> String {
     let mut holding = Vec::new();
     let mut at = &DOCUMENT;
     for key in path {
@@ -172,6 +176,7 @@ fn every_default_the_schema_publishes_is_the_kind_of_value_its_key_takes() {
         let agrees = match kind {
             "string" => stated.is_string(),
             "boolean" => stated.is_boolean(),
+            "array" => stated.is_array(),
             "integer" => stated.is_u64(),
             other => panic!("{path:?} takes {other}, which this test has not been taught"),
         };
@@ -249,7 +254,11 @@ fn every_default_the_schema_states_is_a_value_crucible_would_accept() {
     assert!(!stated.is_empty(), "no field states a default");
 
     for (path, field, usual) in stated {
-        let text = written(&path, &field.shape, usual);
+        let text = if matches!(field.shape, Shape::TextSet { .. }) {
+            written_value(&path, serde_json::from_str(usual).unwrap())
+        } else {
+            written(&path, &field.shape, usual)
+        };
         let read = Document::parse(&text, "~/.crucible/config.json", Origin::User);
 
         assert!(

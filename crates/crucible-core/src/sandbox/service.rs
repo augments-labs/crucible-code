@@ -17,8 +17,8 @@ use super::capability::{
 use super::guardrail::SandboxCommandStage;
 use super::manifest::SandboxManifest;
 use super::policy::{
-    SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxMode, SandboxNetworkPolicy,
-    SandboxPolicy, SandboxPolicyError, SandboxResourceLimits,
+    SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxNetworkPolicy, SandboxPolicy,
+    SandboxPolicyError, SandboxResourceLimits,
 };
 
 /// Maximum environment entries given to one command.
@@ -575,9 +575,9 @@ impl SandboxRequest {
     ///
     /// # Errors
     ///
-    /// Every explicit hard feature must be reported as enforced in every mode.
-    /// `degraded` and `off` relax only the documented baseline kernel boundary;
-    /// they do not turn requested limits or session semantics into telemetry.
+    /// Every explicit hard feature must be enforced even when confinement is
+    /// disabled. Disabling removes the baseline kernel boundary, not requested
+    /// command limits, auditing or session semantics.
     pub fn negotiate(&self, capabilities: &SandboxCapabilities) -> Result<(), SandboxError> {
         if self.invocation != SandboxInvocationMode::Foreground && self.call_result.is_none() {
             return Err(SandboxError::InvalidInspection);
@@ -597,7 +597,7 @@ fn capability_requirements(
 ) -> Vec<(SandboxFeature, SandboxCapability)> {
     let enforced = SandboxCapability::Enforced;
     let mut features = Vec::with_capacity(SandboxFeature::COUNT);
-    if policy.mode() == SandboxMode::Required {
+    if policy.enabled() {
         features.extend([
             (SandboxFeature::Filesystem, enforced),
             (SandboxFeature::DescriptorIsolation, enforced),
@@ -607,14 +607,15 @@ fn capability_requirements(
             (
                 match policy.network() {
                     SandboxNetworkPolicy::Closed => SandboxFeature::NetworkDeny,
-                    SandboxNetworkPolicy::Exact { .. } => SandboxFeature::NetworkAllowlist,
+                    SandboxNetworkPolicy::Domains(_) => SandboxFeature::NetworkAllowlist,
                 },
                 enforced,
             ),
         ]);
-    } else if matches!(policy.network(), SandboxNetworkPolicy::Exact { .. }) {
-        // Compatibility may deliberately expose the ordinary host network, but
-        // it can never pretend that broad reach is an exact endpoint grant.
+    } else if matches!(policy.network(), SandboxNetworkPolicy::Domains(policy) if !policy.is_closed())
+    {
+        // Compatibility exposes the ordinary host network and cannot pretend
+        // that broad reach satisfies a mediated domain or local-socket grant.
         features.push((SandboxFeature::NetworkAllowlist, enforced));
     }
     if !manifest.is_empty() {
@@ -704,14 +705,16 @@ impl std::fmt::Debug for SandboxRootInspection {
 pub enum SandboxNetworkInspection {
     /// No network reach.
     Closed,
-    /// Exact endpoint policy; endpoint spellings remain behind a digest.
-    Exact {
-        /// Number of canonical endpoints.
-        endpoints: usize,
-        /// Whether DNS was requested through the enforcing mechanism.
-        dns: bool,
-        /// Whether bounded forwarding was requested.
-        forwarding: bool,
+    /// Domain/local policy counts; private spellings remain behind the digest.
+    Domains {
+        /// Number of allowed host patterns.
+        allowed: usize,
+        /// Number of overriding denied patterns.
+        denied: usize,
+        /// Whether the workload may bind local listeners.
+        local_binding: bool,
+        /// Number of exact host Unix sockets.
+        unix_sockets: usize,
     },
 }
 
@@ -721,34 +724,7 @@ impl SandboxNetworkInspection {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Closed => "closed",
-            Self::Exact { .. } => "exact",
-        }
-    }
-
-    /// Number of exact endpoint grants.
-    #[must_use]
-    pub const fn endpoints(self) -> usize {
-        match self {
-            Self::Closed => 0,
-            Self::Exact { endpoints, .. } => endpoints,
-        }
-    }
-
-    /// Whether DNS was requested.
-    #[must_use]
-    pub const fn dns(self) -> bool {
-        match self {
-            Self::Closed => false,
-            Self::Exact { dns, .. } => dns,
-        }
-    }
-
-    /// Whether forwarding was requested.
-    #[must_use]
-    pub const fn forwarding(self) -> bool {
-        match self {
-            Self::Closed => false,
-            Self::Exact { forwarding, .. } => forwarding,
+            Self::Domains { .. } => "domains",
         }
     }
 }
@@ -756,7 +732,7 @@ impl SandboxNetworkInspection {
 /// Bounded redacted summary of the immutable effective policy and manifest.
 #[derive(Clone, PartialEq, Eq)]
 pub struct SandboxPlanInspection {
-    mode: SandboxMode,
+    enabled: bool,
     roots: Box<[SandboxRootInspection]>,
     working_directory: [u8; 32],
     network: SandboxNetworkInspection,
@@ -782,14 +758,15 @@ impl SandboxPlanInspection {
             .into_boxed_slice();
         let network = match policy.network() {
             SandboxNetworkPolicy::Closed => SandboxNetworkInspection::Closed,
-            SandboxNetworkPolicy::Exact { .. } => SandboxNetworkInspection::Exact {
-                endpoints: policy.network().endpoints().len(),
-                dns: policy.network().dns(),
-                forwarding: policy.network().forwarding(),
+            SandboxNetworkPolicy::Domains(policy) => SandboxNetworkInspection::Domains {
+                allowed: policy.allowed().len(),
+                denied: policy.denied().len(),
+                local_binding: policy.allow_local_binding(),
+                unix_sockets: policy.unix_sockets().len(),
             },
         };
         Self {
-            mode: policy.mode(),
+            enabled: policy.enabled(),
             roots,
             working_directory: path_identity(b"working-directory", policy.working_directory()),
             network,
@@ -802,10 +779,10 @@ impl SandboxPlanInspection {
         }
     }
 
-    /// Required/degraded/off effective selection.
+    /// Whether the effective policy requires verified confinement.
     #[must_use]
-    pub const fn mode(&self) -> SandboxMode {
-        self.mode
+    pub const fn enabled(&self) -> bool {
+        self.enabled
     }
 
     /// Canonical reaches, represented only by domain-separated identities.
@@ -866,7 +843,7 @@ impl SandboxPlanInspection {
 impl std::fmt::Debug for SandboxPlanInspection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SandboxPlanInspection")
-            .field("mode", &self.mode)
+            .field("enabled", &self.enabled)
             .field("roots", &self.roots)
             .field("working_directory", &"[sha256]")
             .field("network", &self.network)
@@ -912,7 +889,7 @@ pub struct SandboxInspection {
     policy_digest: [u8; 32],
     manifest_digest: [u8; 32],
     confined: bool,
-    degradation: Option<Box<str>>,
+    disabled_reason: Option<Box<str>>,
     cleanup: SandboxCleanup,
 }
 
@@ -921,7 +898,7 @@ impl SandboxInspection {
     ///
     /// # Errors
     ///
-    /// Degradation text is bounded and a report may call itself confined only
+    /// Disable-reason text is bounded and a report may call itself confined only
     /// when the essential kernel boundaries are all enforced.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -931,7 +908,7 @@ impl SandboxInspection {
         policy: &SandboxPolicy,
         manifest: &SandboxManifest,
         confined: bool,
-        degradation: Option<impl Into<Box<str>>>,
+        disabled_reason: Option<impl Into<Box<str>>>,
         cleanup: SandboxCleanup,
     ) -> Result<Self, SandboxError> {
         Self::build(
@@ -942,7 +919,7 @@ impl SandboxInspection {
             policy,
             manifest,
             confined,
-            degradation,
+            disabled_reason,
             cleanup,
         )
     }
@@ -974,12 +951,12 @@ impl SandboxInspection {
     ///
     /// # Errors
     ///
-    /// The required degradation reason must be non-empty and bounded.
+    /// Confinement must be disabled and the reason must be non-empty and bounded.
     pub fn unconfined_for_request(
         backend: SandboxBackendIdentity,
         capabilities: SandboxCapabilities,
         request: &SandboxRequest,
-        degradation: impl Into<Box<str>>,
+        disabled_reason: impl Into<Box<str>>,
     ) -> Result<Self, SandboxError> {
         Self::build(
             request.id(),
@@ -989,7 +966,7 @@ impl SandboxInspection {
             request.policy(),
             request.manifest(),
             false,
-            Some(degradation),
+            Some(disabled_reason),
             SandboxCleanup::Pending,
         )
     }
@@ -1003,20 +980,21 @@ impl SandboxInspection {
         policy: &SandboxPolicy,
         manifest: &SandboxManifest,
         confined: bool,
-        degradation: Option<impl Into<Box<str>>>,
+        disabled_reason: Option<impl Into<Box<str>>>,
         cleanup: SandboxCleanup,
     ) -> Result<Self, SandboxError> {
-        let degradation = degradation.map(Into::into);
-        if degradation
+        let disabled_reason = disabled_reason.map(Into::into);
+        if disabled_reason
             .as_ref()
             .is_some_and(|text| text.is_empty() || text.len() > MAX_SANDBOX_BACKEND_WORD_BYTES)
-            || confined == degradation.is_some()
+            || confined == disabled_reason.is_some()
+            || policy.enabled() != confined
         {
             return Err(SandboxError::InvalidInspection);
         }
         let network = match policy.network() {
             SandboxNetworkPolicy::Closed => SandboxFeature::NetworkDeny,
-            SandboxNetworkPolicy::Exact { .. } => SandboxFeature::NetworkAllowlist,
+            SandboxNetworkPolicy::Domains(_) => SandboxFeature::NetworkAllowlist,
         };
         let essential = [
             SandboxFeature::Filesystem,
@@ -1043,7 +1021,7 @@ impl SandboxInspection {
             policy_digest: policy.digest(),
             manifest_digest: manifest.digest(),
             confined,
-            degradation,
+            disabled_reason,
             cleanup,
         })
     }
@@ -1102,10 +1080,10 @@ impl SandboxInspection {
         self.confined
     }
 
-    /// Explicit reason for a user-authorized degradation.
+    /// Why the host deliberately disabled confinement.
     #[must_use]
-    pub fn degradation(&self) -> Option<&str> {
-        self.degradation.as_deref()
+    pub fn disabled_reason(&self) -> Option<&str> {
+        self.disabled_reason.as_deref()
     }
 
     /// Last known cleanup outcome.
@@ -1128,7 +1106,7 @@ pub struct SandboxCheckpoint {
     id: SandboxId,
     backend: SandboxBackendIdentity,
     capabilities: SandboxCapabilities,
-    mode: SandboxMode,
+    enabled: bool,
     network: SandboxNetworkInspection,
     policy_digest: [u8; 32],
     manifest_digest: [u8; 32],
@@ -1143,7 +1121,7 @@ impl SandboxCheckpoint {
             id: inspection.id,
             backend: inspection.backend.clone(),
             capabilities: inspection.capabilities.clone(),
-            mode: inspection.plan.mode,
+            enabled: inspection.plan.enabled,
             network: inspection.plan.network,
             policy_digest: inspection.policy_digest,
             manifest_digest: inspection.manifest_digest,
@@ -1155,29 +1133,28 @@ impl SandboxCheckpoint {
     ///
     /// # Errors
     ///
-    /// A record that calls itself confined without its exact essential network
-    /// and kernel capabilities is refused.
+    /// A record that calls itself confined without its required network and
+    /// kernel capabilities is refused.
     #[allow(clippy::too_many_arguments)]
     pub fn restore(
         id: SandboxId,
         backend: SandboxBackendIdentity,
         capabilities: SandboxCapabilities,
-        mode: SandboxMode,
+        enabled: bool,
         network: SandboxNetworkInspection,
         policy_digest: [u8; 32],
         manifest_digest: [u8; 32],
         confined: bool,
     ) -> Result<Self, SandboxError> {
-        if matches!(
-            network,
-            SandboxNetworkInspection::Exact { endpoints: 0, .. }
-        ) || network.endpoints() > super::policy::MAX_SANDBOX_NETWORK_ENDPOINTS
+        if enabled != confined
+            || matches!(network, SandboxNetworkInspection::Domains { allowed, denied, unix_sockets, .. }
+                if [allowed, denied, unix_sockets].into_iter().any(|count| count > super::domains::MAX_SANDBOX_NETWORK_RULES))
         {
             return Err(SandboxError::InvalidInspection);
         }
         let network_feature = match network {
             SandboxNetworkInspection::Closed => SandboxFeature::NetworkDeny,
-            SandboxNetworkInspection::Exact { .. } => SandboxFeature::NetworkAllowlist,
+            SandboxNetworkInspection::Domains { .. } => SandboxFeature::NetworkAllowlist,
         };
         if confined
             && [
@@ -1197,7 +1174,7 @@ impl SandboxCheckpoint {
             id,
             backend,
             capabilities,
-            mode,
+            enabled,
             network,
             policy_digest,
             manifest_digest,
@@ -1223,10 +1200,10 @@ impl SandboxCheckpoint {
         &self.capabilities
     }
 
-    /// Effective mode before interruption.
+    /// Whether confinement was required before interruption.
     #[must_use]
-    pub const fn mode(&self) -> SandboxMode {
-        self.mode
+    pub const fn enabled(&self) -> bool {
+        self.enabled
     }
 
     /// Effective redacted network shape before interruption.
@@ -1258,7 +1235,7 @@ impl SandboxCheckpoint {
     #[must_use]
     pub fn is_compatible_with(&self, live: &Self) -> bool {
         self.backend == live.backend
-            && self.mode == live.mode
+            && self.enabled == live.enabled
             && self.network == live.network
             && self.policy_digest == live.policy_digest
             && self.manifest_digest == live.manifest_digest
@@ -1275,7 +1252,7 @@ impl std::fmt::Debug for SandboxCheckpoint {
             .field("id", &self.id)
             .field("backend", &self.backend)
             .field("capabilities", &self.capabilities)
-            .field("mode", &self.mode)
+            .field("enabled", &self.enabled)
             .field("network", &self.network)
             .field("policy_digest", &"[sha256]")
             .field("manifest_digest", &"[sha256]")

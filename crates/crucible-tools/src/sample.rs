@@ -149,12 +149,25 @@ impl Sample {
     /// a unique name can. The tests of one crate run in one process, which is
     /// what makes a counter enough.
     pub(crate) fn new(name: &str) -> Self {
+        Self::below(name, &std::env::temp_dir())
+    }
+
+    /// Unix socket names must fit Darwin's 104-byte sockaddr field. Its usual
+    /// per-user temporary directory alone can consume most of that field.
+    #[cfg(unix)]
+    pub(crate) fn socket(name: &str) -> Self {
+        let temporary = Path::new("/tmp")
+            .canonicalize()
+            .expect("canonical temporary root");
+        Self::below(name, &temporary)
+    }
+
+    fn below(name: &str, temporary: &Path) -> Self {
         /// How many fixtures this process has made.
         static MADE: AtomicU64 = AtomicU64::new(0);
 
         let made = MADE.fetch_add(1, Ordering::Relaxed);
-        let base =
-            std::env::temp_dir().join(format!("crucible-{name}-{}-{made}", std::process::id()));
+        let base = temporary.join(format!("crucible-{name}-{}-{made}", std::process::id()));
 
         // A previous run that crashed leaves its tree behind, and a process
         // identifier is reused eventually. Cheap, and the only thing that can

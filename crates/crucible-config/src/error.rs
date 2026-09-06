@@ -337,6 +337,19 @@ pub enum ConfigError {
         at: At,
     },
 
+    /// A sandbox setting conflicts with a path or authority boundary.
+    #[error("{file}: {path}{at} — {problem}")]
+    Sandbox {
+        /// The source configuration file.
+        file: Box<str>,
+        /// The setting, without its potentially private value.
+        path: Box<str>,
+        /// Position of the setting key.
+        at: At,
+        /// Bounded explanation containing no configured path.
+        problem: &'static str,
+    },
+
     /// A prompt-cache policy was internally contradictory or exceeded a
     /// retention/authority boundary that its JSON shape cannot express.
     #[error("{file}: {path}{at} — {problem}")]

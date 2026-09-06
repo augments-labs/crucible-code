@@ -83,7 +83,7 @@ pub(crate) struct Document {
     rules: Rules,
     /// Typed prompt-cache fields this one layer actually stated.
     prompt_cache: Option<PromptCacheLayer>,
-    /// Typed confinement mode this layer actually stated.
+    /// Typed confinement enablement this layer actually stated.
     sandbox: Option<SandboxLayer>,
 }
 

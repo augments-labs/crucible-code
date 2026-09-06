@@ -22,6 +22,7 @@ const FILTER_LABELS: [&[u8]; 4] = [
 ];
 
 pub(super) struct SetupIdentity {
+    pub(super) owner_sid: Vec<u8>,
     pub(super) account_name: String,
     pub(super) registry_subkey: String,
     pub(super) entropy: [u8; 32],
@@ -45,6 +46,7 @@ impl SetupIdentity {
             GUID::from_u128(u128::from_be_bytes(value))
         });
         Self {
+            owner_sid: owner_sid.to_vec(),
             account_name: format!(
                 "CrucibleSBX-{:02X}{:02X}{:02X}{:02X}",
                 account_hash[0], account_hash[1], account_hash[2], account_hash[3]

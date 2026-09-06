@@ -123,7 +123,9 @@ The conversation a provider receives is deliberately a closed sequence of
 context, user, agent and tool-result messages. Framework facts live beside that
 conversation rather than becoming new provider messages. A format 11 session
 therefore follows a conversation line with versioned `run_item` metadata where
-there is ancestry or lifecycle state to retain. Message metadata does not copy
+there is ancestry or lifecycle state to retain. The current journal envelope is
+version 2: sandbox plans record boolean `enabled` and `disabled_reason` replaces
+the obsolete degradation field. Message metadata does not copy
 the prompt text. Prompt-cache records keep normalized per-attempt decisions,
 usage and cost; invocation records keep stable prepared, started and finished
 states. Conversation replay skips all of these records.

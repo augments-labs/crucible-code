@@ -3,10 +3,10 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::ffi::OsStr;
 use std::fs;
-use std::os::unix::fs::MetadataExt as _;
+use std::os::unix::fs::{FileTypeExt as _, MetadataExt as _};
 use std::path::{Path, PathBuf};
 
-use crucible_core::{SandboxError, SandboxFilesystemAccess, SandboxPolicy};
+use crucible_core::{SandboxError, SandboxFilesystemAccess, SandboxNetworkPolicy, SandboxPolicy};
 
 const MAX_ENTRIES: usize = 262_144;
 const MAX_DEPTH: usize = 64;
@@ -27,6 +27,7 @@ impl Validation {
 }
 
 pub(super) fn validate(policy: &SandboxPolicy) -> Result<Validation, SandboxError> {
+    let sockets = validate_granted_sockets(policy)?;
     let mut roots: BTreeMap<PathBuf, bool> = BTreeMap::new();
     for rule in policy.filesystem().iter().filter(|rule| {
         rule.access() != SandboxFilesystemAccess::Unreadable
@@ -47,7 +48,7 @@ pub(super) fn validate(policy: &SandboxPolicy) -> Result<Validation, SandboxErro
 
     let mut protected = Vec::new();
     for (root, protects_metadata) in roots {
-        protected.extend(validate_tree(&root, protects_metadata)?);
+        protected.extend(validate_tree(&root, protects_metadata, &sockets)?);
     }
     protected.sort();
     protected.dedup();
@@ -83,7 +84,11 @@ pub(super) fn validate(policy: &SandboxPolicy) -> Result<Validation, SandboxErro
     })
 }
 
-fn validate_tree(root: &Path, protects_metadata: bool) -> Result<Vec<PathBuf>, SandboxError> {
+fn validate_tree(
+    root: &Path,
+    protects_metadata: bool,
+    sockets: &BTreeMap<PathBuf, SocketIdentity>,
+) -> Result<Vec<PathBuf>, SandboxError> {
     let root_device = fs::metadata(root)
         .map_err(|source| failed("workspace root could not be inspected", source))?
         .dev();
@@ -92,11 +97,13 @@ fn validate_tree(root: &Path, protects_metadata: bool) -> Result<Vec<PathBuf>, S
     let mut pending = VecDeque::from([(root.to_path_buf(), 0_usize)]);
     let mut inspected = 0_usize;
     while let Some((directory, depth)) = pending.pop_front() {
-        let mut entries = fs::read_dir(&directory)
-            .map_err(|source| failed("workspace metadata scan failed", source))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|source| failed("workspace metadata entry could not be inspected", source))?;
-        entries.sort_by_key(fs::DirEntry::file_name);
+        let entries = fs::read_dir(&directory)
+            .map_err(|source| failed("workspace metadata scan failed", source))?;
+        let entries =
+            super::super::directory_entries(entries, MAX_ENTRIES.saturating_sub(inspected))
+                .map_err(|source| {
+                    failed("workspace metadata entry could not be inspected", source)
+                })?;
         for entry in entries {
             inspected = inspected.saturating_add(1);
             if inspected > MAX_ENTRIES {
@@ -153,6 +160,16 @@ fn validate_tree(root: &Path, protects_metadata: bool) -> Result<Vec<PathBuf>, S
                 pending.push_back((path, depth.saturating_add(1)));
                 continue;
             }
+            if (!protects_metadata || !protected_name(&name))
+                && let Some(expected) = sockets.get(&path)
+            {
+                if expected.matches(&metadata) {
+                    continue;
+                }
+                return Err(refused(
+                    "granted Unix endpoint changed during workspace validation",
+                ));
+            }
             return Err(refused("workspace tree contains a special file"));
         }
     }
@@ -167,6 +184,70 @@ fn validate_tree(root: &Path, protects_metadata: bool) -> Result<Vec<PathBuf>, S
         ));
     }
     Ok(protected)
+}
+
+#[derive(Clone, Copy)]
+struct SocketIdentity {
+    device: u64,
+    inode: u64,
+    changed_seconds: i64,
+    changed_nanoseconds: i64,
+}
+
+impl SocketIdentity {
+    fn from(metadata: &fs::Metadata) -> Self {
+        Self {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+            changed_seconds: metadata.ctime(),
+            changed_nanoseconds: metadata.ctime_nsec(),
+        }
+    }
+
+    fn matches(self, metadata: &fs::Metadata) -> bool {
+        self.device == metadata.dev()
+            && self.inode == metadata.ino()
+            && self.changed_seconds == metadata.ctime()
+            && self.changed_nanoseconds == metadata.ctime_nsec()
+            && metadata.nlink() == 1
+            && metadata.file_type().is_socket()
+    }
+}
+
+fn validate_granted_sockets(
+    policy: &SandboxPolicy,
+) -> Result<BTreeMap<PathBuf, SocketIdentity>, SandboxError> {
+    let SandboxNetworkPolicy::Domains(domains) = policy.network() else {
+        return Ok(BTreeMap::new());
+    };
+    let mut sockets = BTreeMap::new();
+    for path in domains.unix_sockets() {
+        let inspect = || {
+            fs::symlink_metadata(path)
+                .map_err(|source| failed("granted Unix endpoint could not be inspected", source))
+        };
+        let named = inspect()?;
+        if named.file_type().is_symlink() || !named.file_type().is_socket() || named.nlink() != 1 {
+            return Err(refused("granted Unix endpoint is not a canonical socket"));
+        }
+        let canonical = path
+            .canonicalize()
+            .map_err(|source| failed("granted Unix endpoint could not be canonicalized", source))?;
+        if canonical != path.as_path() {
+            return Err(refused(
+                "granted Unix endpoint contains a symbolic-link or non-canonical component",
+            ));
+        }
+        let expected = SocketIdentity::from(&named);
+        let confirmed = inspect()?;
+        if !expected.matches(&confirmed) {
+            return Err(refused(
+                "granted Unix endpoint changed during workspace validation",
+            ));
+        }
+        sockets.insert(path.clone(), expected);
+    }
+    Ok(sockets)
 }
 
 fn linked_worktree_metadata(path: &Path) -> Result<Vec<PathBuf>, SandboxError> {
@@ -270,7 +351,12 @@ fn failed(problem: &'static str, source: std::io::Error) -> SandboxError {
 
 #[cfg(test)]
 mod tests {
-    use crucible_core::SandboxPolicy;
+    use std::os::unix::net::UnixListener;
+
+    use crucible_core::{
+        SandboxDomainPolicy, SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxPolicy,
+        SandboxResourceLimits,
+    };
 
     #[test]
     fn nested_repository_metadata_is_discovered() {
@@ -284,6 +370,34 @@ mod tests {
                 .protected()
                 .contains(&policy.working_directory().join("nested/.git"))
         );
+    }
+
+    #[test]
+    fn only_an_exact_granted_socket_is_accepted_in_the_workspace_tree() {
+        let sample = crate::sample::Sample::socket("macos-granted-workspace-socket");
+        let socket_path = sample.root().join("granted.sock");
+        let _socket = UnixListener::bind(&socket_path).expect("Unix socket fixture");
+        let standard = SandboxPolicy::standard(&sample.workspace()).expect("standard policy");
+        let domains =
+            SandboxDomainPolicy::new([], [], false, [socket_path], SandboxNetworkProvenance::User)
+                .expect("domain policy");
+        let policy = SandboxPolicy::new(
+            true,
+            standard.filesystem().iter().cloned(),
+            standard.working_directory(),
+            SandboxNetworkPolicy::Domains(domains),
+            SandboxResourceLimits::confining(),
+        )
+        .expect("effective policy");
+
+        super::validate(&policy).expect("the exact granted socket is valid tree content");
+
+        let _ambient = UnixListener::bind(sample.root().join("ambient.sock"))
+            .expect("ambient Unix socket fixture");
+        let Err(problem) = super::validate(&policy) else {
+            panic!("an ambient socket must be refused");
+        };
+        assert!(problem.to_string().contains("special file"));
     }
 
     #[test]

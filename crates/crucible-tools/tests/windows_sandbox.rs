@@ -25,7 +25,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crucible_core::{
     Ancestry, SandboxCommand, SandboxEnvironment, SandboxError, SandboxFilesystemAccess,
-    SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxId, SandboxManifest, SandboxMode,
+    SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxId, SandboxManifest,
     SandboxNetworkPolicy, SandboxOutput, SandboxPolicy, SandboxProcess, SandboxRead,
     SandboxRequest, SandboxService, ToolId, Workspace,
 };
@@ -341,7 +341,7 @@ fn windows_refuses_an_explicit_unreadable_root_before_preparation() {
     )
     .expect("unreadable root");
     let policy = SandboxPolicy::new(
-        SandboxMode::Required,
+        true,
         base.filesystem().iter().cloned().chain([unreadable]),
         &fixture.workspace,
         SandboxNetworkPolicy::Closed,

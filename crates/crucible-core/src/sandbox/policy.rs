@@ -7,6 +7,7 @@ use std::time::Duration;
 use crate::Workspace;
 use sha2::{Digest, Sha256};
 
+use super::domains::SandboxDomainPolicy;
 use super::guardrail::SandboxCommandPolicy;
 
 /// Maximum filesystem rules in one effective policy.
@@ -14,9 +15,6 @@ pub const MAX_SANDBOX_FILESYSTEM_RULES: usize = 128;
 
 /// Maximum bytes retained for one policy path.
 pub const MAX_SANDBOX_PATH_BYTES: usize = 4096;
-
-/// Maximum exact network endpoints in one policy.
-pub const MAX_SANDBOX_NETWORK_ENDPOINTS: usize = 64;
 
 /// Maximum bytes in one DNS name.
 pub const MAX_SANDBOX_HOST_BYTES: usize = 253;
@@ -26,49 +24,6 @@ pub const MAX_SANDBOX_UNREADABLE_PATTERNS: usize = 64;
 
 /// Maximum wildcard/literal components after one pattern's fixed scan root.
 pub const MAX_SANDBOX_PATTERN_COMPONENTS: usize = 64;
-
-/// Whether the host must provide kernel confinement.
-///
-/// The SDK default remains required. The application resolves its opt-in
-/// configuration separately and explicitly applies that choice to the policy.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum SandboxMode {
-    /// Refuse before materialization or spawn unless every requested hard
-    /// feature has an enforcing backend.
-    #[default]
-    Required,
-    /// Prefer confinement, but permit an explicitly user-selected and clearly
-    /// reported compatibility backend when enforcement is unavailable.
-    Degraded,
-    /// Explicitly use the non-confining compatibility backend.
-    Off,
-}
-
-impl SandboxMode {
-    /// Whether `candidate` preserves or strengthens `parent`.
-    #[must_use]
-    pub const fn permits(self, candidate: Self) -> bool {
-        candidate.strength() >= self.strength()
-    }
-
-    const fn strength(self) -> u8 {
-        match self {
-            Self::Off => 0,
-            Self::Degraded => 1,
-            Self::Required => 2,
-        }
-    }
-
-    /// Stable inspection/configuration spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Required => "required",
-            Self::Degraded => "degraded",
-            Self::Off => "off",
-        }
-    }
-}
 
 /// Access granted to one exact filesystem subtree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,6 +77,12 @@ pub enum SandboxFilesystemProvenance {
     Descendant,
     /// An explicit manifest mount request.
     Manifest,
+    /// A filesystem grant or restriction in the user's configuration.
+    UserConfiguration,
+    /// A restriction in the checked-in project configuration.
+    ProjectConfiguration,
+    /// A restriction in the project-local configuration.
+    ProjectLocalConfiguration,
 }
 
 impl SandboxFilesystemProvenance {
@@ -138,6 +99,9 @@ impl SandboxFilesystemProvenance {
             Self::ProtectedMetadata => "protected_metadata",
             Self::Descendant => "descendant",
             Self::Manifest => "manifest",
+            Self::UserConfiguration => "user_configuration",
+            Self::ProjectConfiguration => "project_configuration",
+            Self::ProjectLocalConfiguration => "project_local_configuration",
         }
     }
 }
@@ -210,18 +174,11 @@ pub enum SandboxNetworkProvenance {
     Descendant,
 }
 
-impl SandboxNetworkProvenance {
-    const fn permits(self, candidate: Self) -> bool {
-        candidate as u8 >= self as u8
-    }
-}
-
 /// One exact outbound endpoint.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SandboxNetworkEndpoint {
     host: Box<str>,
     port: u16,
-    literal_address: bool,
     provenance: SandboxNetworkProvenance,
 }
 
@@ -244,7 +201,6 @@ impl SandboxNetworkEndpoint {
             return Ok(Self {
                 host: address.to_string().into(),
                 port,
-                literal_address: true,
                 provenance,
             });
         }
@@ -276,7 +232,6 @@ impl SandboxNetworkEndpoint {
         Ok(Self {
             host: host.to_ascii_lowercase().into(),
             port,
-            literal_address: false,
             provenance,
         })
     }
@@ -298,14 +253,6 @@ impl SandboxNetworkEndpoint {
     pub const fn provenance(&self) -> SandboxNetworkProvenance {
         self.provenance
     }
-
-    fn same_target(&self, other: &Self) -> bool {
-        self.host == other.host && self.port == other.port
-    }
-
-    const fn is_literal_address(&self) -> bool {
-        self.literal_address
-    }
 }
 
 impl std::fmt::Debug for SandboxNetworkEndpoint {
@@ -313,7 +260,6 @@ impl std::fmt::Debug for SandboxNetworkEndpoint {
         f.debug_struct("SandboxNetworkEndpoint")
             .field("host", &"[host]")
             .field("port", &self.port)
-            .field("literal_address", &self.literal_address)
             .field("provenance", &self.provenance)
             .finish()
     }
@@ -503,110 +449,16 @@ pub enum SandboxNetworkPolicy {
     /// No host network namespace, inherited socket, loopback, Unix socket, DNS,
     /// metadata address, or forwarding authority.
     Closed,
-    /// Exact proxy-enforced host/port endpoints. The initial Linux backend
-    /// reports this unsupported rather than broadening it.
-    Exact {
-        /// Canonically sorted permitted endpoints.
-        endpoints: Box<[SandboxNetworkEndpoint]>,
-        /// Whether DNS resolution through the enforcing mechanism is allowed.
-        dns: bool,
-        /// Whether bounded inbound/outbound port forwarding is requested.
-        forwarding: bool,
-    },
+    /// Domain mediation with overriding denies and explicit local connections.
+    Domains(SandboxDomainPolicy),
 }
 
 impl SandboxNetworkPolicy {
-    /// Validates, sorts, and deduplicates an exact network request.
-    ///
-    /// # Errors
-    ///
-    /// Empty or oversized endpoint sets are rejected.
-    pub fn exact(
-        endpoints: impl IntoIterator<Item = SandboxNetworkEndpoint>,
-        dns: bool,
-        forwarding: bool,
-    ) -> Result<Self, SandboxPolicyError> {
-        let mut endpoints: Vec<_> = endpoints.into_iter().collect();
-        if !dns
-            && endpoints
-                .iter()
-                .any(|endpoint| !endpoint.is_literal_address())
-        {
-            return Err(SandboxPolicyError::InvalidEndpoint);
-        }
-        endpoints.sort();
-        if endpoints.windows(2).any(|pair| {
-            pair.first().is_some_and(|left| {
-                pair.get(1).is_some_and(|right| {
-                    left.same_target(right) && left.provenance != right.provenance
-                })
-            })
-        }) {
-            return Err(SandboxPolicyError::InvalidEndpoint);
-        }
-        endpoints.dedup();
-        if endpoints.is_empty() || endpoints.len() > MAX_SANDBOX_NETWORK_ENDPOINTS {
-            return Err(SandboxPolicyError::InvalidEndpointCount);
-        }
-        Ok(Self::Exact {
-            endpoints: endpoints.into_boxed_slice(),
-            dns,
-            forwarding,
-        })
-    }
-
     fn is_no_wider_than(&self, parent: &Self) -> bool {
         match (self, parent) {
             (Self::Closed, _) => true,
-            (Self::Exact { .. }, Self::Closed) => false,
-            (
-                Self::Exact {
-                    endpoints,
-                    dns,
-                    forwarding,
-                },
-                Self::Exact {
-                    endpoints: parent_endpoints,
-                    dns: parent_dns,
-                    forwarding: parent_forwarding,
-                },
-            ) => {
-                (!dns || *parent_dns)
-                    && (!forwarding || *parent_forwarding)
-                    && endpoints.iter().all(|endpoint| {
-                        parent_endpoints.iter().any(|parent| {
-                            endpoint.same_target(parent)
-                                && parent.provenance.permits(endpoint.provenance)
-                        })
-                    })
-            }
-        }
-    }
-
-    /// Exact endpoints, or an empty slice for a closed policy.
-    #[must_use]
-    pub fn endpoints(&self) -> &[SandboxNetworkEndpoint] {
-        match self {
-            Self::Closed => &[],
-            Self::Exact { endpoints, .. } => endpoints,
-        }
-    }
-
-    /// Whether policy-authorized DNS is requested.
-    #[must_use]
-    pub const fn dns(&self) -> bool {
-        match self {
-            Self::Closed => false,
-            Self::Exact { dns, .. } => *dns,
-        }
-    }
-
-    /// Whether bounded forwarding is requested.
-    #[must_use]
-    pub const fn forwarding(&self) -> bool {
-        match self {
-            Self::Closed => false,
-            Self::Exact { forwarding, .. } => *forwarding,
+            (Self::Domains(child), Self::Domains(parent)) => child.is_no_wider_than(parent),
+            (Self::Domains(child), Self::Closed) => child.is_closed(),
         }
     }
 }
@@ -714,13 +566,10 @@ impl SandboxResourceLimits {
         }
     }
 
-    /// The ceilings only a confining backend can apply, taken off.
+    /// Removes ceilings applied only by a confining backend.
     ///
-    /// A mode below [`SandboxMode::Required`] is the host saying it will accept
-    /// a backend that confines less, and the compatibility backend applies no
-    /// rlimit at all. Keeping the numbers there would not bound anything; it
-    /// would refuse every command instead, because a policy may not ask for a
-    /// ceiling its backend cannot apply.
+    /// Disabled confinement leaves command time, output and concurrency bounds
+    /// active. Kernel limits cannot remain promised on ordinary execution.
     const fn unconfined(mut self) -> Self {
         self.cpu_seconds = None;
         self.memory_bytes = None;
@@ -775,7 +624,7 @@ fn no_larger<T: PartialOrd>(candidate: Option<T>, parent: Option<T>) -> bool {
 /// One fully resolved immutable policy.
 #[derive(Clone, PartialEq, Eq)]
 pub struct SandboxPolicy {
-    mode: SandboxMode,
+    enabled: bool,
     filesystem: Box<[SandboxFilesystemRule]>,
     unreadable_patterns: Box<[SandboxUnreadablePattern]>,
     working_directory: PathBuf,
@@ -816,7 +665,7 @@ impl SandboxPolicy {
             }
         }
         Self::new(
-            SandboxMode::Required,
+            true,
             filesystem,
             workspace.root(),
             SandboxNetworkPolicy::Closed,
@@ -831,13 +680,16 @@ impl SandboxPolicy {
     /// Invalid paths, duplicate/conflicting rules, an out-of-policy working
     /// directory, oversized rule sets, or zero resource ceilings are refused.
     pub fn new(
-        mode: SandboxMode,
+        enabled: bool,
         filesystem: impl IntoIterator<Item = SandboxFilesystemRule>,
         working_directory: impl Into<PathBuf>,
         network: SandboxNetworkPolicy,
         limits: SandboxResourceLimits,
     ) -> Result<Self, SandboxPolicyError> {
-        let mut filesystem: Vec<_> = filesystem.into_iter().collect();
+        let mut filesystem: Vec<_> = filesystem
+            .into_iter()
+            .take(MAX_SANDBOX_FILESYSTEM_RULES + 1)
+            .collect();
         if filesystem.is_empty() || filesystem.len() > MAX_SANDBOX_FILESYSTEM_RULES {
             return Err(SandboxPolicyError::InvalidFilesystemRuleCount);
         }
@@ -877,7 +729,7 @@ impl SandboxPolicy {
         }
 
         Ok(Self {
-            mode,
+            enabled,
             filesystem: filesystem.into_boxed_slice(),
             unreadable_patterns: Box::new([]),
             working_directory,
@@ -893,11 +745,11 @@ impl SandboxPolicy {
     ///
     /// # Errors
     ///
-    /// A weaker mode, new/wider filesystem grant, broader network policy,
+    /// Disabled required confinement, a wider filesystem grant or network policy,
     /// relaxed resource ceiling, or new persistence authority is rejected.
     pub fn restrict(parent: &Self, mut candidate: Self) -> Result<Self, SandboxPolicyError> {
-        if !parent.mode.permits(candidate.mode) {
-            return Err(SandboxPolicyError::WeakerMode);
+        if parent.enabled && !candidate.enabled {
+            return Err(SandboxPolicyError::ConfinementDisabled);
         }
         if !candidate
             .filesystem
@@ -995,7 +847,10 @@ impl SandboxPolicy {
         mut self,
         patterns: impl IntoIterator<Item = SandboxUnreadablePattern>,
     ) -> Result<Self, SandboxPolicyError> {
-        let mut patterns: Vec<_> = patterns.into_iter().collect();
+        let mut patterns: Vec<_> = patterns
+            .into_iter()
+            .take(MAX_SANDBOX_UNREADABLE_PATTERNS + 1)
+            .collect();
         if patterns.len() > MAX_SANDBOX_UNREADABLE_PATTERNS {
             return Err(SandboxPolicyError::InvalidUnreadablePatternCount);
         }
@@ -1017,17 +872,15 @@ impl SandboxPolicy {
         Ok(self)
     }
 
-    /// Returns a copy under a host-authorized top-level mode.
+    /// Applies the host-authorized opt-in choice.
     ///
-    /// Lowering the mode takes the confinement's own ceilings off with it. They
-    /// are applied by the backend that confines, and a mode below
-    /// [`SandboxMode::Required`] accepts one that does not — so leaving them
-    /// stated would refuse every command rather than bound any of it. What the
-    /// caller asked for over one command, such as its wall time, is untouched.
+    /// Disabling removes kernel-only ceilings; command limits remain active.
+    /// Descendants must pass through [`Self::restrict`] and cannot disable
+    /// confinement required by their parent.
     #[must_use]
-    pub const fn with_mode(mut self, mode: SandboxMode) -> Self {
-        self.mode = mode;
-        if !matches!(mode, SandboxMode::Required) {
+    pub const fn with_enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        if !enabled {
             self.limits = self.limits.unconfined();
         }
         self
@@ -1043,10 +896,10 @@ impl SandboxPolicy {
         self
     }
 
-    /// Required/degraded/off selection.
+    /// Whether commands require verified operating-system confinement.
     #[must_use]
-    pub const fn mode(&self) -> SandboxMode {
-        self.mode
+    pub const fn enabled(&self) -> bool {
+        self.enabled
     }
 
     /// Canonical ordered filesystem rules.
@@ -1125,8 +978,8 @@ impl SandboxPolicy {
     #[must_use]
     pub fn digest(&self) -> [u8; 32] {
         let mut digest = Sha256::new();
-        digest.update(b"crucible-sandbox-policy-v1\0");
-        digest.update([self.mode as u8]);
+        digest.update(b"crucible-sandbox-policy-v2\0");
+        digest.update([u8::from(self.enabled)]);
         for rule in &self.filesystem {
             digest.update(rule.path.as_os_str().as_encoded_bytes());
             digest.update([0, rule.access as u8, rule.provenance as u8]);
@@ -1138,20 +991,7 @@ impl SandboxPolicy {
         digest.update(self.working_directory.as_os_str().as_encoded_bytes());
         match &self.network {
             SandboxNetworkPolicy::Closed => digest.update(b"\0closed"),
-            SandboxNetworkPolicy::Exact {
-                endpoints,
-                dns,
-                forwarding,
-            } => {
-                digest.update(b"\0exact");
-                for endpoint in endpoints {
-                    digest.update(endpoint.host.as_bytes());
-                    digest.update([0]);
-                    digest.update(endpoint.port.to_be_bytes());
-                    digest.update([endpoint.provenance as u8]);
-                }
-                digest.update([u8::from(*dns), u8::from(*forwarding)]);
-            }
+            SandboxNetworkPolicy::Domains(policy) => policy.update_digest(&mut digest),
         }
         update_limits(&mut digest, self.limits);
         digest.update(self.commands.digest());
@@ -1163,7 +1003,7 @@ impl SandboxPolicy {
 impl std::fmt::Debug for SandboxPolicy {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SandboxPolicy")
-            .field("mode", &self.mode)
+            .field("enabled", &self.enabled)
             .field("filesystem_rules", &self.filesystem.len())
             .field("unreadable_patterns", &self.unreadable_patterns.len())
             .field("working_directory", &"[absolute path]")
@@ -1176,7 +1016,7 @@ impl std::fmt::Debug for SandboxPolicy {
     }
 }
 
-fn validate_absolute_path(path: &Path) -> Result<(), SandboxPolicyError> {
+pub(super) fn validate_absolute_path(path: &Path) -> Result<(), SandboxPolicyError> {
     let encoded = path.as_os_str().as_encoded_bytes();
     if !path.is_absolute()
         || path.as_os_str().is_empty()
@@ -1274,18 +1114,18 @@ pub enum SandboxPolicyError {
     /// Network endpoints are bounded and structurally valid.
     #[error("sandbox network endpoint is invalid")]
     InvalidEndpoint,
-    /// An exact request is non-empty and bounded.
-    #[error("sandbox network policy must contain 1..={MAX_SANDBOX_NETWORK_ENDPOINTS} endpoints")]
-    InvalidEndpointCount,
     /// A ceiling of zero has no useful meaning and often means unlimited to a kernel API.
     #[error("sandbox resource ceilings must be greater than zero")]
     InvalidResourceLimit,
     /// Descendants cannot opt out of a parent's confinement requirement.
-    #[error("sandbox descendant requested a weaker confinement mode")]
-    WeakerMode,
+    #[error("sandbox descendant disabled required confinement")]
+    ConfinementDisabled,
     /// Descendants cannot add or widen filesystem reach.
     #[error("sandbox descendant requested wider filesystem authority")]
     FilesystemWidening,
+    /// Domain and local socket lists have a fixed bound.
+    #[error("sandbox network rule list exceeds its bound")]
+    InvalidNetworkRuleCount,
     /// Descendants cannot broaden network reach.
     #[error("sandbox descendant requested wider network authority")]
     NetworkWidening,
@@ -1300,8 +1140,8 @@ pub enum SandboxPolicyError {
     InvalidCommandPolicy,
 }
 
-// The fixtures are POSIX absolute paths, which no Windows path type accepts;
-// Windows has no confinement backend to give them a native shape.
+// These policy fixtures use POSIX paths. Native Windows path and enforcement
+// coverage lives in the backend integration tests.
 #[cfg(test)]
 #[cfg(unix)]
 mod tests {
@@ -1312,12 +1152,12 @@ mod tests {
             .expect("valid fixture rule")
     }
 
-    fn policy(mode: SandboxMode, rules: Vec<SandboxFilesystemRule>) -> SandboxPolicy {
-        policy_with(mode, rules, SandboxResourceLimits::default())
+    fn policy(enabled: bool, rules: Vec<SandboxFilesystemRule>) -> SandboxPolicy {
+        policy_with(enabled, rules, SandboxResourceLimits::default())
     }
 
     fn policy_with(
-        mode: SandboxMode,
+        enabled: bool,
         rules: Vec<SandboxFilesystemRule>,
         limits: SandboxResourceLimits,
     ) -> SandboxPolicy {
@@ -1326,7 +1166,7 @@ mod tests {
             .map_or_else(|| Path::new("/workspace"), SandboxFilesystemRule::path)
             .to_path_buf();
         SandboxPolicy::new(
-            mode,
+            enabled,
             rules,
             working_directory,
             SandboxNetworkPolicy::Closed,
@@ -1359,12 +1199,35 @@ mod tests {
     }
 
     #[test]
-    fn a_mode_that_accepts_a_backend_which_does_not_confine_asks_it_for_no_ceilings() {
+    fn policy_identity_versions_boolean_enablement() {
+        let rules = vec![rule("/workspace", SandboxFilesystemAccess::ReadWrite)];
+        let disabled = policy(false, rules.clone());
+        let enabled = policy(true, rules);
+        assert_ne!(disabled.digest(), enabled.digest());
+        // Fixed vectors bind the persisted identity to the v2 domain and to
+        // enablement even when all filesystem and resource limits are equal.
+        for (policy, expected) in [
+            (
+                disabled,
+                "842034099768d0182c014f30178b768be61d9d79d8c133e7ad09dd50acecb1d9",
+            ),
+            (
+                enabled,
+                "0c087a9983c6d5baeb62fa6791ded47fe999f8ef105d47a7d09a920091076f36",
+            ),
+        ] {
+            let actual = policy.digest().map(|byte| format!("{byte:02x}")).concat();
+            assert_eq!(actual, expected);
+        }
+    }
+
+    #[test]
+    fn disabling_confinement_removes_only_its_kernel_ceilings() {
         // Memory is not one of the ceilings `confining` states, so a policy
-        // that only used those could not tell whether `with_mode` took it off
+        // that only used those could not tell whether `with_enabled` took it off
         // or whether it was never there. A host that did ask for it says both.
         let confining = policy_with(
-            SandboxMode::Required,
+            true,
             vec![rule("/workspace", SandboxFilesystemAccess::ReadWrite)],
             SandboxResourceLimits {
                 memory_bytes: Some(1 << 30),
@@ -1378,29 +1241,23 @@ mod tests {
         assert_eq!(confining.limits().cpu_seconds, None);
         assert_eq!(confining.limits().memory_bytes, Some(1 << 30));
 
-        for accepted in [SandboxMode::Degraded, SandboxMode::Off] {
-            // The compatibility backend applies no rlimit. Carrying the numbers
-            // across would not bound the command; it would refuse it, because a
-            // policy may not ask for a ceiling its backend cannot apply.
-            let relaxed = confining.clone().with_mode(accepted);
-            assert_eq!(relaxed.limits().cpu_seconds, None, "{accepted:?}");
-            assert_eq!(relaxed.limits().open_files, None, "{accepted:?}");
-            assert_eq!(relaxed.limits().memory_bytes, None, "{accepted:?}");
+        // The compatibility backend applies no rlimit. Carrying the numbers
+        // across would not bound the command; it would refuse it, because a
+        // policy may not ask for a ceiling its backend cannot apply.
+        let relaxed = confining.clone().with_enabled(false);
+        assert_eq!(relaxed.limits().cpu_seconds, None);
+        assert_eq!(relaxed.limits().open_files, None);
+        assert_eq!(relaxed.limits().memory_bytes, None);
 
-            // What the caller asked for over one command is not the
-            // confinement's, and stays exactly as it was.
-            assert_eq!(
-                relaxed.limits().command_time,
-                Some(Duration::from_secs(30)),
-                "{accepted:?}"
-            );
-        }
+        // What the caller asked for over one command is not the
+        // confinement's, and stays exactly as it was.
+        assert_eq!(relaxed.limits().command_time, Some(Duration::from_secs(30)));
     }
 
     #[test]
     fn one_command_may_narrow_the_confinement_it_runs_under_but_never_shed_it() {
         let confining = policy_with(
-            SandboxMode::Required,
+            true,
             vec![rule("/workspace", SandboxFilesystemAccess::ReadWrite)],
             SandboxResourceLimits::confining(),
         );
@@ -1429,28 +1286,28 @@ mod tests {
     }
 
     #[test]
-    fn descendants_may_narrow_but_never_widen_filesystem_or_mode() {
+    fn descendants_may_narrow_but_never_widen_filesystem_or_disable_confinement() {
         let parent = policy(
-            SandboxMode::Required,
+            true,
             vec![rule("/workspace", SandboxFilesystemAccess::ReadWrite)],
         );
         let narrower = policy(
-            SandboxMode::Required,
+            true,
             vec![rule("/workspace/src", SandboxFilesystemAccess::ReadOnly)],
         );
         assert!(SandboxPolicy::restrict(&parent, narrower).is_ok());
 
         let weaker = policy(
-            SandboxMode::Off,
+            false,
             vec![rule("/workspace", SandboxFilesystemAccess::ReadWrite)],
         );
         assert_eq!(
             SandboxPolicy::restrict(&parent, weaker),
-            Err(SandboxPolicyError::WeakerMode)
+            Err(SandboxPolicyError::ConfinementDisabled)
         );
 
         let wider = policy(
-            SandboxMode::Required,
+            true,
             vec![rule("/other", SandboxFilesystemAccess::ReadOnly)],
         );
         assert_eq!(
@@ -1470,7 +1327,7 @@ mod tests {
     #[test]
     fn descendants_cannot_drop_parent_filesystem_carve_outs_or_relabel_authority() {
         let parent = policy(
-            SandboxMode::Required,
+            true,
             vec![
                 rule("/workspace", SandboxFilesystemAccess::ReadWrite),
                 SandboxFilesystemRule::new(
@@ -1488,7 +1345,7 @@ mod tests {
             ],
         );
         let dropped = policy(
-            SandboxMode::Required,
+            true,
             vec![rule("/workspace", SandboxFilesystemAccess::ReadWrite)],
         );
         assert_eq!(
@@ -1497,7 +1354,7 @@ mod tests {
         );
 
         let relabeled = policy(
-            SandboxMode::Required,
+            true,
             vec![
                 SandboxFilesystemRule::new(
                     "/workspace/src",
@@ -1514,32 +1371,7 @@ mod tests {
     }
 
     #[test]
-    fn exact_network_policy_is_canonical_and_closed_is_always_narrower() {
-        let first =
-            SandboxNetworkEndpoint::new("EXAMPLE.COM.", 443, SandboxNetworkProvenance::User)
-                .expect("endpoint");
-        let duplicate =
-            SandboxNetworkEndpoint::new("example.com", 443, SandboxNetworkProvenance::User)
-                .expect("endpoint");
-        let exact =
-            SandboxNetworkPolicy::exact([first, duplicate], true, false).expect("exact policy");
-        let SandboxNetworkPolicy::Exact { endpoints, .. } = &exact else {
-            panic!("expected exact policy");
-        };
-        assert_eq!(endpoints.len(), 1);
-        assert_eq!(
-            endpoints.first().expect("one canonical endpoint").host(),
-            "example.com"
-        );
-        assert!(SandboxNetworkPolicy::Closed.is_no_wider_than(&exact));
-        assert!(!exact.is_no_wider_than(&SandboxNetworkPolicy::Closed));
-    }
-
-    #[test]
-    fn endpoint_provenance_is_retained_and_cannot_be_escalated_by_a_descendant() {
-        let parent_endpoint =
-            SandboxNetworkEndpoint::new("192.0.2.1", 443, SandboxNetworkProvenance::Project)
-                .expect("parent endpoint");
+    fn endpoint_provenance_is_retained() {
         let child_endpoint =
             SandboxNetworkEndpoint::new("192.0.2.1", 443, SandboxNetworkProvenance::Descendant)
                 .expect("child endpoint");
@@ -1547,43 +1379,6 @@ mod tests {
             child_endpoint.provenance(),
             SandboxNetworkProvenance::Descendant
         );
-        let parent =
-            SandboxNetworkPolicy::exact([parent_endpoint], false, false).expect("parent network");
-        let child =
-            SandboxNetworkPolicy::exact([child_endpoint], false, false).expect("child network");
-        assert!(child.is_no_wider_than(&parent));
-        assert_eq!(
-            SandboxNetworkPolicy::exact(
-                [
-                    SandboxNetworkEndpoint::new(
-                        "192.0.2.1",
-                        443,
-                        SandboxNetworkProvenance::Project,
-                    )
-                    .expect("project endpoint"),
-                    SandboxNetworkEndpoint::new(
-                        "192.0.2.1",
-                        443,
-                        SandboxNetworkProvenance::Descendant,
-                    )
-                    .expect("descendant endpoint"),
-                ],
-                false,
-                false,
-            ),
-            Err(SandboxPolicyError::InvalidEndpoint)
-        );
-
-        let escalated = SandboxNetworkPolicy::exact(
-            [
-                SandboxNetworkEndpoint::new("192.0.2.1", 443, SandboxNetworkProvenance::User)
-                    .expect("escalated endpoint"),
-            ],
-            false,
-            false,
-        )
-        .expect("escalated network");
-        assert!(!escalated.is_no_wider_than(&parent));
     }
 
     #[test]
@@ -1610,6 +1405,12 @@ mod tests {
                 .host(),
             "2001:db8::1"
         );
+        assert_eq!(
+            SandboxNetworkEndpoint::new("EXAMPLE.COM.", 443, SandboxNetworkProvenance::User)
+                .expect("canonical hostname")
+                .host(),
+            "example.com"
+        );
 
         let endpoint =
             SandboxNetworkEndpoint::new("private.example", 8443, SandboxNetworkProvenance::User)
@@ -1617,21 +1418,6 @@ mod tests {
         let shown = format!("{endpoint:?}");
         assert!(!shown.contains("private.example"), "{shown}");
         assert!(shown.contains("[host]"), "{shown}");
-    }
-
-    #[test]
-    fn dns_disabled_exact_policy_accepts_only_literal_addresses() {
-        let hostname =
-            SandboxNetworkEndpoint::new("example.com", 443, SandboxNetworkProvenance::User)
-                .expect("hostname");
-        assert_eq!(
-            SandboxNetworkPolicy::exact([hostname], false, false),
-            Err(SandboxPolicyError::InvalidEndpoint)
-        );
-
-        let address = SandboxNetworkEndpoint::new("192.0.2.1", 443, SandboxNetworkProvenance::User)
-            .expect("address");
-        assert!(SandboxNetworkPolicy::exact([address], false, false).is_ok());
     }
 
     #[test]
@@ -1666,9 +1452,54 @@ mod tests {
     }
 
     #[test]
+    fn filesystem_rule_iterators_stop_at_the_count_bound() {
+        let consumed = std::cell::Cell::new(0);
+        let rules = (0..MAX_SANDBOX_FILESYSTEM_RULES + 8).map(|_| {
+            consumed.set(consumed.get() + 1);
+            rule("/workspace", SandboxFilesystemAccess::ReadWrite)
+        });
+        let result = SandboxPolicy::new(
+            false,
+            rules,
+            "/workspace",
+            SandboxNetworkPolicy::Closed,
+            SandboxResourceLimits::default(),
+        );
+        assert!(matches!(
+            result,
+            Err(SandboxPolicyError::InvalidFilesystemRuleCount)
+        ));
+        assert_eq!(consumed.get(), MAX_SANDBOX_FILESYSTEM_RULES + 1);
+    }
+
+    #[test]
+    fn unreadable_pattern_iterators_stop_at_the_count_bound() {
+        let consumed = std::cell::Cell::new(0);
+        let pattern = SandboxUnreadablePattern::new(
+            "/workspace/**/*.pem",
+            SandboxFilesystemProvenance::Workspace,
+        )
+        .unwrap();
+        let patterns = (0..MAX_SANDBOX_UNREADABLE_PATTERNS + 8).map(|_| {
+            consumed.set(consumed.get() + 1);
+            pattern.clone()
+        });
+        let result = policy(
+            true,
+            vec![rule("/workspace", SandboxFilesystemAccess::ReadWrite)],
+        )
+        .with_unreadable_patterns(patterns);
+        assert!(matches!(
+            result,
+            Err(SandboxPolicyError::InvalidUnreadablePatternCount)
+        ));
+        assert_eq!(consumed.get(), MAX_SANDBOX_UNREADABLE_PATTERNS + 1);
+    }
+
+    #[test]
     fn descendant_policy_cannot_drop_a_parent_unreadable_pattern() {
         let parent = policy(
-            SandboxMode::Required,
+            true,
             vec![rule("/workspace", SandboxFilesystemAccess::ReadWrite)],
         )
         .with_unreadable_patterns([SandboxUnreadablePattern::new(
@@ -1678,7 +1509,7 @@ mod tests {
         .expect("parent pattern")])
         .expect("parent policy");
         let child = policy(
-            SandboxMode::Required,
+            true,
             vec![rule("/workspace", SandboxFilesystemAccess::ReadOnly)],
         );
 
@@ -1696,11 +1527,11 @@ mod tests {
     #[test]
     fn descendant_unreadable_patterns_cannot_claim_parent_provenance() {
         let parent = policy(
-            SandboxMode::Required,
+            true,
             vec![rule("/workspace", SandboxFilesystemAccess::ReadWrite)],
         );
         let relabeled = policy(
-            SandboxMode::Required,
+            true,
             vec![rule("/workspace", SandboxFilesystemAccess::ReadWrite)],
         )
         .with_unreadable_patterns([SandboxUnreadablePattern::new(
@@ -1715,7 +1546,7 @@ mod tests {
         );
 
         let descendant = policy(
-            SandboxMode::Required,
+            true,
             vec![rule("/workspace", SandboxFilesystemAccess::ReadWrite)],
         )
         .with_unreadable_patterns([SandboxUnreadablePattern::new(
@@ -1746,23 +1577,23 @@ mod tests {
     #[test]
     fn session_state_authority_can_be_preserved_or_removed_but_not_added() {
         let parent = policy(
-            SandboxMode::Required,
+            true,
             vec![rule("/workspace", SandboxFilesystemAccess::ReadWrite)],
         )
         .with_session_state(true, true);
         let narrower = policy(
-            SandboxMode::Required,
+            true,
             vec![rule("/workspace", SandboxFilesystemAccess::ReadWrite)],
         )
         .with_session_state(false, false);
         assert!(SandboxPolicy::restrict(&parent, narrower).is_ok());
 
         let no_state = policy(
-            SandboxMode::Required,
+            true,
             vec![rule("/workspace", SandboxFilesystemAccess::ReadWrite)],
         );
         let added = policy(
-            SandboxMode::Required,
+            true,
             vec![rule("/workspace", SandboxFilesystemAccess::ReadWrite)],
         )
         .with_session_state(true, false);
@@ -1775,7 +1606,7 @@ mod tests {
     #[test]
     fn mount_aliases_cannot_bypass_narrower_descendant_rules() {
         let protected = policy(
-            SandboxMode::Required,
+            true,
             vec![
                 rule("/workspace", SandboxFilesystemAccess::ReadWrite),
                 rule("/workspace/.git", SandboxFilesystemAccess::Protected),
@@ -1787,7 +1618,7 @@ mod tests {
         assert!(protected.permits_path(Path::new("/workspace"), SandboxFilesystemAccess::ReadOnly));
 
         let unreadable = policy(
-            SandboxMode::Required,
+            true,
             vec![
                 rule("/workspace", SandboxFilesystemAccess::ReadWrite),
                 rule("/workspace/private", SandboxFilesystemAccess::Unreadable),
@@ -1806,7 +1637,7 @@ mod tests {
         ] {
             assert_eq!(
                 SandboxPolicy::new(
-                    SandboxMode::Required,
+                    true,
                     [
                         rule("/workspace", SandboxFilesystemAccess::ReadWrite),
                         rule("/workspace/private", protected),
@@ -1835,7 +1666,7 @@ mod tests {
         .expect("descendant rule");
         assert_eq!(
             SandboxPolicy::new(
-                SandboxMode::Required,
+                true,
                 [workspace, descendant],
                 "/workspace",
                 SandboxNetworkPolicy::Closed,

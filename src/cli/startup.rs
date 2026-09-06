@@ -222,7 +222,8 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<Runner, Fatal> {
 
     // Build the registry before the runner, because its exact immutable
     // generation is one of the typed facts the first pass assembles.
-    let offering = tools(startup, settings, reaching)?;
+    let sandbox: Arc<dyn crucible_core::SandboxService> = Arc::new(LocalSandbox::new());
+    let offering = tools(startup, settings, reaching, Arc::clone(&sandbox))?;
 
     // Operator-authored instructions are the stable request prefix. Everything
     // that can move within the session is read by context assembly instead.
@@ -245,7 +246,7 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<Runner, Fatal> {
     } else {
         Runner::with_toolset(
             provider,
-            Hosting::new(offering, Arc::new(LocalSandbox::new()), chosen),
+            Hosting::new(offering, sandbox, chosen),
             asking,
             context,
             session,
@@ -776,7 +777,8 @@ fn tools(
     startup: &Startup<'_>,
     settings: &Settings,
     reaching: Reaching,
-) -> Result<Tools, ToolsetError> {
+    sandbox: Arc<dyn crucible_core::SandboxService>,
+) -> Result<Tools, super::Fatal> {
     // Read off the wiring rather than taken one by one. Five things a tool is
     // built with is five arguments beside the settings, which is a call nobody
     // can read — and every one of them is already a field of the value that
@@ -817,7 +819,8 @@ fn tools(
     // stop one — and what makes the caller's copy the thing that ends them all.
     tools.add_builtin(
         Bash::new(workspace.clone())
-            .sandboxing(Arc::new(LocalSandbox::new()), settings.sandbox_mode())
+            .under_policy(sandbox, settings.sandbox().enforcing_policy(workspace)?)
+            .following_enablement(settings.sandbox().enablement())
             .exporting(settings.env())
             .leaving(leaving.clone()),
     )?;

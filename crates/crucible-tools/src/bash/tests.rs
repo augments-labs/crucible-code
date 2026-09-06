@@ -15,10 +15,7 @@ use super::{Bash, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, environmen
 use crate::sample::{Sample, allowed, skipped_without_enforcement};
 
 fn compatibility(tool: Bash) -> Bash {
-    tool.sandboxing(
-        std::sync::Arc::new(crate::LocalSandbox::new()),
-        crucible_core::SandboxMode::Off,
-    )
+    tool.sandboxing(std::sync::Arc::new(crate::LocalSandbox::new()), false)
 }
 
 fn compatible(sample: &Sample) -> Bash {
@@ -326,10 +323,10 @@ fn a_pipeline_the_command_started_is_stopped_with_it() {
 fn a_timeout_past_the_ceiling_is_refused_rather_than_quietly_shortened() {
     let sample = Sample::new("bash-ceiling");
 
-    let output = ran(&sample, r#"{"command":"true","timeout":9000}"#);
+    let output = ran(&sample, r#"{"command":"true","timeout":90000}"#);
 
     assert!(output.is_failed());
-    assert_eq!(output.text(), "timeout must be 600 seconds or less");
+    assert_eq!(output.text(), "timeout must be 86400 seconds or less");
 }
 
 #[test]
@@ -857,10 +854,7 @@ fn an_explicit_background_command_has_no_foreground_deadline() {
     let recording = RecordingSandbox::default();
     let observed = std::sync::Arc::clone(&recording.limits);
     let tool = Bash::new(sample.workspace())
-        .sandboxing(
-            std::sync::Arc::new(recording),
-            crucible_core::SandboxMode::Off,
-        )
+        .sandboxing(std::sync::Arc::new(recording), false)
         .leaving(left.clone());
 
     finalized(&tool, r#"{"command":"sleep 30","background":true}"#).expect("the command started");
@@ -987,4 +981,134 @@ fn a_line_that_does_not_say_what_runs_is_not_looking() {
     assert_eq!(looking("ls $(cat targets)"), None);
     assert_eq!(looking("cat one.txt > two.txt"), None);
     assert_eq!(looking("eval ls"), None);
+}
+
+#[test]
+fn configured_command_ceilings_survive_foreground_and_background_requests() {
+    let sample = Sample::new("bash-configured-ceilings");
+    let left = Background::new();
+    let recording = RecordingSandbox::default();
+    let observed = std::sync::Arc::clone(&recording.limits);
+    let mut tool = Bash::new(sample.workspace())
+        .sandboxing(std::sync::Arc::new(recording), false)
+        .leaving(left.clone());
+    let configured = SandboxResourceLimits {
+        command_time: Some(Duration::from_secs(7)),
+        output_bytes: Some(1024),
+        concurrent_commands: Some(2),
+        ..tool.policy.as_ref().unwrap().limits()
+    };
+    tool.policy = Ok(tool
+        .policy
+        .as_ref()
+        .unwrap()
+        .clone()
+        .with_limits(configured)
+        .unwrap());
+    for args in [
+        r#"{"command":"printf bounded","timeout":600}"#,
+        r#"{"command":"sleep 30","background":true}"#,
+    ] {
+        let result = finalized(&tool, args).expect("configured ceilings must narrow the request");
+        assert!(!result.is_failed(), "{}", result.text());
+    }
+    let limits = observed.lock().unwrap();
+    assert_eq!(limits.len(), 2);
+    assert!(limits.iter().all(|limits| *limits == configured));
+    drop(limits);
+    left.stop(1).expect("background cleanup");
+}
+
+#[test]
+fn interactive_enablement_is_sampled_for_new_commands_without_losing_kernel_ceilings() {
+    struct Capture(std::sync::Mutex<Vec<crucible_core::SandboxPolicy>>);
+    impl SandboxService for Capture {
+        fn probe(&self) -> Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError> {
+            Err(SandboxError::BackendUnavailable {
+                reason: "recording fixture".into(),
+            })
+        }
+        fn prepare(
+            &self,
+            request: SandboxRequest,
+        ) -> Result<Box<dyn SandboxSession>, SandboxError> {
+            self.0.lock().unwrap().push(request.policy().clone());
+            Err(SandboxError::BackendUnavailable {
+                reason: "stopped at preparation".into(),
+            })
+        }
+    }
+    let sample = Sample::new("interactive-policy-samples");
+    let template = crucible_core::SandboxPolicy::standard(&sample.workspace()).unwrap();
+    let ceilings = template.limits();
+    let control = std::sync::Arc::new(crucible_core::SandboxEnablement::new(false, false));
+    let capture = std::sync::Arc::new(Capture(std::sync::Mutex::new(Vec::new())));
+    let tool = Bash::new(sample.workspace())
+        .under_policy(capture.clone(), template.clone())
+        .following_enablement(control.clone());
+    for choice in [false, true, false] {
+        control.set_enabled(choice).unwrap();
+        assert!(
+            tool.run(
+                allowed(&tool, r#"{"command":"echo fixture"}"#),
+                &crate::sample::context()
+            )
+            .is_err()
+        );
+    }
+    let policies = capture.0.lock().unwrap().clone();
+    assert_eq!(policies.len(), 3);
+    assert!(!policies.first().expect("captured policy").enabled());
+    assert!(policies.get(1).expect("captured policy").enabled());
+    assert!(!policies.get(2).expect("captured policy").enabled());
+    assert_eq!(
+        policies
+            .get(1)
+            .expect("captured policy")
+            .limits()
+            .cpu_seconds,
+        ceilings.cpu_seconds
+    );
+    assert_eq!(
+        policies
+            .get(1)
+            .expect("captured policy")
+            .limits()
+            .open_files,
+        ceilings.open_files
+    );
+    assert_eq!(
+        policies
+            .first()
+            .expect("captured policy")
+            .limits()
+            .cpu_seconds,
+        None
+    );
+    assert_eq!(
+        policies
+            .first()
+            .expect("captured policy")
+            .limits()
+            .command_time,
+        Some(Duration::from_mins(2))
+    );
+    // A disabled template has already lost its kernel-only limits and must
+    // never be treated as an enforcing template by the interactive builder.
+    let invalid = Bash::new(sample.workspace())
+        .under_policy(capture.clone(), template.with_enabled(false))
+        .following_enablement(control);
+    assert!(
+        invalid
+            .run(
+                allowed(&invalid, r#"{"command":"echo fixture"}"#),
+                &crate::sample::context()
+            )
+            .is_err()
+    );
+    assert_eq!(
+        capture.0.lock().unwrap().len(),
+        3,
+        "invalid template reached process preparation"
+    );
 }

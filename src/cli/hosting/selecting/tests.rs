@@ -280,6 +280,7 @@ fn a_written_down_directory_is_a_writable_root_and_the_place_the_server_starts_i
         elsewhere.display().to_string().replace('\\', "/")
     );
     let settings = sample.user(&document);
+    let expected = elsewhere.canonicalize().expect("the resolved directory");
     let (_, lookup) = installed(&sample, "docs-mcp", &[]);
 
     let found = selected(&["docs".to_owned()], &settings, &sample.workspace(), lookup)
@@ -288,13 +289,43 @@ fn a_written_down_directory_is_a_writable_root_and_the_place_the_server_starts_i
     let [chosen] = found.as_slice() else {
         panic!("one server was named");
     };
-    assert_eq!(chosen.policy.working_directory(), elsewhere);
+    assert_eq!(chosen.effective_policy().working_directory(), expected);
     assert!(
-        chosen.policy.filesystem().iter().any(|rule| {
-            rule.path() == elsewhere && rule.access() == SandboxFilesystemAccess::ReadWrite
+        chosen.effective_policy().filesystem().iter().any(|rule| {
+            rule.path() == expected && rule.access() == SandboxFilesystemAccess::ReadWrite
         }),
         "the directory it starts in has to be one it may reach"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_server_directory_uses_the_same_resolved_spelling_as_its_policy_root() {
+    use std::os::unix::fs::symlink;
+
+    let sample = Sample::new("selecting-directory-spelling");
+    let elsewhere = sample.home().join("elsewhere");
+    let alias = sample.home().join("alias");
+    fs::create_dir_all(&elsewhere).expect("a temporary directory");
+    symlink(&elsewhere, &alias).expect("a temporary directory alias");
+    let document = format!(
+        r#"{{"mcp": {{"servers": {{"docs": {{"command": "docs-mcp", "directory": "{}"}}}}}}}}"#,
+        alias.display().to_string().replace('\\', "/")
+    );
+    let settings = sample.user(&document);
+    let expected = elsewhere.canonicalize().expect("the resolved directory");
+    let (_, lookup) = installed(&sample, "docs-mcp", &[]);
+
+    let found = selected(&["docs".to_owned()], &settings, &sample.workspace(), lookup)
+        .expect("the directory spelling resolves before policy construction");
+
+    let [chosen] = found.as_slice() else {
+        panic!("one server was named");
+    };
+    assert_eq!(chosen.effective_policy().working_directory(), expected);
+    assert!(chosen.effective_policy().filesystem().iter().any(|rule| {
+        rule.path() == expected && rule.access() == SandboxFilesystemAccess::ReadWrite
+    }));
 }
 
 #[test]
@@ -310,16 +341,19 @@ fn a_record_that_names_no_directory_runs_where_a_confined_command_would() {
     let [chosen] = found.as_slice() else {
         panic!("one server was named");
     };
-    assert_eq!(chosen.policy.working_directory(), workspace.root());
+    assert_eq!(
+        chosen.effective_policy().working_directory(),
+        workspace.root()
+    );
 }
 
 #[test]
 fn selected_servers_share_the_runs_opt_in_confinement() {
-    let sample = Sample::new("selecting-mode");
+    let sample = Sample::new("selecting-enabled");
     for (sandbox, expected) in [
-        ("", SandboxMode::Off),
-        (r#""sandbox":{"enabled":true},"#, SandboxMode::Required),
-        (r#""sandbox":{"enabled":false},"#, SandboxMode::Off),
+        ("", false),
+        (r#""sandbox":{"enabled":true},"#, true),
+        (r#""sandbox":{"enabled":false},"#, false),
     ] {
         let settings = sample.user(&format!(
             r#"{{{sandbox}"mcp":{{"servers":{{"docs":{{"command":"docs-mcp"}}}}}}}}"#
@@ -330,19 +364,42 @@ fn selected_servers_share_the_runs_opt_in_confinement() {
         let [chosen] = found.as_slice() else {
             panic!("one server was named");
         };
-        assert_eq!(chosen.policy.mode(), expected);
+        assert_eq!(chosen.effective_policy().enabled(), expected);
         let confinement = crucible_core::SandboxResourceLimits::confining();
         assert_eq!(
-            chosen.policy.limits().cpu_seconds,
-            (expected == SandboxMode::Required)
-                .then_some(confinement.cpu_seconds)
-                .flatten()
+            chosen.effective_policy().limits().cpu_seconds,
+            expected.then_some(confinement.cpu_seconds).flatten()
         );
         assert_eq!(
-            chosen.policy.limits().open_files,
-            (expected == SandboxMode::Required)
-                .then_some(confinement.open_files)
-                .flatten()
+            chosen.effective_policy().limits().open_files,
+            expected.then_some(confinement.open_files).flatten()
         );
     }
+}
+
+#[test]
+fn selected_mcp_hosts_sample_the_shared_choice_for_each_preparation() {
+    let sample = Sample::new("selecting-interactive-enabled");
+    let settings = sample.user(BARE);
+    let (_, lookup) = installed(&sample, "docs-mcp", &[(NAMED, HELD)]);
+    let found = selected(&["docs".to_owned()], &settings, &sample.workspace(), lookup).unwrap();
+    let [chosen] = found.as_slice() else {
+        panic!("one selected host")
+    };
+    let before = chosen.effective_policy();
+    settings.sandbox().enablement().set_enabled(true).unwrap();
+    let during = chosen.effective_policy();
+    settings.sandbox().enablement().set_enabled(false).unwrap();
+    let after = chosen.effective_policy();
+    assert!(!before.enabled());
+    assert!(during.enabled());
+    assert!(!after.enabled());
+    assert_eq!(
+        during.limits().cpu_seconds,
+        crucible_core::SandboxResourceLimits::confining().cpu_seconds
+    );
+    assert_eq!(before.limits().cpu_seconds, None);
+    assert_eq!(before.filesystem(), during.filesystem());
+    assert_eq!(before.digest(), after.digest());
+    assert_ne!(before.digest(), during.digest());
 }

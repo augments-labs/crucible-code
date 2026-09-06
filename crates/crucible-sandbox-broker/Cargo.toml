@@ -18,7 +18,11 @@ sha2.workspace = true
 # starts, and PID 1 must kill/reap the complete workload scope before scanning.
 # std covers neither operation; this is the workspace's existing safe Linux
 # system-call boundary.
-rustix = { workspace = true, features = ["process"] }
+rustix = { workspace = true, features = ["event", "net", "process"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+seccompiler.workspace = true
+libc.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 # The Windows broker is the trusted bridge between the host process and the

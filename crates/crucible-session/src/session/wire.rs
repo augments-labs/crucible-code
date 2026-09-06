@@ -156,7 +156,7 @@ pub(crate) fn journal(item: &RunItem) -> Option<String> {
         }),
     };
 
-    let line = json!({ "run_item": { "version": 1, "body": body } }).to_string();
+    let line = json!({ "run_item": { "version": 2, "body": body } }).to_string();
     (line.len() <= MAX_RUN_ITEM_BYTES).then_some(line)
 }
 
@@ -184,7 +184,7 @@ fn sandbox_fact(call: &ToolId, fact: &crucible_core::SandboxFact, ancestry: &Val
             "requested_plan": sandbox_plan(inspection.requested_plan()),
             "effective_plan": sandbox_plan(inspection.plan()),
             "confined": inspection.confined(),
-            "degradation": inspection.degradation(),
+            "disabled_reason": inspection.disabled_reason(),
             "cleanup": sandbox_cleanup(inspection.cleanup()),
         }),
         SandboxFactKind::Guardrail { stage, decision } => json!({
@@ -229,19 +229,14 @@ fn sandbox_plan(plan: &crucible_core::SandboxPlanInspection) -> Value {
     let network = plan.network();
     let limits = plan.limits();
     json!({
-        "mode": plan.mode().as_str(),
+        "enabled": plan.enabled(),
         "roots": plan.roots().iter().map(|root| json!({
             "identity": hex(&root.identity()),
             "access": root.access().as_str(),
             "provenance": root.provenance().as_str(),
         })).collect::<Vec<_>>(),
         "working_directory": hex(&plan.working_directory()),
-        "network": {
-            "state": network.as_str(),
-            "endpoints": network.endpoints(),
-            "dns": network.dns(),
-            "forwarding": network.forwarding(),
-        },
+        "network": crate::checkpoint::encode_network(network),
         "limits": {
             "cpu_seconds": limits.cpu_seconds,
             "memory_bytes": limits.memory_bytes,
@@ -1388,23 +1383,23 @@ mod tests {
         let written = journal(&item).expect("bounded journal metadata");
 
         assert!(journaled(&written));
-        assert!(written.contains(r#""version":1"#));
+        assert!(written.contains(r#""version":2"#));
         assert!(written.contains(r#""kind":"message""#));
         assert!(!written.contains("prompt-plaintext-canary"));
         assert!(message(&written).is_none());
     }
 
     // The fixtures are POSIX absolute paths, which no Windows path type accepts;
-    // Windows has no confinement backend to give them a native shape.
+    // Native Windows paths are exercised by the backend integration tests.
     #[cfg(unix)]
     #[test]
     fn sandbox_journal_keeps_typed_identity_and_plan_without_raw_reach() {
         use crucible_core::{
             SandboxAudit, SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance,
-            SandboxCapabilities, SandboxCapability, SandboxCleanup, SandboxFactKind,
-            SandboxFeature, SandboxFilesystemAccess, SandboxFilesystemProvenance,
-            SandboxFilesystemRule, SandboxId, SandboxInspection, SandboxManifest, SandboxMode,
-            SandboxNetworkEndpoint, SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxPolicy,
+            SandboxCapabilities, SandboxCapability, SandboxCleanup, SandboxDomainPattern,
+            SandboxDomainPolicy, SandboxFactKind, SandboxFeature, SandboxFilesystemAccess,
+            SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxId, SandboxInspection,
+            SandboxManifest, SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxPolicy,
             SandboxResourceLimits,
         };
 
@@ -1412,7 +1407,7 @@ mod tests {
         let call = ToolId::new("sandbox-call");
         let sandbox = SandboxId::new();
         let policy = SandboxPolicy::new(
-            SandboxMode::Required,
+            true,
             [SandboxFilesystemRule::new(
                 "/home/alice/private-workspace",
                 SandboxFilesystemAccess::ReadWrite,
@@ -1420,17 +1415,16 @@ mod tests {
             )
             .unwrap()],
             "/home/alice/private-workspace",
-            SandboxNetworkPolicy::exact(
-                [SandboxNetworkEndpoint::new(
-                    "secret.internal",
-                    443,
+            SandboxNetworkPolicy::Domains(
+                SandboxDomainPolicy::new(
+                    [SandboxDomainPattern::new("secret.internal").unwrap()],
+                    [],
+                    false,
+                    [],
                     SandboxNetworkProvenance::User,
                 )
-                .unwrap()],
-                true,
-                false,
-            )
-            .unwrap(),
+                .unwrap(),
+            ),
             SandboxResourceLimits::default(),
         )
         .unwrap();
@@ -1475,7 +1469,25 @@ mod tests {
         let written = journal(&item).expect("bounded sandbox journal line");
 
         assert!(written.contains(r#""kind":"sandbox""#));
-        assert!(written.contains(r#""network":{"dns":true,"endpoints":1"#));
+        let value: serde_json::Value = serde_json::from_str(&written).unwrap();
+        assert_eq!(
+            value.pointer("/run_item/version"),
+            Some(&serde_json::json!(2))
+        );
+        for name in ["requested_plan", "effective_plan"] {
+            let plan = value
+                .pointer(&format!("/run_item/body/fact/{name}"))
+                .expect("sandbox plan");
+            assert_eq!(
+                plan.get("enabled"),
+                Some(&serde_json::json!(true)),
+                "{written}"
+            );
+            assert!(plan.get("mode").is_none(), "{written}");
+        }
+        assert!(written.contains(
+            r#""network":{"allowed":1,"denied":0,"local_binding":false,"state":"domains","unix_sockets":0}"#
+        ));
         assert!(written.contains(r#""feature":"network_allowlist""#));
         assert!(written.contains(r#""requested_policy_digest""#));
         assert!(written.contains(r#""requested_plan""#));

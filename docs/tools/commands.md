@@ -192,11 +192,11 @@ resumed. <kbd>Esc</kbd> does not either: it stops the turn, and a command you
 deliberately let go of is not part of the turn that started it.
 
 What does: <kbd>x</kbd> in the list, and crucible exiting — every process group
-goes with it, however the process leaves, including a panic. Under required Linux
-confinement, the descriptor broker and PID namespace also end the complete
-workload if crucible is killed before user-space cleanup can run. Degraded and
-off modes have no equivalent kernel boundary: after an uncatchable kill, an
-escaped compatibility-mode command may need to be ended from your own shell.
+goes with it, however the process leaves, including a panic. With Linux
+confinement enabled, the descriptor broker and PID namespace also end the complete
+workload if crucible is killed before user-space cleanup can run. Disabled confinement has no
+equivalent kernel boundary: after an uncatchable kill, an escaped command may
+need to be ended from your own shell.
 
 ## What comes back
 

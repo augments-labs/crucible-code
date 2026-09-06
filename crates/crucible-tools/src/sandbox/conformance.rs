@@ -31,11 +31,11 @@ use std::path::Path;
 use std::time::Duration;
 
 use crucible_core::{
-    Ancestry, SandboxBackendIdentity, SandboxCapabilities, SandboxCapability, SandboxError,
-    SandboxFeature, SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule,
-    SandboxId, SandboxManifest, SandboxManifestEntry, SandboxMode, SandboxNetworkEndpoint,
-    SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxPolicy, SandboxRequest,
-    SandboxResourceLimits, SandboxService, ToolId,
+    Ancestry, SandboxBackendIdentity, SandboxCapabilities, SandboxCapability, SandboxDomainPattern,
+    SandboxDomainPolicy, SandboxError, SandboxFeature, SandboxFilesystemAccess,
+    SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxId, SandboxManifest,
+    SandboxManifestEntry, SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxPolicy,
+    SandboxRequest, SandboxResourceLimits, SandboxService, ToolId,
 };
 
 /// A family of claims a backend is conformant in, or is not, on its own.
@@ -240,20 +240,14 @@ impl Conformance {
     /// report on, and an empty matrix would read as one that holds nothing.
     pub fn audit(service: &dyn SandboxService, at: &Path) -> Result<Self, SandboxError> {
         let (backend, capabilities) = service.probe()?;
-        // Every offer is written in the mode that reaches the backend that was
-        // just probed. A service selects its implementation by mode, so an
-        // offer written in a weaker one would be answered by somebody else, and
-        // this suite would read one backend's refusal as another's broken
-        // claim.
-        let mode = if capabilities.claim(SandboxFeature::Filesystem).is_enforced() {
-            SandboxMode::Required
-        } else {
-            SandboxMode::Off
-        };
+        // Each offer selects the backend that was just probed. An enabled
+        // offer reaches the enforcing backend; a disabled offer reaches
+        // compatibility. Mixing them would test another backend's claims.
+        let enabled = capabilities.claim(SandboxFeature::Filesystem).is_enforced();
         // One offer covers the whole isolation family, because no policy field
         // names a PID namespace on its own; requiring confinement is the only
         // way to ask for any of them, and it asks for all of them at once.
-        let confinement = offered(service, at, SandboxFeature::Filesystem, mode);
+        let confinement = offered(service, at, SandboxFeature::Filesystem, enabled);
 
         let mut findings = Vec::with_capacity(SandboxFeature::COUNT);
         for feature in SandboxFeature::ALL {
@@ -263,14 +257,14 @@ impl Conformance {
             let answered = if claim == SandboxClaim::Isolation {
                 confinement.as_ref()
             } else {
-                alone = offered(service, at, feature, mode);
+                alone = offered(service, at, feature, enabled);
                 alone.as_ref()
             };
             // A confining offer carries the whole isolation family whatever
             // else it asks for, so a refusal naming one of them is honest and
             // leaves this feature untested rather than contradicted.
             let mut scope = Vec::with_capacity(CONFINEMENT.len() + 1);
-            if mode == SandboxMode::Required {
+            if enabled {
                 scope.extend_from_slice(CONFINEMENT);
             }
             if !scope.contains(&feature) {
@@ -435,9 +429,9 @@ fn offered(
     service: &dyn SandboxService,
     at: &Path,
     feature: SandboxFeature,
-    mode: SandboxMode,
+    enabled: bool,
 ) -> Option<Result<(), SandboxError>> {
-    let (policy, manifest) = asking(at, feature, mode)?;
+    let (policy, manifest) = asking(at, feature, enabled)?;
     let request = SandboxRequest::new(
         SandboxId::new(),
         Ancestry::new(),
@@ -457,7 +451,7 @@ fn offered(
 fn asking(
     at: &Path,
     feature: SandboxFeature,
-    mode: SandboxMode,
+    enabled: bool,
 ) -> Option<(SandboxPolicy, SandboxManifest)> {
     let mut manifest = SandboxManifest::empty();
     let mut network = SandboxNetworkPolicy::Closed;
@@ -482,10 +476,11 @@ fn asking(
             manifest = SandboxManifest::new([entry]).ok()?;
         }
         SandboxFeature::NetworkAllowlist => {
-            let endpoint =
-                SandboxNetworkEndpoint::new("192.0.2.1", 443, SandboxNetworkProvenance::User)
-                    .ok()?;
-            network = SandboxNetworkPolicy::exact([endpoint], false, false).ok()?;
+            let domain = SandboxDomainPattern::new("example.test").ok()?;
+            network = SandboxNetworkPolicy::Domains(
+                SandboxDomainPolicy::new([domain], [], false, [], SandboxNetworkProvenance::User)
+                    .ok()?,
+            );
         }
         SandboxFeature::CpuLimit => limits.cpu_seconds = Some(1),
         SandboxFeature::MemoryLimit => limits.memory_bytes = Some(1),
@@ -514,7 +509,7 @@ fn asking(
         SandboxFilesystemProvenance::Workspace,
     )
     .ok()?;
-    let policy = SandboxPolicy::new(mode, [rule], root, network, limits)
+    let policy = SandboxPolicy::new(enabled, [rule], root, network, limits)
         .ok()?
         .with_session_state(persistent, snapshots);
     Some((policy, manifest))

@@ -43,6 +43,7 @@ use crate::plan::{Plan, State, Task};
 use crate::prompt::Prompt;
 use crate::row::Row;
 use crate::running::{Command, Running};
+use crate::sandbox_panel::{SandboxPanel, SandboxTab};
 use crate::shelf::{Pane, Serving, Shelf, Stocked};
 use crate::welcome::{Recent, Welcome};
 use crate::working::Working;
@@ -171,6 +172,32 @@ fn a_panel_fits_the_window_it_stands_in() {
     };
     across("a panel", |columns, glyphs| panel.rows(columns, glyphs));
     down("a panel", |columns, room, glyphs| {
+        panel.within(columns, room, glyphs)
+    });
+}
+
+#[test]
+fn the_sandbox_panel_fits_the_window_it_stands_in() {
+    const ITEMS: [Offered<'static>; 2] = [
+        Offered {
+            name: "automatic",
+            says: PROSE,
+        },
+        Offered {
+            name: LONG,
+            says: PROSE,
+        },
+    ];
+    let panel = SandboxPanel {
+        tab: SandboxTab::Dependencies,
+        items: &ITEMS,
+        chosen: 1,
+        summary: Some(PROSE),
+    };
+    across("a sandbox panel", |columns, glyphs| {
+        panel.rows(columns, glyphs)
+    });
+    down("a sandbox panel", |columns, room, glyphs| {
         panel.within(columns, room, glyphs)
     });
 }

@@ -48,8 +48,8 @@ use crucible_config::{ConfigError, Home, Settings};
 use crucible_core::{
     Ancestry, Cancel, Collision, CredentialError, Effort, ModelCapabilities, ModelError,
     ModelLimits, PathError, Provenance, Provider, Registered, Registry, RegistryError,
-    RegistrySnapshot, Revealed, SandboxId, SandboxManifest, SandboxPolicy, SandboxPolicyError,
-    SandboxRequest, SandboxService as _, SessionId, SourceKind, ToolId, ToolsetError, Workspace,
+    RegistrySnapshot, Revealed, SandboxId, SandboxManifest, SandboxPolicyError, SandboxRequest,
+    SandboxService as _, SessionId, SourceKind, ToolId, ToolsetError, Workspace,
 };
 use crucible_provider::EndpointError;
 use crucible_runner::SessionError;
@@ -1014,10 +1014,9 @@ fn confined() -> Result<(), Fatal> {
     // out would understate what a command can touch.
     let workspace = workspace.reaching(settings.extra_directories())?;
 
-    let mode = settings.sandbox_mode();
     let service = LocalSandbox::new();
     let probed = service.probe();
-    let policy = SandboxPolicy::standard(&workspace)?.with_mode(mode);
+    let policy = settings.sandbox().policy(&workspace)?;
     let prepared = service.prepare(SandboxRequest::new(
         SandboxId::new(),
         Ancestry::new(),
@@ -1037,7 +1036,7 @@ fn confined() -> Result<(), Fatal> {
         },
         (Err(_), Err(why)) => sandbox::Probe::Absent(why),
     };
-    let said = sandbox::report(workspace.root(), mode, &probe);
+    let said = sandbox::report(workspace.root(), settings.sandbox_enabled(), &probe);
 
     let _ = io::stdout().write_all(said.as_bytes());
     Ok(())
@@ -1205,7 +1204,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         // keeps Shift and Return for itself reports nothing this program could
         // have read, and the reader is the one who can see that happening.
         sending: sends(&settings),
-        commands: converse::command::builtins()?,
+        commands: converse::command::builtins(&settings.sandbox().enablement())?,
         providers,
         reading: RefCell::new(settings.syntax_theme().map(str::to_owned)),
         cancel: cancel.clone(),

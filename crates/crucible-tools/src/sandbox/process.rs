@@ -160,6 +160,7 @@ pub(super) type Canceller = Box<dyn Fn(u32) -> io::Result<()> + Send + Sync>;
 
 /// Spawns `command` inside a platform process-tree scope.
 pub(super) struct SpawnPlan {
+    pub(super) network: Option<super::network::Mediator>,
     pub(super) inspection: SandboxInspection,
     pub(super) reservation: Reservation,
     pub(super) stage: Option<Stage>,
@@ -218,6 +219,19 @@ pub(super) fn cleanup_prepared_owners(
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(super) fn cleanup_unspawned(mut plan: SpawnPlan) -> SandboxCleanup {
     let mut reservation = Some(plan.reservation);
+    let network = plan
+        .network
+        .as_mut()
+        .map_or(Ok(()), super::network::Mediator::stop);
+    if network.is_err() {
+        if let Some(stage) = &mut plan.stage {
+            stage.retain();
+        }
+        if let Some(reservation) = reservation.take() {
+            reservation.quarantine();
+        }
+        return SandboxCleanup::Failed;
+    }
     cleanup_prepared_owners(&mut plan.stage, &mut reservation)
 }
 
@@ -253,6 +267,7 @@ fn spawn_inner(
     #[cfg(test)]
     let stop_scope = test_stop;
     let SpawnPlan {
+        network,
         inspection,
         reservation,
         stage,
@@ -288,6 +303,7 @@ fn spawn_inner(
                 crucible_core::SandboxError::Spawn(source),
                 stage,
                 reservation,
+                network,
             ));
         }
     };
@@ -299,6 +315,7 @@ fn spawn_inner(
                 crucible_core::SandboxError::Spawn(source),
                 stage,
                 reservation,
+                network,
             ));
         }
     };
@@ -321,6 +338,7 @@ fn spawn_inner(
         inspection,
         reservation: Some(reservation),
         stage,
+        network,
         control,
         supervisor: None,
         status: None,
@@ -363,8 +381,12 @@ fn failed_before_spawn(
     startup: crucible_core::SandboxError,
     mut stage: Option<Stage>,
     reservation: Reservation,
+    mut network: Option<super::network::Mediator>,
 ) -> crucible_core::SandboxError {
-    match stage.as_mut().map_or(Ok(()), Stage::cleanup) {
+    let stopped = network
+        .as_mut()
+        .map_or(Ok(()), super::network::Mediator::stop);
+    match stopped.and_then(|()| stage.as_mut().map_or(Ok(()), Stage::cleanup)) {
         Ok(()) => startup,
         Err(cleanup) => {
             if let Some(stage) = &mut stage {
@@ -647,6 +669,7 @@ struct LocalProcess {
     inspection: SandboxInspection,
     reservation: Option<Reservation>,
     stage: Option<Stage>,
+    network: Option<super::network::Mediator>,
     control: Arc<Control>,
     supervisor: Option<Supervisor>,
     status: Option<ExitStatus>,
@@ -725,6 +748,16 @@ impl LocalProcess {
             .transpose()
             .map_err(crucible_core::SandboxError::Spawn)?
             .map(|pipe| Box::new(pipe) as Box<dyn SandboxOutput>);
+        if let Some(network) = &self.network {
+            self.stdout = self
+                .stdout
+                .take()
+                .map(|output| network.protect_output(output));
+            self.stderr = self
+                .stderr
+                .take()
+                .map(|output| network.protect_output(output));
+        }
         if limits.command_time.is_some() || limits.output_bytes.is_some() {
             self.supervisor = Some(
                 Supervisor::start(
@@ -872,7 +905,11 @@ impl SandboxProcess for LocalProcess {
 
         self.stdout.take();
         self.stderr.take();
-        let scope_confirmed = cleanup.is_ok() && joined.is_ok();
+        let network = self
+            .network
+            .as_mut()
+            .map_or(Ok(()), super::network::Mediator::stop);
+        let scope_confirmed = cleanup.is_ok() && joined.is_ok() && network.is_ok();
         let staged = if scope_confirmed {
             let staged = self.stage.as_mut().map_or(Ok(()), Stage::cleanup);
             if staged.is_ok() {
@@ -883,7 +920,7 @@ impl SandboxProcess for LocalProcess {
         } else {
             Ok(())
         };
-        let mut result = cleanup.and(joined).and(staged).and(supervised);
+        let mut result = cleanup.and(joined).and(network).and(staged).and(supervised);
         if scope_confirmed && self.status.is_some() && self.terminator.is_some() {
             let audited = self.audit_finished();
             result = result.and(audited);
@@ -959,6 +996,7 @@ impl std::fmt::Debug for LocalProcess {
             .field("running", &!self.stopped)
             .field("reservation", &self.reservation)
             .field("stage", &self.stage)
+            .field("network", &self.network)
             .finish_non_exhaustive()
     }
 }
@@ -1035,8 +1073,8 @@ pub(super) fn testing_plan(
     use crucible_core::{
         Ancestry, SandboxAudit, SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance,
         SandboxCapabilities, SandboxCleanup, SandboxFilesystemAccess, SandboxFilesystemProvenance,
-        SandboxFilesystemRule, SandboxId, SandboxManifest, SandboxMode, SandboxNetworkPolicy,
-        SandboxPolicy, ToolId,
+        SandboxFilesystemRule, SandboxId, SandboxManifest, SandboxNetworkPolicy, SandboxPolicy,
+        ToolId,
     };
 
     let identity = SandboxBackendIdentity::new(
@@ -1057,7 +1095,7 @@ pub(super) fn testing_plan(
     )
     .map_err(|_| crucible_core::SandboxError::InvalidInspection)?;
     let policy = SandboxPolicy::new(
-        SandboxMode::Off,
+        false,
         [rule],
         root,
         SandboxNetworkPolicy::Closed,
@@ -1079,6 +1117,7 @@ pub(super) fn testing_plan(
     let reservation = Reservation::take(active, 1)?;
     let sandbox = inspection.id();
     Ok(SpawnPlan {
+        network: None,
         inspection,
         reservation,
         stage,
@@ -1101,6 +1140,104 @@ mod tests {
     mod startup;
 
     use super::Stage;
+
+    #[test]
+    fn proxy_credentials_are_masked_on_both_real_process_outputs() {
+        use crucible_core::{
+            SandboxDomainPolicy, SandboxId, SandboxNetworkProvenance, SandboxRead, SandboxSpeech,
+        };
+        let policy =
+            SandboxDomainPolicy::new([], [], false, [], SandboxNetworkProvenance::User).unwrap();
+        let proxy = super::super::network::Mediator::tcp(
+            policy,
+            SandboxId::new(),
+            Some(std::time::Duration::from_secs(5)),
+        )
+        .unwrap();
+        let mut command = std::process::Command::new("/bin/sh");
+        command.args([
+            "-c",
+            "printf '%s\\n%s\\n' \"$HTTP_PROXY\" \"$CRUCIBLE_TEST_AUTH\"; printf '%s\\n%s\\n' \"$HTTP_PROXY\" \"$CRUCIBLE_TEST_AUTH\" >&2",
+        ]);
+        command.envs(proxy.environment(proxy.address()));
+        command.env("CRUCIBLE_TEST_AUTH", proxy.authorization());
+        let expected = format!(
+            "http://crucible:{}@{}\nBasic {}\n",
+            "*".repeat(64),
+            proxy.address(),
+            "*".repeat(100),
+        );
+        let mut plan = super::testing_plan(SandboxSpeech::Closed, None).unwrap();
+        plan.network = Some(proxy);
+        let mut process = super::spawn(command, plan).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        for mut reader in [
+            process.take_stdout().unwrap(),
+            process.take_stderr().unwrap(),
+        ] {
+            let mut received = Vec::new();
+            let mut bytes = [0; 17];
+            loop {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "output did not finish"
+                );
+                match reader.read_ready(&mut bytes).unwrap() {
+                    SandboxRead::Bytes(count) => {
+                        received
+                            .extend_from_slice(bytes.get(..count).expect("bounded output read"));
+                    }
+                    SandboxRead::Pending => std::thread::sleep(std::time::Duration::from_millis(1)),
+                    SandboxRead::End => break,
+                    SandboxRead::Limited { .. } => panic!("small output exceeded its budget"),
+                }
+            }
+            assert!(
+                received == expected.as_bytes(),
+                "process output was not safely masked"
+            );
+        }
+        process.stop().unwrap();
+    }
+
+    #[test]
+    fn command_owns_the_network_listener_until_cleanup() {
+        use crucible_core::{
+            SandboxDomainPolicy, SandboxId, SandboxNetworkProvenance, SandboxSpeech,
+        };
+        let policy =
+            SandboxDomainPolicy::new([], [], false, [], SandboxNetworkProvenance::User).unwrap();
+        let proxy = super::super::network::Mediator::tcp(
+            policy,
+            SandboxId::new(),
+            Some(std::time::Duration::from_secs(5)),
+        )
+        .unwrap();
+        let address = proxy.address();
+        let mut plan = super::testing_plan(SandboxSpeech::Held, None).unwrap();
+        plan.network = Some(proxy);
+        let mut process = super::spawn(echoing(), plan).unwrap();
+        assert!(
+            std::net::TcpStream::connect(address).is_ok(),
+            "live command lost its network owner"
+        );
+        process.stop().unwrap();
+        // Another test may be between fork and exec with a transient copy of
+        // the CLOEXEC listener. Require closure within a fixed bound rather
+        // than confusing that short window with a retained network owner.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        while std::net::TcpStream::connect(address).is_ok() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "listener survived command cleanup"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(
+            process.inspection().cleanup(),
+            crucible_core::SandboxCleanup::Complete
+        );
+    }
 
     #[cfg(unix)]
     use std::io::Write as _;

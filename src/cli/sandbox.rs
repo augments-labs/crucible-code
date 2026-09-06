@@ -22,7 +22,7 @@ use std::time::Duration;
 
 use crucible_core::{
     SandboxBackendIdentity, SandboxCapabilities, SandboxCapability, SandboxCleanup, SandboxError,
-    SandboxFeature, SandboxInspection, SandboxMode, SandboxPlanInspection, SandboxResourceLimits,
+    SandboxFeature, SandboxInspection, SandboxPlanInspection, SandboxResourceLimits,
 };
 
 /// How far the backend got when it was asked about this workspace.
@@ -54,9 +54,14 @@ pub(crate) enum Probe<'a> {
 /// the directory the person running this is standing in, so it tells them which
 /// checkout they asked about rather than telling anybody something they did not
 /// already have.
-pub(crate) fn report(at: &Path, asked: SandboxMode, probe: &Probe<'_>) -> String {
+pub(crate) fn report(at: &Path, enabled: bool, probe: &Probe<'_>) -> String {
     let mut said = String::new();
-    let _ = writeln!(said, "sandbox {} in {}", asked.as_str(), at.display());
+    let _ = writeln!(
+        said,
+        "sandbox {} in {}",
+        if enabled { "enabled" } else { "disabled" },
+        at.display()
+    );
 
     match probe {
         Probe::Prepared(inspection) => {
@@ -131,15 +136,9 @@ fn settled(said: &mut String, inspection: &SandboxInspection) {
         "  confined  {}",
         if inspection.confined() { "yes" } else { "no" },
     );
-    // Said whether or not anything was given up. "nothing given up" is the
-    // sentence somebody running with confinement required needs to read, and
-    // a line that appears only on the bad day is one whose absence proves
-    // nothing.
-    let _ = writeln!(
-        said,
-        "  gave up   {}",
-        inspection.degradation().unwrap_or("nothing"),
-    );
+    if let Some(reason) = inspection.disabled_reason() {
+        let _ = writeln!(said, "  disabled  {reason}");
+    }
     let _ = writeln!(
         said,
         "  cleanup   {}",
@@ -175,7 +174,7 @@ fn settled(said: &mut String, inspection: &SandboxInspection) {
 
 /// One plan: reach, network, ceilings and what is staged into it.
 fn plan(said: &mut String, plan: &SandboxPlanInspection, capabilities: &SandboxCapabilities) {
-    let _ = writeln!(said, "  mode      {}", plan.mode().as_str());
+    let _ = writeln!(said, "  enabled   {}", plan.enabled());
     let _ = writeln!(said, "  cwd       {}", hex(plan.working_directory()));
 
     // The digest is not a path anybody can read back, which is the point; the
@@ -215,11 +214,14 @@ fn plan(said: &mut String, plan: &SandboxPlanInspection, capabilities: &SandboxC
         network.as_str(),
         match network {
             crucible_core::SandboxNetworkInspection::Closed => String::new(),
-            crucible_core::SandboxNetworkInspection::Exact { .. } => format!(
-                ", {} endpoints, dns {}, forwarding {}",
-                network.endpoints(),
-                yes(network.dns()),
-                yes(network.forwarding()),
+            crucible_core::SandboxNetworkInspection::Domains {
+                allowed,
+                denied,
+                local_binding,
+                unix_sockets,
+            } => format!(
+                ", {allowed} allowed, {denied} denied, local binding {}, {unix_sockets} Unix sockets",
+                yes(local_binding)
             ),
         }
     );

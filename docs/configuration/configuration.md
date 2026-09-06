@@ -272,7 +272,7 @@ home configuration leaves commands unconfined by the operating system.
 Permissions, sensitive-call approval, environment filtering, deadlines, output
 bounds and lifecycle accounting still apply.
 
-`enabled: true` resolves to `required`: every requested hard boundary must be
+With `enabled: true`, every requested hard boundary must be
 enforced before a command starts. It never silently falls back to an ordinary
 subprocess. Linux uses Bubblewrap 0.11.0 or newer with the required features.
 macOS uses the built-in Seatbelt framework through the fixed system
@@ -281,17 +281,113 @@ path-capability ACLs, WFP network denial, a restricted token, private desktop,
 exact inherited handles and a Job Object after one explicit Administrator
 setup. See the [setup and platform details](../security/sandboxing.md#windows-setup-maintenance).
 
-`sandbox.enabled` is the only configuration switch. The former `sandbox.mode`
-key is rejected; replace `required` with `enabled: true`, and replace `off`
-with `enabled: false`. There is no configuration option that permits a fallback
-when confinement is unavailable.
+`enabled` controls OS confinement. An unavailable backend or an unsupported
+requested boundary prevents the command from starting.
 
 Only your home configuration may disable confinement. Either project file may
 set `enabled: true`, which strengthens the user choice regardless of document
 order. Project `enabled: false` is refused. A project, tool, extension, skill,
 agent, or descendant cannot weaken confinement chosen above it.
 
-Under `required`, Linux applies an hour of processor time per process and a
+Configure the boundary in the same block:
+
+```json
+{
+  "sandbox": {
+    "enabled": true,
+    "filesystem": {
+      "writable": [],
+      "readOnly": [],
+      "unreadable": [],
+      "protected": []
+    },
+    "network": {
+      "allowedDomains": [],
+      "deniedDomains": [],
+      "allowLocalBinding": false,
+      "allowUnixSockets": []
+    },
+    "limits": {
+      "commandSeconds": 1200,
+      "outputBytes": 10485760,
+      "concurrentCommands": 4
+    }
+  }
+}
+```
+
+Empty filesystem lists keep the standard workspace and system-runtime policy.
+Linux/WSL2 and macOS support every setting above. Native Windows supports
+`enabled`, writable/read-only/protected paths, all three command limits and
+`/sandbox`, with the [documented native ACL limitations](../security/sandboxing.md#windows-setup-maintenance).
+Windows refuses nonempty `unreadable` paths, domain policies, local binding and
+Unix-socket grants before starting a command. Empty network lists and
+`allowLocalBinding: false` retain its closed network policy. Use Crucible inside
+WSL2 when those richer policies are needed on a Windows machine; it uses the
+Linux backend. An unsupported setting never causes an unconfined retry.
+
+Relative paths are resolved from the workspace root; absolute paths use the
+current platform's spelling. Paths do not expand environment variables or `~`,
+and parent traversal (`..`) is rejected.
+
+| Filesystem key | Effect |
+| --- | --- |
+| `writable` | Grants additional read and write access. Only your home configuration may set it. |
+| `readOnly` | Grants read access in home configuration, or removes existing write access in a project file. |
+| `unreadable` | Denies reading and writing the named path and its descendants. |
+| `protected` | Keeps a path readable while preventing writes, including through a nested writable grant. |
+
+A project file can restrict inherited access, but cannot grant a new readable
+or writable root. Unreadable and protected paths cannot be reopened by another
+grant. Repository and Crucible control files, including `.git`, `.agents`,
+`.codex` and `.crucible`, stay protected within additional writable roots too.
+Each path is limited to 4096 bytes and the effective filesystem policy to 128
+rules.
+
+Network access is closed unless granted. `allowedDomains` and `deniedDomains`
+accept hostnames, IP literals, `*.example.com` or `*`, without a URL scheme,
+path or port. A wildcard domain matches subdomains; name the base domain
+separately when it is needed. Denies take precedence. Each list has at most 64
+entries.
+
+Authorized outbound TCP goes through a per-command HTTP/CONNECT proxy. A host
+grant allows its nonzero TCP ports; it does not inspect encrypted tunnel
+contents. Tools must use the supplied proxy environment. Direct outbound TCP,
+UDP and application DNS do not acquire that grant. The host resolves permitted
+names, checks the resulting addresses before connecting, and evaluates each
+new proxy request independently. Private, loopback and metadata addresses need
+an explicit IP-literal grant; a wildcard or a public hostname resolving to a
+private address does not grant access by itself.
+
+`allowLocalBinding` allows local listeners; it does not grant host egress or
+publish a Linux namespace port onto the host. On macOS a local listener may
+also bind a wildcard address, so use it only when a listener is intended.
+`allowUnixSockets` grants connections to exact existing native Unix socket
+paths, with no wildcard matching. It does not grant Windows named pipes.
+Granting a privileged service socket grants access to that service's protocol.
+
+Only your home configuration can introduce domain grants, local binding or
+Unix socket access. Project allowlists and socket lists must be subsets of
+inherited grants; an explicit empty list removes those grants. Project denies
+accumulate, and a project can set local binding to `false`.
+
+`commandSeconds` limits wall time, including background commands, and defaults
+to 1200 seconds. `outputBytes` limits combined stdout and stderr to 10 MiB by
+default; reaching it stops the process scope. `concurrentCommands` defaults to
+4 and bounds active command slots shared by Bash and sandboxed MCP processes.
+The respective maximum values are 86400, 67108864 and 16; zero is invalid.
+Projects and individual command requests may lower limits but cannot raise an
+inherited ceiling. These guards apply even with OS confinement disabled.
+
+Use `/sandbox` during a conversation to inspect the effective boundary or
+switch enablement. The Dependencies tab reports the platform prerequisites;
+arrow keys navigate, Enter selects and Esc closes. `/sandbox enable` and
+`/sandbox disable` make the same persistent home-configuration change. A
+project-required sandbox cannot be disabled. The panel is available between
+turns; existing background commands keep their original policy. A failed update
+keeps the previous effective setting.
+
+When enabled, Linux applies an hour of processor time per process and a
 4096-open-file ceiling. macOS applies the open-file ceiling; Darwin's catchable
 CPU signal is not advertised as a hard limit. Windows applies an hour of
 aggregate Job processor time and has no handle-count ceiling. These ceilings

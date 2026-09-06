@@ -1476,7 +1476,9 @@ fn remove_uninitialized(
     journal: Option<File>,
 ) -> io::Result<bool> {
     let entries = match fs::read_dir(candidate) {
-        Ok(entries) => entries.collect::<Result<Vec<_>, _>>()?,
+        // At most the empty journal is ours; a second entry already proves
+        // this directory cannot be removed as an uninitialized transaction.
+        Ok(entries) => entries.take(2).collect::<Result<Vec<_>, _>>()?,
         Err(problem) if problem.kind() == io::ErrorKind::NotFound => return Ok(false),
         Err(problem) => return Err(problem),
     };
