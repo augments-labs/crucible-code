@@ -16,8 +16,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    Ancestry, Ask, Cancel, Mode, Permission, Remember, SandboxMode, Sensitivity, Settled, Tool,
-    ToolArgs, ToolCall, ToolContext, ToolError, ToolId, ToolOutput, Unwatched, Verdict, Workspace,
+    Ancestry, Ask, Cancel, Mode, Permission, Remember, Sensitivity, Settled, Tool, ToolArgs,
+    ToolCall, ToolContext, ToolError, ToolId, ToolOutput, Unwatched, Verdict, Workspace,
 };
 use crucible_tools::{Bash, Edit, Glob, Ledger, LocalSandbox, Read, Write};
 
@@ -186,8 +186,8 @@ fn write_latency(scratch: &Scratch, ledger: &Ledger) -> Result<f64, ProbeError> 
 }
 
 fn sandbox_latency(scratch: &Scratch) -> Result<f64, ProbeError> {
-    let tool = Bash::new(scratch.workspace.clone())
-        .sandboxing(Arc::new(LocalSandbox::new()), SandboxMode::Off);
+    let tool =
+        Bash::new(scratch.workspace.clone()).sandboxing(Arc::new(LocalSandbox::new()), false);
     let mut readings = Vec::with_capacity(RUNS);
     for _ in 0..RUNS {
         let (output, elapsed) = invoke(
