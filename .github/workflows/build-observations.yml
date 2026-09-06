@@ -1,0 +1,52 @@
+name: build-observations
+
+on:
+  workflow_dispatch:
+    inputs:
+      base:
+        description: Base revision (defaults to the first parent or main)
+        required: false
+        type: string
+  schedule:
+    - cron: '41 6 * * 2'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-observations
+  cancel-in-progress: false
+
+jobs:
+  compare:
+    name: Compile and incremental observations
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Resolve comparison revisions
+        id: revisions
+        env:
+          INPUT_BASE: ${{ inputs.base }}
+        run: |
+          set -euo pipefail
+          candidate=$(git rev-parse HEAD)
+          if [[ -n $INPUT_BASE ]]; then
+            base=$(git rev-parse --verify "$INPUT_BASE^{commit}")
+          elif git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+            base=$(git rev-parse HEAD^)
+          else
+            base=$(git rev-parse origin/main)
+          fi
+          printf 'base=%s\ncandidate=%s\n' "$base" "$candidate" >> "$GITHUB_OUTPUT"
+      - run: scripts/build-comparison.sh '${{ steps.revisions.outputs.base }}' '${{ steps.revisions.outputs.candidate }}' build-observation
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ always() }}
+        with:
+          name: build-observation
+          path: build-observation
+          if-no-files-found: error
+          retention-days: 30

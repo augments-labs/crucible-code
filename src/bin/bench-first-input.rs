@@ -12,6 +12,7 @@
 //! character comes back in a frame. The terminal is in raw mode with echo off,
 //! so seeing it proves crucible accepted and rendered the key.
 
+#[allow(dead_code)]
 mod startup;
 
 use std::fmt::Write as _;

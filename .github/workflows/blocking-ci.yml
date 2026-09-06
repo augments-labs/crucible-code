@@ -25,6 +25,10 @@ jobs:
     name: Repository checks
     uses: ./.github/workflows/repo-checks.yml
 
+  python-ci:
+    name: Python CI
+    uses: ./.github/workflows/python-ci.yml
+
   rust-ci:
     name: Rust CI
     uses: ./.github/workflows/rust-ci.yml
@@ -36,6 +40,7 @@ jobs:
       - dependency-policy
       - performance
       - repo-checks
+      - python-ci
       - rust-ci
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -45,6 +50,7 @@ jobs:
           DEPENDENCY_POLICY: ${{ needs.dependency-policy.result }}
           PERFORMANCE: ${{ needs.performance.result }}
           REPO_CHECKS: ${{ needs.repo-checks.result }}
+          PYTHON_CI: ${{ needs.python-ci.result }}
           RUST_CI: ${{ needs.rust-ci.result }}
         run: |
           set -euo pipefail
@@ -54,6 +60,7 @@ jobs:
             "dependency-policy=$DEPENDENCY_POLICY" \
             "performance=$PERFORMANCE" \
             "repo-checks=$REPO_CHECKS" \
+            "python-ci=$PYTHON_CI" \
             "rust-ci=$RUST_CI"; do
             name=${result%%=*}
             state=${result#*=}

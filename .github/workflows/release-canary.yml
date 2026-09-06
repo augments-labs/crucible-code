@@ -1,0 +1,25 @@
+name: release-canary
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 8 * * 3'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-canary
+  cancel-in-progress: false
+
+jobs:
+  latest:
+    name: Latest release install and uninstall
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: scripts/release-canary.sh
+      - uses: ./.github/actions/check-clean-worktree

@@ -15,6 +15,10 @@ if ! scripts/repo-checks.sh; then
     failed+=("repository")
 fi
 
+if ! scripts/python-checks.sh; then
+    failed+=("Python")
+fi
+
 if ((${#failed[@]})); then
     echo
     printf 'FAILED gates:\n'

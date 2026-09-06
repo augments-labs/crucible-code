@@ -52,6 +52,10 @@ const QUIET: Duration = Duration::from_millis(400);
 /// Long enough to cross more than one quarter-second face of the working mark.
 const TURN_BEATS: Duration = Duration::from_secs(1);
 
+/// An active marker may wake on its four beats, but not burn a scheduler slice
+/// between them. The allowance includes terminal parsing and the key echo.
+const ACTIVE_TICKS: u64 = 4;
+
 /// A settled prompt should spend no measurable scheduler tick over this span.
 ///
 /// A tick is the kernel's accounting quantum, not a percentage sampled by a
@@ -138,6 +142,19 @@ fn working(scratch: &Path) -> PathBuf {
         .join("workspace")
 }
 
+/// Optional behavior of the terminal side of one whole-screen case.
+struct TerminalFixture<'a> {
+    columns: u16,
+    rows: u16,
+    reply: Option<&'a [u8]>,
+}
+
+impl TerminalFixture<'_> {
+    fn coloured(&self) -> bool {
+        self.reply.is_some()
+    }
+}
+
 /// crucible, and the terminal it is drawing into.
 #[derive(Debug)]
 pub(crate) struct Watched {
@@ -149,11 +166,30 @@ pub(crate) struct Watched {
     bytes: Receiver<Vec<u8>>,
     /// What it has drawn.
     screen: Screen,
+    /// Whether fixed palette proofs crossed the PTY. Payloads do not survive.
+    light_seen: bool,
+    dark_seen: bool,
     /// The directory this case was given to itself.
     scratch: PathBuf,
 }
 
 impl Watched {
+    /// Starts crucible as though an exact-colour terminal answered that its
+    /// background is white. The reply is sent over the PTY in response to the
+    /// process's real OSC 11 query; no style owner is called by the fixture.
+    pub(crate) fn on_light_terminal(case: &str, columns: u16, rows: u16) -> Self {
+        Self::configured_with_terminal(
+            case,
+            &document(None, None),
+            false,
+            &TerminalFixture {
+                columns,
+                rows,
+                reply: Some(b"\x1b]11;rgb:ffff/ffff/ffff\x1b\\\x1b[?1;2c"),
+            },
+        )
+    }
+
     /// Starts crucible in a window that size and waits for it to finish
     /// drawing.
     ///
@@ -314,6 +350,24 @@ impl Watched {
     }
 
     fn configured(case: &str, columns: u16, rows: u16, document: &str, keyed: bool) -> Self {
+        Self::configured_with_terminal(
+            case,
+            document,
+            keyed,
+            &TerminalFixture {
+                columns,
+                rows,
+                reply: None,
+            },
+        )
+    }
+
+    fn configured_with_terminal(
+        case: &str,
+        document: &str,
+        keyed: bool,
+        terminal: &TerminalFixture<'_>,
+    ) -> Self {
         // One flat directory per case, so the last thing a case does can take
         // the whole of what it made with it.
         let scratch = std::env::temp_dir().join(format!(
@@ -343,19 +397,24 @@ impl Watched {
         )
         .expect("a git configuration file");
 
-        let (terminal, inside) = pair(columns, rows);
-        let child = start(&scratch, &home, &workspace, keyed, inside);
+        let (mut near, inside) = pair(terminal.columns, terminal.rows);
+        let child = start(&scratch, keyed, terminal, inside);
+        if let Some(reply) = terminal.reply {
+            near.write_all(reply)
+                .expect("the terminal background reply goes to crucible");
+            near.flush().expect("the terminal reply is flushed");
+        }
         let (sender, bytes) = mpsc::channel();
-        let reading = terminal
-            .try_clone()
-            .expect("a second handle on the terminal");
+        let reading = near.try_clone().expect("a second handle on the terminal");
         std::thread::spawn(move || read(reading, &sender));
 
         let mut window = Self {
-            terminal,
+            terminal: near,
             child,
             bytes,
-            screen: Screen::new(columns as usize, rows as usize),
+            screen: Screen::new(terminal.columns as usize, terminal.rows as usize),
+            light_seen: false,
+            dark_seen: false,
             scratch,
         };
         window.settle("crucible started", Some(READY));
@@ -448,6 +507,7 @@ impl Watched {
     /// come from the shipped binary rather than from [`Screen`]'s interpretation
     /// of one final picture.
     pub(crate) fn turns_then_echoes(&mut self, key: &str) {
+        let before = cpu_ticks(self.child.id());
         let deadline = Instant::now() + TURN_BEATS;
         let mut faces = Vec::new();
 
@@ -457,7 +517,7 @@ impl Watched {
                 .recv_timeout(QUIET.min(deadline.saturating_duration_since(Instant::now())))
             {
                 Ok(bytes) => {
-                    self.screen.feed(&bytes);
+                    self.feed(&bytes);
                     if let Some(face) = working_face(&self.picture())
                         && !faces.contains(&face)
                     {
@@ -480,23 +540,92 @@ impl Watched {
         self.terminal
             .write_all(key.as_bytes())
             .expect("a key goes to the running turn");
-        let echoed_by = Instant::now() + QUIET;
+        let sent = Instant::now();
+        let echoed_by = sent + QUIET;
         while !self.picture().contains(key) && Instant::now() < echoed_by {
             match self
                 .bytes
                 .recv_timeout(echoed_by.saturating_duration_since(Instant::now()))
             {
-                Ok(bytes) => self.screen.feed(&bytes),
+                Ok(bytes) => self.feed(&bytes),
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => {
                     panic!("crucible left the terminal before the key was echoed")
                 }
             }
         }
+        let latency = sent.elapsed();
         assert!(
             self.picture().contains(key),
             "{key:?} was not drawn within {QUIET:?} during the held turn\n{}",
             self.picture()
+        );
+        assert!(
+            latency <= QUIET,
+            "{key:?} took {latency:?} to reach the held-turn box; allowed {QUIET:?}"
+        );
+
+        let ticks = cpu_ticks(self.child.id()).saturating_sub(before);
+        assert!(
+            ticks <= ACTIVE_TICKS,
+            "the active animation and key echo used {ticks} CPU ticks in {TURN_BEATS:?}, allowed {ACTIVE_TICKS}"
+        );
+    }
+
+    /// Proves every synchronized frame of a streamed answer preserves the
+    /// already-visible prefix and never blanks the active answer panel.
+    pub(crate) fn streams_without_flicker(&mut self, prompt: &str, words: &[&str]) {
+        self.terminal
+            .write_all(format!("{prompt}\r").as_bytes())
+            .expect("the prompt goes to the terminal");
+
+        let mut seen = 0;
+        let mut active = 0;
+        while seen < words.len() {
+            let bytes = self
+                .bytes
+                .recv_timeout(CEILING)
+                .expect("the streamed answer presents another frame");
+            self.feed(&bytes);
+            if !self.screen.is_holding() {
+                let picture = self.picture();
+                let now = words
+                    .iter()
+                    .take_while(|word| picture.contains(**word))
+                    .count();
+                if now > 0 {
+                    active += 1;
+                    assert!(
+                        now >= seen,
+                        "a streamed prefix went backwards from {seen} to {now}"
+                    );
+                    seen = now;
+                } else if seen > 0 {
+                    panic!("a streamed answer became blank between visible prefixes");
+                }
+            }
+        }
+        self.settle("the streamed answer", words.last().copied());
+        assert!(
+            active >= words.len(),
+            "only {active} streamed presentation frames carried {} prefixes",
+            words.len()
+        );
+    }
+
+    /// Proves a real terminal query selected the light table in emitted bytes.
+    pub(crate) fn uses_light_theme(&self) {
+        assert!(
+            self.screen
+                .commands()
+                .iter()
+                .any(|command| command == "11;?"),
+            "crucible never asked the terminal for its background"
+        );
+        assert!(self.light_seen, "the exact light accent was never emitted");
+        assert!(
+            !self.dark_seen,
+            "the dark accent followed a light background reply"
         );
     }
 
@@ -518,7 +647,7 @@ impl Watched {
             {
                 Ok(bytes) => {
                     written += bytes.len();
-                    self.screen.feed(&bytes);
+                    self.feed(&bytes);
                 }
                 Err(RecvTimeoutError::Timeout) => break,
                 Err(RecvTimeoutError::Disconnected) => {
@@ -546,7 +675,7 @@ impl Watched {
 
         while !self.picture().contains(wanted) {
             match self.bytes.recv_timeout(QUIET) {
-                Ok(bytes) => self.screen.feed(&bytes),
+                Ok(bytes) => self.feed(&bytes),
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => {
                     panic!(
@@ -604,6 +733,16 @@ impl Watched {
         self.screen.commands()
     }
 
+    /// Turns the two fixed palette proofs into booleans, then draws the bytes.
+    /// No extra copy of any terminal payload survives this call.
+    fn feed(&mut self, bytes: &[u8]) {
+        const LIGHT: &[u8] = b"\x1b[38;2;13;107;98m";
+        const DARK: &[u8] = b"\x1b[38;2;18;137;127m";
+        self.light_seen |= bytes.windows(LIGHT.len()).any(|window| window == LIGHT);
+        self.dark_seen |= bytes.windows(DARK.len()).any(|window| window == DARK);
+        self.screen.feed(bytes);
+    }
+
     /// Reads until the screen settles, and fails plainly when it never does.
     ///
     /// Settled means two things at once: the terminal has gone [`QUIET`], and
@@ -630,7 +769,7 @@ impl Watched {
         loop {
             match self.bytes.recv_timeout(QUIET) {
                 Ok(bytes) => {
-                    self.screen.feed(&bytes);
+                    self.feed(&bytes);
                     arrived = true;
                 }
                 Err(RecvTimeoutError::Timeout) if self.ready(arrived, wanted) => break,
@@ -750,7 +889,9 @@ fn pair(columns: u16, rows: u16) -> (File, File) {
 /// beside it is a socket on this machine, and what answers there wants nothing
 /// signed — but crucible will not choose a provider without one, so a case with
 /// something to ask needs the variable set to reach the provider at all.
-fn start(scratch: &Path, home: &Path, workspace: &Path, keyed: bool, inside: File) -> Child {
+fn start(scratch: &Path, keyed: bool, terminal: &TerminalFixture<'_>, inside: File) -> Child {
+    let home = scratch.join("home");
+    let workspace = working(scratch);
     let second = inside.try_clone().expect("a second handle on the far side");
     let third = inside.try_clone().expect("a third handle on the far side");
 
@@ -761,13 +902,14 @@ fn start(scratch: &Path, home: &Path, workspace: &Path, keyed: bool, inside: Fil
         // the command line. A configured credential makes a provider
         // reachable; it must not silently choose what answers.
         .args(keyed.then_some(["--model", "anthropic/claude-test-1"]).into_iter().flatten())
-        .current_dir(workspace)
+        .current_dir(&workspace)
         .env_clear()
         .env("PATH", std::env::var_os("PATH").unwrap_or_default())
         .env("HOME", scratch)
         .env("TERM", "xterm-256color")
-        .env("NO_COLOR", "1")
-        .env("CRUCIBLE_CODE_HOME", home)
+        .envs(terminal.coloured().then_some(("COLORTERM", "truecolor")))
+        .envs((!terminal.coloured()).then_some(("NO_COLOR", "1")))
+        .env("CRUCIBLE_CODE_HOME", &home)
         .envs(keyed.then_some(("ANTHROPIC_API_KEY", "not-a-key-and-nothing-reads-it")))
         .stdin(Stdio::from(inside))
         .stdout(Stdio::from(second))

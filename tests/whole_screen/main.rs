@@ -124,6 +124,20 @@ fn a_turn_still_running() -> Vendor {
     )
 }
 
+/// The row directly under the one that reads `› {command}`, without the
+/// picture's edges.
+fn under(picture: &str, command: &str) -> String {
+    let rows: Vec<&str> = picture.lines().collect();
+    let at = rows
+        .iter()
+        .position(|row| row.starts_with(&format!("|› {command}")))
+        .unwrap_or_else(|| panic!("no row reads › {command}: {picture}"));
+    let Some(row) = rows.get(at + 1) else {
+        panic!("nothing under › {command}: {picture}")
+    };
+    row.trim_matches('|').trim_end().to_owned()
+}
+
 #[test]
 fn a_settled_prompt_writes_nothing_and_stays_off_cpu() {
     // The ordinary between-turns state, not a turn whose working mark is meant
@@ -146,6 +160,54 @@ fn a_silent_running_turn_animates_and_echoes_a_key_promptly() {
     // More than one quarter-second face must reach the PTY, and a plain key must
     // still reach the box inside one generous 400 ms beat window.
     window.turns_then_echoes("z");
+}
+
+#[test]
+fn every_streamed_frame_keeps_the_answer_prefix_and_never_blanks_it() {
+    let words = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"];
+    let vendor = Vendor::answering(&words.join(" "));
+    let mut window = Watched::answering("stream-frames", 80, 24, &vendor);
+
+    window.streams_without_flicker("say the planted words", &words);
+}
+
+#[test]
+fn a_light_terminal_reply_selects_the_light_palette_on_the_real_pty() {
+    let window = Watched::on_light_terminal("light-terminal", 80, 24);
+
+    window.uses_light_theme();
+}
+
+#[test]
+fn every_onboarding_state_can_be_left_for_the_same_clean_prompt() {
+    let mut first = Watched::open("login-leave-first", 80, 24);
+    first.types_until("/login\r", "Provide your own API key");
+    first.types_until("\x1b", "cancelled, nothing signed in");
+
+    let mut provider = Watched::open("login-leave-provider", 80, 24);
+    provider.types_until("/login\r", "Provide your own API key");
+    provider.types_until(
+        "\x1b[B\x1b[B\r",
+        "Choose the provider whose API key you have.",
+    );
+    provider.types_until("\x1b", "cancelled, nothing signed in");
+
+    let mut secret = Watched::open("login-leave-secret", 80, 24);
+    secret.types_until("/login\r", "Provide your own API key");
+    secret.types_until(
+        "\x1b[B\x1b[B\r",
+        "Choose the provider whose API key you have.",
+    );
+    secret.types_until("\r", "paste or type your API key");
+    secret.types_until("\x1b", "cancelled, nothing signed in");
+
+    for picture in [first.picture(), provider.picture(), secret.picture()] {
+        assert_eq!(under(&picture, "/login"), "⎿ cancelled, nothing signed in");
+        assert!(picture.contains("ask mode on"), "{picture}");
+        assert!(!picture.contains("Provide your own API key"), "{picture}");
+        assert!(!picture.contains("Choose the provider"), "{picture}");
+        assert!(!picture.contains("paste or type your API key"), "{picture}");
+    }
 }
 
 #[test]
@@ -321,6 +383,19 @@ fn a_click_on_the_count_opens_the_list_while_a_turn_is_still_running() {
     window.clicks_catching(at, 0, "Still running");
 
     insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn escape_cancels_a_real_pty_turn_and_returns_to_the_prompt() {
+    let vendor = Vendor::answering(&"still arriving ".repeat(96));
+    let mut window = Watched::answering("escape-cancels-turn", 80, 24, &vendor);
+
+    window.types_and_catches("start the long answer\r", "still arriving");
+    window.types_until("\x1b", "! stopped");
+
+    let picture = window.picture();
+    assert!(picture.contains("ask mode on"), "{picture}");
+    assert!(!picture.contains("interrupting"), "{picture}");
 }
 
 #[test]
@@ -1175,20 +1250,6 @@ fn a_pasted_key_draws_one_mark_per_character_and_offers_to_save() {
     assert!(!picture.contains("window"), "{picture}");
     assert!(!picture.contains('%'), "{picture}");
     insta::assert_snapshot!(picture);
-}
-
-/// The row directly under the one that reads `› {command}`, without the
-/// picture's edges.
-fn under(picture: &str, command: &str) -> String {
-    let rows: Vec<&str> = picture.lines().collect();
-    let at = rows
-        .iter()
-        .position(|row| row.starts_with(&format!("|› {command}")))
-        .unwrap_or_else(|| panic!("no row reads › {command}: {picture}"));
-    let Some(row) = rows.get(at + 1) else {
-        panic!("nothing under › {command}: {picture}")
-    };
-    row.trim_matches('|').trim_end().to_owned()
 }
 
 #[test]

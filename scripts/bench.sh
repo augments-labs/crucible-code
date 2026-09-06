@@ -5,8 +5,9 @@
 # see that document for why those two readings are not the same claim.
 #
 #     scripts/bench.sh              every budget
-#     scripts/bench.sh startup      first frame, first input, resume preview
-#     scripts/bench.sh mem          peak RSS after a long session
+#     scripts/bench.sh startup      first frame/input, fast exits, resume preview
+#     scripts/bench.sh tools        deterministic filesystem and process tools
+#     scripts/bench.sh mem          peak and retained RSS after a long session
 #     scripts/bench.sh grep         search, against the rg binary
 #     scripts/bench.sh stream       rendered frames under a token burst
 #     scripts/bench.sh live         turn-band redraws while a command prints
@@ -48,14 +49,16 @@ cd "$(dirname "$0")/.."
 readonly BUDGETS=(
     "startup|bench-first-frame|first frame <= 20 ms p95"
     "startup|bench-first-input|first input <= 60 ms p95"
+    "startup|bench-cli-exit|help and version process exit <= 12 ms p95"
     "startup|bench-resume-preview|resume picker, deepest session previewed <= 20 ms p95"
-    "mem|bench-session-rss|peak RSS after a 20-turn session, pictures or none <= 35 MB"
+    "tools|bench-tools|deterministic read, glob, edit, write and sandbox medians <= 40 ms"
+    "mem|bench-session-rss|peak and retained RSS after a long session <= 35 MB"
     "grep|bench-grep|grep worst paired median within 1.25x the rg binary"
     "stream|bench-render-burst|rendered frames >= 30/s and sustained/opening pace >= 0.5"
     "live|bench-live-burst|turn-band redraws >= 30/s and sustained/opening pace >= 0.5"
 )
 
-readonly MODES=(startup mem grep stream live)
+readonly MODES=(startup tools mem grep stream live)
 
 # A probe's value and limit go into the JSON unquoted, so both must be numbers.
 readonly NUMERIC='^-?[0-9]+(\.[0-9]+)?$'
