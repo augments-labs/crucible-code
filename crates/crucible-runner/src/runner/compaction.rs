@@ -424,6 +424,18 @@ impl Runner {
         (files.read, files.modified)
     }
 
+    /// Adds the temporary instruction, never a durable user message. Every
+    /// exit from `recap` below removes it before returning to the turn loop.
+    fn append_recap_prompt(&mut self) -> Result<u64, TurnError> {
+        self.transcript
+            .push(Message::said(RECAP))
+            .map_err(|_| ProviderError::Protocol {
+                provider: self.provider.name(),
+                problem: "invalid recap transcript".into(),
+            })?;
+        Ok(RECAP.len() as u64)
+    }
+
     fn recap(
         &mut self,
         why: Compacting,
@@ -433,9 +445,7 @@ impl Runner {
     ) -> Result<Recap, TurnError> {
         let events = run.reporting();
         let cancel = run.cancel();
-        let asking = RECAP.to_owned();
-        let asking_bytes = asking.len() as u64;
-        self.transcript.push(Message::said(asking));
+        let asking_bytes = self.append_recap_prompt()?;
 
         // The recap is a standalone request: no ordinary system prompt or tool
         // schemas, and its output has to fit beside the request itself. This is
@@ -478,6 +488,7 @@ impl Runner {
             .unwrap_or_else(|| std::path::Path::new(""))
             .to_string_lossy();
         let request = Request {
+            purpose: crucible_core::RequestPurpose::Recap,
             model: &self.spec.model.name,
             transcript: &self.transcript,
             tools: &[],
@@ -645,6 +656,12 @@ impl Runner {
         );
 
         self.transcript.pop();
+        // The final EOF read may have raised cancellation without producing a
+        // delta. A complete recap is still provisional until that read ends;
+        // it must not replace the original history after the user stopped it.
+        if cancel.requested() {
+            return Ok(Recap::Stopped);
+        }
         said
     }
 
@@ -677,6 +694,13 @@ impl Runner {
                 Err(ProviderError::Cancelled(_)) => return Ok(Recap::Stopped),
                 Err(problem) => return Err(problem.into()),
             };
+            // Some protocols report accounting after the model's stop. Keep
+            // reading it through EOF, but never append late response content.
+            if stopped.is_some()
+                && !matches!(delta, Delta::Usage(_) | Delta::Spent(_) | Delta::Carried(_))
+            {
+                return Ok(Recap::Incomplete);
+            }
             match delta {
                 Delta::Text(text) => {
                     said.push_str(&text);
@@ -739,10 +763,13 @@ impl Runner {
                         })),
                     );
                 }
-                Delta::ToolStarted { .. } | Delta::ToolArgs(_) | Delta::Carried(_) => {}
+                Delta::ToolStarted { .. }
+                | Delta::ToolArgs(_)
+                | Delta::Carried(_)
+                | Delta::Continuation(_)
+                | Delta::Progress => {}
                 Delta::Stopped(reason) => {
                     stopped = Some(reason);
-                    break;
                 }
             }
         }

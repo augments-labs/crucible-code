@@ -21,6 +21,7 @@ fn spoken(user: &str, agent: &str) -> Vec<String> {
     vec![
         wire::line(&Message::said(user)),
         wire::line(&Message::Agent {
+            continuation: None,
             text: agent.into(),
             calls: Vec::new(),
             stop: None,
@@ -78,6 +79,7 @@ fn the_calls_a_turn_made_and_what_came_back_are_kept_with_it() {
     let lines = vec![
         wire::line(&Message::said("read the config")),
         wire::line(&Message::Agent {
+            continuation: None,
             text: "I will look at it.".into(),
             calls: vec![ToolCall {
                 id: ToolId::new("c-1"),

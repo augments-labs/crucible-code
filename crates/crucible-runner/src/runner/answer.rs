@@ -7,7 +7,10 @@
 
 use std::fmt;
 
-use crucible_core::{ProviderError, ProviderLimit, StopReason, ToolArgs, ToolCall, ToolId};
+use crucible_core::{
+    Continuation, ProviderContinuation, ProviderError, ProviderLimit, StopReason, ToolArgs,
+    ToolCall, ToolId,
+};
 
 const MAX_RESPONSE_TEXT: usize = 8 * 1024 * 1024;
 const MAX_TOOL_ARGUMENTS: usize = 1024 * 1024;
@@ -28,6 +31,9 @@ pub(crate) struct Answer {
     retained_bytes: usize,
     turn_held: usize,
     turn_maximum: usize,
+    continuation: Option<Continuation>,
+    finalized: Option<ProviderContinuation>,
+    progress: bool,
 }
 
 /// One tool call, still arriving.
@@ -78,6 +84,9 @@ impl Answer {
             retained_bytes: 0,
             turn_held,
             turn_maximum,
+            continuation: None,
+            finalized: None,
+            progress: false,
         }
     }
 
@@ -164,6 +173,67 @@ impl Answer {
         self.argument_bytes += fragment.len();
         self.retained_bytes += fragment.len();
         Ok(())
+    }
+
+    /// Admits private response state within the remaining turn and history room.
+    pub(crate) fn continuing(
+        &mut self,
+        state: Continuation,
+        room: usize,
+    ) -> Result<(), ProviderError> {
+        self.open()?;
+        if self.continuation.is_some() {
+            return Err(self.invalid("duplicate provider continuation"));
+        }
+        let bytes = state.retained_bytes();
+        if bytes > room {
+            return Err(self.invalid("provider continuation exceeds the retained-history limit"));
+        }
+        self.turn_room(bytes)?;
+        self.retained_bytes += bytes;
+        self.progress = true;
+        self.continuation = Some(state);
+        Ok(())
+    }
+
+    /// Private progress changes retry safety, never token or visible-text counts.
+    pub(crate) fn progressed(&mut self) -> Result<(), ProviderError> {
+        self.open()?;
+        self.progress = true;
+        Ok(())
+    }
+
+    pub(crate) const fn has_progress(&self) -> bool {
+        self.progress
+    }
+
+    fn invalid(&self, problem: &'static str) -> ProviderError {
+        ProviderError::Protocol {
+            provider: self.provider,
+            problem: problem.into(),
+        }
+    }
+
+    /// Called only after the entire stream ended without error or cancellation.
+    pub(crate) fn finalize(&mut self) -> Result<StopReason, ProviderError> {
+        let stop = self.reached()?;
+        if let Some(state) = self.continuation.take()
+            && matches!(stop, StopReason::Yielded | StopReason::WantsTools)
+        {
+            self.finalized = Some(
+                state
+                    .finish(&self.text, self.calls.len(), Some(stop))
+                    .map_err(|_| {
+                        self.invalid("provider continuation does not match the completed answer")
+                    })?,
+            );
+        }
+        Ok(stop)
+    }
+
+    /// Never available on a failed response, even after an individually valid part.
+    pub(crate) fn take_continuation(&mut self) -> Option<ProviderContinuation> {
+        self.finalized.take()
     }
 
     /// Takes the reason the model stopped.

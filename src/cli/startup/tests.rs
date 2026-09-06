@@ -694,6 +694,57 @@ fn anthropic_serves_both_halves_of_reaching_the_web() {
 }
 
 #[test]
+fn google_web_authority_is_api_key_only_and_uses_the_checked_recipient() {
+    let sample = Sample::new("google-web-authority");
+    let stored = sample.subscribed("google");
+    let subscriptions = Subscriptions::production();
+    let defaults = Settings::default();
+    let absent = |_: &str| None;
+    let auth = ProviderAuth {
+        settings: &defaults,
+        from: &absent,
+        stored: &stored,
+        subscriptions: &subscriptions,
+    };
+    let reaching = google_web(wiring(serving("google"), auth).unwrap(), "gemini-3.8-flash");
+    assert!(reaching.searching.is_none());
+    assert!(reaching.fetching.is_none());
+
+    let settings = sample.user(r#"{"providers":{"google":{"baseUrl":"https://gateway.example/interactions?alt=sse","apiKeyEnv":"WORK_GEMINI"}}}"#);
+    let from = |name: &str| (name == "WORK_GEMINI").then(|| "synthetic-key".into());
+    let auth = ProviderAuth {
+        settings: &settings,
+        from: &from,
+        stored: &stored,
+        subscriptions: &subscriptions,
+    };
+    let reaching = google_web(wiring(serving("google"), auth).unwrap(), "gemini-3.8-flash");
+    assert_eq!(
+        reaching.searching.unwrap().reaches(),
+        crucible_core::Host::Named {
+            sent: "https://gateway.example/interactions?alt=sse".into(),
+            host: "gateway.example".into()
+        }
+    );
+    assert!(reaching.fetching.is_some());
+
+    let invalid =
+        sample.user(r#"{"providers":{"google":{"baseUrl":"http://remote.example/interactions"}}}"#);
+    assert!(
+        wiring(
+            serving("google"),
+            ProviderAuth {
+                settings: &invalid,
+                from: &from,
+                stored: &stored,
+                subscriptions: &subscriptions
+            }
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn openai_serves_both_through_one_tool() {
     // Reading a page is an action inside this vendor's search tool rather than
     // a tool of its own, which is a fact about the wire and not about what the
@@ -717,7 +768,7 @@ fn moonshot_serves_both_halves_from_kimi_code() {
 fn a_session_with_no_model_chosen_reaches_nothing() {
     // A side request has to name a model, and the one it names is the session's.
     // Nothing is chosen yet in the state `/model` exists to leave open.
-    for named in ["anthropic", "openai"] {
+    for named in ["anthropic", "google", "openai"] {
         let reaching = reaching_for(named, None);
 
         assert!(reaching.searching.is_none(), "{named}");

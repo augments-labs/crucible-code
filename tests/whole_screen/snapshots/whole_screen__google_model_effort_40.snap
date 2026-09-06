@@ -1,0 +1,29 @@
+---
+source: tests/whole_screen/main.rs
+expression: models
+---
+40x24 cursor 4,16 scrolled 0
+|› /model                                |
+|Model             now  nothing asked yet|
+|                                        |
+|╭──────────────────────────────────────╮|
+|│ Search  gemini                       │|
+|╰──────────────────────────────────────╯|
+|                                        |
+|╭──────────────────────────────────────╮|
+|│  ‹All› · Anthropic · Google · Moonsho│|
+|├──────────────────────────────────────┤|
+|│ › Gemini 3.8 Flash     200k          │|
+|│   Gemini 3.7 Flash     200k          │|
+|│   Gemini 3.6 Flash     200k          │|
+|│   Gemini 3.1 Pro Prev  200k          │|
+|│                                      │|
+|│                                      │|
+|│                                      │|
+|│                                      │|
+|╰──────────────────────────────────────╯|
+|                                        |
+|  Effort   ‹ low ›  medium   high       |
+|                                        |
+|  tab · ↑↓ · ←→ · enter · esc           |
+|                                        |

@@ -201,18 +201,28 @@ fn a_continued_session_goes_on_counting_where_it_stopped() {
     let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
 
     let mut earlier = Transcript::new();
-    earlier.push(Message::said("one"));
-    earlier.push(Message::Agent {
-        text: "first".into(),
-        calls: Vec::new(),
-        stop: Some(StopReason::Yielded),
-    });
-    earlier.push(Message::said("two"));
-    earlier.push(Message::Agent {
-        text: "second".into(),
-        calls: Vec::new(),
-        stop: Some(StopReason::Yielded),
-    });
+    earlier
+        .push(Message::said("one"))
+        .expect("valid fixture transcript");
+    earlier
+        .push(Message::Agent {
+            continuation: None,
+            text: "first".into(),
+            calls: Vec::new(),
+            stop: Some(StopReason::Yielded),
+        })
+        .expect("valid fixture transcript");
+    earlier
+        .push(Message::said("two"))
+        .expect("valid fixture transcript");
+    earlier
+        .push(Message::Agent {
+            continuation: None,
+            text: "second".into(),
+            calls: Vec::new(),
+            stop: Some(StopReason::Yielded),
+        })
+        .expect("valid fixture transcript");
     scripted.runner = scripted.runner.resuming(earlier);
 
     scripted.turn("three").unwrap();
@@ -340,6 +350,7 @@ fn a_turn_that_was_cut_off_comes_back_from_a_replay_still_cut_off() {
         [
             Message::said("write it all out"),
             Message::Agent {
+                continuation: None,
                 text: "as I was say".into(),
                 calls: Vec::new(),
                 stop: Some(StopReason::OutOfTokens),
@@ -371,6 +382,7 @@ fn a_stream_that_never_said_why_it_stopped_fails_the_turn_rather_than_finishing_
         [
             Message::said("go"),
             Message::Agent {
+                continuation: None,
                 text: "as I was say".into(),
                 calls: Vec::new(),
                 stop: None,

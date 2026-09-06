@@ -27,9 +27,12 @@ fn provider(endpoint: Endpoint, body: &str, status: u16) -> (Moonshot, std::sync
 
 fn asking(text: &str) -> Request<'static> {
     let mut transcript = Transcript::new();
-    transcript.push(Message::said(text));
+    transcript
+        .push(Message::said(text))
+        .expect("valid fixture transcript");
 
     Request {
+        purpose: crucible_core::RequestPurpose::Turn,
         model: "kimi-test",
         transcript: Box::leak(Box::new(transcript)),
         tools: &[],

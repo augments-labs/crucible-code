@@ -169,7 +169,7 @@ fn a_pre_context_session_supersedes_every_unknown_section_on_its_first_pass() {
     drop(session);
 
     let current = fs::read_to_string(&path).unwrap();
-    let legacy = current.replacen(r#""format":11"#, r#""format":9"#, 1);
+    let legacy = current.replacen(r#""format":12"#, r#""format":9"#, 1);
     assert_ne!(legacy, current, "the fixture header was not downgraded");
     fs::write(&path, legacy).unwrap();
 

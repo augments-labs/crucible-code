@@ -917,8 +917,11 @@ mod tests {
     #[test]
     fn default_prefer_derives_a_session_scoped_routing_key_when_supported() {
         let mut transcript = Transcript::new();
-        transcript.push(Message::said("hello"));
+        transcript
+            .push(Message::said("hello"))
+            .expect("valid fixture transcript");
         let request = Request {
+            purpose: crucible_core::RequestPurpose::Turn,
             model: "model-a",
             transcript: &transcript,
             tools: &[],
@@ -1090,8 +1093,11 @@ mod tests {
     #[test]
     fn authorized_persistent_content_is_created_before_it_is_referenced() {
         let mut transcript = Transcript::new();
-        transcript.push(Message::said("a stable prefix long enough"));
+        transcript
+            .push(Message::said("a stable prefix long enough"))
+            .expect("valid fixture transcript");
         let request = Request {
+            purpose: crucible_core::RequestPurpose::Turn,
             model: "model-a",
             transcript: &transcript,
             tools: &[],
@@ -1304,8 +1310,11 @@ mod tests {
 
     fn with_persistent_request<T>(run: impl FnOnce(&Request<'_>) -> T) -> T {
         let mut transcript = Transcript::new();
-        transcript.push(Message::said("a stable prefix long enough"));
+        transcript
+            .push(Message::said("a stable prefix long enough"))
+            .expect("valid fixture transcript");
         let request = Request {
+            purpose: crucible_core::RequestPurpose::Turn,
             model: "model-a",
             transcript: &transcript,
             tools: &[],
@@ -1409,7 +1418,9 @@ mod tests {
             prepared_with(request, &other_scope, &mut store, &lifecycle, 1_020).unwrap();
 
             let mut other_transcript = Transcript::new();
-            other_transcript.push(Message::said("a different stable prefix long enough"));
+            other_transcript
+                .push(Message::said("a different stable prefix long enough"))
+                .expect("valid fixture transcript");
             let other_request = Request {
                 transcript: &other_transcript,
                 system: Some("different stable instructions"),

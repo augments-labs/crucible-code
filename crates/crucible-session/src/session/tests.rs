@@ -23,6 +23,7 @@ fn said(text: &str) -> Message {
 
 fn calling(id: &str, name: &str, args: &str) -> Message {
     Message::Agent {
+        continuation: None,
         text: "on it".into(),
         calls: vec![ToolCall {
             id: ToolId::new(id),
@@ -35,6 +36,7 @@ fn calling(id: &str, name: &str, args: &str) -> Message {
 
 fn answering(text: &str) -> Message {
     Message::Agent {
+        continuation: None,
         text: text.into(),
         calls: Vec::new(),
         stop: Some(StopReason::Yielded),
@@ -60,6 +62,140 @@ fn record(sample: &Sample, messages: &[Message]) -> PathBuf {
     // Dropping is what waits for the queue, so the file is complete after it.
     drop(session);
     path
+}
+
+#[test]
+fn appending_continuation_to_an_old_log_requires_a_new_reader() {
+    use crucible_core::{Continuation, ContinuationData, ContinuationPart, ContinuationScope};
+    let sample = Sample::new("continuation-old-format");
+    let id = "0198abcd-0000-7000-8000-000000000001";
+    let path = sample.plant(
+        id,
+        &[sample.header(11, id), wire::line(&said("old prompt"))],
+    );
+    let before = fs::read_to_string(&path).unwrap();
+    let (session, _) = Session::resume(&sample.logs(), &sample.workspace()).unwrap();
+    let mut pending = Continuation::new(
+        "fixture-v1",
+        "fixture",
+        ContinuationScope::from_digest([0; 32]),
+    )
+    .unwrap();
+    pending
+        .push(ContinuationPart::Opaque(
+            ContinuationData::new("signature-canary").unwrap(),
+        ))
+        .unwrap();
+    let message = Message::Agent {
+        text: "".into(),
+        calls: vec![],
+        stop: Some(StopReason::Yielded),
+        continuation: Some(pending.finish("", 0, Some(StopReason::Yielded)).unwrap()),
+    };
+    session.append(&message);
+    drop(session);
+    let written = fs::read_to_string(&path).unwrap();
+    assert!(
+        written.starts_with(&before),
+        "old bytes must not be rewritten"
+    );
+    let new_lines: Vec<_> = written[before.len()..].lines().collect();
+    assert_eq!(
+        new_lines.len(),
+        2,
+        "old readers need a refusal marker before new private state"
+    );
+    assert_eq!(new_lines.first().unwrap(), &r#"{"requires_format":12}"#);
+    assert!(
+        wire::message(new_lines.first().unwrap()).is_none(),
+        "an old message reader must not silently accept the guard"
+    );
+    let (_session, replayed) = Session::resume(&sample.logs(), &sample.workspace()).unwrap();
+    assert_eq!(replayed.messages().last(), Some(&message));
+}
+
+#[test]
+fn a_complete_invalid_continuation_is_refused_even_at_the_end_of_the_log() {
+    let sample = Sample::new("continuation-invalid-tail");
+    let id = "0198abcd-0000-7000-8000-000000000001";
+    let path = sample.plant(id, &[
+        sample.header(12, id),
+        wire::line(&said("keep my history")),
+        r#"{"agent":"answer","calls":[],"stop":"yielded","continuation":{"protocol":"invalid"}}"#.into(),
+    ]);
+    let before = fs::read(&path).unwrap();
+    assert!(
+        matches!(
+            Session::resume(&sample.logs(), &sample.workspace()),
+            Err(SessionError::Log { .. })
+        ),
+        "complete private state cannot be silently truncated as a crash fragment"
+    );
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn a_newer_required_reader_is_refused_without_truncating_even_at_eof() {
+    for marker in [
+        r#"{"requires_format":13}"#,
+        r#"{"requires_format":"invalid"}"#,
+    ] {
+        let sample = Sample::new("continuation-new-reader");
+        let id = "0198abcd-0000-7000-8000-000000000001";
+        let path = sample.plant(id, &[sample.header(11, id), marker.into()]);
+        let before = fs::read(&path).unwrap();
+        assert!(matches!(
+            Session::resume(&sample.logs(), &sample.workspace()),
+            Err(SessionError::Foreign { .. })
+        ));
+        assert_eq!(fs::read(&path).unwrap(), before);
+    }
+}
+
+#[test]
+fn replay_enforces_the_aggregate_private_history_limit_without_truncating() {
+    use crucible_core::{
+        CONTINUATION_BYTES, Continuation, ContinuationData, ContinuationPart, ContinuationScope,
+    };
+    let sample = Sample::new("continuation-replay-cap");
+    let id = "0198abcd-0000-7000-8000-000000000001";
+    let path = sample.plant(id, &[sample.header(12, id)]);
+    let mut state = Continuation::new(
+        "fixture-v1",
+        "fixture",
+        ContinuationScope::from_digest([0; 32]),
+    )
+    .unwrap();
+    state
+        .push(ContinuationPart::Opaque(
+            ContinuationData::new(&"x".repeat(CONTINUATION_BYTES - 1024)).unwrap(),
+        ))
+        .unwrap();
+    let message = Message::Agent {
+        text: "".into(),
+        calls: vec![],
+        stop: Some(StopReason::Yielded),
+        continuation: Some(state.finish("", 0, Some(StopReason::Yielded)).unwrap()),
+    };
+    let line = wire::line(&message);
+    let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+    for _ in 0..64 {
+        writeln!(file, "{line}").unwrap();
+    }
+    drop(file);
+    let (session, transcript) = Session::resume(&sample.logs(), &sample.workspace()).unwrap();
+    assert_eq!(transcript.len(), 64);
+    drop(transcript);
+    drop(session);
+    let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+    writeln!(file, "{line}").unwrap();
+    drop(file);
+    let length = fs::metadata(&path).unwrap().len();
+    assert!(matches!(
+        Session::resume(&sample.logs(), &sample.workspace()),
+        Err(SessionError::Log { .. })
+    ));
+    assert_eq!(fs::metadata(&path).unwrap().len(), length);
 }
 
 #[test]
@@ -162,6 +298,7 @@ fn recovery_settles_every_call_when_only_one_result_reached_acceptance() {
     let sample = Sample::new("recover-partial-call-results");
     let session = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();
     let calls = Message::Agent {
+        continuation: None,
         text: "on it".into(),
         calls: vec![
             ToolCall {
@@ -882,6 +1019,7 @@ fn an_agent_line_with_a_stop_word_this_build_lacks_is_not_read_as_a_finish() {
     assert_eq!(
         transcript.messages().last(),
         Some(&Message::Agent {
+            continuation: None,
             text: "as I was say".into(),
             calls: Vec::new(),
             stop: Some(StopReason::Unknown),
@@ -910,6 +1048,7 @@ fn an_agent_line_with_no_stop_at_all_reads_as_an_answer_that_never_ended() {
     assert_eq!(
         transcript.messages().last(),
         Some(&Message::Agent {
+            continuation: None,
             text: "as I was say".into(),
             calls: Vec::new(),
             stop: None,

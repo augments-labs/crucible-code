@@ -14,6 +14,8 @@ mod anthropic;
 mod endpoint;
 #[cfg(test)]
 mod fake;
+mod google;
+mod history;
 mod json;
 mod moonshot;
 mod openai;
@@ -26,9 +28,10 @@ mod web;
 
 pub use anthropic::Anthropic;
 pub use endpoint::{Endpoint, EndpointError};
+pub use google::Google;
 pub use moonshot::Moonshot;
 pub use openai::OpenAi;
 pub use transport::http::Https;
 pub use transport::{Response, Transport, TransportError};
 pub use unavailable::Unavailable;
-pub use web::{AnthropicWeb, MoonshotWeb, OpenAiWeb};
+pub use web::{AnthropicWeb, GoogleWeb, MoonshotWeb, OpenAiWeb};

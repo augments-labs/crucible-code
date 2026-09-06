@@ -80,6 +80,7 @@ fn provider_projection_refuses_an_unanswered_or_twice_answered_call() {
             RunItem::message(
                 ancestry,
                 Message::Agent {
+                    continuation: None,
                     text: "".into(),
                     calls: vec![call("call-1")],
                     stop: Some(StopReason::WantsTools),
@@ -128,6 +129,7 @@ fn provider_projection_does_not_let_an_unanswered_call_cross_a_later_message() {
             RunItem::message(
                 ancestry,
                 Message::Agent {
+                    continuation: None,
                     text: "".into(),
                     calls: vec![call("call-1")],
                     stop: Some(StopReason::WantsTools),

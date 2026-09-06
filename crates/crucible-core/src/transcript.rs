@@ -101,6 +101,8 @@ pub enum Message {
         /// every turn after this one. Without it a half-sentence goes back to
         /// the model as an answer it chose to end.
         stop: Option<StopReason>,
+        /// Finalized private provider state, never rendered or summarized.
+        continuation: Option<crate::ProviderContinuation>,
     },
 
     /// What the tools produced, matched back to the calls that asked.
@@ -108,6 +110,18 @@ pub enum Message {
 }
 
 impl Message {
+    /// Additional private state retained by this message, not billable tokens.
+    #[must_use]
+    pub fn continuation_bytes(&self) -> usize {
+        match self {
+            Self::Agent {
+                continuation: Some(state),
+                ..
+            } => state.retained_bytes(),
+            _ => 0,
+        }
+    }
+
     /// A prompt with nothing attached to it.
     ///
     /// Most prompts are this, and the constructor is what keeps them reading
@@ -275,6 +289,10 @@ impl StopReason {
 #[derive(Clone, Default)]
 pub struct Transcript {
     messages: Vec<Message>,
+    continuation_bytes: usize,
+    /// Existing messages at the last history rewrite. Reconstructed from the
+    /// same compaction/pruning records on resume; no duplicate wire history.
+    rewritten_through: usize,
 }
 
 impl fmt::Debug for Transcript {
@@ -284,7 +302,7 @@ impl fmt::Debug for Transcript {
                 "messages",
                 &format_args!("{} redacted", self.messages.len()),
             )
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -295,9 +313,51 @@ impl Transcript {
         Self::default()
     }
 
-    /// Appends a message.
-    pub fn push(&mut self, message: Message) {
+    /// Checks private state before a caller records or appends this message.
+    ///
+    /// # Errors
+    /// Refuses changed references, unfinished state, or the retained-history cap.
+    pub fn check_continuation(&self, message: &Message) -> Result<(), crate::ContinuationError> {
+        if let Message::Agent {
+            text,
+            calls,
+            stop,
+            continuation: Some(state),
+        } = message
+        {
+            if !matches!(stop, Some(StopReason::Yielded | StopReason::WantsTools)) {
+                return Err(crate::ContinuationError::Unfinished);
+            }
+            state.validate(text, calls.len())?;
+        }
+        if message.continuation_bytes() > self.continuation_room() {
+            return Err(crate::ContinuationError::Limit);
+        }
+        Ok(())
+    }
+
+    /// Remaining room for private provider state in the active transcript.
+    #[must_use]
+    pub fn continuation_room(&self) -> usize {
+        crate::CONTINUATION_HISTORY_BYTES.saturating_sub(self.continuation_bytes)
+    }
+
+    /// Whether this message predates a rewrite of the working history.
+    /// Adapters decide which private blocks require projection after a rewrite.
+    #[must_use]
+    pub const fn prefix_rewritten(&self, message: usize) -> bool {
+        message < self.rewritten_through
+    }
+
+    /// Appends a message after checking its private state and aggregate size.
+    ///
+    /// # Errors
+    /// Refuses invalid continuation without changing the transcript.
+    pub fn push(&mut self, message: Message) -> Result<(), crate::ContinuationError> {
+        self.check_continuation(&message)?;
+        self.continuation_bytes += message.continuation_bytes();
         self.messages.push(message);
+        Ok(())
     }
 
     /// Drops the last `many` messages.
@@ -306,7 +366,14 @@ impl Transcript {
     /// an invalid boundary.
     pub fn behind(&mut self, many: usize) {
         let keeping = self.messages.len().saturating_sub(many);
+        self.continuation_bytes -= self
+            .messages
+            .iter()
+            .skip(keeping)
+            .map(Message::continuation_bytes)
+            .sum::<usize>();
         self.messages.truncate(keeping);
+        self.rewritten_through = self.rewritten_through.min(keeping);
     }
 
     /// Takes the last message back off.
@@ -315,7 +382,10 @@ impl Transcript {
     /// leave it there: an instruction the session never gave, still standing in
     /// the transcript, is a question the model answers again every turn after.
     pub fn pop(&mut self) -> Option<Message> {
-        self.messages.pop()
+        let message = self.messages.pop()?;
+        self.continuation_bytes -= message.continuation_bytes();
+        self.rewritten_through = self.rewritten_through.min(self.messages.len());
+        Some(message)
     }
 
     /// Hands the messages out, consuming the transcript.
@@ -343,6 +413,8 @@ impl Transcript {
     /// because it had become too large would carry that size to the end.
     pub fn forget(&mut self) {
         self.messages = Vec::new();
+        self.continuation_bytes = 0;
+        self.rewritten_through = 0;
     }
 
     /// Removes every typed context fragment after history was summarized.
@@ -353,8 +425,12 @@ impl Transcript {
     /// the next provider request. User, agent, tool, and recap messages stay
     /// byte-for-byte as compaction selected them.
     pub fn forget_context(&mut self) {
+        let before = self.messages.len();
         self.messages
             .retain(|message| !matches!(message, Message::Context(_)));
+        if self.messages.len() != before {
+            self.rewritten_through = self.messages.len();
+        }
     }
 
     /// Replaces a compacted prefix with its recap and keeps the tail in order.
@@ -366,9 +442,14 @@ impl Transcript {
     /// first entry, exactly as the live provider transcript reads it.
     pub fn compacted(&mut self, replaced: usize, recap: impl Into<Box<str>>) {
         let boundary = replaced.min(self.messages.len());
-        self.messages.drain(..boundary);
+        self.continuation_bytes -= self
+            .messages
+            .drain(..boundary)
+            .map(|message| message.continuation_bytes())
+            .sum::<usize>();
         self.forget_context();
         self.messages.insert(0, Message::said(recap));
+        self.rewritten_through = self.messages.len();
     }
 
     /// How many messages the transcript holds.
@@ -415,6 +496,9 @@ impl Transcript {
             }
         }
 
+        if freed > 0 {
+            self.rewritten_through = self.messages.len();
+        }
         freed
     }
 }
@@ -434,13 +518,20 @@ mod tests {
     #[test]
     fn turns_are_counted_by_user_prompts() {
         let mut transcript = Transcript::new();
-        transcript.push(Message::said("first"));
-        transcript.push(Message::Agent {
-            text: "answer".into(),
-            calls: Vec::new(),
-            stop: Some(StopReason::Yielded),
-        });
-        transcript.push(Message::said("second"));
+        transcript
+            .push(Message::said("first"))
+            .expect("valid fixture transcript");
+        transcript
+            .push(Message::Agent {
+                continuation: None,
+                text: "answer".into(),
+                calls: Vec::new(),
+                stop: Some(StopReason::Yielded),
+            })
+            .expect("valid fixture transcript");
+        transcript
+            .push(Message::said("second"))
+            .expect("valid fixture transcript");
 
         assert_eq!(transcript.turns(), 2);
         assert_eq!(transcript.len(), 3);
@@ -449,10 +540,12 @@ mod tests {
     #[test]
     fn context_is_retained_without_starting_a_user_turn() {
         let mut transcript = Transcript::new();
-        transcript.push(Message::Context(Fragment::new(
-            "workspace",
-            "Workspace: /private/project",
-        )));
+        transcript
+            .push(Message::Context(Fragment::new(
+                "workspace",
+                "Workspace: /private/project",
+            )))
+            .expect("valid fixture transcript");
 
         assert_eq!(transcript.turns(), 0);
         assert_eq!(transcript.len(), 1);
@@ -519,8 +612,12 @@ mod tests {
     #[test]
     fn a_transcript_that_forgot_has_nothing_in_it_and_no_turns_behind_it() {
         let mut transcript = Transcript::new();
-        transcript.push(Message::said("said"));
-        transcript.push(Message::said("said again"));
+        transcript
+            .push(Message::said("said"))
+            .expect("valid fixture transcript");
+        transcript
+            .push(Message::said("said again"))
+            .expect("valid fixture transcript");
 
         transcript.forget();
 
@@ -533,13 +630,20 @@ mod tests {
     #[test]
     fn a_history_rewrite_can_remove_context_without_touching_the_conversation() {
         let mut transcript = Transcript::new();
-        transcript.push(Message::said("keep the prompt"));
-        transcript.push(Message::Context(Fragment::new("workspace", "private")));
-        transcript.push(Message::Agent {
-            text: "keep the answer".into(),
-            calls: Vec::new(),
-            stop: Some(StopReason::Yielded),
-        });
+        transcript
+            .push(Message::said("keep the prompt"))
+            .expect("valid fixture transcript");
+        transcript
+            .push(Message::Context(Fragment::new("workspace", "private")))
+            .expect("valid fixture transcript");
+        transcript
+            .push(Message::Agent {
+                continuation: None,
+                text: "keep the answer".into(),
+                calls: Vec::new(),
+                stop: Some(StopReason::Yielded),
+            })
+            .expect("valid fixture transcript");
 
         transcript.forget_context();
 
@@ -557,10 +661,18 @@ mod tests {
     #[test]
     fn compaction_replaces_the_prefix_and_removes_context_from_the_retained_tail() {
         let mut transcript = Transcript::new();
-        transcript.push(Message::said("replace one"));
-        transcript.push(Message::said("replace two"));
-        transcript.push(Message::Context(Fragment::new("model", "changed")));
-        transcript.push(Message::said("retain three"));
+        transcript
+            .push(Message::said("replace one"))
+            .expect("valid fixture transcript");
+        transcript
+            .push(Message::said("replace two"))
+            .expect("valid fixture transcript");
+        transcript
+            .push(Message::Context(Fragment::new("model", "changed")))
+            .expect("valid fixture transcript");
+        transcript
+            .push(Message::said("retain three"))
+            .expect("valid fixture transcript");
 
         transcript.compacted(2, "recap");
 
@@ -573,20 +685,29 @@ mod tests {
     #[test]
     fn transcript_debug_redacts_prompts_answers_and_tool_results() {
         let mut transcript = Transcript::new();
-        transcript.push(Message::Context(Fragment::new(
-            "workspace",
-            "context-debug-canary",
-        )));
-        transcript.push(Message::said("prompt-debug-canary"));
-        transcript.push(Message::Agent {
-            text: "answer-debug-canary".into(),
-            calls: Vec::new(),
-            stop: Some(StopReason::Yielded),
-        });
-        transcript.push(Message::ToolResults(vec![ToolResult {
-            id: ToolId::new("call-debug-canary"),
-            output: ToolOutput::ok("tool-debug-canary"),
-        }]));
+        transcript
+            .push(Message::Context(Fragment::new(
+                "workspace",
+                "context-debug-canary",
+            )))
+            .expect("valid fixture transcript");
+        transcript
+            .push(Message::said("prompt-debug-canary"))
+            .expect("valid fixture transcript");
+        transcript
+            .push(Message::Agent {
+                continuation: None,
+                text: "answer-debug-canary".into(),
+                calls: Vec::new(),
+                stop: Some(StopReason::Yielded),
+            })
+            .expect("valid fixture transcript");
+        transcript
+            .push(Message::ToolResults(vec![ToolResult {
+                id: ToolId::new("call-debug-canary"),
+                output: ToolOutput::ok("tool-debug-canary"),
+            }]))
+            .expect("valid fixture transcript");
 
         let shown = format!("{transcript:?}");
         for canary in [

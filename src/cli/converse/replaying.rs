@@ -237,7 +237,12 @@ fn said<T: Terminal>(
             draw::attached(renderer, attachments, style)?;
         }
 
-        Message::Agent { text, calls, stop } => {
+        Message::Agent {
+            continuation: _,
+            text,
+            calls,
+            stop,
+        } => {
             if !text.trim().is_empty() {
                 renderer.apart()?;
                 renderer.stream(text)?;
@@ -386,7 +391,12 @@ impl Folded {
                 Message::User { .. } | Message::Context(_) | Message::ToolResults(_) => {
                     folded.close(&mut run);
                 }
-                Message::Agent { text, calls, stop } => {
+                Message::Agent {
+                    continuation: _,
+                    text,
+                    calls,
+                    stop,
+                } => {
                     if !text.trim().is_empty() {
                         folded.close(&mut run);
                     }
@@ -564,25 +574,35 @@ mod tests {
     /// A transcript with one of everything in it.
     fn everything() -> Transcript {
         let mut transcript = Transcript::new();
-        transcript.push(Message::said("read the config and tell me what it says"));
-        transcript.push(Message::Agent {
-            text: "I will look at it.".into(),
-            calls: vec![ToolCall {
+        transcript
+            .push(Message::said("read the config and tell me what it says"))
+            .expect("valid fixture transcript");
+        transcript
+            .push(Message::Agent {
+                continuation: None,
+                text: "I will look at it.".into(),
+                calls: vec![ToolCall {
+                    id: ToolId::new("c-1"),
+                    name: "read".into(),
+                    args: ToolArgs::new(r#"{"path":"crucible.json"}"#),
+                }],
+                stop: Some(StopReason::WantsTools),
+            })
+            .expect("valid fixture transcript");
+        transcript
+            .push(Message::ToolResults(vec![ToolResult {
                 id: ToolId::new("c-1"),
-                name: "read".into(),
-                args: ToolArgs::new(r#"{"path":"crucible.json"}"#),
-            }],
-            stop: Some(StopReason::WantsTools),
-        });
-        transcript.push(Message::ToolResults(vec![ToolResult {
-            id: ToolId::new("c-1"),
-            output: ToolOutput::ok("theme = midnight\nand nine hundred lines after it"),
-        }]));
-        transcript.push(Message::Agent {
-            text: "It sets the theme and nothing else.".into(),
-            calls: Vec::new(),
-            stop: Some(StopReason::Yielded),
-        });
+                output: ToolOutput::ok("theme = midnight\nand nine hundred lines after it"),
+            }]))
+            .expect("valid fixture transcript");
+        transcript
+            .push(Message::Agent {
+                continuation: None,
+                text: "It sets the theme and nothing else.".into(),
+                calls: Vec::new(),
+                stop: Some(StopReason::Yielded),
+            })
+            .expect("valid fixture transcript");
         transcript
     }
 
@@ -641,38 +661,45 @@ mod tests {
     /// four runs of one and would fold nothing.
     fn walked_a_tree(count: usize) -> Transcript {
         let mut transcript = Transcript::new();
-        transcript.push(Message::said("what is in here?"));
+        transcript
+            .push(Message::said("what is in here?"))
+            .expect("valid fixture transcript");
 
         let ids: Vec<ToolId> = (1..=count)
             .map(|one| ToolId::new(format!("c-{one}")))
             .collect();
 
-        transcript.push(Message::Agent {
-            text: String::new().into(),
-            calls: ids
-                .iter()
-                .enumerate()
-                .map(|(at, id)| ToolCall {
-                    id: id.clone(),
-                    name: "read".into(),
-                    args: ToolArgs::new(format!(r#"{{"path":"file-{}.rs"}}"#, at + 1)),
-                })
-                .collect(),
-            stop: Some(StopReason::WantsTools),
-        });
+        transcript
+            .push(Message::Agent {
+                continuation: None,
+                text: String::new().into(),
+                calls: ids
+                    .iter()
+                    .enumerate()
+                    .map(|(at, id)| ToolCall {
+                        id: id.clone(),
+                        name: "read".into(),
+                        args: ToolArgs::new(format!(r#"{{"path":"file-{}.rs"}}"#, at + 1)),
+                    })
+                    .collect(),
+                stop: Some(StopReason::WantsTools),
+            })
+            .expect("valid fixture transcript");
 
-        transcript.push(Message::ToolResults(
-            ids.iter()
-                .enumerate()
-                .map(|(at, id)| ToolResult {
-                    id: id.clone(),
-                    output: ToolOutput::ok(format!(
-                        "line one of {}\nand nine hundred after it",
-                        at + 1
-                    )),
-                })
-                .collect(),
-        ));
+        transcript
+            .push(Message::ToolResults(
+                ids.iter()
+                    .enumerate()
+                    .map(|(at, id)| ToolResult {
+                        id: id.clone(),
+                        output: ToolOutput::ok(format!(
+                            "line one of {}\nand nine hundred after it",
+                            at + 1
+                        )),
+                    })
+                    .collect(),
+            ))
+            .expect("valid fixture transcript");
 
         transcript
     }
@@ -722,20 +749,27 @@ mod tests {
         // watched them come back and a session picked up is meant to look like
         // the session they left.
         let mut transcript = Transcript::new();
-        transcript.push(Message::said("read the config and tell me what it says"));
-        transcript.push(Message::Agent {
-            text: "I will look at it.".into(),
-            calls: vec![ToolCall {
+        transcript
+            .push(Message::said("read the config and tell me what it says"))
+            .expect("valid fixture transcript");
+        transcript
+            .push(Message::Agent {
+                continuation: None,
+                text: "I will look at it.".into(),
+                calls: vec![ToolCall {
+                    id: ToolId::new("c-1"),
+                    name: "read".into(),
+                    args: ToolArgs::new(r#"{"path":"crucible.json"}"#),
+                }],
+                stop: Some(StopReason::WantsTools),
+            })
+            .expect("valid fixture transcript");
+        transcript
+            .push(Message::ToolResults(vec![ToolResult {
                 id: ToolId::new("c-1"),
-                name: "read".into(),
-                args: ToolArgs::new(r#"{"path":"crucible.json"}"#),
-            }],
-            stop: Some(StopReason::WantsTools),
-        });
-        transcript.push(Message::ToolResults(vec![ToolResult {
-            id: ToolId::new("c-1"),
-            output: ToolOutput::ok("[cleared to make room — 4096 bytes]"),
-        }]));
+                output: ToolOutput::ok("[cleared to make room — 4096 bytes]"),
+            }]))
+            .expect("valid fixture transcript");
 
         let mut pruned = Pruned::default();
         pruned.keep(ToolId::new("c-1"), "theme = midnight".to_owned());
@@ -805,19 +839,24 @@ mod tests {
         // result the row said the whole of is an offer to show somebody what
         // they are looking at.
         let mut transcript = Transcript::new();
-        transcript.push(Message::Agent {
-            text: String::new().into(),
-            calls: vec![ToolCall {
+        transcript
+            .push(Message::Agent {
+                continuation: None,
+                text: String::new().into(),
+                calls: vec![ToolCall {
+                    id: ToolId::new("c-1"),
+                    name: "read".into(),
+                    args: ToolArgs::new(r#"{"path":"crucible.json"}"#),
+                }],
+                stop: Some(StopReason::WantsTools),
+            })
+            .expect("valid fixture transcript");
+        transcript
+            .push(Message::ToolResults(vec![ToolResult {
                 id: ToolId::new("c-1"),
-                name: "read".into(),
-                args: ToolArgs::new(r#"{"path":"crucible.json"}"#),
-            }],
-            stop: Some(StopReason::WantsTools),
-        });
-        transcript.push(Message::ToolResults(vec![ToolResult {
-            id: ToolId::new("c-1"),
-            output: ToolOutput::ok("one line and no more"),
-        }]));
+                output: ToolOutput::ok("one line and no more"),
+            }]))
+            .expect("valid fixture transcript");
 
         let (kept, _) = holding(transcript, 80);
 
@@ -898,7 +937,9 @@ mod tests {
         let runner = resumed(everything());
         let mut transcript = Transcript::new();
         for nth in 0..200 {
-            transcript.push(Message::said(format!("question {nth}").as_str()));
+            transcript
+                .push(Message::said(format!("question {nth}").as_str()))
+                .expect("valid fixture transcript");
         }
 
         let shown = glimpsed(
@@ -963,33 +1004,40 @@ mod tests {
     /// A turn that searched the web twice in one batch and was answered.
     fn searched_twice() -> Transcript {
         let mut transcript = Transcript::new();
-        transcript.push(Message::said("what are people saying?"));
-        transcript.push(Message::Agent {
-            text: String::new().into(),
-            calls: vec![
-                ToolCall {
+        transcript
+            .push(Message::said("what are people saying?"))
+            .expect("valid fixture transcript");
+        transcript
+            .push(Message::Agent {
+                continuation: None,
+                text: String::new().into(),
+                calls: vec![
+                    ToolCall {
+                        id: ToolId::new("s-1"),
+                        name: "web_search".into(),
+                        args: ToolArgs::new(r#"{"query":"first question"}"#),
+                    },
+                    ToolCall {
+                        id: ToolId::new("s-2"),
+                        name: "web_search".into(),
+                        args: ToolArgs::new(r#"{"query":"second question"}"#),
+                    },
+                ],
+                stop: Some(StopReason::WantsTools),
+            })
+            .expect("valid fixture transcript");
+        transcript
+            .push(Message::ToolResults(vec![
+                ToolResult {
                     id: ToolId::new("s-1"),
-                    name: "web_search".into(),
-                    args: ToolArgs::new(r#"{"query":"first question"}"#),
+                    output: ToolOutput::ok("1. First answer\n   https://a.example\n"),
                 },
-                ToolCall {
+                ToolResult {
                     id: ToolId::new("s-2"),
-                    name: "web_search".into(),
-                    args: ToolArgs::new(r#"{"query":"second question"}"#),
+                    output: ToolOutput::ok("1. Second answer\n   https://b.example\n"),
                 },
-            ],
-            stop: Some(StopReason::WantsTools),
-        });
-        transcript.push(Message::ToolResults(vec![
-            ToolResult {
-                id: ToolId::new("s-1"),
-                output: ToolOutput::ok("1. First answer\n   https://a.example\n"),
-            },
-            ToolResult {
-                id: ToolId::new("s-2"),
-                output: ToolOutput::ok("1. Second answer\n   https://b.example\n"),
-            },
-        ]));
+            ]))
+            .expect("valid fixture transcript");
         transcript
     }
 
@@ -1026,16 +1074,21 @@ mod tests {
         // The session ended while the call was out. The line the reader
         // watched go up is still part of what they left, so it comes back.
         let mut transcript = Transcript::new();
-        transcript.push(Message::said("what are people saying?"));
-        transcript.push(Message::Agent {
-            text: String::new().into(),
-            calls: vec![ToolCall {
-                id: ToolId::new("s-1"),
-                name: "web_search".into(),
-                args: ToolArgs::new(r#"{"query":"an open question"}"#),
-            }],
-            stop: Some(StopReason::WantsTools),
-        });
+        transcript
+            .push(Message::said("what are people saying?"))
+            .expect("valid fixture transcript");
+        transcript
+            .push(Message::Agent {
+                continuation: None,
+                text: String::new().into(),
+                calls: vec![ToolCall {
+                    id: ToolId::new("s-1"),
+                    name: "web_search".into(),
+                    args: ToolArgs::new(r#"{"query":"an open question"}"#),
+                }],
+                stop: Some(StopReason::WantsTools),
+            })
+            .expect("valid fixture transcript");
         let screen = screen(transcript, 80);
 
         assert!(screen.contains("an open question"), "{screen}");
@@ -1067,11 +1120,14 @@ mod tests {
         // column on its way down and a word count would be counting the breaks.
         let long = "x".repeat(300);
         let mut transcript = Transcript::new();
-        transcript.push(Message::Agent {
-            text: long.clone().into(),
-            calls: Vec::new(),
-            stop: Some(StopReason::Yielded),
-        });
+        transcript
+            .push(Message::Agent {
+                continuation: None,
+                text: long.clone().into(),
+                calls: Vec::new(),
+                stop: Some(StopReason::Yielded),
+            })
+            .expect("valid fixture transcript");
 
         let screen = screen(transcript, 40);
 
@@ -1089,9 +1145,11 @@ mod tests {
         // them — but they are the model's own words, and the mark a typed line
         // wears would say otherwise.
         let mut transcript = Transcript::new();
-        transcript.push(Message::said(format!(
-            "{RECAP}what was decided, and what is left"
-        )));
+        transcript
+            .push(Message::said(format!(
+                "{RECAP}what was decided, and what is left"
+            )))
+            .expect("valid fixture transcript");
 
         let screen = screen(transcript, 80);
         println!("\n{screen}");
@@ -1109,11 +1167,14 @@ mod tests {
         // A half answer read back as a whole one is the one thing a transcript
         // may not do, and replaying it is exactly where that would happen.
         let mut transcript = Transcript::new();
-        transcript.push(Message::Agent {
-            text: "half a th".into(),
-            calls: Vec::new(),
-            stop: Some(StopReason::OutOfTokens),
-        });
+        transcript
+            .push(Message::Agent {
+                continuation: None,
+                text: "half a th".into(),
+                calls: Vec::new(),
+                stop: Some(StopReason::OutOfTokens),
+            })
+            .expect("valid fixture transcript");
 
         assert!(screen(transcript, 80).contains("token ceiling"));
     }
@@ -1163,11 +1224,14 @@ mod tests {
         // reads as the markers it was formatted with.
         let style = Style::coloured();
         let mut transcript = Transcript::new();
-        transcript.push(Message::Agent {
-            text: "# Heading\n\nand a word.".into(),
-            calls: Vec::new(),
-            stop: Some(StopReason::Yielded),
-        });
+        transcript
+            .push(Message::Agent {
+                continuation: None,
+                text: "# Heading\n\nand a word.".into(),
+                calls: Vec::new(),
+                stop: Some(StopReason::Yielded),
+            })
+            .expect("valid fixture transcript");
 
         let screen = painted(transcript, 80, style);
 

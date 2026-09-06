@@ -59,6 +59,7 @@ mod attachments;
 mod attribution;
 mod compaction;
 mod context;
+mod continuation;
 mod lifecycle;
 mod lifecycle_audit;
 mod outcome;
@@ -1284,6 +1285,7 @@ fn a_turn_that_yields_records_what_the_model_said() {
         [
             Message::said("hi"),
             Message::Agent {
+                continuation: None,
                 text: "Hello, world".into(),
                 calls: Vec::new(),
                 stop: Some(StopReason::Yielded),
@@ -1425,6 +1427,7 @@ fn a_call_the_model_never_finished_asking_for_is_not_recorded() {
         [
             Message::said("go"),
             Message::Agent {
+                continuation: None,
                 text: "looking".into(),
                 calls: Vec::new(),
                 stop: Some(StopReason::Cancelled),
@@ -1488,6 +1491,7 @@ fn an_answer_the_connection_broke_off_is_still_in_the_transcript() {
         [
             Message::said("what is in main.rs?"),
             Message::Agent {
+                continuation: None,
                 text: "let me look at src/main.rs".into(),
                 calls: Vec::new(),
                 stop: None,
@@ -1537,6 +1541,7 @@ fn a_response_that_went_away_before_it_said_anything_is_asked_for_again() {
         [
             Message::said("go"),
             Message::Agent {
+                continuation: None,
                 text: "done".into(),
                 calls: Vec::new(),
                 stop: Some(StopReason::Yielded),

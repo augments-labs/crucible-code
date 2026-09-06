@@ -131,6 +131,7 @@ fn the_answer_is_counted_once_rather_than_measured_as_well() {
 
     let mut counted_twice = load;
     counted_twice.recorded(&Message::Agent {
+        continuation: None,
         text: "x".repeat(20_000).into(),
         calls: Vec::new(),
         stop: None,
@@ -145,6 +146,7 @@ fn the_answer_is_counted_once_rather_than_measured_as_well() {
 fn agent_prose_is_estimated_when_an_existing_transcript_is_recounted() {
     let mut load = Load::default();
     load.recounted(&Message::Agent {
+        continuation: None,
         text: "x".repeat(3_000).into(),
         calls: Vec::new(),
         stop: None,
@@ -234,6 +236,7 @@ fn unreported_response_output_is_estimated_when_it_is_recorded() {
     load.carried(Carried::new(1_000));
     load.produced(3_000);
     load.recorded(&Message::Agent {
+        continuation: None,
         text: "x".repeat(3_000).into(),
         calls: Vec::new(),
         stop: None,
@@ -258,6 +261,7 @@ fn output_after_an_exact_partial_spend_is_the_only_part_estimated_on_recording()
     load.spent(Spend::new(100));
     load.produced(200);
     load.recorded(&Message::Agent {
+        continuation: None,
         text: "x".repeat(600).into(),
         calls: Vec::new(),
         stop: None,

@@ -109,7 +109,7 @@ const PATIENCE: std::time::Duration = std::time::Duration::from_millis(8);
 /// since the build is one nobody picked without the vendor refusing it by name,
 /// and a model released since is typed, which is the path that was there before
 /// any of these were written down.
-const PROVIDERS: [Served; 3] = [
+const PROVIDERS: [Served; 4] = [
     Served {
         name: "anthropic",
         shown: "Anthropic",
@@ -118,6 +118,7 @@ const PROVIDERS: [Served; 3] = [
         reach: startup::anthropic_web,
         window: 200_000,
         models: &[
+            Model::shown("claude-fable-5-1", "Claude Fable 5.1", EVERY),
             Model::new("claude-fable-5", EVERY),
             Model::new("claude-opus-5", EVERY),
             Model::new("claude-sonnet-5", EVERY),
@@ -126,6 +127,22 @@ const PROVIDERS: [Served; 3] = [
             // against a word, and the field the other three read is one it has
             // never been served.
             Model::new("claude-haiku-4-5", NONE),
+        ],
+    },
+    Served {
+        name: "google",
+        shown: "Google",
+        key: "GEMINI_API_KEY",
+        build: startup::google,
+        reach: startup::google_web,
+        // The model's full input capacity is available through configuration;
+        // starting below the long-context pricing boundary keeps it deliberate.
+        window: 200_000,
+        models: &[
+            Model::shown("gemini-3.8-flash", "Gemini 3.8 Flash", GEMINI),
+            Model::shown("gemini-3.7-flash", "Gemini 3.7 Flash", GEMINI),
+            Model::shown("gemini-3.6-flash", "Gemini 3.6 Flash", GEMINI),
+            Model::shown("gemini-3.1-pro-preview", "Gemini 3.1 Pro Preview", GEMINI),
         ],
     },
     Served {
@@ -161,6 +178,7 @@ const PROVIDERS: [Served; 3] = [
         // The `-pro` variants are left off: they answer in one piece rather
         // than streaming, and every turn here is drawn as it arrives.
         models: &[
+            Model::shown("gpt-6-astra", "GPT-6 Astra", EVERY),
             Model::new("gpt-5.6-sol", EVERY),
             Model::new("gpt-5.6-terra", EVERY),
             Model::new("gpt-5.6-luna", EVERY),
@@ -194,6 +212,9 @@ fn facts(provider: &str, model: &str) -> Option<models::Facts> {
 
 /// What a model that takes every rung crucible has is written with.
 const EVERY: &[Effort] = &Effort::LADDER;
+
+/// The supported intersection of Gemini thinking levels and this UI's ladder.
+const GEMINI: &[Effort] = &[Effort::Low, Effort::Medium, Effort::High];
 
 /// The three rungs the Kimi thinking models serve.
 ///
@@ -279,9 +300,9 @@ pub(crate) struct Served {
     ///
     /// That last sentence binds the rungs beside each name too. They are read
     /// off the same documentation and go stale the same way, and what a stale
-    /// one costs is a rung missing from a panel rather than a wrong request:
-    /// `--effort` and `/effort <rung>` both go straight to the vendor, which is
-    /// the path that was there before any of this was written down.
+    /// one normally costs is a rung missing from a panel. The Google encoder's
+    /// narrower supported effort set is checked for typed choices as well;
+    /// other providers keep their existing vendor-validated typed path.
     pub(crate) models: &'static [Model],
     /// Builds the provider from a resolved credential and address.
     ///
@@ -599,7 +620,7 @@ changes a file or starts a process.
 
 --model takes a model name, optionally qualified by the provider serving it: \
 claude-sonnet-5, or openai/gpt-5.6-terra. The provider is whichever holds a \
-usable credential — a key in one of ANTHROPIC_API_KEY, MOONSHOT_API_KEY and \
+usable credential — a key in one of ANTHROPIC_API_KEY, GEMINI_API_KEY, MOONSHOT_API_KEY and \
 OPENAI_API_KEY (a variable exported empty holds none, so it does not compete), \
 or one stored by /login, whether an API key or an account login. Where more \
 than one is usable, qualify the name or set provider for one of them. \

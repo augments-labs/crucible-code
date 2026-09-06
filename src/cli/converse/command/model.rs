@@ -263,7 +263,7 @@ fn named<T: Terminal>(
     // Dropped for the same reason `apply` drops it: `/model provider/name`
     // names one thing and takes it or says why not, and there is no second half
     // waiting behind this one.
-    taken(provider, &model, renderer, runner, terms).map(drop)
+    taken(provider, (&model, None), renderer, runner, terms).map(drop)
 }
 
 /// The keys, under the panes they work on, long and short.
@@ -497,13 +497,14 @@ fn applied<T: Terminal>(
     runner: &mut Runner,
     terms: &Terms,
 ) -> Result<(), Fatal> {
+    let effort = rung.and_then(|at| selected.model.rungs.get(at).copied());
     // A rung is asked of a model, so a model that was refused has no rung to
     // ask for. Going on would reach `/effort`, which finds the session still
     // without a provider and says it has no model at all -- a second warning,
     // about a second missing thing, under the one that named the real one.
     if !taken(
         selected.provider,
-        selected.model.name,
+        (selected.model.name, effort),
         renderer,
         runner,
         terms,
@@ -511,7 +512,7 @@ fn applied<T: Terminal>(
         return Ok(());
     }
 
-    let Some(effort) = rung.and_then(|at| selected.model.rungs.get(at).copied()) else {
+    let Some(effort) = effort else {
         return Ok(());
     };
 
@@ -545,7 +546,7 @@ pub(super) fn apply<T: Terminal>(
     // The answer is dropped rather than passed on: there is no rung behind this
     // caller to stop, and the line saying what went wrong has already been
     // drawn by the time it comes back.
-    taken(selected, name, renderer, runner, terms).map(drop)
+    taken(selected, (name, None), renderer, runner, terms).map(drop)
 }
 
 /// Whether the model is the one the next turn will be asked for.
@@ -555,14 +556,33 @@ pub(super) fn apply<T: Terminal>(
 /// told, and the session is exactly where it was -- but it is the difference
 /// between a model taken and a model refused, and only the caller knows what it
 /// was about to do next.
+/// The model and optional explicit rung travel together; an absent rung keeps
+/// the effort already selected by the session.
 fn taken<T: Terminal>(
     selected: Served,
-    name: &str,
+    (name, effort): (&str, Option<Effort>),
     renderer: &mut Renderer<T>,
     runner: &mut Runner,
     terms: &Terms,
 ) -> Result<bool, Fatal> {
     let provider = selected.name;
+    // Validate before retiring a cache or replacing the provider. The picker
+    // may supply a compatible rung together with the model; a typed model name
+    // cannot silently carry xhigh/max into Gemini's narrower ladder.
+    let catalogue = terms.providers.snapshot();
+    if provider == "google"
+        && let Some(effort) = effort.or(runner.effort())
+        && !crate::cli::rungs(&catalogue, provider, name).contains(&effort)
+    {
+        say(
+            renderer,
+            &format!(
+                "! {name} does not support {} effort; choose a supported rung in /model or change /effort before switching",
+                effort.as_str()
+            ),
+        )?;
+        return Ok(false);
+    }
     let provider_changed = terms.provider.get() != Some(provider);
     if provider_changed {
         let set = match (terms.serving)(selected, &terms.logins.read()) {
@@ -580,7 +600,6 @@ fn taken<T: Terminal>(
     // One generation, read once: the ceiling, the window and what the model
     // reads are three answers about the same model, and three separate reads
     // could take them from three different generations of the registry.
-    let catalogue = terms.providers.snapshot();
     runner.ask(
         name,
         crate::cli::startup::ceiling(&catalogue, provider, name),
@@ -830,6 +849,47 @@ mod tests {
     }
 
     #[test]
+    fn google_model_switch_requires_an_explicit_compatible_effort() {
+        let mut terms = plain();
+        terms.serving = Box::new(|_, _| {
+            Ok(crate::cli::Resolved {
+                provider: Box::new(Script::new(Vec::new())),
+                source: crate::cli::CredentialSource::StoredKey,
+            })
+        });
+        let mut runner = asking();
+        runner.think(Effort::Max);
+        let mut renderer = Renderer::new(Recording::new(100, 24));
+        let google = row("google", "gemini-3.8-flash");
+        super::run(
+            "google/gemini-3.8-flash",
+            &mut renderer,
+            &mut runner,
+            &terms,
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            runner.model(),
+            "old",
+            "an incompatible inherited rung must not silently cross providers"
+        );
+        assert_eq!(runner.effort(), Some(Effort::Max));
+        assert_eq!(terms.provider.get(), Some("anthropic"));
+        assert!(renderer.terminal().written().contains("effort"));
+        applied(google, Some(2), &mut renderer, &mut runner, &terms).unwrap();
+        assert_eq!(runner.model(), "gemini-3.8-flash");
+        assert_eq!(runner.effort(), Some(Effort::High));
+        assert_eq!(terms.provider.get(), Some("google"));
+        super::super::effort::run("xhigh", &mut renderer, &mut runner, &terms, false).unwrap();
+        assert_eq!(
+            runner.effort(),
+            Some(Effort::High),
+            "an unsupported typed rung must leave the selected rung unchanged"
+        );
+    }
+
+    #[test]
     fn taking_a_model_that_serves_no_rung_leaves_the_rung_exactly_as_it_was() {
         // Not an error and nothing said about it. The row carried `no rung`
         // and the strip carried the same sentence, so a session that took it
@@ -877,7 +937,7 @@ mod tests {
 
         taken(
             anthropic,
-            "claude-haiku-4-5",
+            ("claude-haiku-4-5", None),
             &mut renderer,
             &mut runner,
             &terms,
