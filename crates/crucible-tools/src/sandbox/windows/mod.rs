@@ -2,8 +2,9 @@
 
 mod broker;
 use std::ffi::OsStr;
+use std::fs;
 use std::os::windows::ffi::OsStrExt as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
@@ -16,7 +17,9 @@ use crucible_core::{
     SandboxRequest, SandboxSession,
 };
 
-use super::process::{MAX_LOCAL_COMMANDS, Reservation};
+use super::process::{
+    MAX_LOCAL_COMMANDS, Reservation, Stage, cleanup_prepared_owners, cleanup_unspawned,
+};
 
 pub(super) fn probe() -> Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError> {
     let broker = broker::Broker::find(&[])?;
@@ -88,15 +91,36 @@ pub(super) fn prepare(
         .concurrent_commands
         .and_then(|value| usize::try_from(value).ok())
         .unwrap_or(MAX_LOCAL_COMMANDS);
-    let reservation = Reservation::take(active, maximum)?;
-    request.audit().record(
-        request.id(),
-        SandboxFactKind::Lifecycle(SandboxLifecycle::Prepared),
-    )?;
+    let scratch_root = scratch_path(&request)?;
+    let mut reservation = Some(Reservation::take(active, maximum)?);
+    let mut scratch = None;
+    let setup = (|| {
+        create_scratch(&scratch_root, &mut scratch)?;
+        request.audit().record(
+            request.id(),
+            SandboxFactKind::Lifecycle(SandboxLifecycle::Prepared),
+        )?;
+        Ok(())
+    })();
+    if let Err(problem) = setup {
+        let cleanup = cleanup_prepared_owners(&mut scratch, &mut reservation);
+        return Err(preparation_failure(problem, cleanup));
+    }
+    let scratch = scratch.ok_or_else(|| {
+        SandboxError::Lifecycle(std::io::Error::other(
+            "prepared Windows scratch owner is unavailable",
+        ))
+    })?;
+    let reservation = reservation.ok_or_else(|| {
+        SandboxError::Lifecycle(std::io::Error::other(
+            "prepared Windows admission owner is unavailable",
+        ))
+    })?;
     Ok(Box::new(WindowsSession {
         request,
         broker,
         inspection,
+        scratch: Some(scratch),
         reservation: Some(reservation),
         materialized: false,
         transferred: false,
@@ -107,6 +131,7 @@ struct WindowsSession {
     request: SandboxRequest,
     broker: broker::Broker,
     inspection: SandboxInspection,
+    scratch: Option<Stage>,
     reservation: Option<Reservation>,
     materialized: bool,
     transferred: bool,
@@ -153,7 +178,12 @@ impl SandboxSession for WindowsSession {
                 return Err(SandboxError::Guardrail);
             }
         }
-        let startup_input = match launch_frame(&self.request, &self.broker, &command) {
+        let scratch = self.scratch.as_ref().map(Stage::root).ok_or_else(|| {
+            SandboxError::Lifecycle(std::io::Error::other(
+                "Windows sandbox scratch owner is unavailable",
+            ))
+        })?;
+        let startup_input = match launch_frame(&self.request, &self.broker, &command, scratch) {
             Ok(frame) => frame,
             Err(problem) => {
                 self.record_start_failure(problem.failure_kind())?;
@@ -165,12 +195,17 @@ impl SandboxSession for WindowsSession {
             .arg(crucible_sandbox_broker::WINDOWS_LAUNCH_MODE)
             .current_dir(self.request.policy().working_directory());
         let reservation = self.reservation.take().ok_or(SandboxError::Concurrency)?;
+        let stage = self.scratch.take().ok_or_else(|| {
+            SandboxError::Lifecycle(std::io::Error::other(
+                "Windows sandbox scratch owner is unavailable",
+            ))
+        })?;
         let launch = WindowsLaunch {
             process: Some(process),
             plan: Some(super::process::SpawnPlan {
                 inspection: self.inspection.clone(),
                 reservation,
-                stage: None,
+                stage: Some(stage),
                 limits: self.request.policy().limits(),
                 audit: self.request.audit().clone(),
                 sandbox: self.request.id(),
@@ -210,10 +245,11 @@ impl WindowsSession {
 impl Drop for WindowsSession {
     fn drop(&mut self) {
         if !self.transferred {
-            let _ = self.request.audit().record(
-                self.request.id(),
-                SandboxFactKind::Cleanup(SandboxCleanup::Complete),
-            );
+            let cleanup = cleanup_prepared_owners(&mut self.scratch, &mut self.reservation);
+            let _ = self
+                .request
+                .audit()
+                .record(self.request.id(), SandboxFactKind::Cleanup(cleanup));
         }
     }
 }
@@ -294,10 +330,13 @@ impl Drop for WindowsLaunch {
                 self.sandbox,
                 SandboxFactKind::Lifecycle(SandboxLifecycle::Refused),
             );
-            let _ = self.audit.record(
-                self.sandbox,
-                SandboxFactKind::Cleanup(SandboxCleanup::Complete),
-            );
+            let cleanup = self
+                .plan
+                .take()
+                .map_or(SandboxCleanup::Complete, cleanup_unspawned);
+            let _ = self
+                .audit
+                .record(self.sandbox, SandboxFactKind::Cleanup(cleanup));
         }
     }
 }
@@ -306,6 +345,7 @@ fn launch_frame(
     request: &SandboxRequest,
     broker: &broker::Broker,
     command: &SandboxCommand,
+    scratch: &Path,
 ) -> Result<Vec<u8>, SandboxError> {
     let mut readable = Vec::new();
     let mut writable = Vec::new();
@@ -325,10 +365,20 @@ fn launch_frame(
         }
     }
     readable.push(broker.path().to_path_buf());
+    writable.push(scratch.to_path_buf());
     protected.push(broker.path().to_path_buf());
     normalize_roots(&mut readable);
     normalize_roots(&mut writable);
     normalize_roots(&mut protected);
+
+    let mut environment: Vec<_> = command
+        .environment()
+        .iter()
+        .filter(|(name, _)| !name.eq_ignore_ascii_case("TEMP") && !name.eq_ignore_ascii_case("TMP"))
+        .map(|(name, value)| (wide(OsStr::new(name)), wide(value)))
+        .collect();
+    environment.push((wide(OsStr::new("TEMP")), wide(scratch.as_os_str())));
+    environment.push((wide(OsStr::new("TMP")), wide(scratch.as_os_str())));
 
     let request = crucible_sandbox_broker::WindowsLaunchRequest::new(
         wide(request.policy().working_directory().as_os_str()),
@@ -338,11 +388,7 @@ fn launch_frame(
             .iter()
             .map(|argument| wide(argument))
             .collect(),
-        command
-            .environment()
-            .iter()
-            .map(|(name, value)| (wide(OsStr::new(name)), wide(value)))
-            .collect(),
+        environment,
         wide_roots(&readable),
         wide_roots(&writable),
         wide_roots(&protected),
@@ -356,6 +402,54 @@ fn launch_frame(
         )
     })?;
     Ok(frame)
+}
+
+fn scratch_path(request: &SandboxRequest) -> Result<PathBuf, SandboxError> {
+    let base = std::env::temp_dir().canonicalize().map_err(|source| {
+        materialization(
+            "the system temporary directory is unavailable",
+            Some(source),
+        )
+    })?;
+    let root = base.join(format!("crucible-sandbox-{}", request.id()));
+    if request
+        .policy()
+        .filesystem()
+        .iter()
+        .any(|rule| root.starts_with(rule.path()))
+    {
+        return Err(materialization(
+            "the private sandbox temporary directory overlaps a declared root",
+            None,
+        ));
+    }
+    Ok(root)
+}
+
+fn create_scratch(root: &Path, owner: &mut Option<Stage>) -> Result<(), SandboxError> {
+    fs::create_dir(root).map_err(|source| {
+        materialization(
+            "the private sandbox temporary directory could not be created",
+            Some(source),
+        )
+    })?;
+    *owner = Some(Stage::new(root.to_path_buf()));
+    crucible_privacy::directory(root).map_err(|source| {
+        materialization(
+            "the private sandbox temporary directory could not be protected",
+            Some(source.into_io()),
+        )
+    })
+}
+
+fn preparation_failure(problem: SandboxError, cleanup: SandboxCleanup) -> SandboxError {
+    if cleanup == SandboxCleanup::Complete {
+        problem
+    } else {
+        SandboxError::Lifecycle(std::io::Error::other(
+            "Windows sandbox preparation failed and cleanup could not be confirmed",
+        ))
+    }
 }
 
 fn normalize_roots(roots: &mut Vec<PathBuf>) {

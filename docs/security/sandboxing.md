@@ -136,13 +136,16 @@ record remain so the command can be retried safely.
 
 An enabled command starts through the packaged broker, which logs on that
 dedicated account and then creates a `WRITE_RESTRICTED` token with all ordinary
-privileges disabled. Path-scoped capability SIDs make only declared roots
-writable; protected repository and Crucible metadata receive write-deny
-capabilities even beneath a writable workspace. The target starts on a private
-desktop with exactly standard input, output and error inherited, and the outer
-broker's kill-on-close Job Object owns every descendant. The Job also applies
-the requested aggregate processor-time limit. WFP denies outbound connections
-and socket binding for both the broker account and its descendants.
+privileges disabled except the standard directory-traversal privilege required
+by ordinary Windows programs. Crucible adds account and path-capability grants
+only to declared roots; protected repository and Crucible metadata receive
+write-deny capabilities even beneath a writable workspace. Each command gets a
+private temporary directory through `TEMP` and `TMP`, and Crucible removes it
+with the process. The target starts on a private desktop with exactly standard
+input, output and error inherited, and the outer broker's kill-on-close Job
+Object owns every descendant. The Job also applies the requested aggregate
+processor-time limit. WFP denies outbound connections and socket binding for
+both the broker account and its descendants.
 
 Windows uses `WRITE_RESTRICTED` deliberately. A fully read-restricted token can
 pass filesystem access probes but cannot start ordinary Win32 tools: the system
@@ -150,16 +153,21 @@ loader needs protected `KnownDlls` object-manager resources whose ACL cannot be
 extended by setup, including under SYSTEM. Reads therefore follow the dedicated
 low-privilege account's normal Windows access. Files in another user's private
 profile remain protected by their own ACL, while system and shared files that
-grant ordinary users read access remain readable. Requests containing explicit
+grant ordinary users access retain that access. This also means an existing ACL
+for the sandbox account or `Everyone` can permit writes outside the roots in the
+current request, including a root granted to an earlier command. Crucible never
+adds such a grant for an undeclared root, and its protected-path deny
+capabilities still win for the current request. Requests containing explicit
 unreadable roots or unreadable wildcard patterns are refused before the broker
-or workspace is touched. Linux and macOS retain their narrower read views.
+or workspace is touched. Linux and macOS retain their narrower filesystem
+views.
 
 ACL projection adds deterministic capability and account entries to the roots
-a command uses. These entries do not grant a later restricted command anything
-unless its token carries the matching path capability. They can remain as inert
-ACL entries after a command or uninstall; Windows provides no namespace-like
-per-process filesystem view to remove instead. Reinstalling creates a new
-account SID, so entries for a deleted account remain inert as well.
+a command uses. They can remain after a command or uninstall because Windows
+provides no namespace-like per-process filesystem view to remove. A later
+command using the same sandbox account can therefore retain the access those
+account entries grant. Uninstalling and reinstalling creates a new account SID,
+so entries for the deleted account become inert.
 
 The exact endpoint allowlist is deliberately unsupported in this release. It
 requires a policy-bound proxy or equivalent mechanism with redirect, DNS,
@@ -349,8 +357,9 @@ escapes the owned process group.
 The command environment is an explicit, bounded map rather than a copy of the
 host environment. Linux supplies only a private `HOME` and `TMPDIR`; macOS
 supplies a private `TMPDIR`; Windows supplies only the variables selected by the
-host. SSH/GPG agent sockets, inherited descriptors or handles, provider keys,
-cloud configuration and arbitrary host variables do not cross the boundary
+host and replaces `TEMP` and `TMP` with one private command directory. SSH/GPG
+agent sockets, inherited descriptors or handles, provider keys, cloud
+configuration and arbitrary host variables do not cross the boundary
 automatically. Values reach the command through the backend's cleared process
 environment, never through its argument list.
 

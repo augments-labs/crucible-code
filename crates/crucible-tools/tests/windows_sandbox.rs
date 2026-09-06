@@ -270,6 +270,27 @@ fn windows_forwards_input_after_its_private_launch_frame() {
 }
 
 #[test]
+fn windows_supplies_and_removes_a_private_temporary_directory() {
+    let fixture = Fixture::new("temporary-directory");
+    let script = "$ErrorActionPreference='Stop'; \
+        if ($env:TEMP -ne $env:TMP) { exit 71 }; \
+        [IO.File]::WriteAllText((Join-Path $env:TEMP 'created.txt'), 'temporary'); \
+        [Console]::Out.Write($env:TEMP)";
+    let (status, output, errors) = finish(start(
+        fixture.request("windows-temporary-directory"),
+        command(script, []),
+    ));
+
+    assert!(status.success(), "{}", String::from_utf8_lossy(&errors));
+    let temporary = PathBuf::from(String::from_utf8(output).expect("UTF-8 temporary path"));
+    assert_ne!(temporary, std::env::temp_dir());
+    assert!(
+        !temporary.exists(),
+        "private temporary directory survived command cleanup"
+    );
+}
+
+#[test]
 fn windows_preserves_the_native_workload_exit_status() {
     let fixture = Fixture::new("exit-status");
     let (status, _, errors) = finish(start(

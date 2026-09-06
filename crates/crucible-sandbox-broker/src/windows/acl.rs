@@ -77,12 +77,13 @@ fn grant(
 ) -> io::Result<()> {
     let capability = capability_sid(account_sid, access, encoded_path);
     edit(path, |old| {
-        // The dedicated account is the first half of Windows' two-pass
-        // restricted-token access check. Its grants only accumulate: reducing
-        // one while another command uses the same path would revoke authority
-        // from that live command. The path capability is the second half and
-        // remains exact for this access class, so accumulated account grants
-        // cannot widen any restricted workload.
+        // The dedicated account satisfies Windows' ordinary access check and
+        // the request capability satisfies its restricted-SID check. Account
+        // grants only accumulate: reducing one while another command uses the
+        // same path would revoke authority from that live command. The token
+        // also retains the account as a restricted identity because ordinary
+        // developer runtimes require it, so callers disclose that a root used
+        // by an earlier command remains reachable through that account grant.
         let revoked = set_entries(&[entry(&capability, 0, REVOKE_ACCESS, 0)], old)?;
         let direct = set_entries(
             &[

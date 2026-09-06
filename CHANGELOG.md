@@ -126,10 +126,12 @@ change in any release with no deprecation period.
   and a kill-on-close Job Object with an aggregate CPU ceiling. Native x86_64
   and ARM64 Windows CI provision the real backend and test workspace/protected
   writes, loopback denial, input forwarding, exit status, identity and
-  descendant cleanup. Windows retains the sandbox account's ordinary read
-  access so the protected Win32 loader can start developer tools; explicit
-  unreadable paths and patterns fail closed rather than claiming a read boundary
-  Windows cannot apply with these stable APIs.
+  descendant cleanup. Each command also receives a private `TEMP`/`TMP`
+  directory. Windows retains the sandbox account's ordinary ACL access so the
+  protected Win32 loader and developer tools can start; Crucible grants only
+  declared roots, but ACLs that already grant the sandbox account or `Everyone`
+  can remain writable. Explicit unreadable paths and patterns fail closed rather
+  than claiming a read boundary Windows cannot apply with these stable APIs.
 
 - **Windows sandbox setup is explicit, repairable, and account-scoped.** Run
   `crucible sandbox setup` once from an Administrator PowerShell to create a

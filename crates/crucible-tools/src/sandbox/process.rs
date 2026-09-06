@@ -86,7 +86,7 @@ pub(super) struct Stage {
     retained: bool,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 impl Stage {
     pub(super) fn new(root: std::path::PathBuf) -> Self {
         Self {
@@ -190,7 +190,11 @@ pub(super) struct SpawnPlan {
 ///
 /// A cleanup failure retains both the stage and its bounded admission slot so
 /// a later command cannot reuse authority whose disposal was not confirmed.
-#[cfg(any(target_os = "macos", all(test, target_os = "linux")))]
+#[cfg(any(
+    target_os = "macos",
+    target_os = "windows",
+    all(test, target_os = "linux")
+))]
 pub(super) fn cleanup_prepared_owners(
     stage: &mut Option<Stage>,
     reservation: &mut Option<Reservation>,
@@ -211,7 +215,7 @@ pub(super) fn cleanup_prepared_owners(
 }
 
 /// Disposes a launch plan that was abandoned before spawn.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(super) fn cleanup_unspawned(mut plan: SpawnPlan) -> SandboxCleanup {
     let mut reservation = Some(plan.reservation);
     cleanup_prepared_owners(&mut plan.stage, &mut reservation)

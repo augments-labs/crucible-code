@@ -503,6 +503,9 @@ gets a short list of what a program needs in order to run at all, and whatever
   `HOMEPATH`, `APPDATA`, `LOCALAPPDATA`, `ProgramFiles`, `ProgramFiles(x86)`,
   `ProgramData`.
 
+When native Windows confinement is enabled, the backend replaces `TEMP` and
+`TMP` with a private directory that it owns and removes with the command.
+
 Everything else stops here, and your provider key is why. `env` and `printenv`
 are ordinary things for a model to run, and what a command prints comes back as
 tool output — onto your screen, into the next request, and into the session log.

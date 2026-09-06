@@ -4,16 +4,20 @@ use std::ffi::c_void;
 use std::io;
 use std::ptr::{null, null_mut};
 
-use windows_sys::Win32::Foundation::{ERROR_INSUFFICIENT_BUFFER, GetLastError, HANDLE};
+use windows_sys::Win32::Foundation::{
+    ERROR_INSUFFICIENT_BUFFER, ERROR_NOT_ALL_ASSIGNED, GetLastError, HANDLE,
+};
 use windows_sys::Win32::Security::Authorization::{
     EXPLICIT_ACCESS_W, GRANT_ACCESS, SetEntriesInAclW, TRUSTEE_IS_SID, TRUSTEE_IS_UNKNOWN,
     TRUSTEE_W,
 };
 use windows_sys::Win32::Security::{
-    CreateRestrictedToken, CreateWellKnownSid, DISABLE_MAX_PRIVILEGE, GetTokenInformation,
-    LUA_TOKEN, SID_AND_ATTRIBUTES, SetTokenInformation, TOKEN_ADJUST_DEFAULT,
-    TOKEN_ADJUST_SESSIONID, TOKEN_ASSIGN_PRIMARY, TOKEN_DEFAULT_DACL, TOKEN_DUPLICATE, TOKEN_QUERY,
-    TokenDefaultDacl, TokenGroups, WRITE_RESTRICTED, WinWorldSid,
+    AdjustTokenPrivileges, CreateRestrictedToken, CreateWellKnownSid, DISABLE_MAX_PRIVILEGE,
+    GetTokenInformation, LUA_TOKEN, LookupPrivilegeValueW, SE_CHANGE_NOTIFY_NAME,
+    SE_PRIVILEGE_ENABLED, SID_AND_ATTRIBUTES, SetTokenInformation, TOKEN_ADJUST_DEFAULT,
+    TOKEN_ADJUST_PRIVILEGES, TOKEN_ADJUST_SESSIONID, TOKEN_ASSIGN_PRIMARY, TOKEN_DEFAULT_DACL,
+    TOKEN_DUPLICATE, TOKEN_PRIVILEGES, TOKEN_QUERY, TokenDefaultDacl, TokenGroups,
+    WRITE_RESTRICTED, WinWorldSid,
 };
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -48,6 +52,13 @@ impl RestrictedToken {
             Sid: logon_sid.as_mut_ptr().cast(),
             Attributes: 0,
         });
+        // The account SID is an identity marker for Windows runtime objects,
+        // not a path capability. It remains absent from the default DACL so a
+        // newly created object cannot turn identity into ambient authority.
+        restricting.push(SID_AND_ATTRIBUTES {
+            Sid: account_sid.as_ptr().cast_mut().cast(),
+            Attributes: 0,
+        });
         // Windows runtime objects commonly grant their baseline access to
         // Everyone. WRITE_RESTRICTED still applies the dedicated account's
         // ordinary access check first, so this cannot grant authority that the
@@ -80,13 +91,8 @@ impl RestrictedToken {
             return Err(error("CreateRestrictedToken"));
         }
         let handle = OwnedHandle::new(restricted, "CreateRestrictedToken")?;
-        set_default_dacl(
-            handle.get(),
-            account_sid,
-            &logon_sid,
-            &world_sid,
-            capabilities,
-        )?;
+        set_default_dacl(handle.get(), &logon_sid, &world_sid, capabilities)?;
+        enable_traverse(handle.get())?;
         Ok(Self { handle })
     }
 
@@ -101,6 +107,7 @@ fn primary_token() -> io::Result<OwnedHandle> {
         | TOKEN_QUERY
         | TOKEN_ASSIGN_PRIMARY
         | TOKEN_ADJUST_DEFAULT
+        | TOKEN_ADJUST_PRIVILEGES
         | TOKEN_ADJUST_SESSIONID;
     // SAFETY: the process pseudo-handle is valid and token is initialized
     // out-handle storage receiving one owned primary-token handle.
@@ -108,6 +115,37 @@ fn primary_token() -> io::Result<OwnedHandle> {
         return Err(error("OpenProcessToken(restricted)"));
     }
     OwnedHandle::new(token, "OpenProcessToken(restricted)")
+}
+
+fn enable_traverse(token: HANDLE) -> io::Result<()> {
+    let mut privileges = TOKEN_PRIVILEGES::default();
+    // SAFETY: the well-known privilege name is NUL terminated and the LUID
+    // destination is writable for the synchronous lookup.
+    if unsafe {
+        LookupPrivilegeValueW(
+            null(),
+            SE_CHANGE_NOTIFY_NAME,
+            &raw mut privileges.Privileges[0].Luid,
+        )
+    } == 0
+    {
+        return Err(error("LookupPrivilegeValueW(SeChangeNotifyPrivilege)"));
+    }
+    privileges.PrivilegeCount = 1;
+    privileges.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+    // SAFETY: the restricted token is live and adjustable, and `privileges`
+    // contains one initialized entry retained for the synchronous call.
+    if unsafe { AdjustTokenPrivileges(token, 0, &raw const privileges, 0, null_mut(), null_mut()) }
+        == 0
+    {
+        return Err(error("AdjustTokenPrivileges(SeChangeNotifyPrivilege)"));
+    }
+    // SAFETY: reads the thread-local result immediately after the successful
+    // adjustment call; this is the documented partial-success condition.
+    if unsafe { GetLastError() } == ERROR_NOT_ALL_ASSIGNED {
+        return Err(error("AdjustTokenPrivileges(SeChangeNotifyPrivilege)"));
+    }
+    Ok(())
 }
 
 fn logon_sid(token: HANDLE) -> io::Result<Vec<u8>> {
@@ -187,13 +225,11 @@ fn world_sid() -> io::Result<Vec<u8>> {
 
 fn set_default_dacl(
     token: HANDLE,
-    account_sid: &[u8],
     logon_sid: &[u8],
     world_sid: &[u8],
     capabilities: &[Vec<u8>],
 ) -> io::Result<()> {
-    let mut entries = Vec::with_capacity(capabilities.len().saturating_add(3));
-    entries.push(allow(account_sid));
+    let mut entries = Vec::with_capacity(capabilities.len().saturating_add(2));
     entries.push(allow(logon_sid));
     entries.push(allow(world_sid));
     entries.extend(capabilities.iter().map(|sid| allow(sid)));
