@@ -202,10 +202,31 @@ impl SandboxSession for LinuxSession {
                 return Err(problem);
             }
         };
-        let mut mediator = match self.request.policy().network() {
-            crucible_core::SandboxNetworkPolicy::Domains(policy) => Some(
-                super::network::Mediator::unix(
-                    &projection.network_socket(),
+        let network_socket = projection.network_socket();
+        // From this point one owner covers every resource acquired before
+        // spawn. Its cleanup proves network and materialization first, then
+        // resolves the projection and admission. No early return can silently
+        // drop evidence or infer Complete from only the session's fields.
+        let mut launch = LinuxLaunch {
+            process: None,
+            projection: Some(projection),
+            network: None,
+            materialization: self.materialization.take(),
+            reservation: self.reservation.take(),
+            status_channel: None,
+            inspection: self.inspection.clone(),
+            audit: self.request.audit().clone(),
+            sandbox: self.request.id(),
+            invocation: self.request.invocation_mode(),
+            call_result_key: self.request.call_result_key(),
+            owner_transferred: false,
+            released: false,
+        };
+        self.transferred = true;
+        launch.network = match self.request.policy().network() {
+            crucible_core::SandboxNetworkPolicy::Domains(policy) => {
+                match super::network::Mediator::unix(
+                    &network_socket,
                     policy.clone(),
                     self.request.id(),
                     self.request
@@ -213,47 +234,83 @@ impl SandboxSession for LinuxSession {
                         .limits()
                         .command_time
                         .unwrap_or(std::time::Duration::from_mins(20)),
-                )
-                .map_err(SandboxError::Spawn)?,
-            ),
+                ) {
+                    Ok(mediator) => Some(mediator),
+                    Err(source) => {
+                        let problem = SandboxError::Spawn(source);
+                        launch.startup_failed(&problem);
+                        return Err(problem);
+                    }
+                }
+            }
             crucible_core::SandboxNetworkPolicy::Closed => None,
         };
-        let proxy_socket = mediator
+        let proxy_socket = launch
+            .network
             .as_ref()
             .map(|_| {
                 network::SocketMount::open(
-                    &projection.network_socket(),
+                    &network_socket,
                     std::path::Path::new(network::PROXY_PATH),
                 )
             })
-            .transpose()?;
-        let mut status_channel = broker::StatusChannel::pair().map_err(SandboxError::Spawn)?;
-        let status_descriptor = status_channel.descriptor().map_err(SandboxError::Spawn)?;
-        let canceller = status_channel.canceller().map_err(SandboxError::Spawn)?;
+            .transpose();
+        let proxy_socket = match proxy_socket {
+            Ok(socket) => socket,
+            Err(problem) => {
+                launch.startup_failed(&problem);
+                return Err(problem);
+            }
+        };
+        let status_channel = match broker::StatusChannel::pair() {
+            Ok(channel) => channel,
+            Err(source) => {
+                let problem = SandboxError::Spawn(source);
+                launch.startup_failed(&problem);
+                return Err(problem);
+            }
+        };
+        let status_descriptor = match status_channel.descriptor() {
+            Ok(descriptor) => descriptor,
+            Err(source) => {
+                let problem = SandboxError::Spawn(source);
+                launch.startup_failed(&problem);
+                return Err(problem);
+            }
+        };
+        let canceller = match status_channel.canceller() {
+            Ok(canceller) => canceller,
+            Err(source) => {
+                let problem = SandboxError::Spawn(source);
+                launch.startup_failed(&problem);
+                return Err(problem);
+            }
+        };
+        launch.status_channel = Some(status_channel);
         let process = match command::build(command::Plan {
             backend: &self.backend,
             broker: &self.broker,
             request: &self.request,
             command: &command,
             view: &self.view,
-            materialization: self.materialization.as_ref(),
-            projection: Some(&projection),
+            materialization: launch.materialization.as_ref(),
+            projection: launch.projection.as_ref(),
             status_descriptor,
-            network: mediator.as_ref(),
+            network: launch.network.as_ref(),
             proxy_socket: proxy_socket.as_ref(),
         }) {
             Ok(process) => process,
             Err(problem) => {
-                self.record_start_failure(&problem)?;
+                launch.startup_failed(&problem);
                 return Err(problem);
             }
         };
-        let Some(reservation) = self.reservation.take() else {
+        let Some(reservation) = launch.reservation.take() else {
             let problem = SandboxError::Concurrency;
-            self.record_start_failure(&problem)?;
+            launch.startup_failed(&problem);
             return Err(problem);
         };
-        let (stage, materialization_sources) = self
+        let (stage, materialization_sources) = launch
             .materialization
             .take()
             .map(materialize::Materialization::split)
@@ -263,7 +320,7 @@ impl SandboxSession for LinuxSession {
         let spawned = super::process::spawn(
             process,
             super::process::SpawnPlan {
-                network: mediator.take(),
+                network: launch.network.take(),
                 inspection: self.inspection.clone(),
                 reservation,
                 stage,
@@ -279,20 +336,10 @@ impl SandboxSession for LinuxSession {
                 startup_input: None,
             },
         );
-        status_channel.close_writer();
+        if let Some(status_channel) = launch.status_channel.as_mut() {
+            status_channel.close_writer();
+        }
         drop(materialization_sources);
-        let mut launch = LinuxLaunch {
-            process: None,
-            projection: Some(projection),
-            status_channel: Some(status_channel),
-            inspection: self.inspection.clone(),
-            audit: self.request.audit().clone(),
-            sandbox: self.request.id(),
-            invocation: self.request.invocation_mode(),
-            call_result_key: self.request.call_result_key(),
-            owner_transferred: false,
-            released: false,
-        };
         // Materialization and admission already belong to spawn's process
         // owner; the launch now owns the distinct projection and journal.
         // Session Drop must not infer Complete from its emptied fields.
@@ -311,6 +358,9 @@ impl SandboxSession for LinuxSession {
 struct LinuxLaunch {
     process: Option<Box<dyn SandboxProcess>>,
     projection: Option<projection::Projection>,
+    network: Option<super::network::Mediator>,
+    materialization: Option<materialize::Materialization>,
+    reservation: Option<Reservation>,
     status_channel: Option<broker::StatusChannel>,
     inspection: SandboxInspection,
     audit: crucible_core::SandboxAudit,
@@ -472,9 +522,17 @@ impl LinuxLaunch {
         );
         // Spawn preserves its original error only after proved cleanup. A
         // Lifecycle error retains evidence through the existing refusal path.
-        let cleanup_proved = !matches!(problem, SandboxError::Lifecycle(_));
+        let network_cleaned = self.stop_network();
+        let materialization_cleaned = self.cleanup_materialization();
+        let cleanup_proved = !matches!(problem, SandboxError::Lifecycle(_))
+            && network_cleaned
+            && materialization_cleaned;
         let _ = self.record_refusal(cleanup_proved);
-        self.finish_cleanup(cleanup_proved);
+        self.finish_cleanup_after_preprojection(
+            cleanup_proved,
+            network_cleaned,
+            materialization_cleaned,
+        );
     }
 
     fn record_refusal(&mut self, stopped: bool) -> io::Result<()> {
@@ -527,6 +585,49 @@ impl LinuxLaunch {
     }
 
     fn finish_cleanup(&mut self, scope_reaped: bool) {
+        let network_cleaned = self.stop_network();
+        let materialization_cleaned = self.cleanup_materialization();
+        self.finish_cleanup_after_preprojection(
+            scope_reaped && network_cleaned && materialization_cleaned,
+            network_cleaned,
+            materialization_cleaned,
+        );
+    }
+
+    fn stop_network(&mut self) -> bool {
+        let cleaned = self
+            .network
+            .as_mut()
+            .map_or(Ok(()), super::network::Mediator::stop)
+            .is_ok();
+        if cleaned {
+            self.network.take();
+        } else if let Some(projection) = self.projection.as_mut() {
+            projection.retain_evidence();
+        }
+        cleaned
+    }
+
+    fn cleanup_materialization(&mut self) -> bool {
+        let cleaned = self
+            .materialization
+            .as_mut()
+            .map_or(Ok(()), materialize::Materialization::cleanup)
+            .is_ok();
+        if cleaned {
+            self.materialization.take();
+        } else if let Some(projection) = self.projection.as_mut() {
+            projection.retain_evidence();
+        }
+        cleaned
+    }
+
+    fn finish_cleanup_after_preprojection(
+        &mut self,
+        scope_reaped: bool,
+        network_cleaned: bool,
+        materialization_cleaned: bool,
+    ) {
         self.status_channel.take();
         let projection_cleanup = self
             .projection
@@ -536,11 +637,13 @@ impl LinuxLaunch {
         if projection_cleaned {
             self.projection.take();
         }
-        let cleanup = if scope_reaped && projection_cleaned {
-            SandboxCleanup::Complete
-        } else {
-            SandboxCleanup::Failed
-        };
+        self.reservation.take();
+        let cleanup =
+            if scope_reaped && network_cleaned && projection_cleaned && materialization_cleaned {
+                SandboxCleanup::Complete
+            } else {
+                SandboxCleanup::Failed
+            };
         let _ = self
             .audit
             .record(self.sandbox, SandboxFactKind::Cleanup(cleanup));
