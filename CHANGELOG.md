@@ -8,6 +8,8 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.38.0] - 2026-09-06
+
 ### Fixed
 
 - **The prompt no longer draws `window unknown`.** Before a model has said how
@@ -3589,7 +3591,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.37.0...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.38.0...HEAD
+[0.38.0]: https://github.com/augments-labs/crucible-code/compare/v0.37.0...v0.38.0
 [0.37.0]: https://github.com/augments-labs/crucible-code/compare/v0.36.0...v0.37.0
 [0.36.0]: https://github.com/augments-labs/crucible-code/compare/v0.35.0...v0.36.0
 [0.35.0]: https://github.com/augments-labs/crucible-code/compare/v0.33.0...v0.35.0
