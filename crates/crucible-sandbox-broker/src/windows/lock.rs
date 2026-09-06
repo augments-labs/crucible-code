@@ -91,6 +91,16 @@ mod tests {
     };
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
+    struct Revert;
+
+    impl Drop for Revert {
+        fn drop(&mut self) {
+            // SAFETY: this guard is created only after successful thread
+            // impersonation and restores that same thread before returning.
+            assert_ne!(unsafe { RevertToSelf() }, 0);
+        }
+    }
+
     /// Administrative setup and normal launches share the mutex. The host
     /// owner's SID must work even when the Administrators SID is deny-only.
     #[test]
@@ -102,6 +112,8 @@ mod tests {
         let _original = SetupLock::acquire(&identity).expect("administrative owner lock");
         let mut token = null_mut();
         assert_ne!(
+            // SAFETY: the current-process pseudo-handle is valid and token
+            // points to live output storage; the result is owned below.
             unsafe {
                 OpenProcessToken(
                     GetCurrentProcess(),
@@ -115,6 +127,8 @@ mod tests {
         let mut sid = [0_u8; 256];
         let mut length = u32::try_from(sid.len()).expect("SID bound");
         assert_ne!(
+            // SAFETY: sid has the supplied capacity and length is writable;
+            // this built-in SID requires no domain SID.
             unsafe {
                 CreateWellKnownSid(
                     WinBuiltinAdministratorsSid,
@@ -131,6 +145,8 @@ mod tests {
         };
         let mut restricted = null_mut();
         assert_ne!(
+            // SAFETY: token, disabled and its SID remain live for this call;
+            // the zero-count lists are null and restricted is writable output.
             unsafe {
                 CreateRestrictedToken(
                     token.get(),
@@ -147,13 +163,9 @@ mod tests {
             0
         );
         let restricted = OwnedHandle::new(restricted, "test limited token").expect("limited token");
+        // SAFETY: restricted owns a live token; the guard immediately below
+        // restores this thread's identity before the token is closed.
         assert_ne!(unsafe { ImpersonateLoggedOnUser(restricted.get()) }, 0);
-        struct Revert;
-        impl Drop for Revert {
-            fn drop(&mut self) {
-                assert_ne!(unsafe { RevertToSelf() }, 0);
-            }
-        }
         let _impersonation = Revert;
         let limited = SetupLock::acquire(&identity);
         assert!(

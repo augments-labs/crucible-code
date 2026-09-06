@@ -898,8 +898,10 @@ fn a_resumed_session_says_what_the_reader_watched() {
     let live = window.picture();
 
     window.types_until("/clear\r", "ask mode on");
-    window.types_until("/resume\r", "a session, or a branch");
-    window.types_until("\r", "fn main");
+    // The picker heading precedes its loaded rows, and its preview also
+    // contains `fn main`. Wait for a selectable row, then a transcript-only mark.
+    window.types_until("/resume\r", "Resume a session · 1 of 1");
+    window.types_until("\r", CHANGED);
     let again = window.picture();
 
     // The live screen first, because everything asserted of the resumed one is

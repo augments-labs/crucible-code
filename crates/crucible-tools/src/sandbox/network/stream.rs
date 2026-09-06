@@ -226,9 +226,11 @@ mod tests {
             while matches!(reverse.read(&mut bytes), Ok(count) if count > 0) {}
         });
 
-        let payload = vec![b'w'; 64 * 1024 * 1024];
+        // Small writes exercise backpressure on Windows too: Winsock can
+        // accept one large send into a correspondingly large kernel buffer.
+        let payload = [b'w'; 8192];
         let started = Instant::now();
-        let result = stream.write_all(&payload);
+        let result = (0..8192).try_for_each(|_| stream.write_all(&payload));
         let elapsed = started.elapsed();
         assert_eq!(
             result.expect_err("stalled write must expire").kind(),
