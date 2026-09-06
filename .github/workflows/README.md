@@ -7,7 +7,7 @@ reusable workflows and exposes `CI required` as the single merge result.
 | --- | --- |
 | `rust-ci.yml` | Rust formatting, all-feature linting, tests and rustdoc on supported CI platforms |
 | `repo-checks.yml` | Deterministic cross-file repository policy |
-| `dependency-policy.yml` | Blocking Cargo license, source and ban policy |
+| `dependency-policy.yml` | Blocking Cargo usage, license, source and ban policy |
 | `performance.yml` | Performance probes and their JSON artifact |
 | `provider-canaries.yml` | Weekly/manual non-blocking live turns against configured provider accounts |
 | `audit.yml` | Advisories whose answer changes as databases are published |

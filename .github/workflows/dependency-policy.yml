@@ -8,8 +8,8 @@ permissions:
   contents: read
 
 jobs:
-  cargo-deny:
-    name: Licenses, sources and bans
+  cargo-policy:
+    name: Usage, licenses, sources and bans
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
