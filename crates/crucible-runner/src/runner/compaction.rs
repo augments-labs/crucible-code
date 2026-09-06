@@ -656,6 +656,12 @@ impl Runner {
         );
 
         self.transcript.pop();
+        // The final EOF read may have raised cancellation without producing a
+        // delta. A complete recap is still provisional until that read ends;
+        // it must not replace the original history after the user stopped it.
+        if cancel.requested() {
+            return Ok(Recap::Stopped);
+        }
         said
     }
 
@@ -688,6 +694,13 @@ impl Runner {
                 Err(ProviderError::Cancelled(_)) => return Ok(Recap::Stopped),
                 Err(problem) => return Err(problem.into()),
             };
+            // Some protocols report accounting after the model's stop. Keep
+            // reading it through EOF, but never append late response content.
+            if stopped.is_some()
+                && !matches!(delta, Delta::Usage(_) | Delta::Spent(_) | Delta::Carried(_))
+            {
+                return Ok(Recap::Incomplete);
+            }
             match delta {
                 Delta::Text(text) => {
                     said.push_str(&text);
@@ -757,7 +770,6 @@ impl Runner {
                 | Delta::Progress => {}
                 Delta::Stopped(reason) => {
                     stopped = Some(reason);
-                    break;
                 }
             }
         }

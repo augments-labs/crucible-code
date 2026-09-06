@@ -27,6 +27,63 @@ fn keeping_one() -> Compaction {
 }
 
 #[test]
+fn accounting_after_a_recap_stop_is_read_before_committing_the_notes() {
+    // Chat Completions reports usage after finish_reason. Waiting for clean
+    // EOF must still accept that accounting-only postlude and count it once.
+    let usage = ProviderUsage::new(
+        InputTokenUsage::inclusive_read(Some(200), None).unwrap(),
+        Some(17),
+        None,
+        None,
+        &[],
+    )
+    .unwrap();
+    let mut notes = recap("notes to self");
+    notes.extend([
+        Delta::Usage(usage),
+        Delta::Spent(Spend::new(17)),
+        Delta::Carried(Carried::new(200)),
+    ]);
+    let script = Script::new(vec![saying("first"), saying("second"), notes]);
+    let mut scripted = Scripted::within(script, 200_000, keeping_one());
+    scripted.turn("first").unwrap();
+    scripted.turn("second").unwrap();
+    let _ = scripted.spent();
+    assert!(matches!(scripted.compacting().unwrap(), Room::Made(_)));
+    assert_eq!(scripted.spent(), [17, 17]);
+    assert!(conversation(scripted.runner.transcript()).iter().any(
+        |message| matches!(message, Message::User { text, .. } if text.contains("notes to self"))
+    ));
+}
+
+#[test]
+fn substantive_content_after_a_recap_stop_never_replaces_the_history() {
+    for extra in [
+        Delta::Text("late content".into()),
+        Delta::ToolStarted {
+            id: ToolId::new("late"),
+            name: "missing".into(),
+        },
+        Delta::ToolArgs("{}".into()),
+        Delta::Progress,
+        Delta::Stopped(StopReason::Yielded),
+    ] {
+        let mut notes = recap("notes to self");
+        notes.push(extra);
+        let script = Script::new(vec![saying("first"), saying("second"), notes]);
+        let mut scripted = Scripted::within(script, 200_000, keeping_one());
+        scripted.turn("first").unwrap();
+        scripted.turn("second").unwrap();
+        let before = conversation(scripted.runner.transcript());
+        assert!(matches!(
+            scripted.compacting(),
+            Err(TurnError::RecapIncomplete)
+        ));
+        assert_eq!(conversation(scripted.runner.transcript()), before);
+    }
+}
+
+#[test]
 fn a_compaction_posts_the_rebuilt_window_reading_immediately() {
     let script = Script::new(vec![
         vec![

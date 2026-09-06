@@ -1646,8 +1646,14 @@ impl Runner {
             )
         };
 
-        self.hear(stream.as_mut(), answer, listening, cache_observation)
-            .and_then(|()| answer.finalize().map_err(TurnError::from))
+        self.hear(stream.as_mut(), answer, listening, cache_observation)?;
+        // EOF is itself a read. Cancellation can arrive during that read even
+        // when the stream returns no final delta, so check the run's authority
+        // again before making any native state or tool call replayable.
+        if listening.run.cancel().requested() {
+            return Ok(StopReason::Cancelled);
+        }
+        answer.finalize().map_err(TurnError::from)
     }
 
     /// Whether this failure, on this much of an answer, is worth asking again.
