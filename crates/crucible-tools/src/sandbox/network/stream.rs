@@ -12,7 +12,7 @@ const IDLE: Duration = Duration::from_secs(30);
 
 pub(super) struct Lifetime {
     started: Instant,
-    deadline: Instant,
+    deadline: Option<Instant>,
     idle: Duration,
     last: AtomicU64,
     command_cancelled: Arc<AtomicBool>,
@@ -20,7 +20,7 @@ pub(super) struct Lifetime {
 }
 
 impl Lifetime {
-    pub(super) fn new(deadline: Instant, command_cancelled: Arc<AtomicBool>) -> Arc<Self> {
+    pub(super) fn new(deadline: Option<Instant>, command_cancelled: Arc<AtomicBool>) -> Arc<Self> {
         Arc::new(Self {
             started: Instant::now(),
             deadline,
@@ -44,7 +44,11 @@ impl Lifetime {
             .started
             .elapsed()
             .saturating_sub(Duration::from_millis(self.last.load(Ordering::Relaxed)));
-        if Instant::now() >= self.deadline || idle >= self.idle {
+        if self
+            .deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+            || idle >= self.idle
+        {
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
                 "sandbox network mediation deadline exceeded",
@@ -62,7 +66,11 @@ impl Lifetime {
                 "sandbox network mediation cancelled",
             ));
         }
-        if Instant::now() >= self.deadline || started.elapsed() >= self.idle {
+        if self
+            .deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+            || started.elapsed() >= self.idle
+        {
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
                 "sandbox network mediation deadline exceeded",
@@ -71,8 +79,9 @@ impl Lifetime {
         Ok(())
     }
 
-    pub(super) fn remaining(&self) -> Duration {
-        self.deadline.saturating_duration_since(Instant::now())
+    pub(super) fn remaining(&self) -> Option<Duration> {
+        self.deadline
+            .map(|deadline| deadline.saturating_duration_since(Instant::now()))
     }
 
     fn active(&self) {
@@ -92,7 +101,7 @@ impl Lifetime {
     ) -> Arc<Self> {
         Arc::new(Self {
             started: Instant::now(),
-            deadline,
+            deadline: Some(deadline),
             idle,
             last: AtomicU64::new(0),
             command_cancelled,

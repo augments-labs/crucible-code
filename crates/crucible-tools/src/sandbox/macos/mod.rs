@@ -271,12 +271,7 @@ impl SandboxSession for MacSession {
             self.record_start_failure(problem.failure_kind())?;
             return Err(problem);
         }
-        let duration = self
-            .request
-            .policy()
-            .limits()
-            .command_time
-            .unwrap_or(std::time::Duration::from_mins(20));
+        let duration = self.request.policy().limits().command_time;
         let mut mediator = match self.request.policy().network() {
             SandboxNetworkPolicy::Domains(policy) if !policy.allowed().is_empty() => {
                 match super::network::Mediator::tcp(policy.clone(), self.request.id(), duration) {

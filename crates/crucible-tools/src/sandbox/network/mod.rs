@@ -17,6 +17,8 @@ mod stream;
 use std::io::{self, BufRead as _, BufReader, Read as _, Write as _};
 use std::net::{Ipv4Addr, Shutdown, SocketAddr, TcpStream};
 use std::sync::Arc;
+#[cfg(test)]
+use std::sync::atomic::AtomicU8;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -33,6 +35,10 @@ use stream::{Lifetime, POLL, Stream};
 const CONNECTIONS: usize = 16;
 const HANDSHAKE: Duration = Duration::from_secs(5);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+#[cfg(test)]
+const FAIL_RELAY_SPAWN: u8 = 1;
+#[cfg(test)]
+const PANIC_RESPONSE: u8 = 2;
 
 pub(super) struct Mediator {
     #[cfg(any(test, not(target_os = "linux")))]
@@ -43,6 +49,8 @@ pub(super) struct Mediator {
     failed: bool,
     stop: Arc<AtomicBool>,
     listener: Option<JoinHandle<io::Result<()>>>,
+    #[cfg(test)]
+    fault: Arc<AtomicU8>,
     #[cfg(any(target_os = "linux", all(test, unix)))]
     socket_path: Option<socket::UnixPath>,
 }
@@ -52,7 +60,7 @@ impl Mediator {
     pub(super) fn tcp(
         policy: SandboxDomainPolicy,
         id: SandboxId,
-        duration: Duration,
+        duration: Option<Duration>,
     ) -> io::Result<Self> {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
         listener.set_nonblocking(true)?;
@@ -65,7 +73,7 @@ impl Mediator {
         address: SocketAddr,
         policy: SandboxDomainPolicy,
         id: SandboxId,
-        duration: Duration,
+        duration: Option<Duration>,
     ) -> io::Result<Self> {
         #[cfg(all(target_os = "linux", not(test)))]
         let _ = address;
@@ -75,14 +83,22 @@ impl Mediator {
             base64::engine::general_purpose::STANDARD.encode(&userinfo)
         );
         let stop = Arc::new(AtomicBool::new(false));
+        #[cfg(test)]
+        let fault = Arc::new(AtomicU8::new(0));
         let context = Context {
             policy,
             id,
-            deadline: Instant::now()
-                .checked_add(duration)
-                .ok_or_else(|| io::Error::other("invalid sandbox network deadline"))?,
+            deadline: duration
+                .map(|duration| {
+                    Instant::now()
+                        .checked_add(duration)
+                        .ok_or_else(|| io::Error::other("invalid sandbox network deadline"))
+                })
+                .transpose()?,
             authorization: authorization.clone(),
             stop: Arc::clone(&stop),
+            #[cfg(test)]
+            fault: Arc::clone(&fault),
         };
         let worker = thread::Builder::new()
             .name("sandbox-proxy".into())
@@ -96,6 +112,8 @@ impl Mediator {
             failed: false,
             stop,
             listener: Some(worker),
+            #[cfg(test)]
+            fault,
             #[cfg(any(target_os = "linux", all(test, unix)))]
             socket_path: None,
         })
@@ -106,7 +124,7 @@ impl Mediator {
         path: &std::path::Path,
         policy: SandboxDomainPolicy,
         id: SandboxId,
-        duration: Duration,
+        duration: Option<Duration>,
     ) -> io::Result<Self> {
         let listener = socket::listen_unix(path)?;
         let owned = socket::UnixPath::bound(path)?;
@@ -149,6 +167,16 @@ impl Mediator {
         } else {
             Ok(())
         }
+    }
+
+    #[cfg(test)]
+    fn inject_relay_spawn_failure(&self) {
+        self.fault.store(FAIL_RELAY_SPAWN, Ordering::Release);
+    }
+
+    #[cfg(test)]
+    fn inject_response_panic(&self) {
+        self.fault.store(PANIC_RESPONSE, Ordering::Release);
     }
 
     /// These bounded values travel only in the workload environment. Native
@@ -202,20 +230,26 @@ impl Drop for Mediator {
 struct Context {
     policy: SandboxDomainPolicy,
     id: SandboxId,
-    deadline: Instant,
+    deadline: Option<Instant>,
     authorization: String,
     stop: Arc<AtomicBool>,
+    #[cfg(test)]
+    fault: Arc<AtomicU8>,
 }
 
 fn accept(listener: Listener, context: &Arc<Context>) -> io::Result<()> {
     let mut result = Ok(());
-    let mut workers: Vec<JoinHandle<()>> = Vec::new();
-    while !context.stop.load(Ordering::Acquire) && Instant::now() < context.deadline {
+    let mut workers: Vec<JoinHandle<io::Result<()>>> = Vec::new();
+    while !context.stop.load(Ordering::Acquire)
+        && context
+            .deadline
+            .is_none_or(|deadline| Instant::now() < deadline)
+    {
         let mut index = 0;
         while index < workers.len() {
             if workers.get(index).is_some_and(JoinHandle::is_finished) {
                 let worker = workers.swap_remove(index);
-                if worker.join().is_err() {
+                if !matches!(worker.join(), Ok(Ok(()))) {
                     result = Err(io::Error::other("sandbox proxy relay failed"));
                 }
             } else {
@@ -224,12 +258,31 @@ fn accept(listener: Listener, context: &Arc<Context>) -> io::Result<()> {
         }
         match listener.accept() {
             Ok(socket) if workers.len() < CONNECTIONS => {
+                #[cfg(test)]
+                let injected = context
+                    .fault
+                    .compare_exchange(FAIL_RELAY_SPAWN, 0, Ordering::AcqRel, Ordering::Acquire)
+                    .is_ok();
                 let context = Arc::clone(context);
-                if let Ok(worker) = thread::Builder::new()
+                #[cfg(test)]
+                let spawned = if injected {
+                    let _ = socket.shutdown(Shutdown::Both);
+                    Err(io::Error::other("injected sandbox relay spawn failure"))
+                } else {
+                    thread::Builder::new()
+                        .name("sandbox-relay".into())
+                        .spawn(move || serve(socket, &context))
+                };
+                #[cfg(not(test))]
+                let spawned = thread::Builder::new()
                     .name("sandbox-relay".into())
-                    .spawn(move || serve(socket, &context))
-                {
-                    workers.push(worker);
+                    .spawn(move || serve(socket, &context));
+                match spawned {
+                    Ok(worker) => workers.push(worker),
+                    Err(error) => {
+                        result = Err(error);
+                        break;
+                    }
                 }
             }
             Ok(socket) => {
@@ -246,21 +299,24 @@ fn accept(listener: Listener, context: &Arc<Context>) -> io::Result<()> {
     context.stop.store(true, Ordering::Release);
     drop(listener);
     for worker in workers {
-        if worker.join().is_err() {
+        if !matches!(worker.join(), Ok(Ok(()))) {
             result = Err(io::Error::other("sandbox proxy relay failed"));
         }
     }
     result
 }
 
-fn serve(socket: Socket, context: &Context) {
+fn serve(socket: Socket, context: &Context) -> io::Result<()> {
+    let handshake = Instant::now() + HANDSHAKE;
     let life = Lifetime::new(
-        context.deadline.min(Instant::now() + HANDSHAKE),
+        Some(
+            context
+                .deadline
+                .map_or(handshake, |deadline| deadline.min(handshake)),
+        ),
         Arc::clone(&context.stop),
     );
-    let Ok(stream) = Stream::new(socket, Arc::clone(&life)) else {
-        return;
-    };
+    let stream = Stream::new(socket, Arc::clone(&life))?;
     let mut client = BufReader::with_capacity(8192, stream);
     let prepared = prepare(&mut client, context, &life);
     let Ok((request, origin)) = prepared else {
@@ -268,20 +324,18 @@ fn serve(socket: Socket, context: &Context) {
             .get_mut()
             .write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
         client.get_ref().shutdown(Shutdown::Both);
-        return;
+        return Ok(());
     };
     let life = Lifetime::new(context.deadline, Arc::clone(&context.stop));
     client.get_mut().following(Arc::clone(&life));
-    let Ok(mut origin) = Stream::new(origin, Arc::clone(&life)) else {
-        return;
-    };
+    let mut origin = Stream::new(origin, Arc::clone(&life))?;
     if request.tunnel {
         if client
             .get_mut()
             .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
             .is_err()
         {
-            return;
+            return Ok(());
         }
     } else {
         if request.expect_continue
@@ -290,31 +344,35 @@ fn serve(socket: Socket, context: &Context) {
                 .write_all(b"HTTP/1.1 100 Continue\r\n\r\n")
                 .is_err()
         {
-            return;
+            return Ok(());
         }
         if origin.write_all(&request.header).is_err() {
-            return;
+            return Ok(());
         }
     }
-    let Ok(mut response) = origin.duplicate() else {
-        return;
-    };
-    let Ok(mut outgoing) = client.get_ref().duplicate() else {
-        return;
-    };
+    let mut response = origin.duplicate()?;
+    let mut outgoing = client.get_ref().duplicate()?;
     thread::scope(|scope| {
         let response_life = Arc::clone(&life);
+        #[cfg(test)]
+        let fault = Arc::clone(&context.fault);
         let received = thread::Builder::new()
             .name("sandbox-response".into())
             .spawn_scoped(scope, move || {
+                #[cfg(test)]
+                if fault
+                    .compare_exchange(PANIC_RESPONSE, 0, Ordering::AcqRel, Ordering::Acquire)
+                    .is_ok()
+                {
+                    panic!("injected sandbox response failure");
+                }
                 if io::copy(&mut response, &mut outgoing).is_err() {
                     response_life.stop();
                 }
                 outgoing.shutdown(Shutdown::Write);
             });
-        let Ok(received) = received else {
-            return;
-        };
+        let received =
+            received.map_err(|_| io::Error::other("sandbox proxy response could not start"))?;
         let copied = if request.tunnel {
             io::copy(&mut client, &mut origin).map(|_| ())
         } else {
@@ -324,10 +382,13 @@ fn serve(socket: Socket, context: &Context) {
             life.stop();
         }
         origin.shutdown(Shutdown::Write);
-        let _ = received.join();
-    });
+        received
+            .join()
+            .map_err(|_| io::Error::other("sandbox proxy response failed"))
+    })?;
     client.get_ref().shutdown(Shutdown::Both);
     origin.shutdown(Shutdown::Both);
+    Ok(())
 }
 
 fn prepare(
@@ -343,7 +404,10 @@ fn prepare(
         if !context.policy.permits_address(address.ip()) {
             continue;
         }
-        let remaining = life.remaining().min(CONNECT_TIMEOUT);
+        let remaining = life
+            .remaining()
+            .unwrap_or(CONNECT_TIMEOUT)
+            .min(CONNECT_TIMEOUT);
         if remaining.is_zero() {
             break;
         }

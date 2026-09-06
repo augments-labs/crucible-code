@@ -97,11 +97,13 @@ fn validate_tree(
     let mut pending = VecDeque::from([(root.to_path_buf(), 0_usize)]);
     let mut inspected = 0_usize;
     while let Some((directory, depth)) = pending.pop_front() {
-        let mut entries = fs::read_dir(&directory)
-            .map_err(|source| failed("workspace metadata scan failed", source))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|source| failed("workspace metadata entry could not be inspected", source))?;
-        entries.sort_by_key(fs::DirEntry::file_name);
+        let entries = fs::read_dir(&directory)
+            .map_err(|source| failed("workspace metadata scan failed", source))?;
+        let entries =
+            super::super::directory_entries(entries, MAX_ENTRIES.saturating_sub(inspected))
+                .map_err(|source| {
+                    failed("workspace metadata entry could not be inspected", source)
+                })?;
         for entry in entries {
             inspected = inspected.saturating_add(1);
             if inspected > MAX_ENTRIES {

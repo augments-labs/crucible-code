@@ -156,7 +156,7 @@ fn pretransfer_network_cleanup_failure_is_quarantined_and_never_complete() -> io
         &socket,
         domain_policy(),
         request.id(),
-        std::time::Duration::from_secs(3),
+        Some(std::time::Duration::from_secs(3)),
     )?;
     std::fs::remove_file(&socket)?;
     std::fs::write(&socket, b"replacement")?;

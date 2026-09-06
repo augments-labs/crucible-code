@@ -229,11 +229,7 @@ impl SandboxSession for LinuxSession {
                     &network_socket,
                     policy.clone(),
                     self.request.id(),
-                    self.request
-                        .policy()
-                        .limits()
-                        .command_time
-                        .unwrap_or(std::time::Duration::from_mins(20)),
+                    self.request.policy().limits().command_time,
                 ) {
                     Ok(mediator) => Some(mediator),
                     Err(source) => {

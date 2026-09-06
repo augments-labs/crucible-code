@@ -1151,7 +1151,7 @@ mod tests {
         let proxy = super::super::network::Mediator::tcp(
             policy,
             SandboxId::new(),
-            std::time::Duration::from_secs(5),
+            Some(std::time::Duration::from_secs(5)),
         )
         .unwrap();
         let mut command = std::process::Command::new("/bin/sh");
@@ -1210,7 +1210,7 @@ mod tests {
         let proxy = super::super::network::Mediator::tcp(
             policy,
             SandboxId::new(),
-            std::time::Duration::from_secs(5),
+            Some(std::time::Duration::from_secs(5)),
         )
         .unwrap();
         let address = proxy.address();

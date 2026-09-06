@@ -39,7 +39,8 @@ fn an_authenticated_tunnel_reaches_only_an_authorized_pinned_address() {
         assert_eq!(&bytes, b"ping");
         stream.write_all(b"pong").unwrap();
     });
-    let proxy = Mediator::tcp(policy(true), SandboxId::new(), Duration::from_secs(5)).unwrap();
+    let proxy =
+        Mediator::tcp(policy(true), SandboxId::new(), Some(Duration::from_secs(5))).unwrap();
     let mut stream = TcpStream::connect(proxy.address()).unwrap();
     stream
         .set_read_timeout(Some(Duration::from_secs(3)))
@@ -66,8 +67,14 @@ fn refused_targets_and_other_command_credentials_never_reach_the_origin() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let endpoint = listener.local_addr().unwrap();
-    let allowed = Mediator::tcp(policy(true), SandboxId::new(), Duration::from_secs(5)).unwrap();
-    let denied = Mediator::tcp(policy(false), SandboxId::new(), Duration::from_secs(5)).unwrap();
+    let allowed =
+        Mediator::tcp(policy(true), SandboxId::new(), Some(Duration::from_secs(5))).unwrap();
+    let denied = Mediator::tcp(
+        policy(false),
+        SandboxId::new(),
+        Some(Duration::from_secs(5)),
+    )
+    .unwrap();
     for (address, authorization) in [
         (denied.address(), denied.authorization()),
         (allowed.address(), denied.authorization()),
@@ -93,7 +100,8 @@ fn refused_targets_and_other_command_credentials_never_reach_the_origin() {
 
 #[test]
 fn an_idle_client_does_not_keep_a_cancelled_mediator_or_listener_alive() {
-    let proxy = Mediator::tcp(policy(true), SandboxId::new(), Duration::from_mins(1)).unwrap();
+    let proxy =
+        Mediator::tcp(policy(true), SandboxId::new(), Some(Duration::from_mins(1))).unwrap();
     let address = proxy.address();
     let mut stream = TcpStream::connect(address).unwrap();
     stream
@@ -119,7 +127,7 @@ fn the_private_unix_transport_enforces_the_same_authenticated_policy() {
         &path,
         policy(false),
         SandboxId::new(),
-        Duration::from_secs(5),
+        Some(Duration::from_secs(5)),
     )
     .unwrap();
     let mut stream = UnixStream::connect(&path).unwrap();
@@ -141,7 +149,12 @@ fn the_private_unix_transport_enforces_the_same_authenticated_policy() {
 
 #[test]
 fn listener_failure_cannot_be_erased_by_a_second_stop() {
-    let mut proxy = Mediator::tcp(policy(false), SandboxId::new(), Duration::from_secs(5)).unwrap();
+    let mut proxy = Mediator::tcp(
+        policy(false),
+        SandboxId::new(),
+        Some(Duration::from_secs(5)),
+    )
+    .unwrap();
     proxy.stop().unwrap();
     proxy.listener = Some(std::thread::spawn(|| {
         Err(std::io::Error::other("injected listener failure"))
@@ -154,10 +167,72 @@ fn listener_failure_cannot_be_erased_by_a_second_stop() {
 }
 
 #[test]
+fn relay_thread_creation_failure_reaches_mediator_cleanup() {
+    let mut proxy = Mediator::tcp(policy(false), SandboxId::new(), None).unwrap();
+    proxy.inject_relay_spawn_failure();
+    let mut client = TcpStream::connect(proxy.address()).unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    let mut reply = Vec::new();
+    let _ = client.read_to_end(&mut reply);
+    assert!(proxy.stop().is_err());
+}
+
+#[test]
+fn response_worker_panic_reaches_mediator_cleanup() {
+    let origin = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = origin.local_addr().unwrap();
+    let mut proxy = Mediator::tcp(policy(true), SandboxId::new(), None).unwrap();
+    proxy.inject_response_panic();
+    let mut client = TcpStream::connect(proxy.address()).unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    write!(
+        client,
+        "CONNECT {endpoint} HTTP/1.1\r\nProxy-Authorization: {}\r\n\r\n",
+        proxy.authorization()
+    )
+    .unwrap();
+    // Wait until the relay accepted CONNECT before cancelling its client.
+    // Otherwise cancellation can win before the response worker is started.
+    let mut reply = [0_u8; b"HTTP/1.1 200 Connection Established\r\n\r\n".len()];
+    client.read_exact(&mut reply).unwrap();
+    assert_eq!(&reply, b"HTTP/1.1 200 Connection Established\r\n\r\n");
+    let accepted = origin.accept().unwrap().0;
+    drop(accepted);
+    drop(client);
+    assert!(proxy.stop().is_err());
+}
+
+#[test]
+fn no_command_deadline_keeps_the_mediator_owned_until_stop() {
+    let mut proxy = Mediator::tcp(policy(false), SandboxId::new(), None).unwrap();
+    std::thread::sleep(Duration::from_millis(150));
+    let mut client = TcpStream::connect(proxy.address()).unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    client
+        .write_all(b"CONNECT denied.test:443 HTTP/1.1\r\n\r\n")
+        .unwrap();
+    let mut reply = String::new();
+    client.read_to_string(&mut reply).unwrap();
+    assert!(reply.starts_with("HTTP/1.1 403 "), "{reply}");
+    proxy.stop().unwrap();
+}
+
+#[test]
 fn proxy_environment_encodes_each_commands_credential_and_clears_bypasses() {
     use base64::Engine as _;
 
-    let proxy = Mediator::tcp(policy(false), SandboxId::new(), Duration::from_secs(5)).unwrap();
+    let proxy = Mediator::tcp(
+        policy(false),
+        SandboxId::new(),
+        Some(Duration::from_secs(5)),
+    )
+    .unwrap();
     let endpoint = "127.0.0.1:31337".parse().unwrap();
     let environment = proxy.environment(endpoint);
     let values: std::collections::BTreeMap<_, _> = environment.into_iter().collect();
@@ -221,7 +296,7 @@ fn hostname_resolution_requires_private_address_consent_and_respects_denies() {
             SandboxNetworkProvenance::User,
         )
         .unwrap();
-        let proxy = Mediator::tcp(policy, SandboxId::new(), Duration::from_secs(8)).unwrap();
+        let proxy = Mediator::tcp(policy, SandboxId::new(), Some(Duration::from_secs(8))).unwrap();
         let mut client = TcpStream::connect(proxy.address()).unwrap();
         client
             .set_read_timeout(Some(Duration::from_secs(6)))

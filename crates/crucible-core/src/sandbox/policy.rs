@@ -686,7 +686,10 @@ impl SandboxPolicy {
         network: SandboxNetworkPolicy,
         limits: SandboxResourceLimits,
     ) -> Result<Self, SandboxPolicyError> {
-        let mut filesystem: Vec<_> = filesystem.into_iter().collect();
+        let mut filesystem: Vec<_> = filesystem
+            .into_iter()
+            .take(MAX_SANDBOX_FILESYSTEM_RULES + 1)
+            .collect();
         if filesystem.is_empty() || filesystem.len() > MAX_SANDBOX_FILESYSTEM_RULES {
             return Err(SandboxPolicyError::InvalidFilesystemRuleCount);
         }
@@ -844,7 +847,10 @@ impl SandboxPolicy {
         mut self,
         patterns: impl IntoIterator<Item = SandboxUnreadablePattern>,
     ) -> Result<Self, SandboxPolicyError> {
-        let mut patterns: Vec<_> = patterns.into_iter().collect();
+        let mut patterns: Vec<_> = patterns
+            .into_iter()
+            .take(MAX_SANDBOX_UNREADABLE_PATTERNS + 1)
+            .collect();
         if patterns.len() > MAX_SANDBOX_UNREADABLE_PATTERNS {
             return Err(SandboxPolicyError::InvalidUnreadablePatternCount);
         }
@@ -1443,6 +1449,51 @@ mod tests {
                 "{invalid}"
             );
         }
+    }
+
+    #[test]
+    fn filesystem_rule_iterators_stop_at_the_count_bound() {
+        let consumed = std::cell::Cell::new(0);
+        let rules = (0..MAX_SANDBOX_FILESYSTEM_RULES + 8).map(|_| {
+            consumed.set(consumed.get() + 1);
+            rule("/workspace", SandboxFilesystemAccess::ReadWrite)
+        });
+        let result = SandboxPolicy::new(
+            false,
+            rules,
+            "/workspace",
+            SandboxNetworkPolicy::Closed,
+            SandboxResourceLimits::default(),
+        );
+        assert!(matches!(
+            result,
+            Err(SandboxPolicyError::InvalidFilesystemRuleCount)
+        ));
+        assert_eq!(consumed.get(), MAX_SANDBOX_FILESYSTEM_RULES + 1);
+    }
+
+    #[test]
+    fn unreadable_pattern_iterators_stop_at_the_count_bound() {
+        let consumed = std::cell::Cell::new(0);
+        let pattern = SandboxUnreadablePattern::new(
+            "/workspace/**/*.pem",
+            SandboxFilesystemProvenance::Workspace,
+        )
+        .unwrap();
+        let patterns = (0..MAX_SANDBOX_UNREADABLE_PATTERNS + 8).map(|_| {
+            consumed.set(consumed.get() + 1);
+            pattern.clone()
+        });
+        let result = policy(
+            true,
+            vec![rule("/workspace", SandboxFilesystemAccess::ReadWrite)],
+        )
+        .with_unreadable_patterns(patterns);
+        assert!(matches!(
+            result,
+            Err(SandboxPolicyError::InvalidUnreadablePatternCount)
+        ));
+        assert_eq!(consumed.get(), MAX_SANDBOX_UNREADABLE_PATTERNS + 1);
     }
 
     #[test]

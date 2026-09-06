@@ -958,10 +958,13 @@ fn expand_unreadable_patterns(
             let entries = fs::read_dir(&directory).map_err(|source| {
                 materialization("unreadable pattern scan failed", Some(source))
             })?;
-            let mut entries = entries.collect::<Result<Vec<_>, _>>().map_err(|source| {
+            let entries = super::super::directory_entries(
+                entries,
+                MAX_WORKSPACE_SCAN_ENTRIES.saturating_sub(inspected),
+            )
+            .map_err(|source| {
                 materialization("unreadable pattern entry could not be read", Some(source))
             })?;
-            entries.sort_by_key(std::fs::DirEntry::file_name);
             for entry in entries {
                 inspected = inspected.saturating_add(1);
                 if inspected > MAX_WORKSPACE_SCAN_ENTRIES {
