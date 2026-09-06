@@ -1,0 +1,70 @@
+name: task-campaign
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: Provider-qualified model for both binaries
+        required: true
+        type: string
+      baseline_release:
+        description: Release version used as the baseline, without a leading v
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: task-campaign
+  cancel-in-progress: false
+
+jobs:
+  campaign:
+    name: Manual coding-task comparison
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo build --release --locked --bin crucible
+      - name: Install baseline release
+        env:
+          BASELINE_RELEASE: ${{ inputs.baseline_release }}
+        run: scripts/install.sh --version "$BASELINE_RELEASE" --dir "$RUNNER_TEMP/baseline"
+      - name: Require one configured provider credential
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_CANARY_API_KEY }}
+          MOONSHOT_API_KEY: ${{ secrets.MOONSHOT_CANARY_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_CANARY_API_KEY }}
+        run: |
+          set -euo pipefail
+          [[ -n $ANTHROPIC_API_KEY || -n $MOONSHOT_API_KEY || -n $OPENAI_API_KEY ]] || {
+            echo 'No provider canary credential is configured' >&2
+            exit 1
+          }
+          {
+            printf 'ANTHROPIC_API_KEY=%s\n' "$ANTHROPIC_API_KEY"
+            printf 'MOONSHOT_API_KEY=%s\n' "$MOONSHOT_API_KEY"
+            printf 'OPENAI_API_KEY=%s\n' "$OPENAI_API_KEY"
+          } >> "$GITHUB_ENV"
+      - name: Run baseline and candidate
+        env:
+          MODEL: ${{ inputs.model }}
+        run: |
+          set -euo pipefail
+          scripts/task-campaign.py run --binary "$RUNNER_TEMP/baseline/crucible" --model "$MODEL" --suite benchmarks/coding-tasks/suite.json --label baseline --output baseline.json
+          scripts/task-campaign.py run --binary "$PWD/target/release/crucible" --model "$MODEL" --suite benchmarks/coding-tasks/suite.json --label candidate --output candidate.json
+          scripts/task-campaign.py compare --baseline baseline.json --candidate candidate.json --output comparison.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ always() }}
+        with:
+          name: task-campaign
+          path: |
+            baseline.json
+            candidate.json
+            comparison.json
+          if-no-files-found: error
+          retention-days: 30

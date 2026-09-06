@@ -333,43 +333,60 @@ member_manifests=(crates/*/Cargo.toml)
 manifests=(Cargo.toml "${member_manifests[@]}")
 
 section "crate layering"
+crate_edges() {
+    awk '
+        FNR == 1 {
+            crate = FILENAME
+            sub(/^crates\//, "", crate)
+            sub(/\/Cargo.toml$/, "", crate)
+            if (FILENAME == "Cargo.toml") crate = "crucible-code"
+            # Process substitution names files `/dev/fd/N`; `N` is the fixture
+            # crate name, which keeps the expected output independent of Bash.
+            if (FILENAME ~ /^\/dev\/fd\//) {
+                sub(/^.*\//, "", crate)
+                crate = "fixture-" crate
+            }
+            # Both ends of an edge are written the short way, so the allowed
+            # list reads as the layering rather than package names.
+            sub(/^crucible-/, "", crate)
+            table = 0
+        }
+        /^[[:space:]]*\[/ {
+            header = $0
+            sub(/^[[:space:]]*\[+[[:space:]]*/, "", header)
+            sub(/[[:space:]]*\]+.*$/, "", header)
+            # Workspace dependencies agree versions; they do not take edges.
+            table = (header ~ /(^|\.)(dependencies|dev-dependencies|build-dependencies)$/ &&
+                     header !~ /^workspace\./)
+            next
+        }
+        # Dotted keys and inline tables both end the name at dot, space or `=`.
+        table && /^[[:space:]]*crucible-[a-z0-9-]+[[:space:].=]/ {
+            dependency = $0
+            sub(/^[[:space:]]*/, "", dependency)
+            sub(/[[:space:].=].*$/, "", dependency)
+            sub(/^crucible-/, "", dependency)
+            print crate " " dependency
+        }
+    ' "$@"
+}
+
+# Pin both Cargo spellings the parser promises to understand. Accepting the
+# workspace's current dotted keys alone would let an inline-table refactor
+# silently empty part of the graph.
+layer_fixture=$(crate_edges \
+    <(printf '[dependencies]\ncrucible-core.workspace = true\n') \
+    <(printf '[dev-dependencies]\ncrucible-session = { workspace = true, features = ["proof"] }\n'))
+if [[ $(printf '%s\n' "$layer_fixture" | sed 's/^fixture-[0-9][0-9]* //') != $'core\nsession' ]]; then
+    printf '    FAIL the crate-layer parser did not read dotted and inline dependency spellings\n'
+    failed=1
+fi
+
 if ((${#manifests[@]} < 2)); then
     printf '    FAIL no manifest under crates/; the dependency graph measured nothing\n'
     failed=1
 fi
-edges=$(awk '
-    FNR == 1 {
-        crate = FILENAME
-        sub(/^crates\//, "", crate)
-        sub(/\/Cargo.toml$/, "", crate)
-        if (FILENAME == "Cargo.toml") crate = "crucible-code"
-        # Both ends of an edge are written the short way, so the allowed list
-        # reads as the layering rather than as a list of package names.
-        sub(/^crucible-/, "", crate)
-        table = 0
-    }
-    /^[[:space:]]*\[/ {
-        header = $0
-        sub(/^[[:space:]]*\[+[[:space:]]*/, "", header)
-        sub(/[[:space:]]*\]+.*$/, "", header)
-        # [workspace.dependencies] is where a version is agreed, not where a
-        # crate takes one on: reading it as an edge would give the root every
-        # edge in the workspace and hide the ones it actually has.
-        table = (header ~ /(^|\.)(dependencies|dev-dependencies|build-dependencies)$/ &&
-                 header !~ /^workspace\./)
-        next
-    }
-    # A dependency is named by the key that opens the line, and a member writes
-    # that key as crucible-core.workspace: the name ends at the first dot, space
-    # or equals, and matching up to the equals instead matched no member at all.
-    table && /^[[:space:]]*crucible-[a-z0-9-]+[[:space:].=]/ {
-        dependency = $0
-        sub(/^[[:space:]]*/, "", dependency)
-        sub(/[[:space:].=].*$/, "", dependency)
-        sub(/^crucible-/, "", dependency)
-        print crate " " dependency
-    }
-' "${manifests[@]}")
+edges=$(crate_edges "${manifests[@]}")
 if [[ -z "$edges" ]]; then
     printf '    FAIL no internal dependency edges found; this check measured nothing\n'
     failed=1

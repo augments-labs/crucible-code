@@ -42,8 +42,9 @@ This compatibility command runs all deterministic checks expected on a normal
 contributor machine. Its current children can also be run independently:
 
 ```bash
-scripts/rust-checks.sh   # formatting, all-feature clippy, tests and rustdoc
-scripts/repo-checks.sh   # cross-file repository policy
+scripts/rust-checks.sh     # formatting, package isolation, clippy, tests and rustdoc
+scripts/repo-checks.sh     # cross-file repository policy and crate layering
+scripts/python-checks.sh   # canary and campaign harness fixtures and reports
 ```
 
 The Rust tests include the whole-screen pseudo-terminal suite. Run that suite on
@@ -88,9 +89,23 @@ Performance-sensitive changes must run:
 scripts/bench.sh
 ```
 
-The probes and thresholds are owned by that script. Shared CI runners provide a
-trend; release measurements are taken on a quiet machine as described in
-[`RELEASING.md`](RELEASING.md).
+The probes and thresholds are owned by that script. Use its `startup`,
+`tools`, `mem`, `grep`, `stream`, or `live` argument to run one family. Shared
+CI runners provide a trend; release measurements are taken on a quiet machine
+as described in [`RELEASING.md`](RELEASING.md).
+
+Compile-time changes can also be compared without an absolute gate:
+
+```bash
+scripts/build-comparison.sh BASE CANDIDATE build-comparison
+```
+
+That command requires a clean checkout, checks both revisions on the same
+machine with independent Cargo targets, and writes clean, no-op, leaf-touch and
+root-touch timing/RSS evidence plus Cargo timing reports. Live release,
+provider, and coding-task campaigns are scheduled or manual workflows rather
+than local or pull-request requirements; their ownership and credentials are
+listed in [the workflow map](.github/workflows/README.md).
 
 ## Commit messages
 

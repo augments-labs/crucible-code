@@ -8,6 +8,17 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Added
+
+- **Performance and portability regressions now have native Crucible evidence.**
+  The performance suite measures argument-only startup exits, deterministic
+  filesystem and process tools, active-turn input latency and CPU, synchronized
+  streamed frames, and retained long-session memory. Rust CI also compiles each
+  workspace package independently, while scheduled/manual canaries compare
+  incremental builds, exercise live provider tool and usage records, verify the
+  newest published installer lifecycle, and run baseline/candidate coding tasks
+  without making external availability a pull-request verdict.
+
 ## [0.38.0] - 2026-09-06
 
 ### Fixed

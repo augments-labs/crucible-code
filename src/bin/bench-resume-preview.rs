@@ -21,6 +21,7 @@
 //! Timed from the keystroke, not from `exec` — startup has two budgets of its
 //! own, and charging them here would leave this one moving whenever they did.
 
+#[allow(dead_code)]
 mod startup;
 
 use std::fmt::Write as _;

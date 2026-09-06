@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "tasks": [
+    {
+      "name": "change-a-tested-message",
+      "fixture": "benchmarks/coding-tasks/fixtures/change-message",
+      "prompt": "Change greeting.txt from hello to hello crucible. Keep the existing check passing, run it, and do not add files.",
+      "verify": "./verify.sh"
+    }
+  ]
+}

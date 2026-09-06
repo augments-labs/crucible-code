@@ -33,7 +33,7 @@ jobs:
           retention-days: 1
 
   provider:
-    name: ${{ matrix.name }} live turn
+    name: ${{ matrix.name }} live tool session
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -54,6 +54,9 @@ jobs:
             model: openai/gpt-5.5
             secret_name: OPENAI_CANARY_API_KEY
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: provider-canary-binary
@@ -61,7 +64,7 @@ jobs:
 
       # A fixed case below exports this row's key under the provider name the
       # binary reads. Each matrix row is its own process and only uses that key.
-      - name: Run a tiny streamed turn when this provider is configured
+      - name: Run a typed multi-turn session when this provider is configured
         env:
           CANARY_API_KEY: ${{ matrix.provider == 'anthropic' && secrets.ANTHROPIC_CANARY_API_KEY || matrix.provider == 'moonshot' && secrets.MOONSHOT_CANARY_API_KEY || matrix.provider == 'openai' && secrets.OPENAI_CANARY_API_KEY || '' }}
           PROVIDER: ${{ matrix.provider }}
@@ -82,17 +85,29 @@ jobs:
             *) echo "unknown canary provider $PROVIDER" >&2; exit 2 ;;
           esac
           unset CANARY_API_KEY
-          home=$(mktemp -d)
-          trap 'rm -rf "$home"' EXIT
+          root=$(mktemp -d)
+          trap 'rm -rf "$root"' EXIT
+          mkdir -p "$root/home" "$root/work"
+          cat > "$root/home/config.json" <<'JSON'
+          {
+            "updates": {"check": "never"},
+            "permissions": {"mode": "fullAccess"},
+            "sandbox": {"enabled": false},
+            "output": {"color": "never"}
+          }
+          JSON
 
-          status=0
-          answer=$(printf 'Write canary and ok separated by a hyphen. Reply with only that.\n' |
-            timeout --signal=TERM --kill-after=10s 90s \
-              env HOME="$home" CRUCIBLE_CODE_HOME="$home/crucible" NO_COLOR=1 \
-              canary/crucible --model "$MODEL" 2>&1) || status=$?
-          if ((status != 0)) || [[ ${answer,,} != *canary-ok* ]]; then
-            printf '%s exited %d without the canary marker:\n%s\n' \
-              "$MODEL" "$status" "$answer" >&2
-            exit 1
-          fi
-          echo "$MODEL completed a streamed turn"
+          scripts/provider-canary.py \
+            --binary "$PWD/canary/crucible" \
+            --model "$MODEL" \
+            --home "$root/home" \
+            --workspace "$root/work" \
+            --report "provider-canary-$PROVIDER.json"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ always() && hashFiles(format('provider-canary-{0}.json', matrix.provider)) != '' }}
+        with:
+          name: provider-canary-${{ matrix.provider }}
+          path: provider-canary-${{ matrix.provider }}.json
+          if-no-files-found: error
+          retention-days: 30

@@ -171,6 +171,17 @@ pub(crate) enum StartupError {
     #[error("crucible exited without printing {0:?}")]
     Silent(&'static str),
 
+    /// A noninteractive startup path did not exit successfully with its proof.
+    #[error("crucible {label} exited with {status} and did not print {needle:?}")]
+    FastExit {
+        /// Which argument path was measured.
+        label: &'static str,
+        /// The process status as the operating system reported it.
+        status: std::process::ExitStatus,
+        /// What its standard output had to contain.
+        needle: &'static str,
+    },
+
     /// The deadline elapsed while the child still held the terminal.
     #[cfg(target_os = "linux")]
     #[error("crucible did not reach {0:?} within five seconds")]
@@ -195,6 +206,47 @@ pub(crate) fn readings(measure: Measure) -> Result<Readings, StartupError> {
     for _ in 0..RUNS {
         home.restore_fixture()?;
         taken.push(once(&binary, home.path(), measure)?);
+    }
+
+    Ok(Readings::new(taken))
+}
+
+/// Takes [`RUNS`] readings of a noninteractive argument that exits by itself.
+///
+/// Unlike a screen measure, this deliberately uses pipes. `--help` and
+/// `--version` are promises to scripts as well as people, and neither should
+/// open a terminal, read a home, or start a session. Waiting for process exit
+/// makes that fast path's whole cost the reading rather than stopping at its
+/// first byte and leaving teardown unmeasured.
+pub(crate) fn exits(
+    label: &'static str,
+    args: &'static [&'static str],
+    needle: &'static str,
+) -> Result<Readings, StartupError> {
+    let binary = beside("crucible")?;
+    let mut taken = Vec::with_capacity(RUNS);
+
+    for _ in 0..RUNS {
+        let started = std::time::Instant::now();
+        let output = std::process::Command::new(&binary)
+            .args(args)
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .output()?;
+        let elapsed = started.elapsed();
+
+        let printed = output
+            .stdout
+            .windows(needle.len())
+            .any(|window| window == needle.as_bytes());
+        if !output.status.success() || !printed {
+            return Err(StartupError::FastExit {
+                label,
+                status: output.status,
+                needle,
+            });
+        }
+        taken.push(elapsed);
     }
 
     Ok(Readings::new(taken))

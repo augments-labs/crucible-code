@@ -36,6 +36,54 @@ if ! cargo clippy --workspace --all-targets --all-features --locked -- -D warnin
     failed=1
 fi
 
+section "package isolation"
+packages=()
+featured=()
+no_default=()
+while IFS=$'\t' read -r package has_features has_defaults; do
+    [[ -n "$package" ]] || continue
+    packages+=("$package")
+    [[ $has_features == yes ]] && featured+=("$package")
+    [[ $has_defaults == yes ]] && no_default+=("$package")
+done < <(
+    cargo metadata --no-deps --format-version 1 --locked |
+        python3 -c '
+import json, sys
+metadata = json.load(sys.stdin)
+for package in sorted(metadata["packages"], key=lambda one: one["name"]):
+    features = package.get("features", {})
+    has_features = "yes" if any(name != "default" for name in features) else "no"
+    has_defaults = "yes" if features.get("default") else "no"
+    print(package["name"], has_features, has_defaults, sep="\t")
+'
+)
+if ((${#packages[@]} == 0)); then
+    printf '    FAIL cargo metadata reported no workspace packages\n'
+    failed=1
+else
+    for package in "${packages[@]}"; do
+        if ! cargo check --quiet --locked -p "$package"; then
+            printf '    FAIL cargo check -p %s did not compile the package in isolation\n' "$package"
+            failed=1
+        fi
+    done
+    # Cargo metadata includes explicit and implicit optional-dependency
+    # features. Only packages whose all-feature graph differs get a second
+    # invocation; only a non-empty default list earns a no-default invocation.
+    for package in "${featured[@]}"; do
+        if ! cargo check --quiet --locked -p "$package" --all-features; then
+            printf '    FAIL %s did not compile with all package features\n' "$package"
+            failed=1
+        fi
+    done
+    for package in "${no_default[@]}"; do
+        if ! cargo check --quiet --locked -p "$package" --no-default-features; then
+            printf '    FAIL %s did not compile without its default features\n' "$package"
+            failed=1
+        fi
+    done
+fi
+
 generated=(schema/crucible-code-schema.json)
 before=()
 for file in "${generated[@]}"; do

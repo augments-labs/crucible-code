@@ -10,6 +10,7 @@
 //! The first thing drawn is the opening banner, so the clock stops when its
 //! first word arrives.
 
+#[allow(dead_code)]
 mod startup;
 
 use std::fmt::Write as _;

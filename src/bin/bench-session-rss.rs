@@ -69,6 +69,10 @@ use rustix::termios::{self, OptionalActions, Winsize};
 /// The budget, in megabytes.
 const LIMIT: f64 = 35.0;
 
+/// How much resident memory may grow across one more full lifecycle after the
+/// retained record has already rolled past its ceiling.
+const RETAINED_LIMIT: f64 = 4.0;
+
 /// Turns in the shipped session being measured.
 #[cfg(target_os = "linux")]
 const TURNS: usize = 20;
@@ -196,6 +200,7 @@ struct Measurement {
     one: f64,
     five: f64,
     twenty: f64,
+    rolled: f64,
     filled: f64,
     crest: f64,
     pictures: f64,
@@ -231,9 +236,13 @@ fn measure() -> Result<Measurement, ProbeError> {
         }
     }
 
+    let mut rolled = Resource::read(running.id())?;
     for turn in 1..=FILL {
         running.send(&format!("fill {turn}: say it again at length\r"))?;
         running.until(&marker(TURNS + turn))?;
+        if turn == FILL - 1 {
+            rolled = Resource::read(running.id())?;
+        }
     }
     let filled = Resource::read(running.id())?;
 
@@ -249,6 +258,7 @@ fn measure() -> Result<Measurement, ProbeError> {
         one: kibibytes(one.rss),
         five: kibibytes(five.rss),
         twenty: kibibytes(twenty.rss),
+        rolled: kibibytes(rolled.rss),
         filled: kibibytes(filled.rss),
         crest: kibibytes(filled.peak),
         pictures,
@@ -847,18 +857,20 @@ fn report(measured: Measurement) -> Result<(), io::Error> {
     let _ = write!(
         line,
         "{:.1} MB {LIMIT:.0} start={:.1} turn1={:.1} turn5={:.1} turn20={:.1} \
-         filled={:.1} crest={:.1} pictures={:.1} pss20={:.1} slope={:.3} \
-         threads={} fds={} processes={}",
+         rolled={:.1} filled={:.1} crest={:.1} pictures={:.1} pss20={:.1} slope={:.3} \
+         retained={:.1} threads={} fds={} processes={}",
         measured.peak,
         measured.start,
         measured.one,
         measured.five,
         measured.twenty,
+        measured.rolled,
         measured.filled,
         measured.crest,
         measured.pictures,
         measured.pss,
         measured.slope,
+        (measured.filled - measured.rolled).max(0.0),
         measured.threads,
         measured.fds,
         measured.processes,
@@ -880,8 +892,13 @@ fn over(measured: Measurement) -> Result<(), io::Error> {
     let _ = writeln!(
         line,
         "    FAIL peak {:.1} MB over twenty turns, {:.1} MB once the record was \
-         full, {:.1} MB carrying pictures at the ceiling (limit {LIMIT:.0} MB)",
-        measured.peak, measured.crest, measured.pictures,
+         full, {:.1} MB carrying pictures at the ceiling (limit {LIMIT:.0} MB); \
+         one more full lifecycle retained {:.1} MB after the record was already rolling \
+         (limit {RETAINED_LIMIT:.0} MB)",
+        measured.peak,
+        measured.crest,
+        measured.pictures,
+        (measured.filled - measured.rolled).max(0.0),
     );
     io::stderr().write_all(line.as_bytes())
 }
@@ -901,17 +918,20 @@ fn main() -> ExitCode {
         }
     };
 
-    // Three readings, and the same limit for each. The first is the budget as
-    // it is written; the second says the record's ceiling is what holds it, by
-    // taking it in a session long enough to have gone over that ceiling; the
-    // third says the attachment ceiling is what holds the bytes, by taking it
-    // in a session every request of which was at that ceiling. A budget with
-    // one number and three sessions under it is what keeps attachments part of
-    // what it bounds rather than a second budget beside it.
+    // Three absolute readings share one limit. The first is the budget as it
+    // is written; the second says the record ceiling holds it after rollover;
+    // the third says the attachment ceiling holds the bytes. The within-process
+    // delta adds a different claim: once rollover is already happening, one
+    // more lifecycle does not retain another transcript-sized allocation.
     if report(measured).is_err() {
         return ExitCode::FAILURE;
     }
-    if measured.peak > LIMIT || measured.crest > LIMIT || measured.pictures > LIMIT {
+    let retained = (measured.filled - measured.rolled).max(0.0);
+    if measured.peak > LIMIT
+        || measured.crest > LIMIT
+        || measured.pictures > LIMIT
+        || retained > RETAINED_LIMIT
+    {
         let _ = over(measured);
         return ExitCode::FAILURE;
     }
