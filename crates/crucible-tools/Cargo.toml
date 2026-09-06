@@ -34,6 +34,10 @@ sha2.workspace = true
 rustix = { workspace = true, features = ["process"] }
 
 [target.'cfg(windows)'.dependencies]
+# Windows sandbox scratch directories need the same protected owner-only DACL
+# as other private local state before the dedicated account is granted access.
+crucible-privacy.workspace = true
+
 # Windows refuses std::fs::rename over an existing file, has no safe job-object
 # API for containing descendants, cannot discover the suspended primary thread
 # that must be resumed after job attachment, and cannot poll anonymous pipes

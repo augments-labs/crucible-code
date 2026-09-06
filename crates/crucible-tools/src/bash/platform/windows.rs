@@ -24,10 +24,11 @@ use windows_sys::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
 };
 use windows_sys::Win32::System::JobObjects::{
-    AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-    JobObjectBasicAccountingInformation, JobObjectExtendedLimitInformation,
-    QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
+    AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_JOB_TIME,
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectBasicAccountingInformation,
+    JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject,
+    TerminateJobObject,
 };
 use windows_sys::Win32::System::Pipes::PeekNamedPipe;
 use windows_sys::Win32::System::Threading::{
@@ -74,7 +75,10 @@ impl std::fmt::Debug for Scope {
 
 impl Scope {
     /// Creates the job before the child so every configuration failure is early.
-    pub(crate) fn new(command: &mut Command) -> io::Result<Self> {
+    pub(crate) fn new(
+        command: &mut Command,
+        resource_limits: crucible_core::SandboxResourceLimits,
+    ) -> io::Result<Self> {
         // SAFETY: null attributes and name request an unnamed job with default
         // security. The returned owned handle is closed by `Drop`.
         let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
@@ -85,6 +89,10 @@ impl Scope {
 
         let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
         limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if let Some(ticks) = job_time_limit(resource_limits.cpu_seconds)? {
+            limits.BasicLimitInformation.PerJobUserTimeLimit = ticks;
+            limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_JOB_TIME;
+        }
         let length = u32::try_from(size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>())
             .map_err(|_| io::Error::other("job limits do not fit the Windows API"))?;
         // SAFETY: `limits` has the layout named by the information class and
@@ -201,6 +209,17 @@ impl Scope {
             Ok(accounting.ActiveProcesses == 0)
         }
     }
+}
+
+fn job_time_limit(seconds: Option<u64>) -> io::Result<Option<i64>> {
+    seconds
+        .map(|seconds| {
+            seconds
+                .checked_mul(10_000_000)
+                .and_then(|ticks| i64::try_from(ticks).ok())
+                .ok_or_else(|| io::Error::other("CPU time limit does not fit a Windows Job"))
+        })
+        .transpose()
 }
 
 impl Terminator {

@@ -320,6 +320,7 @@ impl SandboxSession for MacSession {
                 call_result_key: self.request.call_result_key(),
                 canceller: None,
                 speech: command.speech(),
+                startup_input: None,
             }),
             inspection: self.inspection.clone(),
             audit: self.request.audit().clone(),

@@ -134,9 +134,40 @@ Removal disables the account before changing its firewall rules, then deletes
 the account and record. If cleanup fails, the disabled account and protected
 record remain so the command can be retried safely.
 
-This version contains the explicit maintenance boundary, while the enforcing
-Windows command launcher is still unavailable. Consequently,
-`sandbox.enabled: true` continues to refuse command execution on Windows.
+An enabled command starts through the packaged broker, which logs on that
+dedicated account and then creates a `WRITE_RESTRICTED` token with all ordinary
+privileges disabled except the standard directory-traversal privilege required
+by ordinary Windows programs. Crucible adds account and path-capability grants
+only to declared roots; protected repository and Crucible metadata receive
+write-deny capabilities even beneath a writable workspace. Each command gets a
+private temporary directory through `TEMP` and `TMP`, and Crucible removes it
+with the process. The target starts on a private desktop with exactly standard
+input, output and error inherited, and the outer broker's kill-on-close Job
+Object owns every descendant. The Job also applies the requested aggregate
+processor-time limit. WFP denies outbound connections and socket binding for
+both the broker account and its descendants.
+
+Windows uses `WRITE_RESTRICTED` deliberately. A fully read-restricted token can
+pass filesystem access probes but cannot start ordinary Win32 tools: the system
+loader needs protected `KnownDlls` object-manager resources whose ACL cannot be
+extended by setup, including under SYSTEM. Reads therefore follow the dedicated
+low-privilege account's normal Windows access. Files in another user's private
+profile remain protected by their own ACL, while system and shared files that
+grant ordinary users access retain that access. This also means an existing ACL
+for the sandbox account or `Everyone` can permit writes outside the roots in the
+current request, including a root granted to an earlier command. Crucible never
+adds such a grant for an undeclared root, and its protected-path deny
+capabilities still win for the current request. Requests containing explicit
+unreadable roots or unreadable wildcard patterns are refused before the broker
+or workspace is touched. Linux and macOS retain their narrower filesystem
+views.
+
+ACL projection adds deterministic capability and account entries to the roots
+a command uses. They can remain after a command or uninstall because Windows
+provides no namespace-like per-process filesystem view to remove. A later
+command using the same sandbox account can therefore retain the access those
+account entries grant. Uninstalling and reinstalling creates a new account SID,
+so entries for the deleted account become inert.
 
 The exact endpoint allowlist is deliberately unsupported in this release. It
 requires a policy-bound proxy or equivalent mechanism with redirect, DNS,
@@ -149,12 +180,10 @@ rejected instead of being translated into broad egress.
 | --- | --- | --- |
 | Linux | Verified system Bubblewrap | Runs only when the backend satisfies the requested policy |
 | macOS | Built-in Seatbelt through `/usr/bin/sandbox-exec` | Runs only when the system launcher and packaged broker pass provenance and functional probes |
-| Windows | Not implemented | Refuses command execution |
+| Windows | Dedicated account, ACL capabilities, WFP, restricted token, private desktop and Job Object | Runs only after explicit Administrator setup passes account and network-policy verification |
 
-A normal unconfined command succeeding on Windows is not evidence of sandbox
-support. Its native enforcing backend is required follow-up work; this table
-describes the current implementation. An unavailable backend never
-turns `enabled: true` into permission to run outside confinement.
+An unavailable backend never turns `enabled: true` into permission to run
+outside confinement.
 
 SDK callers constructing `SandboxPolicy::standard` or `Bash::new` still receive
 a required policy. The application applies its resolved configuration explicitly;
@@ -169,40 +198,41 @@ that feature. The SDK policies `degraded` and `off` relax only the documented
 baseline kernel isolation; they cannot turn an explicit limit, manifest, exact network rule,
 persistence request or snapshot request into best-effort behavior.
 
-| Capability | Linux Bubblewrap | macOS Seatbelt | Compatibility |
-| --- | --- | --- | --- |
-| `filesystem` | enforced | enforced | unsupported |
-| `network_deny` | enforced | enforced | unsupported |
-| `network_allowlist` | unsupported | unsupported | unsupported |
-| `descriptor_isolation` | enforced | enforced | unsupported |
-| `process_isolation` | enforced | enforced | unsupported |
-| `kernel_surface` | enforced | enforced | unsupported |
-| `privilege_isolation` | enforced | enforced | unsupported |
-| `materialization` | enforced | unsupported | unsupported |
-| `cpu_limit` | enforced | unsupported | unsupported |
-| `memory_limit` | enforced | unsupported | unsupported |
-| `disk_limit` | unsupported | unsupported | unsupported |
-| `process_limit` | enforced on Linux 5.14 or newer | unsupported | unsupported |
-| `open_file_limit` | enforced | enforced | unsupported |
-| `command_time_limit` | enforced | enforced | enforced |
-| `session_time_limit` | unsupported | unsupported | unsupported |
-| `outbound_byte_limit` | unsupported | unsupported | unsupported |
-| `output_limit` | enforced | enforced | enforced |
-| `concurrency_limit` | enforced | enforced | enforced |
-| `cost_limit` | unsupported | unsupported | unsupported |
-| `pty` | unsupported | unsupported | unsupported |
-| `file_operations` | unsupported | unsupported | unsupported |
-| `persistence` | unsupported | unsupported | unsupported |
-| `snapshot` | unsupported | unsupported | unsupported |
-| `resume` | unsupported | unsupported | unsupported |
-| `audit` | enforced | enforced | enforced |
-| `usage` | observed | observed | observed |
+| Capability | Linux Bubblewrap | macOS Seatbelt | Windows native | Compatibility |
+| --- | --- | --- | --- | --- |
+| `filesystem` | enforced | enforced | enforced | unsupported |
+| `network_deny` | enforced | enforced | enforced | unsupported |
+| `network_allowlist` | unsupported | unsupported | unsupported | unsupported |
+| `descriptor_isolation` | enforced | enforced | enforced | unsupported |
+| `process_isolation` | enforced | enforced | enforced | unsupported |
+| `kernel_surface` | enforced | enforced | enforced | unsupported |
+| `privilege_isolation` | enforced | enforced | enforced | unsupported |
+| `materialization` | enforced | unsupported | unsupported | unsupported |
+| `cpu_limit` | enforced | unsupported | enforced | unsupported |
+| `memory_limit` | enforced | unsupported | unsupported | unsupported |
+| `disk_limit` | unsupported | unsupported | unsupported | unsupported |
+| `process_limit` | enforced on Linux 5.14 or newer | unsupported | unsupported | unsupported |
+| `open_file_limit` | enforced | enforced | unsupported | unsupported |
+| `command_time_limit` | enforced | enforced | enforced | enforced |
+| `session_time_limit` | unsupported | unsupported | unsupported | unsupported |
+| `outbound_byte_limit` | unsupported | unsupported | unsupported | unsupported |
+| `output_limit` | enforced | enforced | enforced | enforced |
+| `concurrency_limit` | enforced | enforced | enforced | enforced |
+| `cost_limit` | unsupported | unsupported | unsupported | unsupported |
+| `pty` | unsupported | unsupported | unsupported | unsupported |
+| `file_operations` | unsupported | unsupported | unsupported | unsupported |
+| `persistence` | unsupported | unsupported | unsupported | unsupported |
+| `snapshot` | unsupported | unsupported | unsupported | unsupported |
+| `resume` | unsupported | unsupported | unsupported | unsupported |
+| `audit` | enforced | enforced | enforced | enforced |
+| `usage` | observed | observed | observed | observed |
 
 A capability being enforced says what a backend *can* apply, not what the
 default policy asks for. Under `required`, Linux's standard policy states
-`cpu_limit` at one hour per process and `open_file_limit` at 4096; macOS states
-only the open-file ceiling because its catchable CPU signal is not a hard
-boundary. `bash` adds
+`cpu_limit` at one hour per process and `open_file_limit` at 4096. Windows
+states one hour of aggregate Job processor time and no handle-count limit.
+macOS states only the open-file ceiling because its catchable CPU signal is not
+a hard boundary. `bash` adds
 `command_time_limit`, `output_limit` and `concurrency_limit` for the one command
 it is running. `memory_limit` is enforced but not asked for: the knob is the
 address space a process may map rather than the memory it uses, and runtimes
@@ -264,13 +294,13 @@ executable, a kernel that will not give it namespaces — leaves the claim
 lies.
 
 Where there is no backend to probe at all, `audit` returns the probe's error
-instead of a table. Windows has no enforcing backend, while a macOS host may
-fail its Seatbelt or packaged-broker probe and a Linux host may have no usable
-Bubblewrap, so a suite that reported those as faults
-would be accusing an absent backend of overclaiming. Whether that error is a
-skip or a failure belongs to the caller: Crucible's own jobs treat it as a skip
-on a developer machine and a failure on the one job that installs a backend and
-therefore requires it.
+instead of a table. A Windows host without its administrator setup, a macOS host
+whose Seatbelt or packaged-broker probe fails, or a Linux host without usable
+Bubblewrap has no enforcing backend to audit, so a suite that reported the
+absence as a fault would be accusing a backend that never claimed readiness.
+Whether that error is a skip or a failure belongs to the caller: Crucible's own
+native CI jobs require the applicable backend, while an unprovisioned developer
+machine may treat it as a skip.
 
 Some features cannot be asked for in a policy at all. A terminal, direct file
 operations and resuming somebody else's session are asked of a session, and a
@@ -302,10 +332,11 @@ descendant policy may preserve or strengthen that choice but never weaken it.
 When confinement is off, inspection and audit records say `confined: false`,
 name the disabled boundary and retain the exact compatibility capability snapshot.
 
-There is no enforcing backend on Windows or FreeBSD yet. Commands run through
-compatibility by default and are reported as unconfined. Enabling the sandbox
-on those systems refuses a command before it starts; it does not fall back
-silently. macOS selects Seatbelt when confinement is enabled.
+There is no enforcing backend on FreeBSD. Commands run through compatibility by
+default and are reported as unconfined. Enabling the sandbox there refuses a
+command before it starts; it does not fall back silently. Linux selects
+Bubblewrap, macOS selects Seatbelt, and Windows selects its native backend after
+the administrator setup passes verification.
 
 SDK callers may separately construct a `SandboxMode::Degraded` policy, which
 tries the enforcing native backend first and permits a reported compatibility
@@ -325,12 +356,12 @@ escapes the owned process group.
 
 The command environment is an explicit, bounded map rather than a copy of the
 host environment. Linux supplies only a private `HOME` and `TMPDIR`; macOS
-supplies a private `TMPDIR`; both add only the literal variables selected by
-the host. SSH/GPG agent sockets, inherited
-descriptors, provider keys, cloud configuration and arbitrary host variables
-do not cross the boundary automatically. Values reach the command through the
-backend's cleared process environment, never through its argument list, which
-every local user can read under `/proc` while a command runs.
+supplies a private `TMPDIR`; Windows supplies only the variables selected by the
+host and replaces `TEMP` and `TMP` with one private command directory. SSH/GPG
+agent sockets, inherited descriptors or handles, provider keys, cloud
+configuration and arbitrary host variables do not cross the boundary
+automatically. Values reach the command through the backend's cleared process
+environment, never through its argument list.
 
 A secret projection carries a bounded opaque credential handle and user/account
 provenance alongside the host-resolved value. Handles and values are redacted

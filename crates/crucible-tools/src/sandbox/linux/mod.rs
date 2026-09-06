@@ -247,6 +247,7 @@ impl SandboxSession for LinuxSession {
                 call_result_key: self.request.call_result_key(),
                 canceller: Some(canceller),
                 speech: command.speech(),
+                startup_input: None,
             },
         );
         status_channel.close_writer();

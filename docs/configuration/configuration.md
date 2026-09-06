@@ -276,9 +276,10 @@ bounds and lifecycle accounting still apply.
 enforced before a command starts. It never silently falls back to an ordinary
 subprocess. Linux uses Bubblewrap 0.11.0 or newer with the required features.
 macOS uses the built-in Seatbelt framework through the fixed system
-`/usr/bin/sandbox-exec` launcher. Windows does not yet have an enforcing
-backend; enabling confinement there refuses command execution. See the
-[current platform status](../security/sandboxing.md#platform-support).
+`/usr/bin/sandbox-exec` launcher. Native Windows uses a dedicated account,
+path-capability ACLs, WFP network denial, a restricted token, private desktop,
+exact inherited handles and a Job Object after one explicit Administrator
+setup. See the [setup and platform details](../security/sandboxing.md#windows-setup-maintenance).
 
 `sandbox.enabled` is the only configuration switch. The former `sandbox.mode`
 key is rejected; replace `required` with `enabled: true`, and replace `off`
@@ -292,9 +293,10 @@ agent, or descendant cannot weaken confinement chosen above it.
 
 Under `required`, Linux applies an hour of processor time per process and a
 4096-open-file ceiling. macOS applies the open-file ceiling; Darwin's catchable
-CPU signal is not advertised as a hard limit. These ceilings are not a budget
-you are meant to work within. They are not configurable, and a command may
-narrow a supported ceiling but not drop it.
+CPU signal is not advertised as a hard limit. Windows applies an hour of
+aggregate Job processor time and has no handle-count ceiling. These ceilings
+are not a budget you are meant to work within. They are not configurable, and
+a command may narrow a supported ceiling but not drop it.
 
 With confinement disabled, commands retain guardrails, deadlines, output bounds,
 usage and audit records, but their inspection report says `confined: false`.
@@ -500,6 +502,9 @@ gets a short list of what a program needs in order to run at all, and whatever
   `windir`, `TEMP`, `TMP`, `TERM`, `HOME`, `USERPROFILE`, `HOMEDRIVE`,
   `HOMEPATH`, `APPDATA`, `LOCALAPPDATA`, `ProgramFiles`, `ProgramFiles(x86)`,
   `ProgramData`.
+
+When native Windows confinement is enabled, the backend replaces `TEMP` and
+`TMP` with a private directory that it owns and removes with the command.
 
 Everything else stops here, and your provider key is why. `env` and `printenv`
 are ordinary things for a model to run, and what a command prints comes back as

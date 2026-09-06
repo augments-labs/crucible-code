@@ -18,6 +18,14 @@ pub const WINDOWS_UNINSTALL_MODE: &str = "--windows-sandbox-uninstall";
 /// Read-only verification mode for the current user's Windows setup.
 pub const WINDOWS_PROBE_MODE: &str = "--windows-sandbox-probe";
 
+/// Internal native-Windows launch mode. The complete command plan arrives on
+/// standard input, never through a caller-controlled command line.
+pub const WINDOWS_LAUNCH_MODE: &str = "--windows-sandbox-launch";
+
+/// Internal account-side native-Windows launch mode. Only the host broker
+/// starts this hop after setup and ACL verification.
+pub const WINDOWS_CHILD_MODE: &str = "--windows-sandbox-child";
+
 /// Runs one internal native-Windows broker maintenance mode.
 ///
 /// # Errors
@@ -51,6 +59,43 @@ pub fn setup_windows_sandbox(owner: Option<&std::ffi::OsStr>) -> io::Result<Stri
 #[cfg(target_os = "windows")]
 pub fn uninstall_windows_sandbox(owner: Option<&std::ffi::OsStr>) -> io::Result<String> {
     windows::uninstall(owner)
+}
+
+/// Verifies the current user's native-Windows sandbox account and network
+/// policy without changing machine state.
+///
+/// # Errors
+///
+/// Setup is absent, incomplete, corrupt, or no longer matches the operating
+/// system account and WFP objects it recorded.
+#[cfg(target_os = "windows")]
+pub fn probe_windows_sandbox() -> io::Result<String> {
+    windows::probe()
+}
+
+/// Runs the owner-side Windows launch hop from one bounded standard-input
+/// request and returns the final workload exit code.
+///
+/// # Errors
+///
+/// The request, installed setup, filesystem authority, logon, or child wait
+/// fails before a final workload status is available.
+#[cfg(target_os = "windows")]
+pub fn launch_windows_sandbox(source: &mut impl Read) -> io::Result<u32> {
+    let request = decode_windows_launch(source)?;
+    windows::launch_host(&request)
+}
+
+/// Runs the dedicated-account Windows launch hop.
+///
+/// # Errors
+///
+/// The request cannot be revalidated or the restricted target cannot be
+/// created and reaped.
+#[cfg(target_os = "windows")]
+pub fn launch_windows_sandbox_child(source: &mut impl Read) -> io::Result<u32> {
+    let request = decode_windows_launch(source)?;
+    windows::launch_child(&request)
 }
 
 /// Maximum UTF-8 bytes in one generated Seatbelt profile.
@@ -97,7 +142,7 @@ pub const SCAN_FRAME: [u8; 8] = *b"CRSCAN01";
 pub const SCAN_END_FRAME: [u8; 8] = *b"CREND001";
 
 /// Opens one length-prefixed native Windows launch request.
-pub const WINDOWS_LAUNCH_FRAME: [u8; 8] = *b"CRWIN001";
+pub const WINDOWS_LAUNCH_FRAME: [u8; 8] = *b"CRWIN002";
 
 /// Maximum encoded Windows launch request, excluding its fixed frame header.
 ///
@@ -130,9 +175,9 @@ pub struct WindowsLaunchRequest {
     program: Vec<u16>,
     arguments: Vec<Vec<u16>>,
     environment: Vec<(Vec<u16>, Vec<u16>)>,
+    readable_roots: Vec<Vec<u16>>,
     writable_roots: Vec<Vec<u16>>,
     protected_roots: Vec<Vec<u16>>,
-    unreadable_roots: Vec<Vec<u16>>,
 }
 
 impl WindowsLaunchRequest {
@@ -150,18 +195,18 @@ impl WindowsLaunchRequest {
         program: Vec<u16>,
         arguments: Vec<Vec<u16>>,
         environment: Vec<(Vec<u16>, Vec<u16>)>,
+        readable_roots: Vec<Vec<u16>>,
         writable_roots: Vec<Vec<u16>>,
         protected_roots: Vec<Vec<u16>>,
-        unreadable_roots: Vec<Vec<u16>>,
     ) -> io::Result<Self> {
         let request = Self {
             working_directory,
             program,
             arguments,
             environment,
+            readable_roots,
             writable_roots,
             protected_roots,
-            unreadable_roots,
         };
         request.validate()?;
         Ok(request)
@@ -171,9 +216,9 @@ impl WindowsLaunchRequest {
         if self.arguments.len() > MAX_WINDOWS_ARGUMENTS
             || self.environment.len() > MAX_WINDOWS_ENVIRONMENT
             || [
+                self.readable_roots.len(),
                 self.writable_roots.len(),
                 self.protected_roots.len(),
-                self.unreadable_roots.len(),
             ]
             .into_iter()
             .any(|count| count > MAX_WINDOWS_ROOTS)
@@ -184,10 +229,10 @@ impl WindowsLaunchRequest {
             || self.program.is_empty()
             || self.environment.iter().any(|(name, _)| name.is_empty())
             || self
-                .writable_roots
+                .readable_roots
                 .iter()
+                .chain(&self.writable_roots)
                 .chain(&self.protected_roots)
-                .chain(&self.unreadable_roots)
                 .any(Vec::is_empty)
             || self.all_fields().any(invalid_wide_field)
         {
@@ -205,9 +250,9 @@ impl WindowsLaunchRequest {
                     .iter()
                     .flat_map(|(name, value)| [name.as_slice(), value.as_slice()]),
             )
+            .chain(self.readable_roots.iter().map(Vec::as_slice))
             .chain(self.writable_roots.iter().map(Vec::as_slice))
             .chain(self.protected_roots.iter().map(Vec::as_slice))
-            .chain(self.unreadable_roots.iter().map(Vec::as_slice))
     }
 
     fn encoded_body_len(&self) -> io::Result<usize> {
@@ -252,6 +297,12 @@ impl WindowsLaunchRequest {
         &self.environment
     }
 
+    /// Requested roots to receive read and execute access for this launch.
+    #[must_use]
+    pub fn readable_roots(&self) -> &[Vec<u16>] {
+        &self.readable_roots
+    }
+
     /// Requested roots to receive read and write access for this launch.
     #[must_use]
     pub fn writable_roots(&self) -> &[Vec<u16>] {
@@ -262,12 +313,6 @@ impl WindowsLaunchRequest {
     #[must_use]
     pub fn protected_roots(&self) -> &[Vec<u16>] {
         &self.protected_roots
-    }
-
-    /// Requested roots to deny both read and write access.
-    #[must_use]
-    pub fn unreadable_roots(&self) -> &[Vec<u16>] {
-        &self.unreadable_roots
     }
 }
 
@@ -291,9 +336,9 @@ pub fn encode_windows_launch(
         write_field(&mut body, name)?;
         write_field(&mut body, value)?;
     }
+    write_fields(&mut body, request.readable_roots())?;
     write_fields(&mut body, request.writable_roots())?;
     write_fields(&mut body, request.protected_roots())?;
-    write_fields(&mut body, request.unreadable_roots())?;
     if body.len() != body_length {
         return Err(invalid_windows_request());
     }
@@ -527,9 +572,9 @@ mod tests {
                 vec![0xd800],
             ],
             vec![(wide("PATH"), wide(r"C:\Windows\System32"))],
+            vec![wide(r"C:\Windows")],
             vec![wide(r"C:\work\crucible")],
             vec![wide(r"C:\work\crucible\.git")],
-            vec![wide(r"C:\Users\person\.ssh")],
         )
         .expect("request")
     }

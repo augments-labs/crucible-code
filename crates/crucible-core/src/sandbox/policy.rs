@@ -624,6 +624,7 @@ const CPU_SECONDS: u64 = 60 * 60;
 /// Four times the soft limit a Linux shell usually starts with, so nothing that
 /// works outside the sandbox stops working inside it, and far below the point
 /// where a descriptor leak reaches the rest of the machine.
+#[cfg(not(target_os = "windows"))]
 const OPEN_FILES: u64 = 4096;
 
 /// Optional resource ceilings for one command/session.
@@ -694,7 +695,13 @@ impl SandboxResourceLimits {
             // must not state or advertise this as enforced.
             #[cfg(target_os = "macos")]
             cpu_seconds: None,
+            // Windows Job Objects have no per-process handle-count ceiling.
+            // Claiming the Unix descriptor limit there would make the native
+            // backend either lie or reject every standard policy.
+            #[cfg(not(target_os = "windows"))]
             open_files: Some(OPEN_FILES),
+            #[cfg(target_os = "windows")]
+            open_files: None,
             memory_bytes: None,
             disk_bytes: None,
             processes: None,

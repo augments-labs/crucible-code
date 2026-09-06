@@ -177,7 +177,11 @@ impl SandboxCapability {
 /// Independently negotiated sandbox features.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SandboxFeature {
-    /// Read/write filesystem view and protected carve-outs.
+    /// Backend-enforced filesystem writes and protected carve-outs.
+    ///
+    /// Backends report their read-visibility boundary separately in inspection
+    /// and platform documentation; native Windows retains the dedicated
+    /// account's ordinary read access so the Win32 loader remains usable.
     Filesystem,
     /// A network policy that permits no egress.
     NetworkDeny,

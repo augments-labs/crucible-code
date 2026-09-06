@@ -335,6 +335,7 @@ runner session
 session core
 session privacy
 tools core
+tools privacy
 tools sandbox-broker'
 while IFS= read -r edge; do
     [[ -z "$edge" ]] && continue

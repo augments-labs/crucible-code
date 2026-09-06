@@ -25,8 +25,11 @@ Every Linux job that runs the Rust gate first runs
 `.github/actions/enforcing-sandbox` and sets
 `CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX`, so the enforcing sandbox tests are
 exercised there rather than skipped. The Intel and Apple silicon macOS jobs set
-the same requirement and exercise the built-in Seatbelt backend. The release
-gate and `rust-ci.yml` share the Linux setup action so they cannot drift apart.
+the same requirement and exercise the built-in Seatbelt backend. The x86_64 and
+ARM64 Windows jobs provision their versioned dedicated sandbox account and WFP
+policy, require the native backend for the full test run, and remove that
+machine state in an always-run cleanup step. The release gate and `rust-ci.yml`
+share the Linux setup action so they cannot drift apart.
 
 Actions are pinned to full commit SHAs. A trailing comment records the release
 name for maintainers; the SHA is what executes.

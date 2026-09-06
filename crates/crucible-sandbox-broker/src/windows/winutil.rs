@@ -45,6 +45,11 @@ impl OwnedHandle {
     pub(super) fn get(&self) -> HANDLE {
         self.0
     }
+
+    pub(super) fn into_raw(self) -> HANDLE {
+        let owned = std::mem::ManuallyDrop::new(self);
+        owned.0
+    }
 }
 
 impl Drop for OwnedHandle {
@@ -240,7 +245,7 @@ pub(super) fn account_sid(account: &OsStr) -> io::Result<Vec<u8>> {
     Ok(sid)
 }
 
-fn copy_sid(sid: PSID) -> io::Result<Vec<u8>> {
+pub(super) fn copy_sid(sid: PSID) -> io::Result<Vec<u8>> {
     // SAFETY: the pointer comes from a live TokenUser buffer at the caller.
     if sid.is_null() || unsafe { IsValidSid(sid) } == 0 {
         return Err(io::Error::new(

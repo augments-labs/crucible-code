@@ -466,6 +466,7 @@ name = "crucible-tools"
 version = "0.37.0"
 dependencies = [
  "crucible-core",
+ "crucible-privacy",
  "crucible-sandbox-broker",
  "globset",
  "grep-regex",
