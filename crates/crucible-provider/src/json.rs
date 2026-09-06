@@ -214,6 +214,11 @@ impl Array<'_> {
         self.item(|json| json.object(fill));
     }
 
+    /// One parsed native item without a second history-sized allocation.
+    pub(crate) fn value(&mut self, value: &Value) {
+        self.item(|json| json.value(value));
+    }
+
     /// One string, escaped the way every other string here is.
     pub(crate) fn text(&mut self, value: &str) {
         self.item(|json| json.text(value));

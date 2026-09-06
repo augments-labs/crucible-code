@@ -13,10 +13,13 @@
 //! prefix on the text because there is no field for it, and how hard to think
 //! is nested under `reasoning` rather than named at the top of the body.
 
+mod replay;
+
 use crucible_core::{
-    Attached, Content, Message, Modality, PromptCacheBoundary, PromptCacheEncoding,
-    PromptCacheIneligibleReason, PromptCacheMechanism, PromptCacheRetentionClass, Request,
-    StopReason, ToolCall, ToolResult, ToolSchema,
+    Attached, Content, ContinuationScope, Message, Modality, PromptCacheBoundary,
+    PromptCacheEncoding, PromptCacheIneligibleReason, PromptCacheMechanism,
+    PromptCacheRetentionClass, ProviderError, Request, StopReason, ToolCall, ToolResult,
+    ToolSchema,
 };
 #[cfg(test)]
 use serde_json::Value;
@@ -25,9 +28,14 @@ use super::Serving;
 use crate::json::{Array, Json, Object, described};
 
 /// The whole request body, as `serving` accepts it.
-pub(super) fn serialize(request: &Request<'_>, serving: Serving) -> String {
+pub(super) fn serialize(
+    request: &Request<'_>,
+    serving: Serving,
+    scope: Option<ContinuationScope>,
+) -> Result<String, ProviderError> {
     let explicit_message = explicit_message(request);
     let mut json = Json::new();
+    let mut outcome = Ok(());
     json.object(|body| {
         body.text("model", request.model);
         body.boolean("stream", true);
@@ -105,11 +113,20 @@ pub(super) fn serialize(request: &Request<'_>, serving: Serving) -> String {
         }
 
         body.array("input", |input| {
-            write_input(
-                input,
-                request,
-                explicit_message.filter(|_| serving == Serving::Api),
-            );
+            if let Some(scope) = scope {
+                outcome = replay::write(
+                    input,
+                    request,
+                    scope,
+                    explicit_message.filter(|_| serving == Serving::Api),
+                );
+            } else {
+                write_input(
+                    input,
+                    request,
+                    explicit_message.filter(|_| serving == Serving::Api),
+                );
+            }
         });
 
         // Absent rather than empty: an empty array is refused rather than read
@@ -122,7 +139,7 @@ pub(super) fn serialize(request: &Request<'_>, serving: Serving) -> String {
             });
         }
     });
-    json.finish()
+    outcome.map(|()| json.finish())
 }
 
 /// The cache metadata [`serialize`] adds for this exact request.
@@ -175,7 +192,7 @@ fn build(request: &Request<'_>) -> Value {
 /// The body one of the two services receives.
 #[cfg(test)]
 fn served(request: &Request<'_>, serving: Serving) -> Value {
-    serde_json::from_str(&serialize(request, serving)).expect("request body is JSON")
+    serde_json::from_str(&serialize(request, serving, None).unwrap()).expect("request body is JSON")
 }
 
 /// The transcript, as the flat list of items this endpoint reads.
@@ -341,12 +358,31 @@ fn explicit_message(request: &Request<'_>) -> Option<usize> {
         return None;
     }
 
-    let point = cache.plan.boundaries().iter().rev().find(|point| {
-        matches!(
-            point.kind(),
-            PromptCacheBoundary::AfterMessage | PromptCacheBoundary::AfterContent
-        ) && capability.boundaries().contains(&point.kind())
-    })?;
+    let point = cache
+        .plan
+        .boundaries()
+        .iter()
+        .rev()
+        .filter(|point| {
+            // Retained native Responses items replay unchanged. Select an earlier
+            // supported input_text boundary rather than adding fields to encrypted
+            // reasoning or output-item content whose marker support is unreviewed.
+            request.model != super::ASTRA
+                || point
+                    .message()
+                    .and_then(|index| usize::try_from(index).ok())
+                    .and_then(|index| request.transcript.messages().get(index))
+                    .is_some_and(|message| {
+                        matches!(message, Message::User { .. } | Message::Context(_))
+                            && explicitly_markable(message)
+                    })
+        })
+        .find(|point| {
+            matches!(
+                point.kind(),
+                PromptCacheBoundary::AfterMessage | PromptCacheBoundary::AfterContent
+            ) && capability.boundaries().contains(&point.kind())
+        })?;
     let message = usize::try_from(point.message()?).ok()?;
     request
         .transcript

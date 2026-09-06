@@ -25,6 +25,8 @@ use crate::stream::Wire;
 /// The Responses API, being narrated.
 #[derive(Debug, Default)]
 pub(super) struct Responses {
+    /// Exact Astra replay captures complete ordered items, not legacy fragments.
+    astra: Option<super::continuation::Output>,
     /// The call being assembled right now.
     open: Open,
     /// Whether this response has asked for a tool at any point, which is what
@@ -35,11 +37,19 @@ pub(super) struct Responses {
 }
 
 impl Responses {
-    pub(super) fn for_model(model: &str) -> Self {
-        Self {
-            cache_write_reporting: super::cache_writes(model),
+    pub(super) fn for_request(
+        request: &crucible_core::Request<'_>,
+        scope: crucible_core::ContinuationScope,
+    ) -> Result<Self, ProviderError> {
+        Ok(Self {
+            astra: if request.model == super::ASTRA {
+                Some(super::continuation::Output::new(request, scope)?)
+            } else {
+                None
+            },
+            cache_write_reporting: super::cache_writes(request.model),
             ..Self::default()
-        }
+        })
     }
 
     #[cfg(test)]
@@ -55,6 +65,9 @@ impl Wire for Responses {
     const PROVIDER: &'static str = NAME;
 
     fn deltas(&mut self, event: &SseEvent) -> Result<Vec<Delta>, ProviderError> {
+        if let Some(astra) = &mut self.astra {
+            return astra.deltas(event);
+        }
         deltas(event, self)
     }
 }
@@ -263,7 +276,10 @@ fn ended(
 }
 
 /// Normalizes the inclusive Responses usage object once at the wire boundary.
-fn usage(payload: &Value, cache_write_reporting: bool) -> Result<Option<Delta>, ProviderError> {
+pub(super) fn usage(
+    payload: &Value,
+    cache_write_reporting: bool,
+) -> Result<Option<Delta>, ProviderError> {
     let Some(usage) = payload
         .get("response")
         .and_then(|response| response.get("usage"))
@@ -345,7 +361,7 @@ fn stop(called: bool) -> StopReason {
 /// Neither of these is a finish. An answer cut off by a ceiling or withheld by a
 /// filter reads as a complete answer unless the turn says otherwise, and that is
 /// the one failure the user cannot see for themselves.
-fn cut(payload: &Value) -> StopReason {
+pub(super) fn cut(payload: &Value) -> StopReason {
     let reason = payload
         .get("response")
         .and_then(|response| response.get("incomplete_details"))

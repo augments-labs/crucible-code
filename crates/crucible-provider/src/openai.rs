@@ -37,6 +37,9 @@
 //! crate learns which endpoint answered.
 
 mod body;
+mod continuation;
+#[cfg(test)]
+mod continuation_tests;
 #[cfg(test)]
 mod model_tests;
 mod stream;
@@ -473,7 +476,13 @@ impl Provider for OpenAi {
 
         let outgoing = self.headers()?;
         let redactions = outgoing.redactions();
-        let body = body::serialize(&request, Serving::of(&self.endpoint));
+        let scope =
+            crucible_core::ContinuationScope::new(self.credential_scope, self.endpoint.as_str());
+        let body = body::serialize(
+            &request,
+            Serving::of(&self.endpoint),
+            (request.model == ASTRA).then_some(scope),
+        )?;
 
         let response = self
             .transport
@@ -481,20 +490,19 @@ impl Provider for OpenAi {
             .map_err(|problem| problem.for_provider(NAME).redacted(&redactions))?;
 
         if response.status != 200 {
-            return Err(refused(
-                NAME,
-                response.status,
-                response.body,
-                &redactions,
-                cancel,
-            ));
+            let error = refused(NAME, response.status, response.body, &redactions, cancel);
+            return Err(if request.model == ASTRA {
+                continuation::refusal(error)
+            } else {
+                error
+            });
         }
 
         Ok(Box::new(Stream::with_wire(
             response.body,
             cancel.clone(),
             redactions,
-            wire::Responses::for_model(request.model),
+            wire::Responses::for_request(&request, scope)?,
         )))
     }
 }

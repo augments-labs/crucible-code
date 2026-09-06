@@ -10,6 +10,10 @@ use crucible_core::{
 use serde_json::json;
 
 use super::*;
+
+fn serialize(request: &Request<'_>, serving: Serving) -> String {
+    super::serialize(request, serving, None).unwrap()
+}
 use crate::fake::{cached, failed, found, observed, picture};
 
 /// What a pointer finds when there is nothing there.
