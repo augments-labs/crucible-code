@@ -421,6 +421,7 @@ pub(super) fn capabilities() -> SandboxCapabilities {
         .with(SandboxFeature::ProcessLimit, process_limit())
         .with(SandboxFeature::Filesystem, enforced)
         .with(SandboxFeature::NetworkDeny, enforced)
+        .with(SandboxFeature::NetworkAllowlist, enforced)
         .with(SandboxFeature::DescriptorIsolation, enforced)
         .with(SandboxFeature::ProcessIsolation, enforced)
         .with(SandboxFeature::KernelSurface, enforced)
@@ -492,7 +493,7 @@ mod tests {
         let capabilities = capabilities();
         assert_eq!(
             capabilities.claim(SandboxFeature::NetworkAllowlist),
-            SandboxCapability::Unsupported
+            SandboxCapability::Enforced
         );
         assert_eq!(
             capabilities.claim(SandboxFeature::MemoryLimit),

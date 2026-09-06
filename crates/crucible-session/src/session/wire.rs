@@ -213,12 +213,7 @@ fn sandbox_plan(plan: &crucible_core::SandboxPlanInspection) -> Value {
             "provenance": root.provenance().as_str(),
         })).collect::<Vec<_>>(),
         "working_directory": hex(&plan.working_directory()),
-        "network": {
-            "state": network.as_str(),
-            "endpoints": network.endpoints(),
-            "dns": network.dns(),
-            "forwarding": network.forwarding(),
-        },
+        "network": crate::checkpoint::encode_network(network),
         "limits": {
             "cpu_seconds": limits.cpu_seconds,
             "memory_bytes": limits.memory_bytes,
@@ -1265,10 +1260,10 @@ mod tests {
     fn sandbox_journal_keeps_typed_identity_and_plan_without_raw_reach() {
         use crucible_core::{
             SandboxAudit, SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance,
-            SandboxCapabilities, SandboxCapability, SandboxCleanup, SandboxFactKind,
-            SandboxFeature, SandboxFilesystemAccess, SandboxFilesystemProvenance,
-            SandboxFilesystemRule, SandboxId, SandboxInspection, SandboxManifest,
-            SandboxNetworkEndpoint, SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxPolicy,
+            SandboxCapabilities, SandboxCapability, SandboxCleanup, SandboxDomainPattern,
+            SandboxDomainPolicy, SandboxFactKind, SandboxFeature, SandboxFilesystemAccess,
+            SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxId, SandboxInspection,
+            SandboxManifest, SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxPolicy,
             SandboxResourceLimits,
         };
 
@@ -1284,17 +1279,16 @@ mod tests {
             )
             .unwrap()],
             "/home/alice/private-workspace",
-            SandboxNetworkPolicy::exact(
-                [SandboxNetworkEndpoint::new(
-                    "secret.internal",
-                    443,
+            SandboxNetworkPolicy::Domains(
+                SandboxDomainPolicy::new(
+                    [SandboxDomainPattern::new("secret.internal").unwrap()],
+                    [],
+                    false,
+                    [],
                     SandboxNetworkProvenance::User,
                 )
-                .unwrap()],
-                true,
-                false,
-            )
-            .unwrap(),
+                .unwrap(),
+            ),
             SandboxResourceLimits::default(),
         )
         .unwrap();
@@ -1355,7 +1349,9 @@ mod tests {
             );
             assert!(plan.get("mode").is_none(), "{written}");
         }
-        assert!(written.contains(r#""network":{"dns":true,"endpoints":1"#));
+        assert!(written.contains(
+            r#""network":{"allowed":1,"denied":0,"local_binding":false,"state":"domains","unix_sockets":0}"#
+        ));
         assert!(written.contains(r#""feature":"network_allowlist""#));
         assert!(written.contains(r#""requested_policy_digest""#));
         assert!(written.contains(r#""requested_plan""#));

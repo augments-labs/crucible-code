@@ -14,7 +14,7 @@ use super::*;
 
 /// The built-in registry, as a session starts with it.
 fn commands() -> command::Commands {
-    command::builtins()
+    command::builtins(&std::sync::Arc::default())
         .expect("the built-in commands register")
         .snapshot()
 }

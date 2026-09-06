@@ -466,3 +466,49 @@ fn an_oversized_encoded_checkpoint_is_refused_before_a_file_is_replaced() {
 
     fs::remove_dir_all(directory).unwrap();
 }
+
+#[cfg(unix)]
+#[test]
+fn domain_network_counts_round_trip_and_oversized_records_are_refused() {
+    use crucible_core::SandboxNetworkInspection;
+    let base = sandbox_checkpoint();
+    let network = SandboxNetworkInspection::Domains {
+        allowed: 3,
+        denied: 2,
+        local_binding: true,
+        unix_sockets: 1,
+    };
+    let saved = SandboxCheckpoint::restore(
+        base.id(),
+        base.backend().clone(),
+        base.capabilities().clone().with(
+            SandboxFeature::NetworkAllowlist,
+            SandboxCapability::Enforced,
+        ),
+        true,
+        network,
+        base.policy_digest(),
+        base.manifest_digest(),
+        true,
+    )
+    .unwrap();
+    let directory = directory("domain-counts");
+    let mut store = FileCheckpointStore::in_directory(&directory);
+    let id = CheckpointId::new();
+    let mut checkpoint =
+        ExecutionCheckpoint::new(id, Ancestry::new(), scope(), None, 1_000, 9_000).unwrap();
+    checkpoint.add_sandbox(saved.clone()).unwrap();
+    store.save(&checkpoint).unwrap();
+    assert_eq!(store.load(id).unwrap().unwrap().sandboxes(), &[saved]);
+    let path = directory.join(format!("{id}.checkpoint"));
+    let document: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    for field in ["allowed", "denied", "unix_sockets"] {
+        let mut invalid = document.clone();
+        *invalid
+            .pointer_mut(&format!("/sandboxes/0/network/{field}"))
+            .unwrap() = serde_json::json!(crucible_core::MAX_SANDBOX_NETWORK_RULES + 1);
+        fs::write(&path, serde_json::to_vec(&invalid).unwrap()).unwrap();
+        assert!(store.load(id).is_err(), "oversized {field} accepted");
+    }
+    fs::remove_dir_all(directory).unwrap();
+}

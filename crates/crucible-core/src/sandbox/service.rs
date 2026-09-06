@@ -607,14 +607,15 @@ fn capability_requirements(
             (
                 match policy.network() {
                     SandboxNetworkPolicy::Closed => SandboxFeature::NetworkDeny,
-                    SandboxNetworkPolicy::Exact { .. } => SandboxFeature::NetworkAllowlist,
+                    SandboxNetworkPolicy::Domains(_) => SandboxFeature::NetworkAllowlist,
                 },
                 enforced,
             ),
         ]);
-    } else if matches!(policy.network(), SandboxNetworkPolicy::Exact { .. }) {
-        // Compatibility may deliberately expose the ordinary host network, but
-        // it can never pretend that broad reach is an exact endpoint grant.
+    } else if matches!(policy.network(), SandboxNetworkPolicy::Domains(policy) if !policy.is_closed())
+    {
+        // Compatibility exposes the ordinary host network and cannot pretend
+        // that broad reach satisfies a mediated domain or local-socket grant.
         features.push((SandboxFeature::NetworkAllowlist, enforced));
     }
     if !manifest.is_empty() {
@@ -704,14 +705,16 @@ impl std::fmt::Debug for SandboxRootInspection {
 pub enum SandboxNetworkInspection {
     /// No network reach.
     Closed,
-    /// Exact endpoint policy; endpoint spellings remain behind a digest.
-    Exact {
-        /// Number of canonical endpoints.
-        endpoints: usize,
-        /// Whether DNS was requested through the enforcing mechanism.
-        dns: bool,
-        /// Whether bounded forwarding was requested.
-        forwarding: bool,
+    /// Domain/local policy counts; private spellings remain behind the digest.
+    Domains {
+        /// Number of allowed host patterns.
+        allowed: usize,
+        /// Number of overriding denied patterns.
+        denied: usize,
+        /// Whether the workload may bind local listeners.
+        local_binding: bool,
+        /// Number of exact host Unix sockets.
+        unix_sockets: usize,
     },
 }
 
@@ -721,34 +724,7 @@ impl SandboxNetworkInspection {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Closed => "closed",
-            Self::Exact { .. } => "exact",
-        }
-    }
-
-    /// Number of exact endpoint grants.
-    #[must_use]
-    pub const fn endpoints(self) -> usize {
-        match self {
-            Self::Closed => 0,
-            Self::Exact { endpoints, .. } => endpoints,
-        }
-    }
-
-    /// Whether DNS was requested.
-    #[must_use]
-    pub const fn dns(self) -> bool {
-        match self {
-            Self::Closed => false,
-            Self::Exact { dns, .. } => dns,
-        }
-    }
-
-    /// Whether forwarding was requested.
-    #[must_use]
-    pub const fn forwarding(self) -> bool {
-        match self {
-            Self::Closed => false,
-            Self::Exact { forwarding, .. } => forwarding,
+            Self::Domains { .. } => "domains",
         }
     }
 }
@@ -782,10 +758,11 @@ impl SandboxPlanInspection {
             .into_boxed_slice();
         let network = match policy.network() {
             SandboxNetworkPolicy::Closed => SandboxNetworkInspection::Closed,
-            SandboxNetworkPolicy::Exact { .. } => SandboxNetworkInspection::Exact {
-                endpoints: policy.network().endpoints().len(),
-                dns: policy.network().dns(),
-                forwarding: policy.network().forwarding(),
+            SandboxNetworkPolicy::Domains(policy) => SandboxNetworkInspection::Domains {
+                allowed: policy.allowed().len(),
+                denied: policy.denied().len(),
+                local_binding: policy.allow_local_binding(),
+                unix_sockets: policy.unix_sockets().len(),
             },
         };
         Self {
@@ -1017,7 +994,7 @@ impl SandboxInspection {
         }
         let network = match policy.network() {
             SandboxNetworkPolicy::Closed => SandboxFeature::NetworkDeny,
-            SandboxNetworkPolicy::Exact { .. } => SandboxFeature::NetworkAllowlist,
+            SandboxNetworkPolicy::Domains(_) => SandboxFeature::NetworkAllowlist,
         };
         let essential = [
             SandboxFeature::Filesystem,
@@ -1156,8 +1133,8 @@ impl SandboxCheckpoint {
     ///
     /// # Errors
     ///
-    /// A record that calls itself confined without its exact essential network
-    /// and kernel capabilities is refused.
+    /// A record that calls itself confined without its required network and
+    /// kernel capabilities is refused.
     #[allow(clippy::too_many_arguments)]
     pub fn restore(
         id: SandboxId,
@@ -1170,17 +1147,14 @@ impl SandboxCheckpoint {
         confined: bool,
     ) -> Result<Self, SandboxError> {
         if enabled != confined
-            || matches!(
-                network,
-                SandboxNetworkInspection::Exact { endpoints: 0, .. }
-            )
-            || network.endpoints() > super::policy::MAX_SANDBOX_NETWORK_ENDPOINTS
+            || matches!(network, SandboxNetworkInspection::Domains { allowed, denied, unix_sockets, .. }
+                if [allowed, denied, unix_sockets].into_iter().any(|count| count > super::domains::MAX_SANDBOX_NETWORK_RULES))
         {
             return Err(SandboxError::InvalidInspection);
         }
         let network_feature = match network {
             SandboxNetworkInspection::Closed => SandboxFeature::NetworkDeny,
-            SandboxNetworkInspection::Exact { .. } => SandboxFeature::NetworkAllowlist,
+            SandboxNetworkInspection::Domains { .. } => SandboxFeature::NetworkAllowlist,
         };
         if confined
             && [

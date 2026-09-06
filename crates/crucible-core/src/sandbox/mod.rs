@@ -14,6 +14,8 @@
 
 mod audit;
 mod capability;
+mod domains;
+mod enablement;
 mod finish;
 mod guardrail;
 mod heard;
@@ -33,6 +35,8 @@ pub use capability::{
     SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities, SandboxCapability,
     SandboxCapabilityError, SandboxFeature,
 };
+pub use domains::{MAX_SANDBOX_NETWORK_RULES, SandboxDomainPattern, SandboxDomainPolicy};
+pub use enablement::SandboxEnablement;
 pub use finish::Finish;
 pub use guardrail::{
     MAX_SANDBOX_GUARDRAIL_BYTES, MAX_SANDBOX_GUARDRAIL_LAYERS, MAX_SANDBOX_GUARDRAIL_RULES,
@@ -46,11 +50,11 @@ pub use manifest::{
 };
 pub use muttered::Muttered;
 pub use policy::{
-    MAX_SANDBOX_FILESYSTEM_RULES, MAX_SANDBOX_HOST_BYTES, MAX_SANDBOX_NETWORK_ENDPOINTS,
-    MAX_SANDBOX_PATH_BYTES, MAX_SANDBOX_PATTERN_COMPONENTS, MAX_SANDBOX_UNREADABLE_PATTERNS,
-    SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule,
-    SandboxNetworkEndpoint, SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxPolicy,
-    SandboxPolicyError, SandboxResourceLimits, SandboxUnreadablePattern,
+    MAX_SANDBOX_FILESYSTEM_RULES, MAX_SANDBOX_HOST_BYTES, MAX_SANDBOX_PATH_BYTES,
+    MAX_SANDBOX_PATTERN_COMPONENTS, MAX_SANDBOX_UNREADABLE_PATTERNS, SandboxFilesystemAccess,
+    SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxNetworkEndpoint,
+    SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxPolicy, SandboxPolicyError,
+    SandboxResourceLimits, SandboxUnreadablePattern,
 };
 pub use said::Said;
 pub use service::{

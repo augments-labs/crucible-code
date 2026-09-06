@@ -19,6 +19,8 @@ change in any release with no deprecation period.
   newest published installer lifecycle, and run baseline/candidate coding tasks
   without making external availability a pull-request verdict.
 
+- **Configure and inspect the sandbox boundary.** `sandbox.filesystem`, `sandbox.network` and `sandbox.limits` control path access, domain grants, local sockets and command ceilings. `/sandbox` shows the effective policy and platform prerequisites and lets you change persistent enablement while idle.
+
 ### Changed
 
 - **Sandbox enablement is a boolean throughout the SDK.** Replaced the sandbox mode enum with `enabled`, removed degraded execution fallback, and aligned inspection, audit records and execution checkpoints with the configuration switch. Enabled policies cannot report an unconfined backend; obsolete checkpoint formats are rejected.

@@ -1,9 +1,9 @@
 ---
 source: tests/whole_screen/main.rs
+assertion_line: 465
 expression: on_the_first_beat(&window.picture())
 ---
 80x24 cursor 20,5 scrolled 0
-|                                                                                |
 |It is started. That is all.                                                     |
 |                                                                                |
 |✳ writing (0s · ↓ 4 · esc to interrupt)                                         |
@@ -14,6 +14,7 @@ expression: on_the_first_beat(&window.picture())
 |  /login     sign in to a provider account                                      |
 |  /logout    remove a stored account or API key                                 |
 |  /mode      ask · allowEdits · fullAccess                                      |
+|  /sandbox   sandbox disabled (enter to configure)                              |
 |  /theme     pick the colours crucible draws with                               |
 |  /resume    pick up an earlier session here                                    |
 |  /cache     inspect or clean prompt-cache state                                |

@@ -2,7 +2,10 @@
 
 use super::*;
 use crate::sandbox::policy::{SandboxFilesystemProvenance, SandboxFilesystemRule};
-use crate::{SandboxBackendId, SandboxBackendProvenance, SandboxFilesystemAccess};
+use crate::{
+    SandboxBackendId, SandboxBackendProvenance, SandboxDomainPattern, SandboxDomainPolicy,
+    SandboxFilesystemAccess, SandboxNetworkProvenance,
+};
 
 fn policy() -> SandboxPolicy {
     SandboxPolicy::new(
@@ -120,18 +123,17 @@ fn enabled_policy_cannot_be_reported_as_unconfined() {
 }
 
 #[test]
-fn confined_inspection_reports_the_exact_network_feature_and_redacts_reach() {
-    let network = SandboxNetworkPolicy::exact(
-        [crate::SandboxNetworkEndpoint::new(
-            "private.example",
-            443,
-            crate::SandboxNetworkProvenance::User,
+fn confined_inspection_reports_the_domain_network_feature_and_redacts_reach() {
+    let network = SandboxNetworkPolicy::Domains(
+        SandboxDomainPolicy::new(
+            [SandboxDomainPattern::new("private.example").unwrap()],
+            [],
+            false,
+            [],
+            SandboxNetworkProvenance::User,
         )
-        .unwrap()],
-        true,
-        false,
-    )
-    .unwrap();
+        .unwrap(),
+    );
     let policy = SandboxPolicy::new(
         true,
         [SandboxFilesystemRule::new(
@@ -158,7 +160,7 @@ fn confined_inspection_reports_the_exact_network_feature_and_redacts_reach() {
         claims.with(feature, SandboxCapability::Enforced)
     });
     let identity = SandboxBackendIdentity::new(
-        SandboxBackendId::new("exact-proxy").unwrap(),
+        SandboxBackendId::new("domain-proxy").unwrap(),
         "1",
         SandboxBackendProvenance::Remote,
         None,
@@ -174,10 +176,17 @@ fn confined_inspection_reports_the_exact_network_feature_and_redacts_reach() {
         None::<Box<str>>,
         SandboxCleanup::Pending,
     )
-    .expect("exact network capability is sufficient");
+    .expect("domain network capability is sufficient");
 
-    assert_eq!(inspection.plan().network().endpoints(), 1);
-    assert!(inspection.plan().network().dns());
+    assert_eq!(
+        inspection.plan().network(),
+        SandboxNetworkInspection::Domains {
+            allowed: 1,
+            denied: 0,
+            local_binding: false,
+            unix_sockets: 0,
+        }
+    );
     let shown = format!("{inspection:?}");
     assert!(!shown.contains("secret-workspace"), "{shown}");
     assert!(!shown.contains("private.example"), "{shown}");

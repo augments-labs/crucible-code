@@ -243,6 +243,7 @@ impl SandboxSession for CompatibilitySession {
         let launch = CompatibilityLaunch {
             process: Some(process),
             plan: Some(super::process::SpawnPlan {
+                network: None,
                 inspection: self.inspection.clone(),
                 reservation,
                 stage: None,

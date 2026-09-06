@@ -31,11 +31,11 @@ use std::path::Path;
 use std::time::Duration;
 
 use crucible_core::{
-    Ancestry, SandboxBackendIdentity, SandboxCapabilities, SandboxCapability, SandboxError,
-    SandboxFeature, SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule,
-    SandboxId, SandboxManifest, SandboxManifestEntry, SandboxNetworkEndpoint, SandboxNetworkPolicy,
-    SandboxNetworkProvenance, SandboxPolicy, SandboxRequest, SandboxResourceLimits, SandboxService,
-    ToolId,
+    Ancestry, SandboxBackendIdentity, SandboxCapabilities, SandboxCapability, SandboxDomainPattern,
+    SandboxDomainPolicy, SandboxError, SandboxFeature, SandboxFilesystemAccess,
+    SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxId, SandboxManifest,
+    SandboxManifestEntry, SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxPolicy,
+    SandboxRequest, SandboxResourceLimits, SandboxService, ToolId,
 };
 
 /// A family of claims a backend is conformant in, or is not, on its own.
@@ -476,10 +476,11 @@ fn asking(
             manifest = SandboxManifest::new([entry]).ok()?;
         }
         SandboxFeature::NetworkAllowlist => {
-            let endpoint =
-                SandboxNetworkEndpoint::new("192.0.2.1", 443, SandboxNetworkProvenance::User)
-                    .ok()?;
-            network = SandboxNetworkPolicy::exact([endpoint], false, false).ok()?;
+            let domain = SandboxDomainPattern::new("example.test").ok()?;
+            network = SandboxNetworkPolicy::Domains(
+                SandboxDomainPolicy::new([domain], [], false, [], SandboxNetworkProvenance::User)
+                    .ok()?,
+            );
         }
         SandboxFeature::CpuLimit => limits.cpu_seconds = Some(1),
         SandboxFeature::MemoryLimit => limits.memory_bytes = Some(1),

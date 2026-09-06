@@ -4,6 +4,7 @@ mod broker;
 mod command;
 mod fd;
 mod materialize;
+mod network;
 mod probe;
 mod projection;
 mod transaction;
@@ -201,6 +202,31 @@ impl SandboxSession for LinuxSession {
                 return Err(problem);
             }
         };
+        let mut mediator = match self.request.policy().network() {
+            crucible_core::SandboxNetworkPolicy::Domains(policy) => Some(
+                super::network::Mediator::unix(
+                    &projection.network_socket(),
+                    policy.clone(),
+                    self.request.id(),
+                    self.request
+                        .policy()
+                        .limits()
+                        .command_time
+                        .unwrap_or(std::time::Duration::from_mins(20)),
+                )
+                .map_err(SandboxError::Spawn)?,
+            ),
+            crucible_core::SandboxNetworkPolicy::Closed => None,
+        };
+        let proxy_socket = mediator
+            .as_ref()
+            .map(|_| {
+                network::SocketMount::open(
+                    &projection.network_socket(),
+                    std::path::Path::new(network::PROXY_PATH),
+                )
+            })
+            .transpose()?;
         let mut status_channel = broker::StatusChannel::pair().map_err(SandboxError::Spawn)?;
         let status_descriptor = status_channel.descriptor().map_err(SandboxError::Spawn)?;
         let canceller = status_channel.canceller().map_err(SandboxError::Spawn)?;
@@ -213,6 +239,8 @@ impl SandboxSession for LinuxSession {
             materialization: self.materialization.as_ref(),
             projection: Some(&projection),
             status_descriptor,
+            network: mediator.as_ref(),
+            proxy_socket: proxy_socket.as_ref(),
         }) {
             Ok(process) => process,
             Err(problem) => {
@@ -235,6 +263,7 @@ impl SandboxSession for LinuxSession {
         let spawned = super::process::spawn(
             process,
             super::process::SpawnPlan {
+                network: mediator.take(),
                 inspection: self.inspection.clone(),
                 reservation,
                 stage,

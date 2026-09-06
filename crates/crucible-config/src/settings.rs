@@ -34,6 +34,7 @@ pub use input::Sending;
 pub use layers::{local, user};
 pub use mcp::McpServer;
 pub use output::{Color, Glyphs, ThemeChoice, ToolDetail};
+pub use sandbox::SandboxSettings;
 pub use updates::Updates;
 pub use variables::ScrollSpeed;
 
@@ -43,7 +44,7 @@ pub(crate) use variables::refused;
 ///
 /// Built once at startup and read from there on, so nothing on the turn path
 /// touches a file.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct Settings {
     value: Value,
 
@@ -54,22 +55,11 @@ pub struct Settings {
 
     /// Host confinement enablement, disabled unless configured and weakened only by
     /// a user-originated layer.
-    sandbox: bool,
+    sandbox: SandboxSettings,
     /// Every layer's rules together. Held apart from the value because a rule
     /// is read where it is written — see [`Document::parse`] — and what survives
     /// the layering is the rule rather than its text.
     rules: Rules,
-}
-
-impl Default for Settings {
-    fn default() -> Self {
-        Self {
-            value: Value::default(),
-            prompt_cache: PromptCachePolicy::default(),
-            sandbox: sandbox::resolve(&[]),
-            rules: Rules::default(),
-        }
-    }
 }
 
 impl fmt::Debug for Settings {
@@ -109,7 +99,7 @@ impl Settings {
         documents.sort_by_key(|document| document.origin().nearness());
 
         let prompt_cache = prompt_cache::resolve(&documents)?;
-        let sandbox = sandbox::resolve(&documents);
+        let sandbox = sandbox::resolve(&documents)?;
 
         let mut value = Value::Object(Map::new());
         for document in &documents {
@@ -281,8 +271,14 @@ impl Settings {
     /// Workspace layers may require confinement but cannot disable it.
     /// Core policy constructors remain conservative; hosts apply this choice.
     #[must_use]
-    pub const fn sandbox_enabled(&self) -> bool {
-        self.sandbox
+    pub fn sandbox_enabled(&self) -> bool {
+        self.sandbox.enabled()
+    }
+
+    /// Effective sandbox settings shared by command and extension hosts.
+    #[must_use]
+    pub const fn sandbox(&self) -> &SandboxSettings {
+        &self.sandbox
     }
 }
 

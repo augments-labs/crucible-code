@@ -121,6 +121,7 @@ pub(crate) struct Chosen {
     /// one file can name two directories to run in, and a policy shared across
     /// the selection could only be right about one of them.
     policy: SandboxPolicy,
+    enablement: Option<Arc<crucible_core::SandboxEnablement>>,
 }
 
 impl Chosen {
@@ -154,7 +155,24 @@ impl Chosen {
             required: false,
             restarts: 0,
             policy,
+            enablement: None,
         }
+    }
+
+    /// Applies the host's shared choice to each new server lifecycle.
+    pub(crate) fn following_enablement(
+        mut self,
+        control: Arc<crucible_core::SandboxEnablement>,
+    ) -> Self {
+        self.enablement = Some(control);
+        self
+    }
+
+    fn effective_policy(&self) -> SandboxPolicy {
+        self.enablement.as_ref().map_or_else(
+            || self.policy.clone(),
+            |control| self.policy.clone().with_enabled(control.enabled()),
+        )
     }
 
     /// The environment it is started with, which is the whole of what it gets.
@@ -256,7 +274,7 @@ fn start(
         SandboxId::new(),
         ancestry,
         ToolId::new(format!("{NAMESPACE}{OF}{}", chosen.name)),
-        chosen.policy.clone(),
+        chosen.effective_policy(),
         SandboxManifest::empty(),
     )
     .with_audit(audit.clone())

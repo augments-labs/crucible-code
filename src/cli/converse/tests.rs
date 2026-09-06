@@ -105,7 +105,7 @@ pub(super) fn plain() -> Terms {
         sessions: unwritten.join("sessions"),
         workspace: Workspace::open(std::env::temp_dir()).expect("a temporary directory"),
         sending: crucible_tui::Sending::default(),
-        commands: crate::cli::converse::command::builtins()
+        commands: crate::cli::converse::command::builtins(&std::sync::Arc::default())
             .expect("the built-in commands register"),
         providers: crate::cli::providers().expect("the built-in providers register"),
     }

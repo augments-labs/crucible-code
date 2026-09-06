@@ -9,9 +9,10 @@ inputs; and only then launches the process.
 OS confinement is disabled by default. Enable it with
 `{"sandbox":{"enabled":true}}`; `enabled: false` in your home configuration
 selects unconfined execution. Approval, minimal environment, command deadlines,
-output bounds and audit remain active whether confinement is enabled or disabled. `sandbox.enabled` is the
-only configuration switch; the former `sandbox.mode` key is rejected. Project
-settings can require confinement and cannot disable it. See [configuration](../configuration/configuration.md#sandbox).
+output bounds and audit remain active whether confinement is enabled or disabled.
+Configure filesystem grants and restrictions, domain mediation, local sockets
+and command limits in the same block. Project settings can require confinement
+and narrow inherited authority. See [configuration](../configuration/configuration.md#sandbox).
 
 On Linux, the production backend uses a
 canonical, root-owned, non-writable system Bubblewrap executable reached only
@@ -26,7 +27,7 @@ Bubblewrap 0.11.0 or newer is needed: the view is built from descriptor binds
 and temporary overlays, which older releases do not offer. The probe checks the
 options themselves rather than the version, because distributions backport some
 of them. Ubuntu 24.04's 0.9.0 has the descriptor binds but not the overlays, so
-there `required` confinement reports an unavailable backend until a newer
+there enabled confinement reports an unavailable backend until a newer
 Bubblewrap is installed. Should a launch still be refused by the system
 Bubblewrap, its own message is quoted in the error.
 
@@ -169,10 +170,15 @@ command using the same sandbox account can therefore retain the access those
 account entries grant. Uninstalling and reinstalling creates a new account SID,
 so entries for the deleted account become inert.
 
-The exact endpoint allowlist is deliberately unsupported in this release. It
-requires a policy-bound proxy or equivalent mechanism with redirect, DNS,
-metadata, forwarding and outbound-byte enforcement. A requested exact rule is
-rejected instead of being translated into broad egress.
+Linux and macOS mediate configured domains through a host-owned authenticated
+HTTP/CONNECT proxy. Linux exposes a pinned Unix endpoint only to its namespace
+broker, which relays it to private loopback. macOS permits only the host proxy's
+IPv4 loopback port. Direct connections remain denied; enabling local binding
+or selected Unix sockets adds only those separately declared operations.
+Proxy credentials are unique to a command, replace inherited proxy settings,
+and are masked in captured stdout and stderr without changing byte counts or
+MCP framing. Listener and relay cleanup belongs to the command lifecycle;
+failed cleanup retains its resources and admission slot for recovery.
 
 ## Platform support
 
@@ -202,7 +208,7 @@ persistence and snapshot requests still require an enforcing implementation.
 | --- | --- | --- | --- | --- |
 | `filesystem` | enforced | enforced | enforced | unsupported |
 | `network_deny` | enforced | enforced | enforced | unsupported |
-| `network_allowlist` | unsupported | unsupported | unsupported | unsupported |
+| `network_allowlist` | enforced | enforced | unsupported | unsupported |
 | `descriptor_isolation` | enforced | enforced | enforced | unsupported |
 | `process_isolation` | enforced | enforced | enforced | unsupported |
 | `kernel_surface` | enforced | enforced | enforced | unsupported |
@@ -228,7 +234,7 @@ persistence and snapshot requests still require an enforcing implementation.
 | `usage` | observed | observed | observed | observed |
 
 A capability being enforced says what a backend *can* apply, not what the
-default policy asks for. Under `required`, Linux's standard policy states
+default policy asks for. With confinement enabled, Linux's standard policy states
 `cpu_limit` at one hour per process and `open_file_limit` at 4096. Windows
 states one hour of aggregate Job processor time and no handle-count limit.
 macOS states only the open-file ceiling because its catchable CPU signal is not
@@ -238,8 +244,8 @@ it is running. `memory_limit` is enforced but not asked for: the knob is the
 address space a process may map rather than the memory it uses, and runtimes
 that reserve enormously and touch little would be refused by any ceiling low
 enough to catch a real runaway. `disk_limit` is unsupported above, and a policy
-may not ask for a ceiling its backend cannot apply — which is also why lowering
-the mode takes the two confining ceilings off with it, rather than carrying
+may not ask for a ceiling its backend cannot apply — which is also why disabling
+confinement takes the two confining ceilings off with it, rather than carrying
 numbers the compatibility backend would have to refuse.
 
 `process_limit` is the one ceiling a policy does not have to ask for. The broker
@@ -253,7 +259,7 @@ two; it may not state more.
 Stating one is what the table's row is about, and it needs a kernel that counts
 processes per user namespace — Linux 5.14 and newer. Below that the kernel
 counts them for the real user across the whole machine, so a stated ceiling
-would bound the host's other work rather than the sandbox's, and `required`
+would bound the host's other work rather than the sandbox's, and enabled confinement
 refuses the policy instead of applying a number that means something else. The
 broker's own 1024 still applies there, and under the older counting it can bind
 before the sandbox has reached 1024 of its own — but the only thing it ever
@@ -329,7 +335,7 @@ session is prepared to see whether it can be, and dropped.
 
 Only home/user configuration may explicitly disable confinement. Project and
 descendant policy may preserve or strengthen that choice but never weaken it.
-When confinement is off, inspection and audit records say `confined: false`,
+When confinement is disabled, inspection and audit records say `confined: false`,
 name the disabled boundary and retain the exact compatibility capability snapshot.
 
 There is no enforcing backend on FreeBSD. Commands run through compatibility by

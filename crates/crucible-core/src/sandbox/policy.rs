@@ -7,6 +7,7 @@ use std::time::Duration;
 use crate::Workspace;
 use sha2::{Digest, Sha256};
 
+use super::domains::SandboxDomainPolicy;
 use super::guardrail::SandboxCommandPolicy;
 
 /// Maximum filesystem rules in one effective policy.
@@ -14,9 +15,6 @@ pub const MAX_SANDBOX_FILESYSTEM_RULES: usize = 128;
 
 /// Maximum bytes retained for one policy path.
 pub const MAX_SANDBOX_PATH_BYTES: usize = 4096;
-
-/// Maximum exact network endpoints in one policy.
-pub const MAX_SANDBOX_NETWORK_ENDPOINTS: usize = 64;
 
 /// Maximum bytes in one DNS name.
 pub const MAX_SANDBOX_HOST_BYTES: usize = 253;
@@ -79,6 +77,12 @@ pub enum SandboxFilesystemProvenance {
     Descendant,
     /// An explicit manifest mount request.
     Manifest,
+    /// A filesystem grant or restriction in the user's configuration.
+    UserConfiguration,
+    /// A restriction in the checked-in project configuration.
+    ProjectConfiguration,
+    /// A restriction in the project-local configuration.
+    ProjectLocalConfiguration,
 }
 
 impl SandboxFilesystemProvenance {
@@ -95,6 +99,9 @@ impl SandboxFilesystemProvenance {
             Self::ProtectedMetadata => "protected_metadata",
             Self::Descendant => "descendant",
             Self::Manifest => "manifest",
+            Self::UserConfiguration => "user_configuration",
+            Self::ProjectConfiguration => "project_configuration",
+            Self::ProjectLocalConfiguration => "project_local_configuration",
         }
     }
 }
@@ -167,18 +174,11 @@ pub enum SandboxNetworkProvenance {
     Descendant,
 }
 
-impl SandboxNetworkProvenance {
-    const fn permits(self, candidate: Self) -> bool {
-        candidate as u8 >= self as u8
-    }
-}
-
 /// One exact outbound endpoint.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SandboxNetworkEndpoint {
     host: Box<str>,
     port: u16,
-    literal_address: bool,
     provenance: SandboxNetworkProvenance,
 }
 
@@ -201,7 +201,6 @@ impl SandboxNetworkEndpoint {
             return Ok(Self {
                 host: address.to_string().into(),
                 port,
-                literal_address: true,
                 provenance,
             });
         }
@@ -233,7 +232,6 @@ impl SandboxNetworkEndpoint {
         Ok(Self {
             host: host.to_ascii_lowercase().into(),
             port,
-            literal_address: false,
             provenance,
         })
     }
@@ -255,14 +253,6 @@ impl SandboxNetworkEndpoint {
     pub const fn provenance(&self) -> SandboxNetworkProvenance {
         self.provenance
     }
-
-    fn same_target(&self, other: &Self) -> bool {
-        self.host == other.host && self.port == other.port
-    }
-
-    const fn is_literal_address(&self) -> bool {
-        self.literal_address
-    }
 }
 
 impl std::fmt::Debug for SandboxNetworkEndpoint {
@@ -270,7 +260,6 @@ impl std::fmt::Debug for SandboxNetworkEndpoint {
         f.debug_struct("SandboxNetworkEndpoint")
             .field("host", &"[host]")
             .field("port", &self.port)
-            .field("literal_address", &self.literal_address)
             .field("provenance", &self.provenance)
             .finish()
     }
@@ -460,110 +449,16 @@ pub enum SandboxNetworkPolicy {
     /// No host network namespace, inherited socket, loopback, Unix socket, DNS,
     /// metadata address, or forwarding authority.
     Closed,
-    /// Exact proxy-enforced host/port endpoints. The initial Linux backend
-    /// reports this unsupported rather than broadening it.
-    Exact {
-        /// Canonically sorted permitted endpoints.
-        endpoints: Box<[SandboxNetworkEndpoint]>,
-        /// Whether DNS resolution through the enforcing mechanism is allowed.
-        dns: bool,
-        /// Whether bounded inbound/outbound port forwarding is requested.
-        forwarding: bool,
-    },
+    /// Domain mediation with overriding denies and explicit local connections.
+    Domains(SandboxDomainPolicy),
 }
 
 impl SandboxNetworkPolicy {
-    /// Validates, sorts, and deduplicates an exact network request.
-    ///
-    /// # Errors
-    ///
-    /// Empty or oversized endpoint sets are rejected.
-    pub fn exact(
-        endpoints: impl IntoIterator<Item = SandboxNetworkEndpoint>,
-        dns: bool,
-        forwarding: bool,
-    ) -> Result<Self, SandboxPolicyError> {
-        let mut endpoints: Vec<_> = endpoints.into_iter().collect();
-        if !dns
-            && endpoints
-                .iter()
-                .any(|endpoint| !endpoint.is_literal_address())
-        {
-            return Err(SandboxPolicyError::InvalidEndpoint);
-        }
-        endpoints.sort();
-        if endpoints.windows(2).any(|pair| {
-            pair.first().is_some_and(|left| {
-                pair.get(1).is_some_and(|right| {
-                    left.same_target(right) && left.provenance != right.provenance
-                })
-            })
-        }) {
-            return Err(SandboxPolicyError::InvalidEndpoint);
-        }
-        endpoints.dedup();
-        if endpoints.is_empty() || endpoints.len() > MAX_SANDBOX_NETWORK_ENDPOINTS {
-            return Err(SandboxPolicyError::InvalidEndpointCount);
-        }
-        Ok(Self::Exact {
-            endpoints: endpoints.into_boxed_slice(),
-            dns,
-            forwarding,
-        })
-    }
-
     fn is_no_wider_than(&self, parent: &Self) -> bool {
         match (self, parent) {
             (Self::Closed, _) => true,
-            (Self::Exact { .. }, Self::Closed) => false,
-            (
-                Self::Exact {
-                    endpoints,
-                    dns,
-                    forwarding,
-                },
-                Self::Exact {
-                    endpoints: parent_endpoints,
-                    dns: parent_dns,
-                    forwarding: parent_forwarding,
-                },
-            ) => {
-                (!dns || *parent_dns)
-                    && (!forwarding || *parent_forwarding)
-                    && endpoints.iter().all(|endpoint| {
-                        parent_endpoints.iter().any(|parent| {
-                            endpoint.same_target(parent)
-                                && parent.provenance.permits(endpoint.provenance)
-                        })
-                    })
-            }
-        }
-    }
-
-    /// Exact endpoints, or an empty slice for a closed policy.
-    #[must_use]
-    pub fn endpoints(&self) -> &[SandboxNetworkEndpoint] {
-        match self {
-            Self::Closed => &[],
-            Self::Exact { endpoints, .. } => endpoints,
-        }
-    }
-
-    /// Whether policy-authorized DNS is requested.
-    #[must_use]
-    pub const fn dns(&self) -> bool {
-        match self {
-            Self::Closed => false,
-            Self::Exact { dns, .. } => *dns,
-        }
-    }
-
-    /// Whether bounded forwarding is requested.
-    #[must_use]
-    pub const fn forwarding(&self) -> bool {
-        match self {
-            Self::Closed => false,
-            Self::Exact { forwarding, .. } => *forwarding,
+            (Self::Domains(child), Self::Domains(parent)) => child.is_no_wider_than(parent),
+            (Self::Domains(child), Self::Closed) => child.is_closed(),
         }
     }
 }
@@ -1090,20 +985,7 @@ impl SandboxPolicy {
         digest.update(self.working_directory.as_os_str().as_encoded_bytes());
         match &self.network {
             SandboxNetworkPolicy::Closed => digest.update(b"\0closed"),
-            SandboxNetworkPolicy::Exact {
-                endpoints,
-                dns,
-                forwarding,
-            } => {
-                digest.update(b"\0exact");
-                for endpoint in endpoints {
-                    digest.update(endpoint.host.as_bytes());
-                    digest.update([0]);
-                    digest.update(endpoint.port.to_be_bytes());
-                    digest.update([endpoint.provenance as u8]);
-                }
-                digest.update([u8::from(*dns), u8::from(*forwarding)]);
-            }
+            SandboxNetworkPolicy::Domains(policy) => policy.update_digest(&mut digest),
         }
         update_limits(&mut digest, self.limits);
         digest.update(self.commands.digest());
@@ -1128,7 +1010,7 @@ impl std::fmt::Debug for SandboxPolicy {
     }
 }
 
-fn validate_absolute_path(path: &Path) -> Result<(), SandboxPolicyError> {
+pub(super) fn validate_absolute_path(path: &Path) -> Result<(), SandboxPolicyError> {
     let encoded = path.as_os_str().as_encoded_bytes();
     if !path.is_absolute()
         || path.as_os_str().is_empty()
@@ -1226,9 +1108,6 @@ pub enum SandboxPolicyError {
     /// Network endpoints are bounded and structurally valid.
     #[error("sandbox network endpoint is invalid")]
     InvalidEndpoint,
-    /// An exact request is non-empty and bounded.
-    #[error("sandbox network policy must contain 1..={MAX_SANDBOX_NETWORK_ENDPOINTS} endpoints")]
-    InvalidEndpointCount,
     /// A ceiling of zero has no useful meaning and often means unlimited to a kernel API.
     #[error("sandbox resource ceilings must be greater than zero")]
     InvalidResourceLimit,
@@ -1238,6 +1117,9 @@ pub enum SandboxPolicyError {
     /// Descendants cannot add or widen filesystem reach.
     #[error("sandbox descendant requested wider filesystem authority")]
     FilesystemWidening,
+    /// Domain and local socket lists have a fixed bound.
+    #[error("sandbox network rule list exceeds its bound")]
+    InvalidNetworkRuleCount,
     /// Descendants cannot broaden network reach.
     #[error("sandbox descendant requested wider network authority")]
     NetworkWidening,
@@ -1483,32 +1365,7 @@ mod tests {
     }
 
     #[test]
-    fn exact_network_policy_is_canonical_and_closed_is_always_narrower() {
-        let first =
-            SandboxNetworkEndpoint::new("EXAMPLE.COM.", 443, SandboxNetworkProvenance::User)
-                .expect("endpoint");
-        let duplicate =
-            SandboxNetworkEndpoint::new("example.com", 443, SandboxNetworkProvenance::User)
-                .expect("endpoint");
-        let exact =
-            SandboxNetworkPolicy::exact([first, duplicate], true, false).expect("exact policy");
-        let SandboxNetworkPolicy::Exact { endpoints, .. } = &exact else {
-            panic!("expected exact policy");
-        };
-        assert_eq!(endpoints.len(), 1);
-        assert_eq!(
-            endpoints.first().expect("one canonical endpoint").host(),
-            "example.com"
-        );
-        assert!(SandboxNetworkPolicy::Closed.is_no_wider_than(&exact));
-        assert!(!exact.is_no_wider_than(&SandboxNetworkPolicy::Closed));
-    }
-
-    #[test]
-    fn endpoint_provenance_is_retained_and_cannot_be_escalated_by_a_descendant() {
-        let parent_endpoint =
-            SandboxNetworkEndpoint::new("192.0.2.1", 443, SandboxNetworkProvenance::Project)
-                .expect("parent endpoint");
+    fn endpoint_provenance_is_retained() {
         let child_endpoint =
             SandboxNetworkEndpoint::new("192.0.2.1", 443, SandboxNetworkProvenance::Descendant)
                 .expect("child endpoint");
@@ -1516,43 +1373,6 @@ mod tests {
             child_endpoint.provenance(),
             SandboxNetworkProvenance::Descendant
         );
-        let parent =
-            SandboxNetworkPolicy::exact([parent_endpoint], false, false).expect("parent network");
-        let child =
-            SandboxNetworkPolicy::exact([child_endpoint], false, false).expect("child network");
-        assert!(child.is_no_wider_than(&parent));
-        assert_eq!(
-            SandboxNetworkPolicy::exact(
-                [
-                    SandboxNetworkEndpoint::new(
-                        "192.0.2.1",
-                        443,
-                        SandboxNetworkProvenance::Project,
-                    )
-                    .expect("project endpoint"),
-                    SandboxNetworkEndpoint::new(
-                        "192.0.2.1",
-                        443,
-                        SandboxNetworkProvenance::Descendant,
-                    )
-                    .expect("descendant endpoint"),
-                ],
-                false,
-                false,
-            ),
-            Err(SandboxPolicyError::InvalidEndpoint)
-        );
-
-        let escalated = SandboxNetworkPolicy::exact(
-            [
-                SandboxNetworkEndpoint::new("192.0.2.1", 443, SandboxNetworkProvenance::User)
-                    .expect("escalated endpoint"),
-            ],
-            false,
-            false,
-        )
-        .expect("escalated network");
-        assert!(!escalated.is_no_wider_than(&parent));
     }
 
     #[test]
@@ -1579,6 +1399,12 @@ mod tests {
                 .host(),
             "2001:db8::1"
         );
+        assert_eq!(
+            SandboxNetworkEndpoint::new("EXAMPLE.COM.", 443, SandboxNetworkProvenance::User)
+                .expect("canonical hostname")
+                .host(),
+            "example.com"
+        );
 
         let endpoint =
             SandboxNetworkEndpoint::new("private.example", 8443, SandboxNetworkProvenance::User)
@@ -1586,21 +1412,6 @@ mod tests {
         let shown = format!("{endpoint:?}");
         assert!(!shown.contains("private.example"), "{shown}");
         assert!(shown.contains("[host]"), "{shown}");
-    }
-
-    #[test]
-    fn dns_disabled_exact_policy_accepts_only_literal_addresses() {
-        let hostname =
-            SandboxNetworkEndpoint::new("example.com", 443, SandboxNetworkProvenance::User)
-                .expect("hostname");
-        assert_eq!(
-            SandboxNetworkPolicy::exact([hostname], false, false),
-            Err(SandboxPolicyError::InvalidEndpoint)
-        );
-
-        let address = SandboxNetworkEndpoint::new("192.0.2.1", 443, SandboxNetworkProvenance::User)
-            .expect("address");
-        assert!(SandboxNetworkPolicy::exact([address], false, false).is_ok());
     }
 
     #[test]

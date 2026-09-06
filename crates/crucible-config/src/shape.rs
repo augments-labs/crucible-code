@@ -37,6 +37,12 @@ pub(crate) enum Shape {
     /// the fact it does not have.
     Count,
 
+    /// A positive command resource ceiling, bounded by its host implementation.
+    Limit(u64),
+
+    /// A bounded set of nonempty strings, semantically checked by its owner.
+    TextSet { maximum: usize, bytes: usize },
+
     /// A whole number *written as a string*, between two bounds.
     ///
     /// A string because the one place this appears is `env`, and the
@@ -506,16 +512,173 @@ const UPDATES: &[Field] = &[Field {
 pub(crate) const MODE: &[&str] = &["ask", "allowEdits", "fullAccess"];
 
 /// Operating-system confinement policy.
-const SANDBOX: &[Field] = &[Field {
-    name: "enabled",
-    about: "Require verified operating-system confinement for commands; off by default, and only user configuration may disable it",
-    shape: Shape::Flag,
-    examples: &[],
-    usual: Some("false"),
-    needed: false,
-    // The value-specific authority check permits a project to enable it.
-    widens: false,
-}];
+const SANDBOX_FILESYSTEM: &[Field] = &[
+    Field {
+        name: "writable",
+        about: "Additional writable paths; only user configuration may grant access",
+        shape: Shape::TextSet {
+            maximum: crucible_core::MAX_SANDBOX_FILESYSTEM_RULES,
+            bytes: crucible_core::MAX_SANDBOX_PATH_BYTES,
+        },
+        examples: &[],
+        usual: Some("[]"),
+        needed: false,
+        widens: false,
+    },
+    Field {
+        name: "readOnly",
+        about: "Readable paths without write access; projects may only narrow existing access",
+        shape: Shape::TextSet {
+            maximum: crucible_core::MAX_SANDBOX_FILESYSTEM_RULES,
+            bytes: crucible_core::MAX_SANDBOX_PATH_BYTES,
+        },
+        examples: &[],
+        usual: Some("[]"),
+        needed: false,
+        widens: false,
+    },
+    Field {
+        name: "unreadable",
+        about: "Paths hidden from sandboxed commands",
+        shape: Shape::TextSet {
+            maximum: crucible_core::MAX_SANDBOX_FILESYSTEM_RULES,
+            bytes: crucible_core::MAX_SANDBOX_PATH_BYTES,
+        },
+        examples: &[],
+        usual: Some("[]"),
+        needed: false,
+        widens: false,
+    },
+    Field {
+        name: "protected",
+        about: "Readable paths that no nested writable grant may reopen",
+        shape: Shape::TextSet {
+            maximum: crucible_core::MAX_SANDBOX_FILESYSTEM_RULES,
+            bytes: crucible_core::MAX_SANDBOX_PATH_BYTES,
+        },
+        examples: &[],
+        usual: Some("[]"),
+        needed: false,
+        widens: false,
+    },
+];
+
+const SANDBOX_NETWORK: &[Field] = &[
+    Field {
+        name: "allowedDomains",
+        about: "Allowed hostnames, IP literals, *.domain patterns or *; projects may only narrow user grants",
+        shape: Shape::TextSet {
+            maximum: crucible_core::MAX_SANDBOX_NETWORK_RULES,
+            bytes: crucible_core::MAX_SANDBOX_HOST_BYTES + 2,
+        },
+        examples: &[],
+        usual: Some("[]"),
+        needed: false,
+        widens: false,
+    },
+    Field {
+        name: "deniedDomains",
+        about: "Overriding denied hostnames, IP literals or domain patterns",
+        shape: Shape::TextSet {
+            maximum: crucible_core::MAX_SANDBOX_NETWORK_RULES,
+            bytes: crucible_core::MAX_SANDBOX_HOST_BYTES + 2,
+        },
+        examples: &[],
+        usual: Some("[]"),
+        needed: false,
+        widens: false,
+    },
+    Field {
+        name: "allowLocalBinding",
+        about: "Allow sandboxed processes to create local listeners",
+        shape: Shape::Flag,
+        examples: &[],
+        usual: Some("false"),
+        needed: false,
+        widens: false,
+    },
+    Field {
+        name: "allowUnixSockets",
+        about: "Exact native host Unix socket paths the sandbox may connect to; projects may only narrow user grants",
+        shape: Shape::TextSet {
+            maximum: crucible_core::MAX_SANDBOX_NETWORK_RULES,
+            bytes: crucible_core::MAX_SANDBOX_PATH_BYTES,
+        },
+        examples: &[],
+        usual: Some("[]"),
+        needed: false,
+        widens: false,
+    },
+];
+
+const SANDBOX_LIMITS: &[Field] = &[
+    Field {
+        name: "commandSeconds",
+        about: "Maximum wall time for each command, including background commands",
+        shape: Shape::Limit(86400),
+        examples: &[],
+        usual: Some("1200"),
+        needed: false,
+        widens: false,
+    },
+    Field {
+        name: "outputBytes",
+        about: "Maximum combined command output before its process scope is stopped",
+        shape: Shape::Limit(67_108_864),
+        examples: &[],
+        usual: Some("10485760"),
+        needed: false,
+        widens: false,
+    },
+    Field {
+        name: "concurrentCommands",
+        about: "Maximum simultaneously running commands",
+        shape: Shape::Limit(16),
+        examples: &[],
+        usual: Some("4"),
+        needed: false,
+        widens: false,
+    },
+];
+
+const SANDBOX: &[Field] = &[
+    Field {
+        name: "enabled",
+        about: "Require verified operating-system confinement for commands; off by default, and only user configuration may disable it",
+        shape: Shape::Flag,
+        examples: &[],
+        usual: Some("false"),
+        needed: false,
+        widens: false,
+    },
+    Field {
+        name: "filesystem",
+        about: "Filesystem access relative to the workspace root or at an absolute path",
+        shape: Shape::Fields(SANDBOX_FILESYSTEM),
+        examples: &[],
+        usual: None,
+        needed: false,
+        widens: false,
+    },
+    Field {
+        name: "network",
+        about: "Domain mediation and explicit local connections",
+        shape: Shape::Fields(SANDBOX_NETWORK),
+        examples: &[],
+        usual: None,
+        needed: false,
+        widens: false,
+    },
+    Field {
+        name: "limits",
+        about: "Command resource ceilings; project configuration may only lower them",
+        shape: Shape::Fields(SANDBOX_LIMITS),
+        examples: &[],
+        usual: None,
+        needed: false,
+        widens: false,
+    },
+];
 
 /// Every answer `compaction.when` accepts.
 pub(crate) const COMPACTION_WHEN: &[&str] = &["full", "never"];
@@ -1188,6 +1351,8 @@ impl Shape {
             Self::Text
             | Self::Choice(_)
             | Self::Count
+            | Self::Limit(_)
+            | Self::TextSet { .. }
             | Self::Flag
             | Self::Whole(_)
             | Self::Named { .. }
@@ -1210,6 +1375,8 @@ impl Shape {
             Self::Text
             | Self::Choice(_)
             | Self::Count
+            | Self::Limit(_)
+            | Self::TextSet { .. }
             | Self::Flag
             | Self::Whole(_)
             | Self::List { .. }
@@ -1228,6 +1395,8 @@ impl Shape {
             Self::Text
             | Self::Choice(_)
             | Self::Count
+            | Self::Limit(_)
+            | Self::TextSet { .. }
             | Self::Flag
             | Self::Whole(_)
             | Self::List { .. }
@@ -1252,6 +1421,8 @@ impl Shape {
             Self::Text
             | Self::Choice(_)
             | Self::Count
+            | Self::Limit(_)
+            | Self::TextSet { .. }
             | Self::Flag
             | Self::Whole(_)
             | Self::List { .. }
@@ -1270,6 +1441,8 @@ impl Shape {
             Self::Text
             | Self::Choice(_)
             | Self::Count
+            | Self::Limit(_)
+            | Self::TextSet { .. }
             | Self::Flag
             | Self::Whole(_)
             | Self::Fields(_)
@@ -1284,6 +1457,8 @@ impl Shape {
             Self::Text => "a string",
             Self::Choice(_) => "one of a fixed set of strings",
             Self::Count => "a whole number that is not negative",
+            Self::Limit(_) => "a positive whole number within the documented ceiling",
+            Self::TextSet { .. } => "a bounded set of nonempty strings",
             Self::Flag => "true or false",
             Self::Whole(_) => "a whole number written as a string",
             Self::Fields(_) | Self::Named { .. } => "an object",

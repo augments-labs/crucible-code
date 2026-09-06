@@ -203,6 +203,7 @@ impl SandboxSession for WindowsSession {
         let launch = WindowsLaunch {
             process: Some(process),
             plan: Some(super::process::SpawnPlan {
+                network: None,
                 inspection: self.inspection.clone(),
                 reservation,
                 stage: Some(stage),

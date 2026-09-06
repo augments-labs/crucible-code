@@ -444,6 +444,22 @@ fn decode_resolution(value: &Value) -> Result<ActionResolution, CheckpointError>
     }
 }
 
+/// The shared redacted network shape used by checkpoint and journal records.
+pub(crate) fn encode_network(network: SandboxNetworkInspection) -> Value {
+    match network {
+        SandboxNetworkInspection::Closed => json!({ "state": "closed" }),
+        SandboxNetworkInspection::Domains {
+            allowed,
+            denied,
+            local_binding,
+            unix_sockets,
+        } => json!({
+            "state": "domains", "allowed": allowed, "denied": denied,
+            "local_binding": local_binding, "unix_sockets": unix_sockets,
+        }),
+    }
+}
+
 fn encode_sandbox(sandbox: &SandboxCheckpoint) -> Value {
     json!({
         "id": sandbox.id().to_string(),
@@ -458,12 +474,7 @@ fn encode_sandbox(sandbox: &SandboxCheckpoint) -> Value {
             "claim": claim.as_str(),
         })).collect::<Vec<_>>(),
         "enabled": sandbox.enabled(),
-        "network": {
-            "state": sandbox.network().as_str(),
-            "endpoints": sandbox.network().endpoints(),
-            "dns": sandbox.network().dns(),
-            "forwarding": sandbox.network().forwarding(),
-        },
+        "network": encode_network(sandbox.network()),
         "policy_digest": hex(&sandbox.policy_digest()),
         "manifest_digest": hex(&sandbox.manifest_digest()),
         "confined": sandbox.confined(),
@@ -517,26 +528,23 @@ fn decode_sandbox(value: &Value) -> Result<SandboxCheckpoint, CheckpointError> {
     }
     let enabled = boolean(value, "enabled")?;
     let network = field(value, "network")?;
+    if ["endpoints", "dns", "forwarding"]
+        .iter()
+        .any(|key| network.get(key).is_some())
+    {
+        return Err(CheckpointError::Unreadable);
+    }
     let network = match text(network, "state")? {
-        "closed" => {
-            if number(network, "endpoints")? != 0
-                || boolean(network, "dns")?
-                || boolean(network, "forwarding")?
-            {
-                return Err(CheckpointError::Unreadable);
-            }
-            SandboxNetworkInspection::Closed
-        }
-        "exact" => {
-            let endpoints = usize::try_from(number(network, "endpoints")?)
-                .map_err(|_| CheckpointError::Unreadable)?;
-            if !(1..=crucible_core::MAX_SANDBOX_NETWORK_ENDPOINTS).contains(&endpoints) {
-                return Err(CheckpointError::Unreadable);
-            }
-            SandboxNetworkInspection::Exact {
-                endpoints,
-                dns: boolean(network, "dns")?,
-                forwarding: boolean(network, "forwarding")?,
+        "closed" => SandboxNetworkInspection::Closed,
+        "domains" => {
+            let count = |key| {
+                usize::try_from(number(network, key)?).map_err(|_| CheckpointError::Unreadable)
+            };
+            SandboxNetworkInspection::Domains {
+                allowed: count("allowed")?,
+                denied: count("denied")?,
+                local_binding: boolean(network, "local_binding")?,
+                unix_sockets: count("unix_sockets")?,
             }
         }
         _ => return Err(CheckpointError::Unreadable),
@@ -916,5 +924,67 @@ impl Drop for Temporary {
         if !self.landed {
             let _ = fs::remove_file(&self.path);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn closed_checkpoint() -> Value {
+        let checkpoint = SandboxCheckpoint::restore(
+            SandboxId::new(),
+            SandboxBackendIdentity::new(
+                SandboxBackendId::new("checkpoint-test").expect("backend id"),
+                "1",
+                SandboxBackendProvenance::Compatibility,
+                None,
+            )
+            .expect("backend"),
+            SandboxCapabilities::none(),
+            false,
+            SandboxNetworkInspection::Closed,
+            [1; 32],
+            [2; 32],
+            false,
+        )
+        .expect("closed checkpoint");
+        encode_sandbox(&checkpoint)
+    }
+
+    #[test]
+    fn obsolete_network_attributes_are_rejected() {
+        for (key, value) in [
+            ("endpoints", json!(0)),
+            ("dns", json!(false)),
+            ("forwarding", json!(false)),
+        ] {
+            let mut encoded = closed_checkpoint();
+            encoded
+                .get_mut("network")
+                .and_then(Value::as_object_mut)
+                .expect("encoded network object")
+                .insert(key.to_owned(), value);
+            assert!(
+                matches!(decode_sandbox(&encoded), Err(CheckpointError::Unreadable)),
+                "obsolete {key} was accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn a_legacy_exact_network_checkpoint_is_rejected() {
+        let mut encoded = closed_checkpoint();
+        *encoded.get_mut("network").expect("encoded network") = json!({
+            "state": "exact",
+            "endpoints": 1,
+            "dns": false,
+            "forwarding": false,
+        });
+
+        assert!(matches!(
+            decode_sandbox(&encoded),
+            Err(CheckpointError::Unreadable)
+        ));
     }
 }

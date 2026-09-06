@@ -18,8 +18,8 @@ use crucible_core::{
     SandboxBackendIdentity, SandboxCapabilities, SandboxCleanup, SandboxCommand,
     SandboxCommandStage, SandboxError, SandboxFactKind, SandboxFailureKind, SandboxFailurePhase,
     SandboxFilesystemAccess, SandboxGuardrailDecision, SandboxInspection, SandboxInvocationMode,
-    SandboxLaunch, SandboxLifecycle, SandboxProcess, SandboxRequest, SandboxResourceLimits,
-    SandboxSession,
+    SandboxLaunch, SandboxLifecycle, SandboxNetworkPolicy, SandboxProcess, SandboxRequest,
+    SandboxResourceLimits, SandboxSession,
 };
 
 #[cfg(target_os = "macos")]
@@ -267,10 +267,42 @@ impl SandboxSession for MacSession {
             }
         }
 
+        if let Err(problem) = self.profile.validate_network() {
+            self.record_start_failure(problem.failure_kind())?;
+            return Err(problem);
+        }
+        let duration = self
+            .request
+            .policy()
+            .limits()
+            .command_time
+            .unwrap_or(std::time::Duration::from_mins(20));
+        let mut mediator = match self.request.policy().network() {
+            SandboxNetworkPolicy::Domains(policy) if !policy.allowed().is_empty() => {
+                match super::network::Mediator::tcp(policy.clone(), self.request.id(), duration) {
+                    Ok(mediator) => Some(mediator),
+                    Err(source) => {
+                        let problem = SandboxError::Spawn(source);
+                        self.record_start_failure(problem.failure_kind())?;
+                        return Err(problem);
+                    }
+                }
+            }
+            SandboxNetworkPolicy::Domains(_) | SandboxNetworkPolicy::Closed => None,
+        };
+        let profile = match mediator.as_ref() {
+            Some(network) => self.profile.with_proxy(network.address()),
+            None => Ok(self.profile.clone()),
+        };
+        let profile = match profile {
+            Ok(profile) => profile,
+            Err(problem) => {
+                self.record_start_failure(problem.failure_kind())?;
+                return Err(problem);
+            }
+        };
         let limits = self.request.policy().limits();
-        if let Err(problem) =
-            validate_launch_arguments(&self.broker, &self.profile, &command, limits)
-        {
+        if let Err(problem) = validate_launch_arguments(&self.broker, &profile, &command, limits) {
             self.record_start_failure(problem.failure_kind())?;
             return Err(problem);
         }
@@ -282,8 +314,8 @@ impl SandboxSession for MacSession {
             .arg("--open-files")
             .arg(limits.open_files.unwrap_or(0).to_string())
             .arg("--profile")
-            .arg(self.profile.policy());
-        for definition in self.profile.definitions() {
+            .arg(profile.policy());
+        for definition in profile.definitions() {
             process.arg("--definition").arg(definition);
         }
         let scratch = self.scratch.as_ref().map(Stage::root).ok_or_else(|| {
@@ -299,6 +331,9 @@ impl SandboxSession for MacSession {
             .env_clear()
             .envs(command.environment().iter())
             .env("TMPDIR", scratch);
+        if let Some(network) = mediator.as_ref() {
+            process.envs(network.environment(network.address()));
+        }
         let reservation = self.reservation.take().ok_or(SandboxError::Concurrency)?;
         let stage = self.scratch.take().ok_or_else(|| {
             SandboxError::Lifecycle(std::io::Error::other(
@@ -307,7 +342,9 @@ impl SandboxSession for MacSession {
         })?;
         let launch = MacLaunch {
             process: Some(process),
+            profile,
             plan: Some(super::process::SpawnPlan {
+                network: mediator.take(),
                 inspection: self.inspection.clone(),
                 reservation,
                 stage: Some(stage),
@@ -415,6 +452,7 @@ impl Drop for MacSession {
 #[cfg(target_os = "macos")]
 struct MacLaunch {
     process: Option<Command>,
+    profile: profile::Profile,
     plan: Option<super::process::SpawnPlan>,
     inspection: SandboxInspection,
     audit: crucible_core::SandboxAudit,
@@ -449,6 +487,16 @@ impl SandboxLaunch for MacLaunch {
             return Err(SandboxError::Lifecycle(std::io::Error::other(
                 "background sandbox has no application cleanup owner",
             )));
+        }
+        if let Err(problem) = self.profile.validate_network() {
+            self.audit.record(
+                self.sandbox,
+                SandboxFactKind::Failed {
+                    phase: SandboxFailurePhase::Start,
+                    kind: problem.failure_kind(),
+                },
+            )?;
+            return Err(problem);
         }
         let process = self.process.take().ok_or_else(|| {
             SandboxError::Spawn(std::io::Error::other("macOS command was already released"))

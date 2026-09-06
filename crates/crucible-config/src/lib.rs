@@ -62,10 +62,10 @@ mod shape;
 pub use error::{Accepted, At, ConfigError};
 pub use extensions::{Extensions, Installed, MAX_EXTENSIONS, Refusal};
 pub use home::{HOME, Home};
-pub use remember::{allowing, asking, choosing, drawing, reading, thinking, unasked};
+pub use remember::{allowing, asking, choosing, drawing, reading, sandboxing, thinking, unasked};
 pub use settings::{
-    Color, Compaction, Glyphs, McpServer, ScrollSpeed, Sending, Settings, ThemeChoice, ToolDetail,
-    Updates, When, local, user,
+    Color, Compaction, Glyphs, McpServer, SandboxSettings, ScrollSpeed, Sending, Settings,
+    ThemeChoice, ToolDetail, Updates, When, local, user,
 };
 pub use shape::THEME;
 pub use shape::schema::schema;

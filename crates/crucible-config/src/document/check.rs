@@ -88,6 +88,32 @@ impl Reader<'_> {
             Shape::Text | Shape::Whole(_) => self.text_at(value, shape, spot),
             Shape::Choice(allowed) => self.choice(value, allowed, shape, spot),
             Shape::Count => self.count(value, shape, spot),
+            Shape::Limit(maximum) => {
+                if value
+                    .as_u64()
+                    .is_some_and(|value| (1..=*maximum).contains(&value))
+                {
+                    Ok(())
+                } else {
+                    Err(self.wrong_type(shape, spot))
+                }
+            }
+            Shape::TextSet { maximum, bytes } => {
+                let Some(paths) = value.as_array() else {
+                    return Err(self.wrong_type(shape, spot));
+                };
+                let mut unique = std::collections::BTreeSet::new();
+                if paths.len() > *maximum
+                    || paths.iter().any(|path| {
+                        !path.as_str().is_some_and(|path| {
+                            !path.is_empty() && path.len() <= *bytes && unique.insert(path)
+                        })
+                    })
+                {
+                    return Err(self.wrong_type(shape, spot));
+                }
+                Ok(())
+            }
             Shape::Flag => self.flag(value, shape, spot),
             Shape::Fields(_) => self.fields(value, shape, spot),
             Shape::Named { others, .. } => self.named(value, others, shape, spot),

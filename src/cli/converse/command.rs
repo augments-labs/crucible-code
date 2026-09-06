@@ -45,6 +45,7 @@ mod login;
 mod logout;
 mod model;
 mod resume;
+mod sandbox;
 mod theme;
 
 /// What a line beginning `/` can ask for.
@@ -65,6 +66,8 @@ pub(super) enum Command {
     Logout,
     /// The permission mode: the one in force, or the one named.
     Mode,
+    /// Inspect and configure operating-system confinement.
+    Sandbox,
     /// Which table of colours the terminal is drawn with.
     Theme,
     /// The sessions recorded here, and picking one of them up.
@@ -84,13 +87,14 @@ pub(super) enum Command {
 /// The ones that only say something first and the one that ends the session
 /// last. A list is read to find what you did not know to look for, and nobody
 /// is looking up how to leave.
-const EVERY: [Command; 12] = [
+const EVERY: [Command; 13] = [
     Command::Help,
     Command::Model,
     Command::Effort,
     Command::Login,
     Command::Logout,
     Command::Mode,
+    Command::Sandbox,
     Command::Theme,
     Command::Resume,
     Command::Cache,
@@ -111,6 +115,7 @@ pub(crate) struct Slash {
     command: Command,
     /// Where it came from.
     provenance: Provenance,
+    enablement: Option<std::sync::Arc<crucible_core::SandboxEnablement>>,
 }
 
 impl Slash {
@@ -130,6 +135,7 @@ impl Slash {
         Ok(Self {
             command,
             provenance,
+            enablement: None,
         })
     }
 }
@@ -163,11 +169,17 @@ pub(crate) type Commands = RegistrySnapshot<Slash>;
 /// [`RegistryError`] where a built-in could not be registered — a name written
 /// twice in [`EVERY`], or one too long for a source identity. Both are wiring
 /// defects, and the sentence names the command.
-pub(crate) fn builtins() -> Result<Registry<Slash>, RegistryError> {
+pub(crate) fn builtins(
+    enablement: &std::sync::Arc<crucible_core::SandboxEnablement>,
+) -> Result<Registry<Slash>, RegistryError> {
     let registry = Registry::new(Collision::Refuse);
     let mut staged = registry.stage();
     for command in EVERY {
-        staged.register(Slash::builtin(command)?)?;
+        let mut slash = Slash::builtin(command)?;
+        if command == Command::Sandbox {
+            slash.enablement = Some(std::sync::Arc::clone(enablement));
+        }
+        staged.register(slash)?;
     }
     registry.commit(staged)?;
     Ok(registry)
@@ -256,6 +268,7 @@ impl Command {
             Self::Login => "/login",
             Self::Logout => "/logout",
             Self::Mode => "/mode",
+            Self::Sandbox => "/sandbox",
             Self::Theme => "/theme",
             Self::Resume => "/resume",
             Self::Cache => "/cache",
@@ -280,6 +293,7 @@ impl Command {
             // one command that takes a word after it, and the words it takes
             // are the useful half of what there is to say.
             Self::Mode => mode::ring(glyphs),
+            Self::Sandbox => "inspect or configure sandbox confinement",
             Self::Theme => "pick the colours crucible draws with",
             Self::Resume => "pick up an earlier session here",
             Self::Cache => "inspect or clean prompt-cache state",
@@ -314,6 +328,9 @@ impl Command {
     const fn mid_turn(self) -> MidTurn {
         match self {
             Self::Help | Self::Theme => MidTurn::Live,
+            Self::Sandbox => {
+                MidTurn::Refused("changes the policy for new commands; open it between turns")
+            }
             // The mode is a ladder, not a picker: shift+tab steps it mid-turn,
             // and the panel between turns. So mid-turn the key is the way in,
             // and the command is told the same — stepped to and held for the
@@ -570,9 +587,18 @@ pub(super) fn filtering(commands: &Commands, line: &str, glyphs: Glyphs) -> Vec<
     commands
         .entries()
         .iter()
-        .map(|slash| slash.command)
-        .filter(|command| command.name().starts_with(line))
-        .map(|command| command.listed(glyphs))
+        .filter(|slash| slash.command.name().starts_with(line))
+        .map(|slash| {
+            let mut listed = slash.command.listed(glyphs);
+            if let Some(enablement) = &slash.enablement {
+                listed.says = if enablement.enabled() {
+                    "sandbox enabled (enter to configure)"
+                } else {
+                    "sandbox disabled (enter to configure)"
+                };
+            }
+            listed
+        })
         .collect()
 }
 
@@ -674,6 +700,11 @@ fn answer<T: Terminal>(
             command: Command::Theme,
             rest,
         } => theme::run(rest, renderer, terms, held.answers.keys)?,
+
+        Wanted::Known {
+            command: Command::Sandbox,
+            rest,
+        } => sandbox::run(rest, renderer, terms, held.answers.keys)?,
 
         // The one other command that can end in a request: a session picked up
         // is put to the reader before it is carried, and one of the three

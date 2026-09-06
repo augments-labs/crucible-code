@@ -1,4 +1,7 @@
-//! Machine-wide serialization for Windows sandbox maintenance.
+//! Machine-wide serialization for Windows sandbox maintenance and launches.
+//!
+//! The configured owner retains access when running without administrator
+//! membership; maintenance for another owner uses that explicit owner SID.
 
 use std::io;
 
@@ -7,7 +10,7 @@ use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
 use windows_sys::Win32::System::Threading::{CreateMutexW, ReleaseMutex, WaitForSingleObject};
 
 use super::identity::SetupIdentity;
-use super::winutil::{OwnedHandle, SecurityDescriptor, error, wide};
+use super::winutil::{OwnedHandle, SecurityDescriptor, error, sid_string, wide};
 
 const LOCK_TIMEOUT_MILLIS: u32 = 30_000;
 
@@ -30,7 +33,9 @@ impl SetupLock {
         let name = wide(format!(
             "Global\\AugmentsLabs.Crucible.Sandbox.Setup.{suffix}"
         ));
-        let descriptor = SecurityDescriptor::from_sddl("D:P(A;;GA;;;SY)(A;;GA;;;BA)")?;
+        let owner = sid_string(&identity.owner_sid)?;
+        let descriptor =
+            SecurityDescriptor::from_sddl(format!("D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;{owner})"))?;
         let attributes = SECURITY_ATTRIBUTES {
             nLength: u32::try_from(size_of::<SECURITY_ATTRIBUTES>()).map_err(|_| {
                 io::Error::new(
@@ -72,5 +77,91 @@ impl Drop for SetupLock {
         unsafe {
             ReleaseMutex(self.handle.get());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ptr::{null, null_mut};
+    use windows_sys::Win32::Security::{
+        CreateRestrictedToken, CreateWellKnownSid, DISABLE_MAX_PRIVILEGE, ImpersonateLoggedOnUser,
+        RevertToSelf, SID_AND_ATTRIBUTES, TOKEN_DUPLICATE, TOKEN_QUERY,
+        WinBuiltinAdministratorsSid,
+    };
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    /// Administrative setup and normal launches share the mutex. The host
+    /// owner's SID must work even when the Administrators SID is deny-only.
+    #[test]
+    fn the_owner_keeps_mutex_access_without_administrator_membership() {
+        let owner = super::super::winutil::current_user_sid().expect("owner SID");
+        let identity = SetupIdentity::for_owner(&owner);
+        // Retain the object: creating a fresh mutex under impersonation would
+        // hand its creator a handle without checking an existing object's DACL.
+        let _original = SetupLock::acquire(&identity).expect("administrative owner lock");
+        let mut token = null_mut();
+        assert_ne!(
+            unsafe {
+                OpenProcessToken(
+                    GetCurrentProcess(),
+                    TOKEN_DUPLICATE | TOKEN_QUERY,
+                    &raw mut token,
+                )
+            },
+            0
+        );
+        let token = OwnedHandle::new(token, "test token").expect("token");
+        let mut sid = [0_u8; 256];
+        let mut length = u32::try_from(sid.len()).expect("SID bound");
+        assert_ne!(
+            unsafe {
+                CreateWellKnownSid(
+                    WinBuiltinAdministratorsSid,
+                    null_mut(),
+                    sid.as_mut_ptr().cast(),
+                    &raw mut length,
+                )
+            },
+            0
+        );
+        let disabled = SID_AND_ATTRIBUTES {
+            Sid: sid.as_mut_ptr().cast(),
+            Attributes: 0,
+        };
+        let mut restricted = null_mut();
+        assert_ne!(
+            unsafe {
+                CreateRestrictedToken(
+                    token.get(),
+                    DISABLE_MAX_PRIVILEGE,
+                    1,
+                    &raw const disabled,
+                    0,
+                    null(),
+                    0,
+                    null(),
+                    &raw mut restricted,
+                )
+            },
+            0
+        );
+        let restricted = OwnedHandle::new(restricted, "test limited token").expect("limited token");
+        assert_ne!(unsafe { ImpersonateLoggedOnUser(restricted.get()) }, 0);
+        struct Revert;
+        impl Drop for Revert {
+            fn drop(&mut self) {
+                assert_ne!(unsafe { RevertToSelf() }, 0);
+            }
+        }
+        let _impersonation = Revert;
+        let limited = SetupLock::acquire(&identity);
+        assert!(
+            limited.is_ok(),
+            "ordinary owner could not open the setup mutex: {}",
+            limited
+                .err()
+                .map_or_else(String::new, |error| error.to_string())
+        );
     }
 }

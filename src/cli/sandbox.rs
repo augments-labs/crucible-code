@@ -214,11 +214,14 @@ fn plan(said: &mut String, plan: &SandboxPlanInspection, capabilities: &SandboxC
         network.as_str(),
         match network {
             crucible_core::SandboxNetworkInspection::Closed => String::new(),
-            crucible_core::SandboxNetworkInspection::Exact { .. } => format!(
-                ", {} endpoints, dns {}, forwarding {}",
-                network.endpoints(),
-                yes(network.dns()),
-                yes(network.forwarding()),
+            crucible_core::SandboxNetworkInspection::Domains {
+                allowed,
+                denied,
+                local_binding,
+                unix_sockets,
+            } => format!(
+                ", {allowed} allowed, {denied} denied, local binding {}, {unix_sockets} Unix sockets",
+                yes(local_binding)
             ),
         }
     );

@@ -19,11 +19,8 @@
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
-use crucible_config::{McpServer, Settings};
-use crucible_core::{
-    SandboxEnvironment, SandboxFilesystemAccess, SandboxFilesystemProvenance,
-    SandboxFilesystemRule, SandboxPolicy, Workspace,
-};
+use crucible_config::{McpServer, SandboxSettings, Settings};
+use crucible_core::{SandboxEnvironment, SandboxPolicy, Workspace};
 
 use super::Chosen;
 use crate::cli::Fatal;
@@ -43,7 +40,6 @@ pub(crate) fn selected(
     lookup: impl Fn(&str) -> Option<OsString>,
 ) -> Result<Vec<Chosen>, Fatal> {
     let records = settings.mcp_servers();
-    let enabled = settings.sandbox_enabled();
     named
         .iter()
         .map(|name| {
@@ -54,7 +50,7 @@ pub(crate) fn selected(
                     named: name.as_str().into(),
                     has: written(&records),
                 })?;
-            one(record, workspace, enabled, &lookup)
+            one(record, workspace, settings.sandbox(), &lookup)
         })
         .collect()
 }
@@ -63,7 +59,7 @@ pub(crate) fn selected(
 fn one(
     record: &McpServer,
     workspace: &Workspace,
-    enabled: bool,
+    settings: &SandboxSettings,
     lookup: &impl Fn(&str) -> Option<OsString>,
 ) -> Result<Chosen, Fatal> {
     let refused = |problem: String| Fatal::Server {
@@ -75,9 +71,10 @@ fn one(
         .ok_or_else(|| refused(format!("no {} on the PATH", record.command())))?;
     let arguments = record.args().map(OsString::from);
     let environment = environment(record, lookup).map_err(refused)?;
-    let policy = confinement(record, workspace, enabled).map_err(refused)?;
+    let policy = confinement(record, workspace, settings).map_err(refused)?;
 
     Ok(Chosen::new(record.name(), program, arguments, policy)
+        .following_enablement(settings.enablement())
         .given(environment)
         .waiting(record.handshake(), record.request(), record.shutdown())
         // Named on the command line and written down as required are two
@@ -159,33 +156,26 @@ fn environment(
 fn confinement(
     record: &McpServer,
     workspace: &Workspace,
-    enabled: bool,
+    settings: &SandboxSettings,
 ) -> Result<SandboxPolicy, String> {
-    let standard = SandboxPolicy::standard(workspace)
-        .map_err(|problem| problem.to_string())?
-        .with_enabled(enabled);
-
-    // Absolute already, because the reader refused it otherwise: a directory
-    // that resolves against wherever crucible happens to be is a root the model
-    // could move, and that is settled where the document is read rather than
-    // here, where it would be the second answer to one question.
+    // The user-owned server directory is part of the initial grant. Apply
+    // sandbox restrictions afterwards so it cannot reopen a protected path.
+    let reaching = match record.directory() {
+        Some(directory) => workspace
+            .clone()
+            .reaching([directory])
+            .map_err(|problem| problem.to_string())?,
+        None => workspace.clone(),
+    };
+    let standard = settings
+        .enforcing_policy(&reaching)
+        .map_err(|problem| problem.to_string())?;
     let Some(directory) = record.directory() else {
         return Ok(standard);
     };
-    let directory = Path::new(directory);
-
-    let mut filesystem: Vec<_> = standard.filesystem().to_vec();
-    filesystem.push(
-        SandboxFilesystemRule::new(
-            directory,
-            SandboxFilesystemAccess::ReadWrite,
-            SandboxFilesystemProvenance::Manifest,
-        )
-        .map_err(|problem| problem.to_string())?,
-    );
     SandboxPolicy::new(
-        enabled,
-        filesystem,
+        standard.enabled(),
+        standard.filesystem().to_vec(),
         directory,
         standard.network().clone(),
         standard.limits(),

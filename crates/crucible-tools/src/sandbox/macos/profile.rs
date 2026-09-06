@@ -3,9 +3,14 @@
 use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::fmt::Write as _;
+use std::fs;
+use std::net::{Ipv4Addr, SocketAddr};
+use std::os::unix::fs::{FileTypeExt as _, MetadataExt as _};
 use std::path::{Path, PathBuf};
 
-use crucible_core::{SandboxError, SandboxFilesystemAccess, SandboxPolicy};
+use crucible_core::{
+    SandboxDomainPolicy, SandboxError, SandboxFilesystemAccess, SandboxNetworkPolicy, SandboxPolicy,
+};
 
 // macOS 26 resolves some system utilities through `/var/select` even when the
 // requested executable lives under `/bin`. This fixed system runtime is
@@ -58,9 +63,20 @@ const BASE_POLICY: &str = "\
     (literal \"/dev/urandom\")))\n\
 (allow file-write-data (require-all (literal \"/dev/null\") (vnode-type CHARACTER-DEVICE)))\n";
 
+#[derive(Clone)]
 pub(super) struct Profile {
     policy: String,
     definitions: Vec<OsString>,
+    sockets: Vec<SocketIdentity>,
+}
+
+#[derive(Clone)]
+struct SocketIdentity {
+    path: PathBuf,
+    device: u64,
+    inode: u64,
+    changed_seconds: i64,
+    changed_nanoseconds: i64,
 }
 
 impl Profile {
@@ -231,9 +247,12 @@ impl Profile {
             );
         }
 
+        let sockets = append_static_network(&mut text, &mut definitions, policy)?;
+
         let profile = Self {
             policy: text,
             definitions,
+            sockets,
         };
         profile.validate()?;
         Ok(profile)
@@ -247,6 +266,44 @@ impl Profile {
         );
         self.validate()?;
         Ok(self)
+    }
+
+    /// Returns the launch profile after opening only the host-owned mediator port.
+    ///
+    /// The listener is created at stage time, so its ephemeral port cannot be
+    /// part of the deterministic prepared profile.
+    pub(super) fn with_proxy(&self, endpoint: SocketAddr) -> Result<Self, SandboxError> {
+        if endpoint.ip() != Ipv4Addr::LOCALHOST || endpoint.port() == 0 {
+            return Err(materialization(
+                "the macOS sandbox proxy endpoint is not private loopback",
+                None,
+            ));
+        }
+        let mut profile = self.clone();
+        let _ = writeln!(
+            profile.policy,
+            "(allow network-outbound (require-all (remote tcp \"localhost:{}\") (socket-domain AF_INET)))",
+            endpoint.port()
+        );
+        profile.validate()?;
+        Ok(profile)
+    }
+
+    pub(super) fn validate_network(&self) -> Result<(), SandboxError> {
+        for expected in &self.sockets {
+            let actual = validate_socket(&expected.path)?;
+            if actual.device != expected.device
+                || actual.inode != expected.inode
+                || actual.changed_seconds != expected.changed_seconds
+                || actual.changed_nanoseconds != expected.changed_nanoseconds
+            {
+                return Err(materialization(
+                    "sandbox Unix endpoint changed after preparation",
+                    None,
+                ));
+            }
+        }
+        Ok(())
     }
 
     fn validate(&self) -> Result<(), SandboxError> {
@@ -269,6 +326,188 @@ impl Profile {
     #[cfg(target_os = "macos")]
     pub(super) fn definitions(&self) -> &[OsString] {
         &self.definitions
+    }
+}
+
+fn append_static_network(
+    text: &mut String,
+    definitions: &mut Vec<OsString>,
+    policy: &SandboxPolicy,
+) -> Result<Vec<SocketIdentity>, SandboxError> {
+    let domains = match policy.network() {
+        SandboxNetworkPolicy::Closed => return Ok(Vec::new()),
+        SandboxNetworkPolicy::Domains(domains) => domains,
+    };
+    let sockets = validate_network(policy)?;
+
+    // A Seatbelt Unix grant is pathname-based rather than descriptor-pinned.
+    // Capture identity now and revalidate at stage and release; these denies
+    // prevent the child from replacing the socket or renaming one of its
+    // writable ancestors after launch. A host process can still replace the
+    // pathname after the final check, which is a platform limitation of
+    // Seatbelt's public profile grammar rather than authority granted here.
+    let mut denied_sockets = 0_usize;
+    for path in domains.unix_sockets() {
+        push_deny_path(
+            text,
+            definitions,
+            path,
+            ("DENY_SOCKET", &mut denied_sockets, "file-write* file-link"),
+        )?;
+    }
+    append_socket_ancestor_denies(text, definitions, policy, domains)?;
+
+    if domains.allow_local_binding() {
+        text.push_str("(allow network-bind network-inbound (local ip \"localhost:*\"))\n");
+    }
+    if !domains.unix_sockets().is_empty() {
+        text.push_str("(allow system-socket (socket-domain AF_UNIX))\n");
+        for path in domains.unix_sockets() {
+            let path = seatbelt_literal(path)?;
+            let _ = writeln!(
+                text,
+                "(allow network-outbound (remote unix-socket (literal \"{path}\")))"
+            );
+        }
+    }
+    Ok(sockets)
+}
+
+fn validate_network(policy: &SandboxPolicy) -> Result<Vec<SocketIdentity>, SandboxError> {
+    let SandboxNetworkPolicy::Domains(domains) = policy.network() else {
+        return Ok(Vec::new());
+    };
+    let mut identities = Vec::with_capacity(domains.unix_sockets().len());
+    for path in domains.unix_sockets() {
+        if policy.filesystem().iter().any(|rule| {
+            rule.access() == SandboxFilesystemAccess::Unreadable && path.starts_with(rule.path())
+        }) || policy
+            .unreadable_patterns()
+            .iter()
+            .any(|pattern| pattern.matches(path))
+        {
+            return Err(materialization(
+                "an unreadable path cannot be granted as a Unix endpoint",
+                None,
+            ));
+        }
+        identities.push(validate_socket(path)?);
+    }
+    Ok(identities)
+}
+
+fn validate_socket(path: &Path) -> Result<SocketIdentity, SandboxError> {
+    let inspect = || {
+        fs::symlink_metadata(path).map_err(|source| {
+            materialization("sandbox Unix endpoint could not be inspected", Some(source))
+        })
+    };
+    let named = inspect()?;
+    if named.file_type().is_symlink() || !named.file_type().is_socket() || named.nlink() != 1 {
+        return Err(materialization(
+            "sandbox Unix endpoint is not a canonical socket",
+            None,
+        ));
+    }
+    let canonical = path.canonicalize().map_err(|source| {
+        materialization(
+            "sandbox Unix endpoint could not be canonicalized",
+            Some(source),
+        )
+    })?;
+    if canonical != path {
+        return Err(materialization(
+            "sandbox Unix endpoint contains a symbolic-link or non-canonical component",
+            None,
+        ));
+    }
+    let confirmed = inspect()?;
+    if confirmed.dev() != named.dev()
+        || confirmed.ino() != named.ino()
+        || confirmed.ctime() != named.ctime()
+        || confirmed.ctime_nsec() != named.ctime_nsec()
+        || confirmed.nlink() != 1
+        || !confirmed.file_type().is_socket()
+    {
+        return Err(materialization(
+            "sandbox Unix endpoint changed during validation",
+            None,
+        ));
+    }
+    Ok(SocketIdentity {
+        path: path.to_path_buf(),
+        device: confirmed.dev(),
+        inode: confirmed.ino(),
+        changed_seconds: confirmed.ctime(),
+        changed_nanoseconds: confirmed.ctime_nsec(),
+    })
+}
+
+fn append_socket_ancestor_denies(
+    text: &mut String,
+    definitions: &mut Vec<OsString>,
+    policy: &SandboxPolicy,
+    domains: &SandboxDomainPolicy,
+) -> Result<(), SandboxError> {
+    let mut ancestors = BTreeSet::new();
+    for socket in domains.unix_sockets() {
+        let writable_root = policy
+            .filesystem()
+            .iter()
+            .filter(|rule| {
+                rule.access() == SandboxFilesystemAccess::ReadWrite
+                    && socket.starts_with(rule.path())
+            })
+            .max_by_key(|rule| rule.path().components().count());
+        let Some(root) = writable_root else {
+            continue;
+        };
+        let mut ancestor = socket.parent();
+        while let Some(path) = ancestor {
+            if path == root.path() {
+                break;
+            }
+            ancestors.insert(path.to_path_buf());
+            ancestor = path.parent();
+        }
+    }
+    for path in ancestors {
+        for path in paths_with_system_alias(&path) {
+            let key = format!("SOCKET_ANCESTOR_{}", definitions.len());
+            push_definition(definitions, &key, &path)?;
+            let _ = writeln!(
+                text,
+                "(deny file-write-unlink file-write-create (require-all (vnode-type DIRECTORY) (literal (param \"{key}\"))))"
+            );
+        }
+    }
+    Ok(())
+}
+
+fn seatbelt_literal(path: &Path) -> Result<String, SandboxError> {
+    let path = path.to_str().ok_or_else(|| {
+        materialization("macOS sandbox Unix endpoints must be valid Unicode", None)
+    })?;
+    let mut escaped = String::with_capacity(path.len());
+    for character in path.chars() {
+        if character.is_control() {
+            return Err(materialization(
+                "macOS sandbox Unix endpoints contain an unsupported control character",
+                None,
+            ));
+        }
+        if matches!(character, '\\' | '"') {
+            escaped.push('\\');
+        }
+        escaped.push(character);
+    }
+    Ok(escaped)
+}
+
+fn materialization(problem: &'static str, source: Option<std::io::Error>) -> SandboxError {
+    SandboxError::Materialization {
+        problem: problem.into(),
+        source,
     }
 }
 
@@ -441,13 +680,16 @@ fn push_definition(
 #[cfg(test)]
 mod tests {
     use std::ffi::OsString;
+    use std::os::unix::net::UnixListener;
+    use std::path::Path;
 
     use crucible_core::{
-        SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule,
-        SandboxNetworkPolicy, SandboxPolicy, SandboxResourceLimits, SandboxUnreadablePattern,
+        SandboxDomainPattern, SandboxDomainPolicy, SandboxFilesystemAccess,
+        SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxNetworkPolicy,
+        SandboxNetworkProvenance, SandboxPolicy, SandboxResourceLimits, SandboxUnreadablePattern,
     };
 
-    use super::{Profile, paths_with_system_alias, protected_metadata_regex};
+    use super::{Profile, paths_with_system_alias, protected_metadata_regex, seatbelt_literal};
     use crate::sample::Sample;
 
     #[test]
@@ -531,11 +773,232 @@ mod tests {
     }
 
     #[test]
+    fn a_domain_profile_grants_only_requested_static_local_authority() {
+        let sample = Sample::socket("macos-seatbelt-domain-profile");
+        let socket_path = sample.root().join("allowed.sock");
+        let _socket = UnixListener::bind(&socket_path).expect("Unix socket fixture");
+        let standard = SandboxPolicy::standard(&sample.workspace()).expect("standard policy");
+        let domains = SandboxDomainPolicy::new(
+            [],
+            [],
+            true,
+            [socket_path.clone()],
+            SandboxNetworkProvenance::User,
+        )
+        .expect("domain policy");
+        let policy = SandboxPolicy::new(
+            true,
+            standard.filesystem().iter().cloned(),
+            standard.working_directory(),
+            SandboxNetworkPolicy::Domains(domains),
+            SandboxResourceLimits::confining(),
+        )
+        .expect("effective policy");
+
+        let profile = Profile::build(&policy, &[], &[], &[]).expect("Seatbelt profile");
+        let socket = socket_path.to_str().expect("Unicode fixture path");
+
+        assert!(
+            profile
+                .policy
+                .contains("(allow network-bind network-inbound (local ip \"localhost:*\"))")
+        );
+        assert!(
+            profile
+                .policy
+                .contains("(allow system-socket (socket-domain AF_UNIX))")
+        );
+        assert!(profile.policy.contains(&format!(
+            "(allow network-outbound (remote unix-socket (literal \"{socket}\")))"
+        )));
+        assert!(profile.policy.contains("(param \"DENY_SOCKET_0\")"));
+        assert!(profile.policy.contains("(deny network*)"));
+        assert!(profile.policy.contains("(param \"WRITE_0\")"));
+        assert!(!profile.policy.contains("(remote tcp"));
+    }
+
+    #[test]
+    fn the_proxy_port_is_added_only_to_the_staged_profile_copy() {
+        let sample = Sample::new("macos-seatbelt-proxy-profile");
+        let standard = SandboxPolicy::standard(&sample.workspace()).expect("standard policy");
+        let domains = SandboxDomainPolicy::new(
+            [SandboxDomainPattern::new("127.0.0.1").expect("literal domain")],
+            [],
+            false,
+            [],
+            SandboxNetworkProvenance::User,
+        )
+        .expect("domain policy");
+        let policy = SandboxPolicy::new(
+            true,
+            standard.filesystem().iter().cloned(),
+            standard.working_directory(),
+            SandboxNetworkPolicy::Domains(domains),
+            SandboxResourceLimits::confining(),
+        )
+        .expect("effective policy");
+        let prepared = Profile::build(&policy, &[], &[], &[]).expect("prepared profile");
+
+        let staged = prepared
+            .with_proxy("127.0.0.1:43127".parse().expect("proxy endpoint"))
+            .expect("staged profile");
+
+        assert!(!prepared.policy.contains("(remote tcp"));
+        assert!(
+            staged
+                .policy
+                .contains("(allow network-outbound (require-all (remote tcp \"localhost:43127\") (socket-domain AF_INET)))")
+        );
+        assert!(staged.policy.starts_with(&prepared.policy));
+        assert!(staged.policy.contains("(param \"WRITE_0\")"));
+        for endpoint in ["0.0.0.0:43127", "127.0.0.1:0", "[::1]:43127"] {
+            assert!(
+                prepared
+                    .with_proxy(endpoint.parse().expect("test endpoint"))
+                    .is_err(),
+                "accepted {endpoint}"
+            );
+        }
+    }
+
+    #[test]
+    fn unix_endpoint_literals_cannot_inject_profile_forms() {
+        assert_eq!(
+            seatbelt_literal(Path::new("/tmp/a\"b\\c.sock")).expect("escaped literal"),
+            "/tmp/a\\\"b\\\\c.sock"
+        );
+        assert!(seatbelt_literal(Path::new("/tmp/a\nb.sock")).is_err());
+    }
+
+    #[test]
+    fn an_unreadable_unix_endpoint_is_refused_before_profile_grants() {
+        let sample = Sample::socket("macos-seatbelt-unreadable-socket");
+        let socket_path = sample.root().join("private/allowed.sock");
+        std::fs::create_dir_all(socket_path.parent().expect("socket parent")).expect("parent");
+        let _socket = UnixListener::bind(&socket_path).expect("Unix socket fixture");
+        let standard = SandboxPolicy::standard(&sample.workspace()).expect("standard policy");
+        let unreadable = SandboxFilesystemRule::new(
+            sample.root().join("private"),
+            SandboxFilesystemAccess::Unreadable,
+            SandboxFilesystemProvenance::Descendant,
+        )
+        .expect("unreadable rule");
+        let domains =
+            SandboxDomainPolicy::new([], [], false, [socket_path], SandboxNetworkProvenance::User)
+                .expect("domain policy");
+        let policy = SandboxPolicy::new(
+            true,
+            standard.filesystem().iter().cloned().chain([unreadable]),
+            standard.working_directory(),
+            SandboxNetworkPolicy::Domains(domains),
+            SandboxResourceLimits::confining(),
+        )
+        .expect("effective policy");
+
+        let Err(problem) = Profile::build(&policy, &[], &[], &[]) else {
+            panic!("unreadable socket must be refused");
+        };
+        assert!(problem.to_string().contains("unreadable path"));
+    }
+
+    #[test]
+    fn an_unreadable_pattern_cannot_be_reopened_as_a_unix_endpoint() {
+        let sample = Sample::socket("macos-seatbelt-unreadable-socket-pattern");
+        let socket_path = sample.root().join("private/allowed.sock");
+        std::fs::create_dir_all(socket_path.parent().expect("socket parent")).expect("parent");
+        let _socket = UnixListener::bind(&socket_path).expect("Unix socket fixture");
+        let standard = SandboxPolicy::standard(&sample.workspace()).expect("standard policy");
+        let domains =
+            SandboxDomainPolicy::new([], [], false, [socket_path], SandboxNetworkProvenance::User)
+                .expect("domain policy");
+        let policy = SandboxPolicy::new(
+            true,
+            standard.filesystem().iter().cloned(),
+            standard.working_directory(),
+            SandboxNetworkPolicy::Domains(domains),
+            SandboxResourceLimits::confining(),
+        )
+        .expect("effective policy")
+        .with_unreadable_patterns([SandboxUnreadablePattern::new(
+            sample.root().join("**/*.sock"),
+            SandboxFilesystemProvenance::Descendant,
+        )
+        .expect("unreadable pattern")])
+        .expect("pattern policy");
+
+        let Err(problem) = Profile::build(&policy, &[], &[], &[]) else {
+            panic!("pattern-selected socket must be refused");
+        };
+        assert!(problem.to_string().contains("unreadable path"));
+    }
+
+    #[test]
+    fn a_symbolic_link_cannot_supply_unix_endpoint_identity() {
+        let sample = Sample::socket("macos-seatbelt-symlink-socket");
+        let socket_path = sample.root().join("real.sock");
+        let linked_path = sample.root().join("linked.sock");
+        let _socket = UnixListener::bind(&socket_path).expect("Unix socket fixture");
+        crate::sample::symlink(&socket_path, &linked_path);
+        let standard = SandboxPolicy::standard(&sample.workspace()).expect("standard policy");
+        let domains =
+            SandboxDomainPolicy::new([], [], false, [linked_path], SandboxNetworkProvenance::User)
+                .expect("domain policy");
+        let policy = SandboxPolicy::new(
+            true,
+            standard.filesystem().iter().cloned(),
+            standard.working_directory(),
+            SandboxNetworkPolicy::Domains(domains),
+            SandboxResourceLimits::confining(),
+        )
+        .expect("effective policy");
+
+        let Err(problem) = Profile::build(&policy, &[], &[], &[]) else {
+            panic!("symlink socket must be refused");
+        };
+        assert!(problem.to_string().contains("canonical socket"));
+    }
+
+    #[test]
+    fn unix_endpoint_identity_is_rechecked_after_preparation() {
+        let sample = Sample::socket("macos-seatbelt-replaced-socket");
+        let socket_path = sample.root().join("endpoint.sock");
+        let socket = UnixListener::bind(&socket_path).expect("Unix socket fixture");
+        let standard = SandboxPolicy::standard(&sample.workspace()).expect("standard policy");
+        let domains = SandboxDomainPolicy::new(
+            [],
+            [],
+            false,
+            [socket_path.clone()],
+            SandboxNetworkProvenance::User,
+        )
+        .expect("domain policy");
+        let policy = SandboxPolicy::new(
+            true,
+            standard.filesystem().iter().cloned(),
+            standard.working_directory(),
+            SandboxNetworkPolicy::Domains(domains),
+            SandboxResourceLimits::confining(),
+        )
+        .expect("effective policy");
+        let profile = Profile::build(&policy, &[], &[], &[]).expect("prepared profile");
+
+        drop(socket);
+        std::fs::remove_file(&socket_path).expect("remove original socket name");
+        let _replacement = UnixListener::bind(&socket_path).expect("replacement socket");
+
+        let problem = profile
+            .validate_network()
+            .expect_err("replacement socket must be refused");
+        assert!(problem.to_string().contains("changed after preparation"));
+    }
+
+    #[test]
     fn the_final_profile_must_fit_the_broker_protocol() {
         let sample = Sample::new("macos-seatbelt-profile-bound");
         let profile = Profile {
             policy: "x".repeat(crucible_sandbox_broker::MACOS_MAX_PROFILE_BYTES),
             definitions: Vec::new(),
+            sockets: Vec::new(),
         };
 
         assert!(profile.with_scratch(sample.root()).is_err());

@@ -53,6 +53,13 @@ pub(crate) fn drawing(file: &Path, theme: &str) -> Result<(), RememberError> {
     })
 }
 
+/// Persists the sandbox choice in the user configuration.
+pub(crate) fn sandboxing(file: &Path, enabled: bool) -> Result<(), RememberError> {
+    answering(file, |text, named| {
+        crucible_config::sandboxing(text, named, enabled)
+    })
+}
+
 /// Writes down that picking a session up should stop asking about its size.
 pub(crate) fn unasked(file: &Path) -> Result<(), RememberError> {
     answering(file, crucible_config::unasked)

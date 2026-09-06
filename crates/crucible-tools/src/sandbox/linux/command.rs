@@ -5,7 +5,7 @@ use std::ffi::{OsStr, OsString};
 use std::fs::{self, OpenOptions};
 use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::os::unix::ffi::OsStringExt as _;
-use std::os::unix::fs::MetadataExt as _;
+use std::os::unix::fs::{FileTypeExt as _, MetadataExt as _};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -61,6 +61,7 @@ const MAX_MOUNT_POINTS: usize = 8192;
 pub(super) struct View {
     binds: Vec<Bind>,
     masks: Vec<Mask>,
+    sockets: Vec<super::network::SocketMount>,
 }
 
 impl View {
@@ -81,6 +82,11 @@ impl View {
                     .filter(|mask| mask.destination.starts_with(root))
                     .map(|mask| mask.destination.clone()),
             )
+            .chain(
+                self.sockets
+                    .iter()
+                    .map(|socket| socket.destination().to_owned()),
+            )
             .filter_map(|destination| destination.strip_prefix(root).ok().map(Path::to_path_buf))
             .collect()
     }
@@ -91,6 +97,7 @@ impl std::fmt::Debug for View {
         f.debug_struct("View")
             .field("binds", &self.binds.len())
             .field("masks", &self.masks.len())
+            .field("sockets", &self.sockets.len())
             .finish()
     }
 }
@@ -207,11 +214,6 @@ struct Mask {
 }
 
 pub(super) fn prepare(request: &SandboxRequest) -> Result<View, SandboxError> {
-    if !matches!(request.policy().network(), SandboxNetworkPolicy::Closed) {
-        return Err(SandboxError::Unsupported {
-            feature: SandboxFeature::NetworkAllowlist,
-        });
-    }
     let limits = request.policy().limits();
     // The process ceiling is the one this list cannot decide on its own: what
     // the kernel counts it against is a property of the host, so the backend's
@@ -241,6 +243,30 @@ pub(super) fn prepare(request: &SandboxRequest) -> Result<View, SandboxError> {
     }
 
     validate_host(request.policy().filesystem())?;
+    let socket_paths = match request.policy().network() {
+        SandboxNetworkPolicy::Domains(policy) => policy.unix_sockets(),
+        SandboxNetworkPolicy::Closed => &[],
+    };
+    let sockets = socket_paths
+        .iter()
+        .map(|path| {
+            if request.policy().filesystem().iter().any(|rule| {
+                rule.access() == SandboxFilesystemAccess::Unreadable
+                    && path.starts_with(rule.path())
+            }) || request
+                .policy()
+                .unreadable_patterns()
+                .iter()
+                .any(|pattern| pattern.matches(path))
+            {
+                return Err(materialization(
+                    "an unreadable path cannot be granted as a Unix endpoint",
+                    None,
+                ));
+            }
+            super::network::SocketMount::open(path, path)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let cwd = request
         .policy()
         .working_directory()
@@ -295,7 +321,7 @@ pub(super) fn prepare(request: &SandboxRequest) -> Result<View, SandboxError> {
         }
     }
     for (root, protects_metadata) in validated_trees {
-        for protected in validate_granted_tree(&root, protects_metadata)? {
+        for protected in validate_granted_tree(&root, protects_metadata, socket_paths)? {
             if !grants.iter().any(|mount| mount.destination == protected) {
                 grants.push(Mount::read_only(&protected));
             }
@@ -354,7 +380,11 @@ pub(super) fn prepare(request: &SandboxRequest) -> Result<View, SandboxError> {
         .into_iter()
         .map(Bind::open)
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(View { binds, masks })
+    Ok(View {
+        binds,
+        masks,
+        sockets,
+    })
 }
 
 fn validate_host(rules: &[SandboxFilesystemRule]) -> Result<(), SandboxError> {
@@ -433,6 +463,8 @@ pub(super) struct Plan<'a> {
     pub(super) materialization: Option<&'a Materialization>,
     pub(super) projection: Option<&'a Projection>,
     pub(super) status_descriptor: RawFd,
+    pub(super) network: Option<&'a super::super::network::Mediator>,
+    pub(super) proxy_socket: Option<&'a super::network::SocketMount>,
 }
 
 pub(super) fn build(plan: Plan<'_>) -> Result<Command, SandboxError> {
@@ -445,34 +477,11 @@ pub(super) fn build(plan: Plan<'_>) -> Result<Command, SandboxError> {
         materialization,
         projection,
         status_descriptor,
+        network,
+        proxy_socket,
     } = plan;
     let runtime = runtime_mounts();
-    let mut directories = BTreeSet::new();
-    for mount in &runtime {
-        add_destination_directories(&mut directories, mount);
-    }
-    for bind in &view.binds {
-        if bind.directory {
-            directories.insert(bind.destination.clone());
-        }
-        add_parents(&mut directories, &bind.destination);
-    }
-    if materialization.is_some() {
-        directories.insert(PathBuf::from("/crucible/manifest"));
-        add_parents(&mut directories, Path::new("/crucible/manifest"));
-    }
-    for mask in &view.masks {
-        add_parents(&mut directories, &mask.destination);
-    }
-    for fixed in [
-        Path::new("/dev"),
-        Path::new("/proc"),
-        Path::new("/tmp"),
-        Path::new("/crucible-home"),
-        Path::new("/run/crucible"),
-    ] {
-        directories.insert(fixed.to_path_buf());
-    }
+    let directories = mount_directories(&runtime, view, materialization.is_some());
 
     let mut process = Command::new(backend.path());
     process.env_clear().args([
@@ -599,6 +608,13 @@ pub(super) fn build(plan: Plan<'_>) -> Result<Command, SandboxError> {
             }
         }
     }
+    for socket in view.sockets.iter().chain(proxy_socket) {
+        inherited.push(socket.descriptor());
+        process
+            .arg("--ro-bind-fd")
+            .arg(socket.descriptor().to_string())
+            .arg(socket.destination());
+    }
     for mask in &view.masks {
         if mask.directory {
             process
@@ -614,6 +630,74 @@ pub(super) fn build(plan: Plan<'_>) -> Result<Command, SandboxError> {
         }
     }
 
+    append_environment(&mut process, command, network);
+    process
+        .arg("--chdir")
+        .arg(request.policy().working_directory())
+        .arg("--")
+        .arg("/run/crucible/broker")
+        .arg("--status-fd")
+        .arg(status_descriptor.to_string());
+    append_projection_plan(&mut process, projection);
+    append_resource_limits(&mut process, request.policy().limits());
+    if network.is_some() {
+        process.arg("--network-proxy");
+    }
+    if matches!(request.policy().network(), SandboxNetworkPolicy::Domains(policy) if policy.allow_local_binding())
+    {
+        process.arg("--allow-local-binding");
+    }
+    process
+        .arg("--")
+        .arg(command.program())
+        .args(command.arguments());
+    super::fd::inherit(&mut process, &inherited)?;
+    Ok(process)
+}
+
+fn mount_directories(
+    runtime: &[Mount],
+    view: &View,
+    has_materialization: bool,
+) -> BTreeSet<PathBuf> {
+    let mut directories = BTreeSet::new();
+    for mount in runtime {
+        add_destination_directories(&mut directories, mount);
+    }
+    for bind in &view.binds {
+        if bind.directory {
+            directories.insert(bind.destination.clone());
+        }
+        add_parents(&mut directories, &bind.destination);
+    }
+    if has_materialization {
+        directories.insert(PathBuf::from("/crucible/manifest"));
+        add_parents(&mut directories, Path::new("/crucible/manifest"));
+    }
+    for mask in &view.masks {
+        add_parents(&mut directories, &mask.destination);
+    }
+    for socket in &view.sockets {
+        add_parents(&mut directories, socket.destination());
+    }
+    for fixed in [
+        Path::new("/dev"),
+        Path::new("/proc"),
+        Path::new("/tmp"),
+        Path::new("/crucible-home"),
+        Path::new("/run/crucible"),
+    ] {
+        directories.insert(fixed.to_path_buf());
+    }
+
+    directories
+}
+
+fn append_environment(
+    process: &mut Command,
+    command: &SandboxCommand,
+    network: Option<&super::super::network::Mediator>,
+) {
     // The environment travels in the backend's own, already cleared, process
     // environment, which it hands on unchanged to the command. It must not travel
     // as arguments: a process's argument list is readable by every local user
@@ -625,21 +709,9 @@ pub(super) fn build(plan: Plan<'_>) -> Result<Command, SandboxError> {
         }
     }
     process.env("HOME", "/crucible-home").env("TMPDIR", "/tmp");
-    process
-        .arg("--chdir")
-        .arg(request.policy().working_directory())
-        .arg("--")
-        .arg("/run/crucible/broker")
-        .arg("--status-fd")
-        .arg(status_descriptor.to_string());
-    append_projection_plan(&mut process, projection);
-    append_resource_limits(&mut process, request.policy().limits());
-    process
-        .arg("--")
-        .arg(command.program())
-        .args(command.arguments());
-    super::fd::inherit(&mut process, &inherited)?;
-    Ok(process)
+    if let Some(network) = network {
+        process.envs(network.environment(super::network::PROXY_ADDRESS));
+    }
 }
 
 fn append_resource_limits(process: &mut Command, limits: crucible_core::SandboxResourceLimits) {
@@ -735,6 +807,7 @@ fn add_parents(directories: &mut BTreeSet<PathBuf>, path: &Path) {
 fn validate_granted_tree(
     root: &Path,
     protects_metadata: bool,
+    sockets: &[PathBuf],
 ) -> Result<Vec<PathBuf>, SandboxError> {
     let root_device = fs::metadata(root)
         .map_err(|source| materialization("workspace root could not be inspected", Some(source)))?
@@ -819,6 +892,9 @@ fn validate_granted_tree(
                     ));
                 }
                 pending.push_back((path, depth.saturating_add(1)));
+                continue;
+            }
+            if metadata.file_type().is_socket() && sockets.contains(&path) {
                 continue;
             }
             return Err(materialization(
@@ -1260,6 +1336,8 @@ mod tests {
         let status = File::open("/dev/null").expect("a file to stand in for the status pipe");
 
         let process = build(Plan {
+            network: None,
+            proxy_socket: None,
             backend: &backend,
             broker: &broker,
             request: &request,

@@ -758,6 +758,7 @@ fn offered(terminal: bool) -> crucible_runner::Tools {
             searching: None,
             fetching: None,
         },
+        Arc::new(LocalSandbox::new()),
     )
     .expect("the built-in tool roster is valid")
 }

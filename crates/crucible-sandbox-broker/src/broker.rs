@@ -1,5 +1,7 @@
 //! Minimal namespace PID 1 for exactly one confined workload.
 
+mod binding;
+mod network;
 mod scan;
 mod scope;
 
@@ -38,7 +40,7 @@ fn run() -> Option<u8> {
     }
     let descriptor_argument = arguments.next()?;
     let descriptor = parse_descriptor(&descriptor_argument)?;
-    let (roots, exclusions, limits) = parse_plan(&mut arguments)?;
+    let (roots, exclusions, limits, network_flags) = parse_plan(&mut arguments)?;
     let program = arguments.next()?;
     let workload_arguments = arguments.collect::<Vec<_>>();
 
@@ -54,6 +56,18 @@ fn run() -> Option<u8> {
     if close_inherited_except(descriptor).is_err() {
         return write_refusal(&mut status_channel, REFUSED_DESCRIPTOR_CLOSURE);
     }
+    let mut network = if network_flags.proxy {
+        match network::NetworkRelay::start() {
+            Ok(network) => Some(network),
+            Err(_) => return write_failure(&mut status_channel),
+        }
+    } else {
+        None
+    };
+    let Ok(filter) = binding::compile(network_flags.allow_local_binding) else {
+        drop(network.take());
+        return write_failure(&mut status_channel);
+    };
     if status_channel
         .write_all(&READY_FRAME)
         .and_then(|()| status_channel.flush())
@@ -63,22 +77,34 @@ fn run() -> Option<u8> {
     }
     let mut release = [0_u8; GO_FRAME.len()];
     if status_channel.read_exact(&mut release).is_err() || release != GO_FRAME {
+        drop(network.take());
         return None;
     }
 
     let mut workload = Command::new(program);
     workload.args(workload_arguments).process_group(0);
-    // SAFETY: only async-signal-safe `setrlimit` syscalls run between fork and
-    // exec; the copied limit record owns no allocator-backed state.
+    // SAFETY: only async-signal-safe `setrlimit`, `prctl`, and `seccomp`
+    // syscalls run between fork and exec; the copied limit record and compiled
+    // BPF program own no mutable allocator-backed state.
     unsafe {
-        workload.pre_exec(move || limits.apply());
+        workload.pre_exec(move || {
+            limits.apply()?;
+            filter.as_deref().map_or(Ok(()), binding::apply)
+        });
     }
     let Ok(status) = workload
         .spawn()
         .and_then(|mut child| wait_workload(&mut child, &mut status_channel))
     else {
+        drop(network.take());
         return write_failure(&mut status_channel);
     };
+    if network
+        .take()
+        .is_some_and(|network| network.stop().is_err())
+    {
+        return write_failure(&mut status_channel);
+    }
     if scope::empty().is_err() {
         return write_failure(&mut status_channel);
     }
@@ -178,10 +204,11 @@ fn close_inherited_except(status: RawFd) -> std::io::Result<()> {
 
 fn parse_plan(
     arguments: &mut impl Iterator<Item = OsString>,
-) -> Option<(Vec<PathBuf>, Vec<PathBuf>, Limits)> {
+) -> Option<(Vec<PathBuf>, Vec<PathBuf>, Limits, NetworkFlags)> {
     let mut roots = Vec::new();
     let mut exclusions = Vec::new();
     let mut limits = Limits::default();
+    let mut network = NetworkFlags::default();
     loop {
         let argument = arguments.next()?;
         match argument.to_str()? {
@@ -213,10 +240,20 @@ fn parse_plan(
             "--limit-processes" => {
                 limits.processes = Some(parse_limit(arguments, limits.processes)?);
             }
-            "--" => return Some((roots, exclusions, limits)),
+            "--network-proxy" if !network.proxy => network.proxy = true,
+            "--allow-local-binding" if !network.allow_local_binding => {
+                network.allow_local_binding = true;
+            }
+            "--" => return Some((roots, exclusions, limits, network)),
             _ => return None,
         }
     }
+}
+
+#[derive(Clone, Copy, Default)]
+struct NetworkFlags {
+    proxy: bool,
+    allow_local_binding: bool,
 }
 
 fn parse_limit(
@@ -356,17 +393,35 @@ mod tests {
             "--",
         ];
         let mut arguments = plan.iter().map(OsString::from);
-        let (roots, exclusions, limits) = parse_plan(&mut arguments).expect("a readable plan");
+        let (roots, exclusions, limits, network) =
+            parse_plan(&mut arguments).expect("a readable plan");
         assert!(roots.is_empty() && exclusions.is_empty());
         assert_eq!(limits.cpu_seconds, Some(3600));
         assert_eq!(limits.open_files, Some(4096));
         assert_eq!(limits.processes, Some(64));
         assert_eq!(limits.memory_bytes, None);
+        assert!(!network.proxy && !network.allow_local_binding);
 
         // Twice is not narrower, it is ambiguous, and the broker refuses rather
         // than deciding which of the two the host meant.
         let repeated = ["--limit-processes", "64", "--limit-processes", "8", "--"];
         assert!(parse_plan(&mut repeated.iter().map(OsString::from)).is_none());
+        assert!(
+            parse_plan(
+                &mut ["--network-proxy", "--network-proxy", "--"]
+                    .iter()
+                    .map(OsString::from)
+            )
+            .is_none()
+        );
+        assert!(
+            parse_plan(
+                &mut ["--allow-local-binding", "--allow-local-binding", "--"]
+                    .iter()
+                    .map(OsString::from)
+            )
+            .is_none()
+        );
 
         // Zero would be a ceiling nothing can run under, and an unread flag
         // would be one the host believed it had set.

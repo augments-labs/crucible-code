@@ -11,6 +11,7 @@
 //! backends below exactly the same questions.
 
 mod local;
+mod network;
 pub(crate) mod process;
 
 pub mod conformance;

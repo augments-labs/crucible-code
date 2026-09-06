@@ -76,6 +76,12 @@ fn of(shape: &Shape) -> Value {
         // `minimum` rather than an upper bound as well: how large a count may
         // be is a fact about somebody's model, which this crate does not have.
         Shape::Count => json!({ "type": "integer", "minimum": 0 }),
+        Shape::Limit(maximum) => json!({ "type": "integer", "minimum": 1, "maximum": maximum }),
+        Shape::TextSet { maximum, bytes } => json!({
+            "type": "array", "maxItems": maximum,
+            "uniqueItems": true,
+            "items": { "type": "string", "minLength": 1, "maxLength": bytes }
+        }),
 
         Shape::Flag => json!({ "type": "boolean" }),
 
@@ -172,10 +178,11 @@ fn described(field: &Field) -> Value {
     }
 
     let holder = match shape {
-        Shape::List { .. } => described.get_mut("items"),
+        Shape::List { .. } | Shape::TextSet { .. } => described.get_mut("items"),
         Shape::Text
         | Shape::Choice(_)
         | Shape::Count
+        | Shape::Limit(_)
         | Shape::Flag
         | Shape::Whole(_)
         | Shape::Fields(_)
@@ -208,9 +215,10 @@ fn stated(shape: &Shape, usual: &str) -> Value {
         Shape::Flag => usual
             .parse::<bool>()
             .map_or_else(|_| Value::from(usual), Value::from),
-        Shape::Count => usual
+        Shape::Count | Shape::Limit(_) => usual
             .parse::<u64>()
             .map_or_else(|_| Value::from(usual), Value::from),
+        Shape::TextSet { .. } => json!([]),
         Shape::Text
         | Shape::Choice(_)
         | Shape::Whole(_)
@@ -283,9 +291,11 @@ fn object(shape: &Shape) -> Value {
         Shape::Text
         | Shape::Choice(_)
         | Shape::Count
+        | Shape::Limit(_)
         | Shape::Flag
         | Shape::Whole(_)
         | Shape::List { .. }
+        | Shape::TextSet { .. }
         | Shape::Opaque => of(shape),
     }
 }
@@ -452,7 +462,7 @@ mod tests {
     }
 
     #[test]
-    fn sandbox_publishes_only_the_boolean_opt_in_setting() {
+    fn sandbox_publishes_boolean_paths_and_bounded_command_limits() {
         let schema = generated();
         let sandbox = property(&schema, &["sandbox"]);
         assert_eq!(
@@ -468,7 +478,17 @@ mod tests {
             .unwrap()
             .keys()
             .collect();
-        assert_eq!(keys, ["$comment", "$schema", "enabled"]);
+        assert_eq!(
+            keys,
+            [
+                "$comment",
+                "$schema",
+                "enabled",
+                "filesystem",
+                "limits",
+                "network"
+            ]
+        );
         assert_eq!(sandbox.get("additionalProperties"), Some(&json!(false)));
     }
 

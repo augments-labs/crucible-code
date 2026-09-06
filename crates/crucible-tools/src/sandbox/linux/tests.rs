@@ -14,10 +14,9 @@ use std::time::{Duration, Instant};
 use crucible_core::{
     Ancestry, CallResultKey, CallResultReceipt, SandboxCleanup, SandboxCommand,
     SandboxCredentialHandle, SandboxCredentialProjection, SandboxCredentialProvenance,
-    SandboxEnvironment, SandboxFactKind, SandboxFeature, SandboxFilesystemAccess,
-    SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxId, SandboxInvocationMode,
-    SandboxLifecycle, SandboxManifest, SandboxManifestEntry, SandboxNetworkEndpoint,
-    SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxOutput, SandboxPolicy, SandboxProcess,
+    SandboxEnvironment, SandboxFactKind, SandboxFilesystemAccess, SandboxFilesystemProvenance,
+    SandboxFilesystemRule, SandboxId, SandboxInvocationMode, SandboxLifecycle, SandboxManifest,
+    SandboxManifestEntry, SandboxNetworkPolicy, SandboxOutput, SandboxPolicy, SandboxProcess,
     SandboxRead, SandboxRequest, SandboxResourceLimits, SandboxService, SandboxUnreadablePattern,
     ToolId,
 };
@@ -1207,47 +1206,6 @@ fn unreadable_patterns_expand_deterministically_without_hiding_siblings() {
 
     assert!(status.success(), "{}", String::from_utf8_lossy(&errors));
     assert_eq!(String::from_utf8(output).expect("utf8"), "visible\n");
-}
-
-#[test]
-fn exact_network_requests_fail_before_materialization_or_spawn() {
-    let service = LocalSandbox::new();
-    if skipped_without_enforcement(&service) {
-        return;
-    }
-    let sample = Sample::new("sandbox-network-allowlist-refusal");
-    let base = SandboxPolicy::standard(&sample.workspace()).expect("base policy");
-    let network = SandboxNetworkPolicy::exact(
-        [
-            SandboxNetworkEndpoint::new("example.com", 443, SandboxNetworkProvenance::User)
-                .expect("endpoint"),
-        ],
-        true,
-        false,
-    )
-    .expect("network policy");
-    let policy = SandboxPolicy::new(
-        true,
-        base.filesystem().iter().cloned(),
-        base.working_directory().to_path_buf(),
-        network,
-        SandboxResourceLimits::default(),
-    )
-    .expect("policy");
-    let request = SandboxRequest::new(
-        SandboxId::new(),
-        Ancestry::new(),
-        ToolId::new("exact-network"),
-        policy,
-        SandboxManifest::empty(),
-    );
-
-    assert!(matches!(
-        service.prepare(request),
-        Err(crucible_core::SandboxError::Unsupported {
-            feature: SandboxFeature::NetworkAllowlist
-        })
-    ));
 }
 
 #[test]

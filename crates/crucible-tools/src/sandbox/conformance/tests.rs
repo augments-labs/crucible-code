@@ -3,11 +3,11 @@
 use std::time::Duration;
 
 use crucible_core::{
-    Ancestry, SandboxBackendProvenance, SandboxCapabilities, SandboxCapability, SandboxError,
-    SandboxFeature, SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule,
-    SandboxId, SandboxManifest, SandboxManifestEntry, SandboxNetworkEndpoint, SandboxNetworkPolicy,
-    SandboxNetworkProvenance, SandboxPolicy, SandboxRequest, SandboxResourceLimits, SandboxService,
-    ToolId,
+    Ancestry, SandboxBackendProvenance, SandboxCapabilities, SandboxCapability,
+    SandboxDomainPattern, SandboxDomainPolicy, SandboxError, SandboxFeature,
+    SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxId,
+    SandboxManifest, SandboxManifestEntry, SandboxNetworkPolicy, SandboxNetworkProvenance,
+    SandboxPolicy, SandboxRequest, SandboxResourceLimits, SandboxService, ToolId,
 };
 
 use super::{CONFINEMENT, Conformance, SandboxClaim, Verdict, asking, judge};
@@ -15,6 +15,7 @@ use crate::sample::{REQUIRE_ENFORCING_SANDBOX, Sample, skipped_without_enforceme
 use crate::sandbox::LocalSandbox;
 
 const LINUX_ENFORCED: &[SandboxFeature] = &[
+    SandboxFeature::NetworkAllowlist,
     SandboxFeature::Filesystem,
     SandboxFeature::NetworkDeny,
     SandboxFeature::DescriptorIsolation,
@@ -32,6 +33,7 @@ const LINUX_ENFORCED: &[SandboxFeature] = &[
 ];
 
 const MACOS_ENFORCED: &[SandboxFeature] = &[
+    SandboxFeature::NetworkAllowlist,
     SandboxFeature::Filesystem,
     SandboxFeature::NetworkDeny,
     SandboxFeature::DescriptorIsolation,
@@ -215,13 +217,19 @@ fn compatibility_refuses_every_explicit_unsupported_policy_before_a_session_exis
 fn unsupported_requests(sample: &Sample) -> Vec<(SandboxFeature, SandboxPolicy, SandboxManifest)> {
     let empty = || SandboxManifest::empty();
     let mut requests = Vec::new();
-    let endpoint = SandboxNetworkEndpoint::new("192.0.2.1", 443, SandboxNetworkProvenance::User)
-        .expect("literal endpoint");
+    let domains = SandboxDomainPolicy::new(
+        [SandboxDomainPattern::new("192.0.2.1").expect("literal domain")],
+        [],
+        false,
+        [],
+        SandboxNetworkProvenance::User,
+    )
+    .expect("domain policy");
     requests.push((
         SandboxFeature::NetworkAllowlist,
         policy(
             sample,
-            SandboxNetworkPolicy::exact([endpoint], false, false).expect("exact network"),
+            SandboxNetworkPolicy::Domains(domains),
             SandboxResourceLimits::default(),
         ),
         empty(),
@@ -626,5 +634,16 @@ fn the_name_a_job_requires_a_backend_by_is_the_one_spelled_outside_this_crate() 
     assert_eq!(
         REQUIRE_ENFORCING_SANDBOX,
         "CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX"
+    );
+}
+
+#[test]
+fn network_conformance_requests_the_host_mediated_domain_policy() {
+    let sample = Sample::new("sandbox-network-offer");
+    let (policy, _) =
+        asking(sample.root(), SandboxFeature::NetworkAllowlist, true).expect("network offer");
+    assert!(
+        matches!(policy.network(), SandboxNetworkPolicy::Domains(policy) if policy.permits_host("example.test") && !policy.permits_host("unrelated.test")),
+        "network conformance must exercise the supported domain authority contract"
     );
 }
