@@ -281,6 +281,9 @@ impl Vendor {
                         Err(error) => panic!("fixture request did not arrive: {error}"),
                     }
                 };
+                // Accepted sockets inherit nonblocking mode on some platforms;
+                // these bounded request reads need blocking mode explicitly.
+                socket.set_nonblocking(false).expect("valid fixture");
                 socket.set_read_timeout(Some(WAIT)).expect("valid fixture");
                 socket.set_write_timeout(Some(WAIT)).expect("valid fixture");
                 let mut reader = BufReader::new(&mut socket);

@@ -48,13 +48,49 @@ use watched::Watched;
 /// it however long starting the call took on this machine today. What such a
 /// case is about is the rows around that mark, so the mark is steadied rather
 /// than the timing. Every face is one column wide, so nothing else on the row
-/// moves.
+/// moves. The elapsed seconds on that same live status row are zeroed one
+/// digit for one digit too: scheduling may advance the clock, but a change in
+/// the duration's width must still be visible to the layout assertion.
 fn on_the_first_beat(picture: &str) -> String {
     let mut steadied = picture.to_owned();
     for face in ["\u{273b}", "\u{273a}", "\u{2731}"] {
         steadied = steadied.replace(face, "\u{2733}");
     }
     steadied
+        .split('\n')
+        .map(|line| {
+            if let Some((elapsed, rest)) = line
+                .strip_prefix("|✳ writing (")
+                .and_then(|tail| tail.split_once("s ·"))
+                && !elapsed.is_empty()
+                && elapsed.bytes().all(|byte| byte.is_ascii_digit())
+            {
+                format!("|✳ writing ({}s ·{rest}", "0".repeat(elapsed.len()))
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn steadying_a_live_status_changes_only_its_clock_and_spinner() {
+    let initial = "|✳ writing (0s · ↓ 4 · esc to interrupt) |\n|allow edits on|";
+    for seconds in ['1', '9'] {
+        let later = initial
+            .replace("0s", &format!("{seconds}s"))
+            .replace('✳', "✻");
+        assert_eq!(on_the_first_beat(&later), initial);
+    }
+    let two_digits = initial.replace("0s", "12s");
+    let steadied = on_the_first_beat(&two_digits);
+    assert_eq!(steadied, initial.replace("0s", "00s"));
+    assert_eq!(steadied.chars().count(), two_digits.chars().count());
+    let different_usage = initial.replace("↓ 4", "↓ 5");
+    assert_eq!(on_the_first_beat(&different_usage), different_usage);
+    let transcript = "|the answer says writing (1s) |\n|ask mode on|";
+    assert_eq!(on_the_first_beat(transcript), transcript);
 }
 
 /// A line long enough to need more rows than the box is allowed to grow to.
