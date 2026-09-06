@@ -160,17 +160,25 @@ fn confinement(
 ) -> Result<SandboxPolicy, String> {
     // The user-owned server directory is part of the initial grant. Apply
     // sandbox restrictions afterwards so it cannot reopen a protected path.
-    let reaching = match record.directory() {
-        Some(directory) => workspace
-            .clone()
-            .reaching([directory])
-            .map_err(|problem| problem.to_string())?,
-        None => workspace.clone(),
+    let (reaching, directory) = match record.directory() {
+        Some(written) => {
+            let reaching = workspace
+                .clone()
+                .reaching([written])
+                .map_err(|problem| problem.to_string())?;
+            let resolved = reaching
+                .roots()
+                .last()
+                .map(Path::to_path_buf)
+                .ok_or_else(|| "server directory did not resolve".to_owned())?;
+            (reaching, Some(resolved))
+        }
+        None => (workspace.clone(), None),
     };
     let standard = settings
         .enforcing_policy(&reaching)
         .map_err(|problem| problem.to_string())?;
-    let Some(directory) = record.directory() else {
+    let Some(directory) = directory else {
         return Ok(standard);
     };
     SandboxPolicy::new(

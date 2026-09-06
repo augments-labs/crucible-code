@@ -280,6 +280,7 @@ fn a_written_down_directory_is_a_writable_root_and_the_place_the_server_starts_i
         elsewhere.display().to_string().replace('\\', "/")
     );
     let settings = sample.user(&document);
+    let expected = elsewhere.canonicalize().expect("the resolved directory");
     let (_, lookup) = installed(&sample, "docs-mcp", &[]);
 
     let found = selected(&["docs".to_owned()], &settings, &sample.workspace(), lookup)
@@ -288,13 +289,43 @@ fn a_written_down_directory_is_a_writable_root_and_the_place_the_server_starts_i
     let [chosen] = found.as_slice() else {
         panic!("one server was named");
     };
-    assert_eq!(chosen.effective_policy().working_directory(), elsewhere);
+    assert_eq!(chosen.effective_policy().working_directory(), expected);
     assert!(
         chosen.effective_policy().filesystem().iter().any(|rule| {
-            rule.path() == elsewhere && rule.access() == SandboxFilesystemAccess::ReadWrite
+            rule.path() == expected && rule.access() == SandboxFilesystemAccess::ReadWrite
         }),
         "the directory it starts in has to be one it may reach"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_server_directory_uses_the_same_resolved_spelling_as_its_policy_root() {
+    use std::os::unix::fs::symlink;
+
+    let sample = Sample::new("selecting-directory-spelling");
+    let elsewhere = sample.home().join("elsewhere");
+    let alias = sample.home().join("alias");
+    fs::create_dir_all(&elsewhere).expect("a temporary directory");
+    symlink(&elsewhere, &alias).expect("a temporary directory alias");
+    let document = format!(
+        r#"{{"mcp": {{"servers": {{"docs": {{"command": "docs-mcp", "directory": "{}"}}}}}}}}"#,
+        alias.display().to_string().replace('\\', "/")
+    );
+    let settings = sample.user(&document);
+    let expected = elsewhere.canonicalize().expect("the resolved directory");
+    let (_, lookup) = installed(&sample, "docs-mcp", &[]);
+
+    let found = selected(&["docs".to_owned()], &settings, &sample.workspace(), lookup)
+        .expect("the directory spelling resolves before policy construction");
+
+    let [chosen] = found.as_slice() else {
+        panic!("one server was named");
+    };
+    assert_eq!(chosen.effective_policy().working_directory(), expected);
+    assert!(chosen.effective_policy().filesystem().iter().any(|rule| {
+        rule.path() == expected && rule.access() == SandboxFilesystemAccess::ReadWrite
+    }));
 }
 
 #[test]

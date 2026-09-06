@@ -19,7 +19,7 @@ change in any release with no deprecation period.
   newest published installer lifecycle, and run baseline/candidate coding tasks
   without making external availability a pull-request verdict.
 
-- **Configure and inspect the sandbox boundary.** `sandbox.filesystem`, `sandbox.network` and `sandbox.limits` control path access, domain grants, local sockets and command ceilings. `/sandbox` shows the effective policy and platform prerequisites and lets you change persistent enablement while idle.
+- **Configure and inspect the sandbox boundary.** `sandbox.filesystem`, `sandbox.network` and `sandbox.limits` control path access, domain grants, local sockets and command ceilings; native Windows rejects unreadable paths and network grants, while Linux/WSL2 and macOS enforce them. `/sandbox` shows the effective policy and platform prerequisites and lets you change persistent enablement while idle.
 
 ### Changed
 

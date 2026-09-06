@@ -539,7 +539,7 @@ const SANDBOX_FILESYSTEM: &[Field] = &[
     },
     Field {
         name: "unreadable",
-        about: "Paths hidden from sandboxed commands",
+        about: "Paths hidden from sandboxed commands on Linux/WSL2 and macOS; nonempty lists are unsupported on native Windows",
         shape: Shape::TextSet {
             maximum: crucible_core::MAX_SANDBOX_FILESYSTEM_RULES,
             bytes: crucible_core::MAX_SANDBOX_PATH_BYTES,
@@ -566,7 +566,7 @@ const SANDBOX_FILESYSTEM: &[Field] = &[
 const SANDBOX_NETWORK: &[Field] = &[
     Field {
         name: "allowedDomains",
-        about: "Allowed hostnames, IP literals, *.domain patterns or *; projects may only narrow user grants",
+        about: "Allowed hostnames, IP literals, *.domain patterns or * on Linux/WSL2 and macOS; projects may only narrow user grants; unsupported on native Windows",
         shape: Shape::TextSet {
             maximum: crucible_core::MAX_SANDBOX_NETWORK_RULES,
             bytes: crucible_core::MAX_SANDBOX_HOST_BYTES + 2,
@@ -578,7 +578,7 @@ const SANDBOX_NETWORK: &[Field] = &[
     },
     Field {
         name: "deniedDomains",
-        about: "Overriding denied hostnames, IP literals or domain patterns",
+        about: "Overriding denied hostnames, IP literals or domain patterns on Linux/WSL2 and macOS; nonempty lists are unsupported on native Windows",
         shape: Shape::TextSet {
             maximum: crucible_core::MAX_SANDBOX_NETWORK_RULES,
             bytes: crucible_core::MAX_SANDBOX_HOST_BYTES + 2,
@@ -590,7 +590,7 @@ const SANDBOX_NETWORK: &[Field] = &[
     },
     Field {
         name: "allowLocalBinding",
-        about: "Allow sandboxed processes to create local listeners",
+        about: "Allow sandboxed processes to create local listeners on Linux/WSL2 and macOS; true is unsupported on native Windows",
         shape: Shape::Flag,
         examples: &[],
         usual: Some("false"),
@@ -599,7 +599,7 @@ const SANDBOX_NETWORK: &[Field] = &[
     },
     Field {
         name: "allowUnixSockets",
-        about: "Exact native host Unix socket paths the sandbox may connect to; projects may only narrow user grants",
+        about: "Exact host Unix socket paths on Linux/WSL2 and macOS; projects may only narrow user grants; nonempty lists are unsupported on native Windows",
         shape: Shape::TextSet {
             maximum: crucible_core::MAX_SANDBOX_NETWORK_RULES,
             bytes: crucible_core::MAX_SANDBOX_PATH_BYTES,

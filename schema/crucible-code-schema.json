@@ -719,7 +719,7 @@
             },
             "unreadable": {
               "default": [],
-              "description": "Paths hidden from sandboxed commands",
+              "description": "Paths hidden from sandboxed commands on Linux/WSL2 and macOS; nonempty lists are unsupported on native Windows",
               "items": {
                 "maxLength": 4096,
                 "minLength": 1,
@@ -790,12 +790,12 @@
             },
             "allowLocalBinding": {
               "default": false,
-              "description": "Allow sandboxed processes to create local listeners",
+              "description": "Allow sandboxed processes to create local listeners on Linux/WSL2 and macOS; true is unsupported on native Windows",
               "type": "boolean"
             },
             "allowUnixSockets": {
               "default": [],
-              "description": "Exact native host Unix socket paths the sandbox may connect to; projects may only narrow user grants",
+              "description": "Exact host Unix socket paths on Linux/WSL2 and macOS; projects may only narrow user grants; nonempty lists are unsupported on native Windows",
               "items": {
                 "maxLength": 4096,
                 "minLength": 1,
@@ -807,7 +807,7 @@
             },
             "allowedDomains": {
               "default": [],
-              "description": "Allowed hostnames, IP literals, *.domain patterns or *; projects may only narrow user grants",
+              "description": "Allowed hostnames, IP literals, *.domain patterns or * on Linux/WSL2 and macOS; projects may only narrow user grants; unsupported on native Windows",
               "items": {
                 "maxLength": 255,
                 "minLength": 1,
@@ -819,7 +819,7 @@
             },
             "deniedDomains": {
               "default": [],
-              "description": "Overriding denied hostnames, IP literals or domain patterns",
+              "description": "Overriding denied hostnames, IP literals or domain patterns on Linux/WSL2 and macOS; nonempty lists are unsupported on native Windows",
               "items": {
                 "maxLength": 255,
                 "minLength": 1,

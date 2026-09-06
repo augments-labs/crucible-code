@@ -11,6 +11,10 @@
 //! backends below exactly the same questions.
 
 mod local;
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+mod network;
+#[cfg(not(any(target_os = "linux", target_os = "macos", test)))]
+#[path = "network_unavailable.rs"]
 mod network;
 pub(crate) mod process;
 

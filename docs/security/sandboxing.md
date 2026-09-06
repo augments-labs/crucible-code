@@ -163,6 +163,14 @@ unreadable roots or unreadable wildcard patterns are refused before the broker
 or workspace is touched. Linux and macOS retain their narrower filesystem
 views.
 
+The same limitation applies to configured `sandbox.filesystem.unreadable`
+paths. Native Windows also refuses domain policies, `allowLocalBinding: true`
+and nonempty `allowUnixSockets` before starting the command. It supports the
+`enabled` switch, writable/read-only/protected path rules, all three configured
+command limits and the `/sandbox` panel. Empty network lists with binding
+disabled keep WFP network denial. Run Crucible inside WSL2 to use Linux's richer
+filesystem and network policies on a Windows machine.
+
 ACL projection adds deterministic capability and account entries to the roots
 a command uses. They can remain after a command or uninstall because Windows
 provides no namespace-like per-process filesystem view to remove. A later

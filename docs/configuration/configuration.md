@@ -317,6 +317,15 @@ Configure the boundary in the same block:
 ```
 
 Empty filesystem lists keep the standard workspace and system-runtime policy.
+Linux/WSL2 and macOS support every setting above. Native Windows supports
+`enabled`, writable/read-only/protected paths, all three command limits and
+`/sandbox`, with the [documented native ACL limitations](../security/sandboxing.md#windows-setup-maintenance).
+Windows refuses nonempty `unreadable` paths, domain policies, local binding and
+Unix-socket grants before starting a command. Empty network lists and
+`allowLocalBinding: false` retain its closed network policy. Use Crucible inside
+WSL2 when those richer policies are needed on a Windows machine; it uses the
+Linux backend. An unsupported setting never causes an unconfined retry.
+
 Relative paths are resolved from the workspace root; absolute paths use the
 current platform's spelling. Paths do not expand environment variables or `~`,
 and parent traversal (`..`) is rejected.
