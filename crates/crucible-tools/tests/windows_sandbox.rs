@@ -4,17 +4,20 @@
 )]
 #![cfg(target_os = "windows")]
 #![allow(
+    clippy::exit,
     clippy::expect_used,
-    reason = "native integration tests fail immediately with fixture context"
+    clippy::panic,
+    clippy::zombie_processes,
+    reason = "the native fixture reports exact failures and deliberately leaves a descendant for job cleanup"
 )]
 
 //! Native behavior checks for the dedicated-account Windows backend.
 
 use std::ffi::OsString;
 use std::fs;
-use std::io::Write as _;
-use std::net::TcpListener;
-use std::path::{Path, PathBuf};
+use std::io::{Read as _, Write as _};
+use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::path::PathBuf;
 use std::process::Command as HostCommand;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -26,6 +29,20 @@ use crucible_core::{
     SandboxRequest, SandboxService, ToolId, Workspace,
 };
 use crucible_tools::LocalSandbox;
+
+const ACTION: &str = "CRUCIBLE_WINDOWS_SANDBOX_TEST_ACTION";
+const ALLOWED: &str = "CRUCIBLE_WINDOWS_SANDBOX_TEST_ALLOWED";
+const CONNECTED: &str = "CRUCIBLE_WINDOWS_SANDBOX_TEST_CONNECTED";
+const DENIED: &str = "CRUCIBLE_WINDOWS_SANDBOX_TEST_DENIED";
+const IDENTITY: &str = "CRUCIBLE_WINDOWS_SANDBOX_TEST_IDENTITY";
+const LINKED: &str = "CRUCIBLE_WINDOWS_SANDBOX_TEST_LINKED";
+const PORT: &str = "CRUCIBLE_WINDOWS_SANDBOX_TEST_PORT";
+const PROTECTED: &str = "CRUCIBLE_WINDOWS_SANDBOX_TEST_PROTECTED";
+const PROTECTED_DIRECTORY: &str = "CRUCIBLE_WINDOWS_SANDBOX_TEST_PROTECTED_DIRECTORY";
+const RENAMED_DIRECTORY: &str = "CRUCIBLE_WINDOWS_SANDBOX_TEST_RENAMED_DIRECTORY";
+const RESULT: &str = "CRUCIBLE_WINDOWS_SANDBOX_TEST_RESULT";
+const SENTINEL: &str = "CRUCIBLE_WINDOWS_SANDBOX_TEST_SENTINEL";
+const WHOAMI: &str = "CRUCIBLE_WINDOWS_SANDBOX_TEST_WHOAMI";
 
 struct Fixture {
     parent: PathBuf,
@@ -46,6 +63,7 @@ impl Fixture {
         let outside = parent.join("outside");
         fs::create_dir_all(workspace.join(".git")).expect("workspace");
         fs::create_dir(&outside).expect("outside");
+        crucible_privacy::directory(&outside).expect("protected outside directory");
         Self {
             parent: parent.canonicalize().expect("canonical fixture"),
             workspace: workspace.canonicalize().expect("canonical workspace"),
@@ -82,24 +100,119 @@ impl Drop for Fixture {
     }
 }
 
-fn powershell() -> PathBuf {
+fn system_program(name: &str) -> PathBuf {
     let root = PathBuf::from(std::env::var_os("SystemRoot").expect("SystemRoot"));
-    root.join("System32/WindowsPowerShell/v1.0/powershell.exe")
-        .canonicalize()
-        .expect("PowerShell")
+    root.join("System32").join(name).canonicalize().expect(name)
 }
 
-fn command(script: &str, arguments: impl IntoIterator<Item = OsString>) -> SandboxCommand {
-    let arguments = [
-        OsString::from("-NoLogo"),
-        OsString::from("-NoProfile"),
-        OsString::from("-NonInteractive"),
-        OsString::from("-Command"),
-        OsString::from(script),
-    ]
-    .into_iter()
-    .chain(arguments);
-    SandboxCommand::new(powershell(), arguments, SandboxEnvironment::empty()).expect("command")
+fn command(
+    action: &'static str,
+    variables: impl IntoIterator<Item = (&'static str, OsString)>,
+) -> SandboxCommand {
+    let variables: Vec<_> = std::iter::once((ACTION, OsString::from(action)))
+        .chain(variables)
+        .collect();
+    let environment = SandboxEnvironment::new(
+        variables
+            .iter()
+            .map(|(name, value)| (*name, value.as_os_str())),
+    )
+    .expect("environment");
+    SandboxCommand::new(
+        std::env::current_exe().expect("current test executable"),
+        [
+            OsString::from("--exact"),
+            OsString::from("windows_sandbox_workload"),
+            OsString::from("--test-threads=1"),
+        ],
+        environment,
+    )
+    .expect("command")
+}
+
+#[test]
+fn windows_sandbox_workload() {
+    let Some(action) = std::env::var_os(ACTION) else {
+        return;
+    };
+    match action.to_string_lossy().as_ref() {
+        "filesystem" => workload_filesystem(),
+        "input" => workload_input(),
+        "linger" => workload_linger(),
+        "network" => workload_network(),
+        "spawn-descendant" => workload_spawn_descendant(),
+        "status" => std::process::exit(4660),
+        "temporary-directory" => workload_temporary_directory(),
+        unknown => panic!("unknown native sandbox workload {unknown}"),
+    }
+}
+
+fn workload_filesystem() {
+    fs::write(required_path(ALLOWED), "allowed").expect("allowed write");
+    assert!(fs::write(required_path(DENIED), "denied").is_err());
+    assert!(fs::write(required_path(PROTECTED), "denied").is_err());
+    assert!(
+        fs::rename(
+            required_path(PROTECTED_DIRECTORY),
+            required_path(RENAMED_DIRECTORY)
+        )
+        .is_err()
+    );
+    assert!(fs::hard_link(required_path(PROTECTED), required_path(LINKED)).is_err());
+    let identity = HostCommand::new(required_path(WHOAMI))
+        .output()
+        .expect("sandbox identity");
+    assert!(identity.status.success());
+    fs::write(required_path(IDENTITY), identity.stdout).expect("identity result");
+}
+
+fn workload_input() {
+    let mut input = Vec::new();
+    std::io::stdin()
+        .read_to_end(&mut input)
+        .expect("sandbox input");
+    fs::write(required_path(RESULT), input).expect("input result");
+}
+
+fn workload_network() {
+    let port = required(PORT).parse::<u16>().expect("network port");
+    let address = SocketAddr::from(([127, 0, 0, 1], port));
+    if TcpStream::connect_timeout(&address, Duration::from_secs(2)).is_ok() {
+        fs::write(required_path(CONNECTED), "connected").expect("connection result");
+    }
+}
+
+fn workload_spawn_descendant() {
+    let child = HostCommand::new(std::env::current_exe().expect("current test executable"))
+        .args(["--exact", "windows_sandbox_workload", "--test-threads=1"])
+        .env(ACTION, "linger")
+        .spawn()
+        .expect("background descendant");
+    fs::write(required_path(RESULT), child.id().to_string()).expect("descendant pid");
+}
+
+fn workload_linger() {
+    thread::sleep(Duration::from_secs(30));
+    fs::write(required_path(SENTINEL), "survived").expect("descendant sentinel");
+}
+
+fn workload_temporary_directory() {
+    let temporary = required_path("TEMP");
+    assert_eq!(temporary, required_path("TMP"));
+    fs::write(temporary.join("created.txt"), "temporary").expect("temporary write");
+    fs::write(
+        required_path(RESULT),
+        temporary.to_string_lossy().as_bytes(),
+    )
+    .expect("temporary result");
+}
+
+fn required(name: &str) -> String {
+    std::env::var(name).unwrap_or_else(|_| panic!("missing workload variable {name}"))
+}
+
+fn required_path(name: &str) -> PathBuf {
+    PathBuf::from(std::env::var_os(name).unwrap_or_else(|| panic!("missing workload path {name}")))
 }
 
 fn start(request: SandboxRequest, command: SandboxCommand) -> Box<dyn SandboxProcess> {
@@ -142,7 +255,7 @@ fn read(stream: &mut Option<Box<dyn SandboxOutput>>, retained: &mut Vec<u8>) {
 }
 
 #[test]
-fn windows_writes_only_the_workspace_and_protects_repository_metadata() {
+fn windows_writes_the_workspace_and_protects_private_and_repository_data() {
     let fixture = Fixture::new("filesystem");
     let protected = fixture.workspace.join(".git/config");
     let protected_directory = fixture.workspace.join(".git");
@@ -151,24 +264,26 @@ fn windows_writes_only_the_workspace_and_protects_repository_metadata() {
     fs::write(&protected, "protected").expect("protected file");
     let allowed = fixture.workspace.join("allowed.txt");
     let denied = fixture.outside.join("denied.txt");
-    let script = "$ErrorActionPreference='Stop'; \
-        [IO.File]::WriteAllText($args[0], 'allowed'); \
-        try { [IO.File]::WriteAllText($args[1], 'denied'); exit 71 } catch {} \
-        try { [IO.File]::WriteAllText($args[2], 'denied'); exit 72 } catch {} \
-        try { Move-Item -LiteralPath $args[3] -Destination $args[4] -ErrorAction Stop; exit 73 } catch {} \
-        try { New-Item -ItemType HardLink -Path $args[5] -Target $args[2] -ErrorAction Stop | Out-Null; exit 74 } catch {} \
-        [Console]::Out.Write([Environment]::UserName)";
-    let (status, output, errors) = finish(start(
+    let identity = fixture.workspace.join("identity.txt");
+    let (status, _, errors) = finish(start(
         fixture.request("windows-filesystem"),
         command(
-            script,
+            "filesystem",
             [
-                allowed.clone().into_os_string(),
-                denied.clone().into_os_string(),
-                protected.clone().into_os_string(),
-                protected_directory.clone().into_os_string(),
-                renamed_directory.clone().into_os_string(),
-                linked_file.clone().into_os_string(),
+                (ALLOWED, allowed.clone().into_os_string()),
+                (DENIED, denied.clone().into_os_string()),
+                (PROTECTED, protected.clone().into_os_string()),
+                (
+                    PROTECTED_DIRECTORY,
+                    protected_directory.clone().into_os_string(),
+                ),
+                (
+                    RENAMED_DIRECTORY,
+                    renamed_directory.clone().into_os_string(),
+                ),
+                (LINKED, linked_file.clone().into_os_string()),
+                (IDENTITY, identity.clone().into_os_string()),
+                (WHOAMI, system_program("whoami.exe").into_os_string()),
             ],
         ),
     ));
@@ -186,12 +301,15 @@ fn windows_writes_only_the_workspace_and_protects_repository_metadata() {
     assert!(protected_directory.is_dir());
     assert!(!renamed_directory.exists());
     assert!(!linked_file.exists());
+    let identity = fs::read_to_string(identity).expect("sandbox identity");
     assert!(
-        String::from_utf8_lossy(&output)
+        identity
+            .trim()
+            .rsplit_once('\\')
+            .map_or(identity.trim(), |(_, account)| account)
             .to_ascii_lowercase()
             .starts_with("cruciblesbx-"),
-        "unexpected sandbox identity: {}",
-        String::from_utf8_lossy(&output)
+        "unexpected sandbox identity: {identity}"
     );
 }
 
@@ -237,14 +355,20 @@ fn windows_denies_loopback_network_connections() {
         .set_nonblocking(true)
         .expect("nonblocking listener");
     let port = listener.local_addr().expect("listener address").port();
-    let script = "$client=[Net.Sockets.TcpClient]::new(); \
-        try { $client.Connect('127.0.0.1', [int]$args[0]); exit 71 } catch { exit 0 }";
+    let connected = fixture.workspace.join("connected.txt");
     let (status, _, errors) = finish(start(
         fixture.request("windows-network"),
-        command(script, [OsString::from(port.to_string())]),
+        command(
+            "network",
+            [
+                (PORT, OsString::from(port.to_string())),
+                (CONNECTED, connected.clone().into_os_string()),
+            ],
+        ),
     ));
 
     assert!(status.success(), "{}", String::from_utf8_lossy(&errors));
+    assert!(!connected.exists());
     assert!(matches!(
         listener.accept(),
         Err(problem) if problem.kind() == std::io::ErrorKind::WouldBlock
@@ -254,35 +378,35 @@ fn windows_denies_loopback_network_connections() {
 #[test]
 fn windows_forwards_input_after_its_private_launch_frame() {
     let fixture = Fixture::new("input");
-    let script = "[Console]::Out.Write([Console]::In.ReadToEnd())";
+    let result = fixture.workspace.join("input.txt");
     let mut process = start(
         fixture.request("windows-input"),
-        command(script, []).spoken_to(),
+        command("input", [(RESULT, result.clone().into_os_string())]).spoken_to(),
     );
     let mut input = process.take_stdin().expect("held input");
     input.write_all(b"caller input").expect("write input");
     input.flush().expect("flush input");
     drop(input);
-    let (status, output, errors) = finish(process);
+    let (status, _, errors) = finish(process);
 
     assert!(status.success(), "{}", String::from_utf8_lossy(&errors));
-    assert_eq!(output, b"caller input");
+    assert_eq!(fs::read(result).expect("input result"), b"caller input");
 }
 
 #[test]
 fn windows_supplies_and_removes_a_private_temporary_directory() {
     let fixture = Fixture::new("temporary-directory");
-    let script = "$ErrorActionPreference='Stop'; \
-        if ($env:TEMP -ne $env:TMP) { exit 71 }; \
-        [IO.File]::WriteAllText((Join-Path $env:TEMP 'created.txt'), 'temporary'); \
-        [Console]::Out.Write($env:TEMP)";
-    let (status, output, errors) = finish(start(
+    let result = fixture.workspace.join("temporary-directory.txt");
+    let (status, _, errors) = finish(start(
         fixture.request("windows-temporary-directory"),
-        command(script, []),
+        command(
+            "temporary-directory",
+            [(RESULT, result.clone().into_os_string())],
+        ),
     ));
 
     assert!(status.success(), "{}", String::from_utf8_lossy(&errors));
-    let temporary = PathBuf::from(String::from_utf8(output).expect("UTF-8 temporary path"));
+    let temporary = PathBuf::from(fs::read_to_string(result).expect("temporary path"));
     assert_ne!(temporary, std::env::temp_dir());
     assert!(
         !temporary.exists(),
@@ -295,7 +419,7 @@ fn windows_preserves_the_native_workload_exit_status() {
     let fixture = Fixture::new("exit-status");
     let (status, _, errors) = finish(start(
         fixture.request("windows-exit-status"),
-        command("exit 4660", []),
+        command("status", std::iter::empty::<(&'static str, OsString)>()),
     ));
 
     assert_eq!(
@@ -309,39 +433,44 @@ fn windows_preserves_the_native_workload_exit_status() {
 #[test]
 fn windows_job_cleanup_stops_a_background_descendant() {
     let fixture = Fixture::new("process-cleanup");
-    let executable = powershell();
-    let script = "$child=Start-Process -FilePath $args[0] \
-        -ArgumentList @('-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 30') \
-        -PassThru; [Console]::Out.Write($child.Id)";
-    let (status, output, errors) = finish(start(
+    let result = fixture.workspace.join("descendant-pid.txt");
+    let sentinel = fixture.workspace.join("descendant-survived.txt");
+    let (status, _, errors) = finish(start(
         fixture.request("windows-process-cleanup"),
-        command(script, [executable.clone().into_os_string()]),
+        command(
+            "spawn-descendant",
+            [
+                (RESULT, result.clone().into_os_string()),
+                (SENTINEL, sentinel.clone().into_os_string()),
+            ],
+        ),
     ));
     assert!(status.success(), "{}", String::from_utf8_lossy(&errors));
-    let pid = String::from_utf8(output)
-        .expect("UTF-8 pid")
+    let pid = fs::read_to_string(result)
+        .expect("descendant pid")
         .parse::<u32>()
         .expect("background pid");
     let deadline = Instant::now() + Duration::from_secs(5);
-    while process_exists(&executable, pid) {
+    while process_exists(pid) {
         assert!(
             Instant::now() < deadline,
             "background descendant survived Job cleanup"
         );
         thread::sleep(Duration::from_millis(25));
     }
+    assert!(!sentinel.exists());
 }
 
-fn process_exists(powershell: &Path, pid: u32) -> bool {
-    HostCommand::new(powershell)
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            &format!(
-                "if (Get-Process -Id {pid} -ErrorAction SilentlyContinue) {{ exit 0 }}; exit 1"
-            ),
-        ])
-        .status()
-        .is_ok_and(|status| status.success())
+fn process_exists(pid: u32) -> bool {
+    let Ok(output) = HostCommand::new(system_program("tasklist.exe"))
+        .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+        .output()
+    else {
+        return true;
+    };
+    String::from_utf8_lossy(&output.stdout).lines().any(|line| {
+        line.split(',')
+            .nth(1)
+            .is_some_and(|field| field.trim_matches('"') == pid.to_string())
+    })
 }

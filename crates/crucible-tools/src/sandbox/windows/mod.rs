@@ -365,8 +365,10 @@ fn launch_frame(
         }
     }
     readable.push(broker.path().to_path_buf());
+    readable.push(command.program().to_path_buf());
     writable.push(scratch.to_path_buf());
     protected.push(broker.path().to_path_buf());
+    protected.push(command.program().to_path_buf());
     normalize_roots(&mut readable);
     normalize_roots(&mut writable);
     normalize_roots(&mut protected);

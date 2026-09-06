@@ -59,8 +59,8 @@ impl LaunchPlan {
         // The approved executable is itself authority to load that image.
         // Windows WRITE_RESTRICTED tokens deliberately retain the dedicated
         // account's ordinary read access so the system loader can reach
-        // protected KnownDlls objects. Writable authority remains rooted only
-        // in the capability ACLs below.
+        // protected KnownDlls objects. The request grants and protects the
+        // selected executable itself before this plan reaches the broker.
         let mut environment = request.environment().to_vec();
         environment.sort_by_key(|left| lowercase(&left.0));
         if environment
