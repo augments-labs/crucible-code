@@ -16,7 +16,7 @@ use super::process::{MAX_LOCAL_COMMANDS, Reservation};
 
 /// Host-owned local sandbox service.
 ///
-/// `required` requests use a verified native backend on Linux and macOS.
+/// `required` requests use a verified native backend on Linux, macOS, and Windows.
 /// `off`, and an explicitly selected `degraded` fallback, still pass through
 /// this service so lifecycle and inspection cannot be bypassed or mislabeled.
 #[derive(Debug, Clone, Default)]
@@ -42,7 +42,11 @@ impl SandboxService for LocalSandbox {
         {
             super::macos::probe()
         }
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        #[cfg(target_os = "windows")]
+        {
+            super::windows::probe()
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
         {
             Err(SandboxError::BackendUnavailable {
                 reason: "no enforcing local sandbox backend for this operating system".into(),
@@ -89,7 +93,19 @@ impl SandboxService for LocalSandbox {
                         Err(error) => Err(error),
                     }
                 }
-                #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+                #[cfg(target_os = "windows")]
+                {
+                    match super::windows::prepare(request.clone(), Arc::clone(&self.active)) {
+                        Ok(session) => Ok(session),
+                        Err(SandboxError::BackendUnavailable { .. }) => compatibility(
+                            request,
+                            Arc::clone(&self.active),
+                            "enforcing Windows sandbox unavailable; user selected degraded mode",
+                        ),
+                        Err(error) => Err(error),
+                    }
+                }
+                #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
                 {
                     compatibility(
                         request,
@@ -130,7 +146,11 @@ fn enforcing(
     {
         super::macos::prepare(request, active)
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(target_os = "windows")]
+    {
+        super::windows::prepare(request, active)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
         let _ = (request, active);
         Err(SandboxError::BackendUnavailable {
@@ -276,6 +296,7 @@ impl SandboxSession for CompatibilitySession {
                 call_result_key: self.request.call_result_key(),
                 canceller: None,
                 speech: command.speech(),
+                startup_input: None,
             }),
             inspection: self.inspection.clone(),
             audit: self.request.audit().clone(),

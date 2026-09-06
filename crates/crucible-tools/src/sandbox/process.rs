@@ -180,6 +180,10 @@ pub(super) struct SpawnPlan {
     /// Whether crucible keeps the writing end of standard input. Decided with
     /// the command, because a pipe cannot be attached after a spawn.
     pub(super) speech: crucible_core::SandboxSpeech,
+    /// Trusted bytes written after containment starts and before caller input
+    /// can take the same pipe. Native brokers consume a bounded launch frame
+    /// and leave any later command-protocol bytes for the workload.
+    pub(super) startup_input: Option<Vec<u8>>,
 }
 
 /// Cleans preparation owners that never reached a child process.
@@ -257,13 +261,15 @@ fn spawn_inner(
         call_result_key,
         canceller,
         speech,
+        startup_input,
     } = plan;
     command
-        .stdin(match speech {
+        .stdin(match (speech, startup_input.is_some()) {
             // A step that reads gets end-of-file, which is an answer. A peer
             // gets a pipe crucible keeps, because it is going to be spoken to.
-            crucible_core::SandboxSpeech::Closed => Stdio::null(),
-            crucible_core::SandboxSpeech::Held => Stdio::piped(),
+            (crucible_core::SandboxSpeech::Closed, false) => Stdio::null(),
+            (crucible_core::SandboxSpeech::Closed, true)
+            | (crucible_core::SandboxSpeech::Held, _) => Stdio::piped(),
         })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -271,7 +277,7 @@ fn spawn_inner(
     #[cfg(unix)]
     let scope = Scope::new(&mut command);
     #[cfg(windows)]
-    let scope = match Scope::new(&mut command) {
+    let scope = match Scope::new(&mut command, limits) {
         Ok(scope) => scope,
         Err(source) => {
             return Err(failed_before_spawn(
@@ -327,7 +333,15 @@ fn spawn_inner(
         #[cfg(test)]
         test_reap: reap,
     };
-    match process.initialize(limits, canceller, audit_started) {
+    match process.initialize(
+        limits,
+        canceller,
+        audit_started,
+        StartupInput {
+            bytes: startup_input,
+            speech,
+        },
+    ) {
         Ok(terminator) => {
             process.terminator = Some(terminator);
             Ok(process)
@@ -667,6 +681,7 @@ impl LocalProcess {
         limits: SandboxResourceLimits,
         canceller: Option<Canceller>,
         audit_started: bool,
+        startup: StartupInput,
     ) -> Result<Terminator, crucible_core::SandboxError> {
         #[cfg(windows)]
         self.scope
@@ -676,6 +691,20 @@ impl LocalProcess {
             .scope
             .terminator(&self.child)
             .map_err(crucible_core::SandboxError::Spawn)?;
+        if let Some(startup_input) = startup.bytes {
+            let input = self.stdin.as_mut().ok_or_else(|| {
+                crucible_core::SandboxError::Spawn(io::Error::other(
+                    "sandbox launcher startup pipe is unavailable",
+                ))
+            })?;
+            input
+                .write_all(&startup_input)
+                .and_then(|()| input.flush())
+                .map_err(crucible_core::SandboxError::Spawn)?;
+            if startup.speech == crucible_core::SandboxSpeech::Closed {
+                self.stdin.take();
+            }
+        }
         self.stdout = self
             .child
             .stdout
@@ -741,6 +770,11 @@ impl LocalProcess {
         self.audit_state.cleanup = Some(cleanup);
         Ok(())
     }
+}
+
+struct StartupInput {
+    bytes: Option<Vec<u8>>,
+    speech: crucible_core::SandboxSpeech,
 }
 
 impl SandboxProcess for LocalProcess {
@@ -1053,6 +1087,7 @@ pub(super) fn testing_plan(
         call_result_key: None,
         canceller: None,
         speech,
+        startup_input: None,
     })
 }
 
@@ -1109,6 +1144,52 @@ mod tests {
         let said = drained(&mut process).expect("what the peer said back");
         assert_eq!(said.trim_end(), "heard a kettle");
 
+        process.stop().expect("cleanup");
+    }
+
+    /// A trusted launcher prefix is written before the caller receives the
+    /// same pipe for command input. The Windows broker uses this to consume a
+    /// bounded launch frame and leave later peer input untouched.
+    #[cfg(unix)]
+    #[test]
+    fn startup_bytes_precede_held_command_input() {
+        let mut command = std::process::Command::new("/bin/sh");
+        command.args([
+            "-c",
+            "IFS= read -r setup; IFS= read -r input; printf '%s|%s\\n' \"$setup\" \"$input\"",
+        ]);
+        let mut plan =
+            super::testing_plan(crucible_core::SandboxSpeech::Held, None).expect("a launch plan");
+        plan.startup_input = Some(b"trusted launch frame\n".to_vec());
+        let mut process = super::spawn(command, plan).expect("a launched peer");
+        let mut stdin = process.take_stdin().expect("peer input remains held");
+        stdin.write_all(b"caller input\n").expect("caller input");
+        stdin.flush().expect("caller input flush");
+        drop(stdin);
+
+        let said = drained(&mut process).expect("what the peer received");
+        assert_eq!(said.trim_end(), "trusted launch frame|caller input");
+        process.stop().expect("cleanup");
+    }
+
+    /// A one-shot command gets the trusted prefix and then end-of-file. Keeping
+    /// the launch pipe open would turn an ordinary Windows command into a hang.
+    #[cfg(unix)]
+    #[test]
+    fn startup_bytes_are_followed_by_eof_for_a_closed_command() {
+        let mut command = std::process::Command::new("/bin/sh");
+        command.args([
+            "-c",
+            "IFS= read -r setup; if IFS= read -r extra; then exit 9; fi; printf '%s|eof\\n' \"$setup\"",
+        ]);
+        let mut plan =
+            super::testing_plan(crucible_core::SandboxSpeech::Closed, None).expect("a launch plan");
+        plan.startup_input = Some(b"trusted launch frame\n".to_vec());
+        let mut process = super::spawn(command, plan).expect("a launched step");
+        assert!(process.take_stdin().is_none());
+
+        let said = drained(&mut process).expect("what the step received");
+        assert_eq!(said.trim_end(), "trusted launch frame|eof");
         process.stop().expect("cleanup");
     }
 

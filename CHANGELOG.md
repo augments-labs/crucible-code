@@ -119,6 +119,18 @@ change in any release with no deprecation period.
 
 ### Added
 
+- **Native Windows can now enforce the opt-in sandbox.** After the explicit
+  Administrator setup, commands run as a dedicated low-privilege account under
+  path-capability ACLs, persistent WFP network denial, a privilege-stripped
+  write-restricted token, a private desktop, exact standard-handle inheritance,
+  and a kill-on-close Job Object with an aggregate CPU ceiling. Native x86_64
+  and ARM64 Windows CI provision the real backend and test workspace/protected
+  writes, loopback denial, input forwarding, exit status, identity and
+  descendant cleanup. Windows retains the sandbox account's ordinary read
+  access so the protected Win32 loader can start developer tools; explicit
+  unreadable paths and patterns fail closed rather than claiming a read boundary
+  Windows cannot apply with these stable APIs.
+
 - **Windows sandbox setup is explicit, repairable, and account-scoped.** Run
   `crucible sandbox setup` once from an Administrator PowerShell to create a
   dedicated local identity, protect its random credential with machine-scope

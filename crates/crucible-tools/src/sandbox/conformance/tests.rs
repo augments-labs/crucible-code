@@ -45,6 +45,20 @@ const MACOS_ENFORCED: &[SandboxFeature] = &[
     SandboxFeature::Audit,
 ];
 
+const WINDOWS_ENFORCED: &[SandboxFeature] = &[
+    SandboxFeature::Filesystem,
+    SandboxFeature::NetworkDeny,
+    SandboxFeature::DescriptorIsolation,
+    SandboxFeature::ProcessIsolation,
+    SandboxFeature::KernelSurface,
+    SandboxFeature::PrivilegeIsolation,
+    SandboxFeature::CpuLimit,
+    SandboxFeature::CommandTimeLimit,
+    SandboxFeature::OutputLimit,
+    SandboxFeature::ConcurrencyLimit,
+    SandboxFeature::Audit,
+];
+
 const COMPATIBILITY_ENFORCED: &[SandboxFeature] = &[
     SandboxFeature::CommandTimeLimit,
     SandboxFeature::OutputLimit,
@@ -108,6 +122,16 @@ fn macos_matrix_is_complete_and_claims_only_implemented_boundaries() {
     );
 }
 
+#[cfg(target_os = "windows")]
+#[test]
+fn windows_matrix_is_complete_and_claims_only_implemented_boundaries() {
+    assert_exact_matrix(
+        &crate::sandbox::windows::declared_capabilities(),
+        WINDOWS_ENFORCED,
+        OBSERVED,
+    );
+}
+
 #[test]
 fn published_capability_matrix_matches_declared_backends() {
     let document = include_str!("../../../../../docs/security/sandboxing.md");
@@ -120,9 +144,10 @@ fn published_capability_matrix_matches_declared_backends() {
         }
         let linux = expected(feature, LINUX_ENFORCED, OBSERVED).as_str();
         let macos = expected(feature, MACOS_ENFORCED, OBSERVED).as_str();
+        let windows = expected(feature, WINDOWS_ENFORCED, OBSERVED).as_str();
         let compatibility = expected(feature, COMPATIBILITY_ENFORCED, OBSERVED).as_str();
         let row = format!(
-            "| `{}` | {linux} | {macos} | {compatibility} |",
+            "| `{}` | {linux} | {macos} | {windows} | {compatibility} |",
             feature.as_str()
         );
         assert_eq!(
@@ -138,7 +163,7 @@ fn published_capability_matrix_matches_declared_backends() {
     )
     .as_str();
     let row = format!(
-        "| `{}` | enforced on Linux 5.14 or newer | unsupported | {compatibility} |",
+        "| `{}` | enforced on Linux 5.14 or newer | unsupported | unsupported | {compatibility} |",
         SandboxFeature::ProcessLimit.as_str()
     );
     assert_eq!(

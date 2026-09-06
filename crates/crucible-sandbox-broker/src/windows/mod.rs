@@ -10,11 +10,17 @@
 )]
 
 mod account;
+mod acl;
+mod desktop;
 mod identity;
 mod lock;
+mod plan;
+mod process;
 mod record;
 mod registry;
+mod runtime;
 mod secret;
+mod token;
 mod wfp;
 mod winutil;
 
@@ -24,6 +30,12 @@ use std::io;
 use identity::SetupIdentity;
 use record::{SetupRecord, Status};
 use secret::SecretWide;
+
+struct LaunchSetup {
+    identity: SetupIdentity,
+    record: SetupRecord,
+    password: SecretWide,
+}
 
 pub(super) enum Action {
     Setup(Option<OsString>),
@@ -64,6 +76,14 @@ pub(super) fn run(action: Action) -> io::Result<String> {
         Action::Uninstall(owner) => uninstall(owner.as_deref()),
         Action::Probe => probe(),
     }
+}
+
+pub(super) fn launch_host(request: &crate::WindowsLaunchRequest) -> io::Result<u32> {
+    runtime::host(request)
+}
+
+pub(super) fn launch_child(request: &crate::WindowsLaunchRequest) -> io::Result<u32> {
+    runtime::child(request)
 }
 
 pub(super) fn setup(owner: Option<&std::ffi::OsStr>) -> io::Result<String> {
@@ -122,7 +142,15 @@ pub(super) fn setup(owner: Option<&std::ffi::OsStr>) -> io::Result<String> {
     ))
 }
 
-fn probe() -> io::Result<String> {
+pub(super) fn probe() -> io::Result<String> {
+    let setup = current_launch_setup()?;
+    Ok(format!(
+        "Windows sandbox setup is ready ({})",
+        setup.identity.account_name
+    ))
+}
+
+fn current_launch_setup() -> io::Result<LaunchSetup> {
     let owner_sid = winutil::current_user_sid()?;
     let identity = SetupIdentity::for_owner(&owner_sid);
     let record = registry::load(&identity)?.ok_or_else(|| {
@@ -141,10 +169,11 @@ fn probe() -> io::Result<String> {
     let password = SecretWide::unprotect(&record.protected_password, &identity.entropy)?;
     account::probe(&record.account_name, &record.account_sid, &password)?;
     wfp::probe(&identity, &record.account_name)?;
-    Ok(format!(
-        "Windows sandbox setup is ready ({})",
-        identity.account_name
-    ))
+    Ok(LaunchSetup {
+        identity,
+        record,
+        password,
+    })
 }
 
 pub(super) fn uninstall(owner: Option<&std::ffi::OsStr>) -> io::Result<String> {

@@ -28,7 +28,11 @@ impl Job {
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        let scope = Scope::new(&mut command).expect("job");
+        let scope = Scope::new(
+            &mut command,
+            crucible_core::SandboxResourceLimits::default(),
+        )
+        .expect("job");
         let mut leader = command.spawn().expect("suspended leader");
 
         // A suspended member cannot exit on its own or launch work outside this
@@ -129,7 +133,11 @@ fn accepted_termination_does_not_complete_a_job_that_still_has_members() {
     // Deliberately signal another empty job: this injects successful termination
     // without extinction of the observed job. Production uses matching handles;
     // the mismatch makes asynchronous termination's pending state deterministic.
-    let empty = Scope::new(&mut Command::new("cmd.exe")).expect("empty job");
+    let empty = Scope::new(
+        &mut Command::new("cmd.exe"),
+        crucible_core::SandboxResourceLimits::default(),
+    )
+    .expect("empty job");
     let signal = empty.terminator(&job.leader).expect("borrowed terminator");
     assert!(
         job.scope

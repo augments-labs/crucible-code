@@ -38,19 +38,33 @@ jobs:
             os: macos-15-intel
           - name: macOS Apple silicon
             os: macos-26
-          - name: Windows
+          - name: Windows x86_64
             os: windows-latest
+          - name: Windows ARM64
+            os: windows-11-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - if: ${{ runner.os == 'Windows' && !cancelled() }}
+        name: Build and provision the native Windows sandbox
+        shell: pwsh
+        run: |
+          cargo build -p crucible-sandbox-broker --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .\target\debug\crucible-sandbox-broker.exe --windows-sandbox-setup
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - if: ${{ runner.os == 'macOS' && !cancelled() }}
         run: cargo test --workspace --locked
         env:
           CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX: 1
-      - if: ${{ runner.os != 'macOS' && !cancelled() }}
+      - if: ${{ runner.os == 'Windows' && !cancelled() }}
+        run: cargo test --workspace --locked
+        env:
+          CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX: 1
+      - if: ${{ runner.os != 'macOS' && runner.os != 'Windows' && !cancelled() }}
         run: cargo test --workspace --locked
       - if: ${{ !cancelled() }}
         run: cargo doc --workspace --all-features --no-deps --locked
@@ -58,4 +72,12 @@ jobs:
           RUSTDOCFLAGS: -D warnings
       - if: ${{ runner.os != 'Windows' && !cancelled() }}
         run: scripts/install-tests.sh
+      - if: ${{ runner.os == 'Windows' && always() }}
+        name: Remove the native Windows sandbox setup
+        shell: pwsh
+        run: |
+          if (Test-Path .\target\debug\crucible-sandbox-broker.exe) {
+            & .\target\debug\crucible-sandbox-broker.exe --windows-sandbox-uninstall
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
       - uses: ./.github/actions/check-clean-worktree
