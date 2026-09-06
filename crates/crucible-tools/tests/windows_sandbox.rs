@@ -44,6 +44,11 @@ const RESULT: &str = "CRUCIBLE_WINDOWS_SANDBOX_TEST_RESULT";
 const SENTINEL: &str = "CRUCIBLE_WINDOWS_SANDBOX_TEST_SENTINEL";
 const WHOAMI: &str = "CRUCIBLE_WINDOWS_SANDBOX_TEST_WHOAMI";
 
+// Native launches may queue behind the broker's 30-second machine-wide setup
+// bound. Keep this outer deadline longer so a broker timeout is reported as
+// the result instead of being hidden by the integration harness.
+const COMMAND_WAIT: Duration = Duration::from_secs(45);
+
 struct Fixture {
     parent: PathBuf,
     workspace: PathBuf,
@@ -228,7 +233,7 @@ fn finish(mut process: Box<dyn SandboxProcess>) -> (std::process::ExitStatus, Ve
     let mut output = Vec::new();
     let mut errors = Vec::new();
     let mut status = None;
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let deadline = Instant::now() + COMMAND_WAIT;
     while stdout.is_some() || stderr.is_some() || status.is_none() {
         read(&mut stdout, &mut output);
         read(&mut stderr, &mut errors);
