@@ -508,7 +508,16 @@ impl Session {
     /// which is the whole reason there is one.
     pub fn append(&self, message: &Message) {
         let Some(to) = &self.to else { return };
-        drop(to.send(LogRequest::Line(wire::line(message).into())));
+        let line = wire::line(message);
+        // Resuming never rewrites an old header. A separate guard makes old
+        // readers refuse the new state instead of silently discarding it.
+        // Queue both lines together so no other append can split the pair.
+        let line = if message.continuation_bytes() > 0 {
+            format!("{{\"requires_format\":{}}}\n{line}", wire::FORMAT)
+        } else {
+            line
+        };
+        drop(to.send(LogRequest::Line(line.into())));
         if is_conversation_message(message) {
             self.messages.fetch_add(1, Ordering::Relaxed);
         }

@@ -455,9 +455,12 @@ mod tests {
 
     fn asking(text: &str) -> Request<'static> {
         let mut transcript = Transcript::new();
-        transcript.push(Message::said(text));
+        transcript
+            .push(Message::said(text))
+            .expect("valid fixture transcript");
 
         Request {
+            purpose: crucible_core::RequestPurpose::Turn,
             model: "claude-test",
             transcript: Box::leak(Box::new(transcript)),
             tools: &[],

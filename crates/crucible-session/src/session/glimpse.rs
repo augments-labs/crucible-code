@@ -141,7 +141,13 @@ pub fn glimpse(
                 text: cleaned(&text),
                 attachments,
             }),
-            Some(Message::Agent { text, calls, stop }) => messages.push(Message::Agent {
+            Some(Message::Agent {
+                continuation: _,
+                text,
+                calls,
+                stop,
+            }) => messages.push(Message::Agent {
+                continuation: None,
                 text: cleaned(&text),
                 calls,
                 stop,

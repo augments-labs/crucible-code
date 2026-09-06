@@ -116,6 +116,13 @@ fn write_messages(messages: &mut Array<'_>, request: &Request<'_>) {
     }
 
     for (nth, message) in request.transcript.messages().iter().enumerate() {
+        if request.purpose == crucible_core::RequestPurpose::Recap {
+            messages.object(|item| {
+                item.text("role", "user");
+                item.text_with("content", |write| crate::history::visible(message, write));
+            });
+            continue;
+        }
         append(messages, message, nth, request.attached);
     }
 }
@@ -157,7 +164,12 @@ fn append(messages: &mut Array<'_>, message: &Message, nth: usize, attached: &[A
                 }
             });
         }),
-        Message::Agent { text, calls, stop } => {
+        Message::Agent {
+            continuation: _,
+            text,
+            calls,
+            stop,
+        } => {
             // Both fields are optional and one of them has to be there. A model
             // that goes straight to a tool says nothing first, and a message
             // with neither is one the API refuses.

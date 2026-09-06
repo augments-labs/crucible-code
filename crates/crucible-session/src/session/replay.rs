@@ -21,6 +21,65 @@ use crucible_core::{
 
 use super::{SUFFIX, SessionError, results, wire};
 
+/// A persisted record cannot legitimately exceed the maximum retained item
+/// escaped at JSON's worst case, plus the bounded private metadata envelope.
+const RECORD_BYTES: usize =
+    6 * crucible_core::MAX_RUN_ITEM_RETAINED_BYTES + crucible_core::CONTINUATION_BYTES;
+
+fn read_record(
+    reader: &mut impl io::BufRead,
+    raw: &mut Vec<u8>,
+    maximum: usize,
+) -> io::Result<usize> {
+    let start = raw.len();
+    loop {
+        let available = reader.fill_buf()?;
+        if available.is_empty() {
+            return Ok(raw.len() - start);
+        }
+        let end = available.iter().position(|byte| *byte == b'\n');
+        let count = end.map_or(available.len(), |end| end + 1);
+        if count > maximum.saturating_sub(raw.len()) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "session record exceeds its byte limit",
+            ));
+        }
+        let part = available.get(..count).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid session record boundary",
+            )
+        })?;
+        raw.reserve_exact(count);
+        raw.extend_from_slice(part);
+        reader.consume(count);
+        if end.is_some() {
+            return Ok(raw.len() - start);
+        }
+    }
+}
+
+#[cfg(test)]
+mod record_tests {
+    use super::*;
+
+    #[test]
+    fn session_record_bounds_are_enforced_before_accumulating_the_overflow() {
+        let mut exact = io::Cursor::new(b"1234567\nnext\n");
+        let mut raw = Vec::new();
+        assert_eq!(read_record(&mut exact, &mut raw, 8).unwrap(), 8);
+        assert_eq!(raw, b"1234567\n");
+        raw.clear();
+        let mut oversized = io::Cursor::new(b"12345678\n");
+        assert!(read_record(&mut oversized, &mut raw, 8).is_err());
+        assert!(
+            raw.len() <= 8,
+            "rejected bytes cannot grow the record buffer"
+        );
+    }
+}
+
 /// Every session log in `directory`, oldest first.
 ///
 /// Session identifiers sort by start time as text, so this is time order and
@@ -158,7 +217,7 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
     let mut raw = Vec::new();
 
     // The header is not a message, but its bytes are where the messages start.
-    let mut through = log.read_until(b'\n', &mut raw).map_err(trouble)? as u64;
+    let mut through = read_record(&mut log, &mut raw, RECORD_BYTES).map_err(trouble)? as u64;
     let format = str::from_utf8(&raw)
         .ok()
         .map(str::trim_end)
@@ -180,7 +239,7 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
 
     loop {
         raw.clear();
-        let read = log.read_until(b'\n', &mut raw).map_err(trouble)?;
+        let read = read_record(&mut log, &mut raw, RECORD_BYTES).map_err(trouble)?;
 
         if read == 0 || !raw.ends_with(b"\n") {
             break;
@@ -193,6 +252,16 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
         // before starting the next one. Nothing was recorded there, so nothing
         // is missing.
         if whole == Some("") {
+            through += read as u64;
+            continue;
+        }
+
+        if let Some(supported) = whole.and_then(wire::required_format) {
+            if !supported {
+                return Err(SessionError::Foreign {
+                    at: path.display().to_string().into(),
+                });
+            }
             through += read as u64;
             continue;
         }
@@ -286,6 +355,12 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
         }
 
         let Some(message) = whole.and_then(wire::message) else {
+            if whole.is_some_and(wire::has_continuation) {
+                return Err(trouble(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid provider continuation in a complete session record",
+                )));
+            }
             // Where the damage sits is what decides what to do about it. At the
             // end of the file it is where the log stops, and what came before
             // is still a transcript. With turns recorded after it, stopping
@@ -314,7 +389,9 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
                 }
             }
         }
-        transcript.push(message);
+        transcript
+            .push(message)
+            .map_err(|error| trouble(io::Error::new(io::ErrorKind::InvalidData, error)))?;
         calibration = None;
         before = through;
         through += read as u64;
@@ -323,7 +400,9 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
     if outstanding(&transcript) {
         if !pending_results.is_empty() {
             let recovered = recovered_results(&transcript, &pending_results).map_err(trouble)?;
-            transcript.push(recovered.clone());
+            transcript
+                .push(recovered.clone())
+                .map_err(|error| trouble(io::Error::new(io::ErrorKind::InvalidData, error)))?;
             settled_results.append(&mut pending_results);
             return Ok(Replayed {
                 transcript,
@@ -338,7 +417,7 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
         // The message being cut off is the one the reading covered, so what is
         // left is a shorter transcript than the number describes.
         return Ok(Replayed {
-            transcript: without_last(&transcript),
+            transcript: without_last(transcript),
             pruned,
             settled_at: before,
             calibration: None,
@@ -505,19 +584,10 @@ fn outstanding(transcript: &Transcript) -> bool {
     )
 }
 
-/// A copy without the final message.
-///
-/// A transcript-sized copy, once per `--continue` and never again: this runs
-/// before the first turn, on a transcript already read whole from the disk, and
-/// the alternative is a `Transcript` that can have its last message taken off —
-/// a method the running loop would then also be able to reach for.
-fn without_last(transcript: &Transcript) -> Transcript {
-    let mut settled = Transcript::new();
-    for message in transcript.messages().iter().rev().skip(1).rev() {
-        settled.push(message.clone());
-    }
-
-    settled
+/// Drops the unanswered final call and its private state without copying history.
+fn without_last(mut transcript: Transcript) -> Transcript {
+    transcript.pop();
+    transcript
 }
 
 #[cfg(test)]

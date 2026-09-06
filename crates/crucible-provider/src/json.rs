@@ -130,6 +130,15 @@ impl Object<'_> {
         self.member(name, |json| json.text(value));
     }
 
+    /// Escapes borrowed pieces directly into one string in the final body.
+    pub(crate) fn text_with(&mut self, name: &str, fill: impl FnOnce(&mut dyn FnMut(&str))) {
+        self.member(name, |json| {
+            json.0.push('"');
+            fill(&mut |part| json.text_content(part));
+            json.0.push('"');
+        });
+    }
+
     pub(crate) fn prefixed_text(&mut self, name: &str, prefix: &str, value: &str) {
         self.member(name, |json| {
             json.0.push('"');

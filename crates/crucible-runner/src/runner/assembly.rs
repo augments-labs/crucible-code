@@ -127,7 +127,7 @@ impl Runner {
         // Words first, state second. A crash between them replays as Unknown;
         // the opposite order could claim the model saw words never retained.
         for fragment in fragments {
-            self.record(ancestry, crucible_core::Message::Context(fragment));
+            self.record(ancestry, crucible_core::Message::Context(fragment))?;
         }
         if let Some(patch) = patch {
             self.session.contextual(&patch)?;

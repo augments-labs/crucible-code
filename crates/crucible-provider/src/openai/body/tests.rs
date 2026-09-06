@@ -15,8 +15,38 @@ use crate::fake::{cached, failed, found, observed, picture};
 /// What a pointer finds when there is nothing there.
 const NOTHING: Value = Value::Null;
 
+#[test]
+fn recap_is_fresh_visible_text_without_executable_history() {
+    let mut request = request(crate::fake::recap_history());
+    request.purpose = crucible_core::RequestPurpose::Recap;
+    let body = build(&request);
+    assert!(
+        body.get("input")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|message| message.get("role").unwrap() == "user"
+                && message.get("content").unwrap().is_string())
+    );
+    let text = body.to_string();
+    for visible in [
+        "old question",
+        "old answer",
+        "lookup",
+        "call-1",
+        "old result",
+        "summarize",
+    ] {
+        assert!(text.contains(visible));
+    }
+    assert!(!text.contains("private-signature-canary"));
+    assert!(!text.contains("function_call"));
+}
+
 fn request(transcript: Transcript) -> Request<'static> {
     Request {
+        purpose: crucible_core::RequestPurpose::Turn,
         model: "gpt-test",
         transcript: Box::leak(Box::new(transcript)),
         tools: &[],
@@ -30,7 +60,9 @@ fn request(transcript: Transcript) -> Request<'static> {
 
 fn said(text: &str) -> Transcript {
     let mut transcript = Transcript::new();
-    transcript.push(Message::said(text));
+    transcript
+        .push(Message::said(text))
+        .expect("valid fixture transcript");
     transcript
 }
 
@@ -163,13 +195,43 @@ fn reviewed_retention_hints_use_the_model_specific_wire_shape() {
 }
 
 #[test]
+fn recap_uses_the_responses_breakpoint_field() {
+    let mut transcript = Transcript::new();
+    transcript.push(Message::said("stable history")).unwrap();
+    transcript.push(Message::said("summarize")).unwrap();
+    let mut request = request(transcript);
+    request.model = "gpt-5.6-sol";
+    request.purpose = crucible_core::RequestPurpose::Recap;
+    let request = cached(
+        request,
+        PromptCacheMechanism::ExplicitBreakpoints,
+        PromptCacheRetentionClass::ProviderDefault,
+        false,
+    );
+    let body = build(&request);
+    assert_eq!(
+        at(&body, "/input/0/content/0/prompt_cache_breakpoint"),
+        &json!({"mode":"explicit"})
+    );
+    assert_eq!(
+        at(&body, "/input/0/content/0/text"),
+        "User:\nstable history"
+    );
+    assert_eq!(at(&body, "/input/0/content/0/cache_control"), &Value::Null);
+}
+
+#[test]
 fn explicit_caching_marks_one_legal_text_boundary_and_disables_implicit_writes() {
     let mut transcript = Transcript::new();
-    transcript.push(Message::Context(Fragment::new(
-        "reference",
-        "stable prefix",
-    )));
-    transcript.push(Message::said("changing question"));
+    transcript
+        .push(Message::Context(Fragment::new(
+            "reference",
+            "stable prefix",
+        )))
+        .expect("valid fixture transcript");
+    transcript
+        .push(Message::said("changing question"))
+        .expect("valid fixture transcript");
     let mut explicit = request(transcript);
     explicit.model = "gpt-5.6-sol";
     let explicit = cached(
@@ -197,21 +259,30 @@ fn explicit_caching_marks_one_legal_text_boundary_and_disables_implicit_writes()
 #[test]
 fn explicit_caching_does_not_claim_a_later_unmarkable_tool_result_was_cached() {
     let mut transcript = Transcript::new();
-    transcript.push(Message::Context(Fragment::new("reference", "earlier text")));
-    transcript.push(Message::Agent {
-        text: Box::default(),
-        calls: vec![ToolCall {
+    transcript
+        .push(Message::Context(Fragment::new("reference", "earlier text")))
+        .expect("valid fixture transcript");
+    transcript
+        .push(Message::Agent {
+            continuation: None,
+            text: Box::default(),
+            calls: vec![ToolCall {
+                id: ToolId::new("call_1"),
+                name: "read".into(),
+                args: ToolArgs::new("{}"),
+            }],
+            stop: Some(StopReason::WantsTools),
+        })
+        .expect("valid fixture transcript");
+    transcript
+        .push(Message::ToolResults(vec![ToolResult {
             id: ToolId::new("call_1"),
-            name: "read".into(),
-            args: ToolArgs::new("{}"),
-        }],
-        stop: Some(StopReason::WantsTools),
-    });
-    transcript.push(Message::ToolResults(vec![ToolResult {
-        id: ToolId::new("call_1"),
-        output: found("result", Vec::new()),
-    }]));
-    transcript.push(Message::said("changing question"));
+            output: found("result", Vec::new()),
+        }]))
+        .expect("valid fixture transcript");
+    transcript
+        .push(Message::said("changing question"))
+        .expect("valid fixture transcript");
     let mut explicit = request(transcript);
     explicit.model = "gpt-5.6-sol";
     let explicit = cached(
@@ -305,11 +376,15 @@ fn a_system_prompt_is_a_field_rather_than_a_message() {
 #[test]
 fn typed_context_is_sent_as_retained_model_input() {
     let mut transcript = Transcript::new();
-    transcript.push(Message::Context(Fragment::new(
-        "workspace",
-        "Workspace: /src",
-    )));
-    transcript.push(Message::said("continue"));
+    transcript
+        .push(Message::Context(Fragment::new(
+            "workspace",
+            "Workspace: /src",
+        )))
+        .expect("valid fixture transcript");
+    transcript
+        .push(Message::said("continue"))
+        .expect("valid fixture transcript");
 
     let body = build(&request(transcript));
 
@@ -332,15 +407,18 @@ fn a_tool_call_is_an_item_of_its_own_beside_what_was_said() {
     // of the message that made it, and its result is not part of a message
     // either. Both are items in one flat list.
     let mut transcript = said("read it");
-    transcript.push(Message::Agent {
-        text: "reading".into(),
-        calls: vec![ToolCall {
-            id: ToolId::new("call_1"),
-            name: "read".into(),
-            args: ToolArgs::new("{\"path\":\"a.rs\"}"),
-        }],
-        stop: Some(StopReason::WantsTools),
-    });
+    transcript
+        .push(Message::Agent {
+            continuation: None,
+            text: "reading".into(),
+            calls: vec![ToolCall {
+                id: ToolId::new("call_1"),
+                name: "read".into(),
+                args: ToolArgs::new("{\"path\":\"a.rs\"}"),
+            }],
+            stop: Some(StopReason::WantsTools),
+        })
+        .expect("valid fixture transcript");
 
     let body = build(&request(transcript));
 
@@ -360,15 +438,18 @@ fn a_tool_call_with_no_words_before_it_sends_no_message_at_all() {
     // A model that goes straight to a tool says nothing first, and an empty
     // message is an item with no content for it to read back.
     let mut transcript = said("read it");
-    transcript.push(Message::Agent {
-        text: String::new().into(),
-        calls: vec![ToolCall {
-            id: ToolId::new("call_1"),
-            name: "read".into(),
-            args: ToolArgs::new("{}"),
-        }],
-        stop: Some(StopReason::WantsTools),
-    });
+    transcript
+        .push(Message::Agent {
+            continuation: None,
+            text: String::new().into(),
+            calls: vec![ToolCall {
+                id: ToolId::new("call_1"),
+                name: "read".into(),
+                args: ToolArgs::new("{}"),
+            }],
+            stop: Some(StopReason::WantsTools),
+        })
+        .expect("valid fixture transcript");
 
     let body = build(&request(transcript));
 
@@ -381,11 +462,14 @@ fn a_turn_that_produced_nothing_at_all_still_sends_something_to_hold() {
     // calls. Sending neither would leave a gap in the transcript where a turn
     // was.
     let mut transcript = said("hello");
-    transcript.push(Message::Agent {
-        text: String::new().into(),
-        calls: Vec::new(),
-        stop: Some(StopReason::Cancelled),
-    });
+    transcript
+        .push(Message::Agent {
+            continuation: None,
+            text: String::new().into(),
+            calls: Vec::new(),
+            stop: Some(StopReason::Cancelled),
+        })
+        .expect("valid fixture transcript");
 
     let body = build(&request(transcript));
 
@@ -398,11 +482,14 @@ fn a_turn_that_was_cut_off_is_not_sent_back_as_one_the_model_finished() {
     // — and every turn of a continued session — showed it its own half-sentence
     // as an answer it had chosen to end there.
     let mut transcript = said("write it all out");
-    transcript.push(Message::Agent {
-        text: "as I was say".into(),
-        calls: Vec::new(),
-        stop: Some(StopReason::OutOfTokens),
-    });
+    transcript
+        .push(Message::Agent {
+            continuation: None,
+            text: "as I was say".into(),
+            calls: Vec::new(),
+            stop: Some(StopReason::OutOfTokens),
+        })
+        .expect("valid fixture transcript");
 
     let body = build(&request(transcript));
 
@@ -418,11 +505,14 @@ fn a_turn_the_model_ended_itself_carries_no_note() {
     // The path taken every time. A note under each answer would be spent on
     // the ordinary ending and teach the model nothing.
     let mut transcript = said("hello");
-    transcript.push(Message::Agent {
-        text: "hello back".into(),
-        calls: Vec::new(),
-        stop: Some(StopReason::Yielded),
-    });
+    transcript
+        .push(Message::Agent {
+            continuation: None,
+            text: "hello back".into(),
+            calls: Vec::new(),
+            stop: Some(StopReason::Yielded),
+        })
+        .expect("valid fixture transcript");
 
     let body = build(&request(transcript));
 
@@ -434,15 +524,18 @@ fn a_tool_that_takes_no_arguments_still_sends_parsable_text() {
     // An empty string is not JSON on the other side, and the model is handed
     // this back as the arguments it wrote.
     let mut transcript = said("what time is it");
-    transcript.push(Message::Agent {
-        text: String::new().into(),
-        calls: vec![ToolCall {
-            id: ToolId::new("call_1"),
-            name: "clock".into(),
-            args: ToolArgs::new("  "),
-        }],
-        stop: Some(StopReason::WantsTools),
-    });
+    transcript
+        .push(Message::Agent {
+            continuation: None,
+            text: String::new().into(),
+            calls: vec![ToolCall {
+                id: ToolId::new("call_1"),
+                name: "clock".into(),
+                args: ToolArgs::new("  "),
+            }],
+            stop: Some(StopReason::WantsTools),
+        })
+        .expect("valid fixture transcript");
 
     let body = build(&request(transcript));
 
@@ -452,16 +545,18 @@ fn a_tool_that_takes_no_arguments_still_sends_parsable_text() {
 #[test]
 fn every_result_of_a_turn_is_its_own_item_naming_the_call_it_answers() {
     let mut transcript = said("read them");
-    transcript.push(Message::ToolResults(vec![
-        ToolResult {
-            id: ToolId::new("call_1"),
-            output: ToolOutput::ok("first"),
-        },
-        ToolResult {
-            id: ToolId::new("call_2"),
-            output: ToolOutput::ok("second"),
-        },
-    ]));
+    transcript
+        .push(Message::ToolResults(vec![
+            ToolResult {
+                id: ToolId::new("call_1"),
+                output: ToolOutput::ok("first"),
+            },
+            ToolResult {
+                id: ToolId::new("call_2"),
+                output: ToolOutput::ok("second"),
+            },
+        ]))
+        .expect("valid fixture transcript");
 
     let body = build(&request(transcript));
 
@@ -477,10 +572,12 @@ fn a_failed_result_says_so_in_the_only_place_this_wire_has() {
     // There is no field for it. Unmarked, "no such file: x" reads as the
     // contents of a file that was read successfully.
     let mut transcript = said("read it");
-    transcript.push(Message::ToolResults(vec![ToolResult {
-        id: ToolId::new("call_1"),
-        output: ToolOutput::failed("no such file: a.rs"),
-    }]));
+    transcript
+        .push(Message::ToolResults(vec![ToolResult {
+            id: ToolId::new("call_1"),
+            output: ToolOutput::failed("no such file: a.rs"),
+        }]))
+        .expect("valid fixture transcript");
 
     let body = build(&request(transcript));
 
@@ -620,7 +717,9 @@ fn a_prompt_that_is_only_a_file_sends_no_empty_text_part() {
 /// A turn whose tool results the runner resolved these attachments for.
 fn answering(results: Vec<ToolResult>, attached: Vec<Attached<'static>>) -> Request<'static> {
     let mut transcript = said("find me one");
-    transcript.push(Message::ToolResults(results));
+    transcript
+        .push(Message::ToolResults(results))
+        .expect("valid fixture transcript");
     let mut request = request(transcript);
     request.attached = Box::leak(attached.into_boxed_slice());
     request

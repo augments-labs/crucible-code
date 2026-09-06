@@ -10,8 +10,38 @@ use crate::fake::{cached, failed, found, observed, picture};
 /// What a pointer finds when there is nothing there.
 const NOTHING: Value = Value::Null;
 
+#[test]
+fn recap_is_fresh_visible_text_without_executable_history() {
+    let mut request = request(crate::fake::recap_history());
+    request.purpose = crucible_core::RequestPurpose::Recap;
+    let body = build(&request);
+    assert!(
+        body.get("messages")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|message| message.get("role").unwrap() == "user"
+                && message.get("content").unwrap().is_string())
+    );
+    let text = body.to_string();
+    for visible in [
+        "old question",
+        "old answer",
+        "lookup",
+        "call-1",
+        "old result",
+        "summarize",
+    ] {
+        assert!(text.contains(visible));
+    }
+    assert!(!text.contains("private-signature-canary"));
+    assert!(!text.contains("tool_calls"));
+}
+
 fn request(transcript: Transcript) -> Request<'static> {
     Request {
+        purpose: crucible_core::RequestPurpose::Turn,
         model: "kimi-test",
         transcript: Box::leak(Box::new(transcript)),
         tools: &[],
@@ -25,7 +55,9 @@ fn request(transcript: Transcript) -> Request<'static> {
 
 fn said(text: &str) -> Transcript {
     let mut transcript = Transcript::new();
-    transcript.push(Message::said(text));
+    transcript
+        .push(Message::said(text))
+        .expect("valid fixture transcript");
     transcript
 }
 
@@ -159,11 +191,15 @@ fn standing_instructions_lead_the_transcript_as_a_message_of_their_own() {
 #[test]
 fn typed_context_is_sent_as_retained_model_input() {
     let mut transcript = Transcript::new();
-    transcript.push(Message::Context(Fragment::new(
-        "workspace",
-        "Workspace: /src",
-    )));
-    transcript.push(Message::said("continue"));
+    transcript
+        .push(Message::Context(Fragment::new(
+            "workspace",
+            "Workspace: /src",
+        )))
+        .expect("valid fixture transcript");
+    transcript
+        .push(Message::said("continue"))
+        .expect("valid fixture transcript");
 
     let body = build(&request(transcript));
 
@@ -186,15 +222,18 @@ fn a_tool_call_rides_on_the_message_the_model_made_it_in() {
     // The model has to see its own call in the transcript, or the result that
     // follows answers a question it never asked.
     let mut transcript = said("read it");
-    transcript.push(Message::Agent {
-        text: "let me look".into(),
-        calls: vec![ToolCall {
-            id: ToolId::new("call_1"),
-            name: "read".into(),
-            args: ToolArgs::new(r#"{"path":"src/main.rs"}"#),
-        }],
-        stop: Some(StopReason::WantsTools),
-    });
+    transcript
+        .push(Message::Agent {
+            continuation: None,
+            text: "let me look".into(),
+            calls: vec![ToolCall {
+                id: ToolId::new("call_1"),
+                name: "read".into(),
+                args: ToolArgs::new(r#"{"path":"src/main.rs"}"#),
+            }],
+            stop: Some(StopReason::WantsTools),
+        })
+        .expect("valid fixture transcript");
 
     let body = build(&request(transcript));
 
@@ -218,15 +257,18 @@ fn arguments_go_back_as_the_text_the_model_wrote() {
     // arguments it sees stop matching the ones it produced. A tool that takes
     // none is called with no text at all, and an empty string is not JSON.
     let mut transcript = said("go");
-    transcript.push(Message::Agent {
-        text: String::new().into(),
-        calls: vec![ToolCall {
-            id: ToolId::new("call_1"),
-            name: "clock".into(),
-            args: ToolArgs::new("  "),
-        }],
-        stop: Some(StopReason::WantsTools),
-    });
+    transcript
+        .push(Message::Agent {
+            continuation: None,
+            text: String::new().into(),
+            calls: vec![ToolCall {
+                id: ToolId::new("call_1"),
+                name: "clock".into(),
+                args: ToolArgs::new("  "),
+            }],
+            stop: Some(StopReason::WantsTools),
+        })
+        .expect("valid fixture transcript");
 
     let body = build(&request(transcript));
 
@@ -243,19 +285,24 @@ fn arguments_go_back_as_the_text_the_model_wrote() {
 #[test]
 fn a_result_answers_the_call_it_was_made_against_in_a_message_of_its_own() {
     let mut transcript = said("read it");
-    transcript.push(Message::Agent {
-        text: String::new().into(),
-        calls: vec![ToolCall {
+    transcript
+        .push(Message::Agent {
+            continuation: None,
+            text: String::new().into(),
+            calls: vec![ToolCall {
+                id: ToolId::new("call_1"),
+                name: "read".into(),
+                args: ToolArgs::new("{}"),
+            }],
+            stop: Some(StopReason::WantsTools),
+        })
+        .expect("valid fixture transcript");
+    transcript
+        .push(Message::ToolResults(vec![ToolResult {
             id: ToolId::new("call_1"),
-            name: "read".into(),
-            args: ToolArgs::new("{}"),
-        }],
-        stop: Some(StopReason::WantsTools),
-    });
-    transcript.push(Message::ToolResults(vec![ToolResult {
-        id: ToolId::new("call_1"),
-        output: ToolOutput::ok("fn main() {}"),
-    }]));
+            output: ToolOutput::ok("fn main() {}"),
+        }]))
+        .expect("valid fixture transcript");
 
     let body = build(&request(transcript));
 
@@ -274,10 +321,12 @@ fn a_result_that_failed_says_so_in_its_text() {
     // There is no field for it here. Unmarked, "no such file: a.rs" reads as
     // the contents of a file that was read successfully.
     let mut transcript = said("read it");
-    transcript.push(Message::ToolResults(vec![ToolResult {
-        id: ToolId::new("call_1"),
-        output: ToolOutput::failed("no such file: a.rs"),
-    }]));
+    transcript
+        .push(Message::ToolResults(vec![ToolResult {
+            id: ToolId::new("call_1"),
+            output: ToolOutput::failed("no such file: a.rs"),
+        }]))
+        .expect("valid fixture transcript");
 
     let body = build(&request(transcript));
 
@@ -294,11 +343,14 @@ fn a_turn_that_produced_nothing_at_all_does_not_send_an_empty_message() {
     // is in the session file it would be sent again on every turn from then
     // on — the session permanently unusable, with nothing saying why.
     let mut transcript = said("go");
-    transcript.push(Message::Agent {
-        text: String::new().into(),
-        calls: Vec::new(),
-        stop: Some(StopReason::Cancelled),
-    });
+    transcript
+        .push(Message::Agent {
+            continuation: None,
+            text: String::new().into(),
+            calls: Vec::new(),
+            stop: Some(StopReason::Cancelled),
+        })
+        .expect("valid fixture transcript");
 
     let body = build(&request(transcript));
 
@@ -314,11 +366,14 @@ fn an_answer_that_was_cut_off_is_followed_by_a_message_saying_so() {
     // Left off, the model reads its own half-sentence as a turn it chose to
     // end, on this turn and on every turn of a continued session.
     let mut transcript = said("go");
-    transcript.push(Message::Agent {
-        text: "I was saying".into(),
-        calls: Vec::new(),
-        stop: Some(StopReason::OutOfTokens),
-    });
+    transcript
+        .push(Message::Agent {
+            continuation: None,
+            text: "I was saying".into(),
+            calls: Vec::new(),
+            stop: Some(StopReason::OutOfTokens),
+        })
+        .expect("valid fixture transcript");
 
     let body = build(&request(transcript));
 
@@ -337,19 +392,24 @@ fn nothing_comes_between_a_turns_tool_calls_and_their_results() {
     // results, and refuses the request outright otherwise. A turn holding calls
     // ended by asking for them, which is not an answer that was cut short.
     let mut transcript = said("go");
-    transcript.push(Message::Agent {
-        text: "looking".into(),
-        calls: vec![ToolCall {
+    transcript
+        .push(Message::Agent {
+            continuation: None,
+            text: "looking".into(),
+            calls: vec![ToolCall {
+                id: ToolId::new("call_1"),
+                name: "read".into(),
+                args: ToolArgs::new("{}"),
+            }],
+            stop: Some(StopReason::Cancelled),
+        })
+        .expect("valid fixture transcript");
+    transcript
+        .push(Message::ToolResults(vec![ToolResult {
             id: ToolId::new("call_1"),
-            name: "read".into(),
-            args: ToolArgs::new("{}"),
-        }],
-        stop: Some(StopReason::Cancelled),
-    });
-    transcript.push(Message::ToolResults(vec![ToolResult {
-        id: ToolId::new("call_1"),
-        output: ToolOutput::ok("fn main() {}"),
-    }]));
+            output: ToolOutput::ok("fn main() {}"),
+        }]))
+        .expect("valid fixture transcript");
 
     let body = build(&request(transcript));
 
@@ -483,7 +543,9 @@ fn a_prompt_that_is_only_a_file_sends_no_empty_text_part() {
 /// A turn whose tool results the runner resolved these attachments for.
 fn answering(results: Vec<ToolResult>, attached: Vec<Attached<'static>>) -> Request<'static> {
     let mut transcript = said("find me one");
-    transcript.push(Message::ToolResults(results));
+    transcript
+        .push(Message::ToolResults(results))
+        .expect("valid fixture transcript");
     let mut request = request(transcript);
     request.attached = Box::leak(attached.into_boxed_slice());
     request

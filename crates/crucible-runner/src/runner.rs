@@ -1016,7 +1016,13 @@ impl Runner {
     /// The only way either the transcript or the log is written. Two calls
     /// that could be made separately would eventually be made separately, and
     /// a log that is missing one message is a session that cannot be continued.
-    fn record(&mut self, ancestry: Ancestry, message: Message) {
+    fn record(&mut self, ancestry: Ancestry, message: Message) -> Result<(), TurnError> {
+        self.transcript
+            .check_continuation(&message)
+            .map_err(|_| ProviderError::Protocol {
+                provider: self.provider.name(),
+                problem: "invalid or oversized provider continuation".into(),
+            })?;
         let settles_call_results = matches!(&message, Message::ToolResults(_));
         match RunItem::message(ancestry, message.clone()) {
             Ok(item) => {
@@ -1030,7 +1036,12 @@ impl Runner {
             Err(_) => SessionStore::append_message(&self.session, &message),
         }
         self.load.recorded(&message);
-        self.transcript.push(message);
+        self.transcript
+            .push(message)
+            .map_err(|_| ProviderError::Protocol {
+                provider: self.provider.name(),
+                problem: "invalid or oversized provider continuation".into(),
+            })?;
 
         // After the message and not beside it: what this says covers the
         // transcript including what was just appended, and a reader that found
@@ -1041,6 +1052,7 @@ impl Runner {
         if settles_call_results {
             JournalStore::settle_call_results(&self.session);
         }
+        Ok(())
     }
 
     fn flush_sandbox_audits(&self, events: Reporter<'_>) -> Result<(), ToolError> {
@@ -1170,7 +1182,7 @@ impl Runner {
                 text: prompt.into(),
                 attachments,
             },
-        );
+        )?;
 
         // Posted from here rather than from either place the exchange ends, so
         // that a turn cannot acquire a second way to finish without one. The
@@ -1394,11 +1406,12 @@ impl Runner {
             self.record(
                 listening.run.ancestry(),
                 Message::Agent {
+                    continuation: None,
                     text,
                     calls: Vec::new(),
                     stop,
                 },
-            );
+            )?;
 
             return Err(problem);
         }
@@ -1469,6 +1482,7 @@ impl Runner {
             // provider request borrows transcript/spec data. A helper borrowing
             // the whole runner would falsely make those owners overlap.
             let request = Request {
+                purpose: crucible_core::RequestPurpose::Turn,
                 model: &self.spec.model.name,
                 transcript: &self.transcript,
                 tools: listening.advertised,
@@ -1633,7 +1647,7 @@ impl Runner {
         };
 
         self.hear(stream.as_mut(), answer, listening, cache_observation)
-            .and_then(|()| answer.reached().map_err(TurnError::from))
+            .and_then(|()| answer.finalize().map_err(TurnError::from))
     }
 
     /// Whether this failure, on this much of an answer, is worth asking again.
@@ -1644,6 +1658,7 @@ impl Runner {
     fn again(problem: &TurnError, answer: &Answer) -> bool {
         matches!(problem, TurnError::Provider(failure) if failure.transient())
             && answer.retained() == 0
+            && !answer.has_progress()
             && answer.stop().is_none()
     }
 
@@ -1703,6 +1718,10 @@ impl Runner {
                     answer.arguments(&fragment)?;
                     Self::output_grew(&events, counting, bytes);
                 }
+                Delta::Continuation(state) => {
+                    answer.continuing(state, self.transcript.continuation_room())?;
+                }
+                Delta::Progress => answer.progressed()?,
                 Delta::Usage(usage) => {
                     let usage = merge_usage(
                         self.prompt_cache_attempt

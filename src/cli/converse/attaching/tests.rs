@@ -755,10 +755,12 @@ fn a_file_sent_with_a_prompt_is_marked_under_it_whichever_way_it_reached_the_scr
 
     // Replayed: the same message, back out of a transcript.
     let mut transcript = Transcript::new();
-    transcript.push(Message::User {
-        text: prompt.into(),
-        attachments,
-    });
+    transcript
+        .push(Message::User {
+            text: prompt.into(),
+            attachments,
+        })
+        .expect("valid fixture transcript");
     let back = sending().resuming(transcript);
     let mut replay = Renderer::new(Recording::new(120, 24));
     replay.wears(style.palette());

@@ -218,6 +218,7 @@ mod tests {
     /// prove nothing about either.
     fn talking(sample: &Sample, asked: &str) -> Runner {
         let answered = Message::Agent {
+            continuation: None,
             text: "an answer".into(),
             calls: Vec::new(),
             stop: Some(StopReason::Yielded),
@@ -229,8 +230,10 @@ mod tests {
         session.append(&answered);
 
         let mut transcript = Transcript::new();
-        transcript.push(Message::said(asked));
-        transcript.push(answered);
+        transcript
+            .push(Message::said(asked))
+            .expect("valid fixture transcript");
+        transcript.push(answered).expect("valid fixture transcript");
 
         Runner::new(
             Box::new(Script::new(Vec::new())),

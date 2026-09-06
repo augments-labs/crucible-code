@@ -181,6 +181,25 @@ fn served(request: &Request<'_>, serving: Serving) -> Value {
 /// The transcript, as the flat list of items this endpoint reads.
 fn write_input(items: &mut Array<'_>, request: &Request<'_>, explicit_message: Option<usize>) {
     for (nth, message) in request.transcript.messages().iter().enumerate() {
+        if request.purpose == crucible_core::RequestPurpose::Recap {
+            items.object(|item| {
+                item.text("role", "user");
+                if explicit_message == Some(nth) {
+                    item.array("content", |content| {
+                        content.object(|part| {
+                            part.text("type", "input_text");
+                            part.text_with("text", |write| crate::history::visible(message, write));
+                            part.object("prompt_cache_breakpoint", |marker| {
+                                marker.text("mode", "explicit");
+                            });
+                        });
+                    });
+                } else {
+                    item.text_with("content", |write| crate::history::visible(message, write));
+                }
+            });
+            continue;
+        }
         append(
             items,
             message,
@@ -243,7 +262,12 @@ fn append(
                 }
             });
         }),
-        Message::Agent { text, calls, stop } => {
+        Message::Agent {
+            continuation: _,
+            text,
+            calls,
+            stop,
+        } => {
             let answered = !text.is_empty() || !calls.is_empty();
             let cut = StopReason::cut(*stop).filter(|_| answered);
 
@@ -337,7 +361,12 @@ fn explicitly_markable(message: &Message) -> bool {
     match message {
         Message::Context(fragment) => !fragment.text().is_empty(),
         Message::User { text, .. } => !text.is_empty(),
-        Message::Agent { text, calls, stop } => {
+        Message::Agent {
+            continuation: _,
+            text,
+            calls,
+            stop,
+        } => {
             let answered = !text.is_empty() || !calls.is_empty();
             StopReason::cut(*stop).is_some_and(|_| answered)
                 || (!text.is_empty() && calls.is_empty())

@@ -641,7 +641,9 @@ impl RunHistory {
             if let Some(message) = projected {
                 validate_message(&message)?;
                 validate_projection(&message, &mut calls)?;
-                transcript.push(message);
+                transcript
+                    .push(message)
+                    .map_err(|_| JournalError::InvalidField("provider continuation"))?;
             }
         }
 
@@ -728,7 +730,25 @@ fn validate_message(message: &Message) -> Result<(), JournalError> {
         return Err(JournalError::InvalidField("message retained bytes"));
     }
     match message {
-        Message::Agent { calls, .. } => {
+        Message::Agent {
+            text,
+            calls,
+            stop,
+            continuation,
+        } => {
+            if let Some(state) = continuation {
+                if !matches!(
+                    stop,
+                    Some(crate::StopReason::Yielded | crate::StopReason::WantsTools)
+                ) {
+                    return Err(JournalError::InvalidField(
+                        "unfinished provider continuation",
+                    ));
+                }
+                state
+                    .validate(text, calls.len())
+                    .map_err(|_| JournalError::InvalidField("provider continuation"))?;
+            }
             for call in calls {
                 validate_call(call)?;
             }
@@ -848,9 +868,10 @@ fn message_retained_bytes(message: &Message) -> usize {
                     .saturating_add(item.media_type.len())
             })
         }
-        Message::Agent { text, calls, .. } => calls.iter().fold(text.len(), |bytes, call| {
-            bytes.saturating_add(call_retained_bytes(call))
-        }),
+        Message::Agent { text, calls, .. } => calls.iter().fold(
+            text.len().saturating_add(message.continuation_bytes()),
+            |bytes, call| bytes.saturating_add(call_retained_bytes(call)),
+        ),
         Message::ToolResults(results) => results.iter().fold(0_usize, |bytes, result| {
             bytes
                 .saturating_add(result.id.as_str().len())

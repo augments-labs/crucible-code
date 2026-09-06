@@ -2,7 +2,10 @@
 
 use std::fmt;
 
-use crate::{Attached, Content, Message, Modality, Request, StopReason, ToolResult};
+use crate::{
+    Attached, Content, ContinuationPart, Message, Modality, ProviderContinuation, Request,
+    StopReason, ToolResult,
+};
 use serde_json::{Map, Value};
 
 use super::{PromptCacheBoundary, PromptCacheContent};
@@ -150,7 +153,11 @@ impl PromptCacheProjection {
             stable_bytes: state.bytes,
             // This estimate is only an eligibility prediction. Provider usage
             // remains authoritative for context accounting and hit reporting.
-            estimated_tokens: state.bytes.saturating_add(3) / 4,
+            estimated_tokens: state
+                .bytes
+                .saturating_sub(state.private_bytes)
+                .saturating_add(3)
+                / 4,
             boundaries: state.boundaries.into_boxed_slice(),
             content: state.content,
         })
@@ -222,6 +229,7 @@ impl fmt::Debug for PromptCacheProjection {
 struct Walk {
     emit: bool,
     bytes: u64,
+    private_bytes: u64,
     segment: u32,
     boundaries: Vec<PromptCacheBoundaryPoint>,
     content: PromptCacheContentSet,
@@ -232,6 +240,7 @@ impl Walk {
         Self {
             emit,
             bytes: 0,
+            private_bytes: 0,
             segment: 0,
             boundaries: Vec::new(),
             content: PromptCacheContentSet::NONE,
@@ -294,6 +303,9 @@ fn walk(
     write: &mut impl FnMut(&[u8]),
 ) -> Result<(), PromptCacheProjectionError> {
     state.frame(0, b"crucible.prompt-cache.projection.v2", write);
+    if request.purpose == crate::RequestPurpose::Recap {
+        state.marker(35, write);
+    }
 
     if let Some(system) = request.system {
         state.next_segment()?;
@@ -324,16 +336,15 @@ fn walk(
         .take(stable_messages)
         .enumerate()
     {
-        // Every shipped adapter drops an assistant turn that contains neither
-        // text nor calls. It remains session truth, but it is not part of the
-        // provider-facing projection and cannot own a cache boundary.
-        if matches!(message, Message::Agent { text, calls, .. } if text.is_empty() && calls.is_empty())
+        // A reasoning-only answer still contributes private provider state.
+        // Only an entirely empty assistant turn has no cacheable content.
+        if matches!(message, Message::Agent { text, calls, continuation: None, .. } if text.is_empty() && calls.is_empty())
         {
             continue;
         }
         state.next_segment()?;
         state.content = state.content.with(PromptCacheContent::Text);
-        write_message(state, message, index, request.attached, write);
+        write_message(state, message, index, request, write);
         state.boundary(PromptCacheBoundary::AfterMessage, Some(index))?;
     }
 
@@ -356,16 +367,21 @@ fn write_message(
     state: &mut Walk,
     message: &Message,
     index: usize,
-    attached: &[Attached<'_>],
+    request: &Request<'_>,
     write: &mut impl FnMut(&[u8]),
 ) {
     match message {
         Message::Context(fragment) => state.frame(10, fragment.text().as_bytes(), write),
         Message::User { text, .. } => {
             state.frame(11, text.as_bytes(), write);
-            write_attachments(state, index, attached, write);
+            write_attachments(state, index, request.attached, write);
         }
-        Message::Agent { text, calls, stop } => {
+        Message::Agent {
+            continuation,
+            text,
+            calls,
+            stop,
+        } => {
             state.frame(12, text.as_bytes(), write);
             for call in calls {
                 state.frame(13, call.id.as_str().as_bytes(), write);
@@ -375,15 +391,59 @@ fn write_message(
             if let Some(cut) = StopReason::cut(*stop) {
                 state.frame(16, cut.as_bytes(), write);
             }
+            if let Some(continuation) = continuation
+                && request.purpose == crate::RequestPurpose::Turn
+            {
+                write_continuation(
+                    state,
+                    continuation,
+                    request.transcript.prefix_rewritten(index),
+                    write,
+                );
+            }
         }
         Message::ToolResults(results) => {
             state.marker(17, write);
             for result in results {
                 write_result(state, result, write);
             }
-            write_attachments(state, index, attached, write);
+            write_attachments(state, index, request.attached, write);
         }
     }
+}
+
+/// Private bytes participate in exact prefix identity, not text-token estimates.
+/// Stream into the existing caller-owned digest without a second history copy.
+fn write_continuation(
+    state: &mut Walk,
+    continuation: &ProviderContinuation,
+    rewritten: bool,
+    write: &mut impl FnMut(&[u8]),
+) {
+    let before = state.bytes;
+    if rewritten {
+        state.marker(36, write);
+    }
+    state.frame(26, continuation.protocol().as_bytes(), write);
+    state.frame(27, continuation.model().as_bytes(), write);
+    state.frame(28, &continuation.scope().bytes(), write);
+    for part in continuation.parts() {
+        match part {
+            ContinuationPart::Text { start, end, data } => {
+                state.frame(29, &(*start as u64).to_be_bytes(), write);
+                state.frame(30, &(*end as u64).to_be_bytes(), write);
+                state.frame(31, data.as_str().as_bytes(), write);
+            }
+            ContinuationPart::Call { index, data } => {
+                state.frame(32, &(*index as u64).to_be_bytes(), write);
+                state.frame(33, data.as_str().as_bytes(), write);
+            }
+            ContinuationPart::Opaque(data) => state.frame(34, data.as_str().as_bytes(), write),
+        }
+    }
+    state.private_bytes = state
+        .private_bytes
+        .saturating_add(state.bytes.saturating_sub(before));
 }
 
 fn write_result(state: &mut Walk, result: &ToolResult, write: &mut impl FnMut(&[u8])) {
@@ -454,21 +514,28 @@ mod tests {
 
     fn transcript(current: &str, path: &str) -> Transcript {
         let mut transcript = Transcript::new();
-        transcript.push(Message::User {
-            text: "inspect the image".into(),
-            attachments: Box::new([Attachment {
-                path: path.into(),
-                modality: Modality::Image,
-                media_type: "image/png".into(),
-                hash: [u8::try_from(path.len()).unwrap_or(u8::MAX); 32],
-            }]),
-        });
-        transcript.push(Message::Agent {
-            text: "seen".into(),
-            calls: Vec::new(),
-            stop: Some(StopReason::Yielded),
-        });
-        transcript.push(Message::said(current));
+        transcript
+            .push(Message::User {
+                text: "inspect the image".into(),
+                attachments: Box::new([Attachment {
+                    path: path.into(),
+                    modality: Modality::Image,
+                    media_type: "image/png".into(),
+                    hash: [u8::try_from(path.len()).unwrap_or(u8::MAX); 32],
+                }]),
+            })
+            .expect("valid fixture transcript");
+        transcript
+            .push(Message::Agent {
+                continuation: None,
+                text: "seen".into(),
+                calls: Vec::new(),
+                stop: Some(StopReason::Yielded),
+            })
+            .expect("valid fixture transcript");
+        transcript
+            .push(Message::said(current))
+            .expect("valid fixture transcript");
         transcript
     }
 
@@ -482,6 +549,7 @@ mod tests {
             content: Content::Bytes(b"provider-visible-image"),
         }];
         let request = Request {
+            purpose: crate::RequestPurpose::Turn,
             model: "fixture-model",
             transcript: &transcript,
             tools: TOOLS,
@@ -506,6 +574,7 @@ mod tests {
         attached: &'a [Attached<'a>],
     ) -> Request<'a> {
         Request {
+            purpose: crate::RequestPurpose::Turn,
             model: "fixture-model",
             transcript,
             tools,
@@ -515,6 +584,97 @@ mod tests {
             attached,
             prompt_cache: None,
         }
+    }
+
+    #[test]
+    fn private_continuation_changes_the_cache_identity_not_the_token_estimate() {
+        use crate::{Continuation, ContinuationData, ContinuationPart, ContinuationScope};
+        let project = |payload: &str| {
+            let mut transcript = Transcript::new();
+            let mut pending = Continuation::new(
+                "fixture-v1",
+                "fixture",
+                ContinuationScope::from_digest([1; 32]),
+            )
+            .unwrap();
+            pending
+                .push(ContinuationPart::Opaque(
+                    ContinuationData::new(payload).unwrap(),
+                ))
+                .unwrap();
+            transcript
+                .push(Message::Agent {
+                    text: "".into(),
+                    calls: vec![],
+                    stop: Some(StopReason::Yielded),
+                    continuation: Some(pending.finish("", 0, Some(StopReason::Yielded)).unwrap()),
+                })
+                .unwrap();
+            transcript.push(Message::said("current")).unwrap();
+            let request = request(&transcript, "system", &[], &[]);
+            let projection = PromptCacheProjection::inspect(&request).unwrap();
+            let mut bytes = Vec::new();
+            projection
+                .write_stable(&request, |part| bytes.extend_from_slice(part))
+                .unwrap();
+            (bytes, projection.estimated_tokens())
+        };
+        let first = project("signature-one");
+        let second = project(&"signature-two".repeat(10_000));
+        assert_ne!(
+            first.0, second.0,
+            "different private state must not alias the same cached prefix"
+        );
+        assert_eq!(first.1, second.1, "encrypted bytes are not text tokens");
+    }
+
+    #[test]
+    fn recap_cache_identity_omits_private_payload_and_differs_from_native_turns() {
+        use crate::{
+            Continuation, ContinuationData, ContinuationPart, ContinuationScope, RequestPurpose,
+        };
+        let mut transcript = Transcript::new();
+        let mut state = Continuation::new(
+            "fixture-v1",
+            "fixture",
+            ContinuationScope::from_digest([0; 32]),
+        )
+        .unwrap();
+        state
+            .push(ContinuationPart::Opaque(
+                ContinuationData::new("private-canary").unwrap(),
+            ))
+            .unwrap();
+        transcript
+            .push(Message::Agent {
+                text: "".into(),
+                calls: vec![],
+                stop: Some(StopReason::Yielded),
+                continuation: Some(state.finish("", 0, Some(StopReason::Yielded)).unwrap()),
+            })
+            .unwrap();
+        transcript.push(Message::said("current")).unwrap();
+        let mut request = request(&transcript, "system", &[], &[]);
+        let project = |request: &Request<'_>| {
+            let projection = PromptCacheProjection::inspect(request).unwrap();
+            let mut bytes = Vec::new();
+            projection
+                .write_stable(request, |part| bytes.extend_from_slice(part))
+                .unwrap();
+            bytes
+        };
+        let native = project(&request);
+        request.purpose = RequestPurpose::Recap;
+        let recap = project(&request);
+        assert!(
+            !recap
+                .windows(b"private-canary".len())
+                .any(|part| part == b"private-canary")
+        );
+        assert_ne!(
+            native, recap,
+            "a recap is not a native continuation request"
+        );
     }
 
     #[test]
@@ -604,6 +764,7 @@ mod tests {
     fn boundaries_preserve_system_tools_then_complete_message_order() {
         let transcript = transcript("current", "/raw/path.png");
         let request = Request {
+            purpose: crate::RequestPurpose::Turn,
             model: "fixture-model",
             transcript: &transcript,
             tools: TOOLS,
@@ -635,14 +796,21 @@ mod tests {
     fn long_transcript(first: &str) -> Transcript {
         let mut transcript = Transcript::new();
         for index in 0..70 {
-            transcript.push(Message::said(if index == 0 { first } else { "history" }));
-            transcript.push(Message::Agent {
-                text: format!("answer-{index}").into(),
-                calls: Vec::new(),
-                stop: Some(StopReason::Yielded),
-            });
+            transcript
+                .push(Message::said(if index == 0 { first } else { "history" }))
+                .expect("valid fixture transcript");
+            transcript
+                .push(Message::Agent {
+                    continuation: None,
+                    text: format!("answer-{index}").into(),
+                    calls: Vec::new(),
+                    stop: Some(StopReason::Yielded),
+                })
+                .expect("valid fixture transcript");
         }
-        transcript.push(Message::said("current volatile prompt"));
+        transcript
+            .push(Message::said("current volatile prompt"))
+            .expect("valid fixture transcript");
         transcript
     }
 

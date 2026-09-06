@@ -623,10 +623,12 @@ mod tests {
         let mut recorded = ContextSnapshot::new();
         recorded.capture(&section).unwrap();
         let mut retained = Transcript::new();
-        retained.push(Message::Context(Fragment::new(
-            Workspace::ID,
-            "workspace is /work",
-        )));
+        retained
+            .push(Message::Context(Fragment::new(
+                Workspace::ID,
+                "workspace is /work",
+            )))
+            .expect("valid fixture transcript");
 
         assert!(matches!(
             recorded.seen(&section, &retained),
@@ -655,10 +657,12 @@ mod tests {
         let mut recorded = ContextSnapshot::new();
         recorded.capture(&section).unwrap();
         let mut retained = Transcript::new();
-        retained.push(Message::Context(Fragment::new(
-            Workspace::ID,
-            "workspace is /work",
-        )));
+        retained
+            .push(Message::Context(Fragment::new(
+                Workspace::ID,
+                "workspace is /work",
+            )))
+            .expect("valid fixture transcript");
 
         assert!(matches!(recorded.seen(&section, &retained), Seen::Known(_)));
 
