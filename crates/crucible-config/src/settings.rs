@@ -54,8 +54,7 @@ pub struct Settings {
 
     /// Host confinement mode, disabled unless configured and weakened only by
     /// a user-originated layer.
-    sandbox: crucible_core::SandboxMode,
-
+    sandbox: bool,
     /// Every layer's rules together. Held apart from the value because a rule
     /// is read where it is written — see [`Document::parse`] — and what survives
     /// the layering is the rule rather than its text.
@@ -277,12 +276,12 @@ impl Settings {
             .unwrap_or_default()
     }
 
-    /// Effective operating-system confinement mode, off unless a document
+    /// Whether operating-system confinement is enabled, false unless a document
     /// opts in with `sandbox.enabled`.
     /// Workspace layers may require confinement but cannot disable it.
     /// Core policy constructors remain conservative; hosts apply this choice.
     #[must_use]
-    pub const fn sandbox_mode(&self) -> crucible_core::SandboxMode {
+    pub const fn sandbox_enabled(&self) -> bool {
         self.sandbox
     }
 }
@@ -427,10 +426,7 @@ mod tests {
     #[test]
     fn disabling_confinement_requires_user_authority() {
         let user = Document::sample(r#"{"sandbox":{"enabled":false}}"#, Origin::User);
-        assert_eq!(
-            Settings::resolve(vec![user]).sandbox_mode(),
-            crucible_core::SandboxMode::Off
-        );
+        assert!(!Settings::resolve(vec![user]).sandbox_enabled());
 
         for origin in [Origin::Project, Origin::ProjectLocal] {
             let error = Document::parse(
@@ -448,10 +444,7 @@ mod tests {
         let user = Document::sample(r#"{"sandbox":{"enabled":false}}"#, Origin::User);
         let project = Document::sample(r#"{"sandbox":{"enabled":true}}"#, Origin::Project);
 
-        assert_eq!(
-            Settings::resolve(vec![project, user]).sandbox_mode(),
-            crucible_core::SandboxMode::Required
-        );
+        assert!(Settings::resolve(vec![project, user]).sandbox_enabled());
     }
 
     #[test]

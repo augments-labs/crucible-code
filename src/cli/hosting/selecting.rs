@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use crucible_config::{McpServer, Settings};
 use crucible_core::{
     SandboxEnvironment, SandboxFilesystemAccess, SandboxFilesystemProvenance,
-    SandboxFilesystemRule, SandboxMode, SandboxPolicy, Workspace,
+    SandboxFilesystemRule, SandboxPolicy, Workspace,
 };
 
 use super::Chosen;
@@ -43,7 +43,7 @@ pub(crate) fn selected(
     lookup: impl Fn(&str) -> Option<OsString>,
 ) -> Result<Vec<Chosen>, Fatal> {
     let records = settings.mcp_servers();
-    let mode = settings.sandbox_mode();
+    let enabled = settings.sandbox_enabled();
     named
         .iter()
         .map(|name| {
@@ -54,7 +54,7 @@ pub(crate) fn selected(
                     named: name.as_str().into(),
                     has: written(&records),
                 })?;
-            one(record, workspace, mode, &lookup)
+            one(record, workspace, enabled, &lookup)
         })
         .collect()
 }
@@ -63,7 +63,7 @@ pub(crate) fn selected(
 fn one(
     record: &McpServer,
     workspace: &Workspace,
-    mode: SandboxMode,
+    enabled: bool,
     lookup: &impl Fn(&str) -> Option<OsString>,
 ) -> Result<Chosen, Fatal> {
     let refused = |problem: String| Fatal::Server {
@@ -75,7 +75,7 @@ fn one(
         .ok_or_else(|| refused(format!("no {} on the PATH", record.command())))?;
     let arguments = record.args().map(OsString::from);
     let environment = environment(record, lookup).map_err(refused)?;
-    let policy = confinement(record, workspace, mode).map_err(refused)?;
+    let policy = confinement(record, workspace, enabled).map_err(refused)?;
 
     Ok(Chosen::new(record.name(), program, arguments, policy)
         .given(environment)
@@ -140,7 +140,7 @@ fn environment(
 
 /// What the server may reach.
 ///
-/// The workspace's own policy, under the mode this run is confined at, with
+/// The workspace's own policy, with this run's enabled choice, with
 /// the written-down directory added as a root and made the one it starts in.
 /// A server is somebody else's program: it gets what a confined command gets,
 /// and the directory is the only thing about that a document may move.
@@ -159,11 +159,11 @@ fn environment(
 fn confinement(
     record: &McpServer,
     workspace: &Workspace,
-    mode: SandboxMode,
+    enabled: bool,
 ) -> Result<SandboxPolicy, String> {
     let standard = SandboxPolicy::standard(workspace)
         .map_err(|problem| problem.to_string())?
-        .with_mode(mode);
+        .with_enabled(enabled);
 
     // Absolute already, because the reader refused it otherwise: a directory
     // that resolves against wherever crucible happens to be is a root the model
@@ -184,7 +184,7 @@ fn confinement(
         .map_err(|problem| problem.to_string())?,
     );
     SandboxPolicy::new(
-        mode,
+        enabled,
         filesystem,
         directory,
         standard.network().clone(),

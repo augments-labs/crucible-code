@@ -6,7 +6,7 @@ use crate::{SandboxBackendId, SandboxBackendProvenance, SandboxFilesystemAccess}
 
 fn policy() -> SandboxPolicy {
     SandboxPolicy::new(
-        SandboxMode::Required,
+        true,
         [SandboxFilesystemRule::new(
             "/workspace",
             SandboxFilesystemAccess::ReadWrite,
@@ -76,7 +76,7 @@ fn unconfined_backend_cannot_label_itself_confined() {
             SandboxCleanup::Pending,
         )
         .is_err(),
-        "an unconfined report requires an explicit degradation reason"
+        "an unconfined report requires an explicit disabled_reason reason"
     );
     assert!(
         SandboxInspection::new(
@@ -86,11 +86,36 @@ fn unconfined_backend_cannot_label_itself_confined() {
             &policy,
             &manifest,
             true,
-            Some("contradictory degradation"),
+            Some("contradictory disabled_reason"),
             SandboxCleanup::Pending,
         )
         .is_err(),
-        "a confined report cannot also claim degradation"
+        "a confined report cannot also claim disabled_reason"
+    );
+}
+
+#[test]
+fn enabled_policy_cannot_be_reported_as_unconfined() {
+    let identity = SandboxBackendIdentity::new(
+        SandboxBackendId::new("compatibility").unwrap(),
+        "1",
+        SandboxBackendProvenance::Compatibility,
+        None,
+    )
+    .unwrap();
+    assert!(
+        SandboxInspection::new(
+            SandboxId::new(),
+            identity,
+            SandboxCapabilities::none(),
+            &policy(),
+            &SandboxManifest::empty(),
+            false,
+            Some("sandbox disabled"),
+            SandboxCleanup::Pending,
+        )
+        .is_err(),
+        "enabled has no degraded fallback, including SDK inspection"
     );
 }
 
@@ -108,7 +133,7 @@ fn confined_inspection_reports_the_exact_network_feature_and_redacts_reach() {
     )
     .unwrap();
     let policy = SandboxPolicy::new(
-        SandboxMode::Required,
+        true,
         [SandboxFilesystemRule::new(
             "/secret-workspace",
             SandboxFilesystemAccess::ReadWrite,
@@ -268,42 +293,40 @@ fn environment_values_reject_interior_nul_bytes() {
 }
 
 #[test]
-fn compatibility_modes_still_refuse_explicit_features_the_backend_cannot_enforce() {
-    for mode in [SandboxMode::Degraded, SandboxMode::Off] {
-        let policy = policy()
-            .with_mode(mode)
-            .with_limits(SandboxResourceLimits {
-                memory_bytes: Some(1_024),
-                ..SandboxResourceLimits::default()
-            })
-            .expect("bounded policy");
-        let request = SandboxRequest::new(
-            SandboxId::new(),
-            Ancestry::new(),
-            ToolId::new("call"),
-            policy,
-            SandboxManifest::empty(),
-        );
-        let capabilities = SandboxCapabilities::none()
-            .with(SandboxFeature::Audit, SandboxCapability::Enforced)
-            .with(SandboxFeature::Usage, SandboxCapability::Observed);
-
-        assert!(matches!(
-            request.negotiate(&capabilities),
-            Err(SandboxError::Unsupported {
-                feature: SandboxFeature::MemoryLimit
-            })
-        ));
-    }
-}
-
-#[test]
-fn every_mode_requires_auditing_and_at_least_observed_usage() {
+fn disabled_confinement_still_refuses_explicit_features_the_backend_cannot_enforce() {
+    let policy = policy()
+        .with_enabled(false)
+        .with_limits(SandboxResourceLimits {
+            memory_bytes: Some(1_024),
+            ..SandboxResourceLimits::default()
+        })
+        .expect("bounded policy");
     let request = SandboxRequest::new(
         SandboxId::new(),
         Ancestry::new(),
         ToolId::new("call"),
-        policy().with_mode(SandboxMode::Off),
+        policy,
+        SandboxManifest::empty(),
+    );
+    let capabilities = SandboxCapabilities::none()
+        .with(SandboxFeature::Audit, SandboxCapability::Enforced)
+        .with(SandboxFeature::Usage, SandboxCapability::Observed);
+
+    assert!(matches!(
+        request.negotiate(&capabilities),
+        Err(SandboxError::Unsupported {
+            feature: SandboxFeature::MemoryLimit
+        })
+    ));
+}
+
+#[test]
+fn disabled_confinement_requires_auditing_and_at_least_observed_usage() {
+    let request = SandboxRequest::new(
+        SandboxId::new(),
+        Ancestry::new(),
+        ToolId::new("call"),
+        policy().with_enabled(false),
         SandboxManifest::empty(),
     );
     let no_audit =

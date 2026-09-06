@@ -8,17 +8,17 @@ use crucible_core::{
     SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities,
     SandboxCapability, SandboxCleanup, SandboxCommand, SandboxCommandStage, SandboxError,
     SandboxFactKind, SandboxFailurePhase, SandboxFeature, SandboxGuardrailDecision,
-    SandboxInspection, SandboxLaunch, SandboxLifecycle, SandboxMode, SandboxProcess,
-    SandboxRequest, SandboxService, SandboxSession,
+    SandboxInspection, SandboxLaunch, SandboxLifecycle, SandboxProcess, SandboxRequest,
+    SandboxService, SandboxSession,
 };
 
 use super::process::{MAX_LOCAL_COMMANDS, Reservation};
 
 /// Host-owned local sandbox service.
 ///
-/// `required` requests use a verified native backend on Linux, macOS, and Windows.
-/// `off`, and an explicitly selected `degraded` fallback, still pass through
-/// this service so lifecycle and inspection cannot be bypassed or mislabeled.
+/// Enabled requests require a verified native backend on Linux, macOS and
+/// Windows. Disabled requests still use this service for bounded execution,
+/// lifecycle tracking and audit. There is no unconfined fallback when enabled.
 #[derive(Debug, Clone, Default)]
 pub struct LocalSandbox {
     active: Arc<AtomicUsize>,
@@ -61,59 +61,14 @@ impl SandboxService for LocalSandbox {
             id,
             SandboxFactKind::Lifecycle(SandboxLifecycle::PolicyResolved),
         )?;
-        let prepared = match request.policy().mode() {
-            SandboxMode::Off => compatibility(
+        let prepared = if request.policy().enabled() {
+            enforcing(request, Arc::clone(&self.active))
+        } else {
+            compatibility(
                 request,
                 Arc::clone(&self.active),
                 "sandbox disabled by effective policy",
-            ),
-            SandboxMode::Required => enforcing(request, Arc::clone(&self.active)),
-            SandboxMode::Degraded => {
-                #[cfg(target_os = "linux")]
-                {
-                    match super::linux::prepare(request.clone(), Arc::clone(&self.active)) {
-                        Ok(session) => Ok(session),
-                        Err(SandboxError::BackendUnavailable { .. }) => compatibility(
-                            request,
-                            Arc::clone(&self.active),
-                            "enforcing Linux sandbox unavailable; user selected degraded mode",
-                        ),
-                        Err(error) => Err(error),
-                    }
-                }
-                #[cfg(target_os = "macos")]
-                {
-                    match super::macos::prepare(request.clone(), Arc::clone(&self.active)) {
-                        Ok(session) => Ok(session),
-                        Err(SandboxError::BackendUnavailable { .. }) => compatibility(
-                            request,
-                            Arc::clone(&self.active),
-                            "enforcing macOS sandbox unavailable; user selected degraded mode",
-                        ),
-                        Err(error) => Err(error),
-                    }
-                }
-                #[cfg(target_os = "windows")]
-                {
-                    match super::windows::prepare(request.clone(), Arc::clone(&self.active)) {
-                        Ok(session) => Ok(session),
-                        Err(SandboxError::BackendUnavailable { .. }) => compatibility(
-                            request,
-                            Arc::clone(&self.active),
-                            "enforcing Windows sandbox unavailable; user selected degraded mode",
-                        ),
-                        Err(error) => Err(error),
-                    }
-                }
-                #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-                {
-                    compatibility(
-                        request,
-                        Arc::clone(&self.active),
-                        "no enforcing backend for this operating system; user selected degraded mode",
-                    )
-                }
-            }
+            )
         };
         if let Err(problem) = &prepared {
             audit.record(
@@ -162,7 +117,7 @@ fn enforcing(
 fn compatibility(
     request: SandboxRequest,
     active: Arc<AtomicUsize>,
-    degradation: &'static str,
+    disabled_reason: &'static str,
 ) -> Result<Box<dyn SandboxSession>, SandboxError> {
     let (backend, capabilities) = compatibility_capabilities()?;
     request.negotiate(&capabilities)?;
@@ -173,8 +128,12 @@ fn compatibility(
         .and_then(|value| usize::try_from(value).ok())
         .unwrap_or(MAX_LOCAL_COMMANDS);
     let reservation = Reservation::take(active, maximum)?;
-    let inspection =
-        SandboxInspection::unconfined_for_request(backend, capabilities, &request, degradation)?;
+    let inspection = SandboxInspection::unconfined_for_request(
+        backend,
+        capabilities,
+        &request,
+        disabled_reason,
+    )?;
     request.audit().record(
         request.id(),
         SandboxFactKind::Negotiated(Box::new(inspection.clone())),
@@ -508,7 +467,7 @@ mod tests {
         .expect("command policy");
         let policy = SandboxPolicy::standard(&sample.workspace())
             .expect("policy")
-            .with_mode(SandboxMode::Off)
+            .with_enabled(false)
             .with_command_policy(commands);
         let request = SandboxRequest::new(
             SandboxId::new(),
@@ -564,7 +523,7 @@ mod tests {
         let audit = SandboxAudit::new(ancestry, call.clone());
         let policy = SandboxPolicy::standard(&sample.workspace())
             .expect("policy")
-            .with_mode(SandboxMode::Off);
+            .with_enabled(false);
         let request = SandboxRequest::new(
             SandboxId::new(),
             ancestry,
@@ -650,7 +609,7 @@ mod tests {
         .expect("command policy");
         let policy = SandboxPolicy::standard(&sample.workspace())
             .expect("policy")
-            .with_mode(SandboxMode::Off)
+            .with_enabled(false)
             .with_command_policy(commands);
         let request = SandboxRequest::new(
             SandboxId::new(),
@@ -694,7 +653,7 @@ mod tests {
         };
         let policy = SandboxPolicy::standard(&sample.workspace())
             .expect("policy")
-            .with_mode(SandboxMode::Off)
+            .with_enabled(false)
             .with_limits(limits)
             .expect("limits");
         let request = SandboxRequest::new(
@@ -765,7 +724,7 @@ mod tests {
         };
         let policy = SandboxPolicy::standard(&sample.workspace())
             .expect("policy")
-            .with_mode(SandboxMode::Off)
+            .with_enabled(false)
             .with_limits(limits)
             .expect("limits");
         let request = SandboxRequest::new(
@@ -829,7 +788,7 @@ mod tests {
         };
         let policy = SandboxPolicy::standard(&sample.workspace())
             .expect("policy")
-            .with_mode(SandboxMode::Off)
+            .with_enabled(false)
             .with_limits(limits)
             .expect("limits");
         let request = SandboxRequest::new(
@@ -899,7 +858,7 @@ mod tests {
         };
         let policy = SandboxPolicy::standard(&sample.workspace())
             .expect("policy")
-            .with_mode(SandboxMode::Off)
+            .with_enabled(false)
             .with_limits(limits)
             .expect("limits");
         let service = LocalSandbox::new();
@@ -1002,7 +961,7 @@ mod tests {
         let sample = Sample::new("sandbox-normal-exit-descendants");
         let policy = SandboxPolicy::standard(&sample.workspace())
             .expect("policy")
-            .with_mode(SandboxMode::Off);
+            .with_enabled(false);
         let request = SandboxRequest::new(
             SandboxId::new(),
             Ancestry::new(),

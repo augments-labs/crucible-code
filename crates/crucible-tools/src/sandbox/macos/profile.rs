@@ -463,7 +463,7 @@ mod tests {
         )
         .expect("unreadable rule");
         let policy = SandboxPolicy::new(
-            standard.mode(),
+            standard.enabled(),
             standard.filesystem().iter().cloned().chain([unreadable]),
             standard.working_directory(),
             SandboxNetworkPolicy::Closed,
@@ -582,7 +582,7 @@ mod tests {
         )
         .expect("unreadable rule");
         let policy = SandboxPolicy::new(
-            crucible_core::SandboxMode::Required,
+            true,
             [readable, unreadable],
             "/private/var",
             SandboxNetworkPolicy::Closed,
@@ -614,7 +614,7 @@ mod tests {
         )
         .expect("protected rule");
         let policy = SandboxPolicy::new(
-            crucible_core::SandboxMode::Required,
+            true,
             [writable, protected],
             "/private/var/folders/workspace",
             SandboxNetworkPolicy::Closed,

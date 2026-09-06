@@ -5,9 +5,9 @@ use std::time::Duration;
 use crucible_core::{
     Ancestry, SandboxBackendProvenance, SandboxCapabilities, SandboxCapability, SandboxError,
     SandboxFeature, SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule,
-    SandboxId, SandboxManifest, SandboxManifestEntry, SandboxMode, SandboxNetworkEndpoint,
-    SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxPolicy, SandboxRequest,
-    SandboxResourceLimits, SandboxService, ToolId,
+    SandboxId, SandboxManifest, SandboxManifestEntry, SandboxNetworkEndpoint, SandboxNetworkPolicy,
+    SandboxNetworkProvenance, SandboxPolicy, SandboxRequest, SandboxResourceLimits, SandboxService,
+    ToolId,
 };
 
 use super::{CONFINEMENT, Conformance, SandboxClaim, Verdict, asking, judge};
@@ -337,7 +337,7 @@ fn policy(
 ) -> SandboxPolicy {
     let root = sample.root().clone();
     SandboxPolicy::new(
-        SandboxMode::Off,
+        false,
         [SandboxFilesystemRule::new(
             &root,
             SandboxFilesystemAccess::ReadWrite,
@@ -472,7 +472,7 @@ fn a_claim_no_policy_can_reach_is_reported_as_untested_rather_than_kept() {
         SandboxFeature::Usage,
     ] {
         assert!(
-            asking(sample.root(), feature, SandboxMode::Required).is_none(),
+            asking(sample.root(), feature, true).is_none(),
             "{} was offered a policy that cannot require it",
             feature.as_str()
         );

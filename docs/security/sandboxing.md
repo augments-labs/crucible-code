@@ -9,7 +9,7 @@ inputs; and only then launches the process.
 OS confinement is disabled by default. Enable it with
 `{"sandbox":{"enabled":true}}`; `enabled: false` in your home configuration
 selects unconfined execution. Approval, minimal environment, command deadlines,
-output bounds and audit remain active in either mode. `sandbox.enabled` is the
+output bounds and audit remain active whether confinement is enabled or disabled. `sandbox.enabled` is the
 only configuration switch; the former `sandbox.mode` key is rejected. Project
 settings can require confinement and cannot disable it. See [configuration](../configuration/configuration.md#sandbox).
 
@@ -186,7 +186,7 @@ An unavailable backend never turns `enabled: true` into permission to run
 outside confinement.
 
 SDK callers constructing `SandboxPolicy::standard` or `Bash::new` still receive
-a required policy. The application applies its resolved configuration explicitly;
+an enabled policy. The application applies its resolved configuration explicitly;
 changing the application's default does not weaken independently constructed
 SDK policies or inherited child authority.
 
@@ -194,9 +194,9 @@ SDK policies or inherited child authority.
 
 `enforced` is a hard boundary, `observed` is bounded measurement only, and
 `unsupported` is rejected whenever the effective policy explicitly requires
-that feature. The SDK policies `degraded` and `off` relax only the documented
-baseline kernel isolation; they cannot turn an explicit limit, manifest, exact network rule,
-persistence request or snapshot request into best-effort behavior.
+that feature. Disabling confinement with `SandboxPolicy::with_enabled(false)`
+removes the baseline kernel isolation. Explicit limits, manifests, network rules,
+persistence and snapshot requests still require an enforcing implementation.
 
 | Capability | Linux Bubblewrap | macOS Seatbelt | Windows native | Compatibility |
 | --- | --- | --- | --- | --- |
@@ -338,10 +338,11 @@ command before it starts; it does not fall back silently. Linux selects
 Bubblewrap, macOS selects Seatbelt, and Windows selects its native backend after
 the administrator setup passes verification.
 
-SDK callers may separately construct a `SandboxMode::Degraded` policy, which
-tries the enforcing native backend first and permits a reported compatibility
-fallback when enforcement is unavailable. This is a typed SDK policy, not a
-JSON configuration setting.
+The SDK uses the same boolean choice: `SandboxPolicy::enabled()` and
+`SandboxPolicy::with_enabled(bool)`. There are no sandbox modes or degraded
+fallbacks. Checkpoints use format 3 with a boolean `enabled` field; obsolete
+checkpoint formats are rejected. Sandbox audit plans also record `enabled`,
+and deliberately unconfined execution includes a bounded `disabled_reason`.
 
 Compatibility still clears and explicitly rebuilds the command environment,
 checks requested and transformed command guardrails, enforces command deadlines,

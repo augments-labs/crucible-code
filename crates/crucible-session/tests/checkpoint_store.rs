@@ -13,8 +13,7 @@ use crucible_core::{
     ResumeEvidence, SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance,
     SandboxCapabilities, SandboxCapability, SandboxCheckpoint, SandboxCleanup, SandboxFeature,
     SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxId,
-    SandboxInspection, SandboxManifest, SandboxMode, SandboxNetworkPolicy, SandboxPolicy,
-    SandboxResourceLimits,
+    SandboxInspection, SandboxManifest, SandboxNetworkPolicy, SandboxPolicy, SandboxResourceLimits,
 };
 use crucible_session::{CHECKPOINT_FORMAT, CheckpointError, FileCheckpointStore};
 
@@ -44,12 +43,12 @@ fn call(id: &str) -> ToolCall {
 }
 
 // The fixture is a POSIX absolute path, which no Windows path type accepts;
-// Windows has no confinement backend to give it a native shape.
+// Native Windows paths are exercised by the backend integration tests.
 #[cfg(unix)]
 #[allow(clippy::expect_used)]
 fn sandbox_checkpoint() -> SandboxCheckpoint {
     let policy = SandboxPolicy::new(
-        SandboxMode::Required,
+        true,
         [SandboxFilesystemRule::new(
             "/workspace",
             SandboxFilesystemAccess::ReadWrite,
@@ -181,6 +180,11 @@ fn sandbox_identity_round_trips_and_resume_refuses_a_weaker_live_backend() {
     checkpoint.add_sandbox(saved.clone()).unwrap();
     store.save(&checkpoint).unwrap();
 
+    let path = directory.join(format!("{id}.checkpoint"));
+    let document: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let sandbox = document.pointer("/sandboxes/0").expect("saved sandbox");
+    assert_eq!(sandbox.get("enabled"), Some(&serde_json::json!(true)));
+    assert!(sandbox.get("mode").is_none());
     let loaded = store.load(id).unwrap().unwrap();
     assert_eq!(loaded.sandboxes(), std::slice::from_ref(&saved));
     let matching = ResumeEvidence::new(scope(), "policy", "capability", None::<Box<str>>)
@@ -195,7 +199,7 @@ fn sandbox_identity_round_trips_and_resume_refuses_a_weaker_live_backend() {
             .capabilities()
             .clone()
             .with(SandboxFeature::Audit, SandboxCapability::Observed),
-        saved.mode(),
+        saved.enabled(),
         saved.network(),
         saved.policy_digest(),
         saved.manifest_digest(),
@@ -214,7 +218,7 @@ fn sandbox_identity_round_trips_and_resume_refuses_a_weaker_live_backend() {
 }
 
 #[test]
-fn format_one_checkpoints_remain_readable_without_inventing_sandbox_identity() {
+fn obsolete_checkpoint_formats_are_rejected_without_compatibility_aliases() {
     let directory = directory("format-one");
     let mut store = FileCheckpointStore::in_directory(&directory);
     let id = CheckpointId::new();
@@ -225,15 +229,11 @@ fn format_one_checkpoints_remain_readable_without_inventing_sandbox_identity() {
     let path = directory.join(format!("{id}.checkpoint"));
     let mut document: serde_json::Value =
         serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-    let object = document.as_object_mut().expect("checkpoint object");
-    object.insert("format".to_owned(), serde_json::json!(1));
-    object.remove("sandboxes");
-    fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
-
-    let loaded = store.load(id).unwrap().expect("format-one checkpoint");
-    assert_eq!(loaded.id(), id);
-    assert_eq!(loaded.ancestry(), ancestry);
-    assert!(loaded.sandboxes().is_empty());
+    for obsolete in [1, 2] {
+        *document.get_mut("format").expect("format") = serde_json::json!(obsolete);
+        fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
+        assert!(matches!(store.load(id), Err(CheckpointError::Unreadable)));
+    }
 
     fs::remove_dir_all(directory).unwrap();
 }

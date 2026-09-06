@@ -48,7 +48,7 @@ pub use muttered::Muttered;
 pub use policy::{
     MAX_SANDBOX_FILESYSTEM_RULES, MAX_SANDBOX_HOST_BYTES, MAX_SANDBOX_NETWORK_ENDPOINTS,
     MAX_SANDBOX_PATH_BYTES, MAX_SANDBOX_PATTERN_COMPONENTS, MAX_SANDBOX_UNREADABLE_PATTERNS,
-    SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxMode,
+    SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule,
     SandboxNetworkEndpoint, SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxPolicy,
     SandboxPolicyError, SandboxResourceLimits, SandboxUnreadablePattern,
 };

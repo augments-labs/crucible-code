@@ -19,6 +19,10 @@ change in any release with no deprecation period.
   newest published installer lifecycle, and run baseline/candidate coding tasks
   without making external availability a pull-request verdict.
 
+### Changed
+
+- **Sandbox enablement is a boolean throughout the SDK.** Replaced the sandbox mode enum with `enabled`, removed degraded execution fallback, and aligned inspection, audit records and execution checkpoints with the configuration switch. Enabled policies cannot report an unconfined backend; obsolete checkpoint formats are rejected.
+
 ## [0.38.0] - 2026-09-06
 
 ### Fixed

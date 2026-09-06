@@ -1,7 +1,5 @@
 //! The opt-in switch and the authority of each configuration file.
 
-use crucible_core::SandboxMode;
-
 use crate::document::{Document, Origin};
 use crate::{ConfigError, Settings};
 
@@ -25,21 +23,15 @@ fn sandbox_mode_is_an_unknown_key_in_every_configuration_layer() {
 
 #[test]
 fn no_sandbox_choice_leaves_os_confinement_off() {
-    assert_eq!(Settings::default().sandbox_mode(), SandboxMode::Off);
-    assert_eq!(
-        Settings::resolve(Vec::new()).sandbox_mode(),
-        SandboxMode::Off
-    );
+    assert!(!Settings::default().sandbox_enabled());
+    assert!(!Settings::resolve(Vec::new()).sandbox_enabled());
     for text in [
         r"{}",
         r#"{"sandbox":{}}"#,
         r#"{"sandbox":{"$comment":"inert"}}"#,
     ] {
         for origin in [Origin::User, Origin::Project, Origin::ProjectLocal] {
-            assert_eq!(
-                Settings::resolve(vec![Document::sample(text, origin)]).sandbox_mode(),
-                SandboxMode::Off
-            );
+            assert!(!Settings::resolve(vec![Document::sample(text, origin)]).sandbox_enabled());
         }
     }
 }
@@ -47,15 +39,15 @@ fn no_sandbox_choice_leaves_os_confinement_off() {
 #[test]
 fn a_user_can_enable_required_confinement_or_explicitly_disable_it() {
     for (text, expected) in [
-        (r#"{"sandbox":{"enabled":true}}"#, SandboxMode::Required),
-        (r#"{"sandbox":{"enabled":false}}"#, SandboxMode::Off),
+        (r#"{"sandbox":{"enabled":true}}"#, true),
+        (r#"{"sandbox":{"enabled":false}}"#, false),
         (
             r#"{"sandbox":{"enabled":true,"$comment":"explicit","$schema":"https://example.test/schema"}}"#,
-            SandboxMode::Required,
+            true,
         ),
     ] {
         assert_eq!(
-            Settings::resolve(vec![Document::sample(text, Origin::User)]).sandbox_mode(),
+            Settings::resolve(vec![Document::sample(text, Origin::User)]).sandbox_enabled(),
             expected
         );
     }
@@ -90,10 +82,7 @@ fn workspace_requirement_wins_regardless_of_document_order() {
             vec![user.clone(), project.clone()],
             vec![project.clone(), user.clone()],
         ] {
-            assert_eq!(
-                Settings::resolve(documents).sandbox_mode(),
-                SandboxMode::Required
-            );
+            assert!(Settings::resolve(documents).sandbox_enabled());
         }
     }
 }

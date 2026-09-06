@@ -161,7 +161,7 @@ fn sandbox_fact(call: &ToolId, fact: &crucible_core::SandboxFact, ancestry: &Val
             "requested_plan": sandbox_plan(inspection.requested_plan()),
             "effective_plan": sandbox_plan(inspection.plan()),
             "confined": inspection.confined(),
-            "degradation": inspection.degradation(),
+            "disabled_reason": inspection.disabled_reason(),
             "cleanup": sandbox_cleanup(inspection.cleanup()),
         }),
         SandboxFactKind::Guardrail { stage, decision } => json!({
@@ -206,7 +206,7 @@ fn sandbox_plan(plan: &crucible_core::SandboxPlanInspection) -> Value {
     let network = plan.network();
     let limits = plan.limits();
     json!({
-        "mode": plan.mode().as_str(),
+        "enabled": plan.enabled(),
         "roots": plan.roots().iter().map(|root| json!({
             "identity": hex(&root.identity()),
             "access": root.access().as_str(),
@@ -1259,7 +1259,7 @@ mod tests {
     }
 
     // The fixtures are POSIX absolute paths, which no Windows path type accepts;
-    // Windows has no confinement backend to give them a native shape.
+    // Native Windows paths are exercised by the backend integration tests.
     #[cfg(unix)]
     #[test]
     fn sandbox_journal_keeps_typed_identity_and_plan_without_raw_reach() {
@@ -1267,7 +1267,7 @@ mod tests {
             SandboxAudit, SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance,
             SandboxCapabilities, SandboxCapability, SandboxCleanup, SandboxFactKind,
             SandboxFeature, SandboxFilesystemAccess, SandboxFilesystemProvenance,
-            SandboxFilesystemRule, SandboxId, SandboxInspection, SandboxManifest, SandboxMode,
+            SandboxFilesystemRule, SandboxId, SandboxInspection, SandboxManifest,
             SandboxNetworkEndpoint, SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxPolicy,
             SandboxResourceLimits,
         };
@@ -1276,7 +1276,7 @@ mod tests {
         let call = ToolId::new("sandbox-call");
         let sandbox = SandboxId::new();
         let policy = SandboxPolicy::new(
-            SandboxMode::Required,
+            true,
             [SandboxFilesystemRule::new(
                 "/home/alice/private-workspace",
                 SandboxFilesystemAccess::ReadWrite,
@@ -1339,6 +1339,18 @@ mod tests {
         let written = journal(&item).expect("bounded sandbox journal line");
 
         assert!(written.contains(r#""kind":"sandbox""#));
+        let value: serde_json::Value = serde_json::from_str(&written).unwrap();
+        for name in ["requested_plan", "effective_plan"] {
+            let plan = value
+                .pointer(&format!("/run_item/body/fact/{name}"))
+                .expect("sandbox plan");
+            assert_eq!(
+                plan.get("enabled"),
+                Some(&serde_json::json!(true)),
+                "{written}"
+            );
+            assert!(plan.get("mode").is_none(), "{written}");
+        }
         assert!(written.contains(r#""network":{"dns":true,"endpoints":1"#));
         assert!(written.contains(r#""feature":"network_allowlist""#));
         assert!(written.contains(r#""requested_policy_digest""#));

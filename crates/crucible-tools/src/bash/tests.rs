@@ -15,10 +15,7 @@ use super::{Bash, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, environmen
 use crate::sample::{Sample, allowed, skipped_without_enforcement};
 
 fn compatibility(tool: Bash) -> Bash {
-    tool.sandboxing(
-        std::sync::Arc::new(crate::LocalSandbox::new()),
-        crucible_core::SandboxMode::Off,
-    )
+    tool.sandboxing(std::sync::Arc::new(crate::LocalSandbox::new()), false)
 }
 
 fn compatible(sample: &Sample) -> Bash {
@@ -857,10 +854,7 @@ fn an_explicit_background_command_has_no_foreground_deadline() {
     let recording = RecordingSandbox::default();
     let observed = std::sync::Arc::clone(&recording.limits);
     let tool = Bash::new(sample.workspace())
-        .sandboxing(
-            std::sync::Arc::new(recording),
-            crucible_core::SandboxMode::Off,
-        )
+        .sandboxing(std::sync::Arc::new(recording), false)
         .leaving(left.clone());
 
     finalized(&tool, r#"{"command":"sleep 30","background":true}"#).expect("the command started");

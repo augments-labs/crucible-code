@@ -169,7 +169,7 @@ pub use sandbox::{
     SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxGuardrailDecision,
     SandboxGuardrailEffect, SandboxGuardrailError, SandboxInspection, SandboxInvocationMode,
     SandboxLaunch, SandboxLifecycle, SandboxManifest, SandboxManifestEntry, SandboxManifestError,
-    SandboxMode, SandboxNetworkEndpoint, SandboxNetworkInspection, SandboxNetworkPolicy,
+    SandboxNetworkEndpoint, SandboxNetworkInspection, SandboxNetworkPolicy,
     SandboxNetworkProvenance, SandboxOutput, SandboxPlanInspection, SandboxPolicy,
     SandboxPolicyError, SandboxProcess, SandboxRead, SandboxRequest, SandboxResourceLimits,
     SandboxRootInspection, SandboxService, SandboxSession, SandboxSpeech, SandboxUnreadablePattern,

@@ -21,7 +21,7 @@ fn startup_unconfirmed_cleanup_retains_linux_projection_and_audits_failed() -> i
     )
     .map_err(io::Error::other)?;
     let policy = crucible_core::SandboxPolicy::new(
-        crucible_core::SandboxMode::Required,
+        true,
         [rule],
         sample.root(),
         crucible_core::SandboxNetworkPolicy::Closed,

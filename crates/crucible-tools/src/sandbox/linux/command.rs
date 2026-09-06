@@ -1185,7 +1185,7 @@ mod tests {
     use std::fs::File;
 
     use crucible_core::{
-        Ancestry, SandboxId, SandboxManifest, SandboxMode, SandboxPolicy, SandboxRequest, ToolId,
+        Ancestry, SandboxId, SandboxManifest, SandboxPolicy, SandboxRequest, ToolId,
     };
 
     use crate::sample::Sample;
@@ -1219,7 +1219,7 @@ mod tests {
         // it.
         let sample = Sample::new("sandbox-standard-ceilings");
         let read_only = SandboxPolicy::new(
-            SandboxMode::Required,
+            true,
             [SandboxFilesystemRule::new(
                 sample.root().clone(),
                 SandboxFilesystemAccess::ReadOnly,
@@ -1335,7 +1335,7 @@ mod tests {
         let outside = PathBuf::from(hard_linked.outside("secret.txt", "secret"));
         std::fs::hard_link(outside, hard_linked.root().join("alias.txt")).expect("hard link");
         let read_only = SandboxPolicy::new(
-            SandboxMode::Required,
+            true,
             [SandboxFilesystemRule::new(
                 hard_linked.root().clone(),
                 SandboxFilesystemAccess::ReadOnly,
@@ -1360,7 +1360,7 @@ mod tests {
         let _socket = std::os::unix::net::UnixListener::bind(special.root().join("host.sock"))
             .expect("host socket");
         let read_only = SandboxPolicy::new(
-            SandboxMode::Required,
+            true,
             [SandboxFilesystemRule::new(
                 special.root().clone(),
                 SandboxFilesystemAccess::ReadOnly,

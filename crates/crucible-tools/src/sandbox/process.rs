@@ -1035,8 +1035,8 @@ pub(super) fn testing_plan(
     use crucible_core::{
         Ancestry, SandboxAudit, SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance,
         SandboxCapabilities, SandboxCleanup, SandboxFilesystemAccess, SandboxFilesystemProvenance,
-        SandboxFilesystemRule, SandboxId, SandboxManifest, SandboxMode, SandboxNetworkPolicy,
-        SandboxPolicy, ToolId,
+        SandboxFilesystemRule, SandboxId, SandboxManifest, SandboxNetworkPolicy, SandboxPolicy,
+        ToolId,
     };
 
     let identity = SandboxBackendIdentity::new(
@@ -1057,7 +1057,7 @@ pub(super) fn testing_plan(
     )
     .map_err(|_| crucible_core::SandboxError::InvalidInspection)?;
     let policy = SandboxPolicy::new(
-        SandboxMode::Off,
+        false,
         [rule],
         root,
         SandboxNetworkPolicy::Closed,

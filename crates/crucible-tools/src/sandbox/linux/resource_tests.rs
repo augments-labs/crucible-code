@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 
 use crucible_core::{
     Ancestry, SandboxCapability, SandboxError, SandboxFeature, SandboxId, SandboxManifest,
-    SandboxMode, SandboxNetworkPolicy, SandboxPolicy, SandboxRequest, SandboxResourceLimits,
-    SandboxService, ToolId,
+    SandboxNetworkPolicy, SandboxPolicy, SandboxRequest, SandboxResourceLimits, SandboxService,
+    ToolId,
 };
 
 use super::tests::{command, finish};
@@ -142,7 +142,7 @@ fn requested_open_file_limit_is_hard_before_workload_exec() {
     let sample = Sample::new("sandbox-open-file-limit");
     let base = SandboxPolicy::standard(&sample.workspace()).expect("base policy");
     let policy = SandboxPolicy::new(
-        SandboxMode::Required,
+        true,
         base.filesystem().iter().cloned(),
         sample.root().clone(),
         SandboxNetworkPolicy::Closed,
@@ -181,7 +181,7 @@ fn requested_address_space_limit_is_hard_before_workload_exec() {
     let sample = Sample::new("sandbox-address-space-limit");
     let base = SandboxPolicy::standard(&sample.workspace()).expect("base policy");
     let policy = SandboxPolicy::new(
-        SandboxMode::Required,
+        true,
         base.filesystem().iter().cloned(),
         sample.root().clone(),
         SandboxNetworkPolicy::Closed,
@@ -220,7 +220,7 @@ fn requested_cpu_limit_terminates_the_workload_scope() {
     let sample = Sample::new("sandbox-cpu-limit");
     let base = SandboxPolicy::standard(&sample.workspace()).expect("base policy");
     let policy = SandboxPolicy::new(
-        SandboxMode::Required,
+        true,
         base.filesystem().iter().cloned(),
         sample.root().clone(),
         SandboxNetworkPolicy::Closed,

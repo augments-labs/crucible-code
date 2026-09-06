@@ -16,7 +16,7 @@ use crucible_core::{
     SandboxCredentialHandle, SandboxCredentialProjection, SandboxCredentialProvenance,
     SandboxEnvironment, SandboxFactKind, SandboxFeature, SandboxFilesystemAccess,
     SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxId, SandboxInvocationMode,
-    SandboxLifecycle, SandboxManifest, SandboxManifestEntry, SandboxMode, SandboxNetworkEndpoint,
+    SandboxLifecycle, SandboxManifest, SandboxManifestEntry, SandboxNetworkEndpoint,
     SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxOutput, SandboxPolicy, SandboxProcess,
     SandboxRead, SandboxRequest, SandboxResourceLimits, SandboxService, SandboxUnreadablePattern,
     ToolId,
@@ -721,7 +721,7 @@ fn read_only_background_commands_have_a_durable_lifecycle() {
     let sample = Sample::new("sandbox-read-only-background-lifecycle");
     sample.write("input.txt", "read-only input\n");
     let policy = SandboxPolicy::new(
-        SandboxMode::Required,
+        true,
         [SandboxFilesystemRule::new(
             sample.root().clone(),
             SandboxFilesystemAccess::ReadOnly,
@@ -869,7 +869,7 @@ fn replacing_a_writable_file_after_stage_cannot_retarget_publication() {
     std::fs::write(&source, "validated inode\n").expect("source fixture");
     let base = SandboxPolicy::standard(&sample.workspace()).expect("base policy");
     let policy = SandboxPolicy::new(
-        SandboxMode::Required,
+        true,
         base.filesystem()
             .iter()
             .cloned()
@@ -1115,7 +1115,7 @@ fn unreadable_rules_mask_only_the_selected_path() {
     sample.write("visible.txt", "visible\n");
     sample.write("secret.txt", "secret\n");
     let policy = SandboxPolicy::new(
-        SandboxMode::Required,
+        true,
         [
             SandboxFilesystemRule::new(
                 sample.root().clone(),
@@ -1227,7 +1227,7 @@ fn exact_network_requests_fail_before_materialization_or_spawn() {
     )
     .expect("network policy");
     let policy = SandboxPolicy::new(
-        SandboxMode::Required,
+        true,
         base.filesystem().iter().cloned(),
         base.working_directory().to_path_buf(),
         network,

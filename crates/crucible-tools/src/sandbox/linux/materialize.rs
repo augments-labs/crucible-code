@@ -381,7 +381,7 @@ mod tests {
     use super::*;
     use crucible_core::{
         Ancestry, SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxId, SandboxManifest,
-        SandboxManifestEntry, SandboxMode, SandboxNetworkPolicy, SandboxPolicy, SandboxRequest,
+        SandboxManifestEntry, SandboxNetworkPolicy, SandboxPolicy, SandboxRequest,
         SandboxResourceLimits, ToolId,
     };
 
@@ -452,7 +452,7 @@ mod tests {
         )
         .expect("temporary rule");
         let policy = SandboxPolicy::new(
-            SandboxMode::Required,
+            true,
             [temporary],
             "/tmp",
             SandboxNetworkPolicy::Closed,

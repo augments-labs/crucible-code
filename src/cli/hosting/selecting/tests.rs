@@ -315,11 +315,11 @@ fn a_record_that_names_no_directory_runs_where_a_confined_command_would() {
 
 #[test]
 fn selected_servers_share_the_runs_opt_in_confinement() {
-    let sample = Sample::new("selecting-mode");
+    let sample = Sample::new("selecting-enabled");
     for (sandbox, expected) in [
-        ("", SandboxMode::Off),
-        (r#""sandbox":{"enabled":true},"#, SandboxMode::Required),
-        (r#""sandbox":{"enabled":false},"#, SandboxMode::Off),
+        ("", false),
+        (r#""sandbox":{"enabled":true},"#, true),
+        (r#""sandbox":{"enabled":false},"#, false),
     ] {
         let settings = sample.user(&format!(
             r#"{{{sandbox}"mcp":{{"servers":{{"docs":{{"command":"docs-mcp"}}}}}}}}"#
@@ -330,19 +330,15 @@ fn selected_servers_share_the_runs_opt_in_confinement() {
         let [chosen] = found.as_slice() else {
             panic!("one server was named");
         };
-        assert_eq!(chosen.policy.mode(), expected);
+        assert_eq!(chosen.policy.enabled(), expected);
         let confinement = crucible_core::SandboxResourceLimits::confining();
         assert_eq!(
             chosen.policy.limits().cpu_seconds,
-            (expected == SandboxMode::Required)
-                .then_some(confinement.cpu_seconds)
-                .flatten()
+            expected.then_some(confinement.cpu_seconds).flatten()
         );
         assert_eq!(
             chosen.policy.limits().open_files,
-            (expected == SandboxMode::Required)
-                .then_some(confinement.open_files)
-                .flatten()
+            expected.then_some(confinement.open_files).flatten()
         );
     }
 }

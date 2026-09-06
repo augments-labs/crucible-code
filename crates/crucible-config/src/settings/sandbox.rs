@@ -1,6 +1,5 @@
 //! Opt-in confinement resolved without letting workspace layers weaken it.
 
-use crucible_core::SandboxMode;
 use serde_json::Value;
 
 use crate::document::{Document, Origin};
@@ -10,7 +9,7 @@ use crate::error::{At, ConfigError};
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct SandboxLayer {
     origin: Origin,
-    mode: SandboxMode,
+    enabled: bool,
 }
 
 /// Reads one typed layer after the general shape walk.
@@ -34,29 +33,24 @@ pub(crate) fn read(
             at: At::of("enabled", text),
         });
     }
-    let mode = if enabled {
-        SandboxMode::Required
-    } else {
-        SandboxMode::Off
-    };
-    Ok(Some(SandboxLayer { origin, mode }))
+    Ok(Some(SandboxLayer { origin, enabled }))
 }
 
 /// Resolves the user choice, then applies only project strengthening.
-pub(crate) fn resolve(documents: &[Document]) -> SandboxMode {
-    let mut mode = documents
+pub(crate) fn resolve(documents: &[Document]) -> bool {
+    let mut enabled = documents
         .iter()
         .filter_map(Document::sandbox)
         .find(|layer| layer.origin == Origin::User)
-        .map_or(SandboxMode::Off, |layer| layer.mode);
+        .is_some_and(|layer| layer.enabled);
     if documents
         .iter()
         .filter_map(Document::sandbox)
         .any(|layer| layer.origin.in_the_workspace())
     {
-        mode = SandboxMode::Required;
+        enabled = true;
     }
-    mode
+    enabled
 }
 
 #[cfg(test)]

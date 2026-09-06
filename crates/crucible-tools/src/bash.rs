@@ -40,8 +40,8 @@ use std::time::Duration;
 pub use background::{Background, Ended, MOST, Standing};
 use crucible_core::{
     Approved, DescribeTool, Looking, SandboxCommand, SandboxEnvironment, SandboxManifest,
-    SandboxMode, SandboxPolicy, SandboxRequest, SandboxResourceLimits, SandboxService, Sensitivity,
-    Summary, Tool, ToolArgs, ToolContext, ToolError, ToolOutput, Workspace,
+    SandboxPolicy, SandboxRequest, SandboxResourceLimits, SandboxService, Sensitivity, Summary,
+    Tool, ToolArgs, ToolContext, ToolError, ToolOutput, Workspace,
 };
 
 use std::sync::LazyLock;
@@ -224,7 +224,7 @@ impl std::fmt::Debug for Exported<'_> {
 
 impl Bash {
     /// Runs in `workspace`, requiring confinement unless the host explicitly
-    /// selects another mode through [`Self::sandboxing`]. The application's
+    /// disables confinement through [`Self::sandboxing`]. The application's
     /// opt-in configuration is applied by its composition root.
     #[must_use]
     pub fn new(workspace: Workspace) -> Self {
@@ -254,16 +254,16 @@ impl Bash {
         }
     }
 
-    /// Replaces the local service and applies a host-authorized top-level mode.
+    /// Replaces the local service and applies the host-authorized enabled choice.
     ///
     /// The binary composition root uses this after configuration provenance has
-    /// established that only a user layer may select `degraded` or `off`.
+    /// established that only a user layer may disable confinement.
     /// Descendant/project narrowing happens before a policy reaches this tool.
     #[must_use]
-    pub fn sandboxing(mut self, service: Arc<dyn SandboxService>, mode: SandboxMode) -> Self {
+    pub fn sandboxing(mut self, service: Arc<dyn SandboxService>, enabled: bool) -> Self {
         self.sandbox = service;
         if let Ok(policy) = &mut self.policy {
-            *policy = policy.clone().with_mode(mode);
+            *policy = policy.clone().with_enabled(enabled);
         }
         self
     }

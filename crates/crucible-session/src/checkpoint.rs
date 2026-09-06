@@ -18,14 +18,13 @@ use crucible_core::{
     PromptCacheFingerprint, PromptCacheResourceId, PromptCacheScopeDigest, ProviderAttemptId,
     ResumeDigest, ResumeScope, RunId, SandboxBackendId, SandboxBackendIdentity,
     SandboxBackendProvenance, SandboxCapabilities, SandboxCapability, SandboxCheckpoint,
-    SandboxFeature, SandboxId, SandboxMode, SandboxNetworkInspection, TOOL_RESULT_BYTES, ToolArgs,
-    ToolCall, ToolEffect, ToolId, ToolOutcome, ToolOutput,
+    SandboxFeature, SandboxId, SandboxNetworkInspection, TOOL_RESULT_BYTES, ToolArgs, ToolCall,
+    ToolEffect, ToolId, ToolOutcome, ToolOutput,
 };
 use serde_json::{Value, json};
 
 /// Current execution-checkpoint document format.
-pub const CHECKPOINT_FORMAT: u64 = 2;
-const READABLE_CHECKPOINT_FORMATS: &[u64] = &[2, 1];
+pub const CHECKPOINT_FORMAT: u64 = 3;
 /// Maximum encoded bytes in one checkpoint document.
 pub const MAX_CHECKPOINT_BYTES: usize = 2 * 1024 * 1024;
 
@@ -310,7 +309,7 @@ fn decode(bytes: &[u8]) -> Result<ExecutionCheckpoint, CheckpointError> {
         .get("format")
         .and_then(Value::as_u64)
         .ok_or(CheckpointError::Unreadable)?;
-    if !READABLE_CHECKPOINT_FORMATS.contains(&format) {
+    if format != CHECKPOINT_FORMAT {
         return Err(CheckpointError::Unreadable);
     }
     let id = text(&value, "checkpoint")?.parse::<CheckpointId>()?;
@@ -338,10 +337,8 @@ fn decode(bytes: &[u8]) -> Result<ExecutionCheckpoint, CheckpointError> {
     for invocation in array(&value, "invocations")? {
         checkpoint.add_invocation(decode_invocation(invocation)?)?;
     }
-    if format >= 2 {
-        for sandbox in array(&value, "sandboxes")? {
-            checkpoint.add_sandbox(decode_sandbox(sandbox)?)?;
-        }
+    for sandbox in array(&value, "sandboxes")? {
+        checkpoint.add_sandbox(decode_sandbox(sandbox)?)?;
     }
     Ok(checkpoint)
 }
@@ -460,7 +457,7 @@ fn encode_sandbox(sandbox: &SandboxCheckpoint) -> Value {
             "feature": feature.as_str(),
             "claim": claim.as_str(),
         })).collect::<Vec<_>>(),
-        "mode": sandbox.mode().as_str(),
+        "enabled": sandbox.enabled(),
         "network": {
             "state": sandbox.network().as_str(),
             "endpoints": sandbox.network().endpoints(),
@@ -515,12 +512,10 @@ fn decode_sandbox(value: &Value) -> Result<SandboxCheckpoint, CheckpointError> {
         };
         capabilities = capabilities.with(feature, claim);
     }
-    let mode = match text(value, "mode")? {
-        "required" => SandboxMode::Required,
-        "degraded" => SandboxMode::Degraded,
-        "off" => SandboxMode::Off,
-        _ => return Err(CheckpointError::Unreadable),
-    };
+    if value.get("mode").is_some() {
+        return Err(CheckpointError::Unreadable);
+    }
+    let enabled = boolean(value, "enabled")?;
     let network = field(value, "network")?;
     let network = match text(network, "state")? {
         "closed" => {
@@ -552,7 +547,7 @@ fn decode_sandbox(value: &Value) -> Result<SandboxCheckpoint, CheckpointError> {
             .map_err(|_| CheckpointError::Unreadable)?,
         backend,
         capabilities,
-        mode,
+        enabled,
         network,
         parse_hex(text(value, "policy_digest")?)?,
         parse_hex(text(value, "manifest_digest")?)?,

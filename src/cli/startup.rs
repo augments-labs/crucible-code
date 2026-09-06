@@ -784,7 +784,7 @@ fn tools(
     // stop one — and what makes the caller's copy the thing that ends them all.
     tools.add_builtin(
         Bash::new(workspace.clone())
-            .sandboxing(Arc::new(LocalSandbox::new()), settings.sandbox_mode())
+            .sandboxing(Arc::new(LocalSandbox::new()), settings.sandbox_enabled())
             .exporting(settings.env())
             .leaving(leaving.clone()),
     )?;

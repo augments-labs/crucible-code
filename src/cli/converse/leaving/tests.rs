@@ -43,7 +43,7 @@ fn running_with(
     // keeps that boundary visible instead of depending on the host running the
     // test to permit nested user namespaces.
     let tool = Bash::new(here.workspace())
-        .sandboxing(sandbox, crucible_core::SandboxMode::Off)
+        .sandboxing(sandbox, false)
         .leaving(left.clone());
     let mut engine = Permission::with(Mode::FullAccess, Rules::default());
 

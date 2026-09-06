@@ -3,7 +3,7 @@
 use crucible_core::{
     SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities,
     SandboxCapability, SandboxCleanup, SandboxError, SandboxFeature, SandboxId, SandboxInspection,
-    SandboxManifest, SandboxMode, SandboxPolicy, SandboxResourceLimits,
+    SandboxManifest, SandboxPolicy, SandboxResourceLimits,
 };
 
 use super::{Probe, report};
@@ -53,7 +53,11 @@ fn written(sample: &Sample, policy: &SandboxPolicy, capabilities: SandboxCapabil
     )
     .expect("a report");
 
-    report(&sample.root(), policy.mode(), &Probe::Prepared(&inspection))
+    report(
+        &sample.root(),
+        policy.enabled(),
+        &Probe::Prepared(&inspection),
+    )
 }
 
 #[test]
@@ -203,7 +207,7 @@ fn a_backend_that_would_not_take_the_policy_still_says_what_it_can_hold() {
     };
     let said = report(
         &sample.root(),
-        SandboxMode::Required,
+        true,
         &Probe::Refused {
             backend: &identity,
             capabilities: &capabilities,
@@ -228,7 +232,7 @@ fn nothing_answering_is_said_as_that_rather_than_as_an_empty_report() {
     let why = SandboxError::BackendUnavailable {
         reason: "nothing was installed".into(),
     };
-    let said = report(&sample.root(), SandboxMode::Required, &Probe::Absent(&why));
+    let said = report(&sample.root(), true, &Probe::Absent(&why));
 
     assert!(said.contains("no sandbox backend answered"), "{said}");
     assert!(said.contains("nothing was installed"), "{said}");
@@ -239,20 +243,13 @@ fn nothing_answering_is_said_as_that_rather_than_as_an_empty_report() {
 }
 
 #[test]
-fn what_was_given_up_is_printed_whether_or_not_anything_was() {
-    let sample = Sample::new("sandbox-report-degraded");
-    let workspace = sample.workspace();
-    let policy = SandboxPolicy::standard(&workspace)
-        .expect("policy")
-        .with_mode(SandboxMode::Degraded);
-
+fn disabled_confinement_is_reported_as_an_explicit_choice() {
+    let sample = Sample::new("sandbox-report-disabled");
+    let policy = SandboxPolicy::standard(&sample.workspace()).expect("policy");
     let confined = written(&sample, &policy, holding());
+    assert!(confined.contains("enabled   true"), "{confined}");
     assert!(confined.contains("confined  yes"), "{confined}");
-    assert!(confined.contains("gave up   nothing"), "{confined}");
-
-    // The same report from a backend that could not confine. The reason is the
-    // backend's own sentence and is the only place the report says why the
-    // answer above changed.
+    let policy = policy.with_enabled(false);
     let inspection = SandboxInspection::new(
         SandboxId::new(),
         backend(),
@@ -260,15 +257,15 @@ fn what_was_given_up_is_printed_whether_or_not_anything_was() {
         &policy,
         &SandboxManifest::empty(),
         false,
-        Some("this kernel refuses user namespaces"),
+        Some("sandbox disabled by effective policy"),
         SandboxCleanup::Pending,
     )
-    .expect("a report");
-    let given = report(&sample.root(), policy.mode(), &Probe::Prepared(&inspection));
-
+    .expect("disabled report");
+    let given = report(&sample.root(), false, &Probe::Prepared(&inspection));
+    assert!(given.contains("enabled   false"), "{given}");
     assert!(given.contains("confined  no"), "{given}");
     assert!(
-        given.contains("gave up   this kernel refuses user namespaces"),
+        given.contains("disabled  sandbox disabled by effective policy"),
         "{given}"
     );
 }

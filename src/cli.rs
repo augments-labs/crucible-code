@@ -993,10 +993,10 @@ fn confined() -> Result<(), Fatal> {
     // out would understate what a command can touch.
     let workspace = workspace.reaching(settings.extra_directories())?;
 
-    let mode = settings.sandbox_mode();
+    let enabled = settings.sandbox_enabled();
     let service = LocalSandbox::new();
     let probed = service.probe();
-    let policy = SandboxPolicy::standard(&workspace)?.with_mode(mode);
+    let policy = SandboxPolicy::standard(&workspace)?.with_enabled(enabled);
     let prepared = service.prepare(SandboxRequest::new(
         SandboxId::new(),
         Ancestry::new(),
@@ -1016,7 +1016,7 @@ fn confined() -> Result<(), Fatal> {
         },
         (Err(_), Err(why)) => sandbox::Probe::Absent(why),
     };
-    let said = sandbox::report(workspace.root(), mode, &probe);
+    let said = sandbox::report(workspace.root(), enabled, &probe);
 
     let _ = io::stdout().write_all(said.as_bytes());
     Ok(())

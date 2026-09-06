@@ -14,7 +14,7 @@ use crucible_core::{
     SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities, SandboxCommand,
     SandboxEnvironment, SandboxError, SandboxFilesystemAccess, SandboxFilesystemProvenance,
     SandboxFilesystemRule, SandboxId, SandboxInspection, SandboxLaunch, SandboxManifest,
-    SandboxMode, SandboxNetworkPolicy, SandboxOutput, SandboxPolicy, SandboxProcess, SandboxRead,
+    SandboxNetworkPolicy, SandboxOutput, SandboxPolicy, SandboxProcess, SandboxRead,
     SandboxRequest, SandboxResourceLimits, SandboxService, SandboxSession, SandboxUsage,
     SandboxViolation, Sensitivity, Settled, Summary, Tool, ToolArgs, ToolCall, ToolContext,
     ToolDescriptor, ToolError, ToolId, ToolOutput, ToolProvenance, ToolSourceKind, Toolset,
@@ -65,7 +65,7 @@ fn exited() -> ExitStatus {
 /// The policy every server here is started under.
 fn policy() -> SandboxPolicy {
     SandboxPolicy::new(
-        SandboxMode::Required,
+        false,
         [SandboxFilesystemRule::new(
             ROOT,
             SandboxFilesystemAccess::ReadWrite,
