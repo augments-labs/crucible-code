@@ -13,6 +13,7 @@
 //! prefix on the text because there is no field for it, and how hard to think
 //! is nested under `reasoning` rather than named at the top of the body.
 
+mod effort;
 mod replay;
 
 use crucible_core::{
@@ -34,6 +35,10 @@ pub(super) fn serialize(
     scope: Option<ContinuationScope>,
 ) -> Result<String, ProviderError> {
     let explicit_message = explicit_message(request);
+    let mut efforts = scope
+        .map(|scope| effort::Efforts::new(request, scope))
+        .transpose()?
+        .flatten();
     let mut json = Json::new();
     let mut outcome = Ok(());
     json.object(|body| {
@@ -106,7 +111,10 @@ pub(super) fn serialize(
             body.text("instructions", system);
         }
 
-        if let Some(effort) = request.effort {
+        if let Some(effort) = efforts
+            .as_ref()
+            .map_or(request.effort, effort::Efforts::initial)
+        {
             body.object("reasoning", |reasoning| {
                 reasoning.text("effort", effort.as_str());
             });
@@ -119,6 +127,7 @@ pub(super) fn serialize(
                     request,
                     scope,
                     explicit_message.filter(|_| serving == Serving::Api),
+                    efforts.as_mut(),
                 );
             } else {
                 write_input(

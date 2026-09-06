@@ -24,9 +24,13 @@ pub(super) fn write(
     request: &Request<'_>,
     scope: ContinuationScope,
     explicit: Option<usize>,
+    mut efforts: Option<&mut super::effort::Efforts<'_>>,
 ) -> Result<(), ProviderError> {
     let mut pending: Option<BTreeSet<&str>> = None;
     for (nth, message) in request.transcript.messages().iter().enumerate() {
+        if let Some(efforts) = efforts.as_mut() {
+            efforts.before(input, nth)?;
+        }
         if request.purpose == RequestPurpose::Turn {
             if !matches!(message, Message::ToolResults(_)) {
                 answered(pending.as_ref())?;
@@ -110,21 +114,8 @@ fn native(
         }
     }
     let mut parts = state.parts().iter().peekable();
-    let Some(ContinuationPart::Opaque(header)) = parts.next() else {
-        return Err(problem("missing request effort record"));
-    };
-    let header = parse(header.as_str())?;
-    if header.len() != 1
-        || !header.get("request_effort").is_some_and(|value| {
-            value.is_null()
-                || matches!(
-                    value.as_str(),
-                    Some("low" | "medium" | "high" | "xhigh" | "max")
-                )
-        })
-    {
-        return Err(problem("invalid request effort record"));
-    }
+    super::effort::recorded(state)?;
+    parts.next();
     while let Some(part) = parts.next() {
         match part {
             ContinuationPart::Opaque(data) => {

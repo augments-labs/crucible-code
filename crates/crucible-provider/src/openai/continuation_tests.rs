@@ -3,8 +3,8 @@
 use super::*;
 use crate::transport::Replay;
 use crucible_core::{
-    ApiKey, Continuation, Delta, Header, HeaderKey, Message, RequestPurpose, ToolArgs, ToolCall,
-    ToolId, ToolOutput, ToolResult, Transcript,
+    ApiKey, Continuation, Delta, Effort, Header, HeaderKey, Message, RequestPurpose, ToolArgs,
+    ToolCall, ToolId, ToolOutput, ToolResult, Transcript,
 };
 use serde_json::{Value, json};
 use std::fmt::Write as _;
@@ -123,6 +123,117 @@ fn answered() -> Message {
         id: ToolId::new("call-1"),
         output: ToolOutput::ok("contents"),
     }])
+}
+
+#[test]
+fn astra_effort_changes_preserve_the_request_prefix_and_replay_update_positions() {
+    for initial in [None, Some(Effort::Low)] {
+        let (provider, replay) = provider(VENDOR, &sse(&events(&output(), true)));
+        let mut transcript = Transcript::new();
+        transcript.push(Message::said("first")).unwrap();
+        transcript
+            .push(answer(
+                &provider,
+                Request {
+                    effort: initial,
+                    ..request(&transcript)
+                },
+            ))
+            .unwrap();
+        transcript.push(answered()).unwrap();
+        transcript.push(Message::said("harder")).unwrap();
+        transcript
+            .push(answer(
+                &provider,
+                Request {
+                    effort: Some(Effort::High),
+                    ..request(&transcript)
+                },
+            ))
+            .unwrap();
+        let first: Value = serde_json::from_str(&replay.sent().body).unwrap();
+        assert_eq!(
+            first.pointer("/reasoning/effort"),
+            initial.map(|rung| json!(rung.as_str())).as_ref()
+        );
+        let items = first.get("input").unwrap().as_array().unwrap();
+        assert_eq!(
+            items.get(8),
+            Some(&json!({"type":"configuration_update","reasoning":{"effort":"high"}}))
+        );
+        assert_eq!(
+            items.get(9),
+            Some(&json!({"role":"user","content":"harder"}))
+        );
+        transcript.push(answered()).unwrap();
+        provider
+            .stream(
+                Request {
+                    effort: Some(Effort::High),
+                    ..request(&transcript)
+                },
+                &Cancel::new(),
+            )
+            .unwrap();
+        let second: Value = serde_json::from_str(&replay.sent().body).unwrap();
+        assert_eq!(
+            second.pointer("/reasoning/effort"),
+            first.pointer("/reasoning/effort")
+        );
+        assert_eq!(
+            second
+                .get("input")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .get(..items.len()),
+            Some(items.as_slice())
+        );
+        assert_eq!(
+            second
+                .get("input")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|item| item.get("type") == Some(&json!("configuration_update")))
+                .count(),
+            1
+        );
+    }
+}
+
+#[test]
+fn astra_effort_reset_on_resume_keeps_default_absent_and_native_history_intact() {
+    let expected = output();
+    let (provider, replay) = provider(VENDOR, &sse(&events(&expected, true)));
+    let mut transcript = Transcript::new();
+    transcript.push(Message::said("first")).unwrap();
+    transcript
+        .push(answer(
+            &provider,
+            Request {
+                effort: Some(Effort::Max),
+                ..request(&transcript)
+            },
+        ))
+        .unwrap();
+    transcript.push(answered()).unwrap();
+    transcript
+        .push(Message::said("resumed with no configured effort"))
+        .unwrap();
+    provider
+        .stream(request(&transcript), &Cancel::new())
+        .unwrap();
+    let sent: Value = serde_json::from_str(&replay.sent().body).unwrap();
+    assert!(sent.get("reasoning").is_none());
+    let items = sent.get("input").unwrap().as_array().unwrap();
+    assert_eq!(items.get(1..7), Some(expected.as_slice()));
+    assert!(
+        items
+            .iter()
+            .all(|item| item.get("type") != Some(&json!("configuration_update")))
+    );
 }
 
 #[test]
