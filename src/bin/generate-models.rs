@@ -52,6 +52,12 @@ use serde_json::Value;
 /// of the model, and the same model answers at the same length whatever slice
 /// of its window a request may use.
 const OFFERED: &[(&str, &str, Option<&str>, Option<u32>)] = &[
+    (
+        "anthropic",
+        "claude-fable-5-1",
+        Some("claude-fable-5-1"),
+        None,
+    ),
     ("anthropic", "claude-fable-5", Some("claude-fable-5"), None),
     ("anthropic", "claude-opus-5", Some("claude-opus-5"), None),
     (
@@ -66,6 +72,15 @@ const OFFERED: &[(&str, &str, Option<&str>, Option<u32>)] = &[
         Some("claude-haiku-4-5"),
         None,
     ),
+    ("google", "gemini-3.8-flash", Some("gemini-3.8-flash"), None),
+    ("google", "gemini-3.7-flash", Some("gemini-3.7-flash"), None),
+    ("google", "gemini-3.6-flash", Some("gemini-3.6-flash"), None),
+    (
+        "google",
+        "gemini-3.1-pro-preview",
+        Some("gemini-3.1-pro-preview"),
+        None,
+    ),
     ("moonshot", "k3", Some("kimi-k3"), None),
     // The same model held to a quarter of its window, which the database does
     // not list separately. The divisor is the vendor's stated figure, checked
@@ -78,6 +93,7 @@ const OFFERED: &[(&str, &str, Option<&str>, Option<u32>)] = &[
         Some("kimi-k2.7-code-highspeed"),
         None,
     ),
+    ("openai", "gpt-6-astra", Some("gpt-6-astra"), None),
     ("openai", "gpt-5.6-sol", Some("gpt-5.6-sol"), None),
     ("openai", "gpt-5.6-terra", Some("gpt-5.6-terra"), None),
     ("openai", "gpt-5.6-luna", Some("gpt-5.6-luna"), None),
@@ -88,11 +104,10 @@ const OFFERED: &[(&str, &str, Option<&str>, Option<u32>)] = &[
 const TABLE: &str = "src/cli/models.rs";
 
 /// Which provider of the database each of crucible's is.
-fn listed(provider: &str) -> &'static str {
+fn listed(provider: &'static str) -> &'static str {
     match provider {
         "moonshot" => "moonshotai",
-        "anthropic" => "anthropic",
-        _ => "openai",
+        other => other,
     }
 }
 
@@ -333,6 +348,30 @@ fn written(rows: &BTreeMap<(&str, &str), Row>) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn google_models_are_read_from_the_google_database_namespace() {
+        assert_eq!(listed("google"), "google");
+        assert_eq!(listed("moonshot"), "moonshotai");
+        assert_eq!(listed("custom"), "custom");
+    }
+
+    #[test]
+    fn all_six_new_model_entries_are_regenerated_under_their_exact_names() {
+        for (provider, model) in [
+            ("google", "gemini-3.8-flash"),
+            ("google", "gemini-3.7-flash"),
+            ("google", "gemini-3.6-flash"),
+            ("google", "gemini-3.1-pro-preview"),
+            ("anthropic", "claude-fable-5-1"),
+            ("openai", "gpt-6-astra"),
+        ] {
+            assert!(
+                OFFERED.contains(&(provider, model, Some(model), None)),
+                "missing generator entry {provider}/{model}"
+            );
+        }
+    }
 
     /// The set the four Anthropic rows and the four OpenAI rows carry.
     fn documents() -> Modalities {

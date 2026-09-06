@@ -13,8 +13,9 @@
 //! secret itself never reaches this crate.
 //!
 //! **What clips and what folds.** The sentence is prose and folds. The
-//! breadcrumb, the title, the footer and the label are labels and are cut at
-//! the width; the label leaves the border altogether when it does not fit
+//! breadcrumb, the title and the label are labels and are cut at the width;
+//! the footer shortens its action before sacrificing the cancel hint. The
+//! label leaves the border altogether when it does not fit
 //! beside the rule on either side of it, because a border with half a label
 //! on it reads as a broken frame. The dots stop at the frame's right edge, and
 //! so does the caret: the frame is the one thing on the screen that must not
@@ -158,7 +159,7 @@ impl KeyPanel<'_> {
         rows.push(Self::closing(columns, glyphs));
 
         if rung.keeps(FOOTER) {
-            rows.push(Row::new().then(Slot::Quiet, clip(&self.footer(glyphs), columns)));
+            rows.push(Row::new().then(Slot::Quiet, clip(&self.footer(columns, glyphs), columns)));
         }
 
         (rows, Some(caret))
@@ -233,14 +234,28 @@ impl KeyPanel<'_> {
     }
 
     /// The row under the box: what Enter does now, and what escape does.
-    fn footer(&self, glyphs: Glyphs) -> String {
+    fn footer(&self, columns: usize, glyphs: Glyphs) -> String {
         let (does, leaves) = if self.held == 0 {
             EMPTY_FOOTER
         } else {
             HELD_FOOTER
         };
 
-        format!("{does} {} {leaves}", glyphs.dot())
+        let full = format!("{does} {} {leaves}", glyphs.dot());
+        if wide(&full) <= columns {
+            return full;
+        }
+        let action = if self.held == 0 {
+            "paste key"
+        } else {
+            "enter save"
+        };
+        let short = format!("{action} {} {leaves}", glyphs.dot());
+        if wide(&short) <= columns {
+            short
+        } else {
+            leaves.into()
+        }
     }
 }
 

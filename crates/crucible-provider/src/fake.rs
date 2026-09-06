@@ -4,6 +4,64 @@
 //! verdict that let the tool run, so a body test cannot write one down — it has
 //! to be issued, by the engine that issues every other one.
 
+/// A completed signed exchange whose recap must carry only descriptive text.
+pub(crate) fn recap_history() -> crucible_core::Transcript {
+    use crucible_core::{
+        Continuation, ContinuationData, ContinuationPart, ContinuationScope, Message, StopReason,
+        ToolArgs, ToolCall, ToolId, ToolOutput, ToolResult, Transcript,
+    };
+    let mut state = Continuation::new(
+        "fixture-v1",
+        "fixture",
+        ContinuationScope::from_digest([0; 32]),
+    )
+    .unwrap();
+    state
+        .push(ContinuationPart::Opaque(
+            ContinuationData::new("private-signature-canary").unwrap(),
+        ))
+        .unwrap();
+    state
+        .push(ContinuationPart::Text {
+            start: 0,
+            end: 10,
+            data: ContinuationData::new("").unwrap(),
+        })
+        .unwrap();
+    state
+        .push(ContinuationPart::Call {
+            index: 0,
+            data: ContinuationData::new("").unwrap(),
+        })
+        .unwrap();
+    let mut transcript = Transcript::new();
+    transcript.push(Message::said("old question")).unwrap();
+    transcript
+        .push(Message::Agent {
+            text: "old answer".into(),
+            calls: vec![ToolCall {
+                id: ToolId::new("call-1"),
+                name: "lookup".into(),
+                args: ToolArgs::new("{}"),
+            }],
+            stop: Some(StopReason::WantsTools),
+            continuation: Some(
+                state
+                    .finish("old answer", 1, Some(StopReason::WantsTools))
+                    .unwrap(),
+            ),
+        })
+        .unwrap();
+    transcript
+        .push(Message::ToolResults(vec![ToolResult {
+            id: ToolId::new("call-1"),
+            output: ToolOutput::ok("old result"),
+        }]))
+        .unwrap();
+    transcript.push(Message::said("summarize")).unwrap();
+    transcript
+}
+
 use crucible_core::{
     Ask, Attachment, Command, Delta, InputTokenUsage, Modality, Permission, PromptCacheBoundary,
     PromptCacheCapabilities, PromptCacheContent, PromptCacheFingerprint, PromptCacheIdentity,
@@ -415,6 +473,7 @@ mod cache_conformance {
 
         for (provider, model, expected) in providers {
             let request = Request {
+                purpose: crucible_core::RequestPurpose::Turn,
                 model,
                 transcript: &transcript,
                 tools: &[],

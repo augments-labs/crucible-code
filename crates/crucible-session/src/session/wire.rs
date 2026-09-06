@@ -14,10 +14,11 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use crucible_core::{
-    Attachment, Calibration, Carried, Changed, ContextError, ContextPatch, Fragment,
-    InvocationState, MAX_RUN_ITEM_BYTES, Message, Modality, PendingAction, PricingUnit,
-    PromptCacheEligibility, PromptCacheEncoding, PromptCacheFact, PromptCacheIneligibleReason,
-    PromptCacheOutcome, PromptCacheRequestDisposition, PromptCacheSupport, RunItem, SessionId,
+    Attachment, Calibration, Carried, Changed, ContextError, ContextPatch, Continuation,
+    ContinuationData, ContinuationPart, ContinuationScope, Fragment, InvocationState,
+    MAX_RUN_ITEM_BYTES, Message, Modality, PendingAction, PricingUnit, PromptCacheEligibility,
+    PromptCacheEncoding, PromptCacheFact, PromptCacheIneligibleReason, PromptCacheOutcome,
+    PromptCacheRequestDisposition, PromptCacheSupport, ProviderContinuation, RunItem, SessionId,
     Spend, StopReason, ToolCall, ToolEffect, ToolId, ToolOutcome, ToolOutput, ToolResult,
 };
 use serde_json::{Value, json};
@@ -28,7 +29,7 @@ use serde_json::{Value, json};
 /// is refused rather than half-understood, which is the difference between
 /// telling the user their session cannot be continued and silently continuing
 /// a different one.
-pub(crate) const FORMAT: u32 = 11;
+pub(crate) const FORMAT: u32 = 12;
 
 /// The formats this build reads, newest first.
 ///
@@ -50,21 +51,43 @@ pub(crate) const FORMAT: u32 = 11;
 /// than pretending it recorded state it could not have written.
 /// Format 10 is, because format 11 only adds `run_item` journal lines that are
 /// explicitly outside provider-visible replay.
+/// Format 11 is, because format 12 adds optional private continuation to agent
+/// messages. Older history cannot provide state it never recorded; it stays
+/// absent. Older readers must refuse format 12 rather than discard that state.
 ///
 /// A format that changed the meaning of a line does not go on this list however
 /// small the change looks. What it would buy is somebody's history; what it
 /// would cost is a session that looks fine and is missing turns, which is the
 /// failure the refusal exists for.
-pub(crate) const READS: &[u32] = &[11, 10, 9, 8, 7, 6, 5, 4, 3];
+pub(crate) const READS: &[u32] = &[12, 11, 10, 9, 8, 7, 6, 5, 4, 3];
 
 /// Whether this build can replay a log written under `format`.
 pub(crate) fn readable(format: u32) -> bool {
     READS.contains(&format)
 }
 
+/// An append-only reader requirement, including malformed requirements.
+/// `Some(false)` must fail even at EOF; this is not a torn message.
+pub(crate) fn required_format(line: &str) -> Option<bool> {
+    let value: Value = serde_json::from_str(line).ok()?;
+    let required = value.get("requires_format")?;
+    Some(
+        required
+            .as_u64()
+            .is_some_and(|format| format <= u64::from(FORMAT)),
+    )
+}
+
+/// Complete private metadata is never disposable tail damage.
+pub(crate) fn has_continuation(line: &str) -> bool {
+    serde_json::from_str::<Value>(line)
+        .ok()
+        .is_some_and(|value| value.get("continuation").is_some())
+}
+
 /// Whether this format has the typed-context baseline introduced in format 10.
 pub(crate) const fn typed_context(format: Option<u32>) -> bool {
-    matches!(format, Some(10 | 11))
+    matches!(format, Some(10..=12))
 }
 
 /// Whether a whole line is framework history rather than a conversation line.
@@ -737,11 +760,25 @@ pub(crate) fn line(message: &Message) -> String {
             "user": text.as_ref(),
             "attached": attachments.iter().map(attached).collect::<Vec<_>>(),
         }),
-        Message::Agent { text, calls, stop } => json!({
-            "agent": text.as_ref(),
-            "calls": calls.iter().map(called).collect::<Vec<_>>(),
-            "stop": stop.map(stopped),
-        }),
+        Message::Agent {
+            text,
+            calls,
+            stop,
+            continuation,
+        } => {
+            let mut value = serde_json::Map::from_iter([
+                ("agent".into(), json!(text.as_ref())),
+                (
+                    "calls".into(),
+                    Value::Array(calls.iter().map(called).collect()),
+                ),
+                ("stop".into(), json!(stop.map(stopped))),
+            ]);
+            if let Some(continuation) = continuation {
+                value.insert("continuation".into(), continued(continuation));
+            }
+            Value::Object(value)
+        }
         Message::ToolResults(results) => json!({
             "results": results.iter().map(answered).collect::<Vec<_>>(),
         }),
@@ -774,14 +811,85 @@ pub(crate) fn message(line: &str) -> Option<Message> {
     }
 
     if let Some(text) = value.get("agent") {
+        let text = text.as_str()?;
+        let calls = read(value.get("calls")?, call)?;
+        let stop = stops(value.get("stop"));
+        let continuation = match value.get("continuation") {
+            Some(value) => Some(continuing(value)?.finish(text, calls.len(), stop).ok()?),
+            None => None,
+        };
         return Some(Message::Agent {
-            text: text.as_str()?.into(),
-            calls: read(value.get("calls")?, call)?,
-            stop: stops(value.get("stop")),
+            text: text.into(),
+            calls,
+            stop,
+            continuation,
         });
     }
 
     Some(Message::ToolResults(read(value.get("results")?, result)?))
+}
+
+/// The only projection that persists opaque state: the protected agent line.
+fn continued(state: &ProviderContinuation) -> Value {
+    json!({
+        "protocol": state.protocol(),
+        "model": state.model(),
+        "scope": hashed(&state.scope().bytes()),
+        "parts": state.parts().iter().map(|part| match part {
+            ContinuationPart::Text { start, end, data } => {
+                json!({"text": [start, end], "data": data.as_str()})
+            }
+            ContinuationPart::Call { index, data } => {
+                json!({"call": index, "data": data.as_str()})
+            }
+            ContinuationPart::Opaque(data) => json!({"opaque": data.as_str()}),
+        }).collect::<Vec<_>>()
+    })
+}
+
+fn continuing(value: &Value) -> Option<Continuation> {
+    let parts = value.get("parts")?.as_array()?;
+    if parts.len() > crucible_core::CONTINUATION_PARTS {
+        return None;
+    }
+    let mut state = Continuation::new(
+        value.get("protocol")?.as_str()?,
+        value.get("model")?.as_str()?,
+        ContinuationScope::from_digest(hash(value.get("scope")?)?),
+    )
+    .ok()?;
+    for value in parts {
+        let object = value.as_object()?;
+        let part = if let Some(opaque) = value.get("opaque") {
+            if object.len() != 1 {
+                return None;
+            }
+            ContinuationPart::Opaque(ContinuationData::new(opaque.as_str()?).ok()?)
+        } else {
+            if object.len() != 2 {
+                return None;
+            }
+            let data = ContinuationData::new(value.get("data")?.as_str()?).ok()?;
+            if let Some(range) = value.get("text") {
+                let range = range.as_array()?;
+                if range.len() != 2 {
+                    return None;
+                }
+                ContinuationPart::Text {
+                    start: usize::try_from(range.first()?.as_u64()?).ok()?,
+                    end: usize::try_from(range.get(1)?.as_u64()?).ok()?,
+                    data,
+                }
+            } else {
+                ContinuationPart::Call {
+                    index: usize::try_from(value.get("call")?.as_u64()?).ok()?,
+                    data,
+                }
+            }
+        };
+        state.push(part).ok()?;
+    }
+    Some(state)
 }
 
 /// One attached file as it is written down.
@@ -1232,8 +1340,36 @@ mod tests {
     }
 
     #[test]
+    fn provider_continuation_survives_the_session_wire_in_order() {
+        let expected = json!({
+            "agent": "beforeafter",
+            "calls": [{"id": "call-1", "name": "lookup", "args": "{}"}],
+            "stop": "yielded",
+            "continuation": {
+                "protocol": "fixture-v1", "model": "fixture-model",
+                "scope": "00".repeat(32),
+                "parts": [
+                    {"opaque": "signature-canary"},
+                    {"text": [0, 6], "data": ""},
+                    {"call": 0, "data": "call-attributes"},
+                    {"text": [6, 11], "data": "phase-attributes"}
+                ]
+            }
+        });
+        let restored = message(&expected.to_string()).expect("valid agent history");
+        let written: Value = serde_json::from_str(&line(&restored)).unwrap();
+        assert_eq!(written.get("continuation"), expected.get("continuation"));
+        assert!(!format!("{restored:?}").contains("signature-canary"));
+        let item = RunItem::message(Ancestry::new(), restored).unwrap();
+        let metadata = journal(&item).unwrap();
+        assert!(!metadata.contains("signature-canary"));
+        assert!(!metadata.contains("call-attributes"));
+        assert!(!metadata.contains("phase-attributes"));
+    }
+
+    #[test]
     fn the_format_moves_with_the_line_shape() {
-        assert_eq!(FORMAT, 11);
+        assert_eq!(FORMAT, 12);
         assert!(readable(FORMAT));
         assert!(typed_context(Some(10)));
         assert!(typed_context(Some(FORMAT)));

@@ -9,10 +9,13 @@
 //! builds a request may be one bad assumption away from taking the process
 //! down.
 
+mod effort;
+mod replay;
+
 use crucible_core::{
-    Attached, Content, Message, Modality, PromptCacheBoundary, PromptCacheEncoding,
-    PromptCacheIneligibleReason, PromptCacheMechanism, PromptCacheRetentionClass, Request,
-    StopReason, ToolResult, ToolSchema,
+    Attached, Content, ContinuationScope, Message, Modality, PromptCacheBoundary,
+    PromptCacheEncoding, PromptCacheIneligibleReason, PromptCacheMechanism,
+    PromptCacheRetentionClass, ProviderError, Request, StopReason, ToolResult, ToolSchema,
 };
 use serde_json::Value;
 #[cfg(test)]
@@ -21,20 +24,41 @@ use serde_json::json;
 use crate::json::{Array, Json, Object, described, object};
 
 /// The whole request body.
-pub(super) fn serialize(request: &Request<'_>) -> String {
+pub(super) fn serialize(
+    request: &Request<'_>,
+    scope: Option<ContinuationScope>,
+) -> Result<String, ProviderError> {
     let automatic = automatic_retention(request);
     let explicit = explicit_placement(request);
+    let mut efforts = scope
+        .filter(|_| request.purpose == crucible_core::RequestPurpose::Turn)
+        .map(|scope| effort::Efforts::new(request, scope))
+        .transpose()?;
+    let initial_effort = efforts
+        .as_ref()
+        .map_or(request.effort, effort::Efforts::initial);
     let mut json = Json::new();
+    let mut outcome = Ok(());
     json.object(|body| {
         body.text("model", request.model);
         body.number("max_tokens", request.max_tokens);
         body.boolean("stream", true);
+        if request.model == super::FABLE_51 {
+            // Intentional system/tool/history edits must not strand a session
+            // on prefix-bound thinking. Unchanged blocks remain usable.
+            body.object("thinking", |thinking| {
+                thinking.text("type", "adaptive");
+                thinking.object("block_binding", |binding| {
+                    binding.text("prefix_mismatch_behavior", "drop_block");
+                });
+            });
+        }
 
         if let Some(retention) = automatic {
             write_cache_control(body, retention);
         }
         body.array("messages", |messages| {
-            write_messages(messages, request, explicit);
+            outcome = write_messages(messages, request, explicit, scope, efforts.as_mut());
         });
 
         // Absent rather than null: the API rejects a null system prompt, and a
@@ -58,7 +82,7 @@ pub(super) fn serialize(request: &Request<'_>) -> String {
         // that reason and refused by the ones that do not, so sending it unasked
         // would turn "I never touched effort" into a 400 on whichever of them is
         // not on the list this week.
-        if let Some(effort) = request.effort {
+        if let Some(effort) = initial_effort {
             body.object("output_config", |config| {
                 config.text("effort", effort.as_str());
             });
@@ -80,7 +104,7 @@ pub(super) fn serialize(request: &Request<'_>) -> String {
             });
         }
     });
-    json.finish()
+    outcome.map(|()| json.finish())
 }
 
 /// The cache metadata [`serialize`] adds for this exact request.
@@ -147,6 +171,15 @@ fn explicit_placement(request: &Request<'_>) -> Option<ExplicitPlacement> {
         .boundaries()
         .iter()
         .rev()
+        .filter(|point| {
+            // Thinking cannot carry an explicit cache marker. A Fable response
+            // may contain nothing else, so use an earlier legal boundary and
+            // report only the marker the serializer can actually write.
+            request.model != super::FABLE_51 || !point.message()
+                .and_then(|index| usize::try_from(index).ok())
+                .and_then(|index| request.transcript.messages().get(index))
+                .is_some_and(|message| matches!(message, Message::Agent { text, calls, .. } if text.is_empty() && calls.is_empty()))
+        })
         .find(|point| capability.boundaries().contains(&point.kind()))
         .and_then(|point| match point.kind() {
             PromptCacheBoundary::AfterSystem => request
@@ -180,7 +213,8 @@ fn write_cache_control(parent: &mut Object<'_>, retention: PromptCacheRetentionC
 
 #[cfg(test)]
 fn build(request: &Request<'_>) -> Value {
-    serde_json::from_str(&serialize(request)).expect("request body is JSON")
+    serde_json::from_str(&serialize(request, None).expect("valid legacy request"))
+        .expect("request body is JSON")
 }
 
 /// Every message that has something in it, in order.
@@ -188,14 +222,84 @@ fn write_messages(
     messages: &mut Array<'_>,
     request: &Request<'_>,
     explicit: Option<ExplicitPlacement>,
-) {
+    scope: Option<ContinuationScope>,
+    mut efforts: Option<&mut effort::Efforts<'_>>,
+) -> Result<(), ProviderError> {
+    let mut pending: Option<std::collections::BTreeSet<&str>> = None;
+    let mut history = crate::history::LegacyHistory::default();
     for (nth, message) in request.transcript.messages().iter().enumerate() {
+        if let Some(efforts) = efforts.as_mut() {
+            efforts.before(messages, nth, message)?;
+        }
         let retention = match explicit {
             Some(ExplicitPlacement::Message(target, retention)) if target == nth => Some(retention),
             _ => None,
         };
+        let mut neutral = request.purpose == crucible_core::RequestPurpose::Recap
+            || (scope.is_none() && history.neutral(message));
+        if !neutral && let Some(scope) = scope {
+            if !matches!(message, Message::ToolResults(_)) {
+                replay::answered(pending.as_ref())?;
+            }
+            match message {
+                Message::Agent {
+                    text,
+                    calls,
+                    continuation,
+                    ..
+                } => {
+                    pending = None;
+                    if let Some(state) = continuation
+                        .as_ref()
+                        .filter(|state| replay::compatible(state, scope))
+                    {
+                        replay::Agent { state, text, calls }.write(
+                            messages,
+                            request.transcript.prefix_rewritten(nth),
+                            retention,
+                        )?;
+                        pending = Some(calls.iter().map(|call| call.id.as_str()).collect());
+                        continue;
+                    }
+                    neutral = true;
+                }
+                Message::ToolResults(results) => {
+                    if let Some(waiting) = pending.as_mut() {
+                        for result in results {
+                            if !waiting.remove(result.id.as_str()) {
+                                return Err(super::continuation::problem(
+                                    "tool result does not match an unanswered call",
+                                ));
+                            }
+                        }
+                    } else {
+                        neutral = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if neutral {
+            messages.object(|item| {
+                item.text("role", "user");
+                if let Some(retention) = retention {
+                    item.array("content", |content| {
+                        content.object(|block| {
+                            block.text("type", "text");
+                            block
+                                .text_with("text", |write| crate::history::visible(message, write));
+                            write_cache_control(block, retention);
+                        });
+                    });
+                } else {
+                    item.text_with("content", |write| crate::history::visible(message, write));
+                }
+            });
+            continue;
+        }
         write_message(messages, message, nth, request.attached, retention);
     }
+    replay::answered(pending.as_ref())
 }
 
 /// One message, unless it would carry no content.
@@ -274,7 +378,12 @@ fn write_message(
                 }
             });
         }),
-        Message::Agent { text, calls, stop } => {
+        Message::Agent {
+            continuation: _,
+            text,
+            calls,
+            stop,
+        } => {
             // Nothing said and nothing asked for: a turn cancelled or filtered
             // before the model's first word. It is recorded, so the message is
             // in the session file and would be sent on every turn after it —
@@ -450,6 +559,10 @@ fn write_tool(
 
 #[cfg(test)]
 mod tests {
+    fn serialize(request: &crucible_core::Request<'_>) -> String {
+        super::serialize(request, None).expect("valid legacy request")
+    }
+
     use crucible_core::{
         Attached, Change, Changed, Content, Diff, Effort, Fragment, Line, Modality, ToolArgs,
         ToolCall, ToolId, ToolOutput, Transcript,
@@ -461,8 +574,36 @@ mod tests {
     /// What a pointer finds when there is nothing there.
     const NOTHING: Value = Value::Null;
 
+    #[test]
+    fn recap_is_fresh_visible_text_without_executable_history() {
+        let mut request = request(crate::fake::recap_history());
+        request.purpose = crucible_core::RequestPurpose::Recap;
+        let body = build(&request);
+        let messages = body.get("messages").unwrap().as_array().unwrap();
+        assert!(
+            messages
+                .iter()
+                .all(|message| message.get("role").unwrap() == "user"
+                    && message.get("content").unwrap().is_string())
+        );
+        let text = body.to_string();
+        for visible in [
+            "old question",
+            "old answer",
+            "lookup",
+            "call-1",
+            "old result",
+            "summarize",
+        ] {
+            assert!(text.contains(visible));
+        }
+        assert!(!text.contains("private-signature-canary"));
+        assert!(!text.contains("tool_use"));
+    }
+
     fn request(transcript: Transcript) -> Request<'static> {
         Request {
+            purpose: crucible_core::RequestPurpose::Turn,
             model: "claude-test",
             transcript: Box::leak(Box::new(transcript)),
             tools: &[],
@@ -511,7 +652,9 @@ mod tests {
 
     fn said(text: &str) -> Transcript {
         let mut transcript = Transcript::new();
-        transcript.push(Message::said(text));
+        transcript
+            .push(Message::said(text))
+            .expect("valid fixture transcript");
         transcript
     }
 
@@ -608,12 +751,17 @@ mod tests {
         );
 
         let mut history = said("earlier");
-        history.push(Message::Agent {
-            text: "answer".into(),
-            calls: Vec::new(),
-            stop: Some(StopReason::Yielded),
-        });
-        history.push(Message::said("current"));
+        history
+            .push(Message::Agent {
+                continuation: None,
+                text: "answer".into(),
+                calls: Vec::new(),
+                stop: Some(StopReason::Yielded),
+            })
+            .expect("valid fixture transcript");
+        history
+            .push(Message::said("current"))
+            .expect("valid fixture transcript");
         let history = cached(
             request(history),
             PromptCacheMechanism::ExplicitBreakpoints,
@@ -647,11 +795,15 @@ mod tests {
     #[test]
     fn typed_context_is_sent_as_retained_model_input() {
         let mut transcript = Transcript::new();
-        transcript.push(Message::Context(Fragment::new(
-            "workspace",
-            "Workspace: /src",
-        )));
-        transcript.push(Message::said("continue"));
+        transcript
+            .push(Message::Context(Fragment::new(
+                "workspace",
+                "Workspace: /src",
+            )))
+            .expect("valid fixture transcript");
+        transcript
+            .push(Message::said("continue"))
+            .expect("valid fixture transcript");
 
         let body = build(&request(transcript));
 
@@ -699,15 +851,18 @@ mod tests {
         // The model has to see its own call in the transcript, or the result
         // that follows answers a question it never asked.
         let mut transcript = said("read it");
-        transcript.push(Message::Agent {
-            text: "let me look".into(),
-            calls: vec![ToolCall {
-                id: ToolId::new("call_1"),
-                name: "read".into(),
-                args: ToolArgs::new(r#"{"path":"src/main.rs"}"#),
-            }],
-            stop: Some(StopReason::WantsTools),
-        });
+        transcript
+            .push(Message::Agent {
+                continuation: None,
+                text: "let me look".into(),
+                calls: vec![ToolCall {
+                    id: ToolId::new("call_1"),
+                    name: "read".into(),
+                    args: ToolArgs::new(r#"{"path":"src/main.rs"}"#),
+                }],
+                stop: Some(StopReason::WantsTools),
+            })
+            .expect("valid fixture transcript");
 
         let body = build(&request(transcript));
 
@@ -732,15 +887,18 @@ mod tests {
         // The API refuses an empty text block, and a model that goes straight
         // to a tool produces one on every turn it does so.
         let mut transcript = said("go");
-        transcript.push(Message::Agent {
-            text: String::new().into(),
-            calls: vec![ToolCall {
-                id: ToolId::new("call_1"),
-                name: "read".into(),
-                args: ToolArgs::new("{}"),
-            }],
-            stop: Some(StopReason::WantsTools),
-        });
+        transcript
+            .push(Message::Agent {
+                continuation: None,
+                text: String::new().into(),
+                calls: vec![ToolCall {
+                    id: ToolId::new("call_1"),
+                    name: "read".into(),
+                    args: ToolArgs::new("{}"),
+                }],
+                stop: Some(StopReason::WantsTools),
+            })
+            .expect("valid fixture transcript");
 
         let body = build(&request(transcript));
         let content = at(&body, "/messages/1/content");
@@ -757,11 +915,14 @@ mod tests {
         // would send it again on every turn from then on. The session would be
         // permanently unusable, and nothing about the failure would say why.
         let mut transcript = said("go");
-        transcript.push(Message::Agent {
-            text: String::new().into(),
-            calls: Vec::new(),
-            stop: Some(StopReason::Cancelled),
-        });
+        transcript
+            .push(Message::Agent {
+                continuation: None,
+                text: String::new().into(),
+                calls: Vec::new(),
+                stop: Some(StopReason::Cancelled),
+            })
+            .expect("valid fixture transcript");
 
         let body = build(&request(transcript));
 
@@ -778,15 +939,18 @@ mod tests {
         // No arguments means no argument text arrived at all. Sending that
         // through as an empty string is a 400.
         let mut transcript = said("go");
-        transcript.push(Message::Agent {
-            text: String::new().into(),
-            calls: vec![ToolCall {
-                id: ToolId::new("call_1"),
-                name: "pwd".into(),
-                args: ToolArgs::new(""),
-            }],
-            stop: Some(StopReason::WantsTools),
-        });
+        transcript
+            .push(Message::Agent {
+                continuation: None,
+                text: String::new().into(),
+                calls: vec![ToolCall {
+                    id: ToolId::new("call_1"),
+                    name: "pwd".into(),
+                    args: ToolArgs::new(""),
+                }],
+                stop: Some(StopReason::WantsTools),
+            })
+            .expect("valid fixture transcript");
 
         let body = build(&request(transcript));
 
@@ -799,11 +963,14 @@ mod tests {
         // turn — and every turn of a continued session — showed it its own
         // half-sentence as an answer it had chosen to end there.
         let mut transcript = said("write it all out");
-        transcript.push(Message::Agent {
-            text: "as I was say".into(),
-            calls: Vec::new(),
-            stop: Some(StopReason::OutOfTokens),
-        });
+        transcript
+            .push(Message::Agent {
+                continuation: None,
+                text: "as I was say".into(),
+                calls: Vec::new(),
+                stop: Some(StopReason::OutOfTokens),
+            })
+            .expect("valid fixture transcript");
 
         let body = build(&request(transcript));
 
@@ -822,11 +989,14 @@ mod tests {
         // The path taken every time. A note under each answer would be spent
         // on the ordinary ending and teach the model nothing.
         let mut transcript = said("hello");
-        transcript.push(Message::Agent {
-            text: "hello back".into(),
-            calls: Vec::new(),
-            stop: Some(StopReason::Yielded),
-        });
+        transcript
+            .push(Message::Agent {
+                continuation: None,
+                text: "hello back".into(),
+                calls: Vec::new(),
+                stop: Some(StopReason::Yielded),
+            })
+            .expect("valid fixture transcript");
 
         let body = build(&request(transcript));
 
@@ -839,10 +1009,12 @@ mod tests {
     #[test]
     fn a_result_answers_the_call_that_asked() {
         let mut transcript = said("go");
-        transcript.push(Message::ToolResults(vec![ToolResult {
-            id: ToolId::new("call_1"),
-            output: ToolOutput::ok("fn main() {}"),
-        }]));
+        transcript
+            .push(Message::ToolResults(vec![ToolResult {
+                id: ToolId::new("call_1"),
+                output: ToolOutput::ok("fn main() {}"),
+            }]))
+            .expect("valid fixture transcript");
 
         let body = build(&request(transcript));
 
@@ -861,10 +1033,12 @@ mod tests {
     #[test]
     fn a_failed_result_is_marked_so_the_model_can_react() {
         let mut transcript = said("go");
-        transcript.push(Message::ToolResults(vec![ToolResult {
-            id: ToolId::new("call_1"),
-            output: ToolOutput::failed("no such file"),
-        }]));
+        transcript
+            .push(Message::ToolResults(vec![ToolResult {
+                id: ToolId::new("call_1"),
+                output: ToolOutput::failed("no such file"),
+            }]))
+            .expect("valid fixture transcript");
 
         let body = build(&request(transcript));
 
@@ -997,7 +1171,9 @@ mod tests {
     /// A turn whose tool results the runner resolved these attachments for.
     fn answering(results: Vec<ToolResult>, attached: Vec<Attached<'static>>) -> Request<'static> {
         let mut transcript = said("find me one");
-        transcript.push(Message::ToolResults(results));
+        transcript
+            .push(Message::ToolResults(results))
+            .expect("valid fixture transcript");
         let mut request = request(transcript);
         request.attached = Box::leak(attached.into_boxed_slice());
         request

@@ -106,12 +106,14 @@ Code plan, or *Provide your own API key*. ChatGPT offers a local browser
 callback and a device code for remote terminals; Kimi Code offers a device code.
 The live panel opens the authorization page, shows only the safe page and
 one-time code, stays cancellable with Escape, and takes a masked paste-back
-fallback for ChatGPT browser login. Anthropic has no account route; choose
-*Provide your own API key*, then Anthropic from the provider list. That list
+fallback for ChatGPT browser login. Anthropic and Google have no account route;
+choose *Provide your own API key*, then the provider from the list. That list
 names each provider with the variable it reads from, `set ANTHROPIC_API_KEY`
 and so on, for anyone who would rather export a key than store one.
 
-`/login anthropic` is the direct API-key shortcut. The key goes into its own
+`/login anthropic` and `/login google` are direct API-key shortcuts. Google also
+reads `GEMINI_API_KEY`; for example, select `google/gemini-3.8-flash` in `/model`
+after exporting that variable or storing a key. The key goes into its own
 labelled box, which takes a paste as readily as typing and draws a dot per
 character, never the key. Enter saves it; Enter on an empty box does nothing.
 Account tokens and API keys go to `~/.crucible/auth.json`, a file only you can

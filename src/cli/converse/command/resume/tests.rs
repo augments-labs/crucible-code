@@ -52,6 +52,7 @@ fn recorded(sample: &Sample, asked: &str) -> Session {
 
     session.append(&Message::said(asked));
     session.append(&Message::Agent {
+        continuation: None,
         text: "an answer".into(),
         calls: Vec::new(),
         stop: Some(StopReason::Yielded),
@@ -399,6 +400,7 @@ fn the_plan_that_comes_back_is_the_one_the_session_picked_up_wrote() {
     let planned = recorded(&sample, "plan the work");
     let id = named(&planned);
     planned.append(&Message::Agent {
+        continuation: None,
         text: "".into(),
         calls: vec![crucible_core::ToolCall {
             id: ToolId::new("call-1"),
@@ -541,6 +543,7 @@ fn the_preview_holds_the_work_a_session_did_and_not_only_what_was_said() {
 
     session.append(&Message::said("read the config"));
     session.append(&Message::Agent {
+        continuation: None,
         text: "I will look at it.".into(),
         calls: vec![ToolCall {
             id: call.clone(),

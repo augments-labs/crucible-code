@@ -97,7 +97,7 @@ impl<'a> AgentLoop<'a> {
             // and so it cannot land while a tool call is out.
             for line in steer.take() {
                 events.post(Event::Steered { line: line.clone() });
-                self.runner.record(run.ancestry(), Message::said(line));
+                self.runner.record(run.ancestry(), Message::said(line))?;
                 events.post(Event::Carried {
                     left: self.runner.load.left(counting.window, counting.reserve),
                 });
@@ -110,7 +110,7 @@ impl<'a> AgentLoop<'a> {
             // and an event saying they did would put a sentence in the panel
             // that nobody wrote. The line above it is already on their screen.
             for note in aside.take() {
-                self.runner.record(run.ancestry(), Message::said(note));
+                self.runner.record(run.ancestry(), Message::said(note))?;
                 events.post(Event::Carried {
                     left: self.runner.load.left(counting.window, counting.reserve),
                 });
@@ -229,7 +229,7 @@ impl<'a> AgentLoop<'a> {
                 }
                 heard => heard?,
             };
-            let (answer, said) = heard;
+            let (mut answer, said) = heard;
 
             // And what the response reported goes the other way: the counts a
             // provider sends are read here and belong to the session, as does a
@@ -253,11 +253,12 @@ impl<'a> AgentLoop<'a> {
                     self.runner.record(
                         run.ancestry(),
                         Message::Agent {
+                            continuation: None,
                             text,
                             calls: Vec::new(),
                             stop: Some(said),
                         },
-                    );
+                    )?;
                 }
                 if !run.policy().compaction.automatic {
                     return Ok(said);
@@ -274,6 +275,7 @@ impl<'a> AgentLoop<'a> {
                 }
             }
             bounds.heard(&answer);
+            let continuation = answer.take_continuation();
             let (text, calls) = answer.finish();
 
             if let Some(stop) = Runner::over(said, &calls) {
@@ -288,11 +290,12 @@ impl<'a> AgentLoop<'a> {
                 self.runner.record(
                     run.ancestry(),
                     Message::Agent {
+                        continuation: if calls.is_empty() { continuation } else { None },
                         text,
                         calls: Vec::new(),
                         stop: Some(stop),
                     },
-                );
+                )?;
                 return Ok(stop);
             }
 
@@ -324,11 +327,12 @@ impl<'a> AgentLoop<'a> {
             self.runner.record(
                 run.ancestry(),
                 Message::Agent {
+                    continuation,
                     text,
                     calls: calls.clone(),
                     stop: Some(said),
                 },
-            );
+            )?;
 
             let (results, went, output_bytes) = Work {
                 tools: &tools,
@@ -346,7 +350,7 @@ impl<'a> AgentLoop<'a> {
             bounds.tool_output = bounds.tool_output.saturating_add(output_bytes);
 
             self.runner
-                .record(run.ancestry(), Message::ToolResults(results));
+                .record(run.ancestry(), Message::ToolResults(results))?;
             events.post(Event::Carried {
                 left: self.runner.load.left(counting.window, counting.reserve),
             });

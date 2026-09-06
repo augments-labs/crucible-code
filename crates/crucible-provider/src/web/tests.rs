@@ -142,6 +142,96 @@ fn a_search_declares_the_server_tool_and_sends_the_query_as_the_message() {
 }
 
 #[test]
+fn fable_51_native_web_uses_adaptive_thinking_without_forced_tools_or_chosen_effort() {
+    for tool in [SEARCH_TOOL, FETCH_TOOL] {
+        let (mut source, replay) = built(200, answer());
+        source.model = "claude-fable-5-1".into();
+        source
+            .ask("Search or fetch this source", tool, &Cancel::new())
+            .unwrap();
+        let sent = replay.sent();
+        let body: Value = serde_json::from_str(&sent.body).unwrap();
+        assert_eq!(sent.url, "https://api.anthropic.com/v1/messages");
+        assert_eq!(body.get("model"), Some(&json!("claude-fable-5-1")));
+        assert_eq!(body.get("thinking"), Some(&json!({"type":"adaptive"})));
+        assert_eq!(body.pointer("/tools/0/type"), Some(&json!(tool)));
+        assert_eq!(body.pointer("/tools/0/max_uses"), Some(&json!(1)));
+        assert_eq!(
+            body.get("max_tokens"),
+            Some(&json!(if tool == FETCH_TOOL { 32_768 } else { 4096 }))
+        );
+        assert!(body.get("tool_choice").is_none());
+        assert!(body.get("output_config").is_none());
+        assert!(body.get("temperature").is_none());
+        assert!(!sent.body.contains(SECRET));
+    }
+}
+
+#[test]
+fn fable_51_native_web_rejects_unfinished_side_answers() {
+    for reason in [
+        None,
+        Some("max_tokens"),
+        Some("pause_turn"),
+        Some("refusal"),
+        Some("new_stop_reason"),
+    ] {
+        let mut payload: Value = serde_json::from_str(&answer()).unwrap();
+        payload
+            .as_object_mut()
+            .unwrap()
+            .insert("stop_reason".into(), json!(reason));
+        let (mut source, _) = built(200, payload.to_string());
+        source.model = "claude-fable-5-1".into();
+        let error = source.search("search now", &Cancel::new()).unwrap_err();
+        assert!(matches!(error, SourceError::Protocol { .. }));
+    }
+}
+
+#[test]
+fn fable_51_native_web_errors_never_echo_private_provider_payloads() {
+    let private = "private-thinking-signature";
+    for (status, payload) in [
+        (400, json!({"error":{"message":private}})),
+        (
+            200,
+            json!({"stop_reason":"end_turn","content":[{"type":"web_search_tool_result","content":{"error_code":private}}]}),
+        ),
+    ] {
+        let (mut source, _) = built(status, payload.to_string());
+        source.model = "claude-fable-5-1".into();
+        let error = source.search("search now", &Cancel::new()).unwrap_err();
+        assert!(!format!("{error:?} {error}").contains(private));
+    }
+    let payload = json!({"stop_reason":"end_turn","content":[{"type":"web_fetch_tool_result","content":{"error_code":private}}]});
+    let (mut source, _) = built(200, payload.to_string());
+    source.model = "claude-fable-5-1".into();
+    let error = source
+        .fetch("https://example.com/", &Cancel::new())
+        .unwrap_err();
+    assert!(!format!("{error:?} {error}").contains(private));
+}
+
+#[test]
+fn web_body_bound_rejects_one_byte_over_instead_of_accepting_a_truncated_json_prefix() {
+    for extra in [0, 1] {
+        let mut payload = answer();
+        payload.push_str(&" ".repeat(MOST - payload.len()));
+        if extra != 0 {
+            payload.push('!');
+        }
+        let (mut source, _) = built(200, payload);
+        source.model = "claude-fable-5-1".into();
+        let result = source.search("search now", &Cancel::new());
+        assert_eq!(
+            result.is_ok(),
+            extra == 0,
+            "exact byte boundary, extra={extra}"
+        );
+    }
+}
+
+#[test]
 fn the_key_travels_in_a_header_and_nowhere_else() {
     let (source, replay) = built(200, answer());
     source.search("x", &Cancel::new()).ok();
@@ -351,6 +441,56 @@ fn openai(status: u16, body: impl Into<String>) -> (OpenAiWeb, Arc<Replay>) {
         ),
         replay,
     )
+}
+
+#[test]
+fn astra_native_web_waits_for_clean_eof_and_rejects_a_late_failure() {
+    let completed = responded("answer", &json!([]));
+    for suffix in [
+        "event: error\ndata: {\"type\":\"error\",\"message\":\"private-late-error\"}\n\n",
+        "data: not-json\n\n",
+        completed.as_str(),
+    ] {
+        let (mut source, _) = openai(200, format!("{completed}{suffix}"));
+        source.model = "gpt-6-astra".into();
+        let error = source
+            .search("fixture", &Cancel::new())
+            .expect_err("an invalid tail must discard the side answer");
+        assert!(!format!("{error:?} {error}").contains("private-late-error"));
+    }
+}
+
+#[test]
+fn astra_native_web_rejects_oversized_bodies_even_after_a_valid_completion() {
+    let (mut source, _) = openai(
+        200,
+        format!("{}{}", responded("answer", &json!([])), " ".repeat(MOST)),
+    );
+    source.model = "gpt-6-astra".into();
+    assert!(source.search("fixture", &Cancel::new()).is_err());
+}
+
+#[test]
+fn astra_native_web_diagnostics_do_not_repeat_private_response_details() {
+    for (status, body) in [
+        (
+            400,
+            "{\"error\":{\"message\":\"private-reasoning-payload\"}}",
+        ),
+        (
+            200,
+            "event: error\ndata: {\"type\":\"error\",\"code\":\"server_error\",\"message\":\"private-reasoning-payload\"}\n\n",
+        ),
+        (
+            200,
+            "event: response.incomplete\ndata: {\"type\":\"response.incomplete\",\"response\":{\"incomplete_details\":{\"reason\":\"private-reasoning-payload\"}}}\n\n",
+        ),
+    ] {
+        let (mut source, _) = openai(status, body);
+        source.model = "gpt-6-astra".into();
+        let error = source.search("fixture", &Cancel::new()).unwrap_err();
+        assert!(!format!("{error:?} {error}").contains("private-reasoning-payload"));
+    }
 }
 
 #[test]

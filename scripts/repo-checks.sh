@@ -142,8 +142,10 @@ memory=$(grep -rIonE '\b[A-Z]{1,6}-[0-9]{1,4}\b|sdlc-skills|\bADR\b|\.claude/|\.
     crates src docs schema README.md Cargo.toml) || scan=$?
 case $scan in
     0)
+        # Standards and the public GPT model family are not internal work-item
+        # identities; their names remain meaningful outside this repository.
         memory=$(printf '%s\n' "$memory" |
-            grep -vE ':(UTF|SHA|ISO|IEC|RFC|IEEE|ECMA|ANSI|CVE|AES)-[0-9]+$') || memory=""
+            grep -vE ':(UTF|SHA|ISO|IEC|RFC|IEEE|ECMA|ANSI|CVE|AES|GPT)-[0-9]+$') || memory=""
         if [[ -n "$memory" ]]; then
             printf '%s\n' "$memory"
             printf '    FAIL the lines above name something only this repository can resolve\n'

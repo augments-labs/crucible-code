@@ -13,10 +13,14 @@
 //! prefix on the text because there is no field for it, and how hard to think
 //! is nested under `reasoning` rather than named at the top of the body.
 
+mod effort;
+mod replay;
+
 use crucible_core::{
-    Attached, Content, Message, Modality, PromptCacheBoundary, PromptCacheEncoding,
-    PromptCacheIneligibleReason, PromptCacheMechanism, PromptCacheRetentionClass, Request,
-    StopReason, ToolCall, ToolResult, ToolSchema,
+    Attached, Content, ContinuationScope, Message, Modality, PromptCacheBoundary,
+    PromptCacheEncoding, PromptCacheIneligibleReason, PromptCacheMechanism,
+    PromptCacheRetentionClass, ProviderError, Request, StopReason, ToolCall, ToolResult,
+    ToolSchema,
 };
 #[cfg(test)]
 use serde_json::Value;
@@ -25,9 +29,18 @@ use super::Serving;
 use crate::json::{Array, Json, Object, described};
 
 /// The whole request body, as `serving` accepts it.
-pub(super) fn serialize(request: &Request<'_>, serving: Serving) -> String {
+pub(super) fn serialize(
+    request: &Request<'_>,
+    serving: Serving,
+    scope: Option<ContinuationScope>,
+) -> Result<String, ProviderError> {
     let explicit_message = explicit_message(request);
+    let mut efforts = scope
+        .map(|scope| effort::Efforts::new(request, scope))
+        .transpose()?
+        .flatten();
     let mut json = Json::new();
+    let mut outcome = Ok(());
     json.object(|body| {
         body.text("model", request.model);
         body.boolean("stream", true);
@@ -58,7 +71,7 @@ pub(super) fn serialize(request: &Request<'_>, serving: Serving) -> String {
                         body.text("prompt_cache_key", key.as_str());
                     }
                     match (
-                        request.model.starts_with("gpt-5.6-"),
+                        super::cache_writes(request.model),
                         cache.policy.retention().class(),
                     ) {
                         (true, PromptCacheRetentionClass::Ephemeral) => {
@@ -98,18 +111,31 @@ pub(super) fn serialize(request: &Request<'_>, serving: Serving) -> String {
             body.text("instructions", system);
         }
 
-        if let Some(effort) = request.effort {
+        if let Some(effort) = efforts
+            .as_ref()
+            .map_or(request.effort, effort::Efforts::initial)
+        {
             body.object("reasoning", |reasoning| {
                 reasoning.text("effort", effort.as_str());
             });
         }
 
         body.array("input", |input| {
-            write_input(
-                input,
-                request,
-                explicit_message.filter(|_| serving == Serving::Api),
-            );
+            if let Some(scope) = scope {
+                outcome = replay::write(
+                    input,
+                    request,
+                    scope,
+                    explicit_message.filter(|_| serving == Serving::Api),
+                    efforts.as_mut(),
+                );
+            } else {
+                write_input(
+                    input,
+                    request,
+                    explicit_message.filter(|_| serving == Serving::Api),
+                );
+            }
         });
 
         // Absent rather than empty: an empty array is refused rather than read
@@ -122,7 +148,7 @@ pub(super) fn serialize(request: &Request<'_>, serving: Serving) -> String {
             });
         }
     });
-    json.finish()
+    outcome.map(|()| json.finish())
 }
 
 /// The cache metadata [`serialize`] adds for this exact request.
@@ -143,7 +169,7 @@ pub(super) fn prompt_cache_encoding(
         PromptCacheMechanism::AutomaticPrefix => {
             let hinted = cache.routing_key.is_some()
                 || matches!(
-                    (request.model.starts_with("gpt-5.6-"), selected.retention()),
+                    (super::cache_writes(request.model), selected.retention()),
                     (true, PromptCacheRetentionClass::Ephemeral)
                         | (false, PromptCacheRetentionClass::Extended)
                 );
@@ -175,12 +201,32 @@ fn build(request: &Request<'_>) -> Value {
 /// The body one of the two services receives.
 #[cfg(test)]
 fn served(request: &Request<'_>, serving: Serving) -> Value {
-    serde_json::from_str(&serialize(request, serving)).expect("request body is JSON")
+    serde_json::from_str(&serialize(request, serving, None).unwrap()).expect("request body is JSON")
 }
 
 /// The transcript, as the flat list of items this endpoint reads.
 fn write_input(items: &mut Array<'_>, request: &Request<'_>, explicit_message: Option<usize>) {
+    let mut history = crate::history::LegacyHistory::default();
     for (nth, message) in request.transcript.messages().iter().enumerate() {
+        if history.neutral(message) || request.purpose == crucible_core::RequestPurpose::Recap {
+            items.object(|item| {
+                item.text("role", "user");
+                if explicit_message == Some(nth) {
+                    item.array("content", |content| {
+                        content.object(|part| {
+                            part.text("type", "input_text");
+                            part.text_with("text", |write| crate::history::visible(message, write));
+                            part.object("prompt_cache_breakpoint", |marker| {
+                                marker.text("mode", "explicit");
+                            });
+                        });
+                    });
+                } else {
+                    item.text_with("content", |write| crate::history::visible(message, write));
+                }
+            });
+            continue;
+        }
         append(
             items,
             message,
@@ -243,7 +289,12 @@ fn append(
                 }
             });
         }),
-        Message::Agent { text, calls, stop } => {
+        Message::Agent {
+            continuation: _,
+            text,
+            calls,
+            stop,
+        } => {
             let answered = !text.is_empty() || !calls.is_empty();
             let cut = StopReason::cut(*stop).filter(|_| answered);
 
@@ -317,12 +368,31 @@ fn explicit_message(request: &Request<'_>) -> Option<usize> {
         return None;
     }
 
-    let point = cache.plan.boundaries().iter().rev().find(|point| {
-        matches!(
-            point.kind(),
-            PromptCacheBoundary::AfterMessage | PromptCacheBoundary::AfterContent
-        ) && capability.boundaries().contains(&point.kind())
-    })?;
+    let point = cache
+        .plan
+        .boundaries()
+        .iter()
+        .rev()
+        .filter(|point| {
+            // Retained native Responses items replay unchanged. Select an earlier
+            // supported input_text boundary rather than adding fields to encrypted
+            // reasoning or output-item content whose marker support is unreviewed.
+            request.model != super::ASTRA
+                || point
+                    .message()
+                    .and_then(|index| usize::try_from(index).ok())
+                    .and_then(|index| request.transcript.messages().get(index))
+                    .is_some_and(|message| {
+                        matches!(message, Message::User { .. } | Message::Context(_))
+                            && explicitly_markable(message)
+                    })
+        })
+        .find(|point| {
+            matches!(
+                point.kind(),
+                PromptCacheBoundary::AfterMessage | PromptCacheBoundary::AfterContent
+            ) && capability.boundaries().contains(&point.kind())
+        })?;
     let message = usize::try_from(point.message()?).ok()?;
     request
         .transcript
@@ -337,7 +407,12 @@ fn explicitly_markable(message: &Message) -> bool {
     match message {
         Message::Context(fragment) => !fragment.text().is_empty(),
         Message::User { text, .. } => !text.is_empty(),
-        Message::Agent { text, calls, stop } => {
+        Message::Agent {
+            continuation: _,
+            text,
+            calls,
+            stop,
+        } => {
             let answered = !text.is_empty() || !calls.is_empty();
             StopReason::cut(*stop).is_some_and(|_| answered)
                 || (!text.is_empty() && calls.is_empty())

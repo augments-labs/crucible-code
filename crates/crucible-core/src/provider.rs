@@ -247,6 +247,8 @@ impl fmt::Display for ProviderLimit {
 /// response, so starting a request does not duplicate the transcript.
 #[derive(Clone, Copy)]
 pub struct Request<'a> {
+    /// Whether history is continued natively or read as visible recap context.
+    pub purpose: RequestPurpose,
     /// Which model to ask.
     pub model: &'a str,
     /// The transcript so far.
@@ -278,6 +280,15 @@ pub struct Request<'a> {
     /// observe-only policy, so reported automatic provider usage keeps its
     /// policy and attempt identity.
     pub prompt_cache: Option<&'a crate::PromptCacheRequest<'a>>,
+}
+
+/// Which history projection the request requires, independently of its vendor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequestPurpose {
+    /// Continue the conversation, including compatible private provider state.
+    Turn,
+    /// Summarize visible history as fresh text, without executable old calls.
+    Recap,
 }
 
 /// One attachment as a request carries it.
@@ -554,6 +565,13 @@ pub enum Delta {
     },
     /// More of the current tool call's argument JSON.
     ToolArgs(Box<str>),
+    /// Bounded ordered state, finalized by the runner only after a clean stop.
+    Continuation(crate::Continuation),
+    /// Private output arrived but is not yet a complete replayable unit.
+    ///
+    /// Contains no payload and never reaches the renderer. It prevents an
+    /// interrupted thought-only response from being retried as an empty one.
+    Progress,
     /// Normalized partial or complete usage for this provider attempt.
     ///
     /// Shipped adapters use this variant. The legacy output/input level
@@ -588,6 +606,8 @@ impl fmt::Debug for Delta {
                 .field("name", &"[redacted]")
                 .finish(),
             Self::ToolArgs(_) => f.debug_tuple("ToolArgs").field(&"[redacted]").finish(),
+            Self::Continuation(state) => f.debug_tuple("Continuation").field(state).finish(),
+            Self::Progress => f.write_str("Progress"),
             Self::Usage(usage) => f.debug_tuple("Usage").field(usage).finish(),
             Self::Spent(spend) => f.debug_tuple("Spent").field(spend).finish(),
             Self::Carried(carried) => f.debug_tuple("Carried").field(carried).finish(),

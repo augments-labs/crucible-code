@@ -97,9 +97,12 @@ mod tests {
 
     fn asking() -> Request<'static> {
         let mut transcript = Transcript::new();
-        transcript.push(Message::said("hello"));
+        transcript
+            .push(Message::said("hello"))
+            .expect("valid fixture transcript");
 
         Request {
+            purpose: crucible_core::RequestPurpose::Turn,
             model: "",
             transcript: Box::leak(Box::new(transcript)),
             tools: &[],

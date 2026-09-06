@@ -19,7 +19,7 @@
 //! keeps only the terminal response; the result is no more visible in halves
 //! than either vendor's unstreamed answer.
 
-use std::io::{self, BufReader, Read};
+use std::io::{self, Read};
 use std::time::{Duration, Instant};
 
 use crucible_core::{
@@ -31,6 +31,9 @@ use crate::endpoint::Endpoint;
 use crate::json::Json;
 use crate::sse::{Events, Framed};
 use crate::transport::{Response, Transport};
+
+mod google;
+pub use google::GoogleWeb;
 
 #[cfg(test)]
 mod tests;
@@ -95,7 +98,9 @@ fn filled(
     cancel: &Cancel,
 ) -> Result<String, SourceError> {
     let since = Instant::now();
-    let mut body = body.take(MOST as u64);
+    // Read one byte beyond the admitted size to distinguish exact EOF from a
+    // truncated prefix that happens to be valid JSON (or valid page text).
+    let mut body = body.take(MOST as u64 + 1);
     let mut said = Vec::new();
     let mut into = [0_u8; 8 * 1024];
 
@@ -122,7 +127,17 @@ fn filled(
 
         match read {
             Ok(0) => break,
-            Ok(read) => said.extend_from_slice(into.get(..read).unwrap_or_default()),
+            Ok(read) => {
+                if read > MOST.saturating_sub(said.len()) {
+                    return Err(SourceError::Protocol {
+                        named,
+                        problem:
+                            "the web response exceeded its byte limit; no partial result was used"
+                                .into(),
+                    });
+                }
+                said.extend_from_slice(into.get(..read).unwrap_or_default());
+            }
             Err(problem) if problem.kind() == io::ErrorKind::Interrupted => {}
             Err(problem) => return Err(transport(&problem)),
         }
@@ -227,6 +242,14 @@ impl AnthropicWeb {
         json.object(|body| {
             body.text("model", &self.model);
             body.number("max_tokens", if fetching { FETCH_CEILING } else { CEILING });
+            if self.model.as_ref() == crate::anthropic::FABLE_51 {
+                // This fresh side request has no thinking history to bind.
+                // Fable is always adaptive; leave its effort default unchosen
+                // and let it select the tool rather than forcing a rejected mode.
+                body.object("thinking", |thinking| {
+                    thinking.text("type", "adaptive");
+                });
+            }
             body.array("messages", |messages| {
                 messages.object(|message| {
                     message.text("role", "user");
@@ -248,7 +271,7 @@ impl AnthropicWeb {
             });
         });
 
-        posted(
+        let answered = posted(
             Sending {
                 named: ANTHROPIC,
                 transport: self.transport.as_ref(),
@@ -258,6 +281,43 @@ impl AnthropicWeb {
             json.finish(),
             cancel,
         )
+        .map_err(|error| self.failure(error))?;
+        if self.model.as_ref() == crate::anthropic::FABLE_51
+            && !matches!(
+                answered.get("stop_reason").and_then(Value::as_str),
+                Some("end_turn" | "stop_sequence")
+            )
+        {
+            return Err(SourceError::Protocol {
+                named: ANTHROPIC,
+                problem: "the native web request did not finish; no partial result was used".into(),
+            });
+        }
+        Ok(answered)
+    }
+
+    /// A Fable side response can include private thinking beside web results.
+    /// Keep typed failure facts but never expose arbitrary response prose/code.
+    fn failure(&self, error: SourceError) -> SourceError {
+        if self.model.as_ref() != crate::anthropic::FABLE_51 {
+            return error;
+        }
+        match error {
+            SourceError::Refused { status, .. } => SourceError::Refused {
+                named: ANTHROPIC,
+                status,
+                message: "check the Anthropic key, model access, web-tool settings and workspace retention; private details omitted".into(),
+            },
+            SourceError::Protocol { .. } => SourceError::Protocol {
+                named: ANTHROPIC,
+                problem: "the native web request returned no usable result; private details omitted".into(),
+            },
+            SourceError::Transport { .. } => SourceError::Transport {
+                named: ANTHROPIC,
+                problem: "the native web request could not be delivered or read; private details omitted".into(),
+            },
+            error @ (SourceError::Address(_) | SourceError::Cancelled(_)) => error,
+        }
     }
 }
 
@@ -401,7 +461,7 @@ impl Search for AnthropicWeb {
 
     fn search(&self, query: &str, cancel: &Cancel) -> Result<Vec<SearchResult>, SourceError> {
         let answered = self.ask(query, SEARCH_TOOL, cancel)?;
-        results(&answered)
+        results(&answered).map_err(|error| self.failure(error))
     }
 }
 
@@ -525,7 +585,7 @@ impl Fetch for AnthropicWeb {
         // own against a model inventing one, and here the conversation is one
         // message long and crucible wrote it.
         let answered = self.ask(&format!("Fetch {url}"), FETCH_TOOL, cancel)?;
-        page(&answered, url)
+        page(&answered, url).map_err(|error| self.failure(error))
     }
 }
 
@@ -634,6 +694,28 @@ impl OpenAiWeb {
             body,
             cancel,
         )
+        .map_err(|error| {
+            if self.model.as_ref() == "gpt-6-astra" {
+                match error {
+                    SourceError::Refused { named, status, .. } => SourceError::Refused {
+                        named,
+                        status,
+                        message: "check the OpenAI API access and request settings; private response details omitted".into(),
+                    },
+                    SourceError::Protocol { named, .. } => SourceError::Protocol {
+                        named,
+                        problem: "the OpenAI web response was incomplete or invalid; private details omitted".into(),
+                    },
+                    SourceError::Transport { named, .. } => SourceError::Transport {
+                        named,
+                        problem: "the OpenAI web response could not be read".into(),
+                    },
+                    error @ (SourceError::Address(_) | SourceError::Cancelled(_)) => error,
+                }
+            } else {
+                error
+            }
+        })
     }
 }
 
@@ -691,15 +773,22 @@ fn posted_openai(
     openai_response(body, cancel, &redactions)
 }
 
-/// Reads a streamed side response through the same bounded SSE framing as turns.
+/// Reads a whole bounded side response, then frames it exactly as a turn.
+///
+/// A terminal event is only a proposed answer until the transport reaches clean
+/// EOF. The whole-body reader detects overflow and a broken or cancelled tail;
+/// framing then rejects contradictions after completion instead of using a
+/// prefix that only appeared successful.
 fn openai_response(
     body: Box<dyn Read + Send>,
     cancel: &Cancel,
     redactions: &Redactions,
 ) -> Result<Value, SourceError> {
     let since = Instant::now();
-    let mut events = Events::new(BufReader::new(body.take(MOST as u64)));
+    let body = read(OPENAI, body, cancel)?;
+    let mut events = Events::new(io::Cursor::new(body));
     let mut finished = Vec::new();
+    let mut completed = None;
 
     while let Some(next) = events.next() {
         if cancel.requested() {
@@ -726,6 +815,12 @@ fn openai_response(
         let data = event.data.trim();
         if data.is_empty() || data == "[DONE]" {
             continue;
+        }
+        if completed.is_some() {
+            return Err(SourceError::Protocol {
+                named: OPENAI,
+                problem: "the stream continued after response.completed".into(),
+            });
         }
         let payload: Value =
             serde_json::from_str(data).map_err(|problem| SourceError::Protocol {
@@ -768,9 +863,12 @@ fn openai_response(
                             named: OPENAI,
                             problem: "response.completed did not carry an object".into(),
                         })?;
-                    object.insert("output".to_owned(), Value::Array(finished));
+                    object.insert(
+                        "output".to_owned(),
+                        Value::Array(std::mem::take(&mut finished)),
+                    );
                 }
-                return Ok(response);
+                completed = Some(response);
             }
             Some("response.failed") => return Err(openai_failed(&payload, redactions)),
             Some("response.incomplete") => {
@@ -786,7 +884,7 @@ fn openai_response(
         }
     }
 
-    Err(SourceError::Protocol {
+    completed.ok_or_else(|| SourceError::Protocol {
         named: OPENAI,
         problem: "the stream ended before response.completed".into(),
     })

@@ -19,6 +19,7 @@ use std::io::{Read as _, Write as _};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::process::Command as HostCommand;
+use std::sync::{Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -49,14 +50,21 @@ const WHOAMI: &str = "CRUCIBLE_WINDOWS_SANDBOX_TEST_WHOAMI";
 // the result instead of being hidden by the integration harness.
 const COMMAND_WAIT: Duration = Duration::from_secs(45);
 
+// These independent checks share one machine-wide setup lock and account.
+// Queue fixtures here so concurrent logons cannot consume each other's bounded
+// maintenance waits on slower hosts; the child workload never takes this lock.
+static NATIVE_FIXTURE: Mutex<()> = Mutex::new(());
+
 struct Fixture {
     parent: PathBuf,
     workspace: PathBuf,
     outside: PathBuf,
+    _serial: MutexGuard<'static, ()>,
 }
 
 impl Fixture {
     fn new(name: &str) -> Self {
+        let serial = NATIVE_FIXTURE.lock().expect("native fixture lock");
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |since| since.as_nanos());
@@ -73,6 +81,7 @@ impl Fixture {
             parent: parent.canonicalize().expect("canonical fixture"),
             workspace: workspace.canonicalize().expect("canonical workspace"),
             outside: outside.canonicalize().expect("canonical outside"),
+            _serial: serial,
         }
     }
 

@@ -27,6 +27,63 @@ fn keeping_one() -> Compaction {
 }
 
 #[test]
+fn accounting_after_a_recap_stop_is_read_before_committing_the_notes() {
+    // Chat Completions reports usage after finish_reason. Waiting for clean
+    // EOF must still accept that accounting-only postlude and count it once.
+    let usage = ProviderUsage::new(
+        InputTokenUsage::inclusive_read(Some(200), None).unwrap(),
+        Some(17),
+        None,
+        None,
+        &[],
+    )
+    .unwrap();
+    let mut notes = recap("notes to self");
+    notes.extend([
+        Delta::Usage(usage),
+        Delta::Spent(Spend::new(17)),
+        Delta::Carried(Carried::new(200)),
+    ]);
+    let script = Script::new(vec![saying("first"), saying("second"), notes]);
+    let mut scripted = Scripted::within(script, 200_000, keeping_one());
+    scripted.turn("first").unwrap();
+    scripted.turn("second").unwrap();
+    let _ = scripted.spent();
+    assert!(matches!(scripted.compacting().unwrap(), Room::Made(_)));
+    assert_eq!(scripted.spent(), [17, 17]);
+    assert!(conversation(scripted.runner.transcript()).iter().any(
+        |message| matches!(message, Message::User { text, .. } if text.contains("notes to self"))
+    ));
+}
+
+#[test]
+fn substantive_content_after_a_recap_stop_never_replaces_the_history() {
+    for extra in [
+        Delta::Text("late content".into()),
+        Delta::ToolStarted {
+            id: ToolId::new("late"),
+            name: "missing".into(),
+        },
+        Delta::ToolArgs("{}".into()),
+        Delta::Progress,
+        Delta::Stopped(StopReason::Yielded),
+    ] {
+        let mut notes = recap("notes to self");
+        notes.push(extra);
+        let script = Script::new(vec![saying("first"), saying("second"), notes]);
+        let mut scripted = Scripted::within(script, 200_000, keeping_one());
+        scripted.turn("first").unwrap();
+        scripted.turn("second").unwrap();
+        let before = conversation(scripted.runner.transcript());
+        assert!(matches!(
+            scripted.compacting(),
+            Err(TurnError::RecapIncomplete)
+        ));
+        assert_eq!(conversation(scripted.runner.transcript()), before);
+    }
+}
+
+#[test]
 fn a_compaction_posts_the_rebuilt_window_reading_immediately() {
     let script = Script::new(vec![
         vec![
@@ -246,18 +303,28 @@ fn a_recap_whose_connection_broke_says_so_and_replaces_nothing() {
     scripted.runner.policy.compaction = keeping_one();
 
     let mut earlier = Transcript::new();
-    earlier.push(Message::said("first"));
-    earlier.push(Message::Agent {
-        text: "one".into(),
-        calls: Vec::new(),
-        stop: Some(StopReason::Yielded),
-    });
-    earlier.push(Message::said("second"));
-    earlier.push(Message::Agent {
-        text: "two".into(),
-        calls: Vec::new(),
-        stop: Some(StopReason::Yielded),
-    });
+    earlier
+        .push(Message::said("first"))
+        .expect("valid fixture transcript");
+    earlier
+        .push(Message::Agent {
+            continuation: None,
+            text: "one".into(),
+            calls: Vec::new(),
+            stop: Some(StopReason::Yielded),
+        })
+        .expect("valid fixture transcript");
+    earlier
+        .push(Message::said("second"))
+        .expect("valid fixture transcript");
+    earlier
+        .push(Message::Agent {
+            continuation: None,
+            text: "two".into(),
+            calls: Vec::new(),
+            stop: Some(StopReason::Yielded),
+        })
+        .expect("valid fixture transcript");
     scripted.runner = scripted.runner.resuming(earlier);
     let before = scripted.runner.transcript().messages().to_vec();
 
@@ -383,6 +450,7 @@ fn an_answer_cut_off_by_the_window_is_recorded_before_room_is_made() {
             .transcript()
             .messages()
             .contains(&Message::Agent {
+                continuation: None,
                 text: "half an answer".into(),
                 calls: Vec::new(),
                 stop: Some(StopReason::WindowExceeded),
@@ -414,6 +482,7 @@ fn an_answer_cut_off_by_the_window_is_recorded_when_room_is_not_made() {
         [
             Message::said("go"),
             Message::Agent {
+                continuation: None,
                 text: "half".into(),
                 calls: Vec::new(),
                 stop: Some(StopReason::WindowExceeded),
@@ -1026,13 +1095,16 @@ fn a_pass_is_measured_against_the_room_its_own_run_holds() {
     // Two exchanges under that one run: the first fills the window, the second
     // is the pass that has to notice.
     for prompt in ["first", "second"] {
-        scripted.runner.record(
-            run.ancestry(),
-            Message::User {
-                text: prompt.into(),
-                attachments: Box::new([]),
-            },
-        );
+        scripted
+            .runner
+            .record(
+                run.ancestry(),
+                Message::User {
+                    text: prompt.into(),
+                    attachments: Box::new([]),
+                },
+            )
+            .expect("valid fixture transcript");
         scripted
             .runner
             .exchange(&mut scripted.says, &run)
@@ -1348,6 +1420,7 @@ fn a_run_that_declined_to_make_room_keeps_the_answer_the_window_cut() {
         [
             Message::said("go"),
             Message::Agent {
+                continuation: None,
                 text: "half".into(),
                 calls: Vec::new(),
                 stop: Some(StopReason::WindowExceeded),
@@ -1376,7 +1449,8 @@ fn a_session_that_never_compacts_holds_nothing_back_from_its_window_reading() {
     );
     scripted
         .runner
-        .record(Ancestry::new(), Message::said("x".repeat(150_000)));
+        .record(Ancestry::new(), Message::said("x".repeat(150_000)))
+        .expect("valid fixture transcript");
 
     let never = scripted.runner.left();
 
@@ -1408,7 +1482,8 @@ fn a_session_told_something_longer_reads_its_window_as_fuller_at_once() {
     );
     scripted
         .runner
-        .record(Ancestry::new(), Message::said("x".repeat(150_000)));
+        .record(Ancestry::new(), Message::said("x".repeat(150_000)))
+        .expect("valid fixture transcript");
     scripted.runner.telling("mind the workspace");
 
     let short = scripted.runner.left();

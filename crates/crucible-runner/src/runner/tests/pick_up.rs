@@ -18,6 +18,7 @@ fn earlier(sample: &Sample) -> SessionId {
 
     session.append(&Message::said("what came before"));
     session.append(&Message::Agent {
+        continuation: None,
         text: "an answer from before".into(),
         calls: Vec::new(),
         stop: Some(StopReason::Yielded),

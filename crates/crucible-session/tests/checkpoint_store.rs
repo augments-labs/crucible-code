@@ -346,6 +346,7 @@ fn every_pending_outcome_survives_stop_and_resume_with_one_provider_result() {
             RunItem::message(
                 ancestry,
                 Message::Agent {
+                    continuation: None,
                     text: "".into(),
                     calls: ["approved", "rejected", "cancelled", "external"]
                         .into_iter()

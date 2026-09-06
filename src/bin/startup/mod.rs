@@ -675,6 +675,7 @@ fn worked(session: &crucible_runner::Session) {
 
         session.append(&Message::said(format!("{ASKED} — turn {turn}?")));
         session.append(&Message::Agent {
+            continuation: None,
             text: ANSWERED.into(),
             calls: vec![ToolCall {
                 id: call.clone(),
@@ -690,6 +691,7 @@ fn worked(session: &crucible_runner::Session) {
     }
 
     session.append(&Message::Agent {
+        continuation: None,
         text: ENDED.into(),
         calls: Vec::new(),
         stop: Some(StopReason::Yielded),

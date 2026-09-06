@@ -17,6 +17,7 @@ and forbids persistent cached-content resources.
 | --- | --- | --- |
 | OpenAI | Provider-managed implicit prefix caching | An opaque, derived routing key scoped to the session by default. |
 | Anthropic | Automatic short-lived prefix caching | Top-level `cache_control: {"type":"ephemeral"}`. |
+| Google Gemini | Provider-managed implicit prefix caching | No additional cache field or remote cached-content resource. |
 | Moonshot/Kimi | Provider-managed automatic context caching | An opaque, derived `prompt_cache_key` scoped to the session by default; Kimi manages cache creation and lifetime. |
 
 Only exact built-in endpoint/model records advertise support. A custom
@@ -83,12 +84,16 @@ match or accepted request is not a hit.
 
 ## Shipped capability records
 
-These records were reviewed on 2026-08-31. Their URLs and record versions are
+Existing records were reviewed on 2026-08-31; the six new model records were
+reviewed on 2026-09-06. Their URLs and record versions are
 compiled into the adapters so ordinary startup never scrapes mutable
 documentation.
 
 | Adapter and exact reviewed models | Mechanisms | Official source | Record version |
 | --- | --- | --- | --- |
+| OpenAI Responses: `gpt-6-astra` | implicit caching and up to four explicit input-content breakpoints on the public API | [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching) | `openai-prompt-cache-2026-09-06` |
+| Anthropic Messages: `claude-fable-5-1` | automatic control and up to four legal block breakpoints; 5-minute and 1-hour classes | [Anthropic preserved thinking](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking) | `anthropic-prompt-cache-2026-09-06` |
+| Google Interactions: `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.1-pro-preview` | implicit caching; no explicit cache resource or retention control on this route | [Google caching](https://ai.google.dev/gemini-api/docs/caching) | `google-interactions-cache-2026-09-06` |
 | OpenAI Responses: `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` | implicit automatic caching; up to four explicit input-content breakpoints on the public API | [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching) | `openai-prompt-cache-2026-08-31` |
 | OpenAI Responses: `gpt-5.5` | implicit automatic caching; optional documented 24-hour retention | [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching) | `openai-prompt-cache-2026-08-31` |
 | Anthropic Messages: `claude-fable-5`, `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5` | top-level automatic control and up to four explicit block breakpoints; 5-minute and 1-hour classes | [Anthropic prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching), [tool use](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching) | `anthropic-prompt-cache-2026-08-31` |
@@ -100,6 +105,13 @@ the prompt-caching guide. Pricing is selected only for an exact protocol,
 endpoint, model, revision, date, retention class and input band. Subscription
 billing and Moonshot membership billing remain unknown rather than being
 invented as token prices.
+
+Private continuation is distinct from a cache hit. Compatible Google and Astra
+native history is replayed in order; Fable thinking whose bound prefix was
+rewritten by compaction or pruning is omitted. Public text and settled tool
+results remain available, but prefix changes can reduce cache reuse. Only the
+provider's reported cached-token usage proves a hit. Native web-tool charges
+and account-specific allowances are not inferred from token prices.
 
 Persistent-storage quantities, when a future lifecycle adapter reports them,
 are priced in token-hours rather than raw tokens. A same-currency total may
@@ -120,8 +132,8 @@ no runtime dependency or copied implementation was introduced:
 | Philharmonica ADK | `df69de3411e78b61faf7bb4a4d641b02f53d0bc8` | Anthropic cache applicator, policy resolution, cached-content references and normalized token details |
 
 The following official protocol documents were also re-read on 2026-08-31 as
-conformance context for future adapters. Their presence here does not claim
-that crucible ships those adapters:
+conformance context. Gemini's shipped Interactions route is described above;
+the other links do not claim that crucible ships those adapters:
 
 - [Azure OpenAI](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/prompt-caching)
 - [Gemini API](https://ai.google.dev/gemini-api/docs/caching) and

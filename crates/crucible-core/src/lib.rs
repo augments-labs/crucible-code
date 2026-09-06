@@ -21,6 +21,7 @@ mod attachable;
 mod cancel;
 mod compaction;
 mod context;
+mod continuation;
 mod credential;
 mod diff;
 mod event;
@@ -52,6 +53,10 @@ pub use attachable::{CEILING, KINDS, Kind, kind};
 pub use cancel::Cancel;
 pub use compaction::{Compacted, Compacting, RECAP, Room};
 pub use context::{ContextError, ContextPatch, ContextSection, ContextSnapshot, Fragment, Seen};
+pub use continuation::{
+    CONTINUATION_BYTES, CONTINUATION_HISTORY_BYTES, CONTINUATION_PARTS, Continuation,
+    ContinuationData, ContinuationError, ContinuationPart, ContinuationScope, ProviderContinuation,
+};
 pub use credential::{
     ApiKey, Credential, CredentialError, Header, HeaderKey, Outgoing, Redactions,
 };
@@ -140,7 +145,7 @@ pub use prompt_cache::{
 };
 pub use provider::{
     Attached, Calibration, Carried, Content, Delta, DeltaStream, Effort, EffortError, Provider,
-    ProviderError, ProviderLimit, Request, Spend, ToolSchema,
+    ProviderError, ProviderLimit, Request, RequestPurpose, Spend, ToolSchema,
 };
 pub use registry::{
     Collision, Provenance, ProvenanceError, REGISTRY_BYTES, REGISTRY_ENTRIES, Registered, Registry,

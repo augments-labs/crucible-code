@@ -4,7 +4,7 @@ use clap::CommandFactory;
 use crucible_core::{Modality, PricingDate, PromptCacheRetentionClass, PromptCacheSupport};
 
 /// A date every compiled pricing record is already effective on.
-const REVIEWED: PricingDate = PricingDate::new(2026, 9, 1);
+const REVIEWED: PricingDate = PricingDate::new(2026, 9, 6);
 #[cfg(unix)]
 use std::ffi::OsString;
 
@@ -659,6 +659,122 @@ fn every_provider_offers_a_few_models_and_never_a_list_to_scroll() {
 }
 
 #[test]
+fn six_requested_models_have_exact_limits_and_supported_effort_ladders() {
+    for (provider, model, window, output) in [
+        ("google", "gemini-3.8-flash", 1_048_576, 65_536),
+        ("google", "gemini-3.7-flash", 1_048_576, 65_536),
+        ("google", "gemini-3.6-flash", 1_048_576, 65_536),
+        ("google", "gemini-3.1-pro-preview", 1_048_576, 65_536),
+        ("anthropic", "claude-fable-5-1", 1_000_000, 128_000),
+        ("openai", "gpt-6-astra", 922_000, 128_000),
+    ] {
+        let served = serving(provider);
+        assert!(
+            served.models.iter().any(|offered| offered.name == model),
+            "missing offer {provider}/{model}"
+        );
+        let facts = facts(provider, model).expect("reviewed model facts");
+        assert_eq!((facts.window, facts.output), (window, output));
+        let expected = if provider == "google" {
+            &[Effort::Low, Effort::Medium, Effort::High][..]
+        } else {
+            &Effort::LADDER[..]
+        };
+        assert_eq!(rungs(&catalogue(), provider, model), expected);
+    }
+    assert_eq!(serving("google").key, "GEMINI_API_KEY");
+}
+
+#[test]
+fn google_key_discovery_preserves_empty_custom_stored_and_ambiguous_choices() {
+    let defaults = Settings::default();
+    assert_eq!(
+        lands(&defaults, &holding(&["GEMINI_API_KEY"]))
+            .unwrap()
+            .map(|one| one.name),
+        Some("google")
+    );
+    assert!(
+        lands(&defaults, &exported(&[("GEMINI_API_KEY", " \t")]))
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        lands(&defaults, &holding(&["GEMINI_API_KEY", "OPENAI_API_KEY"]))
+            .unwrap()
+            .is_none()
+    );
+    let sample = Sample::new("google-key-discovery");
+    let custom = sample.user(r#"{"providers":{"google":{"apiKeyEnv":"WORK_GEMINI"}}}"#);
+    assert!(
+        lands(&custom, &holding(&["GEMINI_API_KEY"]))
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        lands(&custom, &holding(&["WORK_GEMINI"]))
+            .unwrap()
+            .map(|one| one.name),
+        Some("google")
+    );
+    let stored = sample.stored("google");
+    assert_eq!(
+        landing(&defaults, &holding(&[]), &stored)
+            .unwrap()
+            .map(|one| one.name),
+        Some("google")
+    );
+    assert_eq!(
+        landing(&defaults, &holding(&["GEMINI_API_KEY"]), &stored)
+            .unwrap()
+            .map(|one| one.name),
+        Some("google")
+    );
+    assert!(
+        landing(&defaults, &holding(&["ANTHROPIC_API_KEY"]), &stored)
+            .unwrap()
+            .is_none()
+    );
+    let subscriptions = Subscriptions::production();
+    assert_eq!(
+        credential_source(
+            serving("google"),
+            authenticating(
+                &defaults,
+                &holding(&["GEMINI_API_KEY"]),
+                &stored,
+                &subscriptions
+            )
+        ),
+        Some(CredentialSource::Environment("GEMINI_API_KEY".into()))
+    );
+}
+
+#[test]
+fn google_never_uses_a_stored_product_subscription_as_api_authority() {
+    let subscriptions = Subscriptions::production();
+    assert!(!subscriptions.supports("google"));
+    assert!(subscriptions.routes("google").is_empty());
+    assert!(
+        subscriptions
+            .accounts()
+            .iter()
+            .all(|account| account.provider() != "google")
+    );
+    let sample = Sample::new("google-subscription-is-not-api-authority");
+    let stored = sample.subscribed("google");
+    let defaults = Settings::default();
+    assert!(
+        landing(&defaults, &holding(&[]), &stored)
+            .unwrap()
+            .is_none()
+    );
+    let from = holding(&[]);
+    let auth = authenticating(&defaults, &from, &stored, &subscriptions);
+    assert!(startup::provider(Some(serving("google")), NOTHING_TO_ASK, auth).is_err());
+}
+
+#[test]
 fn every_model_serves_its_rungs_weakest_first_and_names_none_of_them_twice() {
     // The ladder is drawn between two ends — faster on the left, smarter on the
     // right — and those ends are a claim about the order of what is between
@@ -777,9 +893,9 @@ fn the_models_table_says_every_model_crucible_offers_reads_text_and_an_image() {
 }
 
 #[test]
-fn the_models_table_gives_a_pdf_to_anthropic_and_openai_and_not_to_moonshot() {
+fn the_models_table_gives_a_pdf_to_anthropic_google_and_openai_but_not_moonshot() {
     for facts in models::FACTS {
-        let expected = matches!(facts.provider, "anthropic" | "openai");
+        let expected = matches!(facts.provider, "anthropic" | "google" | "openai");
         assert_eq!(
             facts.accepts.contains(Modality::Pdf),
             expected,
@@ -791,21 +907,22 @@ fn the_models_table_gives_a_pdf_to_anthropic_and_openai_and_not_to_moonshot() {
 }
 
 #[test]
-fn the_models_table_gives_video_to_moonshot_alone_and_audio_to_nobody() {
+fn the_models_table_gives_video_to_moonshot_and_google_and_audio_only_to_google() {
     for facts in models::FACTS {
         assert_eq!(
             facts.accepts.contains(Modality::Video),
-            facts.provider == "moonshot",
+            matches!(facts.provider, "moonshot" | "google"),
             "{} reading a video",
             facts.model,
         );
-        assert!(
-            !facts.accepts.contains(Modality::Audio),
-            "{} reads audio, which no model crucible offers did when this was written",
+        assert_eq!(
+            facts.accepts.contains(Modality::Audio),
+            facts.provider == "google",
+            "{} audio support",
             facts.model,
         );
     }
-    assert_eq!(accepting(Modality::Audio), Vec::<&str>::new());
+    assert_eq!(accepting(Modality::Audio), vec!["google"; 4]);
 }
 
 #[test]

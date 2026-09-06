@@ -22,6 +22,7 @@ What you get depends on what your vendor serves:
 | Provider | `web_search` | `web_fetch` |
 | --- | --- | --- |
 | Anthropic | yes | yes |
+| Google — Gemini API key | yes | yes |
 | OpenAI — API key or ChatGPT plan | yes | yes |
 | Moonshot — Kimi Code | yes | yes |
 | Moonshot — open platform | — | — |
@@ -35,6 +36,25 @@ the one address, confined to its host. What comes back is the model's rendering
 of the page rather than the page itself. Anthropic and Kimi Code hand over the
 document; OpenAI hands over an account of it, which is fine for reading and
 poor for quoting exactly.
+
+Google uses native `google_search` for search and `url_context` for fetch,
+through the same Gemini model, API key and checked Interactions endpoint as
+the session. Fetch enables only URL context, requires successful retrieval and
+a citation to the exact requested URL, and returns model-extracted text, not
+raw HTML. Neither operation uses a Google subscription login or remote
+interaction history. Incomplete, cancelled or malformed responses yield no
+partial result.
+
+A Google Search answer without usable source citations is reported as a source
+error, not as evidence that the query found no results.
+
+Google Search currently projects citation titles, URLs and cited text into the
+ordinary search-tool result. That text follows normal session storage,
+resumption, compaction and provider-switch behavior. Crucible does not render
+Google's supplied Search Suggestions HTML or implement grounding-specific
+retention. These are unresolved limitations against Google's
+[grounding usage terms](https://ai.google.dev/gemini-api/terms#grounding-with-google-search),
+not a claim of reviewed contractual compliance.
 
 Moonshot's two services belong to the Kimi Code platform, which is where
 crucible sends this provider unless you have set `providers.moonshot.baseUrl`
@@ -52,6 +72,13 @@ OpenAI both charge **$10 per 1 000 searches**, plus the tokens of the request
 that runs one, because on those two the search is run by a model. Kimi Code's
 services are plain endpoints and are covered by the plan the credential is for.
 On any subscription, both tools are part of what you already pay for.
+
+Gemini native Search is metered per executed search query, in addition to model
+tokens; one tool request can execute several queries. URL context uses model
+tokens. Consult [Google's current pricing](https://ai.google.dev/gemini-api/docs/pricing)
+for model, quota and grounding charges. `store: false` disables optional remote
+interaction storage; it does not promise zero provider retention, including for
+grounding requests.
 
 `web_fetch` carries no charge of its own on Anthropic. You pay for the page as
 input tokens, the same as any other text a tool returns.

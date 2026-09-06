@@ -67,6 +67,7 @@ fn found(text: &str, attachments: Vec<Attachment>, approved: &Approved) -> Messa
 /// What the model said back, so two prompts are two turns.
 fn answered(text: &str) -> Message {
     Message::Agent {
+        continuation: None,
         text: text.into(),
         calls: Vec::new(),
         stop: None,
@@ -79,13 +80,15 @@ fn everything_under_the_ceiling_is_carried_whole() {
     let under = sample.workspace().root().to_path_buf();
 
     let mut transcript = Transcript::new();
-    transcript.push(asked(
-        "what is in these",
-        vec![
-            file(&under, "one.png", &[1; 16]),
-            file(&under, "two.png", &[2; 32]),
-        ],
-    ));
+    transcript
+        .push(asked(
+            "what is in these",
+            vec![
+                file(&under, "one.png", &[1; 16]),
+                file(&under, "two.png", &[2; 32]),
+            ],
+        ))
+        .expect("valid fixture transcript");
 
     let resolved = resolve(&transcript, READS);
     let attached = resolved.attached();
@@ -109,8 +112,12 @@ fn over_the_ceiling_the_newest_are_carried_and_the_rest_stand_in() {
 
     let mut transcript = Transcript::new();
     for name in ["first.png", "second.png", "third.png", "fourth.png"] {
-        transcript.push(asked(name, vec![file(&under, name, &vec![7; third])]));
-        transcript.push(answered("looking"));
+        transcript
+            .push(asked(name, vec![file(&under, name, &vec![7; third])]))
+            .expect("valid fixture transcript");
+        transcript
+            .push(answered("looking"))
+            .expect("valid fixture transcript");
     }
 
     let resolved = resolve(&transcript, READS);
@@ -151,17 +158,23 @@ fn the_ceiling_falls_on_bytes_and_not_on_how_many_files() {
     let under = sample.workspace().root().to_path_buf();
 
     let mut transcript = Transcript::new();
-    transcript.push(asked(
-        "twenty small ones",
-        (0..20)
-            .map(|nth| file(&under, &format!("icon{nth}.png"), &vec![3; 1024]))
-            .collect(),
-    ));
-    transcript.push(answered("seen"));
-    transcript.push(asked(
-        "and one big one",
-        vec![file(&under, "big.png", &vec![9; CEILING - 4096])],
-    ));
+    transcript
+        .push(asked(
+            "twenty small ones",
+            (0..20)
+                .map(|nth| file(&under, &format!("icon{nth}.png"), &vec![3; 1024]))
+                .collect(),
+        ))
+        .expect("valid fixture transcript");
+    transcript
+        .push(answered("seen"))
+        .expect("valid fixture transcript");
+    transcript
+        .push(asked(
+            "and one big one",
+            vec![file(&under, "big.png", &vec![9; CEILING - 4096])],
+        ))
+        .expect("valid fixture transcript");
 
     let resolved = resolve(&transcript, READS);
     let attached = resolved.attached();
@@ -191,7 +204,9 @@ fn a_file_that_changed_after_it_was_attached_stands_in() {
     fs::write(under.join("shot.png"), [2; 64]).expect("the file changes underneath");
 
     let mut transcript = Transcript::new();
-    transcript.push(asked("what is in this", vec![attachment]));
+    transcript
+        .push(asked("what is in this", vec![attachment]))
+        .expect("valid fixture transcript");
 
     let resolved = resolve(&transcript, READS);
     let attached = resolved.attached();
@@ -216,7 +231,9 @@ fn a_file_that_is_gone_stands_in() {
     fs::remove_file(under.join("shot.png")).expect("the file goes");
 
     let mut transcript = Transcript::new();
-    transcript.push(asked("what is in this", vec![attachment]));
+    transcript
+        .push(asked("what is in this", vec![attachment]))
+        .expect("valid fixture transcript");
 
     let resolved = resolve(&transcript, READS);
     let attached = resolved.attached();
@@ -249,13 +266,19 @@ fn all_three_lines_name_the_file_and_offer_the_read() {
 
     let mut transcript = Transcript::new();
     for one in [aged, gone, changed] {
-        transcript.push(asked("what is in this", vec![one]));
-        transcript.push(answered("looking"));
+        transcript
+            .push(asked("what is in this", vec![one]))
+            .expect("valid fixture transcript");
+        transcript
+            .push(answered("looking"))
+            .expect("valid fixture transcript");
     }
-    transcript.push(asked(
-        "and this",
-        vec![file(&under, "big.png", &vec![9; CEILING])],
-    ));
+    transcript
+        .push(asked(
+            "and this",
+            vec![file(&under, "big.png", &vec![9; CEILING])],
+        ))
+        .expect("valid fixture transcript");
 
     let resolved = resolve(&transcript, READS);
     let attached = resolved.attached();
@@ -290,12 +313,15 @@ fn a_file_that_stood_in_once_is_carried_where_there_is_room() {
 
     let old = file(&under, "old.png", &[1; 64]);
     let mut full = Transcript::new();
-    full.push(asked("first", vec![old.clone()]));
-    full.push(answered("looking"));
+    full.push(asked("first", vec![old.clone()]))
+        .expect("valid fixture transcript");
+    full.push(answered("looking"))
+        .expect("valid fixture transcript");
     full.push(asked(
         "and this",
         vec![file(&under, "big.png", &vec![9; CEILING])],
-    ));
+    ))
+    .expect("valid fixture transcript");
 
     let crowded = resolve(&full, READS);
     let crowded = crowded.attached();
@@ -308,7 +334,9 @@ fn a_file_that_stood_in_once_is_carried_where_there_is_room() {
     );
 
     let mut alone = Transcript::new();
-    alone.push(asked("first", vec![old]));
+    alone
+        .push(asked("first", vec![old]))
+        .expect("valid fixture transcript");
     let roomy = resolve(&alone, READS);
     let roomy = roomy.attached();
     assert!(
@@ -326,10 +354,12 @@ fn nothing_resolved_survives_the_request() {
     let under = sample.workspace().root().to_path_buf();
 
     let mut transcript = Transcript::new();
-    transcript.push(asked(
-        "what is in this",
-        vec![file(&under, "shot.png", &[1; 64])],
-    ));
+    transcript
+        .push(asked(
+            "what is in this",
+            vec![file(&under, "shot.png", &[1; 64])],
+        ))
+        .expect("valid fixture transcript");
 
     let first = resolve(&transcript, READS);
     assert!(matches!(
@@ -358,15 +388,19 @@ fn what_a_tool_found_is_carried_like_what_a_prompt_named() {
     let approved = permitted(&workspace);
 
     let mut transcript = Transcript::new();
-    transcript.push(Message::said("find me a picture"));
-    transcript.push(found(
-        "one match",
-        vec![
-            file(&under, "found-one.png", &[1; 16]),
-            file(&under, "found-two.png", &[2; 32]),
-        ],
-        &approved,
-    ));
+    transcript
+        .push(Message::said("find me a picture"))
+        .expect("valid fixture transcript");
+    transcript
+        .push(found(
+            "one match",
+            vec![
+                file(&under, "found-one.png", &[1; 16]),
+                file(&under, "found-two.png", &[2; 32]),
+            ],
+            &approved,
+        ))
+        .expect("valid fixture transcript");
 
     let resolved = resolve(&transcript, READS);
     let attached = resolved.attached();
@@ -393,12 +427,16 @@ fn a_tool_s_files_age_out_on_the_same_rule_as_a_prompt_s() {
     // they are, and it has never been about which half of a turn named them.
     let mut transcript = Transcript::new();
     for name in ["first.png", "second.png", "third.png", "fourth.png"] {
-        transcript.push(asked(name, vec![file(&under, name, &vec![7; third])]));
-        transcript.push(found(
-            name,
-            vec![file(&under, &format!("tool-{name}"), &vec![9; third])],
-            &approved,
-        ));
+        transcript
+            .push(asked(name, vec![file(&under, name, &vec![7; third])]))
+            .expect("valid fixture transcript");
+        transcript
+            .push(found(
+                name,
+                vec![file(&under, &format!("tool-{name}"), &vec![9; third])],
+                &approved,
+            ))
+            .expect("valid fixture transcript");
     }
 
     let resolved = resolve(&transcript, READS);
@@ -439,10 +477,12 @@ fn a_file_the_model_does_not_read_is_stood_down_with_a_line_saying_so() {
     let under = sample.workspace().root().to_path_buf();
 
     let mut transcript = Transcript::new();
-    transcript.push(asked(
-        "what is in this",
-        vec![file(&under, "one.png", &[1; 16])],
-    ));
+    transcript
+        .push(asked(
+            "what is in this",
+            vec![file(&under, "one.png", &[1; 16])],
+        ))
+        .expect("valid fixture transcript");
 
     let resolved = resolve(&transcript, Modalities::empty().insert(Modality::Text));
     let attached = resolved.attached();

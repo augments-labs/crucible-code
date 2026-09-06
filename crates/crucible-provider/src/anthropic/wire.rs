@@ -23,18 +23,38 @@ use crate::stream::Wire;
 
 /// The Messages API, being narrated.
 ///
-/// Nothing is carried between events. This endpoint names a tool call in full
-/// in the event that opens it, so a fragment arriving afterwards never has to
-/// be matched against something read earlier — which is the state the other
-/// protocol has no choice but to keep.
-#[derive(Debug, Default)]
-pub(super) struct Messages;
+/// Legacy projections remain stateless. Fable's request-bound parser retains
+/// ordered blocks until the complete message closes, without exposing thinking.
+#[derive(Default)]
+pub(super) struct Messages {
+    blocks: Option<super::continuation::Blocks>,
+}
+
+impl Messages {
+    pub(super) fn for_request(
+        model: &str,
+        scope: crucible_core::ContinuationScope,
+        effort: Option<crucible_core::Effort>,
+    ) -> Result<Self, ProviderError> {
+        Ok(Self {
+            blocks: if model == super::FABLE_51 {
+                Some(super::continuation::Blocks::new(model, scope, effort)?)
+            } else {
+                None
+            },
+        })
+    }
+}
 
 impl Wire for Messages {
     const PROVIDER: &'static str = NAME;
 
     fn deltas(&mut self, event: &SseEvent) -> Result<Vec<Delta>, ProviderError> {
-        deltas(event)
+        if let Some(blocks) = &mut self.blocks {
+            blocks.deltas(event)
+        } else {
+            deltas(event)
+        }
     }
 }
 
@@ -118,7 +138,7 @@ fn content(payload: &Value) -> Option<Delta> {
 /// the counts alone while the answer is still arriving, and sends the last one
 /// with the reason beside them. The cost goes first, because the stop is the
 /// thing a reader is entitled to treat as the last word.
-fn ended(payload: &Value) -> Result<Vec<Delta>, ProviderError> {
+pub(super) fn ended(payload: &Value) -> Result<Vec<Delta>, ProviderError> {
     Ok(output_usage(payload)?
         .into_iter()
         .chain(stopped(payload))
@@ -161,7 +181,7 @@ fn output_usage(payload: &Value) -> Result<Option<Delta>, ProviderError> {
 /// Absent rather than zero only where none of the three counts is present, for
 /// the reason [`spent`] gives about its own: a request whose size nobody
 /// reported and one that carried nothing are different facts.
-fn opened(payload: &Value) -> Result<Option<Delta>, ProviderError> {
+pub(super) fn opened(payload: &Value) -> Result<Option<Delta>, ProviderError> {
     let Some(usage) = payload
         .get("message")
         .and_then(|message| message.get("usage"))
