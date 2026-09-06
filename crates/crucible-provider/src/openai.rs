@@ -37,6 +37,8 @@
 //! crate learns which endpoint answered.
 
 mod body;
+#[cfg(test)]
+mod model_tests;
 mod stream;
 mod wire;
 
@@ -56,6 +58,12 @@ use crate::transport::Transport;
 
 /// What this provider is called, in errors and in the status line.
 const NAME: &str = "openai";
+const ASTRA: &str = "gpt-6-astra";
+
+/// Models whose cache options and inclusive usage include cache writes.
+fn cache_writes(model: &str) -> bool {
+    model == ASTRA || model.starts_with("gpt-5.6-")
+}
 
 /// Where requests go unless a setting says otherwise.
 const VENDOR: Endpoint = Endpoint::fixed("https://api.openai.com/v1/responses");
@@ -81,6 +89,7 @@ const OPENAI_55_RETENTIONS: &[PromptCacheRetentionClass] = &[
 
 const USD: PricingCurrency = PricingCurrency::new("USD");
 const PRICING_REVIEWED: PricingDate = PricingDate::new(2026, 8, 31);
+const ASTRA_REVIEWED: PricingDate = PricingDate::new(2026, 9, 6);
 const PRICING_SOURCE: &str = "https://developers.openai.com/api/docs/pricing";
 const MODEL_55_PRICING_SOURCE: &str = "https://developers.openai.com/api/docs/models/gpt-5.5";
 
@@ -223,6 +232,12 @@ impl Provider for OpenAi {
         }
 
         let (minimum, revision, retentions, usage): (u32, &'static str, &[_], _) = match model {
+            ASTRA => (
+                1_024,
+                ASTRA,
+                OPENAI_56_RETENTIONS,
+                PromptCacheUsageReporting::ReadAndWriteTokens,
+            ),
             "gpt-5.6-sol" => (
                 1_024,
                 "gpt-5.6-sol",
@@ -256,7 +271,7 @@ impl Provider for OpenAi {
             OPENAI_CACHE_CONTENT,
         )
         .with_retentions(retentions);
-        let mechanisms = if self.endpoint == VENDOR && model.starts_with("gpt-5.6-") {
+        let mechanisms = if self.endpoint == VENDOR && cache_writes(model) {
             vec![
                 automatic,
                 PromptCacheMechanismCapability::explicit_breakpoints(
@@ -270,13 +285,18 @@ impl Provider for OpenAi {
         } else {
             vec![automatic]
         };
+        let (reviewed, version) = if model == ASTRA {
+            ("2026-09-06", "openai-prompt-cache-2026-09-06")
+        } else {
+            ("2026-08-31", "openai-prompt-cache-2026-08-31")
+        };
         PromptCacheCapabilities::supported(
-            "openai-prompt-cache-2026-08-31",
+            version,
             Some(revision),
             PromptCacheProvenance::new(
                 "https://developers.openai.com/api/docs/guides/prompt-caching",
-                "2026-08-31",
-                "openai-prompt-cache-2026-08-31",
+                reviewed,
+                version,
             ),
             StatefulTransportCapability::Unsupported,
             &mechanisms,
@@ -292,13 +312,34 @@ impl Provider for OpenAi {
         retention: PromptCacheRetentionClass,
         at: PricingDate,
     ) -> Result<Option<PromptCachePricing>, PricingError> {
-        if self.endpoint != VENDOR || at < PRICING_REVIEWED {
+        let reviewed = if model == ASTRA {
+            ASTRA_REVIEWED
+        } else {
+            PRICING_REVIEWED
+        };
+        if self.endpoint != VENDOR || at < reviewed {
             return Ok(None);
         }
         let Some(input_tokens) = input_tokens else {
             return Ok(None);
         };
         let (model, source, short, long) = match (model, revision) {
+            (ASTRA, Some(ASTRA)) => (
+                ASTRA,
+                "https://developers.openai.com/api/docs/models/gpt-6-astra",
+                openai_rates(
+                    10_000_000_000,
+                    1_000_000_000,
+                    rate(12_500_000_000),
+                    50_000_000_000,
+                ),
+                openai_rates(
+                    20_000_000_000,
+                    2_000_000_000,
+                    rate(25_000_000_000),
+                    75_000_000_000,
+                ),
+            ),
             ("gpt-5.6-sol", Some("gpt-5.6-sol")) => (
                 "gpt-5.6-sol",
                 PRICING_SOURCE,
@@ -369,10 +410,21 @@ impl Provider for OpenAi {
         if !allowed_retention {
             return Ok(None);
         }
-        let (rates, minimum, maximum, version) = if input_tokens <= 272_000 {
-            (short, 0, Some(272_000), "openai-standard-short-2026-08-31")
+        let (short_version, long_version) = if model == ASTRA {
+            (
+                "openai-standard-short-2026-09-06",
+                "openai-standard-long-2026-09-06",
+            )
         } else {
-            (long, 272_001, None, "openai-standard-long-2026-08-31")
+            (
+                "openai-standard-short-2026-08-31",
+                "openai-standard-long-2026-08-31",
+            )
+        };
+        let (rates, minimum, maximum, version) = if input_tokens <= 272_000 {
+            (short, 0, Some(272_000), short_version)
+        } else {
+            (long, 272_001, None, long_version)
         };
         Ok(Some(
             PromptCachePricing::new(
@@ -380,7 +432,7 @@ impl Provider for OpenAi {
                 "https://api.openai.com/v1/responses",
                 model,
                 Some(model),
-                PRICING_REVIEWED,
+                reviewed,
                 version,
                 source,
                 USD,

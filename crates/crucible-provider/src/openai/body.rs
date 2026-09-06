@@ -58,7 +58,7 @@ pub(super) fn serialize(request: &Request<'_>, serving: Serving) -> String {
                         body.text("prompt_cache_key", key.as_str());
                     }
                     match (
-                        request.model.starts_with("gpt-5.6-"),
+                        super::cache_writes(request.model),
                         cache.policy.retention().class(),
                     ) {
                         (true, PromptCacheRetentionClass::Ephemeral) => {
@@ -143,7 +143,7 @@ pub(super) fn prompt_cache_encoding(
         PromptCacheMechanism::AutomaticPrefix => {
             let hinted = cache.routing_key.is_some()
                 || matches!(
-                    (request.model.starts_with("gpt-5.6-"), selected.retention()),
+                    (super::cache_writes(request.model), selected.retention()),
                     (true, PromptCacheRetentionClass::Ephemeral)
                         | (false, PromptCacheRetentionClass::Extended)
                 );

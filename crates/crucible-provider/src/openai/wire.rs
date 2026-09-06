@@ -37,7 +37,7 @@ pub(super) struct Responses {
 impl Responses {
     pub(super) fn for_model(model: &str) -> Self {
         Self {
-            cache_write_reporting: model.starts_with("gpt-5.6-"),
+            cache_write_reporting: super::cache_writes(model),
             ..Self::default()
         }
     }
