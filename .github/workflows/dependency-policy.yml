@@ -8,8 +8,8 @@ permissions:
   contents: read
 
 jobs:
-  cargo-deny:
-    name: Licenses, sources and bans
+  cargo-policy:
+    name: Usage, licenses, sources and bans
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -39,6 +39,14 @@ jobs:
 
       - name: Populate the locked Cargo cache
         run: cargo fetch --locked
+
+      # Machete is a source-name analysis rather than a compiler. Pinned here,
+      # and run with Cargo metadata so target, feature and renamed dependency
+      # information comes from the locked workspace rather than inference.
+      - name: Install the pinned unused-dependency checker
+        run: cargo install cargo-machete --version '=0.9.2' --locked
+      - name: Reject unused direct dependencies
+        run: cargo machete --with-metadata
 
       # Bans belongs with these two rather than with advisories: what it decides
       # is read entirely out of the lockfile in front of it, so the answer only

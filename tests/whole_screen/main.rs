@@ -125,6 +125,30 @@ fn a_turn_still_running() -> Vendor {
 }
 
 #[test]
+fn a_settled_prompt_writes_nothing_and_stays_off_cpu() {
+    // The ordinary between-turns state, not a turn whose working mark is meant
+    // to move. `open` has already seen the final ready row and a full quiet
+    // window, so every byte and scheduler tick after that belongs to idle.
+    let mut window = Watched::open("idle-prompt", 80, 24);
+
+    window.stays_idle();
+}
+
+#[test]
+fn a_silent_running_turn_animates_and_echoes_a_key_promptly() {
+    // The answer arrives whole, then the vendor sends only invisible keep-alives
+    // while holding the request open. That makes every visible change after the
+    // last word the shipped binary's own active-turn animation.
+    let vendor = a_turn_still_running();
+    let mut window = Watched::allowing("animated-echo", 80, 24, &vendor, "bash(*)");
+    window.types_and_catches("start it\r", HELD_LAST_WORD);
+
+    // More than one quarter-second face must reach the PTY, and a plain key must
+    // still reach the box inside one generous 400 ms beat window.
+    window.turns_then_echoes("z");
+}
+
+#[test]
 fn a_first_run_with_nothing_set_up_draws_the_welcome_the_warning_and_the_box() {
     // Nothing typed: this is the whole of what crucible puts on screen before
     // it asks for anything, and the first frame is the one with nothing above

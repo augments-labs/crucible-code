@@ -267,4 +267,159 @@ if "$UNINSTALL" --dir "$guarded" 2>/dev/null; then
 fi
 [[ -d $guarded/crucible && -L $guarded/cru ]]
 
+echo '==> hermetic platform and download discovery matrix'
+discovery_tools=$scratch/discovery-tools
+mkdir -p "$discovery_tools"
+cat >"$discovery_tools/uname" <<'UNAME'
+#!/usr/bin/env bash
+set -euo pipefail
+case ${1:-} in
+-s) printf '%s\n' "${INSTALL_TEST_SYSTEM:?}" ;;
+-m) printf '%s\n' "${INSTALL_TEST_MACHINE:?}" ;;
+*) printf 'fake uname: unsupported argument %s\n' "${1:-}" >&2; exit 2 ;;
+esac
+UNAME
+cat >"$discovery_tools/sysctl" <<'SYSCTL'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ $* == '-in sysctl.proc_translated' ]] || {
+    printf 'fake sysctl: unsupported arguments %s\n' "$*" >&2
+    exit 2
+}
+printf '%s\n' "${INSTALL_TEST_TRANSLATED:-0}"
+SYSCTL
+cat >"$discovery_tools/curl" <<'CURL'
+#!/usr/bin/env bash
+set -euo pipefail
+head=0
+output=
+url=
+while (($#)); do
+    case $1 in
+    --head) head=1; shift ;;
+    --output) output=${2:?fake curl: --output needs a value}; shift 2 ;;
+    --write-out|--proto) shift 2 ;;
+    *) url=$1; shift ;;
+    esac
+done
+[[ -n $url ]] || { echo 'fake curl: no URL' >&2; exit 2; }
+printf '%s\n' "$url" >>"${INSTALL_TEST_CURL_LOG:?}"
+if ((head)); then
+    printf 'https://github.com/augments-labs/crucible-code/releases/tag/v%s' \
+        "${INSTALL_TEST_VERSION:?}"
+    exit 0
+fi
+[[ -n $output ]] || { echo 'fake curl: no output path' >&2; exit 2; }
+cp "${INSTALL_TEST_RELEASE:?}/${url##*/}" "$output"
+CURL
+chmod +x "$discovery_tools/uname" "$discovery_tools/sysctl" "$discovery_tools/curl"
+
+# One minimal, valid release for the platform a discovery case is pretending to
+# be. The install remains a dry run: extraction and verification are real, while
+# the fixture executable never has to match the kernel running this test.
+discovery_release() {
+    local at=$1 release_platform=$2 release_architecture=$3
+    local release_stem=crucible-$version-$release_platform-$release_architecture
+    mkdir -p "$at/$release_stem"
+    printf '#!/usr/bin/env sh\nprintf "crucible %s\\n"\n' "$version" \
+        >"$at/$release_stem/crucible"
+    chmod +x "$at/$release_stem/crucible"
+    tar -czf "$at/$release_stem.tar.gz" -C "$at" "$release_stem"
+    (cd "$at" && checksum "$release_stem.tar.gz") >"$at/SHA256SUMS"
+}
+
+assert_discovery() {
+    local label=$1 release_system=$2 release_machine=$3
+    local release_platform=$4 release_architecture=$5 translated=${6:-0}
+    local releases=$scratch/discovery-$label log=$scratch/discovery-$label.urls
+    local release_stem=crucible-$version-$release_platform-$release_architecture
+    discovery_release "$releases" "$release_platform" "$release_architecture"
+    : >"$log"
+
+    INSTALL_TEST_SYSTEM=$release_system \
+        INSTALL_TEST_MACHINE=$release_machine \
+        INSTALL_TEST_TRANSLATED=$translated \
+        INSTALL_TEST_VERSION=$version \
+        INSTALL_TEST_RELEASE=$releases \
+        INSTALL_TEST_CURL_LOG=$log \
+        PATH="$discovery_tools:$PATH" \
+        "$INSTALL" --dry-run --version "v$version" \
+        --dir "$scratch/discovery-bin-$label" >/dev/null
+
+    local base=https://github.com/augments-labs/crucible-code/releases/download/v$version
+    local expected
+    expected=$(printf '%s\n%s\n' \
+        "$base/$release_stem.tar.gz" "$base/SHA256SUMS")
+    if [[ $(cat "$log") != "$expected" ]]; then
+        printf 'installer requested the wrong URLs for %s:\n%s\n' "$label" "$(cat "$log")" >&2
+        exit 1
+    fi
+}
+
+assert_discovery linux-x86-64 Linux x86_64 linux x86_64
+assert_discovery linux-arm64 Linux aarch64 linux aarch64
+assert_discovery macos-x86-64 Darwin x86_64 macos x86_64
+assert_discovery macos-arm64 Darwin arm64 macos aarch64
+assert_discovery macos-rosetta Darwin x86_64 macos aarch64 1
+assert_discovery freebsd-x86-64 FreeBSD amd64 freebsd x86_64
+
+# With no version argument, the redirect target is the only source of the
+# version used by both asset requests.
+latest=$scratch/discovery-latest
+latest_log=$scratch/discovery-latest.urls
+discovery_release "$latest" linux x86_64
+: >"$latest_log"
+INSTALL_TEST_SYSTEM=Linux \
+    INSTALL_TEST_MACHINE=x86_64 \
+    INSTALL_TEST_TRANSLATED=0 \
+    INSTALL_TEST_VERSION=$version \
+    INSTALL_TEST_RELEASE=$latest \
+    INSTALL_TEST_CURL_LOG=$latest_log \
+    PATH="$discovery_tools:$PATH" \
+    "$INSTALL" --dry-run --dir "$scratch/discovery-bin-latest" >/dev/null
+latest_base=https://github.com/augments-labs/crucible-code/releases
+latest_expected=$(printf '%s\n%s\n%s\n' \
+    "$latest_base/latest" \
+    "$latest_base/download/v$version/crucible-$version-linux-x86_64.tar.gz" \
+    "$latest_base/download/v$version/SHA256SUMS")
+if [[ $(cat "$latest_log") != "$latest_expected" ]]; then
+    printf 'installer requested the wrong URLs after latest-version discovery:\n%s\n' \
+        "$(cat "$latest_log")" >&2
+    exit 1
+fi
+
+assert_discovery_refused() {
+    local label=$1 release_system=$2 release_machine=$3 wanted=$4
+    local log=$scratch/discovery-refused-$label.urls problem
+    : >"$log"
+    if problem=$(INSTALL_TEST_SYSTEM=$release_system \
+        INSTALL_TEST_MACHINE=$release_machine \
+        INSTALL_TEST_TRANSLATED=0 \
+        INSTALL_TEST_VERSION=$version \
+        INSTALL_TEST_RELEASE=$scratch \
+        INSTALL_TEST_CURL_LOG=$log \
+        PATH="$discovery_tools:$PATH" \
+        "$INSTALL" --dry-run --version "$version" \
+        --dir "$scratch/discovery-refused-bin-$label" 2>&1); then
+        printf 'installer accepted unsupported host %s/%s\n' \
+            "$release_system" "$release_machine" >&2
+        exit 1
+    fi
+    [[ $problem == *"$wanted"* ]] || {
+        printf 'installer rejected %s/%s for the wrong reason: %s\n' \
+            "$release_system" "$release_machine" "$problem" >&2
+        exit 1
+    }
+    [[ ! -s $log ]] || {
+        printf 'installer downloaded before rejecting %s/%s:\n%s\n' \
+            "$release_system" "$release_machine" "$(cat "$log")" >&2
+        exit 1
+    }
+}
+
+assert_discovery_refused operating-system Plan9 x86_64 'unsupported operating system Plan9'
+assert_discovery_refused architecture Linux riscv64 'unsupported architecture riscv64'
+assert_discovery_refused freebsd-arm64 FreeBSD arm64 \
+    'FreeBSD releases are available only for x86-64'
+
 echo 'installer tests passed'

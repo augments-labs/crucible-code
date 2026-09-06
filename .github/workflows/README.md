@@ -7,8 +7,9 @@ reusable workflows and exposes `CI required` as the single merge result.
 | --- | --- |
 | `rust-ci.yml` | Rust formatting, all-feature linting, tests and rustdoc on supported CI platforms |
 | `repo-checks.yml` | Deterministic cross-file repository policy |
-| `dependency-policy.yml` | Blocking Cargo license, source and ban policy |
+| `dependency-policy.yml` | Blocking Cargo usage, license, source and ban policy |
 | `performance.yml` | Performance probes and their JSON artifact |
+| `provider-canaries.yml` | Weekly/manual non-blocking live turns against configured provider accounts |
 | `audit.yml` | Advisories whose answer changes as databases are published |
 | `codeql.yml` | GitHub code scanning |
 | `release.yml` | Tag validation, artifacts, attestations and publication |
@@ -33,3 +34,21 @@ share the Linux setup action so they cannot drift apart.
 
 Actions are pinned to full commit SHAs. A trailing comment records the release
 name for maintainers; the SHA is what executes.
+
+## Live provider canaries
+
+`provider-canaries.yml` is deliberately outside `blocking-ci.yml`: external API
+availability, account state and provider spend are not pull-request verdicts.
+It runs weekly or by hand, and each provider row reports failures independently.
+The workflow can go red, but is not called by the pull-request gate and cannot
+block one. Add any of these repository secrets to enable its
+row; an absent secret is a recorded skip:
+
+- `ANTHROPIC_CANARY_API_KEY`
+- `MOONSHOT_CANARY_API_KEY`
+- `OPENAI_CANARY_API_KEY`
+
+The workflow uses API keys only. Browser/device account login needs dedicated
+automated accounts and is not inferred from a developer's stored credentials.
+Each configured row sends one tiny prompt through the release-mode binary and
+requires the marker in the streamed answer within 90 seconds.

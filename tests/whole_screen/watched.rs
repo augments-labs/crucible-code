@@ -49,6 +49,17 @@ use crate::vendor::Vendor;
 /// fails one run in twenty and then gets switched off.
 const QUIET: Duration = Duration::from_millis(400);
 
+/// Long enough to cross more than one quarter-second face of the working mark.
+const TURN_BEATS: Duration = Duration::from_secs(1);
+
+/// A settled prompt should spend no measurable scheduler tick over this span.
+///
+/// A tick is the kernel's accounting quantum, not a percentage sampled by a
+/// monitor. One tick is allowed for the reads around the sample itself and for
+/// an unlucky boundary; two means the process kept waking while nobody typed.
+const IDLE_SAMPLE: Duration = Duration::from_secs(1);
+const IDLE_TICKS: u64 = 1;
+
 /// How long one step may take before the screen is called stuck.
 const CEILING: Duration = Duration::from_secs(20);
 
@@ -428,6 +439,107 @@ impl Watched {
         self.catches(&format!("{keys:?} was typed"), wanted);
     }
 
+    /// Watches a running turn cross more than one face, then proves a key is
+    /// drawn before the next face can be mistaken for its response.
+    ///
+    /// The caller first waits for an answer's last word, so the provider has
+    /// gone silent and is only keeping the request open. Bytes arriving here are
+    /// therefore the application's own active-turn frames. The faces themselves
+    /// come from the shipped binary rather than from [`Screen`]'s interpretation
+    /// of one final picture.
+    pub(crate) fn turns_then_echoes(&mut self, key: &str) {
+        let deadline = Instant::now() + TURN_BEATS;
+        let mut faces = Vec::new();
+
+        while Instant::now() < deadline {
+            match self
+                .bytes
+                .recv_timeout(QUIET.min(deadline.saturating_duration_since(Instant::now())))
+            {
+                Ok(bytes) => {
+                    self.screen.feed(&bytes);
+                    if let Some(face) = working_face(&self.picture())
+                        && !faces.contains(&face)
+                    {
+                        faces.push(face);
+                    }
+                }
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => {
+                    panic!("crucible left the terminal while its working mark was watched")
+                }
+            }
+        }
+
+        assert!(
+            faces.len() >= 2,
+            "the held turn drew fewer than two working faces: {faces:?}\n{}",
+            self.picture()
+        );
+
+        self.terminal
+            .write_all(key.as_bytes())
+            .expect("a key goes to the running turn");
+        let echoed_by = Instant::now() + QUIET;
+        while !self.picture().contains(key) && Instant::now() < echoed_by {
+            match self
+                .bytes
+                .recv_timeout(echoed_by.saturating_duration_since(Instant::now()))
+            {
+                Ok(bytes) => self.screen.feed(&bytes),
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => {
+                    panic!("crucible left the terminal before the key was echoed")
+                }
+            }
+        }
+        assert!(
+            self.picture().contains(key),
+            "{key:?} was not drawn within {QUIET:?} during the held turn\n{}",
+            self.picture()
+        );
+    }
+
+    /// Proves the ordinary prompt stays byte-quiet and consumes no scheduler
+    /// time once its opening frame has settled.
+    ///
+    /// Linux exposes child CPU accounting in `/proc`; this whole test target is
+    /// Linux-only, so reading it here adds no portability fiction. Active turns
+    /// intentionally redraw and are measured separately by [`Self::turns_then_echoes`].
+    pub(crate) fn stays_idle(&mut self) {
+        let before = cpu_ticks(self.child.id());
+        let ended = Instant::now() + IDLE_SAMPLE;
+        let mut written = 0;
+
+        while Instant::now() < ended {
+            match self
+                .bytes
+                .recv_timeout(ended.saturating_duration_since(Instant::now()))
+            {
+                Ok(bytes) => {
+                    written += bytes.len();
+                    self.screen.feed(&bytes);
+                }
+                Err(RecvTimeoutError::Timeout) => break,
+                Err(RecvTimeoutError::Disconnected) => {
+                    panic!("crucible left the terminal while its settled prompt was watched")
+                }
+            }
+        }
+
+        let ticks = cpu_ticks(self.child.id()).saturating_sub(before);
+        assert_eq!(
+            written,
+            0,
+            "the settled prompt wrote {written} bytes in {IDLE_SAMPLE:?}\n{}",
+            self.picture()
+        );
+        assert!(
+            ticks <= IDLE_TICKS,
+            "the settled prompt used {ticks} CPU ticks in {IDLE_SAMPLE:?}, allowed {IDLE_TICKS}"
+        );
+    }
+
     /// Reads frames until `wanted` is on screen.
     pub(crate) fn catches(&mut self, step: &str, wanted: &str) {
         let deadline = Instant::now() + CEILING;
@@ -561,6 +673,33 @@ impl Watched {
     fn ready(&self, arrived: bool, wanted: Option<&str>) -> bool {
         wanted.map_or(arrived, |mark| self.picture().contains(mark))
     }
+}
+
+/// The face at the front of the working row in `picture`, where there is one.
+fn working_face(picture: &str) -> Option<char> {
+    picture.lines().find_map(|line| {
+        let face = line.trim_start_matches('|').trim_start().chars().next()?;
+        matches!(face, '✳' | '✻' | '✺' | '✱').then_some(face)
+    })
+}
+
+/// User and system scheduler ticks consumed by `pid` according to Linux.
+fn cpu_ticks(pid: u32) -> u64 {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat"))
+        .expect("Linux reports CPU accounting for the watched process");
+    let (_, fields) = stat
+        .rsplit_once(") ")
+        .expect("/proc/<pid>/stat has a parenthesized process name");
+    let mut fields = fields.split_whitespace();
+    let user = fields
+        .nth(11)
+        .and_then(|field| field.parse::<u64>().ok())
+        .expect("/proc/<pid>/stat has a user CPU field");
+    let system = fields
+        .next()
+        .and_then(|field| field.parse::<u64>().ok())
+        .expect("/proc/<pid>/stat has a system CPU field");
+    user.saturating_add(system)
 }
 
 impl Drop for Watched {

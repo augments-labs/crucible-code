@@ -57,6 +57,69 @@ if ! scripts/install-tests.sh; then
     failed=1
 fi
 
+section "tracked source secrets"
+# Deliberately narrow signatures: each names a credential format whose prefix is
+# part of the provider's contract. Generic entropy and words such as `password`
+# produce findings nobody can distinguish from fixtures and teach maintainers to
+# ignore this gate. Files come from Git, so build output and a developer's local
+# untracked configuration are never read.
+secret_scan=0
+# The expression's alternatives are assembled across lines so the scanner also
+# covers this file: policy source must not need an exclusion from its own rule.
+secret_parts=(
+    'AKIA[0-9A-Z]{16}'
+    'ASIA[0-9A-Z]{16}'
+    'gh[pousr]_[A-Za-z0-9]{20,}'
+    'github_pat_[A-Za-z0-9_]{20,}'
+    'glpat-[A-Za-z0-9_-]{20,}'
+    'xox[baprs]-[A-Za-z0-9-]{10,}'
+    'AIza[A-Za-z0-9_-]{35}'
+    'sk_live_[A-Za-z0-9]{16,}'
+    'sk-ant-[A-Za-z0-9_-]{20,}'
+    'sk-(proj-)?[A-Za-z0-9_-]{20,}'
+    'BEGIN ([A-Z0-9 ]+ )?PRIVATE KEY'
+)
+secret_pattern=$(IFS='|'; printf '%s' "${secret_parts[*]}")
+secrets=$(git grep -InE "$secret_pattern" -- .) || secret_scan=$?
+case $secret_scan in
+    0)
+        printf '%s\n' "$secrets"
+        printf '    FAIL the tracked lines above contain a credential-shaped value\n'
+        printf '         replace a fixture with a conspicuously fake value; never allowlist a real secret\n'
+        failed=1
+        ;;
+    1) ;;
+    *)
+        printf '%s\n' "$secrets"
+        printf '    FAIL the tracked-source secret scan could not be completed\n'
+        failed=1
+        ;;
+esac
+
+section "cross-crate wildcard re-exports"
+# A sibling crate re-exported whole becomes this crate's public API by accident:
+# every public item added there is published here without an edit at this seam.
+# Explicit names keep that API reviewable. `pub use crate::...::*` stays a local
+# module choice and is not what this cross-crate boundary guards.
+wildcard_scan=0
+wildcards=$(git grep -InE \
+    '^[[:space:]]*pub[[:space:]]+use[[:space:]]+(::)?crucible_[a-z0-9_]+(::[A-Za-z0-9_]+)*::\*[[:space:]]*;' \
+    -- '*.rs') || wildcard_scan=$?
+case $wildcard_scan in
+    0)
+        printf '%s\n' "$wildcards"
+        printf '    FAIL cross-crate wildcard re-exports make another crate public wholesale\n'
+        printf '         re-export the intended names explicitly\n'
+        failed=1
+        ;;
+    1) ;;
+    *)
+        printf '%s\n' "$wildcards"
+        printf '    FAIL the cross-crate wildcard re-export scan could not be completed\n'
+        failed=1
+        ;;
+esac
+
 section "file length (<= ${MAX_RUST_FILE_LINES} lines)"
 counted=0
 while IFS= read -r file; do

@@ -1,0 +1,98 @@
+name: provider-canaries
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Weekly is enough to catch API and authentication drift without turning a
+    # canary into a material source of provider spend.
+    - cron: '17 7 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: provider-canaries
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build canary binary
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo build --release --locked --bin crucible
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: provider-canary-binary
+          path: target/release/crucible
+          if-no-files-found: error
+          retention-days: 1
+
+  provider:
+    name: ${{ matrix.name }} live turn
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Anthropic
+            provider: anthropic
+            model: anthropic/claude-haiku-4-5
+            secret_name: ANTHROPIC_CANARY_API_KEY
+          - name: MoonshotAI
+            provider: moonshot
+            model: moonshot/kimi-for-coding
+            secret_name: MOONSHOT_CANARY_API_KEY
+          - name: OpenAI
+            provider: openai
+            model: openai/gpt-5.5
+            secret_name: OPENAI_CANARY_API_KEY
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: provider-canary-binary
+          path: canary
+
+      # A fixed case below exports this row's key under the provider name the
+      # binary reads. Each matrix row is its own process and only uses that key.
+      - name: Run a tiny streamed turn when this provider is configured
+        env:
+          CANARY_API_KEY: ${{ matrix.provider == 'anthropic' && secrets.ANTHROPIC_CANARY_API_KEY || matrix.provider == 'moonshot' && secrets.MOONSHOT_CANARY_API_KEY || matrix.provider == 'openai' && secrets.OPENAI_CANARY_API_KEY || '' }}
+          PROVIDER: ${{ matrix.provider }}
+          SECRET_NAME: ${{ matrix.secret_name }}
+          MODEL: ${{ matrix.model }}
+        run: |
+          set -euo pipefail
+          chmod +x canary/crucible
+          if [[ -z $CANARY_API_KEY ]]; then
+            echo "SKIP: $SECRET_NAME is not configured"
+            exit 0
+          fi
+
+          case $PROVIDER in
+            anthropic) export ANTHROPIC_API_KEY=$CANARY_API_KEY ;;
+            moonshot) export MOONSHOT_API_KEY=$CANARY_API_KEY ;;
+            openai) export OPENAI_API_KEY=$CANARY_API_KEY ;;
+            *) echo "unknown canary provider $PROVIDER" >&2; exit 2 ;;
+          esac
+          unset CANARY_API_KEY
+          home=$(mktemp -d)
+          trap 'rm -rf "$home"' EXIT
+
+          status=0
+          answer=$(printf 'Write canary and ok separated by a hyphen. Reply with only that.\n' |
+            timeout --signal=TERM --kill-after=10s 90s \
+              env HOME="$home" CRUCIBLE_CODE_HOME="$home/crucible" NO_COLOR=1 \
+              canary/crucible --model "$MODEL" 2>&1) || status=$?
+          if ((status != 0)) || [[ ${answer,,} != *canary-ok* ]]; then
+            printf '%s exited %d without the canary marker:\n%s\n' \
+              "$MODEL" "$status" "$answer" >&2
+            exit 1
+          fi
+          echo "$MODEL completed a streamed turn"
