@@ -755,37 +755,46 @@ mod tests {
     }
 
     #[test]
-    fn relay_closes_when_host_peer_stops_reading() {
+    fn relay_closes_when_client_stops_reading() {
         let root = std::env::temp_dir().join(format!(
             "crucible-network-stalled-peer-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_file(&root);
         let listener = UnixListener::bind(&root).expect("host listener");
+        let (closed_tx, closed_rx) = std::sync::mpsc::channel();
         let host = thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("accept");
             stream.set_nonblocking(true).expect("nonblocking");
             let payload = [0x55_u8; 8192];
             let mut input = [0_u8; 1024];
             let mut sent = 0;
+            // Opposite-direction traffic remains active while this response
+            // starts late; expiry must follow write progress, not test startup.
+            let write_after = std::time::Instant::now() + Duration::from_millis(300);
             loop {
                 match stream.read(&mut input) {
                     Ok(0) => break,
                     Ok(_) => {}
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
-                    Err(_) => break,
+                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => break,
+                    Err(error) => panic!("host read failed: {error}"),
                 }
-                if sent < 8 * 1024 * 1024 {
+                if std::time::Instant::now() >= write_after && sent < 8 * 1024 * 1024 {
                     match stream.write(&payload) {
                         Ok(count) => sent += count,
                         Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
-                        Err(_) => break,
+                        Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => break,
+                        Err(error) => panic!("host write failed: {error}"),
                     }
                 }
                 if sent >= 8 * 1024 * 1024 {
                     thread::sleep(Duration::from_millis(1));
                 }
             }
+            closed_tx.send(()).expect("closed observer");
         });
         let relay = NetworkRelay::start_at((std::net::Ipv4Addr::LOCALHOST, 0).into(), &root)
             .expect("relay");
@@ -806,31 +815,11 @@ mod tests {
                 }
             }
         });
-        thread::sleep(Duration::from_millis(350));
-        let mut guest = guest;
-        guest
-            .set_read_timeout(Some(Duration::from_secs(2)))
-            .expect("timeout");
-        let mut closed = false;
-        let mut output = [0_u8; 8192];
-        loop {
-            match guest.read(&mut output) {
-                Ok(0) => {
-                    closed = true;
-                    break;
-                }
-                Ok(_) => {}
-                Err(error)
-                    if matches!(
-                        error.kind(),
-                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                    ) =>
-                {
-                    break;
-                }
-                Err(_) => break,
-            }
-        }
+        // Reading the client would relieve the backpressure being tested. Its
+        // sender clone also makes reads nonblocking, so a read timeout cannot
+        // turn a fixed sleep into evidence of closure. Observe the host peer
+        // instead, keeping the client unread until the relay expires.
+        let closed = closed_rx.recv_timeout(Duration::from_secs(2)).is_ok();
         sender_stop.store(true, std::sync::atomic::Ordering::Release);
         sender.join().expect("sender");
         relay.stop().expect("stop");
