@@ -356,7 +356,7 @@ fn an_answer_is_committed_above_a_box_that_is_still_where_it_was() {
     let vendor = Vendor::answering("Two plus two is four.");
     let mut window = Watched::answering("answered", 80, 24, &vendor);
 
-    window.types("what is 2+2\r");
+    window.types_until("what is 2+2\r", "Two plus two is four.");
 
     insta::assert_snapshot!(window.picture());
 }
@@ -1173,7 +1173,7 @@ fn a_key_given_to_login_is_what_the_turn_after_it_is_sent_with() {
     window.types("/login anthropic\r");
     window.types_until("not-a-key-and-nothing-reads-it\r", "login successful");
     window.types("/model claude-test-1\r");
-    window.types("what is 2+2\r");
+    window.types_until("what is 2+2\r", "Two plus two is four.");
 
     insta::assert_snapshot!(window.picture());
 }
@@ -1194,7 +1194,7 @@ fn the_provider_panel_reaches_a_turn_without_a_provider_being_named() {
     window.types("\r");
     window.types_until("not-a-key-and-nothing-reads-it\r", "login successful");
     window.types("/model claude-test-1\r");
-    window.types("what is 2+2\r");
+    window.types_until("what is 2+2\r", "Two plus two is four.");
 
     insta::assert_snapshot!(window.picture());
 }
