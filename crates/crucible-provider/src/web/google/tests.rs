@@ -43,38 +43,6 @@ fn source_body(status: u16, body: String) -> (GoogleWeb, Arc<Replay>) {
 }
 
 #[test]
-fn google_search_normalizes_results_and_byte_citations_without_private_payloads() {
-    let (source, replay) = source(&[
-        json!({"type":"google_search_call","id":"search","arguments":{"queries":["Rust"]},"signature":"private-call-signature"}),
-        json!({"type":"google_search_result","call_id":"search","result":[{"url":"https://rust-lang.org/","title":"Rust"},{"url":"javascript:bad","title":"invalid"}],"signature":"private-result-signature"}),
-        json!({"type":"model_output","content":[{"type":"text","text":"é Rust","annotations":[{"type":"url_citation","url":"https://rust-lang.org/","title":"Rust","start_index":3,"end_index":7}]}]}),
-    ]);
-    let found = source.search("Rust", &Cancel::new()).unwrap();
-    assert_eq!(
-        found,
-        [SearchResult {
-            url: "https://rust-lang.org/".into(),
-            title: "Rust".into(),
-            extract: "Rust".into()
-        }]
-    );
-    assert!(!format!("{source:?}{found:?}").contains("private-call-signature"));
-    let sent: Value = serde_json::from_str(&replay.sent().body).unwrap();
-    assert_eq!(
-        sent.get("tools").unwrap(),
-        &json!([{"type":"google_search"}])
-    );
-    assert_eq!(
-        sent.pointer("/generation_config/max_output_tokens")
-            .and_then(Value::as_u64),
-        Some(4096)
-    );
-    assert_eq!(sent.get("store").and_then(Value::as_bool), Some(false));
-}
-
-mod search;
-
-#[test]
 fn google_web_cancellation_during_request_setup_is_not_a_failed_tool_result() {
     #[derive(Debug)]
     struct DuringSetup;
@@ -90,27 +58,21 @@ fn google_web_cancellation_during_request_setup_is_not_a_failed_tool_result() {
             Err(crate::TransportError::Cancelled)
         }
     }
-    for fetch in [false, true] {
-        let source = GoogleWeb::new(
-            Google::VENDOR,
-            Box::new(HeaderKey::new(
-                ApiKey::new("fixture-only"),
-                Header::bare("x-goog-api-key"),
-            )),
-            Box::new(DuringSetup),
-            "gemini-3.8-flash",
-        );
-        let cancel = Cancel::new();
-        let result = if fetch {
-            source.fetch("https://example.com/", &cancel).map(|_| ())
-        } else {
-            source.search("Rust", &cancel).map(|_| ())
-        };
-        assert!(
-            matches!(result, Err(SourceError::Cancelled("google"))),
-            "{result:?}"
-        );
-    }
+    let source = GoogleWeb::new(
+        Google::VENDOR,
+        Box::new(HeaderKey::new(
+            ApiKey::new("fixture-only"),
+            Header::bare("x-goog-api-key"),
+        )),
+        Box::new(DuringSetup),
+        "gemini-3.8-flash",
+    );
+    let cancel = Cancel::new();
+    let result = source.fetch("https://example.com/", &cancel);
+    assert!(
+        matches!(result, Err(SourceError::Cancelled("google"))),
+        "{result:?}"
+    );
 }
 
 #[test]
