@@ -53,9 +53,9 @@ FreeBSD keeps it in the `bash` package rather than the base system. Without
 Bash, use the manual path below. The script detects the platform, verifies
 exactly the archive it downloads
 against the release's `SHA256SUMS`, and atomically installs `crucible` plus a
-`cru` alias in `~/.local/bin`. On Linux it also installs
-`crucible-sandbox-broker` beside `crucible`; confined commands run it as their
-PID 1, and it is trusted only when every directory above it belongs to root
+`cru` alias in `~/.local/bin`. On Linux and macOS it also installs
+`crucible-sandbox-broker` beside `crucible`; confined commands use this native
+helper, and it is trusted only when every directory above it belongs to root
 or to you and is writable by neither group nor others; the installer points out
 a directory that breaks that rule, with the `chmod` that fixes it. It
 never asks for `sudo` or edits a shell profile. Use `--version`, `--dir` or
@@ -69,13 +69,22 @@ For a manual Unix install, download the archive and `SHA256SUMS` from the
 Linux use `sha256sum -c`, on macOS use `shasum -a 256 -c`, and on FreeBSD use
 `sha256 -c`, with a checksum file narrowed to the downloaded archive. Then
 unpack it with `tar xzf` and copy `crucible` into a directory on `PATH`. On
-Linux copy `crucible-sandbox-broker` into the same directory.
+Linux and macOS copy `crucible-sandbox-broker` into the same directory.
 
 Each Windows target also ships the executable on its own, beside the archive and
 named the same way — `crucible-<version>-windows-x86_64.exe` — so there is
 nothing to unpack. `SHA256SUMS` covers those too; PowerShell verifies it with
 `(Get-FileHash .\crucible-<version>-windows-x86_64.exe -Algorithm SHA256).Hash`
 before the executable is moved into a directory on `PATH`.
+
+For Windows sandboxing, download the matching archive and keep both
+`crucible.exe` and `crucible-sandbox-broker.exe` together. The broker is also
+available separately as `crucible-sandbox-broker-<version>-windows-x86_64.exe`
+(or `windows-aarch64.exe`); verify its checksum, rename it to
+`crucible-sandbox-broker.exe`, and place it beside Crucible. Follow the
+[administrator setup instructions](../security/sandboxing.md#windows-setup-maintenance)
+before enabling the sandbox. A standalone Crucible executable without its
+broker supports sessions with sandboxing disabled.
 
 ## Build it
 
@@ -86,7 +95,7 @@ for working on crucible itself.
 ```bash
 git clone https://github.com/augments-labs/crucible-code
 cd crucible-code
-cargo build --release
+cargo build --release -p crucible-code -p crucible-sandbox-broker
 ./target/release/crucible --version
 ```
 

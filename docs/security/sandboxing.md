@@ -102,10 +102,11 @@ architectures; daemon resource-stress testing is outside that gate.
 
 Windows confinement uses a dedicated local account and machine firewall
 policy, so an administrator must provision them once before ordinary Crucible
-runs can use the native backend. From an Administrator PowerShell, run:
+runs can use the native backend. Keep the release's `crucible-sandbox-broker.exe`
+beside `crucible.exe`. From an Administrator PowerShell in that directory, run:
 
 ```powershell
-crucible sandbox setup
+.\crucible-sandbox-broker.exe --windows-sandbox-setup
 ```
 
 The command does not auto-elevate and an ordinary Crucible run remains
@@ -113,7 +114,7 @@ unelevated. If PowerShell was elevated with a different administrator account,
 name the developer account explicitly:
 
 ```powershell
-crucible sandbox setup --owner 'MACHINE\person'
+.\crucible-sandbox-broker.exe --windows-sandbox-setup --owner 'MACHINE\person'
 ```
 
 Setup creates one deterministic local sandbox account for that owner, stores
@@ -128,7 +129,7 @@ To remove that state, use the same owner choice from an Administrator
 PowerShell:
 
 ```powershell
-crucible sandbox uninstall
+.\crucible-sandbox-broker.exe --windows-sandbox-uninstall
 ```
 
 Removal disables the account before changing its firewall rules, then deletes

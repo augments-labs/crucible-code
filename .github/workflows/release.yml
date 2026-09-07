@@ -223,24 +223,17 @@ jobs:
       - name: Build
         run: |
           rustup target add ${{ matrix.target }}
-          cargo build --release --locked --target ${{ matrix.target }}
+          cargo build --release --locked --target ${{ matrix.target }} -p crucible-code -p crucible-sandbox-broker
 
-      # Git Bash ships on the Windows images, so one shell packages all four.
-      - name: It runs, and says the version the tag claims
-        shell: bash
-        run: |
-          said=$(./target/${{ matrix.target }}/release/crucible${{ matrix.exe }} --version)
-          if [[ $said != "crucible ${GITHUB_REF_NAME#v}" ]]; then
-            echo "--version said '$said', expected 'crucible ${GITHUB_REF_NAME#v}'"
-            exit 1
-          fi
-
+      # Every supported confinement backend needs its matching broker beside
+      # the application. Git Bash also packages the Windows targets.
       - name: Package
         shell: bash
         run: |
           name=crucible-${GITHUB_REF_NAME#v}-${{ matrix.stem }}
           mkdir -p "$name"
           cp ./target/${{ matrix.target }}/release/crucible${{ matrix.exe }} "$name/"
+          cp ./target/${{ matrix.target }}/release/crucible-sandbox-broker${{ matrix.exe }} "$name/"
           cp README.md LICENSE "$name/"
           cp scripts/install.sh scripts/uninstall.sh "$name/"
           tar czf "$name.tar.gz" "$name"
@@ -250,6 +243,26 @@ jobs:
           # this one are the least likely to have a shell that does it.
           if [[ -n "${{ matrix.exe }}" ]]; then
             cp "./target/${{ matrix.target }}/release/crucible.exe" "$name.exe"
+            cp "./target/${{ matrix.target }}/release/crucible-sandbox-broker.exe" \
+              "crucible-sandbox-broker-${GITHUB_REF_NAME#v}-${{ matrix.stem }}.exe"
+          fi
+
+      - name: Both packaged binaries run on their native platform
+        shell: bash
+        run: |
+          name=crucible-${GITHUB_REF_NAME#v}-${{ matrix.stem }}
+          mkdir unpacked
+          tar xzf "$name.tar.gz" -C unpacked
+          said=$("./unpacked/$name/crucible${{ matrix.exe }}" --version)
+          if [[ $said != "crucible ${GITHUB_REF_NAME#v}" ]]; then
+            echo "--version said '$said', expected 'crucible ${GITHUB_REF_NAME#v}'"
+            exit 1
+          fi
+          status=0
+          said=$("./unpacked/$name/crucible-sandbox-broker${{ matrix.exe }}") || status=$?
+          if [[ $status != 125 || -n $said ]]; then
+            echo "packaged broker exited $status and said '$said', expected 125 and nothing"
+            exit 1
           fi
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -488,7 +501,7 @@ jobs:
       # The upload below is a glob, and a glob ships whatever is there. That
       # is fine for the one platform allowed to be absent and wrong for every
       # other, so what must be present is written out and counted rather than
-      # trusted to a wildcard. Six required archives and two executables; the
+      # trusted to a wildcard. Six required archives and four executables; the
       # seventh is best-effort and its absence is a warning, loud enough to
       # reach the release notes and quiet enough not to stop them.
       - name: Every platform this release promises is here
@@ -504,6 +517,7 @@ jobs:
           done
           for stem in windows-x86_64 windows-aarch64; do
             [ -f "crucible-$version-$stem.exe" ] || missing="$missing $stem.exe"
+            [ -f "crucible-sandbox-broker-$version-$stem.exe" ] || missing="$missing $stem-broker.exe"
           done
           if [ -n "$missing" ]; then
             echo "::error::required platforms missing:$missing"
