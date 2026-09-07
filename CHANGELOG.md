@@ -68,6 +68,11 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **macOS and Windows downloads include the native sandbox helper.** Archives
+  contain the matching broker beside Crucible, and Windows also offers the
+  broker as a separate checksummed download. Installation instructions name
+  the actual Windows setup and removal commands.
+
 - **Stopping at the final stream read no longer commits private state or a recap.**
   Cancellation is checked again after EOF, before tool execution or replacement
   of the original session history.

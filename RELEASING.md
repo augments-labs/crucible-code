@@ -165,8 +165,13 @@ from, so there is no `v` in it — the `v` belongs to git. The triple is what th
 build is; the name is what somebody has to recognise in a list, and the two are
 not the same job.
 
-Each Windows target ships the bare `.exe` beside its archive, because the usual
-way to get one on Windows is to download it and run it.
+Linux, macOS and Windows archives include the matching sandbox broker beside
+Crucible. Each Windows target also ships both executables separately:
+`crucible-<version>-windows-<arch>.exe` and
+`crucible-sandbox-broker-<version>-windows-<arch>.exe`. The broker must be renamed
+to `crucible-sandbox-broker.exe` beside Crucible for sandboxing. The release
+workflow extracts each macOS and Windows archive and runs both binaries before
+publication; ordinary broker invocation must refuse with status 125.
 
 One `SHA256SUMS` covers the lot, rather than a file beside each artifact: a
 single line to publish and a single file to check against.

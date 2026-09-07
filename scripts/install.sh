@@ -17,8 +17,8 @@ Usage: scripts/install.sh [--version VERSION] [--dir DIRECTORY] [--dry-run]
                           [--archive FILE --checksums FILE]
 
 Downloads and verifies a crucible release, then installs `crucible` and the
-`cru` alias. Linux archives also carry `crucible-sandbox-broker`, the program
-confined commands run as PID 1; it is installed beside `crucible`. A local
+`cru` alias. Linux and macOS archives also carry `crucible-sandbox-broker`, the
+native confinement helper; it is installed beside `crucible`. A local
 archive still requires its matching SHA256SUMS file.
 USAGE
 }
