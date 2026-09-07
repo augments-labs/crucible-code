@@ -61,6 +61,9 @@ jobs:
         env:
           CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX: 1
       - if: ${{ runner.os == 'Windows' && !cancelled() }}
+        # A common initialized MSYS parent prevents concurrent Git Bash children
+        # from racing while creating their shared mount table (add_item EPERM).
+        shell: bash
         run: cargo test --workspace --locked
         env:
           CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX: 1

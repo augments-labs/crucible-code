@@ -36,6 +36,11 @@ policy, require the native backend for the full test run, and remove that
 machine state in an always-run cleanup step. The release gate and `rust-ci.yml`
 share the Linux setup action so they cannot drift apart.
 
+Windows tests run under Git Bash so their concurrent shell children share an
+initialized MSYS runtime. Starting them independently from PowerShell can race
+MSYS mount-table initialization before a command runs. Sandbox setup and removal
+still use PowerShell, and test concurrency and native enforcement stay enabled.
+
 Actions are pinned to full commit SHAs. A trailing comment records the release
 name for maintainers; the SHA is what executes.
 
