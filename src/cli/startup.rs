@@ -631,7 +631,7 @@ pub(crate) fn anthropic_web(wiring: Wiring<'_>, model: &str) -> Reaching {
     )))
 }
 
-/// Native Gemini web tools use the same checked key and recipient as turns.
+/// Gemini URL context uses the same checked key and recipient as turns.
 pub(crate) fn google_web(wiring: Wiring<'_>, model: &str) -> Reaching {
     let Ok(credential) = key(
         wiring.variable,
@@ -641,12 +641,15 @@ pub(crate) fn google_web(wiring: Wiring<'_>, model: &str) -> Reaching {
     ) else {
         return Reaching::nothing();
     };
-    Reaching::both(Arc::new(GoogleWeb::new(
-        wiring.sending.unwrap_or(Google::VENDOR),
-        credential,
-        Box::new(Https::new()),
-        model,
-    )))
+    Reaching {
+        searching: None,
+        fetching: Some(Arc::new(GoogleWeb::new(
+            wiring.sending.unwrap_or(Google::VENDOR),
+            credential,
+            Box::new(Https::new()),
+            model,
+        ))),
+    }
 }
 
 /// OpenAI's search and fetch, whichever service the credential is for.

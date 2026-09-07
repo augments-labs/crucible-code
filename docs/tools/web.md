@@ -22,7 +22,7 @@ What you get depends on what your vendor serves:
 | Provider | `web_search` | `web_fetch` |
 | --- | --- | --- |
 | Anthropic | yes | yes |
-| Google — Gemini API key | yes | yes |
+| Google — Gemini API key | — | yes |
 | OpenAI — API key or ChatGPT plan | yes | yes |
 | Moonshot — Kimi Code | yes | yes |
 | Moonshot — open platform | — | — |
@@ -37,24 +37,19 @@ of the page rather than the page itself. Anthropic and Kimi Code hand over the
 document; OpenAI hands over an account of it, which is fine for reading and
 poor for quoting exactly.
 
-Google uses native `google_search` for search and `url_context` for fetch,
-through the same Gemini model, API key and checked Interactions endpoint as
-the session. Fetch enables only URL context, requires successful retrieval and
-a citation to the exact requested URL, and returns model-extracted text, not
-raw HTML. Neither operation uses a Google subscription login or remote
-interaction history. Incomplete, cancelled or malformed responses yield no
-partial result.
+Google uses native `url_context` for fetch, through the same Gemini model,
+API key and checked Interactions endpoint as the session. Fetch requires
+successful retrieval and a citation to the exact requested URL, and returns
+model-extracted text rather than raw HTML. It uses neither a Google subscription
+login nor remote interaction history. Incomplete, cancelled or malformed
+responses yield no partial result.
 
-A Google Search answer without usable source citations is reported as a source
-error, not as evidence that the query found no results.
-
-Google Search currently projects citation titles, URLs and cited text into the
-ordinary search-tool result. That text follows normal session storage,
-resumption, compaction and provider-switch behavior. Crucible does not render
-Google's supplied Search Suggestions HTML or implement grounding-specific
-retention. These are unresolved limitations against Google's
-[grounding usage terms](https://ai.google.dev/gemini-api/terms#grounding-with-google-search),
-not a claim of reviewed contractual compliance.
+Google Search is unavailable in this release, including through the Rust SDK.
+Its Search Suggestions display and grounded-result storage/reuse requirements
+need clarification before it is enabled. In particular, ordinary session
+compaction and provider switching must be checked against Google's
+[grounding usage terms](https://ai.google.dev/gemini-api/terms#grounding-with-google-search).
+This restriction does not disable Gemini models or URL fetching.
 
 Moonshot's two services belong to the Kimi Code platform, which is where
 crucible sends this provider unless you have set `providers.moonshot.baseUrl`
@@ -73,12 +68,10 @@ that runs one, because on those two the search is run by a model. Kimi Code's
 services are plain endpoints and are covered by the plan the credential is for.
 On any subscription, both tools are part of what you already pay for.
 
-Gemini native Search is metered per executed search query, in addition to model
-tokens; one tool request can execute several queries. URL context uses model
-tokens. Consult [Google's current pricing](https://ai.google.dev/gemini-api/docs/pricing)
-for model, quota and grounding charges. `store: false` disables optional remote
-interaction storage; it does not promise zero provider retention, including for
-grounding requests.
+Gemini URL context uses model tokens. Consult
+[Google's current pricing](https://ai.google.dev/gemini-api/docs/pricing) for
+model and quota charges. `store: false` disables optional remote interaction
+storage; it does not promise zero provider retention.
 
 `web_fetch` carries no charge of its own on Anthropic. You pay for the page as
 input tokens, the same as any other text a tool returns.

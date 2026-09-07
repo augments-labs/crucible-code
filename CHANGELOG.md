@@ -8,6 +8,8 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.39.0] - 2026-09-07
+
 ### Added
 
 - **Release and repository checks catch more failures before publication.**
@@ -33,11 +35,11 @@ change in any release with no deprecation period.
   low, medium and high effort without changing the session's output ceiling.
   ([#594](https://github.com/augments-labs/crucible-code/pull/594))
 
-- **Gemini can answer web tools through native Google Search and URL context.**
-  Requests use the session's API key and existing web permissions; fetch returns
-  cited, model-extracted text. Google Search's suggestion-display and
-  grounding-specific retention limitations remain unresolved release blockers,
-  as documented under [web tools](docs/tools/web.md).
+- **Gemini can fetch pages through native URL context.** Requests use the
+  session's API key and existing web permissions and return cited,
+  model-extracted text. Google Search is unavailable in this release while its
+  Search Suggestions display and grounded-result storage/reuse requirements
+  are clarified; Gemini models and URL fetching remain available.
   ([#594](https://github.com/augments-labs/crucible-code/pull/594))
 
 - **Claude Fable 5.1 and GPT-6 Astra preserve native reasoning across tool passes.**
@@ -3660,7 +3662,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.38.0...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.39.0...HEAD
+[0.39.0]: https://github.com/augments-labs/crucible-code/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/augments-labs/crucible-code/compare/v0.37.0...v0.38.0
 [0.37.0]: https://github.com/augments-labs/crucible-code/compare/v0.36.0...v0.37.0
 [0.36.0]: https://github.com/augments-labs/crucible-code/compare/v0.35.0...v0.36.0
