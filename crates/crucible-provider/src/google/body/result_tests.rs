@@ -102,7 +102,9 @@ fn function_results_keep_the_called_name_across_reordering_and_reused_ids() {
     )
     .unwrap();
     let value: Value = serde_json::from_str(&body).unwrap();
-    let results: Vec<_> = value["input"]
+    let results: Vec<_> = value
+        .get("input")
+        .unwrap()
         .as_array()
         .unwrap()
         .iter()
