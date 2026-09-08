@@ -14,6 +14,10 @@ change in any release with no deprecation period.
   function name alongside the call ID, preventing Google's HTTP 400 rejection
   when Crucible sends a tool's output back to the model.
 
+- **The model picker shows exact API IDs.** `/model` displays names such as
+  `gpt-6-astra`, `gemini-3.8-flash` and `claude-fable-5-1` for every provider.
+  Search still accepts friendly display names.
+
 ## [0.39.0] - 2026-09-07
 
 ### Added
