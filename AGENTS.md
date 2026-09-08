@@ -1,40 +1,33 @@
 # crucible-code
 
-A terminal coding agent in Rust. `AGENTS.md` is the canonical repository guide;
-`CLAUDE.md` links here so every coding harness reads the same instructions.
+A terminal coding agent in Rust.
 
 Read the policies in [`.agents/rules/`](.agents/rules/) before working.
-They apply to every harness, including those that do not discover rules folders.
-Repository skills live in [`.agents/skills/`](.agents/skills/); `.claude/` links
-back to those canonical sources. Keep one owner for each instruction.
-
-This guide adds Crucible-specific constraints. Use the installed SDLC skills
-for the general development workflow; do not duplicate their planning, debugging,
-TDD, review, verification or branch procedures here.
+Repository skills live in [`.agents/skills/`](.agents/skills/).
 
 ## Repository map
 
-```text
-src/                     binary composition and CLI
-crates/crucible-core/    domain types and extension traits
-crates/crucible-auth/    credentials and account authorization
-crates/crucible-config/  configuration documents and settings
-crates/crucible-extension/ runs somebody else's program and talks to it
-crates/crucible-mcp/      speaks the Model Context Protocol to such a program
-crates/crucible-privacy/ protected local-file primitives
-crates/crucible-provider/ provider wire protocols
-crates/crucible-runner/  turn execution over traits
-crates/crucible-sandbox-broker/ frozen child-status protocol and PID 1 broker
-crates/crucible-session/ append-only session storage and replay
-crates/crucible-tools/   built-in tool implementations
-crates/crucible-tui/     terminal rendering and interaction
-schema/                  generated configuration schema
-scripts/                 local gates, benchmarks and release helpers
-docs/                    published user documentation
-```
+| Directory | Purpose |
+| --- | --- |
+| `src/` | CLI and application wiring |
+| `crates/crucible-core/` | Domain types and extension traits |
+| `crates/crucible-auth/` | Credentials and account authorization |
+| `crates/crucible-config/` | Configuration and settings |
+| `crates/crucible-extension/` | External program integration |
+| `crates/crucible-mcp/` | Model Context Protocol client |
+| `crates/crucible-privacy/` | Protected local files |
+| `crates/crucible-provider/` | Provider wire protocols |
+| `crates/crucible-runner/` | Agent turn execution |
+| `crates/crucible-sandbox-broker/` | Isolated child execution and status |
+| `crates/crucible-session/` | Session storage and replay |
+| `crates/crucible-tools/` | Built-in tools |
+| `crates/crucible-tui/` | Terminal rendering and interaction |
+| `schema/` | Generated configuration schema |
+| `scripts/` | Checks, benchmarks and release helpers |
+| `docs/` | User documentation |
 
-The workspace manifests declare the current crate graph;
-`scripts/repo-checks.sh` checks it. This map is navigation, not another spec.
+Workspace manifests declare crate dependencies; `scripts/repo-checks.sh`
+enforces their allowed directions.
 
 ## Changing Crucible
 
@@ -75,10 +68,10 @@ invariants. Update it when the implementation makes a sentence false.
 
 ## Dependencies
 
-Use the SDLC scope and reuse checks before choosing a dependency. For this tree,
-inspect `[workspace.dependencies]` for an existing fit. A small local solution
-is appropriate only when it needs no protocol, parser or platform branching.
-A necessary dependency must not become a reason to leave a feature incomplete.
+Before choosing a dependency, inspect `[workspace.dependencies]` for an existing
+fit and check whether `std` covers the need. A small local solution is appropriate
+only when it needs no protocol, parser or platform branching. Add a crate when
+the required behavior justifies it; keep the declaration and checks below.
 
 - Declare each third-party crate in root `Cargo.toml` under
   `[workspace.dependencies]`, with an exact `=1.2.3` version and a nearby comment
@@ -92,8 +85,8 @@ A necessary dependency must not become a reason to leave a feature incomplete.
   stdout/stderr. `unwrap_used`, `expect_used`, `panic`, `indexing_slicing`,
   `print_stdout` and `print_stderr` are denied. Preserve typed errors that a
   `thiserror` enum can hold with `#[from]`, rather than erasing them.
-- Account for compile time, binary size and startup budgets in
-  `scripts/bench.sh`. Its budgets change only by an explicit product decision.
+- Assess build time, binary size and startup impact. Follow the performance
+  checks below for runtime changes.
 - Check direct and transitive licenses against `deny.toml`; changing the allowed
   list requires an explicit rationale in the pull request. The distributed
   binary is MIT-licensed.
@@ -129,6 +122,7 @@ scripts/check.sh
 
 It aggregates deterministic Rust, repository and Python gates. Run
 `scripts/bench.sh` when startup, rendering, searching, retained session data or
-hot-path allocation changes; never widen a budget to accommodate a regression.
+hot-path allocation changes. Budget changes require an explicit product decision;
+do not widen them merely to make a failing change pass.
 Platform matrices, dependency policy, advisories, performance and releases have
 owners in [`.github/workflows/README.md`](.github/workflows/README.md).

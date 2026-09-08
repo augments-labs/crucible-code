@@ -32,6 +32,7 @@ use crucible_core::{
 
 mod beside;
 mod claim;
+mod display;
 mod glimpse;
 mod index;
 mod log;
@@ -50,6 +51,7 @@ pub(crate) fn restored_output(
 }
 
 use claim::{Claim, Claimed, claim};
+pub use display::{DisplayHistory, DisplayItem};
 pub use glimpse::{Glimpse, glimpse};
 use log::{Request as LogRequest, Trouble, make, open, shorten};
 pub use prompts::{PROMPTS, prompts, remember};
@@ -569,6 +571,36 @@ impl Session {
     #[must_use]
     pub const fn context_snapshot(&self) -> Option<&ContextSnapshot> {
         self.context.as_ref()
+    }
+
+    /// Streams the original conversation for display, without applying model
+    /// compaction or restoring execution authority. No extra transcript is kept.
+    ///
+    /// # Errors
+    /// Returns a storage error if queued records cannot be flushed or the
+    /// protected session log cannot be opened. Unrecorded sessions return `None`.
+    pub fn display_history(&self) -> Result<Option<DisplayHistory>, SessionError> {
+        if self.id.is_none() {
+            return Ok(None);
+        }
+        let trouble = |source| SessionError::Log {
+            at: self.path.display().to_string().into(),
+            source,
+        };
+        self.sync_pending_result_source()
+            .map_err(|_| trouble(io::Error::other("could not flush session display history")))?;
+        let file = File::open(&self.path).map_err(trouble)?;
+        DisplayHistory::open(file).map(Some).map_err(trouble)
+    }
+
+    /// Records the exact completed compaction notice for chronological replay.
+    /// `pruned` identifies a pruning record belonging to this same operation,
+    /// so display replay can join it with a recap without merging older events.
+    pub fn display_compacted(&self, compacted: crucible_core::Compacted, pruned: bool) {
+        let Some(to) = &self.to else { return };
+        drop(to.send(LogRequest::Line(
+            display::compacted(compacted, pruned).into(),
+        )));
     }
 
     /// Records that room was made, and what the notes stand in place of.

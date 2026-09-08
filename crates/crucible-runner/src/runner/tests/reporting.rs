@@ -421,11 +421,9 @@ fn a_turn_that_failed_reports_no_reason_because_it_reached_none() {
 
 #[test]
 fn a_diff_reaches_the_reader_and_stops_before_the_transcript() {
-    // The one thing here that goes to one of the two and not the other. A diff
-    // is drawn once; the transcript is replayed to the model every turn for the
-    // rest of the session, so a copy kept there would be paid for again on
-    // every turn after the edit it describes -- and paid for in the one value
-    // that is allowed to grow, against a bound that counts what was said.
+    // A diff reaches the reader, including later display replay, but stays out
+    // of the transcript sent to the model every turn. That growing value is
+    // bounded by what was said, not by the previews shown alongside it.
     let diff = Diff::new([Line::new(315, Change::Added, "budgets:")]);
     let script = Script::new(vec![calling("a", "edit", "{}"), saying("done")]);
     let mut scripted = Scripted::new(

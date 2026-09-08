@@ -179,7 +179,7 @@ impl Runner {
         // themselves, and that is exactly where there is no older middle for a
         // recap to replace. Prune before giving up on finding one so those
         // results do not become untouchable merely because the turn is active.
-        self.prune();
+        let pruned = self.prune();
 
         let replacing = if let Some(replacing) = replacing {
             replacing
@@ -193,6 +193,7 @@ impl Runner {
                     after,
                     kept: self.transcript.turns(),
                 };
+                self.session.display_compacted(compacted, pruned);
                 events.post(crucible_core::Event::Compacted { compacted });
                 events.post(crucible_core::Event::Carried {
                     left: self.left_under(run.policy().compaction),
@@ -287,6 +288,7 @@ impl Runner {
             after: self.load.tokens(),
             kept,
         };
+        self.session.display_compacted(compacted, pruned);
         events.post(crucible_core::Event::Compacted { compacted });
         events.post(crucible_core::Event::Carried {
             left: self.left_under(run.policy().compaction),
@@ -808,7 +810,7 @@ impl Runner {
     /// calls stay, the prose stays, and the placeholder keeps the shape of a
     /// result that answered — only the bulk is gone, and only from what the
     /// model is sent.
-    fn prune(&mut self) {
+    fn prune(&mut self) -> bool {
         // The newest output is protected: a result the model just read is not
         // one to pull out from under it. Counted in bytes, the figure the
         // results are actually measured in.
@@ -846,7 +848,7 @@ impl Runner {
         }
 
         if savings < MINIMUM {
-            return;
+            return false;
         }
 
         // The transcript first, because the log line names what was cleared:
@@ -867,6 +869,7 @@ impl Runner {
         }
         self.load
             .requesting(self.spec.instructions(), &self.tools.advertised());
+        true
     }
 }
 

@@ -110,3 +110,29 @@ fn nothing_a_diff_read_out_of_a_file_reaches_a_debug_line() {
     assert!(said.contains("added: 1"), "{said}");
     assert!(said.contains("Removed"), "{said}");
 }
+
+#[test]
+fn restored_preview_keeps_omitted_counts_without_materializing_omitted_lines() {
+    let original = added(Diff::LINES + 10);
+    let restored = Diff::restored(original.lines().to_vec(), 74, 0, 10).unwrap();
+    assert_eq!(restored, original);
+}
+
+#[test]
+fn restored_preview_rejects_counts_that_cannot_describe_its_lines() {
+    let kept = vec![Line::new(1, Change::Kept, "context")];
+    assert!(Diff::restored(kept.clone(), 1, 0, 0).is_none());
+    assert!(Diff::restored(kept, 0, 0, 1).is_none());
+    let full = added(Diff::LINES).lines().to_vec();
+    assert!(Diff::restored(full.clone(), Diff::LINES - 1, 0, 0).is_none());
+    assert!(Diff::restored(full.clone(), usize::MAX, usize::MAX, usize::MAX).is_none());
+    assert!(
+        Diff::restored(
+            vec![Line::new(1, Change::Kept, ""); Diff::LINES + 1],
+            0,
+            0,
+            0
+        )
+        .is_none()
+    );
+}

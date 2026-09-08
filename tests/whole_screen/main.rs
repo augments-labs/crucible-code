@@ -767,10 +767,8 @@ fn change_header_survives_resume() {
     // a session put back on the screen that forgot what a call changed reads as
     // though nothing happened in it.
     //
-    // The lines under the header are the reader's alone and never reach the log,
-    // so the block is live-only by construction. The sentence counting what the
-    // block could not fit goes with them: on a screen with no block, a header
-    // still claiming lines nobody is being shown would be the header lying.
+    // The private display history retains the bounded preview and its omitted
+    // line count without adding either to the model's conversation context.
     let input = serde_json::json!({
         "path": "notes.md",
         "find": spelling("was"),
@@ -806,12 +804,12 @@ fn change_header_survives_resume() {
         "the resumed screen forgot what the call changed: {again}"
     );
     assert!(
-        !again.contains("the line that"),
-        "the resumed screen drew lines the log never held: {again}"
+        again.contains("the line that is now here, number 1"),
+        "the resumed screen lost the stored diff preview: {again}"
     );
     assert!(
-        !again.contains(UNSHOWN),
-        "the resumed header counted lines nothing is showing: {again}"
+        again.contains(UNSHOWN),
+        "the resumed preview lost its omitted-line count: {again}"
     );
 }
 
@@ -871,20 +869,9 @@ fn a_resumed_session_says_what_the_reader_watched() {
     // middle to recap and clears the oldest results instead; then the session
     // put down and picked up again.
     //
-    // What the resumed screen owes the reader is what the live one showed: the
-    // header saying what the call changed, and the results the pruning cleared
-    // saying again what they said. Neither is in the transcript a request is
-    // built from — the header is drawn from counts recorded beside the result,
-    // and the words come from beside the transcript rather than out of it.
-    //
-    // The two pictures are not the same picture, and the assertions below say
-    // which rows are one screen's alone rather than pretending otherwise. Every
-    // other row matches, the cleared results' among them. What differs is the
-    // block of lines the call moved, which reaches no log; the sentence counting
-    // what that block could not fit, which would be a lie on a screen with no
-    // block; and the note saying room was made together with the line that asked
-    // for it, which are things that happened to the session rather than messages
-    // in it.
+    // Replay restores the original output and bounded change preview from the
+    // private log, followed by the notice at the point pruning happened. The
+    // smaller model transcript remains independent of the visible history.
     let file = |at: usize| {
         (
             "read",
@@ -987,20 +974,19 @@ fn a_resumed_session_says_what_the_reader_watched() {
         "the resumed screen lost the answer: {again}"
     );
 
-    // The three rows that are the live screen's alone, named rather than
-    // stumbled over: a resumed screen drawing any of them would be drawing
-    // something the log does not hold.
+    // Stored display details and compaction notices survive alongside the
+    // original results, even though the model context has pruned those results.
     assert!(
-        !again.contains("the line that"),
-        "the resumed screen drew lines the log never held: {again}"
+        again.contains("the line that is now here, number 1"),
+        "the resumed screen lost the stored diff preview: {again}"
     );
     assert!(
-        !again.contains(UNSHOWN),
-        "the resumed header counted lines nothing is showing: {again}"
+        again.contains(UNSHOWN),
+        "the resumed preview lost its omitted-line count: {again}"
     );
     assert!(
-        !again.contains("old tool output was cleared"),
-        "the resumed screen reported a compaction as though it had just run: {again}"
+        again.contains("old tool output was cleared"),
+        "the resumed screen omitted the historical compaction marker: {again}"
     );
 }
 
@@ -1527,6 +1513,53 @@ fn picking_a_session_up_asks_before_carrying_it_whole() {
     window.types_until("\r", "This session is large");
 
     insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn full_conversation_and_compaction_marker_survive_resume() {
+    let vendor = Vendor::recapping_after(
+        &[
+            "First original answer.",
+            "Second original answer.",
+            "Third original answer.",
+        ],
+        "A compact summary of earlier work.",
+        Some("Answer after compaction."),
+    );
+    let mut window = Watched::compacting("resume-full-history", 80, 80, &vendor);
+    window.types_until("first original request\r", "First original answer.");
+    window.types_until("second original request\r", "Second original answer.");
+    window.types_until("third original request\r", "Third original answer.");
+    window.types_until("/compact\r", "compacted");
+    window.types_until("request after compaction\r", "Answer after compaction.");
+    window.types_until("/clear\r", "ask mode on");
+    window.types_until("/resume\r", "a session, or a branch");
+    window.types_until("\r", "This session is large");
+    // Keep the existing conditional model-context decision. The second choice
+    // carries the current context without spending another recap request.
+    window.types("\x1b[B\r");
+    let picture = window.picture();
+    assert!(!picture.contains("This session is large"), "{picture}");
+    let first = picture
+        .find("First original answer.")
+        .expect("earliest answer restored");
+    let second = picture
+        .find("Second original answer.")
+        .expect("second answer restored");
+    let third = picture
+        .find("Third original answer.")
+        .expect("third answer restored");
+    let compacted = picture
+        .find(" compacted ")
+        .expect("historical compaction marker");
+    let after = picture
+        .find("Answer after compaction.")
+        .expect("later answer restored");
+    assert!(
+        first < second && second < third && third < compacted && compacted < after,
+        "{picture}"
+    );
+    assert!(picture.contains("first original request"), "{picture}");
 }
 
 #[test]

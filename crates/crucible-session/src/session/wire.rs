@@ -118,14 +118,22 @@ pub(crate) fn journal(item: &RunItem) -> Option<String> {
             let state = match invocation.state() {
                 InvocationState::Prepared => json!({ "state": "prepared" }),
                 InvocationState::Started => json!({ "state": "started" }),
-                InvocationState::Finished { outcome, output } => json!({
-                    "state": "finished",
-                    "outcome": tool_outcome(*outcome),
-                    "result": answered(&ToolResult {
+                InvocationState::Finished { outcome, output } => {
+                    let mut result = answered(&ToolResult {
                         id: invocation.call().id.clone(),
                         output: output.clone(),
-                    }),
-                }),
+                    });
+                    if let Some(diff) = output.diff()
+                        && let Some(fields) = result.as_object_mut()
+                    {
+                        fields.insert("display_diff".into(), super::display::preview(diff));
+                    }
+                    json!({
+                        "state": "finished",
+                        "outcome": tool_outcome(*outcome),
+                        "result": result,
+                    })
+                }
             };
             json!({
                 "kind": "invocation",
@@ -1063,9 +1071,10 @@ fn call(value: &Value) -> Option<ToolCall> {
 /// nothing is written exactly as format 6 wrote it, and one that only changed
 /// nothing exactly as format 8 did.
 ///
-/// The count and not the lines. A log is a file on disk that outlives the
-/// session, and a line of a file that held a key is a key; two integers name
-/// nothing and are the whole of what a change header is written from.
+/// This provider-visible conversation record carries counts, not diff lines.
+/// The separate protected invocation journal may persist a bounded display
+/// preview, including sensitive file text, for resume. Ordinary model replay
+/// ignores that display metadata; older logs have only these change counts.
 pub(crate) fn answered(result: &ToolResult) -> Value {
     let mut object = serde_json::Map::new();
     object.insert("id".to_owned(), json!(result.id.as_str()));

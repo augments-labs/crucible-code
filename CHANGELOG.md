@@ -10,6 +10,11 @@ change in any release with no deprecation period.
 
 ### Changed
 
+- **Repository guidance has one canonical home.** `AGENTS.md` and `.agents/`
+  own shared instructions, with compatibility links for other entrypoints.
+  The README and documentation now explain current session, authentication and
+  background-command behavior, and repository reasoning effort defaults to high.
+
 - **Tool activity stays compact and opens into full details.** Individual
   headings and result previews stay bounded, while successful local and web
   lookups share a highlighted, clickable summary with active and completed
@@ -30,6 +35,11 @@ change in any release with no deprecation period.
   retaining the full record in the session log for user review.
 
 ### Fixed
+
+- **Resume restores the full recorded conversation.** Earlier prompts, answers
+  and tool output remain visible after compaction, with chronological compaction
+  markers and newly persisted bounded diff previews. The large-session panel
+  still controls model context independently of visible history.
 
 - **Gemini continues after tool calls.** Tool results now include the original
   function name alongside the call ID, preventing Google's HTTP 400 rejection

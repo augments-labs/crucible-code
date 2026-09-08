@@ -21,19 +21,75 @@ continued later.
 ## Highlights
 
 - **Provider-independent sessions.** Anthropic, Google, Moonshot and OpenAI are wire
-  adapters; API keys and supported account logins are separate credentials.
+  adapters. Each provider uses either an API key or a supported account login;
+  switching login methods replaces that provider’s stored credential.
 - **Permissioned tools.** Reads inside the workspace are available by default;
   file changes, commands and reads outside it are decided by rules and the
   active permission mode. OS sandboxing is opt-in with `sandbox.enabled: true`;
   configure filesystem, network and command limits or inspect them with `/sandbox`.
   See [sandbox setup and platform support](docs/security/sandboxing.md).
 - **A responsive terminal UI.** Prompts remain editable while a turn runs, tool
-  output streams in place, and redirected output stays plain text.
+  output streams in place, and compact tool summaries open into full details.
+  Redirected output stays plain text.
 - **Bounded resource use.** Tool output, retained screen records, configuration
   documents and replay indexes have explicit ceilings. Performance budgets are
   executable release gates rather than README claims.
 - **Resumable work.** Sessions are append-only, private to the current user, and
-  scoped to the workspace where they began.
+  scoped to the workspace where they began. Resume restores the conversation,
+  compaction markers and recorded diff previews.
+
+## Performance, memory and resource use
+
+Crucible ships as a native executable. Its performance suite measures the actual
+terminal process, including input responsiveness and memory after a long session.
+A local release-profile run on September 8, 2026 produced:
+
+| What is checked | Measured | Enforced budget |
+| --- | ---: | ---: |
+| First terminal frame, p95 | 1.9 ms | ≤ 20 ms |
+| First input rendered, p95 | 2.1 ms | ≤ 60 ms |
+| `--help` and `--version` exit, p95 | 0.7 ms | ≤ 12 ms |
+| Session picker with a deep history preview, p95 | 2.1 ms | ≤ 20 ms |
+| Peak RSS across the memory stress fixtures | 25.7 MiB | ≤ 35 MiB |
+
+Measured on Linux x86-64, Intel Core i9-10900K, with Rust 1.97.1 and a local
+fixture provider. The 20-turn conversation alone peaked at 12.7 MiB RSS; the
+larger figure includes retained-history and image pressure. These are local
+workload measurements, not a promise for every machine or session. Rendering
+probes also enforce sustained throughput and pacing budgets.
+
+Tool output and retained terminal records have explicit limits. Resuming streams
+visible history from disk a message batch at a time; it does not build another
+full transcript in memory. Idle and active-turn tests check CPU use and input
+responsiveness, while compaction reduces the context sent on later model requests.
+
+Run `scripts/bench.sh > budgets.json` from a source checkout to measure your own
+machine. The [performance probes](scripts/bench.sh) define each workload and
+threshold; provider latency and child-process memory are separate costs.
+
+## Pick up where you left off
+
+Use `/resume` to browse this workspace’s sessions, `crucible --continue` to open
+the latest one, or `crucible --resume <id>` to select one directly. Scroll through
+original prompts, answers and tool results, including the points where compaction
+happened. Newly recorded edits keep their bounded diff previews; older sessions
+retain only the change details they originally recorded.
+
+Large sessions can offer a choice between summarizing model context and carrying
+it whole. That choice affects the next request, while the visible conversation
+remains available. See [sessions and compaction](docs/sessions/sessions.md).
+
+## Control the workspace and the work
+
+Choose a permission mode with `/mode`, inspect optional OS isolation with
+`/sandbox`, and configure filesystem, network and command limits. Crucible can
+search local files and the web, edit code, run tests, and use configured MCP tools
+and skills.
+
+Press **Ctrl+B** to leave a running command in the background. Completion is
+reported automatically, so independent work can continue. Long tool results open
+with **Ctrl+O** or a click. See [tools](docs/tools/index.md) and
+[permissions](docs/permissions/index.md) for the controls behind these actions.
 
 ## Install
 

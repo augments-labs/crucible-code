@@ -18,6 +18,16 @@ approvals_reviewer = "auto_review"
 # respects them usually has to be reasoned about, not pattern matched.
 model_reasoning_effort = "high"
 
+# Credit Codex's contributions using the supported instruction setting.
+developer_instructions = """
+When creating or editing a commit for work you contributed, preserve existing
+trailers and include a Co-authored-by trailer exactly once, separated from the
+body by a blank line. Use the exact active model ID as the author name and
+noreply@openai.com as the email: Co-authored-by: <active-model-id> <noreply@openai.com>
+Resolve the model ID from the current session; never write the placeholder or
+guess an ID. Preserve attribution from other models that contributed.
+"""
+
 # Rust answers age badly — a crate's API moves between minor versions and the
 # search result outlives it.
 web_search = "cached"

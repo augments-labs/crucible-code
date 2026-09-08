@@ -42,9 +42,10 @@ directory is the remedy.
 
 The Linux view starts from an empty temporary root. It exposes only the minimal
 read-only runtime needed to execute the selected absolute program, the exact
-workspace/reached roots at their granted access, protected repository and
-Crucible metadata carve-outs (including `.git`, `.agents`, and `.crucible`), a
-minimal `/proc` and `/dev`, and a transactionally staged manifest. Bounded unreadable patterns use a deliberately small `*`/single-`**`
+workspace/reached roots at their granted access, protected repository control
+metadata and recognized agent configuration directories, a minimal `/proc` and
+`/dev`, and a transactionally staged manifest. Bounded unreadable patterns use a
+deliberately small `*`/single-`**`
 grammar and one deterministic, no-symlink, no-mount-crossing tree scan. It
 creates isolated user, PID, IPC, UTS and network namespaces, drops capabilities,
 sets no-new-privileges through Bubblewrap, disables nested user namespaces,

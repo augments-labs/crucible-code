@@ -357,6 +357,11 @@ The names under `keys` are provider names, the same ones `--model openai/…`
 takes. `version` says which crucible wrote the file, so one from a later version
 is left alone rather than guessed at.
 
+Stored login methods are mutually exclusive **per provider**. Saving an API key
+removes that provider’s stored subscription login; completing a subscription
+login removes its stored API key. Other providers’ credentials are unaffected.
+The login menu offers available methods, not multiple active methods at once.
+
 For API-key authentication, **the variable wins over a stored API key**. It is
 the key chosen for this process — a second account, a work key, one rotated an
 hour ago — while the stored key is the standing answer underneath it, so

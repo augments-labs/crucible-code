@@ -302,6 +302,12 @@ At most 64 lines are drawn, and a change longer than that is still counted whole
 on the row above, which then says how much of it is not below:
 `Added 300 lines, removed 12 lines (248 of them not shown)`.
 
+The protected session log retains this bounded preview for resume, including the
+omitted count. Each retained line is limited to 1024 characters. Preview bodies
+stay out of model context; they can contain sensitive file text and receive the
+same file protection as the conversation. Sessions recorded before preview
+persistence show only their original change counts when resumed.
+
 `write` is the one that can have nothing to show. It is handed the new file and
 has to read the one it is about to discard, so a file over 1000000 bytes or one
 that is not text is replaced with the block left out rather than guessed at. The

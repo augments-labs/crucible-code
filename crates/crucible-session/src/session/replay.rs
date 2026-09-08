@@ -1,7 +1,7 @@
 //! Reading a log back into the transcript it recorded.
 //!
-//! The other half of this module writes; this half is the only thing that
-//! reads, and everything it does is bounded by what a crashed process can
+//! This reader restores model context; `display` streams the original visible
+//! history separately. Both are bounded by what a crashed process can
 //! leave behind. A log can stop mid-line, name a workspace this run is not in,
 //! or have been written by a build that spelled a message differently — so
 //! finding the right log, refusing the wrong one and stopping at the first
@@ -23,10 +23,10 @@ use super::{SUFFIX, SessionError, results, wire};
 
 /// A persisted record cannot legitimately exceed the maximum retained item
 /// escaped at JSON's worst case, plus the bounded private metadata envelope.
-const RECORD_BYTES: usize =
+pub(super) const RECORD_BYTES: usize =
     6 * crucible_core::MAX_RUN_ITEM_RETAINED_BYTES + crucible_core::CONTINUATION_BYTES;
 
-fn read_record(
+pub(super) fn read_record(
     reader: &mut impl io::BufRead,
     raw: &mut Vec<u8>,
     maximum: usize,
