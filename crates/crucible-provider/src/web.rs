@@ -23,7 +23,8 @@ use std::io::{self, Read};
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    Cancel, Credential, Fetch, Host, Outgoing, Page, Redactions, Search, SearchResult, SourceError,
+    Cancel, Credential, Fetch, Host, Outgoing, Page, Redactions, Search, SearchResponse,
+    SearchResult, SourceError,
 };
 use serde_json::Value;
 
@@ -459,9 +460,11 @@ impl Search for AnthropicWeb {
         host_of(self.endpoint.as_str())
     }
 
-    fn search(&self, query: &str, cancel: &Cancel) -> Result<Vec<SearchResult>, SourceError> {
+    fn search(&self, query: &str, cancel: &Cancel) -> Result<SearchResponse, SourceError> {
         let answered = self.ask(query, SEARCH_TOOL, cancel)?;
-        results(&answered).map_err(|error| self.failure(error))
+        results(&answered)
+            .map(SearchResponse::from)
+            .map_err(|error| self.failure(error))
     }
 }
 
@@ -930,7 +933,7 @@ impl Search for OpenAiWeb {
         host_of(self.endpoint.as_str())
     }
 
-    fn search(&self, query: &str, cancel: &Cancel) -> Result<Vec<SearchResult>, SourceError> {
+    fn search(&self, query: &str, cancel: &Cancel) -> Result<SearchResponse, SourceError> {
         if cancel.requested() {
             return Err(SourceError::Cancelled(OPENAI));
         }
@@ -961,7 +964,7 @@ impl Search for OpenAiWeb {
             });
         }
 
-        Ok(cited(&answered))
+        Ok(cited(&answered).into())
     }
 }
 
@@ -1128,7 +1131,7 @@ impl Search for MoonshotWeb {
         host_of(self.searching.as_str())
     }
 
-    fn search(&self, query: &str, cancel: &Cancel) -> Result<Vec<SearchResult>, SourceError> {
+    fn search(&self, query: &str, cancel: &Cancel) -> Result<SearchResponse, SourceError> {
         if cancel.requested() {
             return Err(SourceError::Cancelled(MOONSHOT));
         }
@@ -1164,7 +1167,7 @@ impl Search for MoonshotWeb {
                 problem: "the answer carried no search_results list".into(),
             })?;
 
-        Ok(found
+        let results: Vec<SearchResult> = found
             .iter()
             .filter_map(|result| {
                 let url = text_at(result, "/url")?;
@@ -1174,7 +1177,8 @@ impl Search for MoonshotWeb {
                     url,
                 })
             })
-            .collect())
+            .collect();
+        Ok(results.into())
     }
 }
 

@@ -180,7 +180,7 @@ pub use sandbox::{
     SandboxResourceLimits, SandboxRootInspection, SandboxService, SandboxSession, SandboxSpeech,
     SandboxUnreadablePattern, SandboxUsage, SandboxViolation,
 };
-pub use source::{Fetch, Page, Search, SearchResult, SourceError};
+pub use source::{Fetch, Page, Search, SearchResponse, SearchResult, SourceError};
 pub use steer::Steer;
 pub use tool::{
     Account, CallResultAcceptance, Changed, Looking, PendingCallResult, Remembered, Summary,

@@ -1,6 +1,8 @@
 //! What the two web tools answer with, over sources that answer from memory.
 
-use crucible_core::{Cancel, Fetch, Host, Page, Search, SearchResult, SourceError, Tool, ToolArgs};
+use crucible_core::{
+    Cancel, Fetch, Host, Page, Search, SearchResponse, SearchResult, SourceError, Tool, ToolArgs,
+};
 
 use super::*;
 use crate::sample;
@@ -20,8 +22,36 @@ impl Search for Answers {
         }
     }
 
-    fn search(&self, _query: &str, _cancel: &Cancel) -> Result<Vec<SearchResult>, SourceError> {
-        Ok(self.0.clone())
+    fn search(&self, _query: &str, _cancel: &Cancel) -> Result<SearchResponse, SourceError> {
+        Ok(self.0.clone().into())
+    }
+}
+
+/// A grounded search that answers with answer text, citations, and suggestions.
+struct GroundedAnswers {
+    answer: &'static str,
+    results: Vec<SearchResult>,
+    suggestions: &'static str,
+}
+
+impl Search for GroundedAnswers {
+    fn name(&self) -> &'static str {
+        "google"
+    }
+
+    fn reaches(&self) -> Host {
+        Host::Named {
+            sent: "https://generativelanguage.googleapis.com".into(),
+            host: "generativelanguage.googleapis.com".into(),
+        }
+    }
+
+    fn search(&self, _query: &str, _cancel: &Cancel) -> Result<SearchResponse, SourceError> {
+        Ok(SearchResponse::grounded(
+            self.answer,
+            self.results.clone(),
+            self.suggestions,
+        ))
     }
 }
 
@@ -40,7 +70,7 @@ impl Search for Breaks {
         }
     }
 
-    fn search(&self, _query: &str, _cancel: &Cancel) -> Result<Vec<SearchResult>, SourceError> {
+    fn search(&self, _query: &str, _cancel: &Cancel) -> Result<SearchResponse, SourceError> {
         Err(if self.0 {
             SourceError::Cancelled("fake")
         } else {
@@ -329,5 +359,51 @@ fn a_page_over_the_bound_comes_back_cut_rather_than_empty() {
         said.len() < 40_000,
         "the bound did not hold: {}",
         said.len()
+    );
+}
+
+#[test]
+fn a_grounded_search_shows_answer_citations_and_suggestions_together() {
+    let source = Arc::new(GroundedAnswers {
+        answer: "Rust is a systems programming language focusing on safety and speed.",
+        results: vec![SearchResult {
+            title: "Rust Home".into(),
+            url: "https://www.rust-lang.org".into(),
+            extract: "Official website".into(),
+        }],
+        suggestions: "- [learn rust](https://www.google.com/search?q=learn+rust)",
+    });
+    let tool = WebSearch::new(source);
+    let output = tool
+        .run(
+            sample::allowed(&tool, r#"{"query":"rust language"}"#),
+            &crate::sample::context(),
+        )
+        .expect("a source that answers");
+
+    assert!(!output.is_failed());
+    let said = output.text();
+    assert!(
+        said.contains("Rust is a systems programming language"),
+        "{said}"
+    );
+    assert!(said.contains("Sources:"), "{said}");
+    assert!(said.contains("Rust Home"), "{said}");
+    assert!(said.contains("https://www.rust-lang.org"), "{said}");
+    assert!(said.contains("Search Suggestions:"), "{said}");
+    assert!(said.contains("learn rust"), "{said}");
+    assert!(
+        said.contains("https://www.google.com/search?q=learn+rust"),
+        "{said}"
+    );
+}
+
+#[test]
+fn search_schema_does_not_encourage_automated_fetch_crawling() {
+    let tool = searching(Vec::new());
+    let schema = tool.schema();
+    assert!(
+        !schema.contains("follow a result with web_fetch"),
+        "search schema encourages automated crawling: {schema}"
     );
 }

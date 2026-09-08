@@ -1033,6 +1033,15 @@ impl ToolOutput {
         freed
     }
 
+    /// Replaces the output text with a placeholder unconditionally.
+    pub fn clear(&mut self, notice: &str) -> usize {
+        let freed = self.text.len();
+        self.text = notice.into();
+        self.capture = None;
+        self.attachments = Box::new([]);
+        freed
+    }
+
     /// The smallest result worth clearing, in bytes.
     ///
     /// Under it the placeholder costs more than the result did, and clearing

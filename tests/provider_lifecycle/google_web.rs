@@ -8,12 +8,13 @@ use super::*;
 use crucible_core::{AgentId, ApiKey, ContinuationPart, Effort, Header, HeaderKey};
 use crucible_provider::{Endpoint, GoogleWeb, Https};
 use crucible_runner::{AgentSpec, Compaction, ContextInputs, Model, RunPolicy, Runner, Tools};
-use crucible_tools::WebFetch;
+use crucible_tools::{WebFetch, WebSearch};
 use serde_json::{Value, json};
 use std::fmt::Write as _;
 use std::sync::Arc;
 
 const URL: &str = "https://example.com/page";
+const SEARCH_TEXT: &str = "Native search passage.";
 const FETCH_TEXT: &str = "Native fetched page.";
 
 fn web_runner(
@@ -33,6 +34,9 @@ fn web_runner(
         model,
     ));
     let mut tools = Tools::new();
+    tools
+        .add_builtin(WebSearch::new(source.clone()))
+        .expect("valid fixture");
     tools
         .add_builtin(WebFetch::new(source))
         .expect("valid fixture");
@@ -86,22 +90,38 @@ fn stream(steps: Vec<Value>, status: &str) -> String {
     body
 }
 
-fn calls() -> String {
+fn calls(fetch: bool) -> String {
+    let (name, args) = if fetch {
+        ("web_fetch", json!({"url": URL}))
+    } else {
+        ("web_search", json!({"query": "Rust"}))
+    };
     stream(
-        vec![
-            json!({"type":"function_call","id":"web_fetch","name":"web_fetch","arguments":{"url":URL}}),
-        ],
+        vec![json!({"type":"function_call","id":name,"name":name,"arguments":args})],
         "requires_action",
     )
 }
 
-fn native() -> String {
+fn native(fetch: bool) -> String {
+    let (call, result, text) = if fetch {
+        (
+            json!({"type":"url_context_call","id":"native-fetch","arguments":{"urls":[URL]}}),
+            json!({"type":"url_context_result","call_id":"native-fetch","result":[{"url":URL,"status":"success"}]}),
+            FETCH_TEXT,
+        )
+    } else {
+        (
+            json!({"type":"google_search_call","id":"native-search","arguments":{"queries":["Rust"]}}),
+            json!({"type":"google_search_result","call_id":"native-search","result":[{"search_suggestions":"<div>synthetic suggestions</div>"}]}),
+            SEARCH_TEXT,
+        )
+    };
     stream(
         vec![
             json!({"type":"thought","signature":"web-private-never-replay","summary":[]}),
-            json!({"type":"url_context_call","id":"native-fetch","arguments":{"urls":[URL]}}),
-            json!({"type":"url_context_result","call_id":"native-fetch","result":[{"url":URL,"status":"success"}]}),
-            json!({"type":"model_output","content":[{"type":"text","text":FETCH_TEXT,"annotations":[{"type":"url_citation","url":URL,"title":"A source","start_index":0,"end_index":FETCH_TEXT.len()}]}]}),
+            call,
+            result,
+            json!({"type":"model_output","content":[{"type":"text","text":text,"annotations":[{"type":"url_citation","url":URL,"title":"A source","start_index":0,"end_index":text.len()}]}]}),
         ],
         "completed",
     )
@@ -126,7 +146,7 @@ fn assert_no_side_state(history: &Transcript) {
     }
 }
 
-fn assert_side(model: &str, endpoint: &Endpoint, sent: &Sent, key: &str) {
+fn assert_side(model: &str, endpoint: &Endpoint, sent: &Sent, key: &str, fetch: bool) {
     let body = &sent.body;
     let headers = sent.headers.to_ascii_lowercase();
     assert!(headers.starts_with("post /interactions?alt=sse http/1.1\r\n"));
@@ -145,19 +165,19 @@ fn assert_side(model: &str, endpoint: &Endpoint, sent: &Sent, key: &str) {
     assert_eq!(body.get("store").expect("valid fixture"), false);
     assert_eq!(
         body.get("tools").expect("valid fixture"),
-        &json!([{"type": "url_context"}])
+        &json!([{"type": if fetch { "url_context" } else { "google_search" }}])
     );
     assert_eq!(
         body.pointer("/generation_config/max_output_tokens")
             .expect("valid fixture"),
-        32768
+        if fetch { 32768 } else { 4096 }
     );
     assert!(
         body.get("input")
             .expect("valid fixture")
             .as_str()
             .expect("valid fixture")
-            .contains(URL)
+            .contains(if fetch { URL } else { "Rust" })
     );
     let text = body.to_string();
     for absent in [
@@ -179,8 +199,10 @@ fn native_google_web_survives_restart_compaction_and_recipient_rotation() {
         let vendor = Vendor::new(
             model,
             [
-                calls(),
-                native(),
+                calls(false),
+                native(false),
+                calls(true),
+                native(true),
                 response(model, None, "web finished"),
                 response(model, None, "resumed"),
                 response(model, None, &recap()),
@@ -194,7 +216,7 @@ fn native_google_web_survives_restart_compaction_and_recipient_rotation() {
             turn(&mut run, "begin web work", &sample),
             StopReason::Yielded
         );
-        assert_eq!(sample.approved(), 1);
+        assert_eq!(sample.approved(), 2);
         let visible = run
             .transcript()
             .messages()
@@ -213,7 +235,9 @@ fn native_google_web_survives_restart_compaction_and_recipient_rotation() {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(visible.contains(FETCH_TEXT));
+        assert!(visible.contains(SEARCH_TEXT), "{visible}");
+        assert!(visible.contains("synthetic suggestions"), "{visible}");
+        assert!(visible.contains(FETCH_TEXT), "{visible}");
         assert_no_side_state(run.transcript());
         let before = run.transcript().clone();
         drop(run);
@@ -227,7 +251,7 @@ fn native_google_web_survives_restart_compaction_and_recipient_rotation() {
             turn(&mut run, "resume the research", &sample),
             StopReason::Yielded
         );
-        assert_eq!(sample.approved(), 1, "resume re-executed web tools");
+        assert_eq!(sample.approved(), 2, "resume re-executed web tools");
         let cancel = crucible_core::Cancel::new();
         let steer = crucible_core::Steer::new();
         let aside = crucible_core::Aside::new();
@@ -244,15 +268,27 @@ fn native_google_web_survives_restart_compaction_and_recipient_rotation() {
         drop(run);
 
         let sent = vendor.requests();
-        assert_eq!(sent.len(), 6);
+        assert_eq!(sent.len(), 8);
         assert_side(
             model,
             &vendor.endpoint,
             sent.get(1).expect("valid fixture"),
             key,
+            false,
         );
-        for index in [2, 3, 4] {
+        assert_side(
+            model,
+            &vendor.endpoint,
+            sent.get(3).expect("valid fixture"),
+            key,
+            true,
+        );
+        for index in [4, 5, 6] {
             let text = sent.get(index).expect("valid fixture").body.to_string();
+            assert!(
+                text.contains(SEARCH_TEXT),
+                "search text lost at request {index}"
+            );
             assert!(
                 text.contains(FETCH_TEXT),
                 "fetch text lost at request {index}"
@@ -260,16 +296,25 @@ fn native_google_web_survives_restart_compaction_and_recipient_rotation() {
             assert!(!text.contains("web-private-never-replay"));
         }
 
-        let next = Vendor::new(model, [calls(), native(), response(model, None, "rotated")]);
+        let next = Vendor::new(
+            model,
+            [
+                calls(false),
+                native(false),
+                calls(true),
+                native(true),
+                response(model, None, "rotated"),
+            ],
+        );
         let key = "synthetic-rotated-key";
         let (session, history) =
             Session::resume(&sample.logs(), &sample.workspace()).expect("valid fixture");
         let mut run = web_runner(&sample, model, &next, session, key).resuming(history);
-        assert_eq!(turn(&mut run, "fetch again", &sample), StopReason::Yielded);
-        assert_eq!(sample.approved(), 2);
+        assert_eq!(turn(&mut run, "search again", &sample), StopReason::Yielded);
+        assert_eq!(sample.approved(), 4);
         assert_no_side_state(run.transcript());
         let sent = next.requests();
-        assert_eq!(sent.len(), 3);
+        assert_eq!(sent.len(), 5);
         assert!(
             !sent
                 .first()
@@ -283,6 +328,14 @@ fn native_google_web_survives_restart_compaction_and_recipient_rotation() {
             &next.endpoint,
             sent.get(1).expect("valid fixture"),
             key,
+            false,
+        );
+        assert_side(
+            model,
+            &next.endpoint,
+            sent.get(3).expect("valid fixture"),
+            key,
+            true,
         );
         assert!(!sample.events().contains("web-private-never-replay"));
     }

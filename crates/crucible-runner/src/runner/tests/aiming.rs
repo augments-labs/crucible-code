@@ -60,6 +60,56 @@ fn a_provider_handed_over_mid_session_is_the_one_the_next_turn_is_sent_to() {
 }
 
 #[test]
+fn switching_away_from_google_prunes_grounded_search_results_from_next_provider() {
+    let first = Script::new(vec![
+        calling("call_search", "web_search", r#"{"query":"rust"}"#),
+        saying("answer from google"),
+    ])
+    .with_name("google");
+
+    let mut scripted = Scripted::new(
+        first,
+        tools([Fixed::new("web_search").answering("grounded search results canary")]),
+        Verdict::Allow,
+    );
+
+    scripted
+        .turn("search for rust")
+        .expect("the turn to finish");
+
+    let second = Script::new(vec![saying("answer from anthropic")]).with_name("anthropic");
+    let _after = second.sent();
+    scripted.runner.serve(Box::new(second));
+    scripted.turn("summarize").expect("the turn to finish");
+
+    let message = scripted
+        .runner
+        .transcript()
+        .messages()
+        .iter()
+        .find(|m| matches!(m, crucible_core::Message::ToolResults(_)))
+        .expect("tool result message");
+    if let crucible_core::Message::ToolResults(results) = message {
+        let first = results.first().expect("tool result");
+        assert!(
+            first
+                .output
+                .text()
+                .contains("Google search results are restricted to Google models"),
+            "clearing notice should be present in tool result: {}",
+            first.output.text()
+        );
+        assert!(
+            !first
+                .output
+                .text()
+                .contains("grounded search results canary"),
+            "Google grounded search results were leaked to a third-party provider"
+        );
+    }
+}
+
+#[test]
 fn changing_model_replaces_its_limits_and_reestimates_the_load() {
     let script = Script::new(vec![vec![
         Delta::Carried(Carried::new(40_000)),

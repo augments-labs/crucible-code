@@ -694,17 +694,14 @@ fn anthropic_serves_both_halves_of_reaching_the_web() {
 }
 
 #[test]
-fn google_exposes_url_fetch_without_a_search_source() {
+fn google_serves_both_halves_from_interactions() {
     let reaching = reaching_for("google", Some("gemini-3.8-flash"));
 
     assert!(
-        reaching.searching.is_none(),
-        "Google Search must not be exposed"
+        reaching.searching.is_some(),
+        "Google Search is exposed with Search Suggestions"
     );
-    assert!(
-        reaching.fetching.is_some(),
-        "URL context must remain available"
-    );
+    assert!(reaching.fetching.is_some(), "URL context remains available");
 }
 
 #[test]
@@ -733,7 +730,13 @@ fn google_web_authority_is_api_key_only_and_uses_the_checked_recipient() {
         subscriptions: &subscriptions,
     };
     let reaching = google_web(wiring(serving("google"), auth).unwrap(), "gemini-3.8-flash");
-    assert!(reaching.searching.is_none());
+    assert_eq!(
+        reaching.searching.unwrap().reaches(),
+        crucible_core::Host::Named {
+            sent: "https://gateway.example/interactions?alt=sse".into(),
+            host: "gateway.example".into()
+        }
+    );
     assert!(reaching.fetching.is_some());
 
     let invalid =

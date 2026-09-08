@@ -302,3 +302,174 @@ fn google_fetch_cancellation_during_a_quiet_read_discards_even_completed_text() 
         Err(SourceError::Cancelled("google"))
     ));
 }
+
+fn searched(query: &str, answer: &str, suggestions: &str, url: &str, title: &str) -> Vec<Value> {
+    vec![
+        json!({
+            "type": "thought",
+            "content": [{"type": "text", "text": "planning to search..."}]
+        }),
+        json!({
+            "type": "google_search_call",
+            "id": "search_1",
+            "arguments": {"queries": [query]}
+        }),
+        json!({
+            "type": "google_search_result",
+            "call_id": "search_1",
+            "result": [{"search_suggestions": suggestions}]
+        }),
+        json!({
+            "type": "model_output",
+            "content": [{
+                "type": "text",
+                "text": answer,
+                "annotations": [{
+                    "type": "url_citation",
+                    "url": url,
+                    "title": title,
+                    "start_index": 0,
+                    "end_index": answer.len()
+                }]
+            }]
+        }),
+    ]
+}
+
+#[test]
+fn google_search_success_with_grounded_answer_citations_and_suggestions() {
+    let query = "rust programming";
+    let answer_text = "Rust is a systems programming language.";
+    let suggestions_html =
+        "<div><a href=\"https://www.google.com/search?q=learn+rust\">learn rust</a></div>";
+    let url = "https://www.rust-lang.org";
+    let title = "Rust Language";
+
+    let (source, replay) = source(&searched(query, answer_text, suggestions_html, url, title));
+    let response = source
+        .search(query, &Cancel::new())
+        .expect("google search should succeed");
+
+    assert_eq!(response.answer.as_deref(), Some(answer_text));
+    assert_eq!(response.results.len(), 1);
+    let first = response.results.first().expect("search result");
+    assert_eq!(&*first.url, url);
+    assert_eq!(&*first.title, title);
+    assert_eq!(&*first.extract, answer_text);
+    assert_eq!(
+        response.suggestions.as_deref(),
+        Some("- [learn rust](https://www.google.com/search?q=learn+rust)")
+    );
+
+    let sent = replay.sent();
+    let body: Value = serde_json::from_str(&sent.body).unwrap();
+    assert_eq!(
+        body.get("model").and_then(Value::as_str),
+        Some("gemini-3.8-flash")
+    );
+    assert_eq!(body.get("stream").and_then(Value::as_bool), Some(true));
+    assert_eq!(body.get("store").and_then(Value::as_bool), Some(false));
+    assert_eq!(
+        body.pointer("/generation_config/max_output_tokens")
+            .and_then(Value::as_u64),
+        Some(u64::from(CEILING))
+    );
+    assert_eq!(
+        body.pointer("/tools/0/type").and_then(Value::as_str),
+        Some("google_search")
+    );
+}
+
+#[test]
+fn google_search_missing_suggestions_is_refused() {
+    let mut steps = searched(
+        "query",
+        "Answer",
+        "<div>suggestions</div>",
+        "https://example.com",
+        "Title",
+    );
+    // Remove search_suggestions from google_search_result
+    if let Some(step) = steps.get_mut(2) {
+        *step = json!({
+            "type": "google_search_result",
+            "call_id": "search_1",
+            "result": [{}]
+        });
+    }
+    let (source, _) = source(&steps);
+    let error = source.search("query", &Cancel::new()).unwrap_err();
+    assert!(
+        format!("{error}").contains("missing Google search suggestions"),
+        "{error}"
+    );
+}
+
+#[test]
+fn google_search_missing_citations_is_refused() {
+    let mut steps = searched(
+        "query",
+        "Answer without citations",
+        "<div>suggestions</div>",
+        "https://example.com",
+        "Title",
+    );
+    // Remove annotations from model_output
+    if let Some(step) = steps.get_mut(3) {
+        *step = json!({
+            "type": "model_output",
+            "content": [{
+                "type": "text",
+                "text": "Answer without citations",
+                "annotations": []
+            }]
+        });
+    }
+    let (source, _) = source(&steps);
+    let error = source.search("query", &Cancel::new()).unwrap_err();
+    assert!(
+        format!("{error}").contains("Google search response carried no citations"),
+        "{error}"
+    );
+}
+
+#[test]
+fn google_search_error_payload_is_refused() {
+    let mut steps = searched(
+        "query",
+        "Answer",
+        "<div>suggestions</div>",
+        "https://example.com",
+        "Title",
+    );
+    if let Some(step) = steps.get_mut(2) {
+        *step = json!({
+            "type": "google_search_result",
+            "call_id": "search_1",
+            "is_error": true,
+            "result": [{"search_suggestions": "<div>suggestions</div>"}]
+        });
+    }
+    let (source, _) = source(&steps);
+    let error = source.search("query", &Cancel::new()).unwrap_err();
+    assert!(
+        format!("{error}").contains("Google search returned an error"),
+        "{error}"
+    );
+}
+
+#[test]
+fn google_search_prior_cancellation_never_posts() {
+    let (source, replay) = source(&searched(
+        "query",
+        "Answer",
+        "<div>suggestions</div>",
+        "https://example.com",
+        "Title",
+    ));
+    let cancel = Cancel::new();
+    cancel.request();
+    let error = source.search("query", &cancel).unwrap_err();
+    assert!(matches!(error, SourceError::Cancelled("google")));
+    assert!(replay.sent().url.is_empty());
+}

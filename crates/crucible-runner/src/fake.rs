@@ -68,6 +68,7 @@ fn fingerprint(text: &str) -> u64 {
 
 /// A provider that answers from a script, one round per request.
 pub(crate) struct Script {
+    name: Option<&'static str>,
     credential_scope: CredentialScopeId,
     rounds: Mutex<VecDeque<Vec<Delta>>>,
     sent: Sent,
@@ -114,6 +115,7 @@ impl Script {
     /// rounds run out.
     pub(crate) fn new(rounds: Vec<Vec<Delta>>) -> Self {
         Self {
+            name: None,
             credential_scope: CredentialScopeId::new(),
             rounds: Mutex::new(rounds.into()),
             sent: Sent::default(),
@@ -127,6 +129,13 @@ impl Script {
             cache: CacheFixture::default(),
             resource_delete: ResourceDelete::Deleted,
         }
+    }
+
+    /// Sets the provider name reported by this script.
+    #[cfg(test)]
+    pub(crate) fn with_name(mut self, name: &'static str) -> Self {
+        self.name = Some(name);
+        self
     }
 
     /// Reconstructs this fixture under one durable credential identity.
@@ -262,7 +271,7 @@ impl Script {
 
 impl Provider for Script {
     fn name(&self) -> &'static str {
-        SCRIPT
+        self.name.unwrap_or(SCRIPT)
     }
 
     /// A stand-in spells what every real provider here spells today.

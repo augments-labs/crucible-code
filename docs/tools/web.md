@@ -22,7 +22,7 @@ What you get depends on what your vendor serves:
 | Provider | `web_search` | `web_fetch` |
 | --- | --- | --- |
 | Anthropic | yes | yes |
-| Google — Gemini API key | — | yes |
+| Google — Gemini API key | yes | yes |
 | OpenAI — API key or ChatGPT plan | yes | yes |
 | Moonshot — Kimi Code | yes | yes |
 | Moonshot — open platform | — | — |
@@ -44,12 +44,14 @@ model-extracted text rather than raw HTML. It uses neither a Google subscription
 login nor remote interaction history. Incomplete, cancelled or malformed
 responses yield no partial result.
 
-Google Search is unavailable in this release, including through the Rust SDK.
-Its Search Suggestions display and grounded-result storage/reuse requirements
-need clarification before it is enabled. In particular, ordinary session
-compaction and provider switching must be checked against Google's
-[grounding usage terms](https://ai.google.dev/gemini-api/terms#grounding-with-google-search).
-This restriction does not disable Gemini models or URL fetching.
+Google Search uses native `google_search` grounding through the same Gemini model,
+API key and checked Interactions endpoint as the session (`store: false`).
+Grounded answers are displayed with associated Search Suggestions and inline source
+citations in the terminal without redirect rewriting. In accordance with Google's
+[grounding usage terms](https://ai.google.dev/gemini-api/terms#grounding-with-google-search),
+switching to another provider clears grounded search outputs from the context sent
+to the new model, while retaining them in the local session log for user history review.
+Incomplete, cancelled or malformed responses yield a clean bounded failure.
 
 Moonshot's two services belong to the Kimi Code platform, which is where
 crucible sends this provider unless you have set `providers.moonshot.baseUrl`

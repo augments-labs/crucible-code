@@ -91,6 +91,57 @@ pub struct SearchResult {
     pub extract: Box<str>,
 }
 
+/// A complete response from a search source, with optional grounded text and suggestions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SearchResponse {
+    /// Distinct results or cited sources.
+    pub results: Vec<SearchResult>,
+    /// Complete grounded answer where provided by the source.
+    pub answer: Option<Box<str>>,
+    /// Associated search suggestions where provided by the source.
+    pub suggestions: Option<Box<str>>,
+}
+
+impl SearchResponse {
+    /// A response containing only individual search results.
+    #[must_use]
+    pub fn results(results: Vec<SearchResult>) -> Self {
+        Self {
+            results,
+            answer: None,
+            suggestions: None,
+        }
+    }
+
+    /// A response containing a grounded answer, cited sources, and search suggestions.
+    #[must_use]
+    pub fn grounded(
+        answer: impl Into<Box<str>>,
+        results: Vec<SearchResult>,
+        suggestions: impl Into<Box<str>>,
+    ) -> Self {
+        Self {
+            results,
+            answer: Some(answer.into()),
+            suggestions: Some(suggestions.into()),
+        }
+    }
+}
+
+impl From<Vec<SearchResult>> for SearchResponse {
+    fn from(results: Vec<SearchResult>) -> Self {
+        Self::results(results)
+    }
+}
+
+impl std::ops::Deref for SearchResponse {
+    type Target = [SearchResult];
+
+    fn deref(&self) -> &Self::Target {
+        &self.results
+    }
+}
+
 /// A page a fetch handed back.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Page {
@@ -123,7 +174,7 @@ pub trait Search: Send + Sync {
     ///
     /// [`SourceError`] where the source could not be reached or did not answer
     /// in a shape this implementation reads. No results is not an error.
-    fn search(&self, query: &str, cancel: &Cancel) -> Result<Vec<SearchResult>, SourceError>;
+    fn search(&self, query: &str, cancel: &Cancel) -> Result<SearchResponse, SourceError>;
 }
 
 /// Something that answers a URL.
@@ -158,5 +209,39 @@ impl fmt::Debug for dyn Search {
 impl fmt::Debug for dyn Fetch {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Fetch({})", self.name())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn search_response_results_only() {
+        let results = vec![SearchResult {
+            title: "Title".into(),
+            url: "https://example.com".into(),
+            extract: "Extract".into(),
+        }];
+        let response = SearchResponse::results(results.clone());
+        assert_eq!(response.results, results);
+        assert!(response.answer.is_none());
+        assert!(response.suggestions.is_none());
+
+        let from_vec: SearchResponse = results.into();
+        assert_eq!(from_vec, response);
+    }
+
+    #[test]
+    fn search_response_grounded() {
+        let results = vec![SearchResult {
+            title: "Title".into(),
+            url: "https://example.com".into(),
+            extract: "Extract".into(),
+        }];
+        let response = SearchResponse::grounded("Answer", results.clone(), "Suggestions");
+        assert_eq!(response.results, results);
+        assert_eq!(response.answer.as_deref(), Some("Answer"));
+        assert_eq!(response.suggestions.as_deref(), Some("Suggestions"));
     }
 }
