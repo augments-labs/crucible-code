@@ -90,16 +90,17 @@ fn switching_away_from_google_prunes_grounded_search_results_from_next_provider(
         .find(|m| matches!(m, crucible_core::Message::ToolResults(_)))
         .expect("tool result message");
     if let crucible_core::Message::ToolResults(results) = message {
+        let first = results.first().expect("tool result");
         assert!(
-            results[0]
+            first
                 .output
                 .text()
                 .contains("Google search results are restricted to Google models"),
             "clearing notice should be present in tool result: {}",
-            results[0].output.text()
+            first.output.text()
         );
         assert!(
-            !results[0]
+            !first
                 .output
                 .text()
                 .contains("grounded search results canary"),

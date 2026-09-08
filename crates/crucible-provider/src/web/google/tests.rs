@@ -352,9 +352,10 @@ fn google_search_success_with_grounded_answer_citations_and_suggestions() {
 
     assert_eq!(response.answer.as_deref(), Some(answer_text));
     assert_eq!(response.results.len(), 1);
-    assert_eq!(&*response.results[0].url, url);
-    assert_eq!(&*response.results[0].title, title);
-    assert_eq!(&*response.results[0].extract, answer_text);
+    let first = response.results.first().expect("search result");
+    assert_eq!(&*first.url, url);
+    assert_eq!(&*first.title, title);
+    assert_eq!(&*first.extract, answer_text);
     assert_eq!(
         response.suggestions.as_deref(),
         Some("- [learn rust](https://www.google.com/search?q=learn+rust)")
@@ -371,7 +372,7 @@ fn google_search_success_with_grounded_answer_citations_and_suggestions() {
     assert_eq!(
         body.pointer("/generation_config/max_output_tokens")
             .and_then(Value::as_u64),
-        Some(CEILING as u64)
+        Some(u64::from(CEILING))
     );
     assert_eq!(
         body.pointer("/tools/0/type").and_then(Value::as_str),
@@ -389,11 +390,13 @@ fn google_search_missing_suggestions_is_refused() {
         "Title",
     );
     // Remove search_suggestions from google_search_result
-    steps[2] = json!({
-        "type": "google_search_result",
-        "call_id": "search_1",
-        "result": [{}]
-    });
+    if let Some(step) = steps.get_mut(2) {
+        *step = json!({
+            "type": "google_search_result",
+            "call_id": "search_1",
+            "result": [{}]
+        });
+    }
     let (source, _) = source(&steps);
     let error = source.search("query", &Cancel::new()).unwrap_err();
     assert!(
@@ -412,14 +415,16 @@ fn google_search_missing_citations_is_refused() {
         "Title",
     );
     // Remove annotations from model_output
-    steps[3] = json!({
-        "type": "model_output",
-        "content": [{
-            "type": "text",
-            "text": "Answer without citations",
-            "annotations": []
-        }]
-    });
+    if let Some(step) = steps.get_mut(3) {
+        *step = json!({
+            "type": "model_output",
+            "content": [{
+                "type": "text",
+                "text": "Answer without citations",
+                "annotations": []
+            }]
+        });
+    }
     let (source, _) = source(&steps);
     let error = source.search("query", &Cancel::new()).unwrap_err();
     assert!(
@@ -437,12 +442,14 @@ fn google_search_error_payload_is_refused() {
         "https://example.com",
         "Title",
     );
-    steps[2] = json!({
-        "type": "google_search_result",
-        "call_id": "search_1",
-        "is_error": true,
-        "result": [{"search_suggestions": "<div>suggestions</div>"}]
-    });
+    if let Some(step) = steps.get_mut(2) {
+        *step = json!({
+            "type": "google_search_result",
+            "call_id": "search_1",
+            "is_error": true,
+            "result": [{"search_suggestions": "<div>suggestions</div>"}]
+        });
+    }
     let (source, _) = source(&steps);
     let error = source.search("query", &Cancel::new()).unwrap_err();
     assert!(
