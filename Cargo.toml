@@ -26,8 +26,7 @@ publish = false
 #   extension  -> core            runs somebody else's program and talks to it
 #   runner     -> core, session   drives turns through traits only
 #   tui        -> core
-#   crucible-code (this package) -> all nine, and is the only place concrete
-#                                   types are wired together
+#   crucible-code (this package) -> workspace crates; the concrete composition root
 #
 # `config` sits beside the others rather than above them: it reads files into
 # settings and hands them to the wiring, which is what applies them. Nothing

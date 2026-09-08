@@ -410,9 +410,9 @@ pub(crate) fn converse<T: Terminal>(
 
     attaching::refresh_store(&mut held, &runner);
 
-    // What the session already said, before what it will be asked about it: a
-    // resumed session is one the model can see and the reader cannot, and the
-    // screen it is being read on was opened empty a moment ago.
+    // The session already has model context and recorded display history.
+    // Put that history onto the newly opened screen before asking what to do
+    // next, independently of how much context the model currently retains.
     //
     // Before the first prompt, because a session picked up on the command line
     // reaches this loop the same way one picked up by `/resume` does, and the

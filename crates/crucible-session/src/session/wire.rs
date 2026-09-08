@@ -1071,10 +1071,11 @@ fn call(value: &Value) -> Option<ToolCall> {
 /// nothing is written exactly as format 6 wrote it, and one that only changed
 /// nothing exactly as format 8 did.
 ///
-/// This provider-visible conversation record carries counts, not diff lines.
+/// This session record carries change counts for display, not diff lines.
 /// The separate protected invocation journal may persist a bounded display
 /// preview, including sensitive file text, for resume. Ordinary model replay
-/// ignores that display metadata; older logs have only these change counts.
+/// ignores that display metadata; provider projections also omit these counts.
+/// Older logs have only the counts available for reconstructing an edit header.
 pub(crate) fn answered(result: &ToolResult) -> Value {
     let mut object = serde_json::Map::new();
     object.insert("id".to_owned(), json!(result.id.as_str()));

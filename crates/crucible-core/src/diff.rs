@@ -7,10 +7,10 @@
 //! again from bytes it no longer has. So the tool says it once, here, on its way
 //! out.
 //!
-//! The model is never sent it. [`crate::ToolOutput::forget_diff`] removes lines
-//! from the provider-visible transcript and retains the two change counts as
-//! [`crate::Changed`]. Repeated provider requests therefore carry what was said,
-//! without retaining a preview for every edit in model context.
+//! Preview lines never enter provider requests. [`crate::ToolOutput::forget_diff`]
+//! removes them before transcript retention and keeps [`crate::Changed`] as
+//! display metadata. Provider projections send result text and attachments;
+//! neither the preview lines nor these counts change the request bytes.
 //!
 //! Bounded previews may be retained in the protected session's display history
 //! and drawn again on resume. They can contain sensitive file text, so they

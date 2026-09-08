@@ -742,14 +742,13 @@ fn a_call_that_changed_a_file_is_drawn_with_the_change() {
 ///
 /// Two of these is more lines than a block may draw, which is the whole of why
 /// the number is this one: the header then has something to say that the block
-/// cannot show, and that sentence is the one thing the live screen and a resumed
-/// one are meant to differ on.
+/// cannot show. Both live and resumed previews must report the same omission.
 const REWRITTEN: usize = 40;
 
 /// The header that call leaves on the row answering it.
 const CHANGED: &str = "Added 40 lines, removed 40 lines";
 
-/// What the live screen adds to it, and a resumed screen has no lines to earn.
+/// The omitted-line count on both the live and restored bounded preview.
 const UNSHOWN: &str = "16 of them not shown";
 
 /// Every line of one version of that file, each saying which version it is.
