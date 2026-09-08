@@ -8,6 +8,15 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Added
+
+- **Google Search is available with Gemini models.** `web_search` uses native
+  Google Search grounding with the session's API key. Grounded answers are
+  presented together with associated Search Suggestions and source citations in
+  the terminal. Switching to another provider clears grounded search results from
+  what the new model is sent, preventing cross-provider context reuse while
+  retaining the full record in the session log for user review.
+
 ### Fixed
 
 - **Gemini continues after tool calls.** Tool results now include the original

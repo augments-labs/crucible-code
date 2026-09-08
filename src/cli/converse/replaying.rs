@@ -492,7 +492,7 @@ impl Folded {
 #[cfg(test)]
 mod tests {
     use crucible_core::{
-        AgentId, Cancel, Effort, Host, Search, SearchResult, SourceError, StopReason, ToolArgs,
+        AgentId, Cancel, Effort, Host, Search, SearchResponse, SourceError, StopReason, ToolArgs,
         ToolCall, ToolId, ToolOutput, ToolResult, Transcript, Workspace,
     };
     use crucible_runner::{AgentSpec, Model, Session, Tools};
@@ -529,8 +529,8 @@ mod tests {
             }
         }
 
-        fn search(&self, _: &str, _: &Cancel) -> Result<Vec<SearchResult>, SourceError> {
-            Ok(Vec::new())
+        fn search(&self, _: &str, _: &Cancel) -> Result<SearchResponse, SourceError> {
+            Ok(SearchResponse::results(Vec::new()))
         }
     }
 

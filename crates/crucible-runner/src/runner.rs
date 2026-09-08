@@ -972,11 +972,40 @@ impl Runner {
     /// Reachable between turns, where [`Runner::ask`] is and for the same
     /// reason: a turn owns the runner while it runs.
     pub fn serve(&mut self, provider: Box<dyn Provider>) {
+        let was_google = self.provider.name() == "google";
+        let is_google = provider.name() == "google";
         self.provider = provider;
+        if was_google && !is_google {
+            self.prune_grounded_results();
+        }
         // Cached-token and tokenizer semantics belong to the provider that
         // reported them. Keep the transcript, but not that provider's exact
         // reading of it.
         self.load.reestimated();
+    }
+
+    /// Clears Google grounded search tool results from what another provider is sent.
+    ///
+    /// Google API terms prohibit sending grounded search results or search suggestions
+    /// to third-party providers. Pruning removes them from the model context while
+    /// preserving them in the session log for user history viewing.
+    fn prune_grounded_results(&mut self) {
+        let mut ids = Vec::new();
+        for message in self.transcript.messages() {
+            if let crucible_core::Message::Agent { calls, .. } = message {
+                for call in calls {
+                    if &*call.name == "web_search" {
+                        ids.push(call.id.clone());
+                    }
+                }
+            }
+        }
+        if !ids.is_empty() {
+            self.transcript.clear_tool_outputs(
+                &ids,
+                "[cleared — Google search results are restricted to Google models]",
+            );
+        }
     }
 
     /// How hard this session is asking the model to think.

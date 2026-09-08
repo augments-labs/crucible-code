@@ -501,6 +501,26 @@ impl Transcript {
         }
         freed
     }
+
+    /// Clears the named tool outputs unconditionally using the provided notice.
+    pub fn clear_tool_outputs(&mut self, ids: &[ToolId], notice: &str) -> usize {
+        let mut freed = 0;
+
+        for message in &mut self.messages {
+            if let Message::ToolResults(results) = message {
+                for result in results.iter_mut() {
+                    if ids.contains(&result.id) {
+                        freed += result.output.clear(notice);
+                    }
+                }
+            }
+        }
+
+        if freed > 0 {
+            self.rewritten_through = self.messages.len();
+        }
+        freed
+    }
 }
 
 #[cfg(test)]
