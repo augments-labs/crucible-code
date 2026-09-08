@@ -161,6 +161,36 @@ fn what_is_held_stays_under_the_ceiling_however_long_the_session_runs() {
 }
 
 #[test]
+fn large_headings_share_the_retained_byte_ceiling_with_output() {
+    let mut cut = Kept::default();
+    for turn in 0..16 {
+        kept(
+            &mut cut,
+            &format!("Bash({turn} {})", "x".repeat(HELD / 3)),
+            0,
+        );
+    }
+
+    let held: usize = cut
+        .newest()
+        .map(|whole| whole.called().len() + whole.text().len())
+        .sum();
+    assert!(held <= HELD, "{held} bytes held");
+    assert_eq!(
+        cut.newest().count(),
+        2,
+        "eviction must subtract heading bytes too"
+    );
+    assert!(
+        cut.newest()
+            .next()
+            .unwrap()
+            .called()
+            .starts_with("Bash(15 ")
+    );
+}
+
+#[test]
 fn a_result_bigger_than_the_ceiling_on_its_own_is_still_the_one_held() {
     // It is over the bound the moment it arrives, so a queue that emptied until
     // it fitted would empty completely — and the result nobody could ever see

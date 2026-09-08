@@ -242,7 +242,7 @@ impl Gathering {
 
 /// Which counter a kind of looking is counted against.
 ///
-/// A match rather than a discriminant, so that a fifth kind of looking is a
+/// A match rather than a discriminant, so that a new kind of looking is a
 /// compile error here rather than a call counted against `patterns`.
 fn at(looking: Looking) -> usize {
     match looking {

@@ -111,8 +111,8 @@ fn reports(part: &str) -> bool {
         })
 }
 
-/// Only `sed -n 'N[,M]p' paths...`: a line range printed without any other
-/// script or option. This is display classification, never permission to run.
+/// Only `sed -n 'N[,M]p'` with explicit paths: no other script, option, or
+/// filename expansion. This is display classification, never permission to run.
 fn prints(part: &str) -> bool {
     let mut words = part.split_whitespace();
     words.next();
@@ -141,8 +141,12 @@ fn prints(part: &str) -> bool {
         return false;
     }
     // Options after the script can still edit a file or load another script.
-    // Quoted or escaped option words are declined as well.
-    words.all(|word| !word.trim_start_matches(['\'', '"', '\\']).starts_with('-'))
+    // Quoted or escaped options are declined too. Globs can introduce options
+    // through filenames such as `-i`, so they cannot establish a lookup either.
+    words.all(|word| {
+        !word.trim_start_matches(['\'', '"', '\\']).starts_with('-')
+            && !word.contains(['*', '?', '['])
+    })
 }
 
 #[cfg(test)]

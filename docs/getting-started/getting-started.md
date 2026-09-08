@@ -497,10 +497,14 @@ the window holds, in the order it arrived. Two characters decide it — a brace 
 a bracket, and something a record could hold after it — so `[exit status 3]` and
 a sentence somebody wrote in brackets keep their spaces and their meaning.
 
-Tool headings and result previews stay on one row, with an ellipsis where
-text was clipped. A long command stays expandable even when it produced no
+Tool headings and result previews stay on one row, with an ellipsis inside
+the closing parenthesis when arguments were clipped: `Bash(cat …)`.
+A recent long command stays expandable even when it produced no
 output; an individual call with only horizontally clipped text offers
 `(ctrl+o to expand)` without a count of extra lines.
+Expansion keeps a bounded history and drops the oldest details as newer
+results arrive. Background completion notices also shorten long commands,
+preserving their exit status and output line count.
 
 A result the row had no room for says how much it left over and names the key
 that gives it back: `(+128 lines · ctrl+o to expand)`. The key is drawn in the
@@ -551,7 +555,8 @@ What folds is successful lookup calls. `grep` counts a pattern, `read` a file,
 `glob` a directory, `web_search` a search, and `web_fetch` a page request. A Bash
 call counts once, even if it chains several shell commands. Supported reporting
 forms include `git status`, `gh pr view`, `ls`, `cat`, a `cd` followed by such
-commands, and `sed -n 'N[,M]p'` for printing a line range. This classification
+commands, and `sed -n 'N[,M]p' path` with explicit paths for printing a line range.
+Wildcard paths and extra options keep a `sed` call individual. This classification
 changes only display, never permissions. A failed lookup, a call that writes a
 file, or an unrecognized command ends the run and keeps its own result row.
 The run also ends wherever the turn does something else worth

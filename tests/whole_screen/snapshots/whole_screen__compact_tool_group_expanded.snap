@@ -16,7 +16,7 @@ expression: opened
 |                                                                                |
 |● Read 2 files                                                                  |
 |                                                                                |
-|● Bash(cat > generated.txt <<'EOF' long script line long …                      |
+|● Bash(cat > generated.txt <<'EOF' long script line long…)                      |
 |  ⎿ (no output) (ctrl+o to expand)                                              |
 |                                                                                |
 |● Read(missing.txt)                                                             |

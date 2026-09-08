@@ -294,14 +294,20 @@ pub(crate) fn gone<T: Terminal>(
         ended.said.trim().to_owned()
     };
 
-    // Wrapped rather than cut, because the end of the sentence is how the
-    // command ended and how much it printed, which is the part nobody can go
-    // back and ask for — and a command is as long as somebody typed it.
+    // Reserve the status and count before shortening the command. Its original
+    // call holds the full heading; repeating a huge script here would undo the
+    // compact transcript. Only a window too narrow for the fixed suffix wraps.
     let window = renderer.columns();
     let lead = Row::plain(format!("{mark} "));
     let room = style
         .output(window)
         .min(window.saturating_sub(lead.columns()));
+    let available = room.saturating_sub(columns(&tail));
+    let named = heading(
+        &named,
+        if available == 0 { room } else { available },
+        glyphs,
+    );
     let rows = hung_off(lead, &Row::plain(flattened(format!("{named}{tail}"))), room);
 
     renderer.settle()?;
@@ -736,7 +742,27 @@ pub(crate) fn words(said: &str, window: usize, style: Style) -> Row {
         .args(window)
         .min(window.saturating_sub(columns(glyphs.called()) + 1));
 
-    named(&clipped(said, room, glyphs))
+    named(&heading(said, room, glyphs))
+}
+
+/// Clips arguments inside their enclosing parentheses, so a shortened label
+/// still reads as a complete call. A tiny window shows only the tool's name.
+fn heading(said: &str, room: usize, glyphs: Glyphs) -> String {
+    let said = flattened(said);
+    if columns(&said) <= room {
+        return said;
+    }
+    if let Some((name, about)) = said.split_once('(')
+        && let Some(about) = about.strip_suffix(')')
+    {
+        let edges = columns(name) + 2;
+        return if room >= edges + columns(glyphs.ellipsis()) {
+            format!("{name}({})", within(about.to_owned(), room - edges, glyphs))
+        } else {
+            within(name.to_owned(), room, glyphs)
+        };
+    }
+    within(said, room, glyphs)
 }
 
 /// A call's words in the two slots they are read in: the tool's name where the

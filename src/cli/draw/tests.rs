@@ -339,7 +339,25 @@ fn long_tool_headings_stay_on_one_row() {
         let long = format!("{name}({})", "argument ".repeat(200));
         let rows = pictured(&long, WIDE, Style::plain());
         assert_eq!(rows.len(), 1, "{rows:?}");
-        assert!(rows.join("").ends_with('…'), "{rows:?}");
+        assert!(rows.join("").ends_with("…)"), "{rows:?}");
+    }
+}
+
+#[test]
+fn compact_headings_keep_their_parentheses_in_both_glyph_sets() {
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        for name in ["Bash", "WebFetch", "WebSearch", "Read"] {
+            let long = format!("{name}({})", "界argument ".repeat(100));
+            for width in 1..100 {
+                let row = words(&long, width, Style::drawn(glyphs));
+                let text = row.text();
+                assert!(row.columns() <= width, "{width}: {text}");
+                if text.contains('(') {
+                    assert!(text.ends_with(')'), "{width}: {text}");
+                    assert!(text.contains(glyphs.ellipsis()), "{width}: {text}");
+                }
+            }
+        }
     }
 }
 
@@ -1487,12 +1505,8 @@ fn an_ending_says_the_status_it_ended_with() {
 
 #[test]
 fn a_command_long_enough_to_fill_the_row_still_says_how_it_ended() {
-    // The failure this is written against: the sentence was clipped whole, so a
-    // command somebody typed at length took every column and what the row exists
-    // to report — how it ended, how much it printed — was the part cut off. The
-    // count under the box had gone down and nothing on screen said why. Now the
-    // sentence wraps, so the end of the command is there as well as the end of
-    // the sentence, and the rows after the first hang under the words.
+    // A background completion must preserve its status without printing a
+    // huge command again. Its original call retains the complete heading.
     let said = ended_on(
         "for i in $(seq 1 120); do printf 'tick %d/120\\n' \"$i\"; sleep 1; done; echo complete",
         80,
@@ -1500,12 +1514,9 @@ fn a_command_long_enough_to_fill_the_row_still_says_how_it_ended() {
 
     assert!(said.contains("exit status 0"), "{said}");
     assert!(said.contains("120 lines"), "{said}");
-    assert!(said.contains("Bash(for i in"), "{said}");
-    assert!(said.contains("echo complete)"), "{said}");
-    assert!(!said.contains(unicode().ellipsis()), "{said}");
-    for row in said.lines().skip(1) {
-        assert!(row.starts_with("  "), "{row:?}");
-    }
+    assert!(said.contains("Bash("), "{said}");
+    assert!(said.contains("…) ended"), "{said}");
+    assert_eq!(said.lines().count(), 1, "{said}");
 }
 
 #[test]

@@ -178,7 +178,7 @@ impl fmt::Debug for Summary {
 ///
 /// Distinct cases rather than a count, because the line names what was done —
 /// searching, reading, listing, running and web research — a bare count would
-/// name nothing. Closed, because a fifth kind of looking must make every
+/// name nothing. Closed, because a new kind of looking must make every
 /// reader of this decide how to say it rather than fall into a default that
 /// silently spells it wrong.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

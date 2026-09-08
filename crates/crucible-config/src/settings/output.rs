@@ -124,7 +124,7 @@ impl ThemeChoice {
 /// How wide the line of a tool call and its result may run.
 ///
 /// Headings and result previews stay compact at either width. The expanded
-/// view holds the full text whenever it was clipped.
+/// view shows the full text of recent clipped results while they are retained.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ToolDetail {
     /// A readable measure, narrower than a wide terminal.
