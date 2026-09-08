@@ -79,7 +79,10 @@ Two ways, and they answer different situations. The model sends `background` whe
 it means to start something with no end of its own — a dev server, a file watcher,
 a tunnel. You press <kbd>Ctrl</kbd>+<kbd>B</kbd> when a command you did not expect
 to be long turns out to be. Either way the call is answered, the turn goes on, and
-the process keeps running.
+the process keeps running. Silence does not detach a command: without an
+explicit `background: true` request or Ctrl+B, it stays in the foreground.
+The agent should continue independent work, or yield if all remaining work
+depends on completion, rather than repeatedly checking the same job.
 
 A call that asked for it is answered as soon as the command has had a moment to
 fail on the spot — two hundred milliseconds, which is long enough for

@@ -697,12 +697,9 @@ fn each_result_gets_the_files_its_own_call_found() {
 /// reader-side and green afterwards — a guard written beside the change it
 /// exists to catch would be recording that change instead of catching it.
 ///
-/// Both shapes, because only one of them is the shape a request is ever built
-/// from. The lines are dropped where the call answers, before the result joins
-/// the transcript, so a result on its way to a provider carries the counts and
-/// never the diff — and a guard that only varied the diff would be pinning the
-/// shape this path cannot produce while leaving the shape it always produces
-/// free to move.
+/// Both internal shapes are covered: a live result may hold preview lines,
+/// while the retained transcript carries change counts as display metadata.
+/// Provider projection ignores both, so neither may change the request bytes.
 #[test]
 fn the_request_body_is_the_same_whatever_the_reader_was_shown() {
     let text = "fn main() {}";

@@ -118,22 +118,11 @@ are priced in token-hours rather than raw tokens. A same-currency total may
 therefore combine token and token-hour rate provenance; missing storage usage
 or pricing keeps the dependent total unknown.
 
-## Implementation-source ledger
+## Protocol references
 
-The implementation re-derived behavior from these pinned source revisions;
-no runtime dependency or copied implementation was introduced:
-
-| Source | Revision | Cache-relevant paths reviewed |
-| --- | --- | --- |
-| crucible-code phase baseline | `b4c01b4099f87f68a220faae0011f8f9c6732323` | core provider contract, shipped provider bodies/wires, configuration shape |
-| pi-mono | `6c87d9a026677b601e8278030dcf1ad97fe0bd86` | `anthropic-messages.ts`, `openai-prompt-cache.ts`, `openai-responses-shared.ts`, `bedrock-converse-stream.ts`, `google-generative-ai.ts`, `types.ts` |
-| OpenAI Codex | `3ae4225b1761c135c6d3bbc1ea0cfcfc95752cdc` | `codex-rs/core/src/client.rs`, including prompt-cache identity and the separate response-continuation paths |
-| jcode | `a5f17d2f8e33bf7469fc72d6f2a8e57aa647bc5f` | projection-aware message hashes, cache-relevant hashes, KV-cache events and stable/dynamic prompt splitting |
-| Philharmonica ADK | `df69de3411e78b61faf7bb4a4d641b02f53d0bc8` | Anthropic cache applicator, policy resolution, cached-content references and normalized token details |
-
-The following official protocol documents were also re-read on 2026-08-31 as
-conformance context. Gemini's shipped Interactions route is described above;
-the other links do not claim that crucible ships those adapters:
+Additional official protocol documentation is listed below. Gemini's shipped
+Interactions route is described above; these links do not imply that Crucible
+ships the other adapters.
 
 - [Azure OpenAI](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/prompt-caching)
 - [Gemini API](https://ai.google.dev/gemini-api/docs/caching) and

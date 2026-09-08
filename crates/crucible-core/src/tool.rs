@@ -980,26 +980,19 @@ impl ToolOutput {
     ///
     /// Set as the lines are dropped rather than beside them, so a copy that
     /// still holds its [`Diff`] answers `None` here and is drawn from the
-    /// lines. Two integers is what a header needs and all that survives.
+    /// lines. The transcript copy keeps this two-integer display header.
     #[must_use]
     pub fn changed(&self) -> Option<Changed> {
         self.changed
     }
 
-    /// Drops it, keeping the count it came to, for the copy that is kept
-    /// rather than drawn.
+    /// Drops preview lines before transcript retention, keeping display counts.
     ///
-    /// A diff is drawn once and a transcript is replayed every turn for the
-    /// rest of the session, so the copy going into one keeps only what the
-    /// model was told. Otherwise the transcript would grow with what had been
-    /// *shown*, where what bounds it is what was *said*.
-    ///
-    /// The lines are the whole of that weight, and the header over them is two
-    /// integers. So the header stays: a session put back together later has to
-    /// draw the row the reader was shown, and this is the last moment anything
-    /// still knows what it said. Called again on a copy that has already parted
-    /// with its lines, this leaves the count where it is — there is nothing
-    /// left to count, and a second call is not a different answer.
+    /// Provider projections send result text and attachments, not these counts
+    /// or preview lines. The protected display journal may retain the bounded
+    /// preview separately, so resume restores it without expanding model context.
+    /// Older logs retain just the header. Calling this again preserves the
+    /// existing counts; there are no remaining lines to count a second time.
     pub fn forget_diff(&mut self) {
         if let Some(diff) = self.diff.take() {
             self.changed = Some(Changed::new(diff.added(), diff.removed()));

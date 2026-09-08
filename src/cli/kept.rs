@@ -5,10 +5,9 @@
 //! that are not. This is where those lines wait for a reader who asks to see
 //! them, and asking is [`Pressed::Expand`](crucible_tui::Pressed::Expand).
 //!
-//! Nothing is copied to put it here. The drawing thread is handed its own
-//! `ToolOutput` and drops it once the row is drawn; what this holds is that
-//! value's text, moved rather than cloned, which is why keeping it costs the
-//! process nothing it was not already spending for the length of one event.
+//! Live results move their event-owned text here after the row is drawn.
+//! Replay copies the result from the current message batch into this bounded
+//! store; that batch is then dropped as history advances.
 //!
 //! It is bounded, because a session is not. [`HELD`] is the ceiling
 //! on how much is held at once and the oldest result is dropped to stay under

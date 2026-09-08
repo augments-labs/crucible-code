@@ -1236,9 +1236,8 @@ pub(crate) fn came_back<T: Terminal>(
 /// could not fit was cut where the change was built rather than here, so there
 /// is nothing left over to offer.
 ///
-/// Zero on the way back in too, where the counts came off the log and the lines
-/// did not. There is even less to offer then — the key would open a result whose
-/// text is the tool's sentence about the call, which the row already says.
+/// Restored previews follow the same rule. Legacy logs with counts alone also
+/// offer no expansion: the result text repeats the sentence in the header.
 fn beyond(output: &ToolOutput) -> usize {
     if changed(output).is_some() {
         return 0;
@@ -1249,12 +1248,9 @@ fn beyond(output: &ToolOutput) -> usize {
 
 /// What a call changed, from whichever of the two still knows.
 ///
-/// Live, the lines are here and the counts are read off them. On the way back in
-/// they are not: a diff is the reader's alone and never reaches the log, so what
-/// a resumed session has is the two numbers the result carried down beside it.
-/// One question, asked once, so the header a reader met live is the header they
-/// meet again — a row that counted lines one way live and another way on the way
-/// back in is the same call behaving as two.
+/// Live and restored previews carry their own counts. When a legacy log lacks
+/// preview lines, the result's saved header supplies the same two numbers.
+/// Both paths therefore describe the same change.
 ///
 /// A change of nothing is no change: a call that left the file as it was has a
 /// header to draw only if `Added 0 lines` is worth a row, and it is not.
@@ -1277,10 +1273,9 @@ fn changed(output: &ToolOutput) -> Option<Changed> {
 /// that stopped without saying so reads as the whole of what happened.
 ///
 /// `dropped` is what the block below is leaving out, and it is passed in rather
-/// than read off the counts because it is a fact about lines being drawn. A
-/// resumed session has the counts and no lines, so nothing is being left out of
-/// anything, and a row that said otherwise would be counting rows nobody is
-/// looking at.
+/// than read off the counts because it is a fact about lines being drawn.
+/// Restored previews retain their omitted-line count; legacy headers without
+/// previews do not claim to show or omit any diff rows.
 fn counted(row: &mut Row, counts: Changed, dropped: usize, room: usize) {
     let before = row.columns();
 

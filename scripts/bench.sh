@@ -206,7 +206,7 @@ if ((unmeasured)); then
     echo >&2
     echo "A budget with no probe cannot be checked, so it cannot be released." >&2
     echo "Write the probe as src/bin/<name>.rs, or retire the budget deliberately" >&2
-    echo "in CLAUDE.md, CONTRIBUTING.md and README.md together." >&2
+    echo "in AGENTS.md, CONTRIBUTING.md and README.md together." >&2
 fi
 
 if ((failed)); then

@@ -7,22 +7,15 @@
 //! again from bytes it no longer has. So the tool says it once, here, on its way
 //! out.
 //!
-//! The model is never sent it. [`crate::ToolOutput::forget_diff`] is where it
-//! comes off, at the one point the reader's copy and the model's part company —
-//! a diff is drawn once, and a transcript is replayed every turn for the rest of
-//! the session, so one that kept a diff per edit would grow with what had been
-//! *shown* where what bounds it is what was *said*.
+//! Preview lines never enter provider requests. [`crate::ToolOutput::forget_diff`]
+//! removes them before transcript retention and keeps [`crate::Changed`] as
+//! display metadata. Provider projections send result text and attachments;
+//! neither the preview lines nor these counts change the request bytes.
 //!
-//! What parts there is the lines. The two counts over them go on as
-//! [`crate::Changed`], because the row a reader was shown has to be drawable
-//! again from the copy that was kept, and a count names no file and holds no
-//! line. This type stays what it always was: a thing with lines in it.
-//!
-//! And it reaches no log, error or panic payload either. A diff of a file
-//! holding a key is a key, so [`Debug`] is written by hand and redacts, the same
-//! as everything else in this crate that carries what a file said. That governs
-//! the counts as well as the lines — it is what makes two integers the most a
-//! log may be told, and the reason nothing here grew a way to say more.
+//! Bounded previews may be retained in the protected session's display history
+//! and drawn again on resume. They can contain sensitive file text, so they
+//! never reach ordinary logs, errors or panic payloads. [`Debug`] is written
+//! by hand and redacts, like other values carrying file contents.
 //!
 //! Both bounds are taken here rather than trusted from above: a diff crosses a
 //! thread and is held until it is drawn, and a producer that forgot to cut one
@@ -128,6 +121,45 @@ impl fmt::Debug for Diff {
 }
 
 impl Diff {
+    /// Restores a bounded display preview without inventing omitted lines.
+    ///
+    /// Returns `None` when its totals cannot describe the retained lines or
+    /// when its retained line shape could not come from a live bounded diff.
+    #[must_use]
+    pub fn restored(
+        lines: Vec<Line>,
+        added: usize,
+        removed: usize,
+        dropped: usize,
+    ) -> Option<Self> {
+        if lines.len() > Self::LINES || (dropped > 0 && lines.len() != Self::LINES) {
+            return None;
+        }
+        let visible_added = lines
+            .iter()
+            .filter(|line| line.change() == Change::Added)
+            .count();
+        let visible_removed = lines
+            .iter()
+            .filter(|line| line.change() == Change::Removed)
+            .count();
+        if added < visible_added
+            || removed < visible_removed
+            || added
+                .checked_sub(visible_added)?
+                .checked_add(removed.checked_sub(visible_removed)?)?
+                > dropped
+        {
+            return None;
+        }
+        Some(Self {
+            lines: lines.into_boxed_slice(),
+            added,
+            removed,
+            dropped,
+        })
+    }
+
     /// The most lines a diff carries.
     ///
     /// Rather more than a screen, because a reader scrolls back to what a tool

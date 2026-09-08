@@ -31,8 +31,8 @@ mod tools;
 pub use agent::AgentSpec;
 pub use context::RunContext;
 pub use crucible_session::{
-    Glimpse, PROMPTS, Pruned, Recorded, Session, SessionError, glimpse, prompts, recent, remember,
-    retitle,
+    DisplayHistory, DisplayItem, Glimpse, PROMPTS, Pruned, Recorded, Session, SessionError,
+    glimpse, prompts, recent, remember, retitle,
 };
 pub use outcome::{RunResult, RunStatus};
 pub use policy::{Bounds, Compaction, MAXIMUM_TOOL_CONCURRENCY, Retry, RunPolicy, ToolScheduling};

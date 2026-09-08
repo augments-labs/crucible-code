@@ -199,50 +199,78 @@ done < <(
 )
 
 section "agent guidance"
-linked=0
-while IFS= read -r link; do
-    linked=$((linked + 1))
-    if [[ ! -L "$link" ]]; then
-        printf '    FAIL %s: must be a symlink to CLAUDE.md, not a file\n' "$link"
+guides=0
+while IFS= read -r guide; do
+    guides=$((guides + 1))
+    if [[ -L "$guide" || ! -f "$guide" ]]; then
+        printf '    FAIL %s: must be a regular canonical file\n' "$guide"
         failed=1
-    elif [[ "$(readlink "$link")" != "CLAUDE.md" ]]; then
-        printf '    FAIL %s: points at %s, expected CLAUDE.md\n' "$link" "$(readlink "$link")"
+        continue
+    fi
+    if (($(awk 'END { print NR }' "$guide") > 200)); then
+        printf '    FAIL %s: exceeds the 200-line guidance limit\n' "$guide"
+        failed=1
+    fi
+    link="$(dirname "$guide")/CLAUDE.md"
+    if [[ ! -L "$link" ]]; then
+        printf '    FAIL %s: must be a symlink to AGENTS.md\n' "$link"
+        failed=1
+    elif [[ "$(readlink "$link")" != "AGENTS.md" ]]; then
+        printf '    FAIL %s: points at %s, expected AGENTS.md\n' "$link" "$(readlink "$link")"
         failed=1
     fi
 done < <(find . -path ./target -prune -o -name AGENTS.md -print)
-if ((linked == 0)); then
-    printf '    FAIL no AGENTS.md anywhere; harnesses reading that name lose the guide\n'
+if ((guides == 0)); then
+    printf '    FAIL no AGENTS.md anywhere; harnesses lose the canonical guide\n'
+    failed=1
+fi
+while IFS= read -r link; do
+    if [[ ! -L "$link" || "$(readlink "$link")" != "AGENTS.md" || ! -f "$link" ]]; then
+        printf '    FAIL %s: must resolve through a symlink to its canonical AGENTS.md\n' "$link"
+        failed=1
+    fi
+done < <(find . -path ./target -prune -o -name CLAUDE.md -print)
+
+for directory in rules skills; do
+    if [[ -L ".agents/$directory" || ! -d ".agents/$directory" ]]; then
+        printf '    FAIL .agents/%s must be a real canonical directory\n' "$directory"
+        failed=1
+    fi
+done
+if [[ ! -L .claude/rules ]]; then
+    printf '    FAIL .claude/rules must be a symlink to ../.agents/rules\n'
+    failed=1
+elif [[ "$(readlink .claude/rules)" != "../.agents/rules" ]]; then
+    printf '    FAIL .claude/rules points at %s, expected ../.agents/rules\n' "$(readlink .claude/rules)"
     failed=1
 fi
 
-if [[ ! -L .agents/rules ]]; then
-    printf '    FAIL .agents/rules must be a symlink to ../.claude/rules\n'
-    failed=1
-elif [[ "$(readlink .agents/rules)" != "../.claude/rules" ]]; then
-    printf '    FAIL .agents/rules points at %s, expected ../.claude/rules\n' "$(readlink .agents/rules)"
-    failed=1
-fi
-
-rules=(.claude/rules/*.md)
+rules=(.agents/rules/*.md)
 if ((${#rules[@]} == 0)); then
-    printf '    FAIL .claude/rules/ holds no always-on rule\n'
+    printf '    FAIL .agents/rules/ holds no always-on rule\n'
     failed=1
 fi
+for rule in "${rules[@]}"; do
+    if [[ -L "$rule" || ! -f "$rule" ]]; then
+        printf '    FAIL %s: must be a regular canonical rule file\n' "$rule"
+        failed=1
+    fi
+done
 
-skills=(.claude/skills/*/)
+skills=(.agents/skills/*)
 if ((${#skills[@]} == 0)); then
-    printf '    FAIL .claude/skills/ holds no skill\n'
+    printf '    FAIL .agents/skills/ holds no skill\n'
     failed=1
 fi
 for skill in "${skills[@]}"; do
     name=$(basename "$skill")
-    if [[ ! -f "$skill/SKILL.md" ]]; then
-        printf '    FAIL %s: no SKILL.md\n' "$skill"
+    if [[ -L "$skill" || ! -d "$skill" || -L "$skill/SKILL.md" || ! -f "$skill/SKILL.md" ]]; then
+        printf '    FAIL %s: must be a canonical skill directory with a regular SKILL.md\n' "$skill"
         failed=1
     fi
 
-    link=".agents/skills/$name"
-    want="../../.claude/skills/$name"
+    link=".claude/skills/$name"
+    want="../../.agents/skills/$name"
     if [[ ! -L "$link" ]]; then
         printf '    FAIL %s: must be a symlink to %s\n' "$link" "$want"
         failed=1
@@ -251,10 +279,11 @@ for skill in "${skills[@]}"; do
         failed=1
     fi
 done
-for entry in .agents/skills/*; do
+for entry in .claude/skills/*; do
     [[ -e "$entry" || -L "$entry" ]] || continue
-    if [[ ! -L "$entry" ]]; then
-        printf '    FAIL %s: real file or directory, expected a symlink into .claude/skills/\n' "$entry"
+    want="../../.agents/skills/$(basename "$entry")"
+    if [[ ! -L "$entry" || "$(readlink "$entry")" != "$want" || ! -f "$entry/SKILL.md" ]]; then
+        printf '    FAIL %s: must resolve through a symlink to %s\n' "$entry" "$want"
         failed=1
     fi
 done

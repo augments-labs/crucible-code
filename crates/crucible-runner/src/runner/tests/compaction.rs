@@ -846,10 +846,13 @@ fn a_compaction_clears_the_bulk_of_old_tool_output_before_the_recap() {
     // One tool, and every call to it produces a ninety-thousand-byte source.
     // The invocation pipeline bounds each encoded result before compaction
     // sees it; clearing then tells the bounded copies apart by age.
-    let mut scripted = Scripted::new(
+    let sample = Sample::new("runner-prune-recap-display");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();
+    let mut scripted = Scripted::recording(
         script,
         tools([Fixed::new("read").answering(&"x".repeat(90_000))]),
         Verdict::Allow,
+        session,
     );
     // Keep the three recent read turns whole — about thirty thousand tokens at
     // the uncalibrated three bytes to the token — so their results survive the
@@ -879,6 +882,35 @@ fn a_compaction_clears_the_bulk_of_old_tool_output_before_the_recap() {
         "freeing room reads as progress: {} not below {}",
         compacted.after,
         compacted.before
+    );
+
+    assert!(
+        compacted.replaced > 0,
+        "the operation must both prune and recap"
+    );
+    let notices = scripted
+        .runner
+        .session()
+        .display_history()
+        .unwrap()
+        .unwrap()
+        .collect::<std::io::Result<Vec<_>>>()
+        .unwrap()
+        .into_iter()
+        .filter(|item| {
+            matches!(
+                item,
+                crate::DisplayItem::Compacted(_) | crate::DisplayItem::LegacyCompacted { .. }
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        notices.len(),
+        1,
+        "one live completion must restore one notice"
+    );
+    assert!(
+        matches!(notices.first(), Some(crate::DisplayItem::Compacted(recorded)) if *recorded == compacted)
     );
 
     let cleared: Vec<usize> = scripted

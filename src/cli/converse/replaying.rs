@@ -1,49 +1,19 @@
 //! Putting a session picked up back on the screen.
 //!
-//! A resumed session is one the model can see and the reader cannot: the
-//! transcript goes back into every request, and the screen it is being read on
-//! was opened empty a moment ago. Nothing here changes what is sent — this is
-//! the screen catching up with what the session already is.
+//! Original conversation and compaction notices come from the protected log,
+//! independently of the smaller transcript sent to the model. Replay calls no
+//! provider or tool and reads no workspace file to reconstruct old changes.
 //!
-//! **It is not a re-run.** No tool is called again, nothing is asked of a
-//! provider, and no file is read. What goes down is what the log recorded, in
-//! the order it recorded it.
-//!
-//! **And it is drawn by the code that drew it the first time.** Every row here
-//! comes out of `draw` and the components under it — the prompt row the box
-//! commits, the call line the footing settles into, the result row, the model's
-//! prose through the same markdown the live path renders it with. A second set
-//! of row builders for the same messages would be a second answer to what a
-//! session looks like, and the two would disagree the first time either was
-//! touched: the theme somebody chose, the mark in front of a prompt, the colour
-//! a tool's name is in. So there is one set, and this walks messages into it.
-//!
-//! Which goes for what a row is *offering* as well as for what it says. A result
-//! too long for its row is cut here the way it was cut live and held where the
-//! key over it can reach it, so a session put back on the screen is one whose
-//! rows still light and still open. A row that behaved one way live and another
-//! on the way back would be the same row behaving as two, and that is what a
-//! reader picking a session up would find strange first.
-//!
-//! It adds nothing of its own. The screen was emptied before the walk starts,
-//! so what a reader is left holding is the session as they left it — a heading
-//! or a rule over it would mark a join that is not there, and they would scroll
-//! into the marker in the middle of their own conversation.
-//!
-//! One thing does not come back, and it is the record's doing rather than this
-//! module's: a diff reaches no log, for the reason `crucible-core` gives beside
-//! the type. What a call changed still reads the same — the counts are recorded
-//! beside the result and the header is drawn from them — but the lines it moved
-//! are not there to show under it, so the block that held them live does not go
-//! down again.
-//!
-//! What a pruning cleared does come back, and it comes from beside the
-//! transcript rather than out of it. See [`Pruned`].
+//! The live draw functions render prompts, markdown, grouped tool calls and
+//! expandable results. New logs also retain bounded private diff previews;
+//! older logs still restore their recorded change counts without inventing
+//! file contents. Display history is streamed a message batch at a time so it
+//! does not create a second session-sized transcript in memory.
 
 use std::collections::HashMap;
 
 use crucible_core::{Message, RECAP, ToolId};
-use crucible_runner::{Pruned, Runner};
+use crucible_runner::{DisplayHistory, DisplayItem, Pruned, Runner, SessionError};
 use crucible_tui::{Recording, Renderer, Row, Slot, Terminal, clip};
 
 use crate::cli::Fatal;
@@ -63,35 +33,107 @@ const NOTES: &str = "notes on everything before this";
 
 /// Puts what a session already said back on the screen.
 ///
-/// Committed rather than drawn live: this is the record of what happened, which
-/// is exactly what the transcript holds, and it is scrolled back to like
-/// anything else said this session.
+/// Original log records are committed to scrollback through the live builders.
+/// The model transcript is only a fallback for sessions without a log.
 ///
 /// # Errors
 ///
-/// [`Fatal::Terminal`] if the terminal could not be written to.
+/// A session storage error if history cannot be read, or [`Fatal::Terminal`]
+/// if the terminal could not be written to.
 pub(super) fn replayed<T: Terminal>(
     renderer: &mut Renderer<T>,
     against: &Replay<'_>,
     kept: &mut Kept,
 ) -> Result<(), Fatal> {
-    let transcript = against.runner.transcript();
-
-    if transcript.is_empty() {
-        return Ok(());
+    if let Some(history) = against.runner.session().display_history()? {
+        let pruned = Pruned::default();
+        let original = Replay {
+            runner: against.runner,
+            style: against.style,
+            pruned: &pruned,
+        };
+        return streamed(renderer, history, &original, kept);
     }
+    walked(
+        renderer,
+        against.runner.transcript().messages(),
+        against,
+        kept,
+    )
+}
 
-    walked(renderer, transcript.messages(), against, kept)
+/// Keeps only the current message and its following result batch in memory.
+/// Grouping needs that one-message lookahead to distinguish failed calls.
+fn streamed<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    history: DisplayHistory,
+    against: &Replay<'_>,
+    kept: &mut Kept,
+) -> Result<(), Fatal> {
+    let mut pending = None;
+    for item in history {
+        let item = item.map_err(|source| SessionError::Log {
+            at: against.runner.session().path().display().to_string().into(),
+            source,
+        })?;
+        match item {
+            DisplayItem::Message(message) => {
+                if let Some(previous) = pending.take() {
+                    if matches!(&previous, Message::Agent { calls, .. } if !calls.is_empty())
+                        && matches!(&message, Message::ToolResults(_))
+                    {
+                        walked(renderer, &[previous, message], against, kept)?;
+                        continue;
+                    }
+                    walked(renderer, &[previous], against, kept)?;
+                }
+                pending = Some(message);
+            }
+            DisplayItem::Compacted(details) => {
+                if let Some(previous) = pending.take() {
+                    walked(renderer, &[previous], against, kept)?;
+                }
+                renderer.apart()?;
+                renderer.present(&draw::compacted_rows(
+                    details,
+                    renderer.columns(),
+                    against.style.glyphs(),
+                ))?;
+            }
+            DisplayItem::LegacyCompacted { replaced } => {
+                if let Some(previous) = pending.take() {
+                    walked(renderer, &[previous], against, kept)?;
+                }
+                renderer.apart()?;
+                let detail = if replaced == 0 {
+                    "old tool output was cleared".to_owned()
+                } else {
+                    format!("{replaced} earlier messages became a recap")
+                };
+                renderer.commit(&format!("compacted · {detail}"))?;
+            }
+            DisplayItem::ContextReset => {
+                // Old /clear reset model context but left terminal scrollback
+                // and its result offers visible. Only message grouping ends.
+                if let Some(previous) = pending.take() {
+                    walked(renderer, &[previous], against, kept)?;
+                }
+            }
+        }
+    }
+    if let Some(previous) = pending {
+        walked(renderer, &[previous], against, kept)?;
+    }
+    renderer.settle()?;
+    Ok(())
 }
 
 /// The tail of a session nobody has picked up, drawn into rows `columns` wide.
 ///
-/// The picker's preview, and the reason this is one function rather than two:
-/// what a session looks like is answered here for the screen it is resumed on
-/// and for the pane it is offered in, so the pane shows what pressing Enter
-/// would leave the reader holding. The walk goes onto a renderer of its own,
-/// which is a screen nobody sees and a width nobody set — the pane's, which the
-/// reader can change under it — and what comes back out is the last `most` rows.
+/// The picker uses the same message builders at its own width. Its bounded
+/// message tail omits supplemental display metadata; selecting the session
+/// streams the complete history and restores those details. What comes back
+/// here is only the last `most` rows of the supplied messages.
 ///
 /// Bounded by `most` for the same reason the log is read from its end: a
 /// preview is a glance, and one that kept every row of a long session would
@@ -144,7 +186,7 @@ fn walked<T: Terminal>(
 
     // A call the log never answered -- the session ended while it was out --
     // still went down as a line the reader watched, so it goes down here too.
-    folded.unanswered(renderer, against.style)?;
+    folded.unanswered(renderer, against.style, kept)?;
 
     // Whatever the last message left live, ended: a session whose last turn was
     // the model talking leaves a tail in the region the renderer owns, and what
@@ -208,7 +250,7 @@ fn said<T: Terminal>(
     // Whatever the batch before this one never answered goes down first, where
     // the live path would have left it: a call line with nothing under it.
     if !matches!(message, Message::ToolResults(_)) {
-        folded.unanswered(renderer, style)?;
+        folded.unanswered(renderer, style, kept)?;
     }
 
     match message {
@@ -489,8 +531,10 @@ impl Folded {
         &mut self,
         renderer: &mut Renderer<T>,
         style: Style,
+        kept: &mut Kept,
     ) -> Result<(), Fatal> {
-        for (_, line) in self.waiting.drain(..) {
+        for (call, line) in self.waiting.drain(..) {
+            kept.abandoned(&call);
             draw::returned(renderer, &line, style)?;
         }
         Ok(())
@@ -600,6 +644,51 @@ mod tests {
             Session::nowhere(),
         )
         .resuming(transcript)
+    }
+
+    #[test]
+    fn legacy_reset_preserves_visible_history_and_opening() {
+        use std::io::Write as _;
+        let sample = crate::cli::sample::Sample::new("replay-legacy-reset");
+        let session = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();
+        for message in everything().messages() {
+            session.append(message);
+        }
+        session.append(&Message::said("before legacy reset"));
+        let path = session.path().to_path_buf();
+        assert!(session.finish().is_none());
+        let mut log = std::fs::OpenOptions::new().append(true).open(path).unwrap();
+        writeln!(log, "{{\"forgotten\":true}}").unwrap();
+        drop(log);
+        let (session, model) = Session::resume(&sample.logs(), &sample.workspace()).unwrap();
+        assert!(model.messages().is_empty());
+        session.append(&Message::said("after legacy reset"));
+        let history = session.display_history().unwrap().unwrap();
+        let runner = resumed(model);
+        let mut renderer = Renderer::new(Recording::new(100, 30));
+        renderer.commit("opening card").unwrap();
+        let mut kept = Kept::default();
+        streamed(
+            &mut renderer,
+            history,
+            &against(&runner, &Pruned::default()),
+            &mut kept,
+        )
+        .unwrap();
+        let visible = renderer
+            .tail(100)
+            .iter()
+            .map(Row::text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(visible.contains("opening card"), "{visible}");
+        assert!(visible.contains("before legacy reset"), "{visible}");
+        assert!(visible.contains("after legacy reset"), "{visible}");
+        assert!(
+            kept.newest()
+                .any(|whole| whole.text().contains("nine hundred lines after it")),
+            "historical expansion survives model reset"
+        );
     }
 
     /// A transcript with one of everything in it.
@@ -1144,7 +1233,7 @@ mod tests {
     fn a_call_the_log_never_answered_still_goes_down() {
         // The session ended while the call was out. The line the reader
         // watched go up is still part of what they left, so it comes back.
-        let mut transcript = Transcript::new();
+        let mut transcript = everything();
         transcript
             .push(Message::said("what are people saying?"))
             .expect("valid fixture transcript");
@@ -1160,9 +1249,18 @@ mod tests {
                 stop: Some(StopReason::WantsTools),
             })
             .expect("valid fixture transcript");
-        let screen = screen(transcript, 80);
-
+        let (kept, renderer) = holding(transcript, 80);
+        let screen = renderer.terminal().written();
         assert!(screen.contains("an open question"), "{screen}");
+        assert!(
+            kept.heading(&ToolId::new("s-1")).is_none(),
+            "historical calls are no longer pending"
+        );
+        assert!(
+            kept.newest()
+                .any(|whole| whole.text().contains("nine hundred lines after it")),
+            "completed expansions survive"
+        );
     }
 
     #[test]

@@ -15,6 +15,6 @@ pub use checkpoint::{
     CHECKPOINT_FORMAT, CheckpointError, FileCheckpointStore, MAX_CHECKPOINT_BYTES,
 };
 pub use session::{
-    Glimpse, PROMPTS, Pruned, Recorded, Session, SessionError, glimpse, prompts, recent, remember,
-    retitle,
+    DisplayHistory, DisplayItem, Glimpse, PROMPTS, Pruned, Recorded, Session, SessionError,
+    glimpse, prompts, recent, remember, retitle,
 };

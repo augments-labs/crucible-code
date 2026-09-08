@@ -2,12 +2,10 @@
 
 # Codex settings for working in this repository.
 #
-# The rules themselves are not here. They are in .claude/rules/, one topic per
-# file, reached as .agents/rules through a symlink; AGENTS.md is a symlink to
-# CLAUDE.md and points at that directory. Codex does not load a rules directory
-# of its own accord, so read them. The skills are the same arrangement:
-# originals under .claude/skills/, symlinked into .agents/skills/. This file
-# only says how Codex should run.
+# AGENTS.md owns the repository guidance. Rules and remaining skills are
+# canonical under .agents/; .claude/ and CLAUDE.md link back to those sources.
+# Read .agents/rules/ as AGENTS.md directs; Codex does not load that directory
+# automatically. This file only says how Codex should run.
 
 # Keep commands inside the workspace sandbox. Eligible requests to cross that
 # boundary go to Codex's automatic reviewer; the sandbox still applies unless
@@ -18,7 +16,17 @@ approvals_reviewer = "auto_review"
 
 # The rules are stated once and enforced across every crate; a change that
 # respects them usually has to be reasoned about, not pattern matched.
-model_reasoning_effort = "xhigh"
+model_reasoning_effort = "high"
+
+# Credit Codex's contributions using the supported instruction setting.
+developer_instructions = """
+When creating or editing a commit for work you contributed, preserve existing
+trailers and include a Co-authored-by trailer exactly once, separated from the
+body by a blank line. Use the exact active model ID as the author name and
+noreply@openai.com as the email: Co-authored-by: <active-model-id> <noreply@openai.com>
+Resolve the model ID from the current session; never write the placeholder or
+guess an ID. Preserve attribution from other models that contributed.
+"""
 
 # Rust answers age badly — a crate's API moves between minor versions and the
 # search result outlives it.

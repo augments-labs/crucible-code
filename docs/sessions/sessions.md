@@ -188,11 +188,11 @@ log this build cannot read is refused rather than half-understood, and a session
 another crucible has open is not available — the picker says so on the marked
 session's own line rather than waiting for Enter to find out.
 
-The preview is that log read from its end and drawn by the code that draws the
-live transcript, so what the pane shows is what taking the session would leave
-on the screen. It is a read of the tail rather than of the file: a session too
-long for it opens on a mark saying so, so the first words on the pane are not
-mistaken for the first words of the session.
+The preview reads a bounded message tail and uses the live transcript's message
+renderer. It omits supplemental diff bodies and compaction notices; selecting
+the session restores those details from the full history. A session too long
+for the preview opens on a mark saying so, so its first words are not mistaken
+for the first words of the session.
 
 What is different is the session being left. It is finished here rather than
 when the process ends, so its log is complete and can be continued from
@@ -233,10 +233,17 @@ waiting for its next answer to measure it — unless it is picked up under
 different instructions or a different set of tools, where the reading is about
 a request this run would not send and the row waits, as it always did.
 
-One thing comes back smaller: a call that changed a file replays as the header
-saying how many lines it added and removed, and not as the lines themselves. The
-counts are recorded; the line bodies never are, because a diff of a file holding
-a key is a key.
+The visible conversation comes from the original log, independently of the
+compacted context sent to the model. Earlier prompts, answers and tool results
+remain in scrollback, with a marker where each completed compaction happened.
+New records preserve the live marker’s reason and measurements; older records
+show the compaction facts they contain.
+
+Newly recorded file changes restore their bounded diff previews: up to 64 lines,
+with up to 1024 characters per line, plus the original added, removed and omitted
+counts. These previews are private display data and are never sent to the model.
+Older logs without preview bodies still show their recorded change counts;
+resume does not reread files or rerun tools to invent missing history.
 
 ## One at a time
 
@@ -341,7 +348,9 @@ window is what gets past it.
 
 A session that ran for hours is worth what it cost to build, and carrying all of
 it back is what that costs again — on the next request and on every request
-after. So picking up a large one asks first:
+after. The panel appears only in an interactive session whose carried context
+reaches `compaction.askOnResume` (60000 tokens by default), with that setting
+enabled. Smaller sessions resume directly. A large one asks:
 
 ```text
 This session is large
@@ -357,6 +366,11 @@ again on every turn.
 
 enter to choose · esc to carry it whole
 ```
+
+These choices control model context, including any compaction already applied.
+They do not remove the original conversation or compaction markers from visible
+history. “Carry all of it” keeps the current context whole; it does not undo an
+earlier compaction.
 
 Nothing is decided for you. The one case where carrying it whole is right — you
 are about to ask about something said two hours ago — is the case crucible
@@ -451,7 +465,7 @@ The new location wins as soon as it exists, so that is the whole migration.
 ## Who can read them
 
 Yours alone. A transcript holds what you typed, what the model said, the
-contents of every file that was read and everything a command printed, so on a
+retained file and command output, and bounded previews of edited file contents, so on a
 shared machine the usual default would hand all of it to anyone with an account.
 The directory is closed for the matching reason from the other side: somewhere
 another account can write is somewhere a log can be *planted* for `--continue` to
@@ -481,7 +495,9 @@ the file is and where it belongs:
 ```
 
 Then one line per message — what you typed, what the model said and asked to
-run, and what the tools returned.
+run, and what the tools returned. Supplemental journal records retain bounded
+private diff previews and completed compaction notices for display replay.
+Compaction changes model context without deleting earlier conversation records.
 
 `/clear` writes nothing here. It closes this log and opens another, so the
 session it left is complete and replays whole, the same as any other on
@@ -492,8 +508,10 @@ top.
 
 The `workspace` in that header is what `--continue` matches against, and
 `format` is what makes a file from a build that spelled things differently a
-refusal rather than a half-understood replay. No key, credential or environment
-value is ever written to one of these files.
+refusal rather than a half-understood replay. Crucible does not serialize its
+credential store or process environment into these files. Conversation content,
+tool output and diff previews can nevertheless contain secrets from files or
+commands, so treat a session log as sensitive when sharing or backing it up.
 
 ## Stability
 

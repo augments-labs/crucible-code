@@ -357,6 +357,11 @@ The names under `keys` are provider names, the same ones `--model openai/…`
 takes. `version` says which crucible wrote the file, so one from a later version
 is left alone rather than guessed at.
 
+Stored login methods are mutually exclusive **per provider**. Saving an API key
+removes that provider’s stored subscription login; completing a subscription
+login removes its stored API key. Other providers’ credentials are unaffected.
+The login menu offers available methods, not multiple active methods at once.
+
 For API-key authentication, **the variable wins over a stored API key**. It is
 the key chosen for this process — a second account, a work key, one rotated an
 hour ago — while the stored key is the standing answer underneath it, so
@@ -393,7 +398,8 @@ never learn whether it came from an account or a key.
 ### Account login today
 
 `/login` offers ChatGPT and Kimi Code account plans. ChatGPT uses browser PKCE
-or device authorization and is fixed to the ChatGPT Codex Responses endpoint.
+or device authorization and is fixed to the ChatGPT subscription Responses
+endpoint.
 Kimi Code uses RFC 8628 device authorization and is fixed to its managed coding
 endpoint. Its token exchange stays on `auth.kimi.com`, while the browser opens
 the authorization page on `www.kimi.com`; crucible accepts only those fixed
@@ -413,8 +419,7 @@ Interactions endpoint, not a base path to which Crucible appends a route.
 See [Google's Interactions documentation](https://ai.google.dev/gemini-api/docs/interactions-overview).
 
 Moonshot authorization and model requests identify the host truthfully as
-crucible with a stable protected device id. They do not reuse another harness's
-product identity.
+crucible with a stable protected device id.
 
 ## What differs between them
 
@@ -428,9 +433,9 @@ on any of them.
 One difference is worth knowing about because it decides which OpenAI models
 work at all. crucible talks to OpenAI over `/v1/responses` rather than
 `/v1/chat/completions`, because a model that reasons before answering refuses
-function tools on the older endpoint — and a harness whose whole purpose is
-calling tools cannot answer that by telling the model not to think. The cost is
-that other vendors serving an "OpenAI-compatible" API implement the older
+function tools on the older endpoint. Crucible needs tool calls to work with
+reasoning enabled. The cost is that other vendors serving an "OpenAI-compatible"
+API implement the older
 endpoint and not this one, so `openai` means OpenAI here rather than anything
 that speaks its shape. `moonshot` is that older endpoint, read by a provider of
 its own.
