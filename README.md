@@ -95,7 +95,7 @@ The full documentation index is [`docs/index.md`](docs/index.md).
 
 Development workflow and local checks are in
 [`CONTRIBUTING.md`](CONTRIBUTING.md). Coding-agent guidance begins in
-[`CLAUDE.md`](CLAUDE.md), also exposed as `AGENTS.md`.
+[`AGENTS.md`](AGENTS.md), also exposed through the `CLAUDE.md` symlink.
 
 Security issues must be reported through [`SECURITY.md`](SECURITY.md), not a
 public issue. Participation is covered by the

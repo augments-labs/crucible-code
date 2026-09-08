@@ -28,9 +28,10 @@ options.
 5. Update user documentation and the changelog when shipped behavior changes.
 6. Open a pull request and state what changed and how it was verified.
 
-Coding agents begin in [`CLAUDE.md`](CLAUDE.md), which routes implementation,
-dependency, writing and gate work to focused skills. Human contributors can read
-the same skill files under [`.claude/skills/`](.claude/skills/).
+Coding agents begin in [`AGENTS.md`](AGENTS.md), which holds the repository
+constraints for implementation, dependencies and writing. Human contributors
+can read the same guide; remaining skills live under
+[`.agents/skills/`](.agents/skills/).
 
 ## Local gates
 
@@ -75,8 +76,8 @@ to upgrade.
 
 ## Dependencies
 
-Use the [`add-a-dependency`](.claude/skills/add-a-dependency/SKILL.md) procedure
-when adding a crate or widening its features. Repository checks enforce exact
+Use the [dependency guidance](AGENTS.md#dependencies) when adding a crate or
+widening its features. Repository checks enforce exact
 pins, manifest justification and the current internal crate graph. Blocking CI
 installs `cargo-deny` and enforces license and source policy; contributors do not
 need that tool for the ordinary local gate.
@@ -117,5 +118,5 @@ fix(runner): stop an in-flight stream on escape
 chore(ci): split Rust and repository checks
 ```
 
-Use the `write-the-change` skill for the repository's commit, changelog and
-pull-request procedure rather than maintaining another copy here.
+Use [Writing the change](AGENTS.md#writing-the-change) for the repository's
+commit, changelog and pull-request conventions.

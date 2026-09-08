@@ -339,8 +339,8 @@ and parent traversal (`..`) is rejected.
 
 A project file can restrict inherited access, but cannot grant a new readable
 or writable root. Unreadable and protected paths cannot be reopened by another
-grant. Repository and Crucible control files, including `.git`, `.agents`,
-`.codex` and `.crucible`, stay protected within additional writable roots too.
+grant. Repository and Crucible control files, including `.git`, `.agents` and
+`.crucible`, stay protected within additional writable roots too.
 Each path is limited to 4096 bytes and the effective filesystem policy to 128
 rules.
 

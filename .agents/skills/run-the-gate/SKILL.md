@@ -7,7 +7,7 @@ description: >-
 
 # Run the gate
 
-For today's Rust-only tree:
+For the current workspace:
 
 ```bash
 scripts/check.sh
@@ -18,11 +18,12 @@ That compatibility command runs:
 ```bash
 scripts/rust-checks.sh   # rustfmt, all-feature clippy, tests, rustdoc, generated agreement
 scripts/repo-checks.sh   # cross-file repository policy
+scripts/python-checks.sh # maintained harness fixtures and campaign reports
 ```
 
-CI calls the named scripts through separate reusable workflows. Future Python,
-JS/TS or other code gets a peer script and workflow; do not hide another
-language's setup inside the Rust gate.
+CI calls the named scripts through their owning workflows. New ecosystems get
+a peer script and workflow; do not hide another language's setup inside the
+Rust gate.
 
 Every deterministic local section should answer from the checked-out tree alone.
 CI supplies tools such as cargo-deny for checks not required on a contributor
