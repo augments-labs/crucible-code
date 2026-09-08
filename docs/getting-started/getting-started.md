@@ -790,7 +790,9 @@ session.
 `/model` on its own stands a shelf over the whole shell, with the model being
 asked now named above it: a search line across the top, the providers this build
 serves in one pane beside the models in the other, and the rungs the marked model
-takes on a strip underneath. Type to narrow both panes at once — `openai` leaves
+takes on a strip underneath. Model rows show exact API IDs, such as `gpt-6-astra`
+and `gemini-3.8-flash`; search also accepts display names.
+Type to narrow both panes at once — `openai` leaves
 everything that vendor serves, `sonnet` leaves the one model, and the line does
 not ask which kind of name it just got. <kbd>Tab</kbd> crosses between the panes,
 the up and down arrows walk whichever one the mark is in, the left and right

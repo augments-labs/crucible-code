@@ -13,10 +13,10 @@ expression: models
 |╭─────────────────────┬────────────────────────────────────────────────────────╮|
 |│  Providers          │  Models                                        4 of 18 │|
 |├─────────────────────┼────────────────────────────────────────────────────────┤|
-|│ › All             4 │ › Gemini 3.8 Flash         Google        200k          │|
-|│   Anthropic       · │   Gemini 3.7 Flash         Google        200k          │|
-|│   Google          4 │   Gemini 3.6 Flash         Google        200k          │|
-|│   MoonshotAI      · │   Gemini 3.1 Pro Preview   Google        200k          │|
+|│ › All             4 │ › gemini-3.8-flash         Google        200k          │|
+|│   Anthropic       · │   gemini-3.7-flash         Google        200k          │|
+|│   Google          4 │   gemini-3.6-flash         Google        200k          │|
+|│   MoonshotAI      · │   gemini-3.1-pro-preview   Google        200k          │|
 |│   OpenAI          · │                                                        │|
 |│                     │                                                        │|
 |│                     │                                                        │|

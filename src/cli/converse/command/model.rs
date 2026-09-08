@@ -427,7 +427,7 @@ fn stood<T: Terminal>(
                 .iter()
                 .zip(&windows)
                 .map(|(one, window)| Stocked {
-                    name: one.model.shown,
+                    name: one.model.name,
                     // Who serves it, until the shelf is one provider's — at
                     // which point the pane beside it is already saying so, once
                     // rather than on every row.

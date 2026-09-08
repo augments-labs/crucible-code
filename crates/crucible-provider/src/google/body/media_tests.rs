@@ -149,12 +149,12 @@ fn result_media_preserves_all_modalities_and_call_associations() {
             .get(2..)
             .unwrap(),
         &[
-            json!({"type":"function_result","call_id":"first","is_error":false,"result":[
+            json!({"type":"function_result","call_id":"first","name":"read","is_error":false,"result":[
                 {"type":"text","text":"first output"},
                 {"type":"image","mime_type":"image/png","data":"aW1hZ2U="},
                 {"type":"text","text":"héllo"},
             ]}),
-            json!({"type":"function_result","call_id":"second","is_error":true,"result":[
+            json!({"type":"function_result","call_id":"second","name":"read","is_error":true,"result":[
                 {"type":"text","text":"second output"},
                 {"type":"text","text":"second image omitted"},
             ]}),

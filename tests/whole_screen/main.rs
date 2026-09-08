@@ -1267,6 +1267,29 @@ fn the_key_box_stands_empty_under_the_provider_it_is_for() {
 }
 
 #[test]
+fn model_picker_rows_show_wire_ids_instead_of_display_names() {
+    let mut window = Watched::open("model-wire-ids", 100, 24);
+    for (query, id) in [
+        ("Astra", "gpt-6-astra"),
+        ("Fable 5.1", "claude-fable-5-1"),
+        ("Gemini 3.8", "gemini-3.8-flash"),
+        ("Gemini 3.7", "gemini-3.7-flash"),
+        ("Gemini 3.6", "gemini-3.6-flash"),
+        ("Gemini 3.1", "gemini-3.1-pro-preview"),
+        ("K2.7 Coding Highspeed", "kimi-for-coding-highspeed"),
+        ("K2.7 Coding", "kimi-for-coding"),
+        ("k3-256k", "k3-256k"),
+        ("k3", "k3"),
+    ] {
+        window.types_until("/model\r", "nothing asked yet");
+        window.types(query);
+        let picture = window.picture();
+        assert!(picture.contains(&format!("› {id}")), "{picture}");
+        window.types_until("\x1b", "ask mode on");
+    }
+}
+
+#[test]
 fn google_login_and_model_selection_keep_keys_private_and_offer_three_efforts() {
     for columns in [40, 80] {
         let mut window = Watched::open(&format!("google-login-{columns}"), columns, 24);

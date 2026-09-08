@@ -4,20 +4,27 @@
 //! client projection keeps the native call/result sequence together and names
 //! the owning call without forging an unsupported function-result content type.
 //! Attachment indexes are message-wide, so missing files cannot shift owners.
+//! Each result echoes both the call ID and its original function name: the
+//! Interactions backend rejects nameless results even when the ID matches.
 
 use super::input::attachment;
 use crate::google::protocol;
 use crate::json::Array;
 use crucible_core::{Attached, Content, Modality, ProviderError, ToolResult};
+use std::collections::BTreeMap;
 
 pub(super) fn write(
     input: &mut Array<'_>,
     results: &[ToolResult],
     attached: &[Attached<'_>],
     message: usize,
+    pending: &mut BTreeMap<&str, &str>,
 ) -> Result<(), ProviderError> {
     let mut index = 0;
     for result in results {
+        let name = pending
+            .remove(result.id.as_str())
+            .ok_or_else(|| protocol("function result does not match an unanswered call"))?;
         let mut files = files(attached, message, &mut index, result)?
             .filter(|file| in_result(file))
             .peekable();
@@ -25,6 +32,7 @@ pub(super) fn write(
         input.object(|step| {
             step.text("type", "function_result");
             step.text("call_id", result.id.as_str());
+            step.text("name", name);
             step.boolean("is_error", result.output.is_failed());
             if files.peek().is_none() {
                 step.text("result", result.output.text());
