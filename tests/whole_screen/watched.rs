@@ -349,7 +349,13 @@ impl Watched {
         Self::configured(case, columns, rows, &document(vendor, None), keyed)
     }
 
-    fn configured(case: &str, columns: u16, rows: u16, document: &str, keyed: bool) -> Self {
+    pub(crate) fn configured(
+        case: &str,
+        columns: u16,
+        rows: u16,
+        document: &str,
+        keyed: bool,
+    ) -> Self {
         Self::configured_with_terminal(
             case,
             document,

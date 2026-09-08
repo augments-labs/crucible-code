@@ -217,7 +217,7 @@ fn the_key_that_opened_it_closes_it_under_a_running_turn_too() {
     let mut standing = Standing::default();
     standing.open(&cut(&["Bash(cargo build)"]));
 
-    assert!(standing.against(Pressed::Expand));
+    assert!(standing.against(Pressed::Expand, 6));
     assert_eq!(standing, Standing::Closed);
 }
 
@@ -229,7 +229,7 @@ fn esc_under_a_turn_closes_the_view_rather_than_stopping_the_turn() {
     let mut standing = Standing::default();
     standing.open(&cut(&["Bash(cargo build)"]));
 
-    assert!(standing.against(Pressed::Escape));
+    assert!(standing.against(Pressed::Escape, 6));
     assert_eq!(standing, Standing::Closed);
 }
 
@@ -240,8 +240,8 @@ fn a_key_that_moves_nothing_under_a_turn_owes_no_frame() {
     // top of the view must not be one.
     let mut standing = Standing::Open(standing(0, 20));
 
-    assert!(!standing.against(Pressed::Up));
-    assert!(standing.against(Pressed::Down));
+    assert!(!standing.against(Pressed::Up, 6));
+    assert!(standing.against(Pressed::Down, 6));
     assert!(standing.is_open());
 }
 

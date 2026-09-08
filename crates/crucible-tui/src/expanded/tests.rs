@@ -307,3 +307,22 @@ fn what_a_tool_printed_is_shown_rather_than_obeyed() {
         "{rows:?}"
     );
 }
+
+#[test]
+fn expansion_exposes_the_end_of_long_headings_and_output_lines() {
+    let heading = format!("Bash({} LAST_ARGUMENT)", "argument ".repeat(30));
+    let text = format!("{} LAST_OUTPUT", "output ".repeat(30));
+    let shown = [Shown {
+        called: &heading,
+        text: &text,
+    }];
+    let expanded = Expanded {
+        shown: &shown,
+        from: 0,
+    };
+    let rows = expanded.laid(40);
+    let all = rows.iter().map(Row::text).collect::<Vec<_>>().join("\n");
+    assert!(all.contains("LAST_ARGUMENT"), "{all}");
+    assert!(all.contains("LAST_OUTPUT"), "{all}");
+    assert!(rows.iter().all(|row| row.columns() <= 40));
+}

@@ -188,3 +188,31 @@ fn a_run_folds_once_it_holds_two() {
     gathering.took(ToolId::new("b"), Looking::File, String::new());
     assert!(gathering.folds());
 }
+
+#[test]
+fn local_and_web_lookups_have_live_and_settled_words() {
+    let run = gathering(&[
+        Looking::Pattern,
+        Looking::Pattern,
+        Looking::Pattern,
+        Looking::File,
+        Looking::File,
+        Looking::Command,
+        Looking::WebSearch,
+        Looking::WebSearch,
+        Looking::WebPage,
+        Looking::WebPage,
+        Looking::WebPage,
+        Looking::WebPage,
+    ]);
+    assert_eq!(
+        run.doing(),
+        "Searching for 3 patterns, reading 2 files, running 1 command, searching the web 2 times, fetching 4 pages"
+    );
+    assert_eq!(
+        run.did(),
+        "Searched for 3 patterns, read 2 files, ran 1 command, searched the web 2 times, fetched 4 pages"
+    );
+    let single = gathering(&[Looking::WebSearch, Looking::WebPage]);
+    assert_eq!(single.did(), "Searched the web 1 time, fetched 1 page");
+}

@@ -123,9 +123,8 @@ impl ThemeChoice {
 
 /// How wide the line of a tool call and its result may run.
 ///
-/// A measure rather than a cut: a line longer than it wraps onto rows under
-/// the first, so nothing a call or a result said is lost to the setting. What
-/// it decides is how far across a wide screen those rows reach.
+/// Headings and result previews stay compact at either width. The expanded
+/// view holds the full text whenever it was clipped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ToolDetail {
     /// A readable measure, narrower than a wide terminal.

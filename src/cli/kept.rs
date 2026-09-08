@@ -107,7 +107,7 @@ impl Whole {
 pub(crate) struct Kept {
     /// What is held, oldest at the front because that is the end that gives.
     whole: VecDeque<Whole>,
-    /// How many bytes of text `whole` holds, added up.
+    /// How many bytes of headings and result text `whole` holds, added up.
     ///
     /// Carried rather than counted per push: the number is wanted on the path a
     /// result arrives on, and a walk over the whole queue there would be work
@@ -151,6 +151,14 @@ impl Kept {
                 writing: None,
             });
         }
+    }
+
+    /// The original heading, before the transcript clips it to one row.
+    pub(crate) fn heading(&self, call: &ToolId) -> Option<&str> {
+        self.pending
+            .iter()
+            .find(|one| one.id == *call)
+            .map(|one| one.called.as_str())
     }
 
     /// Keeps what the call still out has printed.
@@ -247,7 +255,10 @@ impl Kept {
         let called = self.take(call).map_or_else(String::new, |one| one.called);
 
         self.cut = self.cut.saturating_add(1);
-        self.held = self.held.saturating_add(text.len());
+        self.held = self
+            .held
+            .saturating_add(text.len())
+            .saturating_add(called.len());
         self.whole.push_back(Whole { called, text, at });
 
         // After the push rather than before it, so that the newest result is
@@ -256,7 +267,10 @@ impl Kept {
         // one they are most likely to be asking about.
         while self.held > HELD && self.whole.len() > 1 {
             if let Some(gone) = self.whole.pop_front() {
-                self.held = self.held.saturating_sub(gone.text.len());
+                self.held = self
+                    .held
+                    .saturating_sub(gone.text.len())
+                    .saturating_sub(gone.called.len());
             }
         }
     }

@@ -1704,3 +1704,94 @@ fn a_number_the_answer_wrote_is_written_as_somewhere_the_reader_can_go() {
         );
     }
 }
+
+#[test]
+fn expanded_results_use_the_configured_wheel_speed() {
+    for (during, speed) in [(false, 6), (false, 12), (true, 6), (true, 12)] {
+        let args = r#"{"path":"wheel.txt"}"#;
+        let vendor = if during {
+            Vendor::calling_then_holding("read", args, "Ready to inspect.")
+        } else {
+            Vendor::calling("read", args, "Ready to inspect.")
+        };
+        let config = serde_json::json!({
+            "updates": {"check":"never"},
+            "env": {"CRUCIBLE_CODE_MOUSE_SCROLL_SPEED": speed.to_string()},
+            "permissions": {"allow":["read(*)"]},
+            "providers": {"anthropic": {"model":"claude-sonnet-4-6", "baseUrl": vendor.address()}}
+        });
+        let config = serde_json::to_string_pretty(&config).unwrap();
+        let mut window = Watched::configured("wheel-speed", 80, 24, &config, true);
+        let mut text = String::new();
+        for at in 1..=100 {
+            writeln!(text, "wheel line {at:03}").unwrap();
+        }
+        std::fs::write(window.workspace().join("wheel.txt"), text).unwrap();
+        window.types_until("read the file\r", "Ready to inspect.");
+        window.types("\x0f");
+        let initial = window.picture();
+        window.types(&"\x1b[B".repeat(speed));
+        let arrows = window.picture();
+        assert_ne!(initial, arrows);
+        window.types("\x0f\x0f");
+        window.types("\x1b[<65;5;10M");
+        let wheeled = window.picture();
+        // Compare the content, since a live working marker may animate.
+        let content = |picture: &str| {
+            picture
+                .lines()
+                .filter(|line| line.contains("wheel line"))
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            content(&wheeled),
+            content(&arrows),
+            "during={during}, speed={speed}"
+        );
+        window.types("\x1b[<64;5;10M");
+        assert_eq!(content(&window.picture()), content(&initial));
+    }
+}
+
+#[test]
+fn compact_tool_activity_and_its_group_expand_in_the_real_terminal() {
+    let script = format!(
+        "cat > generated.txt <<'EOF'\n{}\nLAST_ARGUMENT\nEOF",
+        "long script line\n".repeat(60)
+    );
+    let calls = vec![
+        vec![
+            ("read", r#"{"path":"one.txt"}"#.to_owned()),
+            ("read", r#"{"path":"two.txt"}"#.to_owned()),
+        ],
+        vec![("bash", serde_json::json!({"command":script}).to_string())],
+        vec![("read", r#"{"path":"missing.txt"}"#.to_owned())],
+    ];
+    let vendor = Vendor::calling_batches(&calls, "Inspection finished.");
+    let config = serde_json::to_string_pretty(&serde_json::json!({
+        "updates":{"check":"never"},
+        "permissions":{"allow":["read(*)","bash(*)"]},
+        "providers":{"anthropic":{"model":"claude-sonnet-4-6","baseUrl":vendor.address()}}
+    }))
+    .unwrap();
+    let mut window = Watched::configured("compact-activity", 80, 32, &config, true);
+    std::fs::write(window.workspace().join("one.txt"), "first retained result").unwrap();
+    std::fs::write(window.workspace().join("two.txt"), "second retained result").unwrap();
+    window.types_until("inspect and write\r", "Inspection finished.");
+    let picture = window.picture();
+    assert!(picture.contains("Read 2 files"), "{picture}");
+    assert!(picture.contains("Read(missing.txt)"), "{picture}");
+    assert!(!picture.contains("LAST_ARGUMENT"), "{picture}");
+    let group = picture
+        .lines()
+        .position(|line| line.contains("Read 2 files"))
+        .unwrap();
+    assert!(!picture.lines().nth(group).unwrap().contains("ctrl+o"));
+    insta::assert_snapshot!("compact_tool_activity", picture);
+    window.clicks(group - 1, 4);
+    let opened = window.picture();
+    assert!(opened.contains("first retained result"), "{opened}");
+    assert!(opened.contains("second retained result"), "{opened}");
+    insta::assert_snapshot!("compact_tool_group_expanded", opened);
+}

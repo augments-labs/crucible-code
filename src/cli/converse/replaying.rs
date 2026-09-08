@@ -379,7 +379,7 @@ impl Folded {
         let mut folded = Self::default();
         let mut run = Gathering::default();
 
-        for message in messages {
+        for (index, message) in messages.iter().enumerate() {
             match message {
                 // A prompt, a fact put in front of one, and the end of a round
                 // trip. The last is where the live path closes a run too:
@@ -402,7 +402,15 @@ impl Folded {
                     }
 
                     for call in calls {
-                        match runner.folds(call) {
+                        // Results follow their request batch. Missing and failed
+                        // answers keep individual headings, just as they did live.
+                        let answered = match messages.get(index + 1) {
+                            Some(Message::ToolResults(results)) => results
+                                .iter()
+                                .any(|result| result.id == call.id && !result.output.is_failed()),
+                            _ => false,
+                        };
+                        match runner.folds(call).filter(|_| answered) {
                             Some(looking) => run.counted(call.id.clone(), looking),
                             None => folded.close(&mut run),
                         }
@@ -492,8 +500,8 @@ impl Folded {
 #[cfg(test)]
 mod tests {
     use crucible_core::{
-        AgentId, Cancel, Effort, Host, Search, SearchResponse, SourceError, StopReason, ToolArgs,
-        ToolCall, ToolId, ToolOutput, ToolResult, Transcript, Workspace,
+        AgentId, Cancel, Effort, Fetch, Host, Page, Search, SearchResponse, SourceError,
+        StopReason, ToolArgs, ToolCall, ToolId, ToolOutput, ToolResult, Transcript, Workspace,
     };
     use crucible_runner::{AgentSpec, Model, Session, Tools};
     use crucible_tui::Picture;
@@ -534,6 +542,25 @@ mod tests {
         }
     }
 
+    impl Fetch for Nowhere {
+        fn name(&self) -> &'static str {
+            "nowhere"
+        }
+        fn reaches(&self, url: &str) -> Host {
+            Host::Named {
+                sent: url.into(),
+                host: "example.com".into(),
+            }
+        }
+        fn fetch(&self, url: &str, _: &Cancel) -> Result<Page, SourceError> {
+            Ok(Page {
+                url: url.into(),
+                title: None,
+                text: "page".into(),
+            })
+        }
+    }
+
     /// A runner with the real `read` tool on it, so what a call is about is
     /// answered by the tool that owns the arguments rather than invented here.
     /// And the real `web_search`, held back the way the build holds it back:
@@ -550,6 +577,10 @@ mod tests {
             .unwrap();
         offered
             .defer_builtin(crucible_tools::WebSearch::new(std::sync::Arc::new(Nowhere)))
+            .unwrap();
+
+        offered
+            .defer_builtin(crucible_tools::WebFetch::new(std::sync::Arc::new(Nowhere)))
             .unwrap();
 
         Runner::new(
@@ -724,6 +755,53 @@ mod tests {
 
         assert!(screen.contains("Read(file-1.rs)"), "{screen:?}");
         assert!(!screen.contains("Read 1 file"), "{screen:?}");
+    }
+
+    #[test]
+    fn a_failed_lookup_is_not_hidden_in_a_replayed_group() {
+        let source = walked_a_tree(3);
+        let mut transcript = Transcript::new();
+        for mut message in source.messages().iter().cloned() {
+            if let Message::ToolResults(results) = &mut message {
+                results.get_mut(1).unwrap().output = ToolOutput::failed("file missing");
+            }
+            transcript.push(message).unwrap();
+        }
+        let screen = screen(transcript, 80);
+        assert!(screen.contains("file missing"), "{screen}");
+        assert!(!screen.contains("Read 3 files"), "{screen}");
+    }
+
+    #[test]
+    fn web_research_replays_as_one_clickable_group_without_an_expansion_hint() {
+        let source = walked_a_tree(4);
+        let mut transcript = Transcript::new();
+        for mut message in source.messages().iter().cloned() {
+            if let Message::Agent { calls, .. } = &mut message {
+                for (at, call) in calls.iter_mut().enumerate() {
+                    let (name, args) = if at < 2 {
+                        ("web_search", r#"{"query":"rust reference"}"#)
+                    } else {
+                        ("web_fetch", r#"{"url":"https://example.com/reference"}"#)
+                    };
+                    call.name = name.into();
+                    call.args = ToolArgs::new(args);
+                }
+            }
+            transcript.push(message).unwrap();
+        }
+        let (kept, renderer) = holding(transcript, 100);
+        let picture = renderer.terminal().picture().said().join("\n");
+        assert!(
+            picture.contains("Searched the web 2 times, fetched 2 pages"),
+            "{picture}"
+        );
+        assert!(!picture.contains("ctrl+o"), "{picture}");
+        let rows: Vec<_> = kept.newest().map(Whole::at).collect();
+        assert_eq!(rows.len(), 4);
+        let row = rows.first().copied().flatten().unwrap();
+        assert!(rows.iter().all(|at| *at == Some(row)));
+        assert!(kept.offered(row));
     }
 
     #[test]
@@ -1001,43 +1079,36 @@ mod tests {
         assert!(screen.contains("crucible.json"), "{screen}");
     }
 
-    /// A turn that searched the web twice in one batch and was answered.
+    /// Two single searches in separate round trips: each keeps its own row.
     fn searched_twice() -> Transcript {
         let mut transcript = Transcript::new();
         transcript
             .push(Message::said("what are people saying?"))
-            .expect("valid fixture transcript");
-        transcript
-            .push(Message::Agent {
-                continuation: None,
-                text: String::new().into(),
-                calls: vec![
-                    ToolCall {
-                        id: ToolId::new("s-1"),
+            .unwrap();
+        for (number, question, answer) in [
+            (1, "first question", "First answer"),
+            (2, "second question", "Second answer"),
+        ] {
+            let id = ToolId::new(format!("s-{number}"));
+            transcript
+                .push(Message::Agent {
+                    continuation: None,
+                    text: String::new().into(),
+                    calls: vec![ToolCall {
+                        id: id.clone(),
                         name: "web_search".into(),
-                        args: ToolArgs::new(r#"{"query":"first question"}"#),
-                    },
-                    ToolCall {
-                        id: ToolId::new("s-2"),
-                        name: "web_search".into(),
-                        args: ToolArgs::new(r#"{"query":"second question"}"#),
-                    },
-                ],
-                stop: Some(StopReason::WantsTools),
-            })
-            .expect("valid fixture transcript");
-        transcript
-            .push(Message::ToolResults(vec![
-                ToolResult {
-                    id: ToolId::new("s-1"),
-                    output: ToolOutput::ok("1. First answer\n   https://a.example\n"),
-                },
-                ToolResult {
-                    id: ToolId::new("s-2"),
-                    output: ToolOutput::ok("1. Second answer\n   https://b.example\n"),
-                },
-            ]))
-            .expect("valid fixture transcript");
+                        args: ToolArgs::new(serde_json::json!({"query":question}).to_string()),
+                    }],
+                    stop: Some(StopReason::WantsTools),
+                })
+                .unwrap();
+            transcript
+                .push(Message::ToolResults(vec![ToolResult {
+                    id,
+                    output: ToolOutput::ok(format!("1. {answer}\n   https://example.com\n")),
+                }]))
+                .unwrap();
+        }
         transcript
     }
 
@@ -1100,7 +1171,7 @@ mod tests {
         // it: what this keeps true is that the two agree, and a second list of
         // expected strings here would be a second thing to keep in step.
         let output = ToolOutput::ok("theme = midnight\nand nine hundred lines after it");
-        let live = draw::finished_rows(&output, 80, Style::plain());
+        let live = draw::finished_rows(&output, 80, Style::plain(), false);
         let screen = screen(everything(), 80);
         println!("\n{screen}");
 

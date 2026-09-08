@@ -482,7 +482,7 @@ you with no way to send at all.
 | `glyphs` | `unicode`, `ascii` | Which characters crucible draws with. `ascii` if box drawing shows as hollow squares. |
 | `theme` | `auto`, `dark`, `light`, `colourblind-dark`, `colourblind-light`, `ansi` | Which colours crucible draws with. |
 | `syntaxTheme` | a theme name | Which theme fenced code is drawn in. |
-| `toolDetail` | `compact`, `full` | How wide the line of a tool call and its result runs before it wraps: a readable measure, or the whole window. |
+| `toolDetail` | `compact`, `full` | The width of compact tool headings and result previews: a readable measure, or the whole window. Clipped details remain expandable. |
 
 `theme` is a table of what each colour on screen means, tuned to one background.
 `auto` asks the terminal what its background is and picks the dark or the light
@@ -994,8 +994,10 @@ because it is what says where the files are. Set it in your shell instead
 
 ## `CRUCIBLE_CODE_MOUSE_SCROLL_SPEED`
 
-How many rows one notch of the wheel moves the transcript. `6` unless you say
-otherwise, which is about three lines of prose per notch.
+How many rows or list entries one notch of the wheel moves wherever wheel
+scrolling is enabled: the transcript, expanded tool results, background-command
+output, and the session picker's list and preview. The default is `6`; arrow
+keys still move one step at a time.
 
 ```json
 { "env": { "CRUCIBLE_CODE_MOUSE_SCROLL_SPEED": "12" } }

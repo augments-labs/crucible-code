@@ -797,6 +797,12 @@ impl<T: Terminal> Renderer<T> {
         self.notch = rows;
     }
 
+    /// How many rows one wheel notch moves in any scrollable view.
+    #[must_use]
+    pub fn scroll_rows(&self) -> usize {
+        usize::try_from(self.notch).unwrap_or(1).max(1)
+    }
+
     /// Tells this renderer a session is on screen, which puts the fixed foot —
     /// the transcript-map door — on the bottom row and keeps it there.
     ///

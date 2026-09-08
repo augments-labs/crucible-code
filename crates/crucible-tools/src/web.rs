@@ -21,8 +21,8 @@
 use std::sync::{Arc, LazyLock};
 
 use crucible_core::{
-    Approved, DescribeTool, Fetch, Host, Search, Sensitivity, Summary, Tool, ToolArgs, ToolContext,
-    ToolEffect, ToolError, ToolOutput,
+    Approved, DescribeTool, Fetch, Host, Looking, Search, Sensitivity, Summary, Tool, ToolArgs,
+    ToolContext, ToolEffect, ToolError, ToolOutput,
 };
 
 #[cfg(test)]
@@ -169,6 +169,10 @@ impl Tool for WebSearch {
         summary::field(SEARCH, args, QUERY)
     }
 
+    fn looking(&self, _args: &ToolArgs) -> Option<Looking> {
+        Some(Looking::WebSearch)
+    }
+
     fn run(&self, approved: Approved, context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
         let args = Args::parse(SEARCH, approved.args())?;
         let query = args.text(QUERY)?;
@@ -306,6 +310,10 @@ impl Tool for WebFetch {
 
     fn summary(&self, args: &ToolArgs) -> Summary {
         summary::field(FETCH, args, URL)
+    }
+
+    fn looking(&self, _args: &ToolArgs) -> Option<Looking> {
+        Some(Looking::WebPage)
     }
 
     fn run(&self, approved: Approved, context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {

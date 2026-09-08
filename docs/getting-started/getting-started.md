@@ -497,6 +497,11 @@ the window holds, in the order it arrived. Two characters decide it — a brace 
 a bracket, and something a record could hold after it — so `[exit status 3]` and
 a sentence somebody wrote in brackets keep their spaces and their meaning.
 
+Tool headings and result previews stay on one row, with an ellipsis where
+text was clipped. A long command stays expandable even when it produced no
+output; an individual call with only horizontally clipped text offers
+`(ctrl+o to expand)` without a count of extra lines.
+
 A result the row had no room for says how much it left over and names the key
 that gives it back: `(+128 lines · ctrl+o to expand)`. The key is drawn in the
 accent, and what the result said reads as the quiet the rest of the transcript
@@ -504,8 +509,10 @@ is in until you point at it. Clicking it opens the same view the key does, for
 the one result it belongs to. The key reaches further than the pointer does:
 <kbd>Ctrl+O</kbd> stands
 every result that was cut this way where the box was, newest first, each under
-the line of the call it answers. The arrow keys walk it where there is more of
-it than the window holds, and <kbd>Esc</kbd> or <kbd>Ctrl+O</kbd> again closes
+the line of the call it answers. Arrow keys move one row at a time; the mouse
+wheel uses `CRUCIBLE_CODE_MOUSE_SCROLL_SPEED` (six rows per notch by default).
+Long headings and output lines wrap here so their ends remain readable.
+<kbd>Esc</kbd> or <kbd>Ctrl+O</kbd> again closes
 it — the box comes back with the line you were typing still in it, and nothing
 is written into the transcript on either side of it.
 
@@ -522,13 +529,11 @@ The row names the call you asked about, so what stands is the output of that
 call alone. A click anywhere
 else, on a row that offered nothing, leaves the screen as it was.
 
-A run of calls that only looked around is one row rather than one row each. A
-turn that greps for a pattern, reads four files and lists two directories has
-done one thing, and seven rows saying so are seven rows to scroll past on the
-way to what came of it. So they are counted instead:
+A run of calls that only looked around is one row rather than one row each.
+Local file lookups and web research in the same batch are counted together:
 
 ```
-● Searched for 1 pattern, read 4 files, listed 2 directories
+● Searched for 3 patterns, read 2 files, searched the web 2 times, fetched 4 pages
 ```
 
 Only the kinds that happened are named, in that order, and each carries its own
@@ -536,11 +541,20 @@ number — a run that read one file says `read 1 file`. Two calls are enough to
 fold; a single lookup keeps the row it always had, since a count of one is the
 same width as the name it replaced and says less.
 
-What folds is looking and nothing else. `grep` counts a pattern, `read` a file,
-`glob` a directory, and a shell command counts only where the command is one
-that reports rather than changes — `git status`, `gh pr view`, `ls`, `cat`. A
-call that writes a file, or a command that could, ends the run and takes the row
-it always had. The run also ends wherever the turn does something else worth
+The grouped sentence is highlighted on hover and clickable: opening it shows
+all its queries, URLs, commands and results. It has no `ctrl+o to expand` suffix.
+That hint belongs to individual calls; <kbd>Ctrl+O</kbd> still opens grouped
+results too. While a run is active, its status uses present tense: `Searching
+for 3 patterns, reading 2 files, searching the web 2 times, fetching 4 pages`.
+
+What folds is successful lookup calls. `grep` counts a pattern, `read` a file,
+`glob` a directory, `web_search` a search, and `web_fetch` a page request. A Bash
+call counts once, even if it chains several shell commands. Supported reporting
+forms include `git status`, `gh pr view`, `ls`, `cat`, a `cd` followed by such
+commands, and `sed -n 'N[,M]p'` for printing a line range. This classification
+changes only display, never permissions. A failed lookup, a call that writes a
+file, or an unrecognized command ends the run and keeps its own result row.
+The run also ends wherever the turn does something else worth
 reading: a paragraph of the answer, your next prompt, a stop.
 
 And it ends at every round trip — the agent asked for a batch of tools, was

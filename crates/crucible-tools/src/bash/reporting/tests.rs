@@ -55,3 +55,37 @@ fn a_line_that_does_not_say_what_runs_is_not_claimed() {
     assert!(!only("eval ls"));
     assert!(!only(""));
 }
+
+#[test]
+fn directory_changes_and_print_only_sed_can_join_a_lookup_run() {
+    for line in [
+        "cd src && grep -n main lib.rs",
+        "cd '../other tree' && sed -n '1,80p' src/lib.rs",
+        "sed -n '20p' file | head -10",
+    ] {
+        assert!(only(line), "{line}");
+        assert!(
+            matches!(
+                super::command::read(line),
+                crucible_core::Command::Opaque(_)
+            ),
+            "display classification must not widen permission rules: {line}"
+        );
+    }
+}
+
+#[test]
+fn scripts_and_sed_writes_are_still_individual_calls() {
+    for line in [
+        "cd src && rm file",
+        "sed -i 's/a/b/' file",
+        "sed -n '1,2w output' file",
+        "sed -n '1p' -i file",
+        "sed -n '1p; e touch file' file",
+        "cd src && python3 -c 'pass'",
+        "cd $(pwd) && cat file",
+        "cat >file <<'EOF'\ntext\nEOF",
+    ] {
+        assert!(!only(line), "{line}");
+    }
+}

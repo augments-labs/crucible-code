@@ -677,12 +677,21 @@ impl Turning {
                     Vec::new()
                 }
             }
-            Event::ToolFinished { call, .. } => self
+            Event::ToolFinished { call, output, .. } => self
                 .calling
                 .iter()
                 .position(|one| one.id == *call)
                 .and_then(|at| self.calling.remove(at))
-                .map_or_else(Vec::new, |calling| vec![settled(calling)]),
+                .map_or_else(Vec::new, |calling| {
+                    let mut returned = settled(calling);
+                    // A failed lookup needs its own result row, even in a batch
+                    // of successful reads. The grouping promise covers work
+                    // that came back, not an error the reader needs to see.
+                    if output.is_failed() {
+                        returned.looking = None;
+                    }
+                    vec![returned]
+                }),
             // Terminal events cannot leave live rows behind. Drain every call in
             // request order: none has a result to consume another call's line.
             Event::TurnFinished { .. } | Event::Failed { .. } => {

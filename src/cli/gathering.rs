@@ -23,7 +23,7 @@ use crucible_core::{Looking, ToolId, ToolOutput};
 /// One table rather than a match per tense, because the two tenses of a counter
 /// and its two numbers are four spellings of one thing, and four spellings kept
 /// apart are four chances for `directory` to come back as `directorys`.
-const COUNTERS: [Counter; 4] = [
+const COUNTERS: [Counter; 6] = [
     Counter {
         doing: "searching for",
         did: "searched for",
@@ -47,6 +47,18 @@ const COUNTERS: [Counter; 4] = [
         did: "ran",
         one: "command",
         many: "commands",
+    },
+    Counter {
+        doing: "searching the web",
+        did: "searched the web",
+        one: "time",
+        many: "times",
+    },
+    Counter {
+        doing: "fetching",
+        did: "fetched",
+        one: "page",
+        many: "pages",
     },
 ];
 
@@ -238,6 +250,8 @@ fn at(looking: Looking) -> usize {
         Looking::File => 1,
         Looking::Directory => 2,
         Looking::Command => 3,
+        Looking::WebSearch => 4,
+        Looking::WebPage => 5,
     }
 }
 

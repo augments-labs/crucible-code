@@ -193,7 +193,7 @@ pub(super) fn stand_while<T: Terminal, S>(
             _ => None,
         };
 
-        match keys(arrived, state) {
+        match wheeled(arrived, renderer.scroll_rows(), |key| keys(key, state)) {
             Moved::Redraw => changed = true,
             Moved::Still => {
                 changed = false;
@@ -289,4 +289,26 @@ pub(super) fn step(at: &mut usize, next: Option<usize>) -> Moved {
         }
         None => Moved::Still,
     }
+}
+
+/// Applies the session's wheel speed to every component that consumes wheel
+/// events. Arrows still move once. A partially consumed notch stays with the
+/// component, so reaching its edge cannot unexpectedly scroll the transcript.
+pub(super) fn wheeled(
+    arrived: Pressed,
+    rows: usize,
+    mut keys: impl FnMut(Pressed) -> Moved,
+) -> Moved {
+    let Pressed::Scrolled { back } = arrived else {
+        return keys(arrived);
+    };
+    let mut moved = Moved::Still;
+    for _ in 0..rows {
+        match keys(Pressed::Scrolled { back }) {
+            Moved::Redraw => moved = Moved::Redraw,
+            Moved::Still => break,
+            left @ (Moved::Left | Moved::Took) => return left,
+        }
+    }
+    moved
 }
