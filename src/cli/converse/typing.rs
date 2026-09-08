@@ -1010,7 +1010,7 @@ pub(super) fn during<T: Terminal>(
                 _ => None,
             };
 
-            let walked = opened.against(arrived);
+            let walked = opened.against(arrived, renderer.scroll_rows());
             moved |= walked;
 
             // A wheel the view did nothing with is the transcript's, by the

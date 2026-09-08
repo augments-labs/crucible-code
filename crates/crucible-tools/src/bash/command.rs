@@ -37,7 +37,7 @@ enum Quote {
 
 /// What this command line will run.
 pub(super) fn read(line: &str) -> Command {
-    match simple(line) {
+    match parts(line, |program| !wrapper::wraps(program)) {
         // A line that decomposed into nothing ran nothing a rule could be
         // about. Reported as unreadable rather than as an empty list, because
         // an empty list is a thing every `allow` rule vacuously covers.
@@ -55,7 +55,7 @@ pub(super) fn read(line: &str) -> Command {
 
 /// The simple commands this line decomposes into, or nothing when it holds
 /// something whose text does not say what will run.
-fn simple(line: &str) -> Option<Box<[Box<str>]>> {
+pub(super) fn parts(line: &str, accepts: fn(&str) -> bool) -> Option<Box<[Box<str>]>> {
     let mut parts = Vec::new();
     let mut current = String::new();
     let mut quote = Quote::None;
@@ -104,19 +104,19 @@ fn simple(line: &str) -> Option<Box<[Box<str>]>> {
                     quote = Quote::Double;
                 }
 
-                ';' | '\n' => finish(&mut parts, &mut current)?,
+                ';' | '\n' => finish(&mut parts, &mut current, accepts)?,
                 '|' => {
                     // `||` as well as a pipe. Both join two commands, and both
                     // leave each of them needing its own rule.
                     chars.as_str().starts_with('|').then(|| chars.next());
-                    finish(&mut parts, &mut current)?;
+                    finish(&mut parts, &mut current, accepts)?;
                 }
                 '&' => {
                     // `&&` joins; a lone `&` backgrounds, which leaves nothing
                     // watching the exit status and is not a shape this models.
                     if chars.as_str().starts_with('&') {
                         chars.next();
-                        finish(&mut parts, &mut current)?;
+                        finish(&mut parts, &mut current, accepts)?;
                     } else {
                         return None;
                     }
@@ -133,14 +133,18 @@ fn simple(line: &str) -> Option<Box<[Box<str>]>> {
         return None;
     }
 
-    finish(&mut parts, &mut current)?;
+    finish(&mut parts, &mut current, accepts)?;
     Some(parts.into())
 }
 
 /// Ends the simple command being read and starts the next one.
 ///
 /// Returns nothing when what was read is a shape no rule may be written about.
-fn finish(parts: &mut Vec<Box<str>>, current: &mut String) -> Option<()> {
+fn finish(
+    parts: &mut Vec<Box<str>>,
+    current: &mut String,
+    accepts: fn(&str) -> bool,
+) -> Option<()> {
     let text = normalised(current);
     current.clear();
 
@@ -154,7 +158,7 @@ fn finish(parts: &mut Vec<Box<str>>, current: &mut String) -> Option<()> {
 
     // `PATH=/tmp/x cargo test` runs whatever `/tmp/x` holds, so the word
     // `cargo` no longer names what runs.
-    if assigns(program) || !literal(program) || wrapper::wraps(program) {
+    if assigns(program) || !literal(program) || !accepts(program) {
         return None;
     }
 

@@ -8,6 +8,18 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Changed
+
+- **Tool activity stays compact and opens into full details.** Individual
+  headings and result previews stay bounded, while successful local and web
+  lookups share a highlighted, clickable summary with active and completed
+  wording. Failed calls remain visible, and expansion exposes long commands
+  and output even when the command returned no text.
+- **Mouse-wheel speed applies throughout the interface.** Expanded results,
+  background-command output and session-picker panes now use
+  `CRUCIBLE_CODE_MOUSE_SCROLL_SPEED`, just like the transcript; arrow keys
+  continue to move one step at a time.
+
 ### Added
 
 - **Google Search is available with Gemini models.** `web_search` uses native

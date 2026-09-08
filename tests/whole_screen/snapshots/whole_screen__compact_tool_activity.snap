@@ -1,0 +1,37 @@
+---
+source: tests/whole_screen/main.rs
+expression: picture
+---
+80x32 cursor 28,4 scrolled 0
+|│                                  │ Recent sessions                           │|
+|│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
+|│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No recent sessions                        │|
+|│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
+|│                                  │ ───────────────────────────────────────── │|
+|│  /…/workspace                    │                                           │|
+|│                                  │ Tips                                      │|
+|│                                  │                                           │|
+|│                                  │ · /          opens the command list       │|
+|│                                  │ · \ enter    adds a line without sending  │|
+|│                                  │ · shift+tab  steps the permission mode    │|
+|│                                  │ · ctrl+c     clears the line typed so far │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|                                                                                |
+|› inspect and write                                                             |
+|                                                                                |
+|● Read 2 files                                                                  |
+|                                                                                |
+|● Bash(cat > generated.txt <<'EOF' long script line long…)                      |
+|  ⎿ (no output) (ctrl+o to expand)                                              |
+|                                                                                |
+|● Read(missing.txt)                                                             |
+|  ⎿ ✗ missing.txt does not exist                                                |
+|                                                                                |
+|Inspection finished.                                                            |
+|                                                                                |
+|                                                                 99% window left|
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│ ›                                                                            │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|ask mode on (shift+tab to cycle)                         anthropic/claude-test-1|
+|                                                               transcript map → |

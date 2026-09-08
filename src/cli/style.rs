@@ -32,10 +32,10 @@ pub(crate) struct Output {
     pub(crate) syntax: Option<String>,
 }
 
-/// The measure a compact line of a tool's arguments wraps at.
+/// The maximum columns shown in a compact tool heading.
 const ARGS: usize = 56;
 
-/// The measure a compact line of a tool's output wraps at.
+/// The maximum columns shown in a compact result preview.
 const OUTPUT: usize = 96;
 
 /// The variable every command-line tool is expected to honour.
@@ -266,12 +266,8 @@ impl Style {
 
     /// One width, according to the detail asked for.
     ///
-    /// A measure the words wrap at rather than a place they are cut: a line
-    /// longer than it goes onto rows under the first, so the setting decides how
-    /// far across a wide screen a call's rows reach and never how much of the
-    /// call is shown. `full` is the terminal's width rather than no limit at
-    /// all, because a row wider than the window is one the terminal wraps and
-    /// this process never counted.
+    /// The ceiling for a heading or result preview. `full` uses the terminal's
+    /// width; overflow is available in the expanded view in either mode.
     fn width(self, compact: usize, columns: usize) -> usize {
         match self.detail {
             ToolDetail::Compact => compact.min(columns),

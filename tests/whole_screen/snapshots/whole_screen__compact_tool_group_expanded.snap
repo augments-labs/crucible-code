@@ -1,0 +1,37 @@
+---
+source: tests/whole_screen/main.rs
+expression: opened
+---
+80x32 cursor 30,0 scrolled 0
+|│  /…/workspace                    │                                           │|
+|│                                  │ Tips                                      │|
+|│                                  │                                           │|
+|│                                  │ · /          opens the command list       │|
+|│                                  │ · \ enter    adds a line without sending  │|
+|│                                  │ · shift+tab  steps the permission mode    │|
+|│                                  │ · ctrl+c     clears the line typed so far │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|                                                                                |
+|› inspect and write                                                             |
+|                                                                                |
+|● Read 2 files                                                                  |
+|                                                                                |
+|● Bash(cat > generated.txt <<'EOF' long script line long…)                      |
+|  ⎿ (no output) (ctrl+o to expand)                                              |
+|                                                                                |
+|● Read(missing.txt)                                                             |
+|  ⎿ ✗ missing.txt does not exist                                                |
+|                                                                                |
+|Inspection finished.                                                            |
+|────────────────────────────────────────────────────────────────────────────────|
+|                                                                                |
+|Read(two.txt)                                                                   |
+|                                                                                |
+|     1 second retained result                                                   |
+|                                                                                |
+|Read(one.txt)                                                                   |
+|                                                                                |
+|     1 first retained result                                                    |
+|                                                                                |
+|esc to close                                                                    |
+|                                                                                |

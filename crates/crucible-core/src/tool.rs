@@ -176,9 +176,9 @@ impl fmt::Debug for Summary {
 /// the work. A call that changed something is never one of these: a change is
 /// the part of a turn a reader is entitled to see go by.
 ///
-/// Four cases rather than a count, because the line names what was done —
-/// searching, reading, listing, running — and a bare number of "lookups" would
-/// name nothing. Closed, because a fifth kind of looking must make every
+/// Distinct cases rather than a count, because the line names what was done —
+/// searching, reading, listing, running and web research — a bare count would
+/// name nothing. Closed, because a new kind of looking must make every
 /// reader of this decide how to say it rather than fall into a default that
 /// silently spells it wrong.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -191,6 +191,10 @@ pub enum Looking {
     Directory,
     /// A command run that only reported what it found.
     Command,
+    /// A query sent to a web search source.
+    WebSearch,
+    /// One web page requested from a fetch source.
+    WebPage,
 }
 
 /// A file a call touched, volunteered for a compaction to remember.

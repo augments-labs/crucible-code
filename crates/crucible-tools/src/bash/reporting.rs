@@ -15,9 +15,7 @@
 //! consulted before a command runs; the sandbox and the permission engine
 //! settle what may run, and this settles only how the row is drawn afterwards.
 
-use crucible_core::Command;
-
-use super::command;
+use super::{command, wrapper};
 
 /// Programs that report whatever flags they are given.
 ///
@@ -27,7 +25,7 @@ use super::command;
 /// destination. That is why `sed`, `find`, `sort` and `awk` are absent: `-i`,
 /// `-delete`, `-o` and a `print >` inside the script all write, and a table
 /// that has to know about them is a table that will one day be wrong about
-/// them.
+/// them. The one print-only `sed` form supported below is checked separately.
 const REPORTS: &[&str] = &[
     "basename", "cat", "df", "dirname", "du", "echo", "egrep", "false", "fgrep", "file", "grep",
     "head", "hostname", "id", "jq", "ls", "nl", "printf", "pwd", "readlink", "realpath", "rg",
@@ -77,18 +75,10 @@ const REPORTING: &[&str] = &[
 
 /// Whether this command line only reports what it found.
 pub(super) fn only(line: &str) -> bool {
-    match command::read(line) {
-        // Every part, because a reader shown a count has been told nothing
-        // about the half of the line that wrote. One `rm` anywhere in it makes
-        // the whole line a change.
-        Command::Understood { parts, .. } => {
-            !parts.is_empty() && parts.iter().all(|part| reports(part))
-        }
-
-        // Text that does not say what will run says nothing about whether it
-        // only reports either.
-        Command::Opaque(_) => false,
-    }
+    command::parts(line, |program| {
+        matches!(program.rsplit('/').next(), Some("cd" | "sed")) || !wrapper::wraps(program)
+    })
+    .is_some_and(|parts| !parts.is_empty() && parts.iter().all(|part| reports(part)))
 }
 
 /// Whether one simple command reports.
@@ -99,7 +89,9 @@ fn reports(part: &str) -> bool {
     // refused everything that could make the spelling a lie.
     let program = program.rsplit('/').next().unwrap_or(program);
 
-    REPORTS.contains(&program)
+    program == "cd"
+        || (program == "sed" && prints(part))
+        || REPORTS.contains(&program)
         || REPORTING.iter().any(|reporting| {
             let rest = match reporting.split_once(' ') {
                 Some((named, rest)) if named == program => rest,
@@ -117,6 +109,44 @@ fn reports(part: &str) -> bool {
                         .is_some_and(|next| next.starts_with(' '))
             })
         })
+}
+
+/// Only `sed -n 'N[,M]p'` with explicit paths: no other script, option, or
+/// filename expansion. This is display classification, never permission to run.
+fn prints(part: &str) -> bool {
+    let mut words = part.split_whitespace();
+    words.next();
+    if words.next() != Some("-n") {
+        return false;
+    }
+    let Some(script) = words.next() else {
+        return false;
+    };
+    let script = script
+        .strip_prefix('\'')
+        .and_then(|text| text.strip_suffix('\''))
+        .or_else(|| {
+            script
+                .strip_prefix('"')
+                .and_then(|text| text.strip_suffix('"'))
+        })
+        .unwrap_or(script);
+    let Some(range) = script.strip_suffix('p') else {
+        return false;
+    };
+    let mut ends = range.split(',');
+    let number = |text: &str| !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit());
+    if !ends.next().is_some_and(number) || !ends.next().is_none_or(number) || ends.next().is_some()
+    {
+        return false;
+    }
+    // Options after the script can still edit a file or load another script.
+    // Quoted or escaped options are declined too. Globs can introduce options
+    // through filenames such as `-i`, so they cannot establish a lookup either.
+    words.all(|word| {
+        !word.trim_start_matches(['\'', '"', '\\']).starts_with('-')
+            && !word.contains(['*', '?', '['])
+    })
 }
 
 #[cfg(test)]

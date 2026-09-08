@@ -161,12 +161,12 @@ impl Standing {
     /// That it closed is read off [`Standing::is_open`] afterwards rather than
     /// reported here: the caller draws something either way, and which of the
     /// two it draws is a question about the state and not about the key.
-    pub(super) fn against(&mut self, arrived: Pressed) -> bool {
+    pub(super) fn against(&mut self, arrived: Pressed, wheel: usize) -> bool {
         let Self::Open(view) = self else {
             return false;
         };
 
-        match moving(arrived, view) {
+        match region::wheeled(arrived, wheel, |key| moving(key, view)) {
             Moved::Redraw => true,
             Moved::Still => false,
 

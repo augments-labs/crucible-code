@@ -1542,3 +1542,20 @@ fn the_run_wears_the_same_mark_as_the_call_beneath_it() {
         "{rows:?}"
     );
 }
+
+#[test]
+fn a_failed_lookup_settles_as_an_individual_call() {
+    let mut turning = Turning::started(None);
+    let mut requested = requested();
+    if let Event::ToolRequested { looking, .. } = &mut requested {
+        *looking = Some(Looking::File);
+    }
+    turning.saw(&requested);
+    let returned = turning.saw(&Event::ToolFinished {
+        call: ToolId::new("a"),
+        output: ToolOutput::failed("file missing"),
+        receipt: None,
+    });
+    assert_eq!(returned.len(), 1);
+    assert!(returned.first().unwrap().looking.is_none());
+}

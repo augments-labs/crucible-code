@@ -85,7 +85,7 @@ fn unicode() -> Glyphs {
 /// it: how much of a wide one a result may take is the style's answer, and the
 /// row takes its own marks off whatever that leaves.
 fn hung(output: &ToolOutput, window: usize, style: Style) -> String {
-    finished(output, beyond(output), window, style)
+    finished(output, beyond(output), window, style, false)
         .iter()
         .map(Row::text)
         .collect::<Vec<_>>()
@@ -94,7 +94,7 @@ fn hung(output: &ToolOutput, window: usize, style: Style) -> String {
 
 /// The one row a result short enough for one takes.
 fn one(output: &ToolOutput, window: usize, style: Style) -> Row {
-    let rows = finished(output, beyond(output), window, style);
+    let rows = finished(output, beyond(output), window, style, false);
     assert_eq!(rows.len(), 1, "{rows:?}");
     rows.into_iter().next().unwrap_or_default()
 }
@@ -334,92 +334,76 @@ fn a_long_summary_is_cut_on_the_footing_which_is_redrawn_every_frame() {
 }
 
 #[test]
-fn a_long_call_line_is_wrapped_rather_than_cut_once_it_has_settled() {
-    // The footing above is redrawn every frame and has one row to do it in;
-    // the line the call settles on is written once, so it has as many rows as
-    // its words take. Nothing is lost at the end of it — which is where the
-    // arguments that say what the call was actually for tend to be.
-    let long = format!(
-        "Bash({})",
-        (1..=40)
-            .map(|n| format!("w{n}"))
-            .collect::<Vec<_>>()
-            .join(" ")
-    );
-
-    let rows = pictured(&long, WIDE, Style::plain());
-    let whole = rows.join("\n");
-
-    assert!(!whole.contains('…'), "{whole}");
-    assert!(whole.contains("w40)"), "{whole}");
-    assert!(rows.len() > 1, "{whole}");
-}
-
-#[test]
-fn the_rows_a_call_line_wraps_onto_are_indented_under_its_words() {
-    let long = format!(
-        "Bash({})",
-        (1..=40)
-            .map(|n| format!("w{n}"))
-            .collect::<Vec<_>>()
-            .join(" ")
-    );
-
-    let rows = pictured(&long, WIDE, Style::plain());
-    let mut rows = rows.iter();
-    let first = rows.next().map(String::as_str).unwrap_or_default();
-    let indent = first
-        .find("Bash")
-        .and_then(|at| first.get(..at))
-        .map(crucible_tui::columns)
-        .unwrap_or_default();
-
-    assert!(indent > 0, "{first:?}");
-    for row in rows {
-        assert!(row.starts_with(&" ".repeat(indent)), "{row:?}");
-        assert!(!row.trim_start().is_empty(), "{row:?}");
+fn long_tool_headings_stay_on_one_row() {
+    for name in ["Bash", "WebFetch", "WebSearch"] {
+        let long = format!("{name}({})", "argument ".repeat(200));
+        let rows = pictured(&long, WIDE, Style::plain());
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert!(rows.join("").ends_with("…)"), "{rows:?}");
     }
 }
 
 #[test]
-fn a_long_result_is_wrapped_and_still_offers_the_rest() {
-    // The first line of a result, wrapped to the room, with the offer on the
-    // end of the last row of it — and the whole of the line there, because a
-    // reader deciding whether to open a result decides on what it said.
-    let first = (1..=30)
-        .map(|n| format!("word{n}"))
-        .collect::<Vec<_>>()
-        .join(" ");
-    let output = ToolOutput::ok(format!("{first}\ntwo\nthree"));
+fn compact_headings_keep_their_parentheses_in_both_glyph_sets() {
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        for name in ["Bash", "WebFetch", "WebSearch", "Read"] {
+            let long = format!("{name}({})", "界argument ".repeat(100));
+            for width in 1..100 {
+                let row = words(&long, width, Style::drawn(glyphs));
+                let text = row.text();
+                assert!(row.columns() <= width, "{width}: {text}");
+                if text.contains('(') {
+                    assert!(text.ends_with(')'), "{width}: {text}");
+                    assert!(text.contains(glyphs.ellipsis()), "{width}: {text}");
+                }
+            }
+        }
+    }
+}
 
+#[test]
+fn a_long_result_preview_keeps_the_expansion_offer_on_one_row() {
+    let output = ToolOutput::ok(format!("{}\ntwo\nthree", "word ".repeat(200)));
     let text = hung(&output, WIDE, Style::plain());
-
-    assert!(!text.contains('…'), "{text}");
-    assert!(text.contains("word30"), "{text}");
+    assert_eq!(text.lines().count(), 1, "{text}");
+    assert!(text.contains('…'), "{text}");
     assert!(text.ends_with("(+2 lines · ctrl+o to expand)"), "{text}");
-    assert!(text.lines().count() > 1, "{text}");
-    for row in text.lines().skip(1) {
-        assert!(row.starts_with("    "), "{row:?}");
-    }
 }
 
 #[test]
-fn every_row_of_a_wrapped_result_says_the_result_was_cut() {
-    // The light under the pointer and the click that opens it both run along
-    // the rows wearing the cut slot, so a row of the result that did not wear
-    // it would be a row the reader can point at and get nothing from.
-    let first = (1..=30)
-        .map(|n| format!("word{n}"))
-        .collect::<Vec<_>>()
-        .join(" ");
-    let output = ToolOutput::ok(format!("{first}\ntwo\nthree"));
+fn a_long_single_line_result_can_be_expanded() {
+    let mut renderer = Renderer::new(Recording::new(WIDE, 24));
+    let mut kept = Kept::default();
+    let call = call("web_fetch", "{}");
+    kept.calling(call.id.clone(), "WebFetch(https://example.com)".into());
+    let text = "page text ".repeat(200);
+    returning(&mut renderer, &mut kept, &text);
+    let picture = renderer.terminal().picture().said().join("\n");
+    assert!(picture.contains("ctrl+o to expand"), "{picture}");
+    assert!(!picture.contains("+0 lines"), "{picture}");
+    let whole = kept
+        .newest()
+        .next()
+        .expect("the clipped line to remain reachable");
+    assert_eq!(whole.text(), text);
+}
 
-    let rows = finished(&output, beyond(&output), WIDE, Style::plain());
-
-    assert!(rows.len() > 1, "{rows:?}");
-    for row in &rows {
-        assert!(row.kinds().any(|slot| slot == Slot::Cut), "{row:?}");
-    }
+#[test]
+fn a_long_command_with_no_output_keeps_its_full_heading_for_expansion() {
+    let mut renderer = Renderer::new(Recording::new(WIDE, 24));
+    let mut kept = Kept::default();
+    let call = call("bash", "{}");
+    let heading = format!("Bash(python3 -c '{}')", "pass; ".repeat(200));
+    kept.calling(call.id.clone(), heading.clone());
+    returned(&mut renderer, &heading, Style::plain()).unwrap();
+    returning(&mut renderer, &mut kept, "");
+    let picture = renderer.terminal().picture().said().join("\n");
+    assert!(picture.contains("ctrl+o to expand"), "{picture}");
+    let whole = kept
+        .newest()
+        .next()
+        .expect("the clipped command to remain reachable");
+    assert_eq!(whole.called(), heading);
 }
 
 #[test]
@@ -524,7 +508,7 @@ fn a_window_too_narrow_for_the_offer_still_says_the_result_was_cut() {
     // cut: the key still works, and a row that dropped the slot with it would
     // say the whole result is there.
     let output = ToolOutput::ok("one\ntwo\nthree");
-    let rows = finished(&output, beyond(&output), 24, Style::plain());
+    let rows = finished(&output, beyond(&output), 24, Style::plain(), false);
     let text = hung(&output, 24, Style::plain());
 
     assert!(!text.contains("ctrl+o"), "{text:?}");
@@ -617,7 +601,7 @@ fn a_clipped_line_stays_inside_the_window_in_both_glyph_sets() {
 #[test]
 fn a_call_line_stays_inside_the_window_mark_and_all() {
     // The mark and the space after it are columns of the row, so a line
-    // wrapped to the whole window and then given a mark is two columns past
+    // clipped to the whole window and then given a mark is two columns past
     // it. Both sets and both marks, since the ascii one is a different width.
     // Nothing is lost either: a window too narrow for one word still gets
     // every character of it, one row at a time.
@@ -633,17 +617,7 @@ fn a_call_line_stays_inside_the_window_mark_and_all() {
                     "{glyphs:?} at {window}: {row:?}"
                 );
             }
-            // A window of 24 rows holds only so much of a line wrapped one
-            // character at a time, so what is counted is what a window with
-            // room for the whole of it shows.
-            if window >= 40 {
-                let whole = rows.join("");
-                assert_eq!(
-                    whole.matches('x').count(),
-                    200,
-                    "{glyphs:?} at {window}: {rows:?}"
-                );
-            }
+            assert!(rows.len() <= 1, "{rows:?}");
         }
     }
 }
@@ -654,7 +628,13 @@ fn a_result_row_stays_inside_the_window_whatever_the_window() {
 
     for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
         for window in [1, 2, 4, 8, 12, 40, WIDE] {
-            for row in finished(&output, beyond(&output), window, Style::drawn(glyphs)) {
+            for row in finished(
+                &output,
+                beyond(&output),
+                window,
+                Style::drawn(glyphs),
+                false,
+            ) {
                 assert!(
                     row.columns() <= window.max(columns(glyphs.called()) + 4),
                     "{glyphs:?} at {window}: {:?}",
@@ -1525,12 +1505,8 @@ fn an_ending_says_the_status_it_ended_with() {
 
 #[test]
 fn a_command_long_enough_to_fill_the_row_still_says_how_it_ended() {
-    // The failure this is written against: the sentence was clipped whole, so a
-    // command somebody typed at length took every column and what the row exists
-    // to report — how it ended, how much it printed — was the part cut off. The
-    // count under the box had gone down and nothing on screen said why. Now the
-    // sentence wraps, so the end of the command is there as well as the end of
-    // the sentence, and the rows after the first hang under the words.
+    // A background completion must preserve its status without printing a
+    // huge command again. Its original call retains the complete heading.
     let said = ended_on(
         "for i in $(seq 1 120); do printf 'tick %d/120\\n' \"$i\"; sleep 1; done; echo complete",
         80,
@@ -1538,12 +1514,9 @@ fn a_command_long_enough_to_fill_the_row_still_says_how_it_ended() {
 
     assert!(said.contains("exit status 0"), "{said}");
     assert!(said.contains("120 lines"), "{said}");
-    assert!(said.contains("Bash(for i in"), "{said}");
-    assert!(said.contains("echo complete)"), "{said}");
-    assert!(!said.contains(unicode().ellipsis()), "{said}");
-    for row in said.lines().skip(1) {
-        assert!(row.starts_with("  "), "{row:?}");
-    }
+    assert!(said.contains("Bash("), "{said}");
+    assert!(said.contains("…) ended"), "{said}");
+    assert_eq!(said.lines().count(), 1, "{said}");
 }
 
 #[test]

@@ -8,12 +8,10 @@
 //! the record as the row that could not say it; the same text committed a second
 //! time would be a transcript that says everything twice.
 //!
-//! **What folds and what is left alone.** A result is a tool's own output and
-//! its lines mean what their layout means, so a line too wide for the window is
-//! cut rather than folded — a column of numbers rewrapped into a paragraph is
-//! harder to read than one that runs off the edge, and the edge is where the
-//! reader already knows to look. The call's line above it is a label and is cut
-//! the same way. Nothing here folds.
+//! **The complete text.** Explicit line breaks stay in place, and a line too
+//! wide for the window continues on rows below it. The transcript already
+//! clipped its preview: clipping again here would make the end of a command
+//! or a single-line result unreachable even after asking for the whole thing.
 //!
 //! **The window.** Everything is laid out and then a window `from` rows down is
 //! taken out of it, because how far down the reader may go is a fact about the
@@ -83,7 +81,9 @@ impl Expanded<'_> {
                 rows.push(Row::new());
             }
 
-            rows.push(Row::new().then(Slot::Strong, clip(shown.called, columns)));
+            for line in shown.called.lines() {
+                rows.extend(Row::new().then(Slot::Strong, line).fold(columns));
+            }
             rows.push(Row::new());
 
             // On the reader's own ground rather than in the quieter colour the
@@ -91,7 +91,11 @@ impl Expanded<'_> {
             // the call it hangs off; this is the thing somebody asked to read,
             // and a screen of dim text is a screen asking not to be.
             for line in shown.text.lines() {
-                rows.push(Row::new().then(Slot::Plain, clip(line, columns)));
+                if line.is_empty() {
+                    rows.push(Row::new());
+                } else {
+                    rows.extend(Row::new().then(Slot::Plain, line).fold(columns));
+                }
             }
         }
 

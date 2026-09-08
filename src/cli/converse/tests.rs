@@ -1349,3 +1349,5 @@ fn a_run_that_asked_not_to_be_kept_is_not_sent_anywhere() {
     // does not conjure one.
     assert_eq!(Parting::of(true, None, None), Parting::Nothing);
 }
+
+mod research;

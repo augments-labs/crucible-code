@@ -407,3 +407,17 @@ fn search_schema_does_not_encourage_automated_fetch_crawling() {
         "search schema encourages automated crawling: {schema}"
     );
 }
+
+#[test]
+fn web_calls_volunteer_for_lookup_grouping() {
+    assert!(
+        searching(Vec::new())
+            .looking(&ToolArgs::new(r#"{"query":"rust"}"#))
+            .is_some()
+    );
+    assert!(
+        fetching("https://example.com", None, "page")
+            .looking(&ToolArgs::new(r#"{"url":"https://example.com"}"#))
+            .is_some()
+    );
+}
