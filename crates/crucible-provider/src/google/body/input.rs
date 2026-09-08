@@ -19,9 +19,10 @@ pub(super) fn write(
     request: &Request<'_>,
     scope: ContinuationScope,
 ) -> Result<(), ProviderError> {
-    // Borrow at most the 128 IDs and names already validated by native(), not
-    // another history-sized index. Keep the empty map after answering a local call
-    // group so a later duplicate result is rejected; another Agent resets it.
+    // native() limits each group to 128 calls. Borrow their IDs and names
+    // instead of building a history-sized index. Keep the empty map after
+    // answering a group so later duplicate results are rejected; another
+    // Agent resets it.
     let mut pending: Option<BTreeMap<&str, &str>> = None;
     for (nth, message) in request.transcript.messages().iter().enumerate() {
         if request.purpose == RequestPurpose::Turn {
