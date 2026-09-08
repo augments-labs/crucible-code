@@ -8,6 +8,12 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Gemini continues after tool calls.** Tool results now include the original
+  function name alongside the call ID, preventing Google's HTTP 400 rejection
+  when Crucible sends a tool's output back to the model.
+
 ## [0.39.0] - 2026-09-07
 
 ### Added

@@ -321,7 +321,7 @@ mod tests {
                 json!({"type":"thought","signature":"signed-thought","summary":[]}),
                 json!({"type":"model_output","content":[{"type":"text","text":"é","annotations":[]},{"type":"text","text":"!"}]}),
                 json!({"type":"function_call","id":"call-1","name":"read","arguments":{"path":"a"},"signature":"signed-call"}),
-                json!({"type":"function_result","call_id":"call-1","result":"contents","is_error":false}),
+                json!({"type":"function_result","call_id":"call-1","name":"read","result":"contents","is_error":false}),
             ]
         );
         for (purpose, recipient) in [

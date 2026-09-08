@@ -78,6 +78,48 @@ fn serialize(
 }
 
 #[test]
+fn function_results_keep_the_called_name_across_reordering_and_reused_ids() {
+    let named = |ids: &[&str], names: &[&str]| {
+        let mut message = calling(ids);
+        if let Message::Agent { calls, .. } = &mut message {
+            for (call, name) in calls.iter_mut().zip(names) {
+                call.name = (*name).into();
+            }
+        }
+        message
+    };
+    let body = serialize(
+        vec![
+            named(&["a", "b"], &["read", "grep"]),
+            results(&["b"]),
+            results(&["a"]),
+            Message::said("again"),
+            named(&["a"], &["bash"]),
+            results(&["a"]),
+        ],
+        RequestPurpose::Turn,
+        scope(),
+    )
+    .unwrap();
+    let value: Value = serde_json::from_str(&body).unwrap();
+    let results: Vec<_> = value["input"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|step| step["type"] == "function_result")
+        .map(|step| (step["call_id"].as_str(), step["name"].as_str()))
+        .collect();
+    assert_eq!(
+        results,
+        [
+            (Some("b"), Some("grep")),
+            (Some("a"), Some("read")),
+            (Some("a"), Some("bash")),
+        ]
+    );
+}
+
+#[test]
 fn native_function_results_must_answer_the_whole_call_group_exactly_once() {
     let cases = [
         vec![calling(&["a"]), results(&["a", "a"])],

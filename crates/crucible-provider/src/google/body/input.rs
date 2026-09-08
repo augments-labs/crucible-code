@@ -12,17 +12,17 @@ use crucible_core::{
     ProviderContinuation, ProviderError, Request, RequestPurpose, ToolCall,
 };
 use serde_json::{Map, Value};
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 
 pub(super) fn write(
     input: &mut Array<'_>,
     request: &Request<'_>,
     scope: ContinuationScope,
 ) -> Result<(), ProviderError> {
-    // Borrow at most the 128 IDs already validated by native(), not another
-    // history-sized index. Keep the empty set after answering a local call
+    // Borrow at most the 128 IDs and names already validated by native(), not
+    // another history-sized index. Keep the empty map after answering a local call
     // group so a later duplicate result is rejected; another Agent resets it.
-    let mut pending: Option<BTreeSet<&str>> = None;
+    let mut pending: Option<BTreeMap<&str, &str>> = None;
     for (nth, message) in request.transcript.messages().iter().enumerate() {
         if request.purpose == RequestPurpose::Turn {
             if !matches!(message, Message::ToolResults(_)) {
@@ -43,20 +43,18 @@ pub(super) fn write(
                     .validate(text, calls.len())
                     .map_err(|_| protocol("invalid continuation references"))?;
                 native(input, state, text, calls)?;
-                pending = Some(calls.iter().map(|call| call.id.as_str()).collect());
+                pending = Some(
+                    calls
+                        .iter()
+                        .map(|call| (call.id.as_str(), call.name.as_ref()))
+                        .collect(),
+                );
                 continue;
             }
             if let Message::ToolResults(results) = message
                 && let Some(waiting) = pending.as_mut()
             {
-                for result in results {
-                    if !waiting.remove(result.id.as_str()) {
-                        return Err(protocol(
-                            "function result does not match an unanswered call",
-                        ));
-                    }
-                }
-                super::results::write(input, results, request.attached, nth)?;
+                super::results::write(input, results, request.attached, nth, waiting)?;
                 continue;
             }
         }
@@ -92,7 +90,7 @@ pub(super) fn write(
     answered(pending.as_ref())
 }
 
-fn answered(pending: Option<&BTreeSet<&str>>) -> Result<(), ProviderError> {
+fn answered(pending: Option<&BTreeMap<&str, &str>>) -> Result<(), ProviderError> {
     if pending.is_some_and(|waiting| !waiting.is_empty()) {
         return Err(protocol("history has unanswered function calls"));
     }

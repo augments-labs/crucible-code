@@ -466,6 +466,18 @@ pub(crate) fn assert_native_history(model: &str, body: &Value, calls: usize) {
         "{model}: native state missing"
     );
     for step in 1..=calls {
+        if model.starts_with("gemini-") {
+            let result = body["input"]
+                .as_array()
+                .expect("valid fixture")
+                .iter()
+                .find(|item| item["call_id"] == format!("call-{step}"))
+                .expect("matching function result");
+            assert_eq!(
+                result["name"], "fixture",
+                "{model}: result lost its tool name"
+            );
+        }
         assert_eq!(
             wire.matches(&format!("fixture-result-{step}")).count(),
             1,
