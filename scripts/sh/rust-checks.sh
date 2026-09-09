@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Deterministic checks owned by the Rust ecosystem. Repository structure is
-# checked separately by scripts/repo-checks.sh.
+# checked separately by scripts/sh/repo-checks.sh.
 set -uo pipefail
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 failed=0
 any=0

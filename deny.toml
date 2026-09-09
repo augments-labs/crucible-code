@@ -97,7 +97,7 @@ unknown-git = "deny"
 multiple-versions = "deny"
 
 # `=`-pinning is the repository's rule for its own manifests, checked by
-# `scripts/repo-checks.sh`. A wildcard would be the same hole from the other
+# `scripts/sh/repo-checks.sh`. A wildcard would be the same hole from the other
 # side: a dependency that resolves to whatever was published this morning.
 wildcards = "deny"
 

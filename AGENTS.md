@@ -23,10 +23,10 @@ Repository skills live in [`.agents/skills/`](.agents/skills/).
 | `crates/crucible-tools/` | Built-in tools |
 | `crates/crucible-tui/` | Terminal rendering and interaction |
 | `schema/` | Generated configuration schema |
-| `scripts/` | Checks, benchmarks and release helpers |
+| `scripts/` | Checks, benchmarks and release helpers, under `sh/` and `python/` |
 | `docs/` | User documentation |
 
-Workspace manifests declare crate dependencies; `scripts/repo-checks.sh`
+Workspace manifests declare crate dependencies; `scripts/sh/repo-checks.sh`
 enforces their allowed directions.
 
 ## Changing Crucible
@@ -79,7 +79,7 @@ the required behavior justifies it; keep the declaration and checks below.
   `some-crate.workspace = true`; versions and justification live at the root.
 - Put the dependency in the narrowest crate that needs it. A dependency in
   `crucible-core` affects every consumer. New internal edges require a deliberate
-  update to the graph checked by `scripts/repo-checks.sh`.
+  update to the graph checked by `scripts/sh/repo-checks.sh`.
 - Use crates.io sources. Git dependencies are not an escape from version pins.
 - The dependency must support shipped paths without panicking or printing to
   stdout/stderr. `unwrap_used`, `expect_used`, `panic`, `indexing_slicing`,
@@ -157,11 +157,11 @@ Use [run-the-gate](.agents/skills/run-the-gate/SKILL.md) when changing a check o
 preparing to finish. The compatibility gate is:
 
 ```bash
-scripts/check.sh
+scripts/sh/check.sh
 ```
 
 It aggregates deterministic Rust, repository and Python gates. Run
-`scripts/bench.sh` when startup, rendering, searching, retained session data or
+`scripts/sh/bench.sh` when startup, rendering, searching, retained session data or
 hot-path allocation changes. Budget changes require an explicit product decision;
 do not widen them merely to make a failing change pass.
 Platform matrices, dependency policy, advisories, performance and releases have

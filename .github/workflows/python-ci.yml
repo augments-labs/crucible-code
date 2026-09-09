@@ -16,5 +16,5 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: scripts/python-checks.sh
+      - run: scripts/sh/python-checks.sh
       - uses: ./.github/actions/check-clean-worktree

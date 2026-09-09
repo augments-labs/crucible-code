@@ -16,7 +16,7 @@ use crate::Modality;
 /// The most raw attachment bytes one request may carry.
 ///
 /// Not a vendor's limit — this one binds first. What a request peaks at is
-/// measured rather than derived: `scripts/bench.sh mem` runs a session at this
+/// measured rather than derived: `scripts/sh/bench.sh mem` runs a session at this
 /// ceiling every time it runs, and reads about three times this figure on top
 /// of what the session was already holding. The bytes, their base64 form and
 /// the serialized body are alive at once, and the last two each hold the

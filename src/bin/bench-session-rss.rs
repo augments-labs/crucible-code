@@ -881,7 +881,7 @@ fn report(measured: Measurement) -> Result<(), io::Error> {
 }
 
 /// Says which of the three readings went over, on stderr, where
-/// `scripts/bench.sh` puts everything a human reads.
+/// `scripts/sh/bench.sh` puts everything a human reads.
 ///
 /// The one line on stdout carries the twenty-turn figure whichever reading
 /// failed, because that is the budget as it is written and the script reads it

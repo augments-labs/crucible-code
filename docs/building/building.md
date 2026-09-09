@@ -15,7 +15,7 @@ pregenerated, so no assembler is needed and no C++ is compiled anywhere in the
 tree — the packages below carry a C++ compiler because that is how they are
 shipped, not because a build asks for one.
 
-**A POSIX shell, to run the gate.** `scripts/check.sh` is bash. On Windows that
+**A POSIX shell, to run the gate.** `scripts/sh/check.sh` is bash. On Windows that
 means Git Bash or a Windows Subsystem for Linux shell; the build itself needs no
 shell.
 
@@ -84,7 +84,7 @@ be beside the Crucible executable on Linux, macOS and Windows.
 ## Run the gate
 
 ```bash
-scripts/check.sh
+scripts/sh/check.sh
 ```
 
 The compatibility command runs the deterministic Rust and repository checks

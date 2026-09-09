@@ -17,7 +17,7 @@
 //! So the reason this file exists is the component that is not in it yet. A
 //! sweep written beside one component covers the widths its author thought of.
 //! This one is a list that reads as incomplete the moment something is missing
-//! from it — and `scripts/check.sh` fails while it is, because the one thing a
+//! from it — and `scripts/sh/check.sh` fails while it is, because the one thing a
 //! sweep cannot notice is a component it was never given.
 //!
 //! The fixtures are deliberately hostile. Every string is either long enough to
