@@ -715,7 +715,7 @@ fn a_command_left_running_answers_at_once_and_keeps_running() {
     assert!(
         output
             .text()
-            .contains("when it ends you are given what it printed; do not poll or wait for it"),
+            .contains("ask bash_output what it has printed so far"),
         "the result invited the model to monitor work Crucible already watches: {}",
         output.text()
     );
@@ -770,7 +770,7 @@ fn a_command_the_developer_let_go_of_says_who_let_go_of_it() {
     assert!(
         output
             .text()
-            .contains("when it ends you are given what it printed; do not poll or wait for it"),
+            .contains("ask bash_output what it has printed so far"),
         "the result invited the model to poll a command Crucible is watching: {}",
         output.text()
     );

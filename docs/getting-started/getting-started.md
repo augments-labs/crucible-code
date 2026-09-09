@@ -1056,8 +1056,8 @@ stays in the box, and the next prompt carries on the same session.
 
 ## What it can do
 
-Eleven tools, advertised in the order a model tends to reach for them. Seven
-are always in the list. The rest are **held back**: they exist and they work, and the
+Twelve tools, advertised in the order a model tends to reach for them. Eight are
+always in the list. The rest are **held back**: they exist and they work, and the
 agent does not see them until it looks them up with `tool_search`. A schema the
 agent can see is one it pays for on every request of every turn, and most
 sessions never write a plan or ask a question about the world.
@@ -1070,6 +1070,7 @@ sessions never write a plan or ask a question about the world.
 | `edit` | Replaces text in a file | yes |
 | `write` | Creates or overwrites a file | yes |
 | `bash` | Runs a command | yes |
+| `bash_output` | Says what a command left running has printed | no |
 | `todo_write` | Writes down the plan | no |
 | `ask_user` | Puts a question to you | no |
 | `web_search` | Searches the web | yes |

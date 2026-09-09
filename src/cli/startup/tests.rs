@@ -874,9 +874,28 @@ fn the_tools_a_session_already_had_are_unchanged_in_name_and_order() {
             "edit",
             "write",
             "bash",
+            "bash_output",
             "ask_user",
             "tool_search"
         ]
+    );
+}
+
+#[test]
+fn a_session_carries_a_tool_for_reading_a_command_it_left_running() {
+    // Advertised rather than deferred, for the reason `ask_user` is: the moment
+    // a model needs this is the moment a command it left running has said
+    // nothing yet, and the note it is told about it in is the same result it is
+    // being asked not to poll. A tool it has to look up first is one it will
+    // not look up then.
+    let tools = offered(true);
+
+    assert!(
+        tools
+            .advertised()
+            .iter()
+            .any(|schema| schema.name == "bash_output"),
+        "the tool was registered without being offered"
     );
 }
 

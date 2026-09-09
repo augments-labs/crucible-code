@@ -8,6 +8,15 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Added
+
+- **A model can ask a command it left running what it has printed.** The output
+  of a background command was already held for the panel behind
+  <kbd>Ctrl</kbd>+<kbd>O</kbd>, and only the reader could see it; a model with a
+  dev server or a watcher running had no way to ask how it was going except to
+  run something that asked again. `bash_output` takes the number the call was
+  answered with and answers with what that command has printed so far.
+
 ### Fixed
 
 - **A command that ended while nobody waited hands over what it printed.** The
