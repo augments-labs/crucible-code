@@ -87,18 +87,18 @@ Scope is decided by purpose, not changed-line arithmetic. A pull request that
 needs two independent summaries is usually two changes; a module whose code and
 proof do not compile apart remains one.
 
-Use the pull-request template and answer every section it asks for; the
-surfaces it lists — security boundaries, durable formats, generated files,
-platform-specific behavior, terminal rendering, performance-sensitive paths and
-required-case obligations — are the ones a reviewer cannot recover from the
-diff alone. `CHANGELOG.md` is for user-visible changes, written for someone
-deciding whether to upgrade.
+Use the pull-request template and answer every section it asks for. A blank
+section, kept placeholder text or bundled unrelated changes get the pull
+request closed rather than reviewed. The surfaces it lists — security
+boundaries, durable formats, generated files, platform-specific behavior,
+terminal rendering, performance-sensitive paths and required-case obligations —
+are the ones a reviewer cannot recover from the diff alone. `CHANGELOG.md` is
+for user-visible changes, written for someone deciding whether to upgrade.
 
-The template's first section asks who made the change, because a reviewer reads
-a generated diff with different questions than a hand-written one, and which
-model, harness and plugins produced it is part of reproducing the work. Its
-last row names the person who read the diff, and a box further down is ticked
-only once somebody has read the whole of it. A green gate is evidence about the
+It opens by asking who made the change, because a reviewer reads a generated
+diff with different questions than a hand-written one, and which model, harness
+and plugins produced it is part of reproducing the work. It closes by asking
+whether a person has read the complete diff. A green gate is evidence about the
 checks that ran, not about whether the change answers the right problem, so
 that reading is a separate thing a pull request either has or is still waiting
 for — and one nobody has read yet leaves the box empty rather than claiming
