@@ -97,14 +97,22 @@ the required behavior justifies it; keep the declaration and checks below.
 
 ## Writing the change
 
+Work lands on `dev`; `main` holds what shipped. Branch from `dev` and open the
+pull request against `dev` — one opened against `main` is retargeted before
+review, because merging it would put an unreleased change into the branch a tag
+is cut from. Only a release branch and a hotfix target `main`, both owned by
+[`RELEASING.md`](RELEASING.md).
+
 Keep repository prose focused on shipped behavior and why the reader cares:
 
 - Commit: a conventional subject and at most one short paragraph explaining why.
 - Changelog: a bold lead and at most three sentences for someone deciding
   whether to upgrade. Release notes reuse that entry.
-- Pull request: follow the template, with one short paragraph per section and
-  the test that failed before a behavior change. Keep one reason per PR;
-  implementation and proof that cannot compile apart remain one change.
+- Pull request: follow the template, answering every section with one short
+  paragraph and naming the test that failed before a behavior change. Fill the
+  authoring environment truthfully — a reviewer reads a generated diff with
+  different questions. Keep one reason per PR; implementation and proof that
+  cannot compile apart remain one change.
 
 Update affected user docs, the first-run README surface, contributor setup and
 changelog in the same change. Put long reasoning beside the code or in a focused
