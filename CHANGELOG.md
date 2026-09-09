@@ -15,6 +15,10 @@ change in any release with no deprecation period.
   sentence that named neither the path nor the reason, so a build that was
   never made and a directory a group member can rewrite looked identical. The
   error now names each path it looked at and what disqualified it.
+- **A permission rule in a diagnostic reads as it was written.** Printing
+  settings used to expand every `allow`, `ask` and `deny` pattern into the
+  matcher compiled from it — tens of kilobytes of automaton for one rule, in
+  place of the rule. A rule now carries the pattern text it was written with.
 
 ## [0.40.0] - 2026-09-08
 

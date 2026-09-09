@@ -10,6 +10,8 @@
 //! that "deny every `git` except `git status`" cannot be said; the return is
 //! that anyone can read a deny list and know what it protects.
 
+use std::fmt;
+
 use globset::GlobMatcher;
 
 use crate::tool::ToolCall;
@@ -97,7 +99,7 @@ impl Rule {
 }
 
 /// What a rule says about the thing a call acts on.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 enum Pattern {
     /// `*`, or the tool named on its own: everything that tool could do.
     ///
@@ -118,6 +120,27 @@ enum Pattern {
         /// which spelling of a target it is matched against.
         absolute: bool,
     },
+}
+
+impl fmt::Debug for Pattern {
+    /// Prints the pattern as it was written, not as it was compiled.
+    ///
+    /// A compiled matcher's own `Debug` is its automaton — configuration,
+    /// properties, states, byte classes — which runs to tens of kilobytes for
+    /// one glob and belongs to the crate that built it rather than to the rule
+    /// somebody wrote. Rules reach a diagnostic through the settings they were
+    /// read into, so that rendering would arrive wherever those do, and it
+    /// would say nothing a reader of a permission problem is looking for.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Blanket => f.write_str("Blanket"),
+            Self::Glob { path, absolute, .. } => f
+                .debug_struct("Glob")
+                .field("pattern", &path.glob().glob())
+                .field("absolute", absolute)
+                .finish(),
+        }
+    }
 }
 
 /// The patterns a call must refuse for itself, whatever it reaches.
