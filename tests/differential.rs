@@ -18,6 +18,8 @@
 //!   `<home>`, `<workspace>` or `<root>`;
 //! - the separators inside a path that begins at one of those, which are the
 //!   platform's rather than the answer's, become `/`;
+//! - the file name the built binary was started as, which carries the suffix
+//!   the platform gives an executable, becomes the one name `crucible`;
 //! - the stable prefix a caching cell sends, which is one fixed constant long
 //!   enough to cross every reviewed threshold, becomes `<stable prefix>`. It is
 //!   the one substitution that stands for a value which does not vary: it
@@ -227,7 +229,7 @@ fn asked(home: &Path, args: &[&str]) -> String {
 
     let answered = command.output().expect("the built binary runs");
     let mut rendered = String::new();
-    let _ = writeln!(rendered, "$ crucible {}", args.join(" "));
+    let _ = writeln!(rendered, "$ {PROGRAM} {}", args.join(" "));
     let _ = writeln!(
         rendered,
         "exit {}",
@@ -236,12 +238,33 @@ fn asked(home: &Path, args: &[&str]) -> String {
             .code()
             .map_or_else(|| "(signalled)".to_owned(), |code| code.to_string())
     );
+    // The substitution is applied to what the program wrote and not to the
+    // whole rendering, so that the lines this function writes itself cannot be
+    // rewritten by it.
+    let named = |raw: &[u8]| String::from_utf8_lossy(raw).replace(invoked(), PROGRAM);
     let _ = writeln!(rendered, "--- stdout ---");
-    rendered.push_str(&String::from_utf8_lossy(&answered.stdout));
+    rendered.push_str(&named(&answered.stdout));
     let _ = writeln!(rendered, "--- stderr ---");
-    rendered.push_str(&String::from_utf8_lossy(&answered.stderr));
+    rendered.push_str(&named(&answered.stderr));
     rendered.push('\n');
     rendered
+}
+
+/// The one name a usage line is frozen under.
+const PROGRAM: &str = "crucible";
+
+/// The file name of the built binary, which is what a usage line reports.
+///
+/// The command line names itself from the file it was started as, so on Windows
+/// every usage line says `crucible.exe`. That is the same program under the
+/// spelling that platform gives an executable, not a second answer, so it is
+/// read from the built path rather than written down — a probe that spelled the
+/// suffix itself would be asserting the platform instead of asking it.
+fn invoked() -> &'static str {
+    Path::new(env!("CARGO_BIN_EXE_crucible"))
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("the built binary has a name")
 }
 
 #[test]
