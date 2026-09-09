@@ -34,9 +34,12 @@ use std::sync::Arc;
 use crucible_config::{Extensions, HOME, Home, Settings};
 use crucible_core::{Answered, Fetch, Put, Search};
 use crucible_core::{
-    Cancel, DescribeTool, Host, Page, Question, SearchResponse, SourceError, ToolProvenance,
+    Cancel, Credential, CredentialError, CredentialScopeId, DescribeTool, Host, Message, Outgoing,
+    Page, Provider, Question, Request, RequestPurpose, SearchResponse, SourceError, StopReason,
+    ToolArgs, ToolCall, ToolId, ToolOutput, ToolProvenance, ToolResult, ToolSchema, Transcript,
     Workspace,
 };
+use crucible_provider::{Anthropic, Google, Moonshot, OpenAi, Response, Transport, TransportError};
 use crucible_tools::{
     AskUser, Bash, Edit, Glob, Grep, Held, Ledger, Plan, Read, TodoWrite, ToolSearch, WebFetch,
     WebSearch, Write,
@@ -643,4 +646,312 @@ fn the_installed_extension_sweep_answers_what_it_read_and_refused() {
     let _ = writeln!(rendered, "refused   {}", swept.refused().len());
 
     same("installed-extensions", &settled(&rendered, root, "<root>"));
+}
+
+// ------------------------------------------------------------------ provider
+
+/// The secret this probe's credential applies, so redaction can be shown.
+///
+/// A value no vendor would send back and no schema would contain, so its
+/// absence from a frozen body means the body never carried it, rather than
+/// that nothing looked.
+const KEY: &str = "differential-probe-key-never-a-real-one";
+
+/// A credential that authorizes the way a key does, and protects what it wrote.
+#[derive(Debug)]
+struct Keyed;
+
+impl Credential for Keyed {
+    fn scope(&self) -> CredentialScopeId {
+        // Fixed rather than minted. A fresh scope every run would put a value
+        // in the rendering that differs between two correct runs, and there is
+        // no identity material here to derive a stable one from.
+        CredentialScopeId::from_digest([7; 32])
+    }
+
+    fn authorize(&self, request: &mut Outgoing) -> Result<(), CredentialError> {
+        request.set_header("authorization", format!("Bearer {KEY}"));
+        request.set_header("x-api-key", KEY);
+        request.protect(KEY);
+        Ok(())
+    }
+}
+
+/// One request a provider made, kept where the probe can read it.
+#[derive(Clone)]
+struct Posted {
+    url: String,
+    headers: Vec<(String, String)>,
+    body: String,
+}
+
+/// A transport that answers nothing and keeps what it was asked to send.
+///
+/// The response is deliberately empty. What is frozen here is the request, and
+/// a recorded reply would be a second thing to keep current for no gain. Every
+/// provider therefore fails to read an answer, which each cell ignores: the
+/// bytes were on the wire before that, and they are the whole question.
+#[derive(Clone, Default)]
+struct Recorder(Arc<std::sync::Mutex<Vec<Posted>>>);
+
+impl std::fmt::Debug for Recorder {
+    /// By hand, and saying nothing. The derived one would print every request
+    /// this has kept, and a request carries the header a credential wrote.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Recorder")
+    }
+}
+
+impl Recorder {
+    /// What was posted, in the order it was posted.
+    fn posted(&self) -> Vec<Posted> {
+        self.0.lock().map(|kept| kept.clone()).unwrap_or_default()
+    }
+}
+
+impl Transport for Recorder {
+    fn post(
+        &self,
+        url: &str,
+        headers: Outgoing,
+        body: String,
+        _cancel: &Cancel,
+    ) -> Result<Response, TransportError> {
+        if let Ok(mut kept) = self.0.lock() {
+            kept.push(Posted {
+                url: url.to_owned(),
+                headers: headers
+                    .headers()
+                    .iter()
+                    .map(|(name, value)| (name.to_string(), value.to_string()))
+                    .collect(),
+                body,
+            });
+        }
+
+        Ok(Response {
+            status: 200,
+            body: Box::new(std::io::empty()),
+        })
+    }
+}
+
+/// The conversation every cell sends, so two vendors differ only by protocol.
+///
+/// It holds each shape a body module needs a form for: a prompt, an answer
+/// that called a tool, that tool's result, and a second prompt with the first
+/// exchange behind it. A transcript of one message would freeze the easiest
+/// quarter of every vendor's rendering.
+fn spoken() -> Transcript {
+    let mut transcript = Transcript::new();
+    transcript
+        .push(Message::User {
+            text: "rename the field and show me what moved".into(),
+            attachments: Box::new([]),
+        })
+        .expect("a first prompt");
+    transcript
+        .push(Message::Agent {
+            text: "Looking at where it is read.".into(),
+            calls: vec![ToolCall {
+                id: ToolId::new("probe-call-1"),
+                name: "grep".into(),
+                args: ToolArgs::new(r#"{"pattern":"nearness","path":"crates"}"#),
+            }],
+            stop: Some(StopReason::WantsTools),
+            continuation: None,
+        })
+        .expect("an answer that called a tool");
+    transcript
+        .push(Message::ToolResults(vec![ToolResult {
+            id: ToolId::new("probe-call-1"),
+            output: ToolOutput::ok("crates/crucible-config/src/document.rs:41"),
+        }]))
+        .expect("the tool's result");
+    transcript
+        .push(Message::User {
+            text: "good, now the other caller".into(),
+            attachments: Box::new([]),
+        })
+        .expect("a second prompt");
+    transcript
+}
+
+/// The tools every cell offers, as the runner would hand them over.
+fn offered() -> [ToolSchema<'static>; 2] {
+    [
+        ToolSchema {
+            name: "grep",
+            schema: r#"{"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string"}},"required":["pattern"]}"#,
+        },
+        ToolSchema {
+            name: "write",
+            schema: r#"{"type":"object","properties":{"path":{"type":"string"},"text":{"type":"string"}},"required":["path","text"]}"#,
+        },
+    ]
+}
+
+/// Renders exactly what one provider put on the wire for one request.
+///
+/// `build` is handed the transport rather than the provider being handed back,
+/// because the probe needs a second handle on the recorder and a provider owns
+/// the one it sends through.
+///
+/// The body is frozen as the provider wrote it, never re-serialized through a
+/// JSON value: key order, spacing and a repeated key are part of the answer,
+/// and a round trip through a map would agree with any reordering of them.
+fn wired(
+    cell: &str,
+    purpose: RequestPurpose,
+    model: &str,
+    build: impl FnOnce(Box<dyn Transport>) -> Box<dyn Provider>,
+) -> String {
+    let recorder = Recorder::default();
+    let provider = build(Box::new(recorder.clone()));
+    let transcript = spoken();
+    let tools = offered();
+
+    let _ = provider.stream(
+        Request {
+            purpose,
+            model,
+            transcript: &transcript,
+            tools: &tools,
+            max_tokens: 4096,
+            system: Some("You are a probe. Answer nothing."),
+            effort: None,
+            attached: &[],
+            prompt_cache: None,
+        },
+        &Cancel::new(),
+    );
+
+    let posted = recorder.posted();
+    assert!(
+        posted.len() == 1,
+        "{cell} made {} requests, and a cell that made none or several is not \
+         the one request this freezes",
+        posted.len()
+    );
+    let Some(sent) = posted.first() else {
+        panic!("{cell} recorded nothing")
+    };
+
+    // The header values and the address are shown with the credential removed,
+    // because a probe that printed a secret would put one in a file that is
+    // committed. The body is shown whole, and the assertion below is what says
+    // the secret is not in it — a redaction there could hide a body that had
+    // started carrying the key.
+    let redactions = {
+        let mut outgoing = Outgoing::new();
+        outgoing.protect(KEY);
+        outgoing.redactions()
+    };
+
+    assert!(
+        !sent.body.contains(KEY),
+        "{cell} put the credential in the request body"
+    );
+
+    let mut rendered = String::new();
+    let _ = writeln!(rendered, "=== {cell} ===");
+    let _ = writeln!(rendered, "url     {}", redactions.redact(&sent.url));
+    for (name, value) in &sent.headers {
+        let _ = writeln!(rendered, "header  {name}: {}", redactions.redact(value));
+    }
+    let _ = writeln!(rendered, "body");
+    rendered.push_str(&sent.body);
+    rendered.push_str("\n\n");
+    rendered
+}
+
+#[test]
+fn every_provider_answers_what_it_puts_on_the_wire() {
+    let mut rendered = String::new();
+
+    // Anthropic, twice over the model and once over the projection. The named
+    // model takes a branch of its own in the headers, so a cell that only sent
+    // the ordinary one would freeze half of what this vendor writes.
+    rendered.push_str(&wired(
+        "anthropic turn claude-opus-5",
+        RequestPurpose::Turn,
+        "claude-opus-5",
+        |transport| Box::new(Anthropic::at(Anthropic::VENDOR, Box::new(Keyed), transport)),
+    ));
+    rendered.push_str(&wired(
+        "anthropic turn claude-fable-5-1",
+        RequestPurpose::Turn,
+        "claude-fable-5-1",
+        |transport| Box::new(Anthropic::at(Anthropic::VENDOR, Box::new(Keyed), transport)),
+    ));
+    rendered.push_str(&wired(
+        "anthropic recap claude-opus-5",
+        RequestPurpose::Recap,
+        "claude-opus-5",
+        |transport| Box::new(Anthropic::at(Anthropic::VENDOR, Box::new(Keyed), transport)),
+    ));
+
+    rendered.push_str(&wired(
+        "google turn gemini-3.8-flash",
+        RequestPurpose::Turn,
+        "gemini-3.8-flash",
+        |transport| Box::new(Google::at(Google::VENDOR, Box::new(Keyed), transport)),
+    ));
+    rendered.push_str(&wired(
+        "google recap gemini-3.8-flash",
+        RequestPurpose::Recap,
+        "gemini-3.8-flash",
+        |transport| Box::new(Google::at(Google::VENDOR, Box::new(Keyed), transport)),
+    ));
+
+    // Moonshot over both of its own addresses. Which one it is sent to decides
+    // what the provider considers a custom endpoint, and that answer is in the
+    // request rather than only in the configuration that chose it.
+    rendered.push_str(&wired(
+        "moonshot turn kimi-for-coding at the coding address",
+        RequestPurpose::Turn,
+        "kimi-for-coding",
+        |transport| Box::new(Moonshot::at(Moonshot::CODING, Box::new(Keyed), transport)),
+    ));
+    rendered.push_str(&wired(
+        "moonshot turn kimi-for-coding at the platform address",
+        RequestPurpose::Turn,
+        "kimi-for-coding",
+        |transport| Box::new(Moonshot::at(Moonshot::PLATFORM, Box::new(Keyed), transport)),
+    ));
+
+    // OpenAI over its two addresses and over the model that is treated apart
+    // from the rest, for the same reason the Anthropic cells go twice.
+    rendered.push_str(&wired(
+        "openai turn gpt-5.6-sol",
+        RequestPurpose::Turn,
+        "gpt-5.6-sol",
+        |transport| Box::new(OpenAi::at(OpenAi::VENDOR, Box::new(Keyed), transport)),
+    ));
+    rendered.push_str(&wired(
+        "openai turn gpt-6-astra",
+        RequestPurpose::Turn,
+        "gpt-6-astra",
+        |transport| Box::new(OpenAi::at(OpenAi::VENDOR, Box::new(Keyed), transport)),
+    ));
+    rendered.push_str(&wired(
+        "openai turn gpt-5.6-sol at the subscription address",
+        RequestPurpose::Turn,
+        "gpt-5.6-sol",
+        |transport| Box::new(OpenAi::at(OpenAi::SUBSCRIPTION, Box::new(Keyed), transport)),
+    ));
+    rendered.push_str(&wired(
+        "openai recap gpt-5.6-sol",
+        RequestPurpose::Recap,
+        "gpt-5.6-sol",
+        |transport| Box::new(OpenAi::at(OpenAi::VENDOR, Box::new(Keyed), transport)),
+    ));
+
+    // The version reaches the wire in a header, so it is substituted the way
+    // every other rendering here substitutes it. There is no path to normalize:
+    // nothing in a request body is a temporary directory.
+    same(
+        "provider-messages",
+        &rendered.replace(env!("CARGO_PKG_VERSION"), "<version>"),
+    );
 }

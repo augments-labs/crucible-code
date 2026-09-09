@@ -815,6 +815,24 @@
         "macos",
         "windows"
       ]
+    },
+    {
+      "id": "CASE-PRESERVED-PROVIDER-MESSAGES",
+      "family": "preserved-surfaces",
+      "obligation": "Every provider puts the same bytes on the wire for the same conversation: the same address, the same headers, and a body whose keys, order and shape have not moved.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "differential"
+      },
+      "case": "every_provider_answers_what_it_puts_on_the_wire",
+      "source": "tests/differential.rs",
+      "body_sha256": "412edb97b7deed3ddcc15a6df0dbd82c66d6c8a9bee6d92cae00f4e2ce0b9956",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
     }
   ]
 }
