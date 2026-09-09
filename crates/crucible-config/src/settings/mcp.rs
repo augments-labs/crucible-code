@@ -20,17 +20,25 @@ use serde_json::Value;
 use super::Settings;
 use crate::env;
 
-/// The most server records read back from one document.
+/// The most server records one document may write down.
 ///
 /// Far beyond a machine somebody configures by hand, and small enough that a
 /// document that grew a block by accident cannot make startup walk it forever.
-const SERVERS: usize = 64;
+///
+/// Applied where the key is declared, so a document over the boundary is
+/// refused by name and position while it is being read, rather than by this
+/// reader, which has neither to name by the time it holds the block.
+pub(crate) const SERVERS: usize = 64;
 
-/// The most arguments read back for one server.
-const ARGS: usize = 256;
+/// The most arguments one server may be given.
+///
+/// Applied at the declaration like the bound above, and refused there rather
+/// than shortened here: a launch assembled from part of an argument list runs
+/// a command nobody wrote.
+pub(crate) const ARGS: usize = 256;
 
-/// The most environment entries read back for one server, in each block.
-const VARIABLES: usize = 256;
+/// The most environment entries one server may be given, in each block.
+pub(crate) const VARIABLES: usize = 256;
 
 /// What each timeout is where the record does not say, in seconds.
 ///
@@ -61,7 +69,6 @@ impl Settings {
 
         servers
             .iter()
-            .take(SERVERS)
             .filter_map(|(name, record)| McpServer::read(name, record))
             .collect()
     }
@@ -223,7 +230,6 @@ impl McpServer {
                 .map(|held| {
                     held.iter()
                         .filter_map(Value::as_str)
-                        .take(ARGS)
                         .map(Into::into)
                         .collect()
                 })
@@ -262,7 +268,6 @@ fn block(record: &Value, key: &str) -> Vec<(Box<str>, Box<str>)> {
                         .as_str()
                         .map(|written| (name.as_str().into(), written.into()))
                 })
-                .take(VARIABLES)
                 .collect()
         })
         .unwrap_or_default()

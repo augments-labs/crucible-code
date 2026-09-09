@@ -10,6 +10,11 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **An MCP block longer than crucible reads is refused rather than shortened.**
+  A record with three hundred arguments was accepted and the server was started
+  with the first 256 of them, and nothing said which went missing. A block over
+  the 64-server, 256-argument or 256-variable boundary is now refused by name
+  and line when the file is read, and the schema publishes each boundary.
 - **A sandbox that cannot start says which check turned the broker down.**
   Linux sandboxing refused every candidate `crucible-sandbox-broker` with one
   sentence that named neither the path nor the reason, so a build that was

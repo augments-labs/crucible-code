@@ -337,6 +337,35 @@ pub enum ConfigError {
         at: At,
     },
 
+    /// A block holds more entries than the setting reads.
+    ///
+    /// Its own variant because the alternative this replaced was silence: the
+    /// document parsed, and the entries past the boundary were dropped on the
+    /// way to the value the program uses. A server launched with the first two
+    /// hundred and fifty-six of the three hundred arguments somebody wrote is
+    /// running a command they did not write, and nothing said so.
+    ///
+    /// The message counts rather than lists. What the reader has to do is
+    /// shorten the block, and sixty-five server names in a startup error is a
+    /// screen they have to scroll to find the sentence.
+    #[error(
+        "{file}: {path} holds {found} entries{at}, and crucible reads at most \
+         {most} — shorten the block, because nothing in this file is applied \
+         while one of its blocks is longer than what reads it"
+    )]
+    TooMany {
+        /// The file, as the user would name it.
+        file: Box<str>,
+        /// The dotted path to the block.
+        path: Box<str>,
+        /// Where it is, when that can be said.
+        at: At,
+        /// The greatest accepted number of entries.
+        most: usize,
+        /// How many were written. A count, never an entry.
+        found: usize,
+    },
+
     /// A sandbox setting conflicts with a path or authority boundary.
     #[error("{file}: {path}{at} — {problem}")]
     Sandbox {

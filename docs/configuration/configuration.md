@@ -973,9 +973,11 @@ workspace file may tighten its own rules — permissions.ask and permissions.den
 home directory
 ```
 
-Crucible reads 64 servers, 256 arguments and 256 variables per record. Past a
-bound the rest is not read, so a document cannot make startup walk further by
-being longer.
+Crucible reads 64 servers, and 256 arguments and 256 variables per record. A
+block holding more than one of those is refused by name and line when the file
+is read, rather than accepted and then shortened — a server started with the
+first 256 of the 300 arguments you wrote is running a command you did not
+write, and would say nothing about the ones it dropped.
 
 ## `CRUCIBLE_CODE_HOME`
 
