@@ -258,31 +258,10 @@ while IFS= read -r link; do
     fi
 done < <(find . -path ./target -prune -o -name CLAUDE.md -print)
 
-for directory in rules skills; do
-    if [[ -L ".agents/$directory" || ! -d ".agents/$directory" ]]; then
-        printf '    FAIL .agents/%s must be a real canonical directory\n' "$directory"
-        failed=1
-    fi
-done
-if [[ ! -L .claude/rules ]]; then
-    printf '    FAIL .claude/rules must be a symlink to ../.agents/rules\n'
-    failed=1
-elif [[ "$(readlink .claude/rules)" != "../.agents/rules" ]]; then
-    printf '    FAIL .claude/rules points at %s, expected ../.agents/rules\n' "$(readlink .claude/rules)"
+if [[ -L ".agents/skills" || ! -d ".agents/skills" ]]; then
+    printf '    FAIL .agents/skills must be a real canonical directory\n'
     failed=1
 fi
-
-rules=(.agents/rules/*.md)
-if ((${#rules[@]} == 0)); then
-    printf '    FAIL .agents/rules/ holds no always-on rule\n'
-    failed=1
-fi
-for rule in "${rules[@]}"; do
-    if [[ -L "$rule" || ! -f "$rule" ]]; then
-        printf '    FAIL %s: must be a regular canonical rule file\n' "$rule"
-        failed=1
-    fi
-done
 
 skills=(.agents/skills/*)
 if ((${#skills[@]} == 0)); then

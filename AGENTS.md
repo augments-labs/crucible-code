@@ -2,7 +2,6 @@
 
 A terminal coding agent in Rust.
 
-Read the policies in [`.agents/rules/`](.agents/rules/) before working.
 Repository skills live in [`.agents/skills/`](.agents/skills/).
 
 ## Repository map
