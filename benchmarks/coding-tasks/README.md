@@ -22,7 +22,7 @@ scripts/python/task-campaign.py run \
   --model provider/model \
   --suite benchmarks/coding-tasks/suite.json \
   --label candidate \
-  --output candidate.json
+  --output generated/json/candidate.json
 ```
 
 The runner records the agent and verifier exits, wall time, normalized input and

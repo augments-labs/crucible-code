@@ -72,6 +72,15 @@ script goes in the directory for its language; `scripts/sh/repo-checks.sh`
 fails on one left anywhere else, because a file outside those two directories
 is one no gate compiles or runs.
 
+What those scripts write lands under `generated/`, which git ignores whole: a
+budget measurement, a campaign report or a canary report is evidence of one run
+on one machine, not something the repository carries. A single document goes
+under the directory for its format, `generated/json` or `generated/txt`, and a
+command that writes a tree gets a directory of its own. A generated file the
+repository does keep, such as the configuration schema, is committed where it
+is read instead, and `scripts/sh/repo-checks.sh` fails on anything tracked
+under `generated/`.
+
 The Rust tests include the whole-screen pseudo-terminal suite. Run that suite on
 its own with:
 
@@ -134,7 +143,7 @@ as described in [`RELEASING.md`](RELEASING.md).
 Compile-time changes can also be compared without an absolute gate:
 
 ```bash
-scripts/sh/build-comparison.sh BASE CANDIDATE build-comparison
+scripts/sh/build-comparison.sh BASE CANDIDATE
 ```
 
 That command requires a clean checkout, checks both revisions on the same
