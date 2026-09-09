@@ -257,3 +257,115 @@ fn a_reading_taken_against_other_instructions_is_reestimated_for_this_run() {
         "nothing of the reading was taken: what came back is a few bytes of          transcript, counted at the rate a session with no report of its own uses"
     );
 }
+
+#[test]
+fn a_result_cleared_for_another_vendor_stays_cleared_when_the_session_comes_back() {
+    // The half a live swap could not answer for. Clearing moved the transcript
+    // and nothing else, so the log still held what the transcript no longer
+    // did, and the next `--resume` read it back and sent it to the vendor it
+    // had just been taken away from — the swap undone by the reopen, silently,
+    // with no second swap to notice.
+    let sample = Sample::new("runner-picked-restricted");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
+    let id = named(&session);
+
+    let restricting = Script::new(vec![
+        calling("call_search", "web_search", r#"{"query":"rust"}"#),
+        saying("an answer from the vendor that restricts its results"),
+    ])
+    .with_name("google")
+    .restricting(RESTRICTED);
+
+    let mut scripted = Scripted::recording(
+        restricting,
+        tools([Fixed::new("web_search").answering("grounded search results canary")]),
+        Verdict::Allow,
+        session,
+    );
+
+    scripted.turn("search for rust").expect("a search turn");
+    scripted
+        .runner
+        .serve(Box::new(Script::new(vec![]).with_name("anthropic")));
+
+    // The run ends: the session being recorded to is released, which is what
+    // waits for its queue, and then it is opened again the way `--resume` does.
+    drop(
+        scripted
+            .runner
+            .pick_up(Session::nowhere(), Transcript::new()),
+    );
+    drop(picking(&mut scripted, &sample, &id));
+
+    let result = only_result(&scripted);
+    assert!(
+        !result
+            .output
+            .text()
+            .contains("grounded search results canary"),
+        "a restricted result came back off the log and into another vendor's request: {}",
+        result.output.text()
+    );
+    assert_eq!(
+        result.output.text(),
+        RESTRICTED,
+        "the result came back without the sentence saying why it is empty"
+    );
+}
+
+#[test]
+fn a_session_moved_twice_says_once_that_its_results_were_taken_away() {
+    // The write side of the same line. A second swap walks a transcript whose
+    // results are already the sentence, and clearing a sentence with itself
+    // reports the sentence's own length as freed — so a runner that did not
+    // look first would write a second line claiming a clearing that had already
+    // happened, and every later swap another.
+    let sample = Sample::new("runner-picked-restricted-twice");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
+    let path = session.path().to_owned();
+
+    let restricting = Script::new(vec![
+        calling("call_search", "web_search", r#"{"query":"rust"}"#),
+        saying("an answer from the vendor that restricts its results"),
+    ])
+    .with_name("google")
+    .restricting(RESTRICTED);
+
+    let mut scripted = Scripted::recording(
+        restricting,
+        tools([Fixed::new("web_search").answering("grounded search results canary")]),
+        Verdict::Allow,
+        session,
+    );
+
+    // Away, back, and away again — the shape a user gets by trying the other
+    // vendor and changing their mind. Only the first move has anything to take.
+    scripted.turn("search for rust").expect("a search turn");
+    scripted
+        .runner
+        .serve(Box::new(Script::new(vec![]).with_name("anthropic")));
+    scripted.runner.serve(Box::new(
+        Script::new(vec![])
+            .with_name("google")
+            .restricting(RESTRICTED),
+    ));
+    scripted
+        .runner
+        .serve(Box::new(Script::new(vec![]).with_name("openai")));
+
+    drop(
+        scripted
+            .runner
+            .pick_up(Session::nowhere(), Transcript::new()),
+    );
+
+    let written = std::fs::read_to_string(&path).expect("the log the run wrote");
+    assert_eq!(
+        written
+            .lines()
+            .filter(|line| line.contains("\"restricted\""))
+            .count(),
+        1,
+        "the log says more than once that the same results were taken away:\n{written}"
+    );
+}

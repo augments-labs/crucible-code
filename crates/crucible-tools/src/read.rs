@@ -1,6 +1,5 @@
 //! Reading a file.
 
-use std::fs;
 use std::io::{self, BufRead, BufReader, ErrorKind, Read as _};
 use std::sync::LazyLock;
 
@@ -662,18 +661,31 @@ impl Read {
             Modality::Text | Modality::Pdf | Modality::Video | Modality::Audio => return None,
         }
 
-        // Asked of the metadata, so a file too large to carry is never read
-        // into this process to find that out.
-        let about = fs::metadata(path.as_path()).ok()?;
-        if about.len() > crucible_core::CEILING as u64 {
-            return Some(ToolOutput::failed(format!(
-                "{requested} is larger than the {} MB a request may carry, so it is not attached. \
-                 A smaller copy of it would be.",
-                crucible_core::CEILING / (1024 * 1024),
-            )));
-        }
+        // Through the workspace rather than by name, for the reason the text
+        // path below opens that way: a last component replaced since the path
+        // was resolved is refused by the open rather than followed, and what a
+        // pipe is standing there is answered from the descriptor instead of
+        // waited on. Anything this cannot open falls through to the text path,
+        // which has the sentence for it.
+        let mut file = path.open_regular().ok()?;
 
-        let bytes = fs::read(path.as_path()).ok()?;
+        // The size comes from that descriptor, so a file too large to carry is
+        // never read into this process to find that out.
+        let bytes = match crucible_core::carried(&mut file) {
+            Ok(bytes) => bytes,
+            Err(crucible_core::AttachmentError::TooLarge) => {
+                return Some(ToolOutput::failed(format!(
+                    "{requested} is larger than the {} MB a request may carry, so it is not \
+                     attached. A smaller copy of it would be.",
+                    crucible_core::CEILING / (1024 * 1024),
+                )));
+            }
+            Err(
+                crucible_core::AttachmentError::NotFile | crucible_core::AttachmentError::Unread(_),
+            ) => {
+                return None;
+            }
+        };
         if !(kind.confirms)(&bytes) {
             return None;
         }
@@ -1379,6 +1391,32 @@ mod tests {
             output.text(),
             "huge.png is larger than the 4 MB a request may carry, so it is not attached. A \
              smaller copy of it would be."
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_picture_that_is_a_fifo_is_refused_without_waiting_for_a_writer() {
+        // The defect this catches: the picture path asked the metadata a
+        // question and then read the file by name, and a name can be a pipe.
+        // `fs::read` on one blocks until somebody writes, so a `.png` that is
+        // a pipe stopped the agent where a `waiting` with no extension was
+        // refused at once — the extension decided whether the tool hung.
+        let sample = Sample::new("read-picture-fifo");
+        let made = std::process::Command::new("mkfifo")
+            .arg(sample.root().join("waiting.png"))
+            .status()
+            .unwrap();
+        assert!(made.success());
+
+        let output = read(&sample, r#"{"path":"waiting.png"}"#);
+
+        assert!(output.is_failed(), "{}", output.text());
+        assert!(output.attachments().is_empty());
+        assert!(
+            output.text().contains("is not a regular file"),
+            "{}",
+            output.text()
         );
     }
 

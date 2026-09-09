@@ -3,12 +3,12 @@
 # it through the shipped uninstaller, and prove neither executable remains.
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 root=$(mktemp -d)
 trap 'rm -rf -- "$root"' EXIT
 mkdir -p "$root/home" "$root/bin"
 
-HOME="$root/home" CRUCIBLE_INSTALL_DIR="$root/bin" scripts/install.sh
+HOME="$root/home" CRUCIBLE_INSTALL_DIR="$root/bin" scripts/sh/install.sh
 version=$(HOME="$root/home" "$root/bin/crucible" --version)
 [[ $version == 'crucible '* ]] || {
     printf 'installed release reported an unexpected version: %q\n' "$version" >&2
@@ -20,7 +20,7 @@ version=$(HOME="$root/home" "$root/bin/crucible" --version)
 }
 
 HOME="$root/home" CRUCIBLE_CODE_HOME="$root/home/.crucible" \
-    CRUCIBLE_INSTALL_DIR="$root/bin" scripts/uninstall.sh
+    CRUCIBLE_INSTALL_DIR="$root/bin" scripts/sh/uninstall.sh
 for path in crucible crucible-sandbox-broker cru; do
     if [[ -e $root/bin/$path || -L $root/bin/$path ]]; then
         printf 'latest release uninstall left %s behind\n' "$path" >&2

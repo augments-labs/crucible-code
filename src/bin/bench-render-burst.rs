@@ -276,7 +276,7 @@ fn report(burst: Burst) -> Result<(), ProbeError> {
 }
 
 /// Says why no reading could be taken at all, on stderr, where
-/// `scripts/bench.sh` puts everything a human reads.
+/// `scripts/sh/bench.sh` puts everything a human reads.
 ///
 /// Without it an unopenable discard file, or a renderer that failed mid-burst,
 /// reaches the operator as an empty line on stdout — reported as malformed
@@ -288,7 +288,7 @@ fn explain(problem: &ProbeError) -> Result<(), io::Error> {
     io::stderr().write_all(line.as_bytes())
 }
 
-/// Says why the burst failed, on stderr, where `scripts/bench.sh` puts
+/// Says why the burst failed, on stderr, where `scripts/sh/bench.sh` puts
 /// everything a human reads. The one line on stdout stays the measurement.
 fn slowing(burst: Burst) -> Result<(), ProbeError> {
     let mut line = String::new();

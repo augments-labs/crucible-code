@@ -861,7 +861,7 @@ impl ToolOutput {
     /// way. It can already do that with a prompt line, which carries no proof
     /// either, so what this rests on is the log file's own boundary rather than
     /// a new one. What must stay true is that nothing else calls it, and that
-    /// is not left to a comment: `scripts/check.sh` holds it to the one module
+    /// is not left to a comment: `scripts/sh/check.sh` holds it to the one module
     /// that replays a log.
     #[must_use]
     pub fn replayed(mut self, attachments: impl Into<Box<[Attachment]>>) -> Self {

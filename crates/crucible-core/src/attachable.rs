@@ -1,4 +1,5 @@
-//! What may be attached to a request, and what says a file is one.
+//! What may be attached to a request, what says a file is one, and how its
+//! bytes are taken.
 //!
 //! A closed table rather than a guess from an extension, and the bytes are read
 //! back against it: the cost of being wrong is a request the user paid for and
@@ -11,12 +12,16 @@
 //! kind it names. That is the model's half and the provider's, settled per
 //! request, and it is not a property of the file.
 
+use std::fs::File;
+use std::io::{self, Read as _};
+use std::path::Path;
+
 use crate::Modality;
 
 /// The most raw attachment bytes one request may carry.
 ///
 /// Not a vendor's limit — this one binds first. What a request peaks at is
-/// measured rather than derived: `scripts/bench.sh mem` runs a session at this
+/// measured rather than derived: `scripts/sh/bench.sh mem` runs a session at this
 /// ceiling every time it runs, and reads about three times this figure on top
 /// of what the session was already holding. The bytes, their base64 form and
 /// the serialized body are alive at once, and the last two each hold the
@@ -35,7 +40,92 @@ use crate::Modality;
 ///
 /// A single file larger than this can never be carried whatever else a request
 /// holds, which is what lets a caller refuse one before it has read the bytes.
+/// [`carried`] is where that refusal is made, from the descriptor.
 pub const CEILING: usize = 4 * 1024 * 1024;
+
+/// Why a named file did not become attachable bytes.
+#[derive(Debug, thiserror::Error)]
+pub enum AttachmentError {
+    /// Larger than [`CEILING`], settled from the descriptor rather than from
+    /// bytes already in hand.
+    #[error("larger than the {} MB one attachment may be", CEILING / (1024 * 1024))]
+    TooLarge,
+    /// Opened, and what opened is a directory, a device or a pipe.
+    #[error("not a regular file")]
+    NotFile,
+    /// The open or the read did not finish.
+    #[error("could not be read: {0}")]
+    Unread(#[from] io::Error),
+}
+
+/// Opens a file whose path did not come from the workspace, for its bytes.
+///
+/// The two callers are the prompt, where a person typed an absolute path, and
+/// a request going out, where the path was resolved and recorded earlier. A
+/// path a model can reach goes through [`WorkspacePath::open_regular`] instead,
+/// which walks the tree by descriptor and answers containment as well; these
+/// two have no containment question to answer, and mixing them would give one
+/// ingress the other's authority.
+///
+/// What it does answer is the pair that a name cannot: a pipe or a device
+/// standing where a file stood is refused on the opened descriptor rather than
+/// waited on, so the read never blocks on a writer who is not coming.
+///
+/// [`WorkspacePath::open_regular`]: crate::WorkspacePath::open_regular
+///
+/// # Errors
+///
+/// [`AttachmentError::NotFile`] where what opened is not a regular file, and
+/// [`AttachmentError::Unread`] where the open itself failed.
+pub fn opened(path: &Path) -> Result<File, AttachmentError> {
+    let mut options = File::options();
+    options.read(true);
+
+    // Opening a pipe for reading blocks until somebody writes. Asking for a
+    // descriptor without waiting is the only way to be told what this is, and
+    // the check below is what then refuses it.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.custom_flags(rustix::fs::OFlags::NONBLOCK.bits().cast_signed());
+    }
+
+    let file = options.open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(AttachmentError::NotFile);
+    }
+    Ok(file)
+}
+
+/// The bytes of an opened file, where there are few enough of them to carry.
+///
+/// The size is asked of the descriptor, so a file over [`CEILING`] is refused
+/// before a byte of it is allocated — that is the sentence in `CEILING`'s
+/// documentation, made true rather than assumed. The read still stops one past
+/// the ceiling and checks the length again, because the file may grow between
+/// the two questions and a descriptor already open would follow it.
+///
+/// # Errors
+///
+/// [`AttachmentError::TooLarge`] where the file is over the ceiling at either
+/// question, and [`AttachmentError::Unread`] where the read did not finish.
+pub fn carried(file: &mut File) -> Result<Vec<u8>, AttachmentError> {
+    let size = file.metadata()?.len();
+    if size > CEILING as u64 {
+        return Err(AttachmentError::TooLarge);
+    }
+
+    // The size is at most the ceiling by the check above, so this asks for
+    // exactly what the file holds and no more.
+    let mut bytes = Vec::with_capacity(usize::try_from(size).unwrap_or(CEILING));
+    file.by_ref()
+        .take(CEILING as u64 + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > CEILING {
+        return Err(AttachmentError::TooLarge);
+    }
+    Ok(bytes)
+}
 
 /// The kind a path's extension names, where it names one this build attaches.
 ///
@@ -203,6 +293,76 @@ fn mp4(bytes: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A directory this test owns, emptied first so a rerun starts clean.
+    fn base(name: &str) -> std::path::PathBuf {
+        let base =
+            std::env::temp_dir().join(format!("crucible-attach-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).expect("a writable temporary directory");
+        base
+    }
+
+    #[test]
+    fn a_file_over_the_ceiling_is_refused_from_the_descriptor() {
+        // The size comes from the descriptor, so this holds without the test
+        // ever writing four megabytes: the file is that large and no page of
+        // it is touched, by the check or by the assertion.
+        let base = base("over");
+        let at = base.join("huge.png");
+        let file = File::create(&at).expect("a writable temporary directory");
+        file.set_len(CEILING as u64 + 1).expect("a sparse file");
+        drop(file);
+
+        let mut file = opened(&at).expect("a regular file opens");
+        let refused = carried(&mut file).expect_err("over the ceiling");
+
+        assert!(matches!(refused, AttachmentError::TooLarge), "{refused}");
+    }
+
+    #[test]
+    fn a_file_under_the_ceiling_is_carried_whole() {
+        let base = base("under");
+        let at = base.join("edge.png");
+        std::fs::write(&at, vec![7; 64]).expect("a writable temporary directory");
+
+        let mut file = opened(&at).expect("a regular file opens");
+        let bytes = carried(&mut file).expect("under the ceiling");
+
+        assert_eq!(bytes, vec![7; 64]);
+    }
+
+    #[test]
+    fn a_directory_is_not_a_file_to_attach() {
+        let base = base("directory");
+
+        let refused = opened(&base).expect_err("a directory is not attachable");
+
+        // Unix opens a directory and the kind check is what refuses it; Windows
+        // refuses the open itself, without the flag that would let a directory
+        // through. Either way no caller is handed a directory to read, which is
+        // the sentence being held here.
+        #[cfg(unix)]
+        assert!(matches!(refused, AttachmentError::NotFile), "{refused}");
+        #[cfg(not(unix))]
+        assert!(matches!(refused, AttachmentError::Unread(_)), "{refused}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_pipe_is_refused_without_waiting_for_a_writer() {
+        let base = base("pipe");
+        let at = base.join("waiting.png");
+        let made = std::process::Command::new("mkfifo")
+            .arg(&at)
+            .status()
+            .expect("mkfifo runs");
+        assert!(made.success());
+
+        let refused = opened(&at).expect_err("a pipe is not attachable");
+
+        assert!(matches!(refused, AttachmentError::NotFile), "{refused}");
+    }
 
     /// A minimal whole `ftyp` box with one compatible brand.
     fn video(major: [u8; 4], compatible: [u8; 4]) -> Vec<u8> {

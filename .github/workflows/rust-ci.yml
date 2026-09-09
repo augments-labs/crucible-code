@@ -21,7 +21,7 @@ jobs:
       # The gate runs on the enforcing sandbox host, and a missing backend is
       # a failure rather than a skip; the action says why.
       - uses: ./.github/actions/enforcing-sandbox
-      - run: scripts/rust-checks.sh
+      - run: scripts/sh/rust-checks.sh
         env:
           CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX: 1
       - uses: ./.github/actions/check-clean-worktree
@@ -74,7 +74,7 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
       - if: ${{ runner.os != 'Windows' && !cancelled() }}
-        run: scripts/install-tests.sh
+        run: scripts/sh/install-tests.sh
       - if: ${{ runner.os == 'Windows' && always() }}
         name: Remove the native Windows sandbox setup
         shell: pwsh

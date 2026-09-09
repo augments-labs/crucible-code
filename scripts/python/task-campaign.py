@@ -13,6 +13,19 @@ import tempfile
 import time
 
 
+def write(path: str, document: dict) -> None:
+    """Write one report, creating the directory the caller named.
+
+    Reports land in a tree the repository ignores, so a checkout that has not
+    run one yet has no directory to write into.
+    """
+    destination = pathlib.Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(
+        json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
 def parser() -> argparse.ArgumentParser:
     top = argparse.ArgumentParser()
     commands = top.add_subparsers(dest="command", required=True)
@@ -165,9 +178,7 @@ def run(args: argparse.Namespace) -> int:
             "cost_femtocurrency": cost_summary(results),
         },
     }
-    pathlib.Path(args.output).write_text(
-        json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    write(args.output, report)
     return 0
 
 
@@ -208,9 +219,7 @@ def compare(args: argparse.Namespace) -> int:
         },
         "summaries": {"baseline": left, "candidate": right},
     }
-    pathlib.Path(args.output).write_text(
-        json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    write(args.output, result)
     return 0
 
 

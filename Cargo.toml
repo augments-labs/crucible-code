@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "3"
 
 [workspace.package]
-version = "0.40.0"
+version = "0.40.1"
 edition = "2024"
 rust-version = "1.97.1"
 license = "MIT"
@@ -277,7 +277,7 @@ windows-sys = { version = "=0.61.2", features = [
 
 # --- Encoded standards -------------------------------------------------------
 # These lint tables are the Rust compiler standard. Cross-file repository
-# policy is enforced by `scripts/repo-checks.sh`.
+# policy is enforced by `scripts/sh/repo-checks.sh`.
 # Every crate opts in with `[lints] workspace = true`.
 
 [workspace.lints.rust]
@@ -327,7 +327,7 @@ rc_buffer = "deny"
 # the mechanically checkable part of keeping those exceptions auditable.
 undocumented_unsafe_blocks = "deny"
 
-# Function length. The per-file cap lives in `scripts/repo-checks.sh`; the compiler
+# Function length. The per-file cap lives in `scripts/sh/repo-checks.sh`; the compiler
 # cannot see file boundaries.
 too_many_lines = "deny"
 

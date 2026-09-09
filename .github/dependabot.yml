@@ -1,10 +1,13 @@
 version: 2
 
+# Named rather than inherited: these pull requests land where work lands, and a
+# later change to which branch is the default must not silently redirect them.
 updates:
   # Every crate is =-pinned, so an upgrade cannot arrive silently — it arrives
   # as a pull request that CI has to pass.
   - package-ecosystem: cargo
     directory: /
+    target-branch: dev
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
@@ -15,6 +18,7 @@ updates:
   # the version comment beside it, which is the only sane way to keep both.
   - package-ecosystem: github-actions
     directory: /
+    target-branch: dev
     schedule:
       interval: weekly
     commit-message:

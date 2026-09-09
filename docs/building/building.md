@@ -15,7 +15,7 @@ pregenerated, so no assembler is needed and no C++ is compiled anywhere in the
 tree — the packages below carry a C++ compiler because that is how they are
 shipped, not because a build asks for one.
 
-**A POSIX shell, to run the gate.** `scripts/check.sh` is bash. On Windows that
+**A POSIX shell, to run the gate.** `scripts/sh/check.sh` is bash. On Windows that
 means Git Bash or a Windows Subsystem for Linux shell; the build itself needs no
 shell.
 
@@ -84,8 +84,13 @@ be beside the Crucible executable on Linux, macOS and Windows.
 ## Run the gate
 
 ```bash
-scripts/check.sh
+scripts/sh/check.sh
 ```
+
+Build under `umask 022`. Linux sandboxing refuses a broker image that a group
+member could rewrite, and it walks the whole path to it, so a checkout made
+under `umask 002` fails the confinement tests for the mode of a directory above
+the helper rather than for anything you changed. The error names the directory.
 
 The compatibility command runs the deterministic Rust and repository checks
 expected on a contributor machine. CI calls those named gates independently,

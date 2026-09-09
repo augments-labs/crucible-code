@@ -8,6 +8,49 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.40.1] - 2026-09-09
+
+### Fixed
+
+- **Search results a vendor restricts stay cleared when the session comes
+  back.** Switching away from Google took its grounded search results out of
+  what the next model was sent, but only in memory: the log still held them, so
+  resuming the session read them back and sent them on. The clearing is now
+  recorded, and a resumed session comes back the way the switch left it. New
+  logs are format 13; formats 3 to 12 still replay.
+- **A file being attached is opened once and bounded from what opened.** Every
+  attachment path resolved a name and then read that name again, so a picture
+  that was a named pipe stopped the agent until somebody wrote to it, and a
+  file that grew past the four-megabyte ceiling was read whole before being
+  refused for its size. Each site now opens the file first and settles kind and
+  size from the descriptor, so a pipe is refused at once and nothing over the
+  ceiling is allocated.
+- **An MCP block longer than crucible reads is refused rather than shortened.**
+  A record with three hundred arguments was accepted and the server was started
+  with the first 256 of them, and nothing said which went missing. A block over
+  the 64-server, 256-argument or 256-variable boundary is now refused by name
+  and line when the file is read, and the schema publishes each boundary.
+- **A crowded extensions directory is refused whole rather than listed in
+  part.** The sweep read every directory under `~/.crucible/extensions` before
+  keeping sixty-four, and listed those as though they were all of them. It now
+  stops one past the ceiling and reports that the directory was not read,
+  because which sixty-four a sweep reaches first is the filesystem's order and
+  could differ between two runs.
+- **A sandbox that cannot start says which check turned the broker down.**
+  Linux sandboxing refused every candidate `crucible-sandbox-broker` with one
+  sentence that named neither the path nor the reason, so a build that was
+  never made and a directory a group member can rewrite looked identical. The
+  error now names each path it looked at and what disqualified it.
+- **A value written under an MCP server's `env` stays out of a diagnostic.**
+  Redaction reached the `env` block at the top of a configuration document but
+  not the one each server record carries, so printing the settings, or printing
+  one server, wrote those values in full. Both now name every variable and show
+  nothing of what it was set to.
+- **A permission rule in a diagnostic reads as it was written.** Printing
+  settings used to expand every `allow`, `ask` and `deny` pattern into the
+  matcher compiled from it — tens of kilobytes of automaton for one rule, in
+  place of the rule. A rule now carries the pattern text it was written with.
+
 ## [0.40.0] - 2026-09-08
 
 ### Changed
@@ -3710,7 +3753,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.40.0...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.40.1...HEAD
+[0.40.1]: https://github.com/augments-labs/crucible-code/compare/v0.40.0...v0.40.1
 [0.40.0]: https://github.com/augments-labs/crucible-code/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/augments-labs/crucible-code/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/augments-labs/crucible-code/compare/v0.37.0...v0.38.0

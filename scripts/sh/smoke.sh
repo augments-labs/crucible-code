@@ -2,13 +2,13 @@
 # The release gate that cannot run before there is a release: take the artifact
 # people will actually download, and run it somewhere that holds nothing else.
 #
-#     scripts/smoke.sh                     the tag matching the current version
-#     scripts/smoke.sh v0.0.1              a published tag
-#     scripts/smoke.sh ./crucible.tar.gz   a tarball already on disk
-#     scripts/smoke.sh --no-provider v0.0.1  skip the live provider gate
-#     scripts/smoke.sh --checksum HEX FILE   verify a local tarball first
+#     scripts/sh/smoke.sh                     the tag matching the current version
+#     scripts/sh/smoke.sh v0.0.1              a published tag
+#     scripts/sh/smoke.sh ./crucible.tar.gz   a tarball already on disk
+#     scripts/sh/smoke.sh --no-provider v0.0.1  skip the live provider gate
+#     scripts/sh/smoke.sh --checksum HEX FILE   verify a local tarball first
 #
-# The deterministic gates check the source and `scripts/bench.sh` checks speed.
+# The deterministic gates check the source and `scripts/sh/bench.sh` checks speed.
 # Both build from this tree, with this machine's toolchain, in this
 # working directory — so neither can see the ways a *shipped* binary fails: a
 # library only the build machine has, a certificate store the container has not
@@ -26,7 +26,7 @@ command -v dirname >/dev/null || {
     echo 'smoke: dirname is not installed' >&2
     exit 1
 }
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 readonly REPO=augments-labs/crucible-code
 

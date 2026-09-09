@@ -392,3 +392,22 @@ fn a_pattern_that_is_not_a_glob_is_refused() {
 
     assert!(err.to_string().contains("read(src/[)"));
 }
+
+#[test]
+fn a_printed_rule_says_what_was_written() {
+    let mut rules = Rules::new();
+    rules.add(Disposition::Deny, "bash").expect("a tool name");
+    rules.add(Disposition::Ask, "write(**)").expect("a glob");
+    rules
+        .add(Disposition::Allow, "read(src/**)")
+        .expect("a glob");
+
+    assert_eq!(
+        format!("{rules:?}"),
+        "Rules { \
+         deny: [Rule { tool: \"bash\", pattern: Blanket }], \
+         ask: [Rule { tool: \"write\", pattern: Glob { pattern: \"**\", absolute: false } }], \
+         allow: [Rule { tool: \"read\", pattern: Glob { pattern: \"src/**\", absolute: false } }] \
+         }"
+    );
+}

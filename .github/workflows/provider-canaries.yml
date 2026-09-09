@@ -97,17 +97,17 @@ jobs:
           }
           JSON
 
-          scripts/provider-canary.py \
+          scripts/python/provider-canary.py \
             --binary "$PWD/canary/crucible" \
             --model "$MODEL" \
             --home "$root/home" \
             --workspace "$root/work" \
-            --report "provider-canary-$PROVIDER.json"
+            --report "generated/json/provider-canary-$PROVIDER.json"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: ${{ always() && hashFiles(format('provider-canary-{0}.json', matrix.provider)) != '' }}
+        if: ${{ always() && hashFiles(format('generated/json/provider-canary-{0}.json', matrix.provider)) != '' }}
         with:
           name: provider-canary-${{ matrix.provider }}
-          path: provider-canary-${{ matrix.provider }}.json
+          path: generated/json/provider-canary-${{ matrix.provider }}.json
           if-no-files-found: error
           retention-days: 30

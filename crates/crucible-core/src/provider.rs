@@ -672,6 +672,25 @@ pub trait Provider: Send + Sync {
     /// places at once, and this is one of them.
     fn spells(&self) -> Modalities;
 
+    /// The sentence to leave in place of this vendor's tool results when the
+    /// session moves to a different vendor, where its terms forbid sending them
+    /// on.
+    ///
+    /// `None` — the default — is the answer for a vendor that does not restrict
+    /// what it produced, and it is the honest answer for an unknown or custom
+    /// route as well: a route nobody has reviewed has published no such term,
+    /// and treating silence as a restriction would empty a whole conversation's
+    /// results the first time anyone switched away from it.
+    ///
+    /// The other half is not a default at all. No provider is a trusted
+    /// recipient of another's restricted results, reviewed or not, so a switch
+    /// away from a restricting vendor clears them whatever it is switching to.
+    /// The restriction belongs to whoever produced the results; where they may
+    /// go is not the destination's to say.
+    fn restricts_results(&self) -> Option<&'static str> {
+        None
+    }
+
     /// Exact effective prompt-cache capabilities for this model and route.
     ///
     /// The adapter intersects what it can encode/parse today with a reviewed

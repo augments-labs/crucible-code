@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
 # Deterministic checks owned by the Rust ecosystem. Repository structure is
-# checked separately by scripts/repo-checks.sh.
+# checked separately by scripts/sh/repo-checks.sh.
 set -uo pipefail
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
+
+# A snapshot suite that is allowed to write is not a check. Left to the
+# environment, `INSTA_UPDATE=always` makes every capture agree with whatever
+# just drew it, and the run goes green having asserted nothing. The gate
+# decides this, not the shell it was started from.
+export INSTA_UPDATE=no
 
 failed=0
 any=0
@@ -90,9 +96,34 @@ for file in "${generated[@]}"; do
     before+=("$(cksum "$file" 2>/dev/null || true)")
 done
 
+# One selection, read twice: the suite runs under it, and the required-case
+# manifest is checked against what it built. Narrowing it to skip a package
+# therefore loses the obligations that package owns instead of shrinking a
+# total nobody reads.
+readonly TEST_SELECTION=(--workspace --locked)
+
 section "tests"
-if ! cargo test --workspace --locked; then
+if ! cargo test "${TEST_SELECTION[@]}"; then
     printf '    FAIL read the assertion, not the count\n'
+    failed=1
+fi
+
+section "required cases"
+artifacts=$(mktemp)
+examples=$(mktemp)
+silenced=$(mktemp)
+trap 'rm -f "$artifacts" "$examples" "$silenced"' EXIT
+# Documentation examples are built by no binary, so the same selection is asked
+# a second time for the inventory rustdoc's own harness keeps.
+if ! cargo test "${TEST_SELECTION[@]}" --no-run --message-format=json >"$artifacts"; then
+    printf '    FAIL the test selection did not build; the required cases were not checked\n'
+    failed=1
+elif ! cargo test "${TEST_SELECTION[@]}" --doc -- --list >"$examples" ||
+    ! cargo test "${TEST_SELECTION[@]}" --doc -- --list --ignored >"$silenced"; then
+    printf '    FAIL the documentation examples did not list; the required cases were not checked\n'
+    failed=1
+elif ! python3 scripts/python/required-cases.py "$artifacts" "$examples" "$silenced"; then
+    printf '    FAIL a named obligation in scripts/required-cases.json is missing, silenced or changed\n'
     failed=1
 fi
 

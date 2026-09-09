@@ -49,7 +49,7 @@ mod workspace;
 
 pub use aside::Aside;
 pub use ask::{Answer, Answered, Put, Question};
-pub use attachable::{CEILING, KINDS, Kind, kind};
+pub use attachable::{AttachmentError, CEILING, KINDS, Kind, carried, kind, opened};
 pub use cancel::Cancel;
 pub use compaction::{Compacted, Compacting, RECAP, Room};
 pub use context::{ContextError, ContextPatch, ContextSection, ContextSnapshot, Fragment, Seen};

@@ -192,6 +192,9 @@ def main() -> int:
     except (OSError, ValueError, json.JSONDecodeError, RuntimeError, subprocess.SubprocessError) as problem:
         print(f"provider canary failed: {problem}", file=sys.stderr)
         return 1
+    # The report lands in a tree the repository ignores, so a checkout that has
+    # not run one yet has no directory to write into.
+    report.parent.mkdir(parents=True, exist_ok=True)
     report.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(f"{args.model} completed a multi-turn typed-tool canary")
     return 0

@@ -168,8 +168,17 @@ fn a_pre_context_session_supersedes_every_unknown_section_on_its_first_pass() {
     let path = session.path().to_owned();
     drop(session);
 
+    // Whatever this build writes, rewritten to the last format before typed
+    // context. Reading the number out of the header rather than naming it keeps
+    // the fixture a pre-context log across a format bump, instead of quietly
+    // becoming a current one that asserts nothing.
     let current = fs::read_to_string(&path).unwrap();
-    let legacy = current.replacen(r#""format":12"#, r#""format":9"#, 1);
+    let written = current
+        .split_once(r#""format":"#)
+        .and_then(|(_, rest)| rest.split_once(','))
+        .map(|(format, _)| format.to_owned())
+        .expect("the header says what format it is");
+    let legacy = current.replacen(&format!(r#""format":{written}"#), r#""format":9"#, 1);
     assert_ne!(legacy, current, "the fixture header was not downgraded");
     fs::write(&path, legacy).unwrap();
 

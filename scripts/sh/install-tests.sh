@@ -2,9 +2,9 @@
 # Offline behavioral tests for the release installer and uninstaller.
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
-readonly INSTALL=$PWD/scripts/install.sh
-readonly UNINSTALL=$PWD/scripts/uninstall.sh
+cd "$(dirname "$0")/../.."
+readonly INSTALL=$PWD/scripts/sh/install.sh
+readonly UNINSTALL=$PWD/scripts/sh/uninstall.sh
 scratch=$(mktemp -d)
 readonly scratch
 trap 'rm -rf -- "$scratch"' EXIT

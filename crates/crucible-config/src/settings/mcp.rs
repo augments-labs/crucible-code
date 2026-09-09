@@ -12,23 +12,33 @@
 //! starts none of them, and a build that never reaches the selection reaches no
 //! server at all.
 
+use std::fmt;
 use std::time::Duration;
 
 use serde_json::Value;
 
 use super::Settings;
+use crate::env;
 
-/// The most server records read back from one document.
+/// The most server records one document may write down.
 ///
 /// Far beyond a machine somebody configures by hand, and small enough that a
 /// document that grew a block by accident cannot make startup walk it forever.
-const SERVERS: usize = 64;
+///
+/// Applied where the key is declared, so a document over the boundary is
+/// refused by name and position while it is being read, rather than by this
+/// reader, which has neither to name by the time it holds the block.
+pub(crate) const SERVERS: usize = 64;
 
-/// The most arguments read back for one server.
-const ARGS: usize = 256;
+/// The most arguments one server may be given.
+///
+/// Applied at the declaration like the bound above, and refused there rather
+/// than shortened here: a launch assembled from part of an argument list runs
+/// a command nobody wrote.
+pub(crate) const ARGS: usize = 256;
 
-/// The most environment entries read back for one server, in each block.
-const VARIABLES: usize = 256;
+/// The most environment entries one server may be given, in each block.
+pub(crate) const VARIABLES: usize = 256;
 
 /// What each timeout is where the record does not say, in seconds.
 ///
@@ -59,7 +69,6 @@ impl Settings {
 
         servers
             .iter()
-            .take(SERVERS)
             .filter_map(|(name, record)| McpServer::read(name, record))
             .collect()
     }
@@ -71,7 +80,7 @@ impl Settings {
 /// name or a path that has not been looked for, `env_from` holds the names of
 /// variables that have not been read, and `directory` is a path nothing has
 /// opened.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct McpServer {
     name: Box<str>,
     command: Box<str>,
@@ -84,6 +93,53 @@ pub struct McpServer {
     shutdown: Duration,
     restarts: u32,
     required: bool,
+}
+
+impl fmt::Debug for McpServer {
+    /// Written by hand so `env` is named and not shown.
+    ///
+    /// The block is what this server is started with, so a key for it is
+    /// written there and nowhere else. A derive is how one reaches a log line,
+    /// an error or a panic payload without anybody having decided that it
+    /// should, which is why the redaction lives in the type rather than in
+    /// whatever prints it.
+    ///
+    /// `env_from` stays whole: both of its halves are names of variables, and a
+    /// name is not a value.
+    ///
+    /// The record is taken apart rather than read field by field, so that a
+    /// field added later is a compilation error here instead of a field this
+    /// quietly stops printing. That is the one thing the derive gave for free
+    /// and the reason to give it up was `env`, not the rest of the record.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self {
+            name,
+            command,
+            args,
+            directory,
+            env,
+            env_from,
+            handshake,
+            request,
+            shutdown,
+            restarts,
+            required,
+        } = self;
+
+        f.debug_struct("McpServer")
+            .field("name", name)
+            .field("command", command)
+            .field("args", args)
+            .field("directory", directory)
+            .field("env", &env::Named(env))
+            .field("env_from", env_from)
+            .field("handshake", handshake)
+            .field("request", request)
+            .field("shutdown", shutdown)
+            .field("restarts", restarts)
+            .field("required", required)
+            .finish()
+    }
 }
 
 impl McpServer {
@@ -174,7 +230,6 @@ impl McpServer {
                 .map(|held| {
                     held.iter()
                         .filter_map(Value::as_str)
-                        .take(ARGS)
                         .map(Into::into)
                         .collect()
                 })
@@ -213,7 +268,6 @@ fn block(record: &Value, key: &str) -> Vec<(Box<str>, Box<str>)> {
                         .as_str()
                         .map(|written| (name.as_str().into(), written.into()))
                 })
-                .take(VARIABLES)
                 .collect()
         })
         .unwrap_or_default()

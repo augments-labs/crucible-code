@@ -17,6 +17,12 @@ pub(crate) mod schema;
 #[cfg(test)]
 mod tests;
 
+// The boundaries an MCP record's reader has, named where the key that carries
+// them is declared. They live beside that reader because they are about what
+// launching a server costs, and they are read here so the schema and the walk
+// state one number rather than each holding a copy of it.
+use crate::settings::mcp;
+
 /// What a value at one position in the document may be.
 pub(crate) enum Shape {
     /// Any string.
@@ -82,6 +88,15 @@ pub(crate) enum Shape {
         declared: &'static [Field],
         /// Every other name, whoever chose it.
         others: &'static Shape,
+        /// The most keys the block may hold, where something downstream has a
+        /// boundary. Counted as the document writes them, reserved keys
+        /// included, because that is the count the schema's `maxProperties`
+        /// applies and the two have to answer alike.
+        ///
+        /// `None` where the only boundary is the one on the file, which is
+        /// most of them: a block nothing retains per entry costs what the
+        /// megabyte around it already bounds.
+        most: Option<usize>,
     },
 
     /// An array, every element having the same shape.
@@ -101,6 +116,9 @@ pub(crate) enum Shape {
         /// True for a list that is a sequence: the arguments handed to a
         /// program are positional, and `-e` twice is two of them.
         repeats: bool,
+        /// The most elements the list may hold, where something downstream has
+        /// a boundary, and `None` where the file's own size is the only one.
+        most: Option<usize>,
     },
 
     /// An object whose names belong to somebody else.
@@ -243,6 +261,7 @@ const PROVIDER: Shape = Shape::Fields(&[
         shape: Shape::Named {
             declared: &[],
             others: &WINDOW,
+            most: None,
         },
         examples: &[],
         usual: None,
@@ -756,6 +775,7 @@ const PROMPT_CACHE: &[Field] = &[
         shape: Shape::List {
             of: &CACHE_MECHANISM,
             repeats: false,
+            most: None,
         },
         examples: &[],
         usual: None,
@@ -902,6 +922,7 @@ const PERMISSIONS: &[Field] = &[
         shape: Shape::List {
             of: &RULE,
             repeats: false,
+            most: None,
         },
         // A whole command rather than a program and a wildcard. `bash(git *)`
         // would read as the obvious thing to write and would cover `git push`,
@@ -917,6 +938,7 @@ const PERMISSIONS: &[Field] = &[
         shape: Shape::List {
             of: &RULE,
             repeats: false,
+            most: None,
         },
         examples: &["edit(Cargo.lock)", "bash(git push)"],
         usual: None,
@@ -929,6 +951,7 @@ const PERMISSIONS: &[Field] = &[
         shape: Shape::List {
             of: &RULE,
             repeats: false,
+            most: None,
         },
         examples: &["read(.env)", "edit(.git/**)"],
         usual: None,
@@ -941,6 +964,7 @@ const PERMISSIONS: &[Field] = &[
         shape: Shape::List {
             of: &DIRECTORY,
             repeats: false,
+            most: None,
         },
         // One spelling per platform. What counts as absolute is a drive or a
         // share on Windows and a leading slash everywhere else, and this schema
@@ -1072,6 +1096,10 @@ const MCP_SERVER: Shape = Shape::Fields(&[
             // A command line is a sequence, so `-e` twice is two arguments and
             // not a paste that went in twice.
             repeats: true,
+            // The boundary the record reader was silently applying, moved to the
+            // declaration so the schema publishes it and the parser refuses a
+            // block over it, rather than a launch quietly losing entries.
+            most: Some(mcp::ARGS),
         },
         examples: &["-y", "@example/docs-mcp"],
         usual: None,
@@ -1095,6 +1123,10 @@ const MCP_SERVER: Shape = Shape::Fields(&[
         shape: Shape::Named {
             declared: &[],
             others: &VALUE,
+            // The boundary the record reader was silently applying, moved to the
+            // declaration so the schema publishes it and the parser refuses a
+            // block over it, rather than a launch quietly losing entries.
+            most: Some(mcp::VARIABLES),
         },
         examples: &[],
         usual: None,
@@ -1112,6 +1144,10 @@ const MCP_SERVER: Shape = Shape::Fields(&[
         shape: Shape::Named {
             declared: &[],
             others: &VALUE,
+            // The boundary the record reader was silently applying, moved to the
+            // declaration so the schema publishes it and the parser refuses a
+            // block over it, rather than a launch quietly losing entries.
+            most: Some(mcp::VARIABLES),
         },
         examples: &[],
         usual: None,
@@ -1178,6 +1214,10 @@ const MCP: Shape = Shape::Fields(&[Field {
     shape: Shape::Named {
         declared: &[],
         others: &MCP_SERVER,
+        // The boundary the record reader was silently applying, moved to the
+        // declaration so the schema publishes it and the parser refuses a
+        // block over it, rather than a launch quietly losing entries.
+        most: Some(mcp::SERVERS),
     },
     examples: &[],
     // Nothing, rather than an empty block. Crucible installs no server, and a
@@ -1221,6 +1261,7 @@ pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
         shape: Shape::Named {
             declared: &[],
             others: &PROVIDER,
+            most: None,
         },
         examples: &[],
         usual: None,
@@ -1233,6 +1274,7 @@ pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
         shape: Shape::Named {
             declared: ENV,
             others: &VALUE,
+            most: None,
         },
         examples: &[],
         usual: None,
@@ -1245,6 +1287,7 @@ pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
         shape: Shape::Named {
             declared: &[],
             others: &EXTENSION,
+            most: None,
         },
         examples: &[],
         usual: None,
@@ -1427,6 +1470,18 @@ impl Shape {
             | Self::Whole(_)
             | Self::List { .. }
             | Self::Opaque => None,
+        }
+    }
+
+    /// The most entries this shape holds, where the key that declares it says.
+    ///
+    /// Asked by the walk rather than passed to it, so the number the schema
+    /// publishes and the number a document is refused against are one field
+    /// read twice instead of two arguments that could drift apart.
+    pub(crate) const fn most(&self) -> Option<usize> {
+        match self {
+            Self::Named { most, .. } | Self::List { most, .. } => *most,
+            _ => None,
         }
     }
 

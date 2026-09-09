@@ -10,15 +10,15 @@ description: >-
 For the current workspace:
 
 ```bash
-scripts/check.sh
+scripts/sh/check.sh
 ```
 
 That compatibility command runs:
 
 ```bash
-scripts/rust-checks.sh   # rustfmt, all-feature clippy, tests, rustdoc, generated agreement
-scripts/repo-checks.sh   # cross-file repository policy
-scripts/python-checks.sh # maintained harness fixtures and campaign reports
+scripts/sh/rust-checks.sh   # rustfmt, all-feature clippy, tests, rustdoc, generated agreement
+scripts/sh/repo-checks.sh   # cross-file repository policy
+scripts/sh/python-checks.sh # maintained harness fixtures and campaign reports
 ```
 
 CI calls the named scripts through their owning workflows. New ecosystems get
@@ -40,7 +40,7 @@ diff before rerunning.
 Performance is separate because shared runners are noisy:
 
 ```bash
-scripts/bench.sh
+scripts/sh/bench.sh
 ```
 
 Each probe owns its threshold and exits non-zero when it misses. Run it for
@@ -69,7 +69,7 @@ positive teaches contributors to bypass the gate.
   patterns the compiler can see.
 - Rust test: behavior, generated agreement, security boundary or a closed set
   the type system can exercise.
-- `scripts/repo-checks.sh`: deterministic cross-file or repository structure.
+- `scripts/sh/repo-checks.sh`: deterministic cross-file or repository structure.
 - A language-specific script: formatting, linting and tests for that ecosystem.
 - A dedicated workflow: scheduled/network-dependent scans, platform matrices,
   performance, release and other independently owned CI concerns.

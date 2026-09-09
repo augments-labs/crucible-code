@@ -836,11 +836,21 @@ under its own heading with the reason:
   /home/you/.crucible/extensions/broken/manifest.json: line 2 column 0: EOF while parsing a value
 ```
 
-Crucible looks at 64 directories. Past that the listing says the answer is
-short rather than presenting a truncated one as complete. Two directories
-claiming one `id` are not both kept — the first in sorted order keeps the
-identifier and the second is listed as refused, because the identifier is what
-everything else would key on.
+Crucible reads 64 directories. A directory holding more than that is refused
+whole and nothing in it is listed, because the 64 a sweep would reach first are
+whichever ones the filesystem handed back — a list built from them could name
+different extensions on the next run:
+
+```
+/home/you/.crucible/extensions was not read
+
+1 directory could not be read:
+  /home/you/.crucible/extensions holds more than 64 installed directories, so none of them were read — move what is not an extension out of it
+```
+
+Two directories claiming one `id` are not both kept — the first in sorted order
+keeps the identifier and the second is listed as refused, because the identifier
+is what everything else would key on.
 
 ## MCP servers
 
@@ -973,9 +983,11 @@ workspace file may tighten its own rules — permissions.ask and permissions.den
 home directory
 ```
 
-Crucible reads 64 servers, 256 arguments and 256 variables per record. Past a
-bound the rest is not read, so a document cannot make startup walk further by
-being longer.
+Crucible reads 64 servers, and 256 arguments and 256 variables per record. A
+block holding more than one of those is refused by name and line when the file
+is read, rather than accepted and then shortened — a server started with the
+first 256 of the 300 arguments you wrote is running a command you did not
+write, and would say nothing about the ones it dropped.
 
 ## `CRUCIBLE_CODE_HOME`
 

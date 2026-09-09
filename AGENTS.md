@@ -2,7 +2,6 @@
 
 A terminal coding agent in Rust.
 
-Read the policies in [`.agents/rules/`](.agents/rules/) before working.
 Repository skills live in [`.agents/skills/`](.agents/skills/).
 
 ## Repository map
@@ -23,10 +22,10 @@ Repository skills live in [`.agents/skills/`](.agents/skills/).
 | `crates/crucible-tools/` | Built-in tools |
 | `crates/crucible-tui/` | Terminal rendering and interaction |
 | `schema/` | Generated configuration schema |
-| `scripts/` | Checks, benchmarks and release helpers |
+| `scripts/` | Checks, benchmarks and release helpers, under `sh/` and `python/` |
 | `docs/` | User documentation |
 
-Workspace manifests declare crate dependencies; `scripts/repo-checks.sh`
+Workspace manifests declare crate dependencies; `scripts/sh/repo-checks.sh`
 enforces their allowed directions.
 
 ## Changing Crucible
@@ -79,7 +78,7 @@ the required behavior justifies it; keep the declaration and checks below.
   `some-crate.workspace = true`; versions and justification live at the root.
 - Put the dependency in the narrowest crate that needs it. A dependency in
   `crucible-core` affects every consumer. New internal edges require a deliberate
-  update to the graph checked by `scripts/repo-checks.sh`.
+  update to the graph checked by `scripts/sh/repo-checks.sh`.
 - Use crates.io sources. Git dependencies are not an escape from version pins.
 - The dependency must support shipped paths without panicking or printing to
   stdout/stderr. `unwrap_used`, `expect_used`, `panic`, `indexing_slicing`,
@@ -97,19 +96,59 @@ the required behavior justifies it; keep the declaration and checks below.
 
 ## Writing the change
 
+Work lands on `dev`; `main` holds what shipped. Branch from `dev` and open the
+pull request against `dev` — one opened against `main` is retargeted before
+review, because merging it would put an unreleased change into the branch a tag
+is cut from. Only a release branch and a hotfix target `main`, both owned by
+[`RELEASING.md`](RELEASING.md).
+
 Keep repository prose focused on shipped behavior and why the reader cares:
 
 - Commit: a conventional subject and at most one short paragraph explaining why.
 - Changelog: a bold lead and at most three sentences for someone deciding
   whether to upgrade. Release notes reuse that entry.
-- Pull request: follow the template, with one short paragraph per section and
-  the test that failed before a behavior change. Keep one reason per PR;
-  implementation and proof that cannot compile apart remain one change.
+- Pull request: follow the template, answering every section with one short
+  paragraph and naming the test that failed before a behavior change. Keep one
+  reason per PR; implementation and proof that cannot compile apart remain one
+  change.
 
 Update affected user docs, the first-run README surface, contributor setup and
 changelog in the same change. Put long reasoning beside the code or in a focused
 design document, not a commit narrative. Do not put internal planning identifiers
 or harness paths into shipped comments, docs, schemas or manifests.
+
+## Opening a pull request
+
+Read the whole of
+[`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md) before
+you fill any of it in. A section left blank, answered with the prompt text, or
+answered with a summary of the diff instead of the thing it asked for is worse
+than no pull request: it spends a reviewer's attention and returns nothing, and
+it is the person whose name is on it who pays for that.
+
+Before opening one:
+
+- Search open **and** closed pull requests and issues for the same problem or
+  area. If it has been tried, say what is different here; if it is a duplicate,
+  stop and say so rather than opening another.
+- Be able to name the failure. A panic, an assertion, a wrong screen, a
+  measurement. "It could break" and "a review tool flagged it" are not
+  problems, and a change with no observed failure behind it has nothing for
+  Proof to hold.
+- Say what produced the change: hand or agent, and for an agent the exact model
+  id, the harness and its version, and every plugin loaded. This is weighed, not
+  policed — a claim reasoned out of documentation is read differently from one a
+  real session produced — and hiding it is what closes a pull request.
+- Show the complete diff to the person you are working with, and let them
+  answer for it.
+
+The human-review box is theirs, not yours. Tick it, and name them in the table,
+once they have said they read the diff or authorized the pull request; leave it
+empty otherwise and say who is being asked. A tick nobody gave is a false
+statement about a person.
+
+One reason per pull request. Unrelated changes travelling together get split,
+and a batch opened by pointing an agent at a list is closed on sight.
 
 ## Repository checks
 
@@ -117,12 +156,14 @@ Use [run-the-gate](.agents/skills/run-the-gate/SKILL.md) when changing a check o
 preparing to finish. The compatibility gate is:
 
 ```bash
-scripts/check.sh
+scripts/sh/check.sh
 ```
 
 It aggregates deterministic Rust, repository and Python gates. Run
-`scripts/bench.sh` when startup, rendering, searching, retained session data or
+`scripts/sh/bench.sh` when startup, rendering, searching, retained session data or
 hot-path allocation changes. Budget changes require an explicit product decision;
-do not widen them merely to make a failing change pass.
+do not widen them merely to make a failing change pass. What a run writes goes
+under `generated/`, which git ignores whole: a document under the directory for
+its format, a tree under a directory of its own. Nothing there is committed.
 Platform matrices, dependency policy, advisories, performance and releases have
 owners in [`.github/workflows/README.md`](.github/workflows/README.md).

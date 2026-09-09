@@ -1,0 +1,433 @@
+=== the user layer alone ===
+provider           Some("anthropic")
+providers.anthropic
+  model            Some("user-model")
+  baseUrl          Some("https://user.example/v1")
+  effort           Some(High)
+  apiKeyEnv        Some("EXAMPLE_KEY_VARIABLE")
+providers.google
+  model            None
+  baseUrl          None
+  effort           None
+  apiKeyEnv        None
+providers.openai
+  model            Some("user-openai-model")
+  baseUrl          None
+  effort           None
+  apiKeyEnv        None
+providers.unmentioned
+  model            None
+  baseUrl          None
+  effort           None
+  apiKeyEnv        None
+env                [("CRUCIBLE_CODE_SHARED", "user layer"), ("CRUCIBLE_CODE_USER_ONLY", "user layer")]
+extensions.acme.reviewer
+  enabled          true
+  digest           Some("sha256:0101010101010101010101010101010101010101010101010101010101010101")
+  config           ["audience", "verbosity"]
+extensions.acme.unmentioned
+  enabled          false
+  digest           None
+  config           []
+sandbox enabled    false
+Settings {
+    value: Object {
+        "env": Object {
+            "CRUCIBLE_CODE_SHARED": String("<redacted>"),
+            "CRUCIBLE_CODE_USER_ONLY": String("<redacted>"),
+        },
+        "extensions": Object {
+            "acme.reviewer": Object {
+                "config": Object {
+                    "audience": String("team"),
+                    "verbosity": String("brief"),
+                },
+                "digest": String("sha256:0101010101010101010101010101010101010101010101010101010101010101"),
+                "enabled": Bool(true),
+            },
+        },
+        "permissions": Object {
+            "allow": Array [
+                String("read(src/**)"),
+            ],
+            "deny": Array [
+                String("bash(rm -rf /)"),
+            ],
+        },
+        "provider": String("anthropic"),
+        "providers": Object {
+            "anthropic": Object {
+                "apiKeyEnv": String("EXAMPLE_KEY_VARIABLE"),
+                "baseUrl": String("https://user.example/v1"),
+                "effort": String("high"),
+                "model": String("user-model"),
+            },
+            "openai": Object {
+                "model": String("user-openai-model"),
+            },
+        },
+    },
+    rules: Rules {
+        deny: [
+            Rule {
+                tool: "bash",
+                pattern: Glob {
+                    pattern: "rm -rf /",
+                    absolute: false,
+                },
+            },
+        ],
+        ask: [],
+        allow: [
+            Rule {
+                tool: "read",
+                pattern: Glob {
+                    pattern: "src/**",
+                    absolute: false,
+                },
+            },
+        ],
+    },
+    prompt_cache: PromptCachePolicy {
+        mode: Prefer,
+        allowed_mechanisms: PromptCacheMechanisms(
+            15,
+        ),
+        isolation: Session,
+        retention: PromptCacheRetention {
+            class: ProviderDefault,
+            maximum_seconds: None,
+        },
+        persistent_resources: Forbid,
+        namespace: None,
+        sources: PromptCachePolicySources {
+            mode: Default,
+            mechanisms: Default,
+            isolation: Default,
+            retention: Default,
+            persistent_resources: Default,
+            namespace: Default,
+        },
+        version: PromptCachePolicyVersion(
+            "prompt-cache-policy-v1",
+        ),
+        conflict: None,
+    },
+    sandbox: SandboxSettings {
+        network: NetworkSettings {
+            allowed: 0,
+            denied: 0,
+            binding: false,
+            sockets: 0,
+        },
+        enablement: SandboxEnablement {
+            enabled: false,
+            required: false,
+        },
+        filesystem_rules: 0,
+        command_seconds: 1200,
+        output_bytes: 10485760,
+        concurrent_commands: 4,
+    },
+}
+=== the project layer over it ===
+provider           Some("anthropic")
+providers.anthropic
+  model            Some("project-model")
+  baseUrl          Some("https://user.example/v1")
+  effort           Some(High)
+  apiKeyEnv        Some("EXAMPLE_KEY_VARIABLE")
+providers.google
+  model            Some("project-google-model")
+  baseUrl          None
+  effort           None
+  apiKeyEnv        None
+providers.openai
+  model            Some("user-openai-model")
+  baseUrl          None
+  effort           None
+  apiKeyEnv        None
+providers.unmentioned
+  model            None
+  baseUrl          None
+  effort           None
+  apiKeyEnv        None
+env                [("CRUCIBLE_CODE_SHARED", "project layer"), ("CRUCIBLE_CODE_USER_ONLY", "user layer")]
+extensions.acme.reviewer
+  enabled          true
+  digest           Some("sha256:0101010101010101010101010101010101010101010101010101010101010101")
+  config           ["audience", "verbosity"]
+extensions.acme.unmentioned
+  enabled          false
+  digest           None
+  config           []
+sandbox enabled    false
+Settings {
+    value: Object {
+        "env": Object {
+            "CRUCIBLE_CODE_SHARED": String("<redacted>"),
+            "CRUCIBLE_CODE_USER_ONLY": String("<redacted>"),
+        },
+        "extensions": Object {
+            "acme.reviewer": Object {
+                "config": Object {
+                    "audience": String("team"),
+                    "verbosity": String("brief"),
+                },
+                "digest": String("sha256:0101010101010101010101010101010101010101010101010101010101010101"),
+                "enabled": Bool(true),
+            },
+        },
+        "permissions": Object {
+            "allow": Array [
+                String("read(src/**)"),
+            ],
+            "deny": Array [
+                String("bash(rm -rf /)"),
+                String("bash(curl)"),
+            ],
+        },
+        "provider": String("anthropic"),
+        "providers": Object {
+            "anthropic": Object {
+                "apiKeyEnv": String("EXAMPLE_KEY_VARIABLE"),
+                "baseUrl": String("https://user.example/v1"),
+                "effort": String("high"),
+                "model": String("project-model"),
+            },
+            "google": Object {
+                "model": String("project-google-model"),
+            },
+            "openai": Object {
+                "model": String("user-openai-model"),
+            },
+        },
+    },
+    rules: Rules {
+        deny: [
+            Rule {
+                tool: "bash",
+                pattern: Glob {
+                    pattern: "rm -rf /",
+                    absolute: false,
+                },
+            },
+            Rule {
+                tool: "bash",
+                pattern: Glob {
+                    pattern: "curl",
+                    absolute: false,
+                },
+            },
+        ],
+        ask: [],
+        allow: [
+            Rule {
+                tool: "read",
+                pattern: Glob {
+                    pattern: "src/**",
+                    absolute: false,
+                },
+            },
+        ],
+    },
+    prompt_cache: PromptCachePolicy {
+        mode: Prefer,
+        allowed_mechanisms: PromptCacheMechanisms(
+            15,
+        ),
+        isolation: Session,
+        retention: PromptCacheRetention {
+            class: ProviderDefault,
+            maximum_seconds: None,
+        },
+        persistent_resources: Forbid,
+        namespace: None,
+        sources: PromptCachePolicySources {
+            mode: Default,
+            mechanisms: Default,
+            isolation: Default,
+            retention: Default,
+            persistent_resources: Default,
+            namespace: Default,
+        },
+        version: PromptCachePolicyVersion(
+            "prompt-cache-policy-v1",
+        ),
+        conflict: None,
+    },
+    sandbox: SandboxSettings {
+        network: NetworkSettings {
+            allowed: 0,
+            denied: 0,
+            binding: false,
+            sockets: 0,
+        },
+        enablement: SandboxEnablement {
+            enabled: false,
+            required: false,
+        },
+        filesystem_rules: 0,
+        command_seconds: 1200,
+        output_bytes: 10485760,
+        concurrent_commands: 4,
+    },
+}
+=== the project-local layer over both ===
+provider           Some("anthropic")
+providers.anthropic
+  model            Some("project-model")
+  baseUrl          Some("https://user.example/v1")
+  effort           Some(Low)
+  apiKeyEnv        Some("EXAMPLE_KEY_VARIABLE")
+providers.google
+  model            Some("project-google-model")
+  baseUrl          None
+  effort           None
+  apiKeyEnv        None
+providers.openai
+  model            Some("user-openai-model")
+  baseUrl          None
+  effort           None
+  apiKeyEnv        None
+providers.unmentioned
+  model            None
+  baseUrl          None
+  effort           None
+  apiKeyEnv        None
+env                [("CRUCIBLE_CODE_SHARED", "project-local layer"), ("CRUCIBLE_CODE_USER_ONLY", "user layer")]
+extensions.acme.reviewer
+  enabled          true
+  digest           Some("sha256:0101010101010101010101010101010101010101010101010101010101010101")
+  config           ["audience", "verbosity"]
+extensions.acme.unmentioned
+  enabled          false
+  digest           None
+  config           []
+sandbox enabled    false
+Settings {
+    value: Object {
+        "env": Object {
+            "CRUCIBLE_CODE_SHARED": String("<redacted>"),
+            "CRUCIBLE_CODE_USER_ONLY": String("<redacted>"),
+        },
+        "extensions": Object {
+            "acme.reviewer": Object {
+                "config": Object {
+                    "audience": String("team"),
+                    "verbosity": String("brief"),
+                },
+                "digest": String("sha256:0101010101010101010101010101010101010101010101010101010101010101"),
+                "enabled": Bool(true),
+            },
+        },
+        "permissions": Object {
+            "allow": Array [
+                String("read(src/**)"),
+            ],
+            "ask": Array [
+                String("write(**)"),
+            ],
+            "deny": Array [
+                String("bash(rm -rf /)"),
+                String("bash(curl)"),
+            ],
+        },
+        "provider": String("anthropic"),
+        "providers": Object {
+            "anthropic": Object {
+                "apiKeyEnv": String("EXAMPLE_KEY_VARIABLE"),
+                "baseUrl": String("https://user.example/v1"),
+                "effort": String("low"),
+                "model": String("project-model"),
+            },
+            "google": Object {
+                "model": String("project-google-model"),
+            },
+            "openai": Object {
+                "model": String("user-openai-model"),
+            },
+        },
+    },
+    rules: Rules {
+        deny: [
+            Rule {
+                tool: "bash",
+                pattern: Glob {
+                    pattern: "rm -rf /",
+                    absolute: false,
+                },
+            },
+            Rule {
+                tool: "bash",
+                pattern: Glob {
+                    pattern: "curl",
+                    absolute: false,
+                },
+            },
+        ],
+        ask: [
+            Rule {
+                tool: "write",
+                pattern: Glob {
+                    pattern: "**",
+                    absolute: false,
+                },
+            },
+        ],
+        allow: [
+            Rule {
+                tool: "read",
+                pattern: Glob {
+                    pattern: "src/**",
+                    absolute: false,
+                },
+            },
+        ],
+    },
+    prompt_cache: PromptCachePolicy {
+        mode: Prefer,
+        allowed_mechanisms: PromptCacheMechanisms(
+            15,
+        ),
+        isolation: Session,
+        retention: PromptCacheRetention {
+            class: ProviderDefault,
+            maximum_seconds: None,
+        },
+        persistent_resources: Forbid,
+        namespace: None,
+        sources: PromptCachePolicySources {
+            mode: Default,
+            mechanisms: Default,
+            isolation: Default,
+            retention: Default,
+            persistent_resources: Default,
+            namespace: Default,
+        },
+        version: PromptCachePolicyVersion(
+            "prompt-cache-policy-v1",
+        ),
+        conflict: None,
+    },
+    sandbox: SandboxSettings {
+        network: NetworkSettings {
+            allowed: 0,
+            denied: 0,
+            binding: false,
+            sockets: 0,
+        },
+        enablement: SandboxEnablement {
+            enabled: false,
+            required: false,
+        },
+        filesystem_rules: 0,
+        command_seconds: 1200,
+        output_bytes: 10485760,
+        concurrent_commands: 4,
+    },
+}
+=== a project layer reaching for the key ===
+refused: <root>/project/.crucible/config.json: providers.anthropic.apiKeyEnv cannot be set here at line 2, column 33 — this file is inside the workspace and can arrive with a checkout, and this key only ever widens what crucible does without asking. A workspace file may tighten its own rules — permissions.ask and permissions.deny — and may not loosen anybody's. Put this one in the configuration file in your home directory
+=== a project layer naming a variable of its own ===
+refused: <root>/project/.crucible/config.json: env cannot set PATH_HELPER at line 2, column 12 — crucible cannot tell a file you wrote from one that arrived with the checkout, so no file under the working directory sets a variable for the commands crucible runs — PATH alone decides which program each of those commands is. Only crucible's own settings, which start with CRUCIBLE_CODE_, are read from one. Put this in the configuration file in your home directory, or set it in the shell you start crucible in

@@ -3,19 +3,19 @@
 # one concern and CI calls those children directly.
 set -uo pipefail
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 failed=()
 
-if ! scripts/rust-checks.sh; then
+if ! scripts/sh/rust-checks.sh; then
     failed+=("Rust")
 fi
 
-if ! scripts/repo-checks.sh; then
+if ! scripts/sh/repo-checks.sh; then
     failed+=("repository")
 fi
 
-if ! scripts/python-checks.sh; then
+if ! scripts/sh/python-checks.sh; then
     failed+=("Python")
 fi
 

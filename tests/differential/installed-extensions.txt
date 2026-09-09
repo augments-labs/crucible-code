@@ -1,0 +1,61 @@
+at        <root>/home/extensions
+stopped   false
+found     2
+Installed {
+    file: "<root>/home/extensions/alpha/manifest.json",
+    manifest: ExtensionManifest {
+        identity: ExtensionIdentity {
+            id: "acme.alpha",
+            version: "1.4.0",
+            entrypoint: "bin/reviewer",
+            digest: "sha256:91f991438ba44d7662b7f975e28d00e872e6054a93d629ed76cb5117f98b7687",
+            found: Extension,
+        },
+        requests: ExtensionRequests {
+            protocol: ExtensionProtocol {
+                major: 1,
+                minor: 3,
+            },
+            minimum: "0.35.0",
+            capabilities: [
+                RegisterTools,
+            ],
+            contributions: [
+                Tools,
+            ],
+        },
+    },
+}
+Installed {
+    file: "<root>/home/extensions/zeta/manifest.json",
+    manifest: ExtensionManifest {
+        identity: ExtensionIdentity {
+            id: "acme.zeta",
+            version: "1.4.0",
+            entrypoint: "bin/reviewer",
+            digest: "sha256:35fff0dc4694e98d40f0569271fc6e9fabc32ff68683bd967b843e085e707928",
+            found: Extension,
+        },
+        requests: ExtensionRequests {
+            protocol: ExtensionProtocol {
+                major: 1,
+                minor: 3,
+            },
+            minimum: "0.35.0",
+            capabilities: [
+                RegisterTools,
+            ],
+            contributions: [
+                Tools,
+            ],
+        },
+    },
+}
+refused   3
+<root>/home/extensions/broken/manifest.json: line 1 column 3: key must be a string
+<root>/home/extensions/repeat/manifest.json declares acme.alpha, which <root>/home/extensions/alpha/manifest.json already declares
+<root>/home/extensions/unqualified/manifest.json: reviewer is not a source-qualified identifier such as vendor.plugin
+=== sixty-five installed directories ===
+stopped   true
+found     0
+refused   1

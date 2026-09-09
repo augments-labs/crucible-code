@@ -284,7 +284,7 @@ under the call is the change itself:
 ```
 ● Edit(.github/workflows/release.yml)
   └ Added 2 lines, removed 1 line
-      303            scripts/smoke.sh --no-provider
+      303            scripts/sh/smoke.sh --no-provider
       304
       305 -  # Shared-runner numbers are trend data.
       305 +  # What stops a tag whose build got slower

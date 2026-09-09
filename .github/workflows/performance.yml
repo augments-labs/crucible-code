@@ -34,14 +34,14 @@ jobs:
           rm -rf rg.tar.gz "$stem"
           rg --version | head -1
 
-      - run: scripts/bench.sh > budgets.json
+      - run: mkdir -p generated/json && scripts/sh/bench.sh > generated/json/budgets.json
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: ${{ always() }}
         with:
           name: budgets
-          path: budgets.json
+          path: generated/json/budgets.json
           if-no-files-found: error
 
-      - run: rm budgets.json
+      - run: rm -r generated
       - uses: ./.github/actions/check-clean-worktree

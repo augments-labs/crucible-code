@@ -222,9 +222,11 @@ pub struct Session {
     /// Written to the index once, from [`Drop`], which is also what repairs the
     /// zero a legacy session was indexed with.
     messages: AtomicUsize,
-    /// What the results a pruning cleared said, for whatever draws the session
-    /// back onto a screen. Empty in a session that was started rather than
-    /// continued, and in one whose log never pruned anything.
+    /// What the results a clearing took away said, for whatever draws the
+    /// session back onto a screen — whether room was being made or the vendor
+    /// that produced them restricts where they may be sent. Empty in a session
+    /// that was started rather than continued, and in one whose log never
+    /// cleared anything.
     pruned: Pruned,
     /// Serializes create-once result inserts so an idempotent retry cannot
     /// observe the first writer's not-yet-synced file.
@@ -624,6 +626,32 @@ impl Session {
     pub fn pruned(&self, freed: usize, results: &[crucible_core::ToolId]) {
         let Some(to) = &self.to else { return };
         drop(to.send(LogRequest::Line(wire::pruned(freed, results).into())));
+    }
+
+    /// Records that results were cleared because the vendor that produced them
+    /// restricts where they may be sent, and the sentence left in their place.
+    ///
+    /// Beside [`Session::pruned`] and written for the same reason — the log
+    /// keeps what the results held, and a session continued later reads this
+    /// line and makes the same clearing again. What is different is that this
+    /// one may not be missed. A pruning that a later build read differently
+    /// costs a little context; a restriction that a later build read
+    /// differently sends one vendor's results to another.
+    pub fn restricted(&self, freed: usize, results: &[crucible_core::ToolId], notice: &str) {
+        let Some(to) = &self.to else { return };
+        // With the same guard a new private-state message carries, and needed
+        // for a sharper reason. Resuming never rewrites an old header, so a
+        // log written under an earlier format can gain this line; a reader with
+        // no word for it would call the file damaged, and a reader that skipped
+        // it would put the results back and send them on. The guard makes the
+        // refusal say which of those it is. Queued as one line so no other
+        // append can split the pair.
+        let line = format!(
+            "{{\"requires_format\":{}}}\n{}",
+            wire::FORMAT,
+            wire::restricted(freed, results, notice)
+        );
+        drop(to.send(LogRequest::Line(line.into())));
     }
 
     /// Records what the request behind the answer just written carried.

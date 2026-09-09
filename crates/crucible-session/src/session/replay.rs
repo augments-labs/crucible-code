@@ -317,6 +317,29 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
             continue;
         }
 
+        // Results cleared because the vendor that produced them restricts
+        // where they may be sent. The same shape as a pruning and a different
+        // rule: every named result is cleared whatever its size, because a
+        // small restricted result is as restricted as a large one, and the
+        // sentence put in its place is the one the run wrote rather than one
+        // about making room.
+        if let Some((results, notice)) = whole.and_then(wire::restriction) {
+            for message in transcript.messages() {
+                if let Message::ToolResults(answers) = message {
+                    for answer in answers {
+                        if results.contains(&answer.id) {
+                            pruned.keep(answer.id.clone(), answer.output.text().to_owned());
+                        }
+                    }
+                }
+            }
+
+            transcript.clear_tool_outputs(&results, &notice);
+            calibration = None;
+            through += read as u64;
+            continue;
+        }
+
         // What the request behind the answer above carried. Kept for now and
         // dropped by the next line of any other kind, since what makes it
         // usable is being the last thing written.
@@ -507,13 +530,16 @@ pub(super) struct Replayed {
     pub(super) settled_results: Vec<results::StoredResult>,
 }
 
-/// What results said before a pruning cleared them.
+/// What results said before a clearing took them away.
 ///
-/// A pruning takes text out of the transcript because the model stopped being
-/// sent it. The reader never stopped being shown it — the rows went down when
-/// the call answered and are still what the session looks like — so a resumed
-/// screen drawn from the transcript alone shows a reader a placeholder where
-/// they remember an answer.
+/// A clearing takes text out of the transcript because the model stopped being
+/// sent it — to make room, or because the vendor that produced it restricts
+/// where it may go. The reader never stopped being shown it — the rows went
+/// down when the call answered and are still what the session looks like — so
+/// a resumed screen drawn from the transcript alone shows a reader a
+/// placeholder where they remember an answer. A restricted result is the
+/// sharper case of the same thing: the term is about another vendor's model,
+/// not about the person whose session it is.
 ///
 /// Beside the transcript rather than inside it, and this is the whole of why
 /// the type exists. There is one transcript, it is the pruned one, and it is
@@ -522,7 +548,7 @@ pub(super) struct Replayed {
 /// argument away from re-sending what a session was told to stop sending.
 ///
 /// Keyed by the id a result shares with the call it answered, which is what a
-/// pruning line names and what the walk has in hand at the row it is drawing.
+/// clearing line names and what the walk has in hand at the row it is drawing.
 #[derive(Default)]
 pub struct Pruned(HashMap<ToolId, String>);
 

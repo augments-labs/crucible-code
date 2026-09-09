@@ -47,7 +47,7 @@ jobs:
       # Blocking CI already checked dependency policy and performance before
       # this commit reached main.
       - uses: ./.github/actions/enforcing-sandbox
-      - run: scripts/check.sh
+      - run: scripts/sh/check.sh
         env:
           CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX: 1
 
@@ -66,7 +66,7 @@ jobs:
       - name: Stage release metadata
         run: |
           mkdir release-metadata
-          cp NOTES.md scripts/install.sh scripts/uninstall.sh release-metadata/
+          cp NOTES.md scripts/sh/install.sh scripts/sh/uninstall.sh release-metadata/
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -172,7 +172,7 @@ jobs:
           cp ./target/${{ matrix.target }}/release/crucible "$name/"
           cp ./target/${{ matrix.target }}/release/crucible-sandbox-broker "$name/"
           cp README.md LICENSE "$name/"
-          cp scripts/install.sh scripts/uninstall.sh "$name/"
+          cp scripts/sh/install.sh scripts/sh/uninstall.sh "$name/"
           tar czf "$name.tar.gz" "$name"
           sha256sum "$name.tar.gz" | awk '{ print $1 }' > "digest-${{ matrix.stem }}"
 
@@ -235,7 +235,7 @@ jobs:
           cp ./target/${{ matrix.target }}/release/crucible${{ matrix.exe }} "$name/"
           cp ./target/${{ matrix.target }}/release/crucible-sandbox-broker${{ matrix.exe }} "$name/"
           cp README.md LICENSE "$name/"
-          cp scripts/install.sh scripts/uninstall.sh "$name/"
+          cp scripts/sh/install.sh scripts/sh/uninstall.sh "$name/"
           tar czf "$name.tar.gz" "$name"
 
           # Windows gets the bare executable beside the archive. Unpacking a
@@ -327,7 +327,7 @@ jobs:
             # FreeBSD's base tar and checksum implementations are distinct from
             # the GNU tools in the gate, so exercise archive type preflight and
             # replacement rollback in the guest that will ship the binary.
-            scripts/install-tests.sh
+            scripts/sh/install-tests.sh
 
             cargo build --release --locked --target x86_64-unknown-freebsd
 
@@ -346,7 +346,7 @@ jobs:
             mkdir -p "$name"
             cp ./target/x86_64-unknown-freebsd/release/crucible "$name/"
             cp README.md LICENSE "$name/"
-            cp scripts/install.sh scripts/uninstall.sh "$name/"
+            cp scripts/sh/install.sh scripts/sh/uninstall.sh "$name/"
             tar czf "$name.tar.gz" "$name"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -394,7 +394,7 @@ jobs:
         run: |
           archive=$(find artifact -maxdepth 1 -name 'crucible-*.tar.gz' -type f)
           digest=$(<artifact/digest-linux-x86_64)
-          scripts/smoke.sh --no-provider --checksum "$digest" "$archive"
+          scripts/sh/smoke.sh --no-provider --checksum "$digest" "$archive"
 
   # Every probe carries its own limit and exits non-zero when it is over, so a
   # build that got slower turns this job red. Red on the run, not a blocked
@@ -408,7 +408,7 @@ jobs:
   # beside the downloads than absent from them. The environment file says what
   # produced them, for whoever goes to the run to read the trend.
   # `ubuntu-latest`, and the label is the whole point: on `ubuntu-22.04` this
-  # job ran `scripts/bench.sh` for eighty-five minutes without finishing, twice,
+  # job ran `scripts/sh/bench.sh` for eighty-five minutes without finishing, twice,
   # while CI's identical invocation on `ubuntu-latest` takes under three. Same
   # script, same ripgrep, same inputs — only the image differed. Nothing here
   # diagnoses why; what it does is stop shipping a release behind a probe that
@@ -444,24 +444,25 @@ jobs:
           rm -rf rg.tar.gz "$stem"
           rg --version | head -1
 
-      - run: scripts/bench.sh > budgets.json
+      - run: mkdir -p generated/json && scripts/sh/bench.sh > generated/json/budgets.json
 
       - name: Measurement environment
         run: |
+          mkdir -p generated/txt
           {
             echo 'measurement=shared-runner-trend'
             uname -a
             rustc -vV
             rg --version | head -1
             lscpu
-          } > budget-environment.txt
+          } > generated/txt/budget-environment.txt
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-budgets
           path: |
-            budgets.json
-            budget-environment.txt
+            generated/json/budgets.json
+            generated/txt/budget-environment.txt
           if-no-files-found: error
 
   # The release is opened once, with everything attached, so there is never a

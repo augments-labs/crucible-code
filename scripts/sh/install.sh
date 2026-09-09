@@ -13,7 +13,7 @@ dry_run=0
 
 usage() {
     cat <<'USAGE'
-Usage: scripts/install.sh [--version VERSION] [--dir DIRECTORY] [--dry-run]
+Usage: scripts/sh/install.sh [--version VERSION] [--dir DIRECTORY] [--dry-run]
                           [--archive FILE --checksums FILE]
 
 Downloads and verifies a crucible release, then installs `crucible` and the

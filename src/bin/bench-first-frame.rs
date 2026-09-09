@@ -37,7 +37,7 @@ fn report(elapsed: f64) -> Result<(), io::Error> {
     io::stdout().flush()
 }
 
-/// Says why no reading could be taken, on stderr, where `scripts/bench.sh`
+/// Says why no reading could be taken, on stderr, where `scripts/sh/bench.sh`
 /// puts everything a human reads.
 fn explain(problem: &StartupError) -> Result<(), io::Error> {
     let mut line = String::new();

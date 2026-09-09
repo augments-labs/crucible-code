@@ -150,10 +150,11 @@ fn a_directory_that_could_not_be_read_is_listed_rather_than_left_out() {
 }
 
 #[test]
-fn a_short_answer_says_so_before_the_list_rather_than_after_it() {
-    // At the end of sixty-four entries the sentence has scrolled away, and an
-    // incomplete listing that reads like a complete one is how an extension
-    // ends up installed, absent, and impossible to explain.
+fn a_directory_that_was_not_read_says_that_rather_than_that_nothing_is_installed() {
+    // "no extensions in ..." about a directory holding thousands is a sentence
+    // somebody acts on by installing another one. What they have to be told is
+    // that the sweep refused the directory, and why, which is the refusal at
+    // the end.
     let sample = Sample::new("extensions-listing-many");
     for number in 0..=crucible_config::MAX_EXTENSIONS {
         sample.installed(
@@ -163,11 +164,11 @@ fn a_short_answer_says_so_before_the_list_rather_than_after_it() {
     }
 
     let said = listing(&sample.discovered(), &sample.decided(), RUNNING);
-    let short = said
-        .find("this list is short")
-        .expect("a truncated sweep says so");
 
-    assert!(short < said.find("acme.plugin0").expect("the first entry"));
+    assert!(said.contains("was not read"), "{said}");
+    assert!(!said.contains("no extensions in "), "{said}");
+    assert!(!said.contains("acme.plugin"), "{said}");
+    assert!(said.contains("1 directory could not be read:"), "{said}");
 }
 
 #[test]

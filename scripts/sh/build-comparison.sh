@@ -7,17 +7,19 @@
 # target directories, records Cargo timing reports, and publishes one JSON
 # comparison. Run it manually with:
 #
-#     scripts/build-comparison.sh BASE CANDIDATE [OUTPUT_DIRECTORY]
+#     scripts/sh/build-comparison.sh BASE CANDIDATE [OUTPUT_DIRECTORY]
 #
 # The checkout must be clean because each revision is checked out in turn. Its
 # original revision is restored even when a build fails.
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
-base=${1:?usage: scripts/build-comparison.sh BASE CANDIDATE [OUTPUT_DIRECTORY]}
-candidate=${2:?usage: scripts/build-comparison.sh BASE CANDIDATE [OUTPUT_DIRECTORY]}
-output=${3:-build-comparison}
+base=${1:?usage: scripts/sh/build-comparison.sh BASE CANDIDATE [OUTPUT_DIRECTORY]}
+candidate=${2:?usage: scripts/sh/build-comparison.sh BASE CANDIDATE [OUTPUT_DIRECTORY]}
+# A tree, not one document, so it gets a folder of its own under `generated/`
+# rather than a place among the single JSON files.
+output=${3:-generated/build-comparison}
 
 [[ -x /usr/bin/time ]] || {
     echo 'build comparison requires GNU /usr/bin/time' >&2

@@ -13,19 +13,35 @@ The version lives in exactly one place — `[workspace.package] version` in the
 root `Cargo.toml`. Every crate inherits it with `version.workspace = true`, so
 the workspace ships as one unit and there is no per-crate version to drift.
 
+## Which branch a release comes from
+
+`dev` collects the work and `main` holds what shipped, so a release is the one
+moment the two meet. A release branch is cut from `dev`, carries nothing but
+the version bump and the changelog, and opens against `main`; the tag is cut on
+`main` once that merges. `main` is then merged back into `dev`, because the
+merge commit and the bump exist on `main` first and `dev` has to keep reading
+the same version as the code it is built from.
+
+A hotfix for something already published is the one branch cut from `main`
+rather than from `dev`. It opens against `main` for the same reason a release
+does — `dev` may hold work that is not ready to ship — and is merged back the
+same way afterwards.
+
 ## Before you tag
 
-1. **`main` is green.** CI passed on the commit you intend to tag.
+1. **`dev` is green, and so is the release branch.** CI passed on the commit
+   you intend to tag. `main` is only as green as what you are about to merge
+   into it, so the reading that matters is the one on the release pull request.
 2. **Gates pass locally.**
 
    ```bash
-   scripts/check.sh
+   scripts/sh/check.sh
    ```
 
 3. **The budgets hold.** On a quiet machine:
 
    ```bash
-   scripts/bench.sh > budgets.json
+   mkdir -p generated/json && scripts/sh/bench.sh > generated/json/budgets.json
    ```
 
    Each probe carries its own limit and exits non-zero when it is over, so the
@@ -68,10 +84,10 @@ the workspace ships as one unit and there is no per-crate version to drift.
    install -Dm755 target/release/crucible "$name/crucible"
    install -Dm755 target/release/crucible-sandbox-broker "$name/crucible-sandbox-broker"
    install -Dm644 README.md LICENSE -t "$name/"
-   install -Dm755 scripts/install.sh scripts/uninstall.sh -t "$name/"
+   install -Dm755 scripts/sh/install.sh scripts/sh/uninstall.sh -t "$name/"
    tar czf "$name.tar.gz" "$name"
 
-   scripts/smoke.sh "$name.tar.gz"
+   scripts/sh/smoke.sh "$name.tar.gz"
    ```
 
    The sandbox carries the binary, the loader and the libraries the binary
@@ -84,38 +100,63 @@ the workspace ships as one unit and there is no per-crate version to drift.
    because a turn costs tokens. Set it for the release you actually cut:
 
    ```bash
-   CRUCIBLE_SMOKE_KEY=$ANTHROPIC_API_KEY scripts/smoke.sh "$name.tar.gz"
+   CRUCIBLE_SMOKE_KEY=$ANTHROPIC_API_KEY scripts/sh/smoke.sh "$name.tar.gz"
    ```
 
 ## Cutting it
 
-Nothing reaches `main` except through a pull request, and none merges until
-`CI required` is green. That aggregate covers Rust, repository, dependency and
-performance workflows, so the ruleset needs one stable status as new language
-workflows become peers. The ruleset has no bypass and therefore applies to the
-release change too.
+Nothing reaches `dev` or `main` except through a pull request, and none merges
+until `CI required` is green. That aggregate covers Rust, repository,
+dependency and performance workflows, so the ruleset needs one stable status as
+new language workflows become peers. The ruleset has no bypass and therefore
+applies to the release change too.
 
 ```bash
 # 1. Bump the single version, and update the changelog in the same commit.
+git switch dev && git pull
 git switch -c release/v0.0.1
 $EDITOR Cargo.toml CHANGELOG.md
 cargo build                     # refresh Cargo.lock with the new version
 
-scripts/check.sh
+scripts/sh/check.sh
 
 git commit -am "chore(release): 0.0.1"
 git push -u origin release/v0.0.1
 
-# 2. Open it, let CI answer, merge it.
+# 2. Open it against the released branch, let CI answer, merge it.
 gh pr create --base main --title "release: 0.0.1"
 gh pr checks --watch
-gh pr merge --merge --delete-branch
+gh pr merge --merge
 
 # 3. Tag the commit CI just proved green.
 git switch main && git pull
 git tag -a v0.0.1 -m "crucible 0.0.1"
 git push origin v0.0.1
+
+# 4. Give the bump back to the branch the next change is written on.
+git switch dev && git pull
+git switch -c chore/merge-v0.0.1
+git merge main
+git push -u origin chore/merge-v0.0.1
+
+gh pr create --base dev --title "chore: merge 0.0.1 back into dev"
+gh pr checks --watch
+gh pr merge --merge
 ```
+
+Step 4 carries the bump over a branch rather than opening `main` against `dev`
+directly, because `dev` may have moved while the release was in flight. A pull
+request whose head is `main` would then be behind `dev`, and the ruleset that
+requires a branch to be up to date offers only one repair — pushing `dev` into
+`main` — which the same ruleset refuses. A branch cut from `dev` starts up to
+date: it fast-forwards when `dev` did not move and records a real merge when it
+did.
+
+Step 4 is not bookkeeping either. Until it runs, `dev` builds a binary that
+reports the previous version and a changelog with no entry for the release that
+just went out, and the next release branch cut from it would bump from the
+wrong number. A release branch cut before the merge back is itself behind
+`main` and cannot merge, so skipping it once blocks the release after it.
 
 The opening screen draws the version, and the whole-screen pictures mask it out
 rather than hold it — one `#` per character, so the row keeps its width. A bump
@@ -194,7 +235,7 @@ executing whatever the moving `sh.rustup.rs` endpoint serves that day.
    artifact no earlier step was allowed to trust:
 
    ```bash
-   scripts/smoke.sh v0.0.1
+   scripts/sh/smoke.sh v0.0.1
    ```
 
    Given a tag rather than a file it downloads the release, checks the tarball
@@ -247,7 +288,8 @@ executing whatever the moving `sh.rustup.rs` endpoint serves that day.
    somebody is running. That is why the schema's own description says the format
    is unstable for the whole 0.x line — an editor is a hint, and the program is
    the authority.
-3. Open a fresh `Unreleased` section in the changelog.
+3. Open a fresh `Unreleased` section in the changelog, on `dev`, once the
+   merge back has landed.
 4. If a **published** release is broken, do not delete or move the tag. Fix
    forward with a patch release: a tag that changes meaning breaks every
    checksum anyone recorded against it. The `release tags` ruleset refuses the
@@ -278,7 +320,8 @@ executing whatever the moving `sh.rustup.rs` endpoint serves that day.
    number on infrastructure that was never the code's fault only leaves the next
    reader comparing two versions that carry identical code. Confirm it shipped
    nothing — `gh release view v<version>` answering `release not found` is the
-   check — then repair what broke on `main`, relax the `release tags` ruleset,
+   check — then land the repair on `main` the way a hotfix does, relax the
+   `release tags` ruleset,
    move the annotated tag onto the commit carrying the repair, and put the
    ruleset back before anything else. Restoring it is part of the procedure,
    not a follow-up.
