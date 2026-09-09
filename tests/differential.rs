@@ -17,7 +17,13 @@
 //! - the probe's own temporary directory, which is new every run, becomes
 //!   `<home>`, `<workspace>` or `<root>`;
 //! - the separators inside a path that begins at one of those, which are the
-//!   platform's rather than the answer's, become `/`.
+//!   platform's rather than the answer's, become `/`;
+//! - the stable prefix a caching cell sends, which is one fixed constant long
+//!   enough to cross every reviewed threshold, becomes `<stable prefix>`. It is
+//!   the one substitution that stands for a value which does not vary: it
+//!   stands for a value too large to read, and a request that truncated,
+//!   reordered or split it would no longer match it and would be rendered
+//!   whole.
 //!
 //! Nothing else is normalized. Ordering, error text, absent fields and the
 //! exact wording of a message are the answer, and a probe that hid them would
@@ -35,9 +41,12 @@ use crucible_config::{Extensions, HOME, Home, Settings};
 use crucible_core::{Answered, Fetch, Put, Search};
 use crucible_core::{
     Cancel, Credential, CredentialError, CredentialScopeId, DescribeTool, Host, Message, Outgoing,
-    Page, Provider, Question, Request, RequestPurpose, SearchResponse, SourceError, StopReason,
-    ToolArgs, ToolCall, ToolId, ToolOutput, ToolProvenance, ToolResult, ToolSchema, Transcript,
-    Workspace,
+    Page, PromptCacheFingerprint, PromptCacheIdentity, PromptCacheKey, PromptCacheMechanism,
+    PromptCacheMechanisms, PromptCachePlan, PromptCachePolicy, PromptCacheProjection,
+    PromptCacheRequest, PromptCacheRetention, PromptCacheScopeDigest, PromptCacheSelected,
+    PromptCacheSelection, Provider, ProviderAttemptId, Question, Request, RequestPurpose,
+    SearchResponse, SourceError, StopReason, ToolArgs, ToolCall, ToolId, ToolOutput,
+    ToolProvenance, ToolResult, ToolSchema, Transcript, Workspace,
 };
 use crucible_provider::{Anthropic, Google, Moonshot, OpenAi, Response, Transport, TransportError};
 use crucible_tools::{
@@ -865,6 +874,174 @@ fn wired(
     rendered
 }
 
+/// The stable prefix every caching cell sends.
+///
+/// Sized from the reviewed thresholds rather than by eye. The lowest minimum a
+/// provider here declares is 257 tokens and the highest is 4096, and the
+/// projection estimates one token to four bytes, so a shorter prefix would
+/// leave the strictest of them selecting nothing — and a cell that selected
+/// nothing would freeze the same request as one that never asked to cache,
+/// while reading as though it had proved something.
+fn prefix() -> String {
+    "You are a probe. Answer nothing, and keep answering nothing. ".repeat(300)
+}
+
+/// The same conversation one exchange further on.
+///
+/// A turn projects its own plan from the request it is about to send, so the
+/// second request is never the first one's plan sent again. Growing the
+/// transcript moves the last stable message, and where the cache marker lands
+/// once it has moved is the part a restructuring silently changes.
+fn continued() -> Transcript {
+    let mut transcript = spoken();
+    transcript
+        .push(Message::Agent {
+            text: "The other caller reads it in the runner.".into(),
+            calls: Vec::new(),
+            stop: Some(StopReason::Yielded),
+            continuation: None,
+        })
+        .expect("a second answer");
+    transcript
+        .push(Message::User {
+            text: "rename that one too".into(),
+            attachments: Box::new([]),
+        })
+        .expect("a third prompt");
+    transcript
+}
+
+/// The attempt identity every caching cell carries.
+///
+/// Read from a fixed spelling rather than minted, because a fresh one every run
+/// would differ between two correct runs and there is nothing here to derive a
+/// stable one from.
+const ATTEMPT: &str = "01900000-0000-7000-8000-000000000001";
+
+/// Renders what one provider puts on the wire across two turns of one cached
+/// conversation, under the policy a caller chose.
+///
+/// The plan is built the way a turn builds one: projected from the request that
+/// is about to be sent. Both the encoded request and the provider's own account
+/// of what it encoded are rendered, because they can disagree — a vendor that
+/// supports no marker answers with an unchanged body, and only its verdict says
+/// whether that body was a refusal or a mechanism that needs no field.
+fn caching(
+    cell: &str,
+    model: &str,
+    policy: PromptCachePolicy,
+    build: impl FnOnce(Box<dyn Transport>) -> Box<dyn Provider>,
+) -> String {
+    let recorder = Recorder::default();
+    let provider = build(Box::new(recorder.clone()));
+    let capabilities = provider.prompt_cache_capabilities(model);
+    let tools = offered();
+    let system = prefix();
+    let attempt = ProviderAttemptId::parse(ATTEMPT).expect("a canonical attempt identity");
+    let redactions = {
+        let mut outgoing = Outgoing::new();
+        outgoing.protect(KEY);
+        outgoing.redactions()
+    };
+
+    let mut rendered = String::new();
+    for (turn, (label, transcript, fingerprint)) in [
+        ("first turn", spoken(), [0x11; 32]),
+        ("second turn", continued(), [0x22; 32]),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let projection = PromptCacheProjection::inspect(&Request {
+            purpose: RequestPurpose::Turn,
+            model,
+            transcript: &transcript,
+            tools: &tools,
+            max_tokens: 4096,
+            system: Some(&system),
+            effort: None,
+            attached: &[],
+            prompt_cache: None,
+        })
+        .expect("a projection of the request about to be sent");
+        let plan = PromptCachePlan::new(&projection, PromptCacheFingerprint::new(fingerprint));
+        let selection = PromptCacheSelection::prepare(policy, &capabilities, &plan, false)
+            .expect("a selection under a policy with no conflict");
+        assert!(
+            selection.selected().is_some(),
+            "{cell} {label} selected no mechanism ({:?}), and a cell that \
+             selects none freezes the same request as one that never asked to \
+             cache at all",
+            selection.eligibility()
+        );
+
+        let cache = PromptCacheRequest {
+            attempt,
+            policy,
+            capabilities: &capabilities,
+            plan: &plan,
+            identity: PromptCacheIdentity::new(
+                PromptCacheScopeDigest::new([0x33; 32]),
+                PromptCacheFingerprint::new(fingerprint),
+                "differential-probe-request-v1",
+            ),
+            selection,
+            routing_key: Some(PromptCacheKey::from_digest([0x44; 32], 64)),
+            resource: None,
+        };
+        let request = Request {
+            purpose: RequestPurpose::Turn,
+            model,
+            transcript: &transcript,
+            tools: &tools,
+            max_tokens: 4096,
+            system: Some(&system),
+            effort: None,
+            attached: &[],
+            prompt_cache: Some(&cache),
+        };
+        let encoded = provider.prompt_cache_encoding(&request);
+        let _ = provider.stream(request, &Cancel::new());
+
+        let posted = recorder.posted();
+        assert!(
+            posted.len() == turn + 1,
+            "{cell} had made {} requests by {label}, and a turn that sent none \
+             or several is not the one request this freezes",
+            posted.len()
+        );
+        let Some(sent) = posted.last() else {
+            panic!("{cell} recorded nothing for its {label}")
+        };
+        assert!(
+            !sent.body.contains(KEY),
+            "{cell} put the credential in the {label} request body"
+        );
+
+        let _ = writeln!(rendered, "=== {cell}, {label} ===");
+        let _ = writeln!(
+            rendered,
+            "prefix  {} bytes, an estimated {} tokens",
+            plan.stable_bytes(),
+            plan.estimated_tokens()
+        );
+        let _ = writeln!(
+            rendered,
+            "chose   {:?}",
+            selection.selected().map(PromptCacheSelected::mechanism)
+        );
+        let _ = writeln!(rendered, "encoded {encoded:?}");
+        let _ = writeln!(rendered, "url     {}", redactions.redact(&sent.url));
+        for (name, value) in &sent.headers {
+            let _ = writeln!(rendered, "header  {name}: {}", redactions.redact(value));
+        }
+        let _ = writeln!(rendered, "body");
+        rendered.push_str(&sent.body.replace(&system, "<stable prefix>"));
+        rendered.push_str("\n\n");
+    }
+    rendered
+}
+
 #[test]
 fn every_provider_answers_what_it_puts_on_the_wire() {
     let mut rendered = String::new();
@@ -944,6 +1121,54 @@ fn every_provider_answers_what_it_puts_on_the_wire() {
         "openai recap gpt-5.6-sol",
         RequestPurpose::Recap,
         "gpt-5.6-sol",
+        |transport| Box::new(OpenAi::at(OpenAi::VENDOR, Box::new(Keyed), transport)),
+    ));
+
+    // The same providers again with a cache plan attached, over two turns of
+    // one conversation. Every cell above sends none, so without these nothing
+    // freezes what a cache marker looks like, where it sits, or which of them
+    // a vendor refuses.
+    rendered.push_str(&caching(
+        "anthropic cached turn claude-opus-5",
+        "claude-opus-5",
+        PromptCachePolicy::default(),
+        |transport| Box::new(Anthropic::at(Anthropic::VENDOR, Box::new(Keyed), transport)),
+    ));
+
+    // The same vendor forced onto its other mechanism, and asked to hold the
+    // prefix for longer than a default. The boundary walk that places an
+    // explicit marker and the retention that decides whether a time to live is
+    // written are the two parts of this vendor's encoding that a default policy
+    // never reaches.
+    rendered.push_str(&caching(
+        "anthropic cached turn claude-fable-5-1 at an explicit breakpoint, held longer",
+        "claude-fable-5-1",
+        PromptCachePolicy::default()
+            .allowing(PromptCacheMechanisms::one(
+                PromptCacheMechanism::ExplicitBreakpoints,
+            ))
+            .with_retention(
+                PromptCacheRetention::extended(3_600).expect("an hour is a legal retention"),
+            ),
+        |transport| Box::new(Anthropic::at(Anthropic::VENDOR, Box::new(Keyed), transport)),
+    ));
+
+    rendered.push_str(&caching(
+        "google cached turn gemini-3.8-flash",
+        "gemini-3.8-flash",
+        PromptCachePolicy::default(),
+        |transport| Box::new(Google::at(Google::VENDOR, Box::new(Keyed), transport)),
+    ));
+    rendered.push_str(&caching(
+        "moonshot cached turn kimi-for-coding at the coding address",
+        "kimi-for-coding",
+        PromptCachePolicy::default(),
+        |transport| Box::new(Moonshot::at(Moonshot::CODING, Box::new(Keyed), transport)),
+    ));
+    rendered.push_str(&caching(
+        "openai cached turn gpt-5.6-sol",
+        "gpt-5.6-sol",
+        PromptCachePolicy::default(),
         |transport| Box::new(OpenAi::at(OpenAi::VENDOR, Box::new(Keyed), transport)),
     ));
 

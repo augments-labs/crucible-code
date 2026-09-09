@@ -103,3 +103,131 @@ header  x-api-key: <redacted>
 body
 {"model":"gpt-5.6-sol","stream":true,"max_output_tokens":4096,"store":false,"instructions":"You are a probe. Answer nothing.","input":[{"role":"user","content":"User:\nrename the field and show me what moved"},{"role":"user","content":"Assistant:\nLooking at where it is read.\nHistorical tool request probe-call-1 (grep):\n{\"pattern\":\"nearness\",\"path\":\"crates\"}"},{"role":"user","content":"Historical tool results:\nprobe-call-1:\ncrates/crucible-config/src/document.rs:41\n"},{"role":"user","content":"User:\ngood, now the other caller"}],"tools":[{"type":"function","name":"grep","description":"","parameters":{"properties":{"path":{"type":"string"},"pattern":{"type":"string"}},"required":["pattern"],"type":"object"},"strict":false},{"type":"function","name":"write","description":"","parameters":{"properties":{"path":{"type":"string"},"text":{"type":"string"}},"required":["path","text"],"type":"object"},"strict":false}]}
 
+=== anthropic cached turn claude-opus-5, first turn ===
+prefix  18898 bytes, an estimated 4725 tokens
+chose   Some(AutomaticPrefix)
+encoded AutomaticHintEncoded
+url     https://api.anthropic.com/v1/messages
+header  content-type: application/json
+header  anthropic-version: 2023-06-01
+header  accept: text/event-stream
+header  authorization: Bearer <redacted>
+header  x-api-key: <redacted>
+body
+{"model":"claude-opus-5","max_tokens":4096,"stream":true,"cache_control":{"type":"ephemeral"},"messages":[{"role":"user","content":"rename the field and show me what moved"},{"role":"assistant","content":[{"type":"text","text":"Looking at where it is read."},{"type":"tool_use","id":"probe-call-1","name":"grep","input":{"path":"crates","pattern":"nearness"}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"probe-call-1","content":"crates/crucible-config/src/document.rs:41"}]},{"role":"user","content":"good, now the other caller"}],"system":"<stable prefix>","tools":[{"name":"grep","description":"","input_schema":{"properties":{"path":{"type":"string"},"pattern":{"type":"string"}},"required":["pattern"],"type":"object"}},{"name":"write","description":"","input_schema":{"properties":{"path":{"type":"string"},"text":{"type":"string"}},"required":["path","text"],"type":"object"}}]}
+
+=== anthropic cached turn claude-opus-5, second turn ===
+prefix  18982 bytes, an estimated 4746 tokens
+chose   Some(AutomaticPrefix)
+encoded AutomaticHintEncoded
+url     https://api.anthropic.com/v1/messages
+header  content-type: application/json
+header  anthropic-version: 2023-06-01
+header  accept: text/event-stream
+header  authorization: Bearer <redacted>
+header  x-api-key: <redacted>
+body
+{"model":"claude-opus-5","max_tokens":4096,"stream":true,"cache_control":{"type":"ephemeral"},"messages":[{"role":"user","content":"rename the field and show me what moved"},{"role":"assistant","content":[{"type":"text","text":"Looking at where it is read."},{"type":"tool_use","id":"probe-call-1","name":"grep","input":{"path":"crates","pattern":"nearness"}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"probe-call-1","content":"crates/crucible-config/src/document.rs:41"}]},{"role":"user","content":"good, now the other caller"},{"role":"assistant","content":[{"type":"text","text":"The other caller reads it in the runner."}]},{"role":"user","content":"rename that one too"}],"system":"<stable prefix>","tools":[{"name":"grep","description":"","input_schema":{"properties":{"path":{"type":"string"},"pattern":{"type":"string"}},"required":["pattern"],"type":"object"}},{"name":"write","description":"","input_schema":{"properties":{"path":{"type":"string"},"text":{"type":"string"}},"required":["path","text"],"type":"object"}}]}
+
+=== anthropic cached turn claude-fable-5-1 at an explicit breakpoint, held longer, first turn ===
+prefix  18898 bytes, an estimated 4725 tokens
+chose   Some(ExplicitBreakpoints)
+encoded BreakpointsEncoded(1)
+url     https://api.anthropic.com/v1/messages
+header  content-type: application/json
+header  anthropic-version: 2023-06-01
+header  accept: text/event-stream
+header  anthropic-beta: thinking-binding-controls-2026-08-01,mid-conversation-output-config-2026-07-01
+header  authorization: Bearer <redacted>
+header  x-api-key: <redacted>
+body
+{"model":"claude-fable-5-1","max_tokens":4096,"stream":true,"thinking":{"type":"adaptive","block_binding":{"prefix_mismatch_behavior":"drop_block"}},"messages":[{"role":"user","content":"rename the field and show me what moved"},{"role":"user","content":"Assistant:\nLooking at where it is read.\nHistorical tool request probe-call-1 (grep):\n{\"pattern\":\"nearness\",\"path\":\"crates\"}"},{"role":"user","content":[{"type":"text","text":"Historical tool results:\nprobe-call-1:\ncrates/crucible-config/src/document.rs:41\n","cache_control":{"type":"ephemeral","ttl":"1h"}}]},{"role":"user","content":"good, now the other caller"}],"system":"<stable prefix>","tools":[{"name":"grep","description":"","input_schema":{"properties":{"path":{"type":"string"},"pattern":{"type":"string"}},"required":["pattern"],"type":"object"}},{"name":"write","description":"","input_schema":{"properties":{"path":{"type":"string"},"text":{"type":"string"}},"required":["path","text"],"type":"object"}}]}
+
+=== anthropic cached turn claude-fable-5-1 at an explicit breakpoint, held longer, second turn ===
+prefix  18982 bytes, an estimated 4746 tokens
+chose   Some(ExplicitBreakpoints)
+encoded BreakpointsEncoded(1)
+url     https://api.anthropic.com/v1/messages
+header  content-type: application/json
+header  anthropic-version: 2023-06-01
+header  accept: text/event-stream
+header  anthropic-beta: thinking-binding-controls-2026-08-01,mid-conversation-output-config-2026-07-01
+header  authorization: Bearer <redacted>
+header  x-api-key: <redacted>
+body
+{"model":"claude-fable-5-1","max_tokens":4096,"stream":true,"thinking":{"type":"adaptive","block_binding":{"prefix_mismatch_behavior":"drop_block"}},"messages":[{"role":"user","content":"rename the field and show me what moved"},{"role":"user","content":"Assistant:\nLooking at where it is read.\nHistorical tool request probe-call-1 (grep):\n{\"pattern\":\"nearness\",\"path\":\"crates\"}"},{"role":"user","content":"Historical tool results:\nprobe-call-1:\ncrates/crucible-config/src/document.rs:41\n"},{"role":"user","content":"good, now the other caller"},{"role":"user","content":[{"type":"text","text":"Assistant:\nThe other caller reads it in the runner.","cache_control":{"type":"ephemeral","ttl":"1h"}}]},{"role":"user","content":"rename that one too"}],"system":"<stable prefix>","tools":[{"name":"grep","description":"","input_schema":{"properties":{"path":{"type":"string"},"pattern":{"type":"string"}},"required":["pattern"],"type":"object"}},{"name":"write","description":"","input_schema":{"properties":{"path":{"type":"string"},"text":{"type":"string"}},"required":["path","text"],"type":"object"}}]}
+
+=== google cached turn gemini-3.8-flash, first turn ===
+prefix  18898 bytes, an estimated 4725 tokens
+chose   Some(AutomaticPrefix)
+encoded NoExtraControlEncoded
+url     https://generativelanguage.googleapis.com/v1beta/interactions?alt=sse
+header  content-type: application/json
+header  accept: text/event-stream
+header  authorization: Bearer <redacted>
+header  x-api-key: <redacted>
+body
+{"model":"gemini-3.8-flash","stream":true,"store":false,"system_instruction":"<stable prefix>","generation_config":{"max_output_tokens":4096},"input":[{"type":"user_input","content":[{"type":"text","text":"rename the field and show me what moved"}]},{"type":"user_input","content":[{"type":"text","text":"Assistant:\nLooking at where it is read.\nHistorical tool request probe-call-1 (grep):\n{\"pattern\":\"nearness\",\"path\":\"crates\"}"}]},{"type":"user_input","content":[{"type":"text","text":"Historical tool results:\nprobe-call-1:\ncrates/crucible-config/src/document.rs:41\n"}]},{"type":"user_input","content":[{"type":"text","text":"good, now the other caller"}]}],"tools":[{"type":"function","name":"grep","description":"","parameters":{"properties":{"path":{"type":"string"},"pattern":{"type":"string"}},"required":["pattern"],"type":"object"}},{"type":"function","name":"write","description":"","parameters":{"properties":{"path":{"type":"string"},"text":{"type":"string"}},"required":["path","text"],"type":"object"}}]}
+
+=== google cached turn gemini-3.8-flash, second turn ===
+prefix  18982 bytes, an estimated 4746 tokens
+chose   Some(AutomaticPrefix)
+encoded NoExtraControlEncoded
+url     https://generativelanguage.googleapis.com/v1beta/interactions?alt=sse
+header  content-type: application/json
+header  accept: text/event-stream
+header  authorization: Bearer <redacted>
+header  x-api-key: <redacted>
+body
+{"model":"gemini-3.8-flash","stream":true,"store":false,"system_instruction":"<stable prefix>","generation_config":{"max_output_tokens":4096},"input":[{"type":"user_input","content":[{"type":"text","text":"rename the field and show me what moved"}]},{"type":"user_input","content":[{"type":"text","text":"Assistant:\nLooking at where it is read.\nHistorical tool request probe-call-1 (grep):\n{\"pattern\":\"nearness\",\"path\":\"crates\"}"}]},{"type":"user_input","content":[{"type":"text","text":"Historical tool results:\nprobe-call-1:\ncrates/crucible-config/src/document.rs:41\n"}]},{"type":"user_input","content":[{"type":"text","text":"good, now the other caller"}]},{"type":"user_input","content":[{"type":"text","text":"Assistant:\nThe other caller reads it in the runner."}]},{"type":"user_input","content":[{"type":"text","text":"rename that one too"}]}],"tools":[{"type":"function","name":"grep","description":"","parameters":{"properties":{"path":{"type":"string"},"pattern":{"type":"string"}},"required":["pattern"],"type":"object"}},{"type":"function","name":"write","description":"","parameters":{"properties":{"path":{"type":"string"},"text":{"type":"string"}},"required":["path","text"],"type":"object"}}]}
+
+=== moonshot cached turn kimi-for-coding at the coding address, first turn ===
+prefix  18898 bytes, an estimated 4725 tokens
+chose   Some(AutomaticPrefix)
+encoded AutomaticHintEncoded
+url     https://api.kimi.com/coding/v1/chat/completions
+header  content-type: application/json
+header  accept: text/event-stream
+header  user-agent: crucible/<version>
+header  authorization: Bearer <redacted>
+header  x-api-key: <redacted>
+body
+{"model":"kimi-for-coding","max_tokens":4096,"stream":true,"stream_options":{"include_usage":true},"prompt_cache_key":"4444444444444444444444444444444444444444444444444444444444444444","messages":[{"role":"system","content":"<stable prefix>"},{"role":"user","content":"rename the field and show me what moved"},{"role":"assistant","content":"Looking at where it is read.","tool_calls":[{"id":"probe-call-1","type":"function","function":{"name":"grep","arguments":"{\"pattern\":\"nearness\",\"path\":\"crates\"}"}}]},{"role":"tool","tool_call_id":"probe-call-1","content":"crates/crucible-config/src/document.rs:41"},{"role":"user","content":"good, now the other caller"}],"tools":[{"type":"function","function":{"name":"grep","description":"","parameters":{"properties":{"path":{"type":"string"},"pattern":{"type":"string"}},"required":["pattern"],"type":"object"}}},{"type":"function","function":{"name":"write","description":"","parameters":{"properties":{"path":{"type":"string"},"text":{"type":"string"}},"required":["path","text"],"type":"object"}}}]}
+
+=== moonshot cached turn kimi-for-coding at the coding address, second turn ===
+prefix  18982 bytes, an estimated 4746 tokens
+chose   Some(AutomaticPrefix)
+encoded AutomaticHintEncoded
+url     https://api.kimi.com/coding/v1/chat/completions
+header  content-type: application/json
+header  accept: text/event-stream
+header  user-agent: crucible/<version>
+header  authorization: Bearer <redacted>
+header  x-api-key: <redacted>
+body
+{"model":"kimi-for-coding","max_tokens":4096,"stream":true,"stream_options":{"include_usage":true},"prompt_cache_key":"4444444444444444444444444444444444444444444444444444444444444444","messages":[{"role":"system","content":"<stable prefix>"},{"role":"user","content":"rename the field and show me what moved"},{"role":"assistant","content":"Looking at where it is read.","tool_calls":[{"id":"probe-call-1","type":"function","function":{"name":"grep","arguments":"{\"pattern\":\"nearness\",\"path\":\"crates\"}"}}]},{"role":"tool","tool_call_id":"probe-call-1","content":"crates/crucible-config/src/document.rs:41"},{"role":"user","content":"good, now the other caller"},{"role":"assistant","content":"The other caller reads it in the runner."},{"role":"user","content":"rename that one too"}],"tools":[{"type":"function","function":{"name":"grep","description":"","parameters":{"properties":{"path":{"type":"string"},"pattern":{"type":"string"}},"required":["pattern"],"type":"object"}}},{"type":"function","function":{"name":"write","description":"","parameters":{"properties":{"path":{"type":"string"},"text":{"type":"string"}},"required":["path","text"],"type":"object"}}}]}
+
+=== openai cached turn gpt-5.6-sol, first turn ===
+prefix  18898 bytes, an estimated 4725 tokens
+chose   Some(AutomaticPrefix)
+encoded AutomaticHintEncoded
+url     https://api.openai.com/v1/responses
+header  content-type: application/json
+header  accept: text/event-stream
+header  authorization: Bearer <redacted>
+header  x-api-key: <redacted>
+body
+{"model":"gpt-5.6-sol","stream":true,"max_output_tokens":4096,"store":false,"prompt_cache_key":"4444444444444444444444444444444444444444444444444444444444444444","instructions":"<stable prefix>","input":[{"role":"user","content":"rename the field and show me what moved"},{"role":"assistant","content":"Looking at where it is read."},{"type":"function_call","call_id":"probe-call-1","name":"grep","arguments":"{\"pattern\":\"nearness\",\"path\":\"crates\"}"},{"type":"function_call_output","call_id":"probe-call-1","output":"crates/crucible-config/src/document.rs:41"},{"role":"user","content":"good, now the other caller"}],"tools":[{"type":"function","name":"grep","description":"","parameters":{"properties":{"path":{"type":"string"},"pattern":{"type":"string"}},"required":["pattern"],"type":"object"},"strict":false},{"type":"function","name":"write","description":"","parameters":{"properties":{"path":{"type":"string"},"text":{"type":"string"}},"required":["path","text"],"type":"object"},"strict":false}]}
+
+=== openai cached turn gpt-5.6-sol, second turn ===
+prefix  18982 bytes, an estimated 4746 tokens
+chose   Some(AutomaticPrefix)
+encoded AutomaticHintEncoded
+url     https://api.openai.com/v1/responses
+header  content-type: application/json
+header  accept: text/event-stream
+header  authorization: Bearer <redacted>
+header  x-api-key: <redacted>
+body
+{"model":"gpt-5.6-sol","stream":true,"max_output_tokens":4096,"store":false,"prompt_cache_key":"4444444444444444444444444444444444444444444444444444444444444444","instructions":"<stable prefix>","input":[{"role":"user","content":"rename the field and show me what moved"},{"role":"assistant","content":"Looking at where it is read."},{"type":"function_call","call_id":"probe-call-1","name":"grep","arguments":"{\"pattern\":\"nearness\",\"path\":\"crates\"}"},{"type":"function_call_output","call_id":"probe-call-1","output":"crates/crucible-config/src/document.rs:41"},{"role":"user","content":"good, now the other caller"},{"role":"assistant","content":"The other caller reads it in the runner."},{"role":"user","content":"rename that one too"}],"tools":[{"type":"function","name":"grep","description":"","parameters":{"properties":{"path":{"type":"string"},"pattern":{"type":"string"}},"required":["pattern"],"type":"object"},"strict":false},{"type":"function","name":"write","description":"","parameters":{"properties":{"path":{"type":"string"},"text":{"type":"string"}},"required":["path","text"],"type":"object"},"strict":false}]}
+

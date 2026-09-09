@@ -819,7 +819,7 @@
     {
       "id": "CASE-PRESERVED-PROVIDER-MESSAGES",
       "family": "preserved-surfaces",
-      "obligation": "Every provider puts the same bytes on the wire for the same conversation: the same address, the same headers, and a body whose keys, order and shape have not moved.",
+      "obligation": "Every provider puts the same bytes on the wire for the same conversation: the same address, the same headers, and a body whose keys, order and shape have not moved. With a cache plan attached it also puts the same marker in the same place, over two turns, and gives the same account of what it encoded.",
       "package": "crucible-code",
       "target": {
         "kind": "test",
@@ -827,7 +827,7 @@
       },
       "case": "every_provider_answers_what_it_puts_on_the_wire",
       "source": "tests/differential.rs",
-      "body_sha256": "412edb97b7deed3ddcc15a6df0dbd82c66d6c8a9bee6d92cae00f4e2ce0b9956",
+      "body_sha256": "016bdbd9eb0c2f836dc8079c38da6f4ad5c5cabd4dc211df3a103b91f0c54155",
       "platforms": [
         "linux",
         "macos",
