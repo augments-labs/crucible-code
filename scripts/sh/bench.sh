@@ -4,20 +4,20 @@
 # `CI required`, and RELEASING.md blocks a tag on a quiet-machine run of it —
 # see that document for why those two readings are not the same claim.
 #
-#     scripts/bench.sh              every budget
-#     scripts/bench.sh startup      first frame/input, fast exits, resume preview
-#     scripts/bench.sh tools        deterministic filesystem and process tools
-#     scripts/bench.sh mem          peak and retained RSS after a long session
-#     scripts/bench.sh grep         search, against the rg binary
-#     scripts/bench.sh stream       rendered frames under a token burst
-#     scripts/bench.sh live         turn-band redraws while a command prints
+#     scripts/sh/bench.sh              every budget
+#     scripts/sh/bench.sh startup      first frame/input, fast exits, resume preview
+#     scripts/sh/bench.sh tools        deterministic filesystem and process tools
+#     scripts/sh/bench.sh mem          peak and retained RSS after a long session
+#     scripts/sh/bench.sh grep         search, against the rg binary
+#     scripts/sh/bench.sh stream       rendered frames under a token burst
+#     scripts/sh/bench.sh live         turn-band redraws while a command prints
 #
 # Output is split by stream, so one run serves a human and a pipeline at once:
 #
 #     stdout   a single JSON document — what CI stores and diffs
 #     stderr   progress, and a readable summary
 #
-# `scripts/bench.sh grep > budgets.json` therefore leaves the summary on the
+# `scripts/sh/bench.sh grep > budgets.json` therefore leaves the summary on the
 # terminal and the record in the file.
 #
 # Each budget is owned by one probe under `src/bin/`, which takes its own
@@ -43,7 +43,7 @@
 # a budget, it is a wish.
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 # mode | probe under src/bin/ | the budget it owns
 readonly BUDGETS=(

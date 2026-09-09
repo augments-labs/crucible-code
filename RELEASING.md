@@ -35,13 +35,13 @@ same way afterwards.
 2. **Gates pass locally.**
 
    ```bash
-   scripts/check.sh
+   scripts/sh/check.sh
    ```
 
 3. **The budgets hold.** On a quiet machine:
 
    ```bash
-   scripts/bench.sh > budgets.json
+   scripts/sh/bench.sh > budgets.json
    ```
 
    Each probe carries its own limit and exits non-zero when it is over, so the
@@ -84,10 +84,10 @@ same way afterwards.
    install -Dm755 target/release/crucible "$name/crucible"
    install -Dm755 target/release/crucible-sandbox-broker "$name/crucible-sandbox-broker"
    install -Dm644 README.md LICENSE -t "$name/"
-   install -Dm755 scripts/install.sh scripts/uninstall.sh -t "$name/"
+   install -Dm755 scripts/sh/install.sh scripts/sh/uninstall.sh -t "$name/"
    tar czf "$name.tar.gz" "$name"
 
-   scripts/smoke.sh "$name.tar.gz"
+   scripts/sh/smoke.sh "$name.tar.gz"
    ```
 
    The sandbox carries the binary, the loader and the libraries the binary
@@ -100,7 +100,7 @@ same way afterwards.
    because a turn costs tokens. Set it for the release you actually cut:
 
    ```bash
-   CRUCIBLE_SMOKE_KEY=$ANTHROPIC_API_KEY scripts/smoke.sh "$name.tar.gz"
+   CRUCIBLE_SMOKE_KEY=$ANTHROPIC_API_KEY scripts/sh/smoke.sh "$name.tar.gz"
    ```
 
 ## Cutting it
@@ -118,7 +118,7 @@ git switch -c release/v0.0.1
 $EDITOR Cargo.toml CHANGELOG.md
 cargo build                     # refresh Cargo.lock with the new version
 
-scripts/check.sh
+scripts/sh/check.sh
 
 git commit -am "chore(release): 0.0.1"
 git push -u origin release/v0.0.1
@@ -235,7 +235,7 @@ executing whatever the moving `sh.rustup.rs` endpoint serves that day.
    artifact no earlier step was allowed to trust:
 
    ```bash
-   scripts/smoke.sh v0.0.1
+   scripts/sh/smoke.sh v0.0.1
    ```
 
    Given a tag rather than a file it downloads the release, checks the tarball

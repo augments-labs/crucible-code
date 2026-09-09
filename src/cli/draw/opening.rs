@@ -464,7 +464,7 @@ mod tests {
 
     #[test]
     fn a_redirected_run_is_drawn_the_same_component_without_the_frame_sequences() {
-        // What `scripts/bench.sh` reads, and what somebody piping a session into
+        // What `scripts/sh/bench.sh` reads, and what somebody piping a session into
         // a file keeps. The rows are the same rows; what a pipe does not get is
         // the carriage returns and the erase that only mean anything on a
         // screen.

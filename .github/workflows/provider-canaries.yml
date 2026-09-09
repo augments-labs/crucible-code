@@ -97,7 +97,7 @@ jobs:
           }
           JSON
 
-          scripts/provider-canary.py \
+          scripts/python/provider-canary.py \
             --binary "$PWD/canary/crucible" \
             --model "$MODEL" \
             --home "$root/home" \

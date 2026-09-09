@@ -54,17 +54,23 @@ can read the same guide; remaining skills live under
 ## Local gates
 
 ```bash
-scripts/check.sh
+scripts/sh/check.sh
 ```
 
 This compatibility command runs all deterministic checks expected on a normal
 contributor machine. Its current children can also be run independently:
 
 ```bash
-scripts/rust-checks.sh     # formatting, package isolation, clippy, tests and rustdoc
-scripts/repo-checks.sh     # cross-file repository policy and crate layering
-scripts/python-checks.sh   # canary and campaign harness fixtures and reports
+scripts/sh/rust-checks.sh     # formatting, package isolation, clippy, tests and rustdoc
+scripts/sh/repo-checks.sh     # cross-file repository policy and crate layering
+scripts/sh/python-checks.sh   # canary and campaign harness fixtures and reports
 ```
+
+A script lives under `scripts/sh` if a shell runs it and `scripts/python` if
+python3 does, so looking for one language means opening one directory. A new
+script goes in the directory for its language; `scripts/sh/repo-checks.sh`
+fails on one left anywhere else, because a file outside those two directories
+is one no gate compiles or runs.
 
 The Rust tests include the whole-screen pseudo-terminal suite. Run that suite on
 its own with:
@@ -117,7 +123,7 @@ need that tool for the ordinary local gate.
 Performance-sensitive changes must run:
 
 ```bash
-scripts/bench.sh
+scripts/sh/bench.sh
 ```
 
 The probes and thresholds are owned by that script. Use its `startup`,
@@ -128,7 +134,7 @@ as described in [`RELEASING.md`](RELEASING.md).
 Compile-time changes can also be compared without an absolute gate:
 
 ```bash
-scripts/build-comparison.sh BASE CANDIDATE build-comparison
+scripts/sh/build-comparison.sh BASE CANDIDATE build-comparison
 ```
 
 That command requires a clean checkout, checks both revisions on the same

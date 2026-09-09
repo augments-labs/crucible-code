@@ -9,7 +9,7 @@ confirmed=0
 
 usage() {
     cat <<'USAGE'
-Usage: scripts/uninstall.sh [--dir DIRECTORY] [--dry-run] [--purge --yes]
+Usage: scripts/sh/uninstall.sh [--dir DIRECTORY] [--dry-run] [--purge --yes]
 
 Removes `crucible`, its sandbox broker and its owned `cru` alias.
 Configuration, credentials and sessions are preserved unless both --purge and

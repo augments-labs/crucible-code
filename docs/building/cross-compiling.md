@@ -67,4 +67,4 @@ that build is what proves it.
 It compiles and links; it does not run. The tests for a target are run on that
 platform — CI runs them on Linux, macOS and Windows for every pull request — so
 a cross build catches a platform-specific compile error and nothing that
-happens afterwards. `scripts/check.sh` is still the gate.
+happens afterwards. `scripts/sh/check.sh` is still the gate.

@@ -7,16 +7,16 @@
 # target directories, records Cargo timing reports, and publishes one JSON
 # comparison. Run it manually with:
 #
-#     scripts/build-comparison.sh BASE CANDIDATE [OUTPUT_DIRECTORY]
+#     scripts/sh/build-comparison.sh BASE CANDIDATE [OUTPUT_DIRECTORY]
 #
 # The checkout must be clean because each revision is checked out in turn. Its
 # original revision is restored even when a build fails.
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
-base=${1:?usage: scripts/build-comparison.sh BASE CANDIDATE [OUTPUT_DIRECTORY]}
-candidate=${2:?usage: scripts/build-comparison.sh BASE CANDIDATE [OUTPUT_DIRECTORY]}
+base=${1:?usage: scripts/sh/build-comparison.sh BASE CANDIDATE [OUTPUT_DIRECTORY]}
+candidate=${2:?usage: scripts/sh/build-comparison.sh BASE CANDIDATE [OUTPUT_DIRECTORY]}
 output=${3:-build-comparison}
 
 [[ -x /usr/bin/time ]] || {

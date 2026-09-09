@@ -86,7 +86,7 @@ decision, name it. -->
 
 <!-- Paste what the gate actually returned; it must be green:
 
-    scripts/check.sh
+    scripts/sh/check.sh
 
 Then answer the question that decides the review: which test failed before
 this change, and what did it say when it failed? Paste it. "Tests pass" is not
@@ -94,7 +94,7 @@ an answer, and a new behaviour with no test that could have caught its absence
 is not proven.
 
 For a startup, rendering, search, retention or hot-allocation change, also
-paste `scripts/bench.sh` for the affected family, taken on a quiet machine.
+paste `scripts/sh/bench.sh` for the affected family, taken on a quiet machine.
 Include inconclusive and failing results; an inconclusive result is a finding,
 a fabricated one is grounds for closing.
 
@@ -128,7 +128,7 @@ remove. A PR adding one must:
   exact `=1.2.3` pin and a comment beside it saying what it supplies that
   `std` does not;
 - put it in the narrowest crate that needs it, and update the graph
-  `scripts/repo-checks.sh` enforces if that adds an internal edge;
+  `scripts/sh/repo-checks.sh` enforces if that adds an internal edge;
 - come from crates.io, and pass `deny.toml` on its own and its transitive
   licenses;
 - commit the `Cargo.lock` that `cargo build` refreshed.

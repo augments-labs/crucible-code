@@ -5,7 +5,7 @@
 set -uo pipefail
 shopt -s nullglob
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 readonly MAX_RUST_FILE_LINES=2000
 
@@ -45,14 +45,41 @@ case $scan in
         ;;
 esac
 
+section "script layout"
+# `scripts/sh` holds what a shell runs and `scripts/python` what python3 runs,
+# so a reader looking for one language opens one directory. Nothing else in the
+# tree names a script, and every reference in the repository spells the
+# language directory, so a file left at the top drops out of both gates
+# silently rather than failing.
+for script in scripts/*.sh scripts/*.py; do
+    if [[ -e $script ]]; then
+        printf '    FAIL %s belongs under scripts/sh or scripts/python\n' "$script"
+        failed=1
+    fi
+done
+for stray in $(find scripts -mindepth 2 -name '*.sh' -not -path 'scripts/sh/*'); do
+    printf '    FAIL %s is Bash outside scripts/sh\n' "$stray"
+    failed=1
+done
+for stray in $(find scripts -mindepth 2 -name '*.py' -not -path 'scripts/python/*'); do
+    printf '    FAIL %s is Python outside scripts/python\n' "$stray"
+    failed=1
+done
+for language in sh python; do
+    if [[ -z $(find "scripts/$language" -maxdepth 1 -type f -print -quit 2>/dev/null) ]]; then
+        printf '    FAIL scripts/%s holds nothing; the split it names is gone\n' "$language"
+        failed=1
+    fi
+done
+
 section "installer"
-for script in scripts/install.sh scripts/uninstall.sh scripts/install-tests.sh; do
+for script in scripts/sh/install.sh scripts/sh/uninstall.sh scripts/sh/install-tests.sh; do
     if ! bash -n "$script"; then
         printf '    FAIL %s is not valid Bash\n' "$script"
         failed=1
     fi
 done
-if ! scripts/install-tests.sh; then
+if ! scripts/sh/install-tests.sh; then
     printf '    FAIL the installer did not preserve its checksum, ownership, or rollback contract\n'
     failed=1
 fi

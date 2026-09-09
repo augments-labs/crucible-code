@@ -27,7 +27,7 @@ The Linux release workflow builds dynamically linked binaries against glibc
 that has to build from source. The already-published 0.1.6 Linux artifacts
 predate that build and need glibc 2.39; release artifacts cannot be changed in
 place. A binary from the current release workflow asks the system for nothing
-else: no certificate bundle, no runtime to install. `scripts/smoke.sh` is what
+else: no certificate bundle, no runtime to install. `scripts/sh/smoke.sh` is what
 keeps that true, by running each release in a sandbox holding the binary and its
 two libraries and nothing besides.
 
