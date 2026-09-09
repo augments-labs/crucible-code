@@ -708,8 +708,8 @@ fn the_installed_extension_sweep_answers_what_it_read_and_refused() {
     }
 
     // The ceiling, counted rather than listed. What matters about it is that a
-    // planted tree is cut off at a fixed number and says so, and sixty-five
-    // renderings of one refusal would bury that in the fixture.
+    // planted tree is refused whole and says so, rather than being answered
+    // from the part of it a sweep reached first.
     let crowded = Scratch::new("sources-crowded");
     for one in 0..=64 {
         wrote(

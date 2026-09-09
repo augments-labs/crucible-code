@@ -203,11 +203,31 @@ fn two_directories_claiming_one_identifier_keep_the_first_and_refuse_the_second(
 }
 
 #[test]
-fn more_directories_than_the_sweep_looks_at_stops_and_says_the_answer_is_short() {
-    // A directory somebody filled must cost a bounded amount of startup. What
-    // it must not do is report a short list as a complete one: an extension
-    // that is installed, absent from the list and impossible to explain is
-    // worse than being told the sweep stopped.
+fn as_many_directories_as_the_sweep_reads_are_all_read() {
+    // The boundary is the last directory read rather than the first refused
+    // one, so a machine installed right up to it keeps working.
+    let scratch = Scratch::new("extensions-full");
+    for number in 0..MAX_EXTENSIONS {
+        scratch.write(
+            &format!("home/extensions/plugin-{number:04}/manifest.json"),
+            &manifest(&format!("acme.plugin{number}")),
+        );
+    }
+
+    let found = Extensions::discover(&home(&scratch));
+
+    assert_eq!(found.found().len(), MAX_EXTENSIONS);
+    assert!(!found.stopped());
+    assert!(found.refused().is_empty(), "{}", said(&found));
+}
+
+#[test]
+fn more_directories_than_the_sweep_reads_refuses_the_directory_rather_than_part_of_it() {
+    // A directory somebody filled must cost a bounded amount of startup, and
+    // the part of it the sweep reached is not an answer: which names those are
+    // is the filesystem's order, so a list built from them could name different
+    // extensions on the next run and could hand a repeated identifier to a
+    // different claimant.
     let scratch = Scratch::new("extensions-many");
     for number in 0..=MAX_EXTENSIONS {
         scratch.write(
@@ -218,10 +238,26 @@ fn more_directories_than_the_sweep_looks_at_stops_and_says_the_answer_is_short()
 
     let found = Extensions::discover(&home(&scratch));
 
-    assert_eq!(found.found().len(), MAX_EXTENSIONS);
+    assert!(
+        found.found().is_empty(),
+        "part of a directory was answered as though it were all of it"
+    );
     assert!(
         found.stopped(),
-        "a short answer was reported as a whole one"
+        "a refused sweep was reported as a whole one"
+    );
+    assert!(
+        matches!(
+            found.refused(),
+            [Refusal::Crowded { most, .. }] if *most == MAX_EXTENSIONS
+        ),
+        "{}",
+        said(&found)
+    );
+    assert!(
+        said(&found).contains(&MAX_EXTENSIONS.to_string()),
+        "{}",
+        said(&found)
     );
 }
 

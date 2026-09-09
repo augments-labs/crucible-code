@@ -15,6 +15,12 @@ change in any release with no deprecation period.
   with the first 256 of them, and nothing said which went missing. A block over
   the 64-server, 256-argument or 256-variable boundary is now refused by name
   and line when the file is read, and the schema publishes each boundary.
+- **A crowded extensions directory is refused whole rather than listed in
+  part.** The sweep read every directory under `~/.crucible/extensions` before
+  keeping sixty-four, and listed those as though they were all of them. It now
+  stops one past the ceiling and reports that the directory was not read,
+  because which sixty-four a sweep reaches first is the filesystem's order and
+  could differ between two runs.
 - **A sandbox that cannot start says which check turned the broker down.**
   Linux sandboxing refused every candidate `crucible-sandbox-broker` with one
   sentence that named neither the path nor the reason, so a build that was

@@ -801,7 +801,7 @@
     {
       "id": "CASE-PRESERVED-EXTENSION-DISCOVERY",
       "family": "preserved-surfaces",
-      "obligation": "The installed-extension sweep reads the same manifests in the same order, refuses the same ones with the same words, and stops at the same ceiling.",
+      "obligation": "The installed-extension sweep reads the same manifests in the same order, refuses the same ones with the same words, and refuses a directory over the ceiling whole rather than answering from part of it.",
       "package": "crucible-code",
       "target": {
         "kind": "test",
@@ -809,7 +809,7 @@
       },
       "case": "the_installed_extension_sweep_answers_what_it_read_and_refused",
       "source": "tests/differential.rs",
-      "body_sha256": "1f1be66204bc9494561aa0abd34408ac631461a791a11c95adf9e74b6d0bee6a",
+      "body_sha256": "fe2818a391c3f1070fe52d87049c2588bc76ae0d309bcb0270a751f3d68c62ba",
       "platforms": [
         "linux",
         "macos",
