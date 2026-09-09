@@ -6,8 +6,9 @@
 //!
 //! Blocking on purpose. A turn owns a thread for as long as the model is
 //! talking, so there is nothing here for an async runtime to interleave. The
-//! one blocking span that cannot inspect the turn's cancel — request setup —
-//! runs on one owned worker while the provider thread waits on a channel.
+//! blocking spans that cannot inspect the turn's cancel — request setup, and
+//! each read of the body — each run on an owned worker while the provider
+//! thread waits on a channel it can stop waiting on.
 
 use std::io::{self, Read};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -37,10 +38,10 @@ const TIMEOUT_HEAD: Duration = Duration::from_mins(1);
 /// with no bound at all, because the body deliberately has none.
 ///
 /// A quarter of a second is below what a person reads as an instant, and four
-/// wakeups a second are nothing beside the parsing they interleave with. This
-/// client measures a body read against the head's deadline as well, so a read
-/// waits a second rather than this once a response has been arriving for longer
-/// than [`TIMEOUT_HEAD`]. Both expire the same way.
+/// wakeups a second are nothing beside the parsing they interleave with. The
+/// wait is this file's own rather than the client's: it is measured on the
+/// thread that asked, against a worker that holds the socket, so nothing about
+/// how long the response has already been arriving changes what one read does.
 const TIMEOUT_QUIET: Duration = Duration::from_millis(250);
 
 /// How often setup hands control back to check cancellation.
@@ -281,14 +282,18 @@ fn send(
     body: String,
     poisoned: &AtomicBool,
 ) -> Result<Response, TransportError> {
-    // On this request and not on the agent: it is the answer to a model that
-    // pauses mid-sentence, and the caller reading it is the one that holds a
-    // cancel.
+    // On this request and not on the agent: a stalled resolver poisons the
+    // transport it happened on, and that verdict belongs to one request rather
+    // than to every request the process will ever make.
+    //
+    // The body is left with no client-side clock at all. What bounds it is
+    // [`Waiting`], because a clock cannot tell a long answer from a dead
+    // connection and the user can.
     let mut request = agent
         .post(url)
         .config()
         .timeout_resolve(Some(TIMEOUT_RESOLVE))
-        .timeout_recv_body(Some(TIMEOUT_QUIET))
+        .timeout_recv_body(None)
         .build();
     for (name, value) in headers.headers() {
         request = request.header(&**name, &**value);
@@ -299,7 +304,7 @@ fn send(
     match request.send(body) {
         Ok(response) => Ok(Response {
             status: response.status().as_u16(),
-            body: Box::new(Waiting(reader(response.into_body()))),
+            body: Box::new(Waiting::new(reader(response.into_body()))?),
         }),
         Err(problem) => Err(request_problem(&problem, poisoned)),
     }
@@ -325,6 +330,14 @@ fn request_problem(problem: &ureq::Error, poisoned: &AtomicBool) -> TransportErr
     TransportError::Unreachable(said.into())
 }
 
+/// How much of the body one read of the socket may take off it.
+///
+/// The pump reads into a buffer this size and hands on what it got, so what is
+/// held ahead of the caller is at most this and the one chunk the channel
+/// carries. Small enough that a first token is not waiting behind a full one,
+/// large enough that a long answer is not a wakeup per line.
+const CHUNK: usize = 8 * 1024;
+
 /// A body whose reads give up waiting instead of holding the thread.
 ///
 /// The wait expiring is not a failure — the response is still open and the model
@@ -333,11 +346,12 @@ fn request_problem(problem: &ureq::Error, poisoned: &AtomicBool) -> TransportErr
 /// `fill_buf`, which does not retry it, so a pause hands the turn back and the
 /// cancel gets looked at.
 ///
-/// What it gives up is a bound nobody meant to have: this client measures a body
-/// read against the head's deadline too, so a peer that went silent used to fail
-/// the turn a minute after the head arrived — and so did a model that thought for
-/// that long, which is the failure worth losing the other one to prevent. Nothing
-/// here ends a silent response now but the caller or the socket.
+/// The wait is this file's rather than the client's. A read of the socket blocks
+/// for as long as the peer stays silent and no setting asks it not to, so the
+/// blocking read moves to a worker and what the caller waits on is a channel it
+/// can stop waiting on. That is the same shape request setup uses, for the same
+/// reason, and it is the only bound on a silent response: nothing here ends one
+/// but the caller or the socket.
 ///
 /// Which is why a caller that retries has to say when it will stop. `read_to_end`
 /// does not: it retries an interruption for ever, so a body handed to it against
@@ -345,27 +359,160 @@ fn request_problem(problem: &ureq::Error, poisoned: &AtomicBool) -> TransportErr
 /// caller that reads a whole body — [`refusal`] — carries its own deadline for
 /// that reason, and no new one may read a body without one.
 ///
+/// A body dropped part-read leaves its worker on the socket until the peer says
+/// something or closes. It is one thread, it holds no lock and the connection it
+/// owns is not returned to the pool, so what an abandoned response costs is
+/// bounded by the peer rather than by how many turns have been cancelled.
+///
 /// [`refusal`]: crate::refusal
-struct Waiting(Box<dyn Read + Send>);
+struct Waiting {
+    /// What the worker has read, in the order it read it, and then the end.
+    chunks: mpsc::Receiver<io::Result<Option<Vec<u8>>>>,
+
+    /// Asks the worker to stop before its next read and after it.
+    stop: Arc<AtomicBool>,
+
+    /// The chunk being handed out, and how much of it has been.
+    held: (Vec<u8>, usize),
+
+    /// What the body ended as, once it has.
+    ended: Option<Ended>,
+}
+
+/// How a body stopped producing bytes.
+///
+/// Kept because `Read` is asked again after it answers. A failure that answered
+/// `Ok(0)` the second time would read as a complete response, and the turn would
+/// accept a truncated one as the whole of what the model said.
+enum Ended {
+    /// The worker said it had reached the end of the body.
+    Complete,
+
+    /// The worker reported this, and will report nothing else.
+    Failed(io::ErrorKind),
+}
+
+/// What a body that stopped without saying why is reported as.
+///
+/// The worker says the body ended by sending the end, so the channel closing on
+/// its own is the worker gone — it panicked, or it was unwound. Silence is what
+/// a complete response also looks like, which is exactly why this cannot be read
+/// as one: the bytes that did arrive would be accepted as the whole answer.
+const CUT_SHORT: &str = "the response body stopped before it ended";
+
+impl Waiting {
+    /// Starts the worker that holds the socket for this body.
+    fn new(body: Box<dyn Read + Send>) -> Result<Self, TransportError> {
+        let (read, chunks) = mpsc::sync_channel(1);
+        let stop = Arc::new(AtomicBool::new(false));
+        let stopping = Arc::clone(&stop);
+        thread::Builder::new()
+            .name("crucible-http-body".to_owned())
+            .spawn(move || pump(body, &read, &stopping))
+            .map_err(|problem| TransportError::Unreachable(problem.to_string().into()))?;
+
+        Ok(Self {
+            chunks,
+            stop,
+            held: (Vec::new(), 0),
+            ended: None,
+        })
+    }
+
+    /// Hands out what is left of the chunk in hand.
+    fn hand_out(&mut self, into: &mut [u8]) -> usize {
+        let (chunk, taken) = &mut self.held;
+        let left = chunk.get(*taken..).unwrap_or_default();
+        let giving = left.len().min(into.len());
+        let (from, to) = (left.get(..giving), into.get_mut(..giving));
+        if let (Some(from), Some(to)) = (from, to) {
+            to.copy_from_slice(from);
+        }
+        *taken += giving;
+        giving
+    }
+}
 
 impl Read for Waiting {
     fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
-        match self.0.read(into) {
-            Err(problem) if expired(&problem) => Err(io::ErrorKind::Interrupted.into()),
-            read => read,
+        if into.is_empty() {
+            return Ok(0);
+        }
+
+        let handed = self.hand_out(into);
+        if handed > 0 {
+            return Ok(handed);
+        }
+
+        match &self.ended {
+            Some(Ended::Complete) => return Ok(0),
+            Some(Ended::Failed(kind)) => return Err((*kind).into()),
+            None => {}
+        }
+
+        match self.chunks.recv_timeout(TIMEOUT_QUIET) {
+            Ok(Ok(Some(chunk))) => {
+                self.held = (chunk, 0);
+                Ok(self.hand_out(into))
+            }
+            Ok(Ok(None)) => {
+                self.ended = Some(Ended::Complete);
+                Ok(0)
+            }
+            Ok(Err(problem)) => {
+                self.ended = Some(Ended::Failed(problem.kind()));
+                Err(problem)
+            }
+            Err(RecvTimeoutError::Timeout) => Err(io::ErrorKind::Interrupted.into()),
+            Err(RecvTimeoutError::Disconnected) => {
+                self.ended = Some(Ended::Failed(io::ErrorKind::UnexpectedEof));
+                Err(io::Error::new(io::ErrorKind::UnexpectedEof, CUT_SHORT))
+            }
         }
     }
 }
 
-/// Whether a failed read is this client's own wait running out.
+impl Drop for Waiting {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+    }
+}
+
+/// Reads the body on its own thread for as long as anyone is still reading it.
 ///
-/// Any of its clocks, because a response still arriving after a minute is the
-/// ordinary case here rather than a broken one.
-fn expired(problem: &io::Error) -> bool {
-    problem
-        .get_ref()
-        .and_then(|inner| inner.downcast_ref::<ureq::Error>())
-        .is_some_and(|inner| matches!(inner, ureq::Error::Timeout(_)))
+/// Stops on the end of the body, on a failure, on the reader going away — the
+/// channel reports that — and on the flag, which is checked on both sides of the
+/// blocking read so a cancel that arrives during one is not slept through.
+///
+/// The end of the body is sent rather than left to the channel closing, because
+/// closing is also what this thread dying looks like and the two must not be
+/// answered the same way.
+fn pump(
+    mut body: Box<dyn Read + Send>,
+    read: &mpsc::SyncSender<io::Result<Option<Vec<u8>>>>,
+    stop: &AtomicBool,
+) {
+    let mut into = vec![0_u8; CHUNK];
+    while !stop.load(Ordering::Acquire) {
+        let got = body.read(&mut into);
+        if stop.load(Ordering::Acquire) {
+            return;
+        }
+
+        let sending = match got {
+            Ok(0) => Ok(None),
+            Ok(read) => Ok(Some(into.get(..read).unwrap_or_default().to_vec())),
+            // The one kind the contract says to ask again about, and this is
+            // the thread whose job is asking again.
+            Err(problem) if problem.kind() == io::ErrorKind::Interrupted => continue,
+            Err(problem) => Err(problem),
+        };
+
+        let last = !matches!(sending, Ok(Some(_)));
+        if read.send(sending).is_err() || last {
+            return;
+        }
+    }
 }
 
 /// The body as something to read from.
@@ -717,31 +864,98 @@ mod tests {
         }
     }
 
-    /// What one read of `body` came back as.
-    fn read(body: io::Error) -> io::Error {
-        Waiting(Box::new(Failing(Some(body))))
-            .read(&mut [0_u8; 8])
-            .expect_err("the body was given a failure to report")
+    /// A body whose reads never arrive and never fail.
+    struct Silent;
+
+    impl Read for Silent {
+        fn read(&mut self, _into: &mut [u8]) -> io::Result<usize> {
+            thread::sleep(PROMPTLY);
+            Ok(0)
+        }
     }
 
-    #[test]
-    fn a_wait_the_head_deadline_ended_is_still_only_a_wait() {
-        // This client measures a body read against the head's deadline as well,
-        // so every read of a response that has been arriving for longer than
-        // that ends this way. Taken for a broken connection it fails an answer
-        // that ran past a minute and then paused, which is an ordinary answer.
-        let expired = io::Error::other(ureq::Error::Timeout(ureq::Timeout::RecvResponse));
+    /// Reads `waiting` until it says something other than "nothing yet".
+    ///
+    /// Bounded, because the thing being proved is what the failure came back
+    /// as, and a test that hangs to say so has stopped proving it.
+    fn settled(waiting: &mut Waiting) -> io::Result<usize> {
+        let by = Instant::now() + PROMPTLY;
+        while Instant::now() < by {
+            match waiting.read(&mut [0_u8; 8]) {
+                Err(problem) if problem.kind() == io::ErrorKind::Interrupted => {}
+                settled => return settled,
+            }
+        }
+        panic!("the body never stopped waiting");
+    }
 
-        assert_eq!(read(expired).kind(), io::ErrorKind::Interrupted);
+    /// What reading `body` came back as, once it stopped waiting.
+    fn read(body: io::Error) -> io::Error {
+        let mut waiting =
+            Waiting::new(Box::new(Failing(Some(body)))).expect("a reader for the body");
+
+        settled(&mut waiting).expect_err("the body was given a failure to report")
     }
 
     #[test]
     fn a_connection_that_broke_is_not_mistaken_for_a_wait() {
-        // The other half: a stream retrying a dead socket forever is a turn
-        // that never comes back and never says why.
+        // A stream retrying a dead socket forever is a turn that never comes
+        // back and never says why. Only this file's own wait is a wait; what
+        // the socket said is what it said.
         let broken = io::Error::from(io::ErrorKind::ConnectionReset);
 
         assert_eq!(read(broken).kind(), io::ErrorKind::ConnectionReset);
+    }
+
+    #[test]
+    fn a_body_that_failed_does_not_go_on_to_report_an_ending() {
+        // `Read` gets asked again after it answers, and a failure that answered
+        // `Ok(0)` the second time would read as a body that ended. The turn
+        // would take a truncated answer for the whole of what the model said.
+        let broken = io::Error::from(io::ErrorKind::ConnectionReset);
+        let mut waiting =
+            Waiting::new(Box::new(Failing(Some(broken)))).expect("a reader for the body");
+
+        let first = settled(&mut waiting).expect_err("the body was given a failure to report");
+        let again = settled(&mut waiting).expect_err("a failed body reported an ending");
+
+        assert_eq!(first.kind(), io::ErrorKind::ConnectionReset);
+        assert_eq!(again.kind(), io::ErrorKind::ConnectionReset);
+    }
+
+    #[test]
+    fn a_worker_that_stopped_without_saying_so_is_not_a_body_that_ended() {
+        // The worker sends the end, so the channel closing on its own is the
+        // worker gone rather than the body finished. Answering that with
+        // `Ok(0)` would hand the turn the bytes that did arrive as though they
+        // were the whole of what the model said.
+        let (sending, chunks) = mpsc::sync_channel::<io::Result<Option<Vec<u8>>>>(1);
+        drop(sending);
+        let mut waiting = Waiting {
+            chunks,
+            stop: Arc::new(AtomicBool::new(false)),
+            held: (Vec::new(), 0),
+            ended: None,
+        };
+
+        let first = settled(&mut waiting).expect_err("a body cut short reported an ending");
+        let again = settled(&mut waiting).expect_err("a body cut short reported an ending");
+
+        assert_eq!(first.kind(), io::ErrorKind::UnexpectedEof);
+        assert_eq!(again.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn a_body_nobody_reads_any_more_does_not_hold_the_thread_that_dropped_it() {
+        // What a cancelled turn does: stop reading and let go. Waiting for the
+        // worker here would put the peer's silence back on the user, which is
+        // the whole of what this shape exists to prevent.
+        let waiting = Waiting::new(Box::new(Silent)).expect("a reader for the body");
+
+        let began = Instant::now();
+        drop(waiting);
+
+        assert!(began.elapsed() < PROMPTLY, "{:?}", began.elapsed());
     }
 
     #[test]
