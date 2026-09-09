@@ -29,8 +29,8 @@ use crucible_runner::{
     AgentSpec, Bounds, Compaction, ContextInputs, Model, RunPolicy, Runner, Session, Tools,
 };
 use crucible_tools::{
-    AskUser, Background, Bash, Edit, Glob, Grep, Held, Ledger, LocalSandbox, Plan, Read, TodoWrite,
-    ToolSearch, WebFetch, WebSearch, Write,
+    AskUser, Background, Bash, BashOutput, Edit, Glob, Grep, Held, Ledger, LocalSandbox, Plan,
+    Read, TodoWrite, ToolSearch, WebFetch, WebSearch, Write,
 };
 
 use super::hosting::{Hosting, selecting};
@@ -828,6 +828,13 @@ fn tools(
             .exporting(settings.env())
             .leaving(leaving.clone()),
     )?;
+
+    // Advertised rather than deferred, for the reason `ask_user` below is: the
+    // moment a model needs this is the moment a command it left running has not
+    // said anything yet, and a tool it has to go looking for first is one it
+    // will not find then. The schema is one number, which is what makes that
+    // affordable on every request of every turn.
+    tools.add_builtin(BashOutput::new(leaving.clone()))?;
 
     // The other end of the panel above the prompt. The clone shares one plan
     // rather than copying it, which is what makes a call on the worker thread

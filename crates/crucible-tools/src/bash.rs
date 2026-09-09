@@ -29,6 +29,7 @@ mod command;
 mod environment;
 mod output;
 pub(crate) mod platform;
+mod reading;
 mod reporting;
 mod shell;
 mod wrapper;
@@ -43,6 +44,7 @@ use crucible_core::{
     SandboxManifest, SandboxPolicy, SandboxRequest, SandboxResourceLimits, SandboxService,
     Sensitivity, Summary, Tool, ToolArgs, ToolContext, ToolError, ToolOutput, Workspace,
 };
+pub use reading::BashOutput;
 
 use std::sync::LazyLock;
 
@@ -96,7 +98,14 @@ const TICK: Duration = Duration::from_millis(20);
 /// question the command was answering and one way left to get it; the sentence
 /// that closes the gap is the one that says the output itself will be handed
 /// over. What it promises is kept in `standing::said`.
-const LEFT_RUNNING: &str = "when it ends you are given what it printed; do not poll or wait for it";
+///
+/// And it names the tool for the case that promise cannot cover. A dev server,
+/// a watcher or a `--follow` does not end, so the ending never arrives and the
+/// question stays open for as long as the command is useful. [`reading`] is
+/// where the answer is; this is the only place a model is told so at the moment
+/// it needs to know.
+const LEFT_RUNNING: &str = "ask bash_output what it has printed so far, and its output is handed \
+     over when it ends; do not poll or wait for it";
 
 /// What the model is told when the developer let go of the command rather than
 /// the call asking to.

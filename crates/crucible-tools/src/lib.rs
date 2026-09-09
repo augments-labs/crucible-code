@@ -92,7 +92,7 @@ mod write;
 
 pub use account::{backgrounded, of as account};
 pub use ask::AskUser;
-pub use bash::{Background, Bash, Ended, MOST, Standing};
+pub use bash::{Background, Bash, BashOutput, Ended, MOST, Standing};
 pub use edit::Edit;
 pub use glob::Glob;
 pub use grep::Grep;

@@ -94,8 +94,8 @@ as an ordinary result. The answer names the number it is running as:
 VITE v5.4.2  ready in 412 ms
 ➜  Local:   http://localhost:5173/
 
-[left running as #1; when it ends you are given what it printed; do not poll
-or wait for it]
+[left running as #1; ask bash_output what it has printed so far, and its output
+is handed over when it ends; do not poll or wait for it]
 ```
 
 A command you pressed the key on says who let go of it, because the model asked
@@ -103,8 +103,9 @@ for that one to be waited for and is getting it back early:
 
 ```
 [left running as #2; the developer pressed ctrl+b to leave it running rather
-than keep waiting; carry on with what does not depend on it; when it ends you
-are given what it printed; do not poll or wait for it]
+than keep waiting; carry on with what does not depend on it; ask bash_output
+what it has printed so far, and its output is handed over when it ends; do not
+poll or wait for it]
 ```
 
 Without that it reads as its own call coming back, and a model that wanted the
@@ -162,6 +163,28 @@ If cleanup fails, the command stays selected and the panel says
 slot remain held until cleanup succeeds; a failed cleanup is not reported as a
 completed background command. A command whose original result was abandoned
 also remains reachable here if its cleanup failed.
+
+## Asking one what it has printed
+
+That view is the reader's. `bash_output` is the model's: it answers with what a
+command left running has printed so far. It takes the number the call that left
+it running was answered with, and nothing else:
+
+```json
+{"number": 1}
+```
+
+It exists so that "how is that going?" has an answer that is not another
+command. What a command prints when it ends is handed over on its own, but a dev
+server, a watcher or a `--follow` does not end, and without this the only way to
+ask about one is to run something that asks the same question a second time.
+
+It reaches no file and starts no process, so it never asks you anything. Its
+answer is bounded like every other, and a command that is running but has
+printed nothing says so rather than answering with nothing. A number nothing
+answers to comes back naming what is running, because the ordinary way to be
+wrong about one is to be a moment late: a command that has ended has left the
+list, and what it printed is already on its way.
 
 ## When one ends on its own
 
