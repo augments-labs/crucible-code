@@ -99,6 +99,13 @@ environment. That is not a disclaimer: a reviewer reads a generated diff with
 different questions, and knowing which model and harness produced it is part of
 reproducing the work.
 
+The same table names the person who read the diff line by line, and the human
+review section says what they came back with. A green gate is evidence about
+the checks that ran, not about whether the change answers the right problem,
+so that reading is a separate thing a pull request either has or is still
+waiting for — and one nobody has read yet says so rather than leaving the
+section blank.
+
 ## Dependencies
 
 Use the [dependency guidance](AGENTS.md#dependencies) when adding a crate or

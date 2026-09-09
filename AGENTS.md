@@ -111,8 +111,9 @@ Keep repository prose focused on shipped behavior and why the reader cares:
 - Pull request: follow the template, answering every section with one short
   paragraph and naming the test that failed before a behavior change. Fill the
   authoring environment truthfully — a reviewer reads a generated diff with
-  different questions. Keep one reason per PR; implementation and proof that
-  cannot compile apart remain one change.
+  different questions — and name the person who read the diff rather than
+  claiming a review nobody has given. Keep one reason per PR; implementation
+  and proof that cannot compile apart remain one change.
 
 Update affected user docs, the first-run README surface, contributor setup and
 changelog in the same change. Put long reasoning beside the code or in a focused
