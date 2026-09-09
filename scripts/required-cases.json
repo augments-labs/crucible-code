@@ -817,6 +817,24 @@
       ]
     },
     {
+      "id": "CASE-PRESERVED-SESSION-RECORD",
+      "family": "preserved-surfaces",
+      "obligation": "A session writes down the same record of the same turn: the same lines, in the same order, with the same fields — the conversation, the versioned framework companion beside it, and the bounded summaries a continued session reads to rebuild what was sent.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "differential"
+      },
+      "case": "a_session_writes_down_the_same_record_of_the_same_turn",
+      "source": "tests/differential.rs",
+      "body_sha256": "9aa857afa0cfe6809aa36e9b8f08e15cc0d789ea737a519c5ed46b06460f335f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
       "id": "CASE-PRESERVED-PROVIDER-MESSAGES",
       "family": "preserved-surfaces",
       "obligation": "Every provider puts the same bytes on the wire for the same conversation: the same address, the same headers, and a body whose keys, order and shape have not moved. With a cache plan attached it also puts the same marker in the same place, over two turns, and gives the same account of what it encoded.",

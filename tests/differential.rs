@@ -38,6 +38,9 @@ use std::process::{Command, Stdio};
 use std::sync::Arc;
 
 use crucible_config::{Extensions, HOME, Home, Settings};
+use crucible_core::{
+    Ancestry, Calibration, Carried, ContextSnapshot, Fragment, RunId, RunItem, Spend,
+};
 use crucible_core::{Answered, Fetch, Put, Search};
 use crucible_core::{
     Cancel, Credential, CredentialError, CredentialScopeId, DescribeTool, Host, Message, Outgoing,
@@ -49,6 +52,7 @@ use crucible_core::{
     ToolProvenance, ToolResult, ToolSchema, Transcript, Workspace,
 };
 use crucible_provider::{Anthropic, Google, Moonshot, OpenAi, Response, Transport, TransportError};
+use crucible_session::Session;
 use crucible_tools::{
     AskUser, Bash, Edit, Glob, Grep, Held, Ledger, Plan, Read, TodoWrite, ToolSearch, WebFetch,
     WebSearch, Write,
@@ -1179,4 +1183,100 @@ fn every_provider_answers_what_it_puts_on_the_wire() {
         "provider-messages",
         &rendered.replace(env!("CARGO_PKG_VERSION"), "<version>"),
     );
+}
+
+// ------------------------------------------------------------------- session
+
+/// A log kept in memory, so what a session wrote can be read back exactly.
+#[derive(Clone, Default)]
+struct Kept(Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for Kept {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        match self.0.lock() {
+            Ok(mut kept) => {
+                kept.extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            Err(_) => Err(std::io::Error::other("a poisoned log")),
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn a_session_writes_down_the_same_record_of_the_same_turn() {
+    // A fixed name rather than a minted one: the stem is what the session reads
+    // its own identity back from, and a new identity every run would differ
+    // between two correct runs for no reason a reader could use.
+    let kept = Kept::default();
+    let path = PathBuf::from("/nowhere/01900000-0000-7000-8000-0000000000aa.jsonl");
+    let mut session = Session::onto(path, kept.clone());
+
+    // The conversation, one message of each kind the log has a shape for.
+    for message in spoken().messages() {
+        session.append(message);
+    }
+    session.append(&Message::Context(Fragment::new(
+        "workspace",
+        "one checked-out tree",
+    )));
+
+    // The framework record beside it. `append_item` is the pair — the message
+    // line the conversation reads and the versioned ancestry line beside it —
+    // and freezing only one of the two would leave a restructuring free to drop
+    // the other.
+    let run = RunId::parse("01900000-0000-7000-8000-0000000000b1").expect("a run identity");
+    let ancestry = Ancestry::restore(run, None, run, 0).expect("a top-level ancestry");
+    session.append_item(
+        &RunItem::message(
+            ancestry,
+            Message::said("the framework's own copy of a prompt"),
+        )
+        .expect("a message inside its ceilings"),
+    );
+    session.append_journal(
+        &RunItem::message(
+            ancestry,
+            Message::said("journal only, no conversation line"),
+        )
+        .expect("a message inside its ceilings"),
+    );
+
+    // The bounded summaries. Each stands for messages that stay in the file and
+    // leave the transcript, so what one says is the whole difference between a
+    // session continued correctly and one continued with the wrong history.
+    session.compacted(3, "they renamed a field and found its readers");
+    session.pruned(
+        2,
+        &[ToolId::new("probe-call-1"), ToolId::new("probe-call-2")],
+    );
+    session.measured(&Calibration {
+        carried: Carried::new(4_725),
+        spent: Spend::new(128),
+        sent: 18_898,
+        overhead: 1_024,
+    });
+
+    let snapshot = ContextSnapshot::from_value(serde_json::json!({
+        "workspace": { "root": "/work", "trees": 1 }
+    }))
+    .expect("a snapshot of one section");
+    let established = snapshot
+        .patch_from(&ContextSnapshot::new())
+        .expect("a first snapshot to be a patch against an empty one");
+    session.contextual(&established).expect("a legal patch");
+
+    let trouble = session.finish();
+    assert!(
+        trouble.is_none(),
+        "the probe's own log failed while it was being written: {trouble:?}"
+    );
+
+    let written = kept.0.lock().expect("a lock").clone();
+    let written = String::from_utf8(written).expect("a log of text");
+    same("session-record", &written);
 }
