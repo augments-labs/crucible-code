@@ -74,13 +74,14 @@ Delete the lines that do not apply; keep and answer the ones that do.
 
 ## Human review
 
+- [ ] A human has read the **complete** diff before this pull request was
+      opened, not a summary of it.
+
 <!--
-Name the person who read this diff line by line and say what they came back
-with. A model can produce a change that passes every check and still answers
-the wrong problem, so the reviewer named in the table above is the one who
-vouches for it, not the green tick. If nobody has read it yet, say that here
-rather than leaving the heading empty — it is a state the pull request is
-allowed to be in, and hiding it is not.
+Leave the box empty if nobody has, and say who is being asked to. A green gate
+is evidence about the checks that ran, not about whether the change answers the
+right problem, so this is a separate thing a pull request either has or is
+still waiting for.
 -->
 
 ## Checklist
@@ -94,4 +95,3 @@ allowed to be in, and hiding it is not.
       `scripts/bench.sh` output is in Proof
 - [ ] New dependencies are `=`-pinned with a comment in `Cargo.toml` saying why
 - [ ] `CHANGELOG.md` and affected user documentation updated in this change
-- [ ] A person named in Authoring environment has read the complete diff
