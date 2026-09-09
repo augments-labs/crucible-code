@@ -104,12 +104,15 @@ to send a provider, so the replay ends before it and the file is cut to match.
 
 ## Conversation, journal and checkpoints
 
-New logs use format 12 and remain readable alongside formats 3–11. Format 12
+New logs use format 13 and remain readable alongside formats 3–12. Format 12
 adds bounded provider continuation beside completed agent messages: signed
 thinking, encrypted reasoning and native ordering needed for subsequent tool
 passes. This private state is not rendered or given to the recap model, and a
-failed, incomplete or cancelled stream cannot commit it. Older Crucible builds
-cannot resume format 12 logs.
+failed, incomplete or cancelled stream cannot commit it. Format 13 adds a line
+saying that tool results were cleared because the vendor that produced them
+restricts where they may be sent, and the sentence left in their place; a
+session that never left such a vendor never carries one. Older Crucible builds
+cannot resume format 12 or 13 logs.
 
 Continuation is bound to its producing protocol, model compatibility, credential
 and recipient. A changed key, endpoint or incompatible provider receives visible

@@ -10,6 +10,7 @@ use crucible_core::{
     Ancestry, Calibration, CallResultKey, CallResultStoreError, Carried, ContextPatch,
     ContextSnapshot, CustomEntry, Fragment, InvocationId, JournalEntryId, JournalStore, Message,
     RunItem, SessionId, Spend, StopReason, ToolArgs, ToolCall, ToolId, ToolOutput, ToolResult,
+    Transcript,
 };
 use serde_json::Value;
 
@@ -105,7 +106,10 @@ fn appending_continuation_to_an_old_log_requires_a_new_reader() {
         2,
         "old readers need a refusal marker before new private state"
     );
-    assert_eq!(new_lines.first().unwrap(), &r#"{"requires_format":12}"#);
+    assert_eq!(
+        new_lines.first().unwrap(),
+        &format!(r#"{{"requires_format":{}}}"#, wire::FORMAT).as_str()
+    );
     assert!(
         wire::message(new_lines.first().unwrap()).is_none(),
         "an old message reader must not silently accept the guard"
@@ -137,12 +141,15 @@ fn a_complete_invalid_continuation_is_refused_even_at_the_end_of_the_log() {
 #[test]
 fn a_newer_required_reader_is_refused_without_truncating_even_at_eof() {
     for marker in [
-        r#"{"requires_format":13}"#,
-        r#"{"requires_format":"invalid"}"#,
+        // One past what this build writes, so the case stays "newer than this
+        // reader" rather than becoming "what this reader writes" at the next
+        // format.
+        format!(r#"{{"requires_format":{}}}"#, wire::FORMAT + 1),
+        r#"{"requires_format":"invalid"}"#.to_owned(),
     ] {
         let sample = Sample::new("continuation-new-reader");
         let id = "0198abcd-0000-7000-8000-000000000001";
-        let path = sample.plant(id, &[sample.header(11, id), marker.into()]);
+        let path = sample.plant(id, &[sample.header(11, id), marker.clone()]);
         let before = fs::read(&path).unwrap();
         assert!(matches!(
             Session::resume(&sample.logs(), &sample.workspace()),
@@ -872,6 +879,160 @@ fn a_pruned_result_is_cleared_again_when_the_session_is_continued() {
         result.output.text().contains("cleared to make room"),
         "the continued session re-sent the cleared text: {}",
         result.output.text()
+    );
+}
+
+/// The one result a restriction test is about, read back off the log.
+fn only_result(transcript: &Transcript) -> &ToolResult {
+    transcript
+        .messages()
+        .iter()
+        .find_map(|message| match message {
+            Message::ToolResults(results) => results.first(),
+            _ => None,
+        })
+        .expect("the result is still there, holding whatever replaced it")
+}
+
+#[test]
+fn every_format_this_build_says_it_reads_still_replays_what_it_wrote() {
+    // The list is a promise about somebody's history, and the only thing that
+    // keeps it honest is opening a log written under each number. A format that
+    // quietly stopped replaying would be found by the person whose session it
+    // was, on the day they tried to continue it.
+    for format in wire::READS {
+        let sample = Sample::new(&format!("session-format-{format}"));
+        let id = "0198abcd-0000-7000-8000-000000000001";
+        sample.plant(
+            id,
+            &[
+                sample.header(*format, id),
+                wire::line(&said("what came before")),
+            ],
+        );
+
+        let (_, transcript) = Session::resume(&sample.logs(), &sample.workspace())
+            .unwrap_or_else(|problem| panic!("a format {format} log is refused: {problem}"));
+
+        assert_eq!(
+            transcript.messages().first(),
+            Some(&said("what came before")),
+            "a format {format} log replayed as something else"
+        );
+    }
+}
+
+#[test]
+fn a_log_written_under_a_format_this_build_does_not_know_is_refused() {
+    // The other half of the list. A newer log is refused rather than read as
+    // far as it is understood, because a session missing the turns this build
+    // had no word for looks exactly like a session that is complete.
+    let sample = Sample::new("session-format-newer");
+    let id = "0198abcd-0000-7000-8000-000000000001";
+    sample.plant(id, &[sample.header(wire::FORMAT + 1, id)]);
+
+    assert!(
+        !wire::readable(wire::FORMAT + 1),
+        "a format past this one is claimed as readable"
+    );
+    assert!(
+        Session::resume(&sample.logs(), &sample.workspace()).is_err(),
+        "a log from a newer build was continued"
+    );
+}
+
+#[test]
+fn a_restricted_result_is_cleared_again_when_the_session_is_continued() {
+    // Beside the pruning above and asking a different question of the same
+    // shape: the sentence the run wrote comes back, rather than one about
+    // making room, because the reason a result is empty is the only thing the
+    // placeholder has to say.
+    let sample = Sample::new("session-restricted");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
+
+    session.append(&calling("a", "web_search", r#"{"query":"rust"}"#));
+    session.append(&answered("a", ToolOutput::ok("restricted results canary")));
+    session.append(&said("what did it say"));
+    session.restricted(25, &[ToolId::new("a")], "[cleared — restricted]");
+    session.append(&said("gone"));
+    drop(session);
+
+    let (_, transcript) =
+        Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
+
+    assert_eq!(
+        only_result(&transcript).output.text(),
+        "[cleared — restricted]",
+        "the continued session did not put back what the run left in its place"
+    );
+}
+
+#[test]
+fn clearing_a_restricted_result_in_an_old_log_requires_a_new_reader() {
+    // Resuming never rewrites a header, so an older log can gain this line
+    // partway down. A reader with no word for it has two ways to be wrong: call
+    // the whole file damaged, or skip the line, put the results back and send
+    // them to the vendor they were taken away from. The guard makes it refuse,
+    // and say why.
+    let sample = Sample::new("session-restricted-old-format");
+    let id = "0198abcd-0000-7000-8000-000000000001";
+    let path = sample.plant(
+        id,
+        &[
+            sample.header(11, id),
+            wire::line(&calling("a", "web_search", r#"{"query":"rust"}"#)),
+            wire::line(&answered("a", ToolOutput::ok("restricted results canary"))),
+        ],
+    );
+
+    let (session, _) = Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
+    session.restricted(25, &[ToolId::new("a")], "[cleared — restricted]");
+    drop(session);
+
+    let written = fs::read_to_string(&path).expect("the log");
+    let guard = written
+        .lines()
+        .rev()
+        .nth(1)
+        .expect("a line before the restriction");
+    assert_eq!(
+        guard,
+        format!(r#"{{"requires_format":{}}}"#, wire::FORMAT),
+        "the restriction was written into an old log with nothing to stop an old reader"
+    );
+    assert_eq!(wire::required_format(guard), Some(true));
+}
+
+#[test]
+fn a_restricted_result_too_small_to_be_worth_pruning_is_cleared_anyway() {
+    // Why this is not the pruning line with a different sentence. Pruning
+    // leaves a result alone under `MIN_PRUNE_BYTES`, because a placeholder that
+    // costs more than the text it replaces buys nothing — and that reasoning is
+    // about room, which is not what this is about. A short restricted result is
+    // as restricted as a long one, and a continued session that put it back
+    // would send it to the vendor it was taken away from.
+    let sample = Sample::new("session-restricted-small");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
+
+    let small = "no";
+    assert!(
+        small.len() < ToolOutput::MIN_PRUNE_BYTES,
+        "the point of this"
+    );
+
+    session.append(&calling("a", "web_search", r#"{"query":"rust"}"#));
+    session.append(&answered("a", ToolOutput::ok(small)));
+    session.restricted(small.len(), &[ToolId::new("a")], "[cleared — restricted]");
+    session.append(&said("gone"));
+    drop(session);
+
+    let (_, transcript) =
+        Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
+
+    assert_eq!(
+        only_result(&transcript).output.text(),
+        "[cleared — restricted]",
+        "a restricted result small enough to skip a pruning came back whole"
     );
 }
 

@@ -740,11 +740,18 @@ impl Runner {
     /// Reachable between turns, where [`Runner::ask`] is and for the same
     /// reason: a turn owns the runner while it runs.
     pub fn serve(&mut self, provider: Box<dyn Provider>) {
-        let was_google = self.provider.name() == "google";
-        let is_google = provider.name() == "google";
+        // Asked of the vendor being left, and before it is replaced: a
+        // restriction on where results may go belongs to whoever produced
+        // them, and by the next line there is nobody left to ask. Staying with
+        // the same vendor moves nothing anywhere, so nothing is cleared.
+        let restriction = self
+            .provider
+            .restricts_results()
+            .filter(|_| self.provider.name() != provider.name());
+
         self.provider = provider;
-        if was_google && !is_google {
-            self.prune_grounded_results();
+        if let Some(notice) = restriction {
+            self.restrict_results(notice);
         }
         // Cached-token and tokenizer semantics belong to the provider that
         // reported them. Keep the transcript, but not that provider's exact
@@ -752,28 +759,57 @@ impl Runner {
         self.load.reestimated();
     }
 
-    /// Clears Google grounded search tool results from what another provider is sent.
+    /// Takes the results a vendor restricts out of what the next one is sent,
+    /// and records that it happened.
     ///
-    /// Google API terms prohibit sending grounded search results or search suggestions
-    /// to third-party providers. Pruning removes them from the model context while
-    /// preserving them in the session log for user history viewing.
-    fn prune_grounded_results(&mut self) {
-        let mut ids = Vec::new();
+    /// The results stay in the log holding what they held — the log is the
+    /// record of the session, and a user reading their own history is not the
+    /// third party the term is about. What the line buys is the session coming
+    /// back the same way: without it the transcript loses them and the log does
+    /// not, so the next resume reads them back and sends them on, undoing the
+    /// switch with nothing to notice it.
+    ///
+    /// Which results, today, is every search result in the transcript rather
+    /// than only the ones this vendor answered — a transcript records what was
+    /// called, not who answered it. That is wider than the term requires and it
+    /// is the behaviour being preserved rather than introduced; narrowing it
+    /// needs per-result provenance the session has never recorded.
+    fn restrict_results(&mut self, notice: &str) {
+        let mut searched = Vec::new();
         for message in self.transcript.messages() {
             if let crucible_core::Message::Agent { calls, .. } = message {
                 for call in calls {
                     if &*call.name == "web_search" {
-                        ids.push(call.id.clone());
+                        searched.push(call.id.clone());
                     }
                 }
             }
         }
-        if !ids.is_empty() {
-            self.transcript.clear_tool_outputs(
-                &ids,
-                "[cleared — Google search results are restricted to Google models]",
-            );
+
+        // Down to the ones still holding what they answered with. A session
+        // moved twice would otherwise clear a notice with itself, report the
+        // notice's own length as freed, and write a second line saying results
+        // were taken away that had already gone.
+        let mut clearing = Vec::new();
+        for message in self.transcript.messages() {
+            if let crucible_core::Message::ToolResults(results) = message {
+                for result in results {
+                    if searched.contains(&result.id) && result.output.text() != notice {
+                        clearing.push(result.id.clone());
+                    }
+                }
+            }
         }
+
+        if clearing.is_empty() {
+            return;
+        }
+
+        // The transcript first and the line after it, the way a pruning is
+        // written and for the same reason: a crash between the two must not
+        // leave a log claiming a clearing that the transcript never made.
+        let freed = self.transcript.clear_tool_outputs(&clearing, notice);
+        self.session.restricted(freed, &clearing, notice);
     }
 
     /// How hard this session is asking the model to think.

@@ -282,3 +282,21 @@ fn debug_never_delegates_to_a_transport_holding_private_history() {
     );
     assert!(!format!("{provider:?}").contains("private-transport-canary"));
 }
+
+#[test]
+fn google_says_its_results_may_not_be_sent_to_another_vendor() {
+    // The term is Google's, so the sentence is here rather than wherever a
+    // session decides to move. A build that lost this answer would carry
+    // grounded search results into the next vendor's request without anything
+    // failing, which is the one shape of this bug nobody sees.
+    let (provider, _) = provider(200, ANSWER);
+
+    let notice = provider
+        .restricts_results()
+        .expect("Google restricts where its results may be sent");
+
+    assert!(
+        notice.contains("Google"),
+        "the sentence left in a result's place does not say whose term it is: {notice}"
+    );
+}

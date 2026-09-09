@@ -69,6 +69,7 @@ fn fingerprint(text: &str) -> u64 {
 /// A provider that answers from a script, one round per request.
 pub(crate) struct Script {
     name: Option<&'static str>,
+    restricts: Option<&'static str>,
     credential_scope: CredentialScopeId,
     rounds: Mutex<VecDeque<Vec<Delta>>>,
     sent: Sent,
@@ -128,6 +129,7 @@ impl Script {
             over_window: false,
             cache: CacheFixture::default(),
             resource_delete: ResourceDelete::Deleted,
+            restricts: None,
         }
     }
 
@@ -135,6 +137,14 @@ impl Script {
     #[cfg(test)]
     pub(crate) fn with_name(mut self, name: &'static str) -> Self {
         self.name = Some(name);
+        self
+    }
+
+    /// Makes this script a vendor whose results may not be sent to another,
+    /// with the sentence it leaves in their place.
+    #[cfg(test)]
+    pub(crate) const fn restricting(mut self, notice: &'static str) -> Self {
+        self.restricts = Some(notice);
         self
     }
 
@@ -272,6 +282,10 @@ impl Script {
 impl Provider for Script {
     fn name(&self) -> &'static str {
         self.name.unwrap_or(SCRIPT)
+    }
+
+    fn restricts_results(&self) -> Option<&'static str> {
+        self.restricts
     }
 
     /// A stand-in spells what every real provider here spells today.

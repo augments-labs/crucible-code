@@ -15,7 +15,8 @@ use crucible_core::{
     PromptCacheResourceId, PromptCacheResourceOperation, PromptCacheResourceOwner,
     PromptCacheResourceRecord, PromptCacheResourceState, PromptCacheResourceStore,
     PromptCacheScopeDigest, ProviderError, ProviderLimit, ProviderUsage, Sensitivity, SessionId,
-    Spend, Summary, Target, Tool, ToolArgs, ToolContext, ToolError, ToolId, ToolOutput, Verdict,
+    Spend, Summary, Target, Tool, ToolArgs, ToolContext, ToolError, ToolId, ToolOutput, ToolResult,
+    Verdict,
 };
 
 use sha2::{Digest as _, Sha256};
@@ -48,6 +49,27 @@ fn conversation(transcript: &Transcript) -> Vec<Message> {
         .cloned()
         .collect()
 }
+
+/// The one tool result a restricted-result test is about.
+fn only_result(scripted: &Scripted) -> &ToolResult {
+    scripted
+        .runner
+        .transcript()
+        .messages()
+        .iter()
+        .find_map(|message| match message {
+            Message::ToolResults(results) => results.first(),
+            _ => None,
+        })
+        .expect("the search result the turn produced")
+}
+
+/// The sentence a vendor that restricts its results leaves in their place.
+///
+/// A fixture rather than any shipped vendor's wording: which vendors restrict
+/// what is theirs to declare, and a runner test that named one would be
+/// asserting a term this crate does not own.
+const RESTRICTED: &str = "[cleared — restricted to the vendor that produced them]";
 
 /// What the model these tests ask reads: prose and the pictures they attach.
 const READS: Modalities = Modalities::empty()
