@@ -1,0 +1,640 @@
+{
+  "cases": [
+    {
+      "id": "CASE-TURN-PROJECTION-ANSWERED",
+      "family": "turn",
+      "obligation": "Every provider call is answered exactly once before the projection is handed on.",
+      "package": "crucible-core",
+      "target": {
+        "kind": "test",
+        "name": "journal_interruption"
+      },
+      "case": "provider_projection_refuses_an_unanswered_or_twice_answered_call",
+      "source": "crates/crucible-core/tests/journal_interruption.rs",
+      "body_sha256": "25d6a6a6bdeb16fde009e76c493937822bc854228817d5b3e5d08d700f990396",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TURN-TOOL-GENERATION",
+      "family": "turn",
+      "obligation": "The prompt names the tool generation it snapshotted, not whatever the roster holds now.",
+      "package": "crucible-core",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_core"
+      },
+      "case": "prompt::tests::the_tools_section_reports_the_exact_generation_it_snapshotted",
+      "source": "crates/crucible-core/src/prompt/tests.rs",
+      "body_sha256": "11480b81ac57894d2c05dc3818afb83e363ae9540e4ded2d5c669c8b08401209",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TURN-PROVIDER-WIRE",
+      "family": "turn",
+      "obligation": "A provider request carries the exact generation fields and keeps no state on the wire.",
+      "package": "crucible-provider",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_provider"
+      },
+      "case": "google::body::tests::a_google_request_is_stateless_typed_and_uses_the_exact_generation_fields",
+      "source": "crates/crucible-provider/src/google/body.rs",
+      "body_sha256": "793b1ad1d32cfcb59f513da37c3a0597d7db7ac16a4a23e77d35ac715b59e117",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-AUTHORITY-ONE-CALL",
+      "family": "authority",
+      "obligation": "An approval names the tool and the arguments of the one call it settled.",
+      "package": "crucible-core",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_core"
+      },
+      "case": "permission::grant::tests::an_approval_names_the_tool_and_the_arguments_of_the_one_call",
+      "source": "crates/crucible-core/src/permission/grant.rs",
+      "body_sha256": "0da10405a14b90a834153e01e75a0d08434100f01d953d2555b964787d3ead35",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-AUTHORITY-MINTED-RULE-SCOPE",
+      "family": "authority",
+      "obligation": "A rule minted from a decision covers what it came from and nothing beside it.",
+      "package": "crucible-core",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_core"
+      },
+      "case": "permission::rule::mint::tests::a_minted_rule_covers_what_it_came_from_and_nothing_beside_it",
+      "source": "crates/crucible-core/src/permission/rule/mint/tests.rs",
+      "body_sha256": "42bf20603f063d1e3590e2ce6b35ec945feb0c9ea50543b80fd0473a84269199",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-AUTHORITY-HANDLE-GENERATION",
+      "family": "authority",
+      "obligation": "A handle resolves only through the generation that minted it.",
+      "package": "crucible-core",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_core"
+      },
+      "case": "registry::tests::a_handle_resolves_only_through_the_generation_that_minted_it",
+      "source": "crates/crucible-core/src/registry.rs",
+      "body_sha256": "06b23a1dcc3deff452664cc364a766f97ade09c1339a801ccbf704e0e266e22f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-AUTHORITY-STALE-TRANSACTION",
+      "family": "authority",
+      "obligation": "A transaction staged from a replaced generation is refused.",
+      "package": "crucible-core",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_core"
+      },
+      "case": "registry::tests::a_transaction_staged_from_a_replaced_generation_is_refused",
+      "source": "crates/crucible-core/src/registry.rs",
+      "body_sha256": "13252bf19c232158bcba4219a956d15d984e24a1f95423ad1ccfb4fc785e1f18",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-AUTHORITY-ADMISSION-GENERATION",
+      "family": "authority",
+      "obligation": "An admission is reachable only through the generation that minted it.",
+      "package": "crucible-runner",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_runner"
+      },
+      "case": "tools::tests::an_admission_is_reachable_only_through_the_generation_that_minted_it",
+      "source": "crates/crucible-runner/src/tools.rs",
+      "body_sha256": "b21453dc28272750943e961eba6017ed1ed8d8ce846c0f52fab9ade07581289e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-AUTHORITY-TRANSFORMED-ARGUMENTS",
+      "family": "authority",
+      "obligation": "Transformed arguments are revalidated before sensitivity or authority is read from them.",
+      "package": "crucible-runner",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_runner"
+      },
+      "case": "runner::work::tests::transformed_arguments_are_revalidated_before_sensitivity_or_authority",
+      "source": "crates/crucible-runner/src/runner/work/tests.rs",
+      "body_sha256": "e0a429690f7f8484f495607618eec9a6686af005f0b36b64372e8f0b6994dd24",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-AUTHORITY-REFRESH-LATER-ONLY",
+      "family": "authority",
+      "obligation": "A source refresh changes only later admissions, and each generation runs once.",
+      "package": "crucible-runner",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_runner"
+      },
+      "case": "runner::tests::lifecycle::refresh_changes_only_later_admissions_and_each_generation_runs_once",
+      "source": "crates/crucible-runner/src/runner/tests/lifecycle.rs",
+      "body_sha256": "fe92e0d9e651f6045d5efddcc59828209e8949cfdac97db1f663312f33175e3f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-CONCURRENCY-ONE-INVOCATION",
+      "family": "concurrency",
+      "obligation": "An approved effect journals one stable prepared, started and finished invocation.",
+      "package": "crucible-runner",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_runner"
+      },
+      "case": "runner::work::tests::an_approved_effect_journals_one_stable_prepared_started_and_finished_invocation",
+      "source": "crates/crucible-runner/src/runner/work/tests.rs",
+      "body_sha256": "8b873183767bb69c309db71d6e3de10a17f8e12b2fb46eb0c14f0a0c893ed998",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-CONCURRENCY-BUDGET-FIRST",
+      "family": "concurrency",
+      "obligation": "The result budget is reserved before a parallel wave is admitted.",
+      "package": "crucible-runner",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_runner"
+      },
+      "case": "runner::work::tests::result_budget_is_reserved_before_a_parallel_wave_is_admitted",
+      "source": "crates/crucible-runner/src/runner/work/tests.rs",
+      "body_sha256": "fd9561dfa0ba389643c231b6bd7913dfbaf4618b4549e99f158369e2aa4d8fb8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-CONCURRENCY-CEILING-HELD",
+      "family": "concurrency",
+      "obligation": "Simultaneous preparations cannot oversubscribe the requested ceiling.",
+      "package": "crucible-tools",
+      "target": {
+        "kind": "test",
+        "name": "sandbox_admission"
+      },
+      "case": "simultaneous_preparations_cannot_oversubscribe_the_requested_ceiling",
+      "source": "crates/crucible-tools/tests/sandbox_admission.rs",
+      "body_sha256": "3d1a24febf534ae7bc60ac4ab9d0d6b37139ca1ed4b8ddce2d920a9757f4952c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-SHUTDOWN-CLEANUP-VISIBLE",
+      "family": "shutdown",
+      "obligation": "A cleanup failure never hides the failure that required the cleanup.",
+      "package": "crucible-runner",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_runner"
+      },
+      "case": "runner::tests::lifecycle::cleanup_failure_does_not_hide_the_failure_that_required_cleanup",
+      "source": "crates/crucible-runner/src/runner/tests/lifecycle.rs",
+      "body_sha256": "293f0b0c460e40716ba1b58ab307d5acb5fad940f615f0de9b61a34e0dc8feea",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-SHUTDOWN-DISPOSAL-ONCE",
+      "family": "shutdown",
+      "obligation": "Repeated disposal reuses the first outcome instead of repeating the effects.",
+      "package": "crucible-runner",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_runner"
+      },
+      "case": "runner::tests::lifecycle::repeated_disposal_reuses_the_first_cleanup_outcome_without_repeating_effects",
+      "source": "crates/crucible-runner/src/runner/tests/lifecycle.rs",
+      "body_sha256": "400ba8bca6e8c78453d80dc82395dbe2a2714b34c5f6af21d1b2d2de15345b43",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-SHUTDOWN-OUTPUT-BOUNDED",
+      "family": "shutdown",
+      "obligation": "Encoded output is bounded after the output guard and before the event.",
+      "package": "crucible-runner",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_runner"
+      },
+      "case": "runner::work::tests::encoded_output_is_bounded_after_the_output_guard_and_before_the_event",
+      "source": "crates/crucible-runner/src/runner/work/tests.rs",
+      "body_sha256": "85127c628bb7e1ee3c6beb73028f09b9d03b453d93c5aa4d028f817cb598604c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-SHUTDOWN-PROCESS-GROUP",
+      "family": "shutdown",
+      "obligation": "An early return stops the whole process group rather than leaving children behind.",
+      "package": "crucible-tools",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tools"
+      },
+      "case": "bash::output::tests::an_early_return_guard_stops_the_whole_process_group",
+      "source": "crates/crucible-tools/src/bash/output/tests.rs",
+      "body_sha256": "69e0775b3a9abe956347aebffd9a0557f6bd63b79de41a5331abe70547c05643",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-CREDENTIAL-ROTATE-BEFORE-USE",
+      "family": "credentials",
+      "obligation": "An expired rotation is refreshed and written down before it is used.",
+      "package": "crucible-auth",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_auth"
+      },
+      "case": "oauth::tests::an_expired_rotation_is_refreshed_and_rewritten_before_use",
+      "source": "crates/crucible-auth/src/oauth/tests.rs",
+      "body_sha256": "7067e0b58e8ec1d0ed705b87f38689d786cf2e021a3a6f1dcd93e1f0d78905c6",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-CREDENTIAL-SCOPE-FIXED",
+      "family": "credentials",
+      "obligation": "A refresh cannot move a live credential scope to another account.",
+      "package": "crucible-auth",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_auth"
+      },
+      "case": "oauth::tests::a_refresh_cannot_move_a_live_credential_scope_to_another_account",
+      "source": "crates/crucible-auth/src/oauth/tests.rs",
+      "body_sha256": "5759ebeb8ec43685e25017921783a7fb275ea8b99e9fca0c18dfd2e00265813b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-CREDENTIAL-NO-DEBUG-KEY",
+      "family": "credentials",
+      "obligation": "A written key appears in no debug output anywhere.",
+      "package": "crucible-auth",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_auth"
+      },
+      "case": "store::tests::a_written_key_appears_in_no_debug_output_anywhere",
+      "source": "crates/crucible-auth/src/store/tests.rs",
+      "body_sha256": "06dae6982890d63b4ba3c2c8dc5e88477808a60e09c5af4adbe4e84dfa6e6a58",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-CREDENTIAL-NO-ENV-LEAK",
+      "family": "credentials",
+      "obligation": "A variable Crucible was started with reaches no command unless the list names it.",
+      "package": "crucible-tools",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tools"
+      },
+      "case": "bash::tests::a_variable_crucible_was_started_with_reaches_no_command_unless_the_list_names_it",
+      "source": "crates/crucible-tools/src/bash/tests.rs",
+      "body_sha256": "31f65091da7642d8c9c2684caab02114a5fe44f267ca0b299f7ea921d3bb1fed",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-FILES-OUTSIDE-UNREAD",
+      "family": "files-and-sandbox",
+      "obligation": "A path outside the workspace is refused without reading it.",
+      "package": "crucible-tools",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tools"
+      },
+      "case": "edit::tests::a_path_outside_the_workspace_is_refused_without_reading_it",
+      "source": "crates/crucible-tools/src/edit/tests.rs",
+      "body_sha256": "4fbf986b06bee86155df5440dadb0ab3cae1a4b0e0fc3c2bff53154c72c062a5",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-FILES-LINK-RETARGETED",
+      "family": "files-and-sandbox",
+      "obligation": "A link retargeted after the verdict leads outside and is refused.",
+      "package": "crucible-tools",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tools"
+      },
+      "case": "read::tests::a_link_retargeted_after_the_verdict_leads_outside_and_is_refused",
+      "source": "crates/crucible-tools/src/read.rs",
+      "body_sha256": "d4fc8b5c4fc5cba62dc8a4a15f0009f08f59e786c95f4c21b88d6a528e3d1695",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-SANDBOX-DESCRIPTOR-DESCENT",
+      "family": "files-and-sandbox",
+      "obligation": "Descriptor descent refuses an intermediate symlink.",
+      "package": "crucible-tools",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tools"
+      },
+      "case": "sandbox::linux::projection::authority::tests::descriptor_descent_refuses_an_intermediate_symlink",
+      "source": "crates/crucible-tools/src/sandbox/linux/projection/authority.rs",
+      "body_sha256": "d291af0f749e7b081c070854b43b68c3fc281c81cc15a87d33c0bfb15b5d9163",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-SANDBOX-SHELL-CONFINED",
+      "family": "files-and-sandbox",
+      "obligation": "A denied program reached through a shell is bounded by confinement instead.",
+      "package": "crucible-tools",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tools"
+      },
+      "case": "sandbox::linux::guardrail_tests::a_denied_program_reached_through_a_shell_is_bounded_by_confinement_instead",
+      "source": "crates/crucible-tools/src/sandbox/linux/guardrail_tests.rs",
+      "body_sha256": "2a2b170ace7ada880e7e034090cde2eae0eeed30506c3758021e74f26b6c09c7",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-SANDBOX-DENIED-NEVER-DIALED",
+      "family": "files-and-sandbox",
+      "obligation": "A denied network target is never dialed, and the private proxy is the only route out.",
+      "package": "crucible-tools",
+      "target": {
+        "kind": "test",
+        "name": "linux_network"
+      },
+      "case": "linux_curl_uses_the_private_proxy_and_a_denied_target_is_never_dialed",
+      "source": "crates/crucible-tools/tests/linux_network.rs",
+      "body_sha256": "367ee3922f9376bb1dd500f475580ad3af622982a6efb3678491e4ee83e1160e",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-SANDBOX-NO-FALSE-CLAIM",
+      "family": "files-and-sandbox",
+      "obligation": "The compatibility matrix is complete and never claims kernel confinement it does not have.",
+      "package": "crucible-tools",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tools"
+      },
+      "case": "sandbox::conformance::tests::compatibility_matrix_is_complete_and_never_claims_kernel_confinement",
+      "source": "crates/crucible-tools/src/sandbox/conformance/tests.rs",
+      "body_sha256": "26bb56b2140460ec72e84cc01a17952f72800a982ff33e185802fed4437fcfa3",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-RECOVERY-CRASH-WINDOWS",
+      "family": "recovery",
+      "obligation": "Invocation recovery distinguishes all three crash windows.",
+      "package": "crucible-core",
+      "target": {
+        "kind": "test",
+        "name": "journal_interruption"
+      },
+      "case": "invocation_recovery_distinguishes_all_three_crash_windows",
+      "source": "crates/crucible-core/tests/journal_interruption.rs",
+      "body_sha256": "66d06ffb06e78e782a90d4d20a6fef82defc371faedc6f91802db1714c315488",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-RECOVERY-EXPIRED-APPROVAL",
+      "family": "recovery",
+      "obligation": "Resume refuses an expired approval that has not executed.",
+      "package": "crucible-core",
+      "target": {
+        "kind": "test",
+        "name": "journal_interruption"
+      },
+      "case": "checkpoint_resume_refuses_an_expired_approval_that_has_not_executed",
+      "source": "crates/crucible-core/tests/journal_interruption.rs",
+      "body_sha256": "700924dc7e93971d7bc9b481955fc655bb14658ad410a4021d23366abe8fe256",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-RECOVERY-OBSOLETE-FORMAT",
+      "family": "recovery",
+      "obligation": "Obsolete checkpoint formats are rejected without compatibility aliases.",
+      "package": "crucible-session",
+      "target": {
+        "kind": "test",
+        "name": "checkpoint_store"
+      },
+      "case": "obsolete_checkpoint_formats_are_rejected_without_compatibility_aliases",
+      "source": "crates/crucible-session/tests/checkpoint_store.rs",
+      "body_sha256": "b03cd66c9d078c87cf0aa431cc5d11c5c910df1aabfec7071f74bccc5433799f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-RECOVERY-WEAKER-BACKEND",
+      "family": "recovery",
+      "obligation": "Resume refuses a live sandbox backend weaker than the one the session recorded.",
+      "package": "crucible-session",
+      "target": {
+        "kind": "test",
+        "name": "checkpoint_store"
+      },
+      "case": "sandbox_identity_round_trips_and_resume_refuses_a_weaker_live_backend",
+      "source": "crates/crucible-session/tests/checkpoint_store.rs",
+      "body_sha256": "c75e5370a48d4a695095f3b8621e9fc5b1b5603aa98f1c25b8d41c57934718f8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-RECOVERY-PENDING-SURVIVES",
+      "family": "recovery",
+      "obligation": "Every pending outcome survives stop and resume with one provider result.",
+      "package": "crucible-session",
+      "target": {
+        "kind": "test",
+        "name": "checkpoint_store"
+      },
+      "case": "every_pending_outcome_survives_stop_and_resume_with_one_provider_result",
+      "source": "crates/crucible-session/tests/checkpoint_store.rs",
+      "body_sha256": "654ac5443c6972eac37abdf487bb7578fefac98c59589eedc226c01481357c3c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-AGENT-DEFINITION-WIRED",
+      "family": "agents",
+      "obligation": "The shipped agent stands under the definition the wiring asked for.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::startup::tests::the_agent_is_named_coding_and_stands_under_what_the_wiring_asked",
+      "source": "src/cli/startup/tests.rs",
+      "body_sha256": "0712adfdb19f5e90142bfbd644b619de380a176f2bf031ab2c1290cf91a6bc7b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-NARROWED-REDRAW",
+      "family": "terminal",
+      "obligation": "A window narrowed mid-session redraws what is live at the new width.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "a_window_that_narrows_mid_session_redraws_what_is_live_at_the_new_width",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "4007be5dea7cab2336b0698192edc5d3cbf8c7d721e9e59f831572958b62aebc",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-KEYS-PRIVATE",
+      "family": "terminal",
+      "obligation": "Login and model selection keep keys off the screen.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "google_login_and_model_selection_keep_keys_private_and_offer_three_efforts",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "305332ed7666371270d6bf1970a0a4a4675597fd7ce6537e5179543d1cff12ca",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-RESUME-COMPLETE",
+      "family": "terminal",
+      "obligation": "A resumed session redraws the whole conversation and its compaction marker.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "full_conversation_and_compaction_marker_survive_resume",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "cbdbdbdb9e35b05286cd990f18580eaa960e0e18d28b47f79408178cbaf2fa19",
+      "platforms": [
+        "linux"
+      ]
+    }
+  ]
+}

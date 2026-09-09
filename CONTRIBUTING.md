@@ -61,7 +61,7 @@ This compatibility command runs all deterministic checks expected on a normal
 contributor machine. Its current children can also be run independently:
 
 ```bash
-scripts/sh/rust-checks.sh     # formatting, package isolation, clippy, tests and rustdoc
+scripts/sh/rust-checks.sh     # formatting, package isolation, clippy, tests, required cases and rustdoc
 scripts/sh/repo-checks.sh     # cross-file repository policy and crate layering
 scripts/sh/python-checks.sh   # canary and campaign harness fixtures and reports
 ```
@@ -86,6 +86,13 @@ is what `umask 022` produces. Linux sandboxing refuses a broker image that a
 group member could rewrite, and it walks the whole path to it, so a tree
 created under `umask 002` fails the sandbox tests for its mode rather than for
 anything in the change under test. The error names the directory.
+
+`scripts/required-cases.json` names the obligations that must keep running
+whatever the tests are called: `scripts/sh/rust-checks.sh` checks that each one
+is still discovered by the same selection the suite runs under, is not ignored,
+still hashes to the source recorded for it, and passes when run by exact name.
+Moving a case is a `source` edit. Changing what one asserts is a `body_sha256`
+edit, and the reviewer is agreeing to the new assertion, not to a green total.
 
 The Rust tests include the whole-screen pseudo-terminal suite. Run that suite on
 its own with:

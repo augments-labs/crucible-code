@@ -87,6 +87,11 @@ be beside the Crucible executable on Linux, macOS and Windows.
 scripts/sh/check.sh
 ```
 
+Build under `umask 022`. Linux sandboxing refuses a broker image that a group
+member could rewrite, and it walks the whole path to it, so a checkout made
+under `umask 002` fails the confinement tests for the mode of a directory above
+the helper rather than for anything you changed. The error names the directory.
+
 The compatibility command runs the deterministic Rust and repository checks
 expected on a contributor machine. CI calls those named gates independently,
 runs Rust tests on Intel and Apple silicon macOS plus Windows, and supplies

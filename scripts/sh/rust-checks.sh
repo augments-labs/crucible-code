@@ -90,9 +90,26 @@ for file in "${generated[@]}"; do
     before+=("$(cksum "$file" 2>/dev/null || true)")
 done
 
+# One selection, read twice: the suite runs under it, and the required-case
+# manifest is checked against what it built. Narrowing it to skip a package
+# therefore loses the obligations that package owns instead of shrinking a
+# total nobody reads.
+readonly TEST_SELECTION=(--workspace --locked)
+
 section "tests"
-if ! cargo test --workspace --locked; then
+if ! cargo test "${TEST_SELECTION[@]}"; then
     printf '    FAIL read the assertion, not the count\n'
+    failed=1
+fi
+
+section "required cases"
+artifacts=$(mktemp)
+trap 'rm -f "$artifacts"' EXIT
+if ! cargo test "${TEST_SELECTION[@]}" --no-run --message-format=json >"$artifacts"; then
+    printf '    FAIL the test selection did not build; the required cases were not checked\n'
+    failed=1
+elif ! python3 scripts/python/required-cases.py "$artifacts"; then
+    printf '    FAIL a named obligation in scripts/required-cases.json is missing, silenced or changed\n'
     failed=1
 fi
 
