@@ -8,6 +8,8 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.40.1] - 2026-09-09
+
 ### Fixed
 
 - **Search results a vendor restricts stay cleared when the session comes
@@ -3751,7 +3753,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.40.0...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.40.1...HEAD
+[0.40.1]: https://github.com/augments-labs/crucible-code/compare/v0.40.0...v0.40.1
 [0.40.0]: https://github.com/augments-labs/crucible-code/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/augments-labs/crucible-code/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/augments-labs/crucible-code/compare/v0.37.0...v0.38.0
