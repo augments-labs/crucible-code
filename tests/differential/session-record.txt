@@ -1,0 +1,12 @@
+{"user":"rename the field and show me what moved"}
+{"agent":"Looking at where it is read.","calls":[{"args":"{\"pattern\":\"nearness\",\"path\":\"crates\"}","id":"probe-call-1","name":"grep"}],"stop":"tools"}
+{"results":[{"failed":false,"id":"probe-call-1","text":"crates/crucible-config/src/document.rs:41"}]}
+{"user":"good, now the other caller"}
+{"context":{"section":"workspace","text":"one checked-out tree"}}
+{"user":"the framework's own copy of a prompt"}
+{"run_item":{"body":{"ancestry":{"depth":0,"parent":null,"root":"01900000-0000-7000-8000-0000000000b1","run":"01900000-0000-7000-8000-0000000000b1"},"kind":"message"},"version":2}}
+{"run_item":{"body":{"ancestry":{"depth":0,"parent":null,"root":"01900000-0000-7000-8000-0000000000b1","run":"01900000-0000-7000-8000-0000000000b1"},"kind":"message"},"version":2}}
+{"compacted":{"recap":"they renamed a field and found its readers","replaced":3}}
+{"pruned":{"freed":2,"results":["probe-call-1","probe-call-2"]}}
+{"carried":{"bytes":18898,"overhead":1024,"spent":128,"tokens":4725}}
+{"context_patch":{"workspace":{"root":"/work","trees":1}}}

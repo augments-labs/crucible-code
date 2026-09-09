@@ -61,7 +61,7 @@ This compatibility command runs all deterministic checks expected on a normal
 contributor machine. Its current children can also be run independently:
 
 ```bash
-scripts/sh/rust-checks.sh     # formatting, package isolation, clippy, tests and rustdoc
+scripts/sh/rust-checks.sh     # formatting, package isolation, clippy, tests, required cases and rustdoc
 scripts/sh/repo-checks.sh     # cross-file repository policy and crate layering
 scripts/sh/python-checks.sh   # canary and campaign harness fixtures and reports
 ```
@@ -86,6 +86,21 @@ is what `umask 022` produces. Linux sandboxing refuses a broker image that a
 group member could rewrite, and it walks the whole path to it, so a tree
 created under `umask 002` fails the sandbox tests for its mode rather than for
 anything in the change under test. The error names the directory.
+
+`scripts/required-cases.json` names the obligations that must keep running
+whatever the tests are called: `scripts/sh/rust-checks.sh` checks that each one
+is still discovered by the same selection the suite runs under, is not ignored,
+still hashes to the source recorded for it, and passes when run by exact name.
+Moving a case is a `source` edit. Changing what one asserts is a `body_sha256`
+edit, and the reviewer is agreeing to the new assertion, not to a green total.
+
+A `doc` entry names a documentation example instead of a function, and its hash
+covers the fenced block including the opening fence. That is where the assertion
+lives for one of those: `compile_fail` is what makes the example a proof, and
+`ignore`, `no_run`, `text` or another edition would leave it listed and green
+while it proves nothing. rustdoc does not check the error code written beside
+`compile_fail`, so that code records which failure the example is about rather
+than enforcing it, and the hash is what keeps both from changing unreviewed.
 
 The Rust tests include the whole-screen pseudo-terminal suite. Run that suite on
 its own with:

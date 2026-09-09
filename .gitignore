@@ -43,3 +43,7 @@ target
 # holding to account. It is renamed over that file or removed in the same test,
 # so one left behind is one a run did not finish.
 **/*.rs.new
+
+# Python writes these beside the check scripts on import. The repository checks
+# reject untracked files a run left behind, and this is one no run cleans up.
+**/__pycache__/

@@ -1,0 +1,118 @@
+=== nothing stated anywhere ===
+PromptCachePolicy {
+    mode: Prefer,
+    allowed_mechanisms: PromptCacheMechanisms(
+        15,
+    ),
+    isolation: Session,
+    retention: PromptCacheRetention {
+        class: ProviderDefault,
+        maximum_seconds: None,
+    },
+    persistent_resources: Forbid,
+    namespace: None,
+    sources: PromptCachePolicySources {
+        mode: Default,
+        mechanisms: Default,
+        isolation: Default,
+        retention: Default,
+        persistent_resources: Default,
+        namespace: Default,
+    },
+    version: PromptCachePolicyVersion(
+        "prompt-cache-policy-v1",
+    ),
+    conflict: None,
+}
+=== the user layer states all of it ===
+PromptCachePolicy {
+    mode: Require,
+    allowed_mechanisms: PromptCacheMechanisms(
+        14,
+    ),
+    isolation: User,
+    retention: PromptCacheRetention {
+        class: Extended,
+        maximum_seconds: Some(
+            3600,
+        ),
+    },
+    persistent_resources: Create,
+    namespace: Some(
+        PromptCacheNamespace(
+            "[redacted]",
+        ),
+    ),
+    sources: PromptCachePolicySources {
+        mode: User,
+        mechanisms: User,
+        isolation: User,
+        retention: User,
+        persistent_resources: User,
+        namespace: User,
+    },
+    version: PromptCachePolicyVersion(
+        "prompt-cache-policy-v1",
+    ),
+    conflict: None,
+}
+=== a workspace layer narrowing the mechanisms ===
+PromptCachePolicy {
+    mode: Require,
+    allowed_mechanisms: PromptCacheMechanisms(
+        2,
+    ),
+    isolation: User,
+    retention: PromptCacheRetention {
+        class: Extended,
+        maximum_seconds: Some(
+            3600,
+        ),
+    },
+    persistent_resources: Create,
+    namespace: Some(
+        PromptCacheNamespace(
+            "[redacted]",
+        ),
+    ),
+    sources: PromptCachePolicySources {
+        mode: User,
+        mechanisms: Workspace,
+        isolation: User,
+        retention: User,
+        persistent_resources: User,
+        namespace: User,
+    },
+    version: PromptCachePolicyVersion(
+        "prompt-cache-policy-v1",
+    ),
+    conflict: None,
+}
+=== a workspace layer reaching past the ceiling ===
+refused: <root>/project/.crucible/config.json: promptCaching.persistentResources.mode — a workspace layer may only narrow the inherited prompt-cache ceiling
+=== a workspace layer speaking with no user layer ===
+PromptCachePolicy {
+    mode: ObserveOnly,
+    allowed_mechanisms: PromptCacheMechanisms(
+        15,
+    ),
+    isolation: Session,
+    retention: PromptCacheRetention {
+        class: ProviderDefault,
+        maximum_seconds: None,
+    },
+    persistent_resources: Forbid,
+    namespace: None,
+    sources: PromptCachePolicySources {
+        mode: Workspace,
+        mechanisms: Default,
+        isolation: Default,
+        retention: Default,
+        persistent_resources: Default,
+        namespace: Default,
+    },
+    version: PromptCachePolicyVersion(
+        "prompt-cache-policy-v1",
+    ),
+    conflict: None,
+}
