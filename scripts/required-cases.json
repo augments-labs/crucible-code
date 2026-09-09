@@ -761,6 +761,60 @@
         "macos",
         "windows"
       ]
+    },
+    {
+      "id": "CASE-PRESERVED-CONFIGURATION-PRECEDENCE",
+      "family": "preserved-surfaces",
+      "obligation": "Layered configuration resolves to the same values, and a workspace layer is refused the same widening keys with the same words.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "differential"
+      },
+      "case": "the_configuration_layers_answer_which_one_won",
+      "source": "tests/differential.rs",
+      "body_sha256": "fb7e706d5a57cec8e5b0af1f5777085d4d31fcfb874dfd283b0e4eb5b58c5aee",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-PRESERVED-PROMPT-CACHE-POLICY",
+      "family": "preserved-surfaces",
+      "obligation": "The prompt-cache policy resolves to the same ceiling, the same source per field, and the same refusal when a workspace layer reaches past it.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "differential"
+      },
+      "case": "the_prompt_cache_policy_answers_what_each_layer_was_allowed_to_say",
+      "source": "tests/differential.rs",
+      "body_sha256": "5f5726a6fee1f0a7693ef4fbf925fda5d6d421809cb05ffa23a427c30021a634",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-PRESERVED-EXTENSION-DISCOVERY",
+      "family": "preserved-surfaces",
+      "obligation": "The installed-extension sweep reads the same manifests in the same order, refuses the same ones with the same words, and stops at the same ceiling.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "differential"
+      },
+      "case": "the_installed_extension_sweep_answers_what_it_read_and_refused",
+      "source": "tests/differential.rs",
+      "body_sha256": "1f1be66204bc9494561aa0abd34408ac631461a791a11c95adf9e74b6d0bee6a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
     }
   ]
 }

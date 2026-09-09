@@ -15,7 +15,9 @@
 //!
 //! - the crate version, which every release changes, becomes `<version>`;
 //! - the probe's own temporary directory, which is new every run, becomes
-//!   `<home>` or `<workspace>`.
+//!   `<home>`, `<workspace>` or `<root>`;
+//! - the separators inside a path that begins at one of those, which are the
+//!   platform's rather than the answer's, become `/`.
 //!
 //! Nothing else is normalized. Ordering, error text, absent fields and the
 //! exact wording of a message are the answer, and a probe that hid them would
@@ -29,6 +31,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 
+use crucible_config::{Extensions, HOME, Home, Settings};
 use crucible_core::{Answered, Fetch, Put, Search};
 use crucible_core::{
     Cancel, DescribeTool, Host, Page, Question, SearchResponse, SourceError, ToolProvenance,
@@ -101,10 +104,41 @@ impl Drop for Scratch {
     }
 }
 
-/// Replaces the two values that differ between two correct runs.
+/// Replaces the values that differ between two correct runs.
 fn settled(text: &str, root: &Path, stands_for: &str) -> String {
-    text.replace(&root.display().to_string(), stands_for)
-        .replace(env!("CARGO_PKG_VERSION"), "<version>")
+    let here = root.display().to_string();
+    let escaped = here.replace('\\', "\\\\");
+
+    let named = text
+        .replace(&escaped, stands_for)
+        .replace(&here, stands_for);
+    slashed(&named, stands_for).replace(env!("CARGO_PKG_VERSION"), "<version>")
+}
+
+/// Turns the separators inside a path that begins at `mark` into `/`.
+///
+/// Only inside one. A backslash anywhere else in a rendering — an escape in a
+/// quoted string, a character class in a pattern — is part of the answer, and
+/// rewriting those would be the probe agreeing that two different answers are
+/// the same. What is not part of the answer is which separator the machine
+/// running the probe writes its own temporary directory with.
+fn slashed(text: &str, mark: &str) -> String {
+    let mut rendered = String::with_capacity(text.len());
+    let mut rest = text;
+
+    while let Some(at) = rest.find(mark) {
+        let after = at + mark.len();
+        rendered.push_str(&rest[..after]);
+        rest = &rest[after..];
+
+        let ends = |one: char| one.is_whitespace() || matches!(one, '"' | ',' | ')' | ':');
+        let end = rest.find(ends).unwrap_or(rest.len());
+        rendered.push_str(&rest[..end].replace("\\\\", "/").replace('\\', "/"));
+        rest = &rest[end..];
+    }
+
+    rendered.push_str(rest);
+    rendered
 }
 
 // ---------------------------------------------------------------- command line
@@ -267,4 +301,346 @@ fn every_built_in_tool_advertises_what_it_did() {
         "tool-schemas",
         &settled(&rendered, scratch.path(), "<workspace>"),
     );
+}
+
+// ------------------------------------------------------------------ settings
+
+/// A home directory found the way the binary finds one, touching no disk.
+fn homed(at: &Path) -> Home {
+    let named = at.as_os_str().to_owned();
+    Home::find(&move |wanted| (wanted == HOME).then(|| named.clone())).expect("an absolute path")
+}
+
+/// Writes one fixture file, making whatever directory it needs.
+fn wrote(root: &Path, at: &str, text: &str) {
+    let path = root.join(at);
+    fs::create_dir_all(path.parent().expect("a file has a directory"))
+        .expect("a writable temporary directory");
+    fs::write(&path, text).expect("a writable temporary directory");
+}
+
+/// Renders what every public accessor answers, provider by provider.
+///
+/// Names that no layer mentioned are asked for too. What a setting nobody wrote
+/// resolves to is as much a precedence answer as what a contested one does, and
+/// it is the half that changes silently when a default moves.
+fn resolved(settings: &Settings) -> String {
+    let mut rendered = String::new();
+    let _ = writeln!(rendered, "provider           {:?}", settings.provider());
+
+    for provider in ["anthropic", "google", "openai", "unmentioned"] {
+        let _ = writeln!(rendered, "providers.{provider}");
+        let _ = writeln!(
+            rendered,
+            "  model            {:?}",
+            settings.model(provider)
+        );
+        let _ = writeln!(
+            rendered,
+            "  baseUrl          {:?}",
+            settings.base_url(provider)
+        );
+        let _ = writeln!(
+            rendered,
+            "  effort           {:?}",
+            settings.effort(provider)
+        );
+        let _ = writeln!(
+            rendered,
+            "  apiKeyEnv        {:?}",
+            settings.api_key_env(provider)
+        );
+    }
+
+    let _ = writeln!(
+        rendered,
+        "env                {:?}",
+        settings.env().collect::<Vec<_>>()
+    );
+
+    for id in ["acme.reviewer", "acme.unmentioned"] {
+        let _ = writeln!(rendered, "extensions.{id}");
+        let _ = writeln!(
+            rendered,
+            "  enabled          {:?}",
+            settings.extension_enabled(id)
+        );
+        let _ = writeln!(
+            rendered,
+            "  digest           {:?}",
+            settings.extension_digest(id)
+        );
+        let _ = writeln!(
+            rendered,
+            "  config           {:?}",
+            settings.extension_settings(id)
+        );
+    }
+
+    let _ = writeln!(
+        rendered,
+        "sandbox enabled    {:?}",
+        settings.sandbox_enabled()
+    );
+    rendered
+}
+
+/// Renders whichever a read produced, so a refusal is frozen like an answer.
+fn read_settings(home: &Home, workspace: &Path) -> String {
+    match Settings::read(home, workspace) {
+        Ok(settings) => format!("{}{settings:#?}\n", resolved(&settings)),
+        Err(refusal) => format!("refused: {refusal}\n"),
+    }
+}
+
+/// The layer outside the checkout, which is the only one that may widen.
+const USER_LAYER: &str = r#"{
+  "provider": "anthropic",
+  "providers": {
+    "anthropic": {
+      "model": "user-model",
+      "baseUrl": "https://user.example/v1",
+      "effort": "high",
+      "apiKeyEnv": "EXAMPLE_KEY_VARIABLE"
+    },
+    "openai": { "model": "user-openai-model" }
+  },
+  "env": {
+    "CRUCIBLE_CODE_SHARED": "user layer",
+    "CRUCIBLE_CODE_USER_ONLY": "user layer"
+  },
+  "extensions": {
+    "acme.reviewer": {
+      "enabled": true,
+      "digest": "sha256:0101010101010101010101010101010101010101010101010101010101010101",
+      "config": { "verbosity": "brief", "audience": "team" }
+    }
+  },
+  "permissions": { "allow": ["read(src/**)"], "deny": ["bash(rm -rf /)"] }
+}
+"#;
+
+/// The checked-in project layer, nearer and unable to widen.
+const PROJECT_LAYER: &str = r#"{
+  "providers": {
+    "anthropic": { "model": "project-model" },
+    "google": { "model": "project-google-model" }
+  },
+  "env": { "CRUCIBLE_CODE_SHARED": "project layer" },
+  "permissions": { "deny": ["bash(curl)"] }
+}
+"#;
+
+/// The nearest layer of all, conventionally not committed.
+const LOCAL_LAYER: &str = r#"{
+  "providers": { "anthropic": { "effort": "low" } },
+  "env": { "CRUCIBLE_CODE_SHARED": "project-local layer" },
+  "permissions": { "ask": ["write(**)"] }
+}
+"#;
+
+/// A project layer reaching for the key a request is sent with.
+const WIDENING_LAYER: &str = r#"{
+  "providers": { "anthropic": { "apiKeyEnv": "PLANTED_KEY_VARIABLE" } }
+}
+"#;
+
+/// A project layer naming a variable that is not crucible's own.
+const PLANTING_LAYER: &str = r#"{
+  "env": { "PATH_HELPER": "planted" }
+}
+"#;
+
+#[test]
+fn the_configuration_layers_answer_which_one_won() {
+    let scratch = Scratch::new("config");
+    let root = scratch.path();
+    let home = homed(&root.join("home"));
+    let workspace = root.join("project");
+
+    wrote(root, "home/config.json", USER_LAYER);
+    let mut rendered = String::from("=== the user layer alone ===\n");
+    rendered.push_str(&read_settings(&home, &workspace));
+
+    wrote(root, "project/.crucible/config.json", PROJECT_LAYER);
+    rendered.push_str("=== the project layer over it ===\n");
+    rendered.push_str(&read_settings(&home, &workspace));
+
+    wrote(root, "project/.crucible/config.local.json", LOCAL_LAYER);
+    rendered.push_str("=== the project-local layer over both ===\n");
+    rendered.push_str(&read_settings(&home, &workspace));
+
+    // The two refusals are frozen beside the answers because they are the same
+    // question: what a workspace layer may decide. A key that stopped being
+    // refused would otherwise look like a settings change rather than the loss
+    // of a boundary.
+    wrote(root, "project/.crucible/config.json", WIDENING_LAYER);
+    rendered.push_str("=== a project layer reaching for the key ===\n");
+    rendered.push_str(&read_settings(&home, &workspace));
+
+    wrote(root, "project/.crucible/config.json", PLANTING_LAYER);
+    rendered.push_str("=== a project layer naming a variable of its own ===\n");
+    rendered.push_str(&read_settings(&home, &workspace));
+
+    same("configuration-layers", &settled(&rendered, root, "<root>"));
+}
+
+// -------------------------------------------------------------- cache policy
+
+/// Renders the prompt-cache policy the given two layers resolve to.
+fn cached(scratch: &Scratch, user: &str, project: Option<&str>) -> String {
+    let root = scratch.path();
+    let workspace = root.join("project");
+    let checked_in = workspace.join(".crucible").join("config.json");
+
+    wrote(root, "home/config.json", user);
+    let _ = fs::remove_file(&checked_in);
+    if let Some(project) = project {
+        wrote(root, "project/.crucible/config.json", project);
+    } else {
+        fs::create_dir_all(checked_in.parent().expect("a file has a directory"))
+            .expect("a writable temporary directory");
+    }
+
+    match Settings::read(&homed(&root.join("home")), &workspace) {
+        Ok(settings) => format!("{:#?}\n", settings.prompt_cache()),
+        Err(refusal) => format!("refused: {refusal}\n"),
+    }
+}
+
+/// Everything the block can state, in one layer that is allowed to state it.
+const CACHE_USER: &str = r#"{
+  "promptCaching": {
+    "mode": "require",
+    "allowedMechanisms": ["automaticPrefix", "explicitBreakpoints", "persistentContent"],
+    "isolationScope": "user",
+    "requestedRetention": { "class": "extended", "maxSeconds": 3600 },
+    "persistentResources": { "mode": "create" },
+    "namespace": "example-namespace"
+  }
+}
+"#;
+
+#[test]
+fn the_prompt_cache_policy_answers_what_each_layer_was_allowed_to_say() {
+    let scratch = Scratch::new("cache");
+
+    let cells: [(&str, &str, Option<&str>); 5] = [
+        ("nothing stated anywhere", "{}\n", None),
+        ("the user layer states all of it", CACHE_USER, None),
+        (
+            "a workspace layer narrowing the mechanisms",
+            CACHE_USER,
+            Some("{\"promptCaching\":{\"allowedMechanisms\":[\"automaticPrefix\"]}}\n"),
+        ),
+        (
+            "a workspace layer reaching past the ceiling",
+            CACHE_USER,
+            Some("{\"promptCaching\":{\"persistentResources\":{\"mode\":\"require\"}}}\n"),
+        ),
+        (
+            "a workspace layer speaking with no user layer",
+            "{}\n",
+            Some("{\"promptCaching\":{\"mode\":\"observeOnly\"}}\n"),
+        ),
+    ];
+
+    let mut rendered = String::new();
+    for (about, user, project) in cells {
+        let _ = writeln!(rendered, "=== {about} ===");
+        rendered.push_str(&cached(&scratch, user, project));
+    }
+
+    same(
+        "prompt-cache-policy",
+        &settled(&rendered, scratch.path(), "<root>"),
+    );
+}
+
+// ---------------------------------------------------------- source discovery
+
+/// One installable manifest, as an extension author would write it.
+fn manifest(id: &str) -> String {
+    format!(
+        r#"{{
+  "id": "{id}",
+  "version": "1.4.0",
+  "protocol": "1.3",
+  "entrypoint": "bin/reviewer",
+  "minimumCrucible": "0.35.0",
+  "capabilities": ["registerTools"],
+  "contributions": ["tools"]
+}}
+"#
+    )
+}
+
+#[test]
+fn the_installed_extension_sweep_answers_what_it_read_and_refused() {
+    let scratch = Scratch::new("sources");
+    let root = scratch.path();
+
+    // Named so that the directory order and the read order disagree: what the
+    // sweep answers is the sorted order, and a sweep that started reporting the
+    // filesystem's own would answer differently on two machines holding the
+    // same extensions.
+    wrote(
+        root,
+        "home/extensions/zeta/manifest.json",
+        &manifest("acme.zeta"),
+    );
+    wrote(
+        root,
+        "home/extensions/alpha/manifest.json",
+        &manifest("acme.alpha"),
+    );
+    wrote(
+        root,
+        "home/extensions/repeat/manifest.json",
+        &manifest("acme.alpha"),
+    );
+    wrote(root, "home/extensions/broken/manifest.json", "{ not json\n");
+    wrote(
+        root,
+        "home/extensions/unqualified/manifest.json",
+        &manifest("reviewer"),
+    );
+    // Not a half-installed extension, and must stay out of both lists.
+    wrote(root, "home/extensions/README.md", "not an extension\n");
+
+    let found = Extensions::discover(&homed(&root.join("home")));
+
+    let mut rendered = String::new();
+    let _ = writeln!(rendered, "at        {}", found.at().display());
+    let _ = writeln!(rendered, "stopped   {}", found.stopped());
+    let _ = writeln!(rendered, "found     {}", found.found().len());
+    for one in found.found() {
+        let _ = writeln!(rendered, "{one:#?}");
+    }
+    let _ = writeln!(rendered, "refused   {}", found.refused().len());
+    for one in found.refused() {
+        // Said rather than shown: a refusal that could not open a file carries
+        // the operating system's own wording, and `Display` is the rendering
+        // this program puts in front of a person.
+        let _ = writeln!(rendered, "{one}");
+    }
+
+    // The ceiling, counted rather than listed. What matters about it is that a
+    // planted tree is cut off at a fixed number and says so, and sixty-five
+    // renderings of one refusal would bury that in the fixture.
+    let crowded = Scratch::new("sources-crowded");
+    for one in 0..=64 {
+        wrote(
+            crowded.path(),
+            &format!("home/extensions/one-{one:03}/manifest.json"),
+            "{ not json\n",
+        );
+    }
+    let swept = Extensions::discover(&homed(&crowded.path().join("home")));
+    let _ = writeln!(rendered, "=== sixty-five installed directories ===");
+    let _ = writeln!(rendered, "stopped   {}", swept.stopped());
+    let _ = writeln!(rendered, "found     {}", swept.found().len());
+    let _ = writeln!(rendered, "refused   {}", swept.refused().len());
+
+    same("installed-extensions", &settled(&rendered, root, "<root>"));
 }
