@@ -104,11 +104,19 @@ fi
 
 section "required cases"
 artifacts=$(mktemp)
-trap 'rm -f "$artifacts"' EXIT
+examples=$(mktemp)
+silenced=$(mktemp)
+trap 'rm -f "$artifacts" "$examples" "$silenced"' EXIT
+# Documentation examples are built by no binary, so the same selection is asked
+# a second time for the inventory rustdoc's own harness keeps.
 if ! cargo test "${TEST_SELECTION[@]}" --no-run --message-format=json >"$artifacts"; then
     printf '    FAIL the test selection did not build; the required cases were not checked\n'
     failed=1
-elif ! python3 scripts/python/required-cases.py "$artifacts"; then
+elif ! cargo test "${TEST_SELECTION[@]}" --doc -- --list >"$examples" ||
+    ! cargo test "${TEST_SELECTION[@]}" --doc -- --list --ignored >"$silenced"; then
+    printf '    FAIL the documentation examples did not list; the required cases were not checked\n'
+    failed=1
+elif ! python3 scripts/python/required-cases.py "$artifacts" "$examples" "$silenced"; then
     printf '    FAIL a named obligation in scripts/required-cases.json is missing, silenced or changed\n'
     failed=1
 fi

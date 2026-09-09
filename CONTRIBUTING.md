@@ -94,6 +94,12 @@ still hashes to the source recorded for it, and passes when run by exact name.
 Moving a case is a `source` edit. Changing what one asserts is a `body_sha256`
 edit, and the reviewer is agreeing to the new assertion, not to a green total.
 
+A `doc` entry names a documentation example instead of a function, and its hash
+covers the fenced block including the opening fence. That is where the assertion
+lives for one of those: `compile_fail,E0277` says which error the example is
+about, while a bare `compile_fail` passes for any compile error at all, so
+dropping the code is a change the same reviewer has to agree with.
+
 The Rust tests include the whole-screen pseudo-terminal suite. Run that suite on
 its own with:
 

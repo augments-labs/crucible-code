@@ -181,6 +181,60 @@
       ]
     },
     {
+      "id": "CASE-AUTHORITY-ATTACHMENT-PROOF",
+      "family": "authority",
+      "obligation": "Attaching files to a tool result takes the proof that the call was permitted.",
+      "package": "crucible-core",
+      "target": {
+        "kind": "doc",
+        "name": "crucible_core"
+      },
+      "case": "tool::ToolOutput::with_attachments",
+      "source": "crates/crucible-core/src/tool.rs",
+      "body_sha256": "473d0ae563f1634f4dee1d259e366a8d77f34fa1a396149487c179a124bb63ab",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-AUTHORITY-RUN-CONTEXT-ROOT",
+      "family": "authority",
+      "obligation": "A run context cannot be descended from outside the crate that mints one.",
+      "package": "crucible-runner",
+      "target": {
+        "kind": "doc",
+        "name": "crucible_runner"
+      },
+      "case": "context::RunContext",
+      "source": "crates/crucible-runner/src/context.rs",
+      "body_sha256": "c819d55b09de1476be781ff152df9c4eefc32ac48ff800c27dab09954b4c2b1d",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-AUTHORITY-RUN-RESULT-ORIGIN",
+      "family": "authority",
+      "obligation": "A run result cannot be invented by a caller that ran no run.",
+      "package": "crucible-runner",
+      "target": {
+        "kind": "doc",
+        "name": "crucible_runner"
+      },
+      "case": "outcome::RunResult",
+      "source": "crates/crucible-runner/src/outcome.rs",
+      "body_sha256": "054f03bd0eb7546eb62bd492cae0e0faee8a86cc6967c8cef68031a1396b0bb2",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
       "id": "CASE-CONCURRENCY-ONE-INVOCATION",
       "family": "concurrency",
       "obligation": "An approved effect journals one stable prepared, started and finished invocation.",
@@ -372,6 +426,24 @@
       "case": "bash::tests::a_variable_crucible_was_started_with_reaches_no_command_unless_the_list_names_it",
       "source": "crates/crucible-tools/src/bash/tests.rs",
       "body_sha256": "31f65091da7642d8c9c2684caab02114a5fe44f267ca0b299f7ea921d3bb1fed",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-CREDENTIAL-EXTENSION-VOICE",
+      "family": "credentials",
+      "obligation": "An extension's own words cannot be printed as Crucible's.",
+      "package": "crucible-core",
+      "target": {
+        "kind": "doc",
+        "name": "crucible_core"
+      },
+      "case": "extension::spoken::Trouble",
+      "source": "crates/crucible-core/src/extension/spoken.rs",
+      "body_sha256": "67bd205247c458bccb26f6e6bd2989f0270aadf2b29fe35a719db40f3321ce49",
       "platforms": [
         "linux",
         "macos",
@@ -582,6 +654,24 @@
       "case": "cli::startup::tests::the_agent_is_named_coding_and_stands_under_what_the_wiring_asked",
       "source": "src/cli/startup/tests.rs",
       "body_sha256": "0712adfdb19f5e90142bfbd644b619de380a176f2bf031ab2c1290cf91a6bc7b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-AGENT-INSTRUCTIONS-ONE-WAY",
+      "family": "agents",
+      "obligation": "An agent's instructions reach the definition only through the call that keeps the difference between none and empty.",
+      "package": "crucible-runner",
+      "target": {
+        "kind": "doc",
+        "name": "crucible_runner"
+      },
+      "case": "agent::AgentSpec::told",
+      "source": "crates/crucible-runner/src/agent.rs",
+      "body_sha256": "d7aab4e4a6994d0d81617ce1b2d8a044f9164fc8055028e5aa230f6a1c5ccb93",
       "platforms": [
         "linux",
         "macos",
