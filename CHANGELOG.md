@@ -15,6 +15,11 @@ change in any release with no deprecation period.
   sentence that named neither the path nor the reason, so a build that was
   never made and a directory a group member can rewrite looked identical. The
   error now names each path it looked at and what disqualified it.
+- **A value written under an MCP server's `env` stays out of a diagnostic.**
+  Redaction reached the `env` block at the top of a configuration document but
+  not the one each server record carries, so printing the settings, or printing
+  one server, wrote those values in full. Both now name every variable and show
+  nothing of what it was set to.
 - **A permission rule in a diagnostic reads as it was written.** Printing
   settings used to expand every `allow`, `ask` and `deny` pattern into the
   matcher compiled from it — tens of kilobytes of automaton for one rule, in

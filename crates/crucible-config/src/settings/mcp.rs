@@ -12,11 +12,13 @@
 //! starts none of them, and a build that never reaches the selection reaches no
 //! server at all.
 
+use std::fmt;
 use std::time::Duration;
 
 use serde_json::Value;
 
 use super::Settings;
+use crate::env;
 
 /// The most server records read back from one document.
 ///
@@ -71,7 +73,7 @@ impl Settings {
 /// name or a path that has not been looked for, `env_from` holds the names of
 /// variables that have not been read, and `directory` is a path nothing has
 /// opened.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct McpServer {
     name: Box<str>,
     command: Box<str>,
@@ -84,6 +86,53 @@ pub struct McpServer {
     shutdown: Duration,
     restarts: u32,
     required: bool,
+}
+
+impl fmt::Debug for McpServer {
+    /// Written by hand so `env` is named and not shown.
+    ///
+    /// The block is what this server is started with, so a key for it is
+    /// written there and nowhere else. A derive is how one reaches a log line,
+    /// an error or a panic payload without anybody having decided that it
+    /// should, which is why the redaction lives in the type rather than in
+    /// whatever prints it.
+    ///
+    /// `env_from` stays whole: both of its halves are names of variables, and a
+    /// name is not a value.
+    ///
+    /// The record is taken apart rather than read field by field, so that a
+    /// field added later is a compilation error here instead of a field this
+    /// quietly stops printing. That is the one thing the derive gave for free
+    /// and the reason to give it up was `env`, not the rest of the record.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self {
+            name,
+            command,
+            args,
+            directory,
+            env,
+            env_from,
+            handshake,
+            request,
+            shutdown,
+            restarts,
+            required,
+        } = self;
+
+        f.debug_struct("McpServer")
+            .field("name", name)
+            .field("command", command)
+            .field("args", args)
+            .field("directory", directory)
+            .field("env", &env::Named(env))
+            .field("env_from", env_from)
+            .field("handshake", handshake)
+            .field("request", request)
+            .field("shutdown", shutdown)
+            .field("restarts", restarts)
+            .field("required", required)
+            .finish()
+    }
 }
 
 impl McpServer {

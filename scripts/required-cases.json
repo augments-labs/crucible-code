@@ -851,6 +851,42 @@
         "macos",
         "windows"
       ]
+    },
+    {
+      "id": "CASE-CREDENTIAL-SERVER-ENVIRONMENT-UNPRINTED",
+      "family": "credentials",
+      "obligation": "A printed server record names its environment and shows nothing of what it was set to.",
+      "package": "crucible-config",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_config"
+      },
+      "case": "settings::mcp::tests::printing_a_server_record_names_a_variable_and_shows_nothing_of_its_value",
+      "source": "crates/crucible-config/src/settings/mcp/tests.rs",
+      "body_sha256": "313d1aa20a69557caf3521b5e8e933566e8b345faa7d30079c6e078fd7736e1c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-CREDENTIAL-NESTED-ENVIRONMENT-UNPRINTED",
+      "family": "credentials",
+      "obligation": "A printed document shows nothing of a variable written under a server, as it shows nothing of one written at the top.",
+      "package": "crucible-config",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_config"
+      },
+      "case": "settings::mcp::tests::printing_the_settings_shows_nothing_of_a_variable_written_under_a_server",
+      "source": "crates/crucible-config/src/settings/mcp/tests.rs",
+      "body_sha256": "6812bbcc77ff2702318c69fd77681875485fd55d5af3d99b797521f11e80093c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
     }
   ]
 }
