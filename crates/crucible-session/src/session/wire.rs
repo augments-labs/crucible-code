@@ -29,7 +29,7 @@ use serde_json::{Value, json};
 /// is refused rather than half-understood, which is the difference between
 /// telling the user their session cannot be continued and silently continuing
 /// a different one.
-pub(crate) const FORMAT: u32 = 12;
+pub(crate) const FORMAT: u32 = 13;
 
 /// The formats this build reads, newest first.
 ///
@@ -54,12 +54,19 @@ pub(crate) const FORMAT: u32 = 12;
 /// Format 11 is, because format 12 adds optional private continuation to agent
 /// messages. Older history cannot provide state it never recorded; it stays
 /// absent. Older readers must refuse format 12 rather than discard that state.
+/// Format 12 is, because format 13 only adds a line kind saying that results
+/// were cleared because the vendor that produced them restricts where they may
+/// be sent. A format-12 log never wrote one, and a session that never left such
+/// a vendor has nothing to say; it replays whole. Older readers must refuse
+/// format 13, and would anyway — a line kind they have no word for is refused
+/// mid-log as a damaged file, which names the wrong problem. The refusal costs
+/// them a session either way; the format number is what makes it honest.
 ///
 /// A format that changed the meaning of a line does not go on this list however
 /// small the change looks. What it would buy is somebody's history; what it
 /// would cost is a session that looks fine and is missing turns, which is the
 /// failure the refusal exists for.
-pub(crate) const READS: &[u32] = &[12, 11, 10, 9, 8, 7, 6, 5, 4, 3];
+pub(crate) const READS: &[u32] = &[13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3];
 
 /// Whether this build can replay a log written under `format`.
 pub(crate) fn readable(format: u32) -> bool {
@@ -87,7 +94,7 @@ pub(crate) fn has_continuation(line: &str) -> bool {
 
 /// Whether this format has the typed-context baseline introduced in format 10.
 pub(crate) const fn typed_context(format: Option<u32>) -> bool {
-    matches!(format, Some(10..=12))
+    matches!(format, Some(10..=13))
 }
 
 /// Whether a whole line is framework history rather than a conversation line.
@@ -660,6 +667,46 @@ pub(crate) fn cleared(line: &str) -> Option<Vec<ToolId>> {
         .iter()
         .map(|one| Some(ToolId::new(one.as_str()?)))
         .collect()
+}
+
+/// Records that results were cleared because the vendor that produced them
+/// restricts where they may be sent, and the sentence left in their place.
+///
+/// A separate kind from the pruning line above, for two reasons that are both
+/// about what a reader does with it. A pruning is skipped for a result too
+/// small to be worth a placeholder, and a restricted result of any size may not
+/// go out — the size gate is a hole here, not an economy. And a reader shows
+/// the sentence: "cleared to make room" over a result taken away for a term of
+/// somebody's licence answers the wrong question.
+///
+/// The sentence travels in the line rather than being derived from the kind, so
+/// a log says why in the words the run used, and a later restriction with a
+/// different reason reuses this line rather than needing another format.
+pub(crate) fn restricted(freed: usize, results: &[ToolId], notice: &str) -> String {
+    json!({
+        "restricted": {
+            "freed": freed,
+            "results": results.iter().map(ToolId::as_str).collect::<Vec<_>>(),
+            "notice": notice,
+        }
+    })
+    .to_string()
+}
+
+/// What a restriction line says, or `None` if this is not one: the results it
+/// cleared and the sentence standing in their place.
+pub(crate) fn restriction(line: &str) -> Option<(Vec<ToolId>, String)> {
+    let value: Value = serde_json::from_str(line).ok()?;
+    let restricted = value.get("restricted")?;
+    let notice = restricted.get("notice")?.as_str()?.to_owned();
+    let results = restricted
+        .get("results")?
+        .as_array()?
+        .iter()
+        .map(|one| Some(ToolId::new(one.as_str()?)))
+        .collect::<Option<Vec<_>>>()?;
+
+    Some((results, notice))
 }
 
 /// A line saying what the request that produced the answer above it carried.
@@ -1378,8 +1425,32 @@ mod tests {
     }
 
     #[test]
+    fn a_restriction_line_carries_back_what_it_cleared_and_the_sentence_it_left() {
+        let line = restricted(
+            42,
+            &[ToolId::new("a"), ToolId::new("b")],
+            "[cleared — restricted]",
+        );
+
+        let (results, notice) = restriction(&line).expect("a restriction line");
+        assert_eq!(results, [ToolId::new("a"), ToolId::new("b")]);
+        assert_eq!(notice, "[cleared — restricted]");
+
+        // And it is not the pruning line wearing a different hat. A reader that
+        // took one for the other would clear a restricted result only when it
+        // was large enough to be worth the room, and say the wrong thing about
+        // the ones it did clear.
+        assert!(cleared(&line).is_none(), "read back as a pruning");
+        assert!(
+            restriction(&pruned(42, &[ToolId::new("a")])).is_none(),
+            "a pruning read back as a restriction"
+        );
+        assert!(message(&line).is_none(), "read back as a conversation line");
+    }
+
+    #[test]
     fn the_format_moves_with_the_line_shape() {
-        assert_eq!(FORMAT, 12);
+        assert_eq!(FORMAT, 13);
         assert!(readable(FORMAT));
         assert!(typed_context(Some(10)));
         assert!(typed_context(Some(FORMAT)));

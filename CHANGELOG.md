@@ -10,6 +10,12 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **Search results a vendor restricts stay cleared when the session comes
+  back.** Switching away from Google took its grounded search results out of
+  what the next model was sent, but only in memory: the log still held them, so
+  resuming the session read them back and sent them on. The clearing is now
+  recorded, and a resumed session comes back the way the switch left it. New
+  logs are format 13; formats 3 to 12 still replay.
 - **A file being attached is opened once and bounded from what opened.** Every
   attachment path resolved a name and then read that name again, so a picture
   that was a named pipe stopped the agent until somebody wrote to it, and a

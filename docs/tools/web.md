@@ -51,6 +51,8 @@ citations in the terminal without redirect rewriting. In accordance with Google'
 [grounding usage terms](https://ai.google.dev/gemini-api/terms#grounding-with-google-search),
 switching to another provider clears grounded search outputs from the context sent
 to the new model, while retaining them in the local session log for user history review.
+The clearing is recorded in the log, so a session resumed later comes back cleared
+rather than reading the outputs off the disk and sending them on.
 Incomplete, cancelled or malformed responses yield a clean bounded failure.
 
 Moonshot's two services belong to the Kimi Code platform, which is where

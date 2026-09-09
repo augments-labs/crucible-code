@@ -67,6 +67,13 @@ impl Provider for Google {
     fn name(&self) -> &'static str {
         NAME
     }
+    /// Google's terms do not allow grounded search results or search
+    /// suggestions to be sent to another vendor's model. The sentence is here
+    /// rather than in the runner because the term is this vendor's, and a
+    /// runner that knew which vendors restrict what would be deciding it.
+    fn restricts_results(&self) -> Option<&'static str> {
+        Some("[cleared — Google search results are restricted to Google models]")
+    }
     fn spells(&self) -> crucible_core::Modalities {
         crucible_core::Modality::EVERY.into_iter().fold(
             crucible_core::Modalities::empty(),

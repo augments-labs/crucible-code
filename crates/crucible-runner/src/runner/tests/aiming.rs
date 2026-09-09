@@ -60,16 +60,17 @@ fn a_provider_handed_over_mid_session_is_the_one_the_next_turn_is_sent_to() {
 }
 
 #[test]
-fn switching_away_from_google_prunes_grounded_search_results_from_next_provider() {
+fn switching_away_from_a_vendor_that_restricts_its_results_takes_them_out_of_the_next_request() {
     let first = Script::new(vec![
         calling("call_search", "web_search", r#"{"query":"rust"}"#),
-        saying("answer from google"),
+        saying("an answer from the vendor that restricts"),
     ])
-    .with_name("google");
+    .with_name("restricting")
+    .restricting(RESTRICTED);
 
     let mut scripted = Scripted::new(
         first,
-        tools([Fixed::new("web_search").answering("grounded search results canary")]),
+        tools([Fixed::new("web_search").answering("restricted search results canary")]),
         Verdict::Allow,
     );
 
@@ -77,36 +78,60 @@ fn switching_away_from_google_prunes_grounded_search_results_from_next_provider(
         .turn("search for rust")
         .expect("the turn to finish");
 
-    let second = Script::new(vec![saying("answer from anthropic")]).with_name("anthropic");
-    let _after = second.sent();
+    let second = Script::new(vec![saying("an answer from elsewhere")]).with_name("elsewhere");
+    let after = second.sent();
     scripted.runner.serve(Box::new(second));
     scripted.turn("summarize").expect("the turn to finish");
 
-    let message = scripted
-        .runner
-        .transcript()
-        .messages()
-        .iter()
-        .find(|m| matches!(m, crucible_core::Message::ToolResults(_)))
-        .expect("tool result message");
-    if let crucible_core::Message::ToolResults(results) = message {
-        let first = results.first().expect("tool result");
-        assert!(
-            first
-                .output
-                .text()
-                .contains("Google search results are restricted to Google models"),
-            "clearing notice should be present in tool result: {}",
-            first.output.text()
-        );
-        assert!(
-            !first
-                .output
-                .text()
-                .contains("grounded search results canary"),
-            "Google grounded search results were leaked to a third-party provider"
-        );
-    }
+    drop(after);
+    let result = only_result(&scripted);
+    assert!(
+        !result
+            .output
+            .text()
+            .contains("restricted search results canary"),
+        "a restricted result went out to the vendor it was taken away from: {}",
+        result.output.text()
+    );
+    assert_eq!(
+        result.output.text(),
+        RESTRICTED,
+        "the result stands without the sentence saying why it is empty"
+    );
+}
+
+#[test]
+fn a_vendor_that_restricts_nothing_leaves_the_results_where_they_are() {
+    // The other half of the same rule, and the one that keeps it from being a
+    // clearing on every swap: what may be sent on is the producing vendor's to
+    // say, and a vendor that says nothing has restricted nothing.
+    let first = Script::new(vec![
+        calling("call_search", "web_search", r#"{"query":"rust"}"#),
+        saying("an answer"),
+    ])
+    .with_name("unrestricting");
+
+    let mut scripted = Scripted::new(
+        first,
+        tools([Fixed::new("web_search").answering("ordinary search results canary")]),
+        Verdict::Allow,
+    );
+
+    scripted
+        .turn("search for rust")
+        .expect("the turn to finish");
+
+    let second = Script::new(vec![saying("an answer from elsewhere")]).with_name("elsewhere");
+    let after = second.sent();
+    scripted.runner.serve(Box::new(second));
+    scripted.turn("summarize").expect("the turn to finish");
+
+    drop(after);
+    assert_eq!(
+        only_result(&scripted).output.text(),
+        "ordinary search results canary",
+        "a result nobody restricted was taken away from the conversation"
+    );
 }
 
 #[test]
