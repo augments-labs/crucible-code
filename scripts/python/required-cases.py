@@ -128,7 +128,10 @@ def executables(stream):
         if message.get("reason") != "compiler-artifact" or not message.get("executable"):
             continue
         target = message["target"]
-        if not target.get("test"):
+        # A bin is built twice under `cargo test`: once as the program, once as
+        # the harness that holds its cases. Only the second one can be listed,
+        # and only the profile tells them apart.
+        if not message.get("profile", {}).get("test"):
             continue
         directory = os.path.dirname(os.path.relpath(message["manifest_path"], os.getcwd()))
         package = "crucible-code" if not directory else os.path.basename(directory)
