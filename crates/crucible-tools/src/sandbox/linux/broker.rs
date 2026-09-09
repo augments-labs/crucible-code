@@ -51,48 +51,66 @@ impl Broker {
     }
 
     fn first_trusted(candidates: Vec<PathBuf>, excluded: &[&Path]) -> Result<Self, SandboxError> {
+        let mut refused = Vec::with_capacity(candidates.len());
         for candidate in candidates {
-            let Ok(path) = candidate.canonicalize() else {
-                continue;
-            };
-            if excluded.iter().any(|root| path.starts_with(root)) {
-                continue;
+            match Self::pin(&candidate, excluded) {
+                Ok(broker) => return Ok(broker),
+                Err(reason) => refused.push((candidate, reason)),
             }
-            let Ok(metadata) = path.metadata() else {
-                continue;
-            };
-            // The broker is namespace PID 1: it applies the resource limits,
-            // ends the process tree and drives the scan that decides what is
-            // published back. Like Bubblewrap it may only come from a path no
-            // other unprivileged user can rewrite.
-            if !metadata.is_file()
-                || metadata.len() == 0
-                || metadata.len() > MAX_BROKER_BYTES
-                || !trusted_owner(metadata.uid(), metadata.permissions().mode())
-                || !super::probe::trusted_parent_chain_owned_by(&path, |uid, _, mode| {
-                    trusted_owner(uid, mode)
-                })
-            {
-                continue;
-            }
-            let Ok(image) = File::open(&path) else {
-                continue;
-            };
-            let Ok(opened) = image.metadata() else {
-                continue;
-            };
-            if opened.len() != metadata.len()
-                || opened.ino() != metadata.ino()
-                || opened.dev() != metadata.dev()
-                || !trusted_owner(opened.uid(), opened.permissions().mode())
-            {
-                continue;
-            }
-            return Ok(Self { path, image });
         }
-        Err(unavailable(
-            "the descriptor-pinned crucible-sandbox-broker executable is unavailable",
-        ))
+        Err(none_trusted(&refused))
+    }
+
+    /// Bind one candidate by descriptor, or say what disqualified it.
+    ///
+    /// The broker is namespace PID 1: it applies the resource limits, ends the
+    /// process tree and drives the scan that decides what is published back.
+    /// Like Bubblewrap it may only come from a path no other unprivileged user
+    /// can rewrite. Each refusal carries its own sentence because the two
+    /// candidates fail for different reasons, and a caller who is told only
+    /// that no broker was found cannot tell a missing build from a checkout
+    /// whose directory mode lets a group member replace the image.
+    fn pin(candidate: &Path, excluded: &[&Path]) -> Result<Self, &'static str> {
+        let Ok(path) = candidate.canonicalize() else {
+            return Err("no file stands at that path");
+        };
+        if excluded.iter().any(|root| path.starts_with(root)) {
+            return Err("it lies inside the tree this sandbox is confining");
+        }
+        let Ok(metadata) = path.metadata() else {
+            return Err("its metadata could not be read");
+        };
+        if !metadata.is_file() {
+            return Err("it is not a regular file");
+        }
+        if metadata.len() == 0 {
+            return Err("it is empty");
+        }
+        if metadata.len() > MAX_BROKER_BYTES {
+            return Err("it is larger than a broker image may be");
+        }
+        if !trusted_owner(metadata.uid(), metadata.permissions().mode()) {
+            return Err("another user can rewrite the image itself");
+        }
+        if !super::probe::trusted_parent_chain_owned_by(&path, |uid, _, mode| {
+            trusted_owner(uid, mode)
+        }) {
+            return Err("a directory above it is writable by a group or by everyone");
+        }
+        let Ok(image) = File::open(&path) else {
+            return Err("it could not be opened");
+        };
+        let Ok(opened) = image.metadata() else {
+            return Err("the opened image's metadata could not be read");
+        };
+        if opened.len() != metadata.len()
+            || opened.ino() != metadata.ino()
+            || opened.dev() != metadata.dev()
+            || !trusted_owner(opened.uid(), opened.permissions().mode())
+        {
+            return Err("it changed between being checked and being opened");
+        }
+        Ok(Self { path, image })
     }
 
     /// A broker that is never executed, for tests that read the plan.
@@ -206,6 +224,27 @@ fn unavailable(reason: &'static str) -> SandboxError {
     }
 }
 
+/// Name every candidate and why it was refused.
+///
+/// Both paths are searched before this is reached, so reporting only the last
+/// one would hide the reason that applies to the reader's own layout.
+fn none_trusted(refused: &[(PathBuf, &'static str)]) -> SandboxError {
+    let mut reason =
+        String::from("no trusted crucible-sandbox-broker executable was found; refused:");
+    if refused.is_empty() {
+        reason.push_str(" no path was searched");
+    }
+    for (path, why) in refused {
+        reason.push_str("\n  ");
+        reason.push_str(&path.display().to_string());
+        reason.push_str(" — ");
+        reason.push_str(why);
+    }
+    SandboxError::BackendUnavailable {
+        reason: reason.into(),
+    }
+}
+
 /// How long a cancelled broker may take to end its workload and exit.
 ///
 /// The supervisor holds the process lifecycle lock meanwhile, so this also
@@ -277,10 +316,60 @@ mod tests {
             .expect("fixture mode");
         std::fs::set_permissions(sample.root(), std::fs::Permissions::from_mode(0o777))
             .expect("world-writable parent");
-        let refused = Broker::first_trusted(vec![image], &[]);
+        let refused = Broker::first_trusted(vec![image.clone()], &[]);
+        let Err(SandboxError::BackendUnavailable { reason }) = refused else {
+            panic!("a broker anyone can replace was accepted");
+        };
         assert!(
-            matches!(refused, Err(SandboxError::BackendUnavailable { .. })),
-            "a broker anyone can replace was accepted"
+            reason.contains("a directory above it is writable by a group or by everyone"),
+            "the refusal did not say which check turned the image down: {reason}"
+        );
+        assert!(
+            reason.contains(&image.display().to_string()),
+            "the refusal did not name the path it turned down: {reason}"
+        );
+    }
+
+    #[test]
+    fn a_broker_under_a_group_writable_directory_says_so_rather_than_only_that_none_was_found() {
+        // A checkout created under `umask 002` has group-writable directories,
+        // and every candidate then sits under one. Before the reason was
+        // carried out, the caller was told only that no broker was available,
+        // which reads as a missing build rather than a directory mode.
+        let sample = crate::sample::Sample::new("sandbox-broker-group-writable-parent");
+        let image = sample.root().join("crucible-sandbox-broker");
+        std::fs::write(&image, b"#!/bin/sh\nexit 0\n").expect("broker fixture");
+        std::fs::set_permissions(&image, std::fs::Permissions::from_mode(0o755))
+            .expect("fixture mode");
+        std::fs::set_permissions(sample.root(), std::fs::Permissions::from_mode(0o775))
+            .expect("group-writable parent");
+        let Err(SandboxError::BackendUnavailable { reason }) =
+            Broker::first_trusted(vec![image], &[])
+        else {
+            panic!("a broker any group member can replace was accepted");
+        };
+        assert!(
+            reason.contains("a directory above it is writable by a group or by everyone"),
+            "a group-writable parent was not named as the reason: {reason}"
+        );
+    }
+
+    #[test]
+    fn a_broker_that_was_never_built_says_the_path_is_empty_rather_than_untrusted() {
+        let sample = crate::sample::Sample::new("sandbox-broker-absent");
+        let absent = sample.root().join("crucible-sandbox-broker");
+        let Err(SandboxError::BackendUnavailable { reason }) =
+            Broker::first_trusted(vec![absent.clone()], &[])
+        else {
+            panic!("a broker that does not exist was accepted");
+        };
+        assert!(
+            reason.contains("no file stands at that path"),
+            "an absent broker was not told apart from an untrusted one: {reason}"
+        );
+        assert!(
+            reason.contains(&absent.display().to_string()),
+            "the refusal did not name the path it looked at: {reason}"
         );
     }
 }

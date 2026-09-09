@@ -8,6 +8,14 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A sandbox that cannot start says which check turned the broker down.**
+  Linux sandboxing refused every candidate `crucible-sandbox-broker` with one
+  sentence that named neither the path nor the reason, so a build that was
+  never made and a directory a group member can rewrite looked identical. The
+  error now names each path it looked at and what disqualified it.
+
 ## [0.40.0] - 2026-09-08
 
 ### Changed

@@ -81,6 +81,12 @@ repository does keep, such as the configuration schema, is committed where it
 is read instead, and `scripts/sh/repo-checks.sh` fails on anything tracked
 under `generated/`.
 
+Run the checks from a checkout whose directories are not group-writable, which
+is what `umask 022` produces. Linux sandboxing refuses a broker image that a
+group member could rewrite, and it walks the whole path to it, so a tree
+created under `umask 002` fails the sandbox tests for its mode rather than for
+anything in the change under test. The error names the directory.
+
 The Rust tests include the whole-screen pseudo-terminal suite. Run that suite on
 its own with:
 
