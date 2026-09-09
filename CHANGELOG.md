@@ -10,6 +10,13 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **A file being attached is opened once and bounded from what opened.** Every
+  attachment path resolved a name and then read that name again, so a picture
+  that was a named pipe stopped the agent until somebody wrote to it, and a
+  file that grew past the four-megabyte ceiling was read whole before being
+  refused for its size. Each site now opens the file first and settles kind and
+  size from the descriptor, so a pipe is refused at once and nothing over the
+  ceiling is allocated.
 - **An MCP block longer than crucible reads is refused rather than shortened.**
   A record with three hundred arguments was accepted and the server was started
   with the first 256 of them, and nothing said which went missing. A block over
