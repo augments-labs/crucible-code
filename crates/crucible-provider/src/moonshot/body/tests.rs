@@ -1,7 +1,7 @@
 use crucible_core::{
     Attached, Attachment, Change, Changed, Content, Diff, Effort, Fragment, Line, Modality,
-    PromptCacheMechanism, PromptCacheRetentionClass, ToolArgs, ToolCall, ToolId, ToolOutput,
-    Transcript,
+    PromptCacheMechanism, PromptCacheRetentionClass, RecordedToolOutput, ToolArgs, ToolCall,
+    ToolId, ToolOutput, Transcript,
 };
 
 use super::*;
@@ -300,7 +300,7 @@ fn a_result_answers_the_call_it_was_made_against_in_a_message_of_its_own() {
     transcript
         .push(Message::ToolResults(vec![ToolResult {
             id: ToolId::new("call_1"),
-            output: ToolOutput::ok("fn main() {}"),
+            output: RecordedToolOutput::ok("fn main() {}"),
         }]))
         .expect("valid fixture transcript");
 
@@ -324,7 +324,7 @@ fn a_result_that_failed_says_so_in_its_text() {
     transcript
         .push(Message::ToolResults(vec![ToolResult {
             id: ToolId::new("call_1"),
-            output: ToolOutput::failed("no such file: a.rs"),
+            output: RecordedToolOutput::failed("no such file: a.rs"),
         }]))
         .expect("valid fixture transcript");
 
@@ -407,7 +407,7 @@ fn nothing_comes_between_a_turns_tool_calls_and_their_results() {
     transcript
         .push(Message::ToolResults(vec![ToolResult {
             id: ToolId::new("call_1"),
-            output: ToolOutput::ok("fn main() {}"),
+            output: RecordedToolOutput::ok("fn main() {}"),
         }]))
         .expect("valid fixture transcript");
 
@@ -573,7 +573,7 @@ fn resolved_picture(index: usize) -> Attached<'static> {
 }
 
 /// One call, answered with the words and files a tool came back with.
-fn one(output: ToolOutput) -> Vec<ToolResult> {
+fn one(output: RecordedToolOutput) -> Vec<ToolResult> {
     vec![ToolResult {
         id: ToolId::new("call_1"),
         output,
@@ -703,13 +703,15 @@ fn each_result_gets_the_files_its_own_call_found() {
 #[test]
 fn the_request_body_is_the_same_whatever_the_reader_was_shown() {
     let text = "fn main() {}";
-    let plain = serialize(&answering(one(ToolOutput::ok(text)), Vec::new()));
+    let plain = serialize(&answering(one(RecordedToolOutput::ok(text)), Vec::new()));
     let shown = serialize(&answering(
-        one(ToolOutput::ok(text).showing(Diff::new([Line::new(1, Change::Added, text)]))),
+        one(ToolOutput::ok(text)
+            .showing(Diff::new([Line::new(1, Change::Added, text)]))
+            .into_recorded()),
         Vec::new(),
     ));
     let counted = serialize(&answering(
-        one(ToolOutput::ok(text).counting(Changed::new(2, 1))),
+        one(RecordedToolOutput::ok(text).counting(Changed::new(2, 1))),
         Vec::new(),
     ));
 

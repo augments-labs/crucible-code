@@ -4,7 +4,7 @@ use std::fs::OpenOptions;
 use std::io::Write as _;
 use std::str::FromStr as _;
 
-use crucible_core::{Message, SessionId, ToolCall, ToolId, ToolOutput, ToolResult};
+use crucible_core::{Message, RecordedToolOutput, SessionId, ToolCall, ToolId, ToolResult};
 
 use super::*;
 use crate::sample::Sample;
@@ -90,7 +90,7 @@ fn the_calls_a_turn_made_and_what_came_back_are_kept_with_it() {
         }),
         wire::line(&Message::ToolResults(vec![ToolResult {
             id: ToolId::new("c-1"),
-            output: ToolOutput::ok("theme = midnight"),
+            output: RecordedToolOutput::ok("theme = midnight"),
         }])),
     ];
     planted(&sample, "0000000000001-000001", &lines);
@@ -221,7 +221,7 @@ fn what_a_terminal_would_act_on_does_not_survive_a_tool_result_either() {
     let sample = Sample::new("glimpse-control-result");
     let lines = vec![wire::line(&Message::ToolResults(vec![ToolResult {
         id: ToolId::new("c-1"),
-        output: ToolOutput::ok("two\nlines\u{1b}[31m\u{7}"),
+        output: RecordedToolOutput::ok("two\nlines\u{1b}[31m\u{7}"),
     }]))];
     planted(&sample, "0000000000001-000001", &lines);
 

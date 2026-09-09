@@ -18,8 +18,8 @@ use crucible_core::{
     ContinuationData, ContinuationPart, ContinuationScope, Fragment, InvocationState,
     MAX_RUN_ITEM_BYTES, Message, Modality, PendingAction, PricingUnit, PromptCacheEligibility,
     PromptCacheEncoding, PromptCacheFact, PromptCacheIneligibleReason, PromptCacheOutcome,
-    PromptCacheRequestDisposition, PromptCacheSupport, ProviderContinuation, RunItem, SessionId,
-    Spend, StopReason, ToolCall, ToolEffect, ToolId, ToolOutcome, ToolOutput, ToolResult,
+    PromptCacheRequestDisposition, PromptCacheSupport, ProviderContinuation, RecordedToolOutput,
+    RunItem, SessionId, Spend, StopReason, ToolCall, ToolEffect, ToolId, ToolOutcome, ToolResult,
 };
 use serde_json::{Value, json};
 
@@ -121,16 +121,16 @@ pub(crate) fn journal(item: &RunItem) -> Option<String> {
         RunItem::ProviderAttempt { fact, .. } => cache_fact(fact, &ancestry),
         RunItem::Sandbox { call, fact, .. } => sandbox_fact(call, fact, &ancestry),
         RunItem::Interrupt(action) => interrupted(action, &ancestry),
-        RunItem::Invocation(invocation) => {
-            let state = match invocation.state() {
+        RunItem::Invocation { record, preview } => {
+            let state = match record.state() {
                 InvocationState::Prepared => json!({ "state": "prepared" }),
                 InvocationState::Started => json!({ "state": "started" }),
                 InvocationState::Finished { outcome, output } => {
                     let mut result = answered(&ToolResult {
-                        id: invocation.call().id.clone(),
+                        id: record.call().id.clone(),
                         output: output.clone(),
                     });
-                    if let Some(diff) = output.diff()
+                    if let Some(diff) = preview
                         && let Some(fields) = result.as_object_mut()
                     {
                         fields.insert("display_diff".into(), super::display::preview(diff));
@@ -145,11 +145,11 @@ pub(crate) fn journal(item: &RunItem) -> Option<String> {
             json!({
                 "kind": "invocation",
                 "ancestry": ancestry,
-                "invocation": invocation.id().to_string(),
-                "call": invocation.call().id.as_str(),
-                "tool": invocation.call().name.as_ref(),
-                "effect": effect(invocation.effect()),
-                "idempotency_key_present": invocation.idempotency_key().is_some(),
+                "invocation": record.id().to_string(),
+                "call": record.call().id.as_str(),
+                "tool": record.call().name.as_ref(),
+                "effect": effect(record.effect()),
+                "idempotency_key_present": record.idempotency_key().is_some(),
                 "invocation_state": state,
             })
         }
@@ -353,9 +353,9 @@ const fn sandbox_failure_kind(value: crucible_core::SandboxFailureKind) -> &'sta
 /// persistence seam. Both conversation replay and execution checkpoints enter
 /// here after their owner-only, versioned codecs validate the record.
 pub(super) fn restored_output(
-    output: ToolOutput,
+    output: RecordedToolOutput,
     attachments: impl Into<Box<[Attachment]>>,
-) -> ToolOutput {
+) -> RecordedToolOutput {
     output.replayed(attachments)
 }
 
@@ -1159,9 +1159,9 @@ pub(crate) fn result(value: &Value) -> Option<ToolResult> {
     let failed = value.get("failed")?.as_bool()?;
 
     let output = if failed {
-        ToolOutput::failed(text)
+        RecordedToolOutput::failed(text)
     } else {
-        ToolOutput::ok(text)
+        RecordedToolOutput::ok(text)
     };
 
     // Restored rather than admitted again. The verdict that let this tool read
@@ -1196,7 +1196,7 @@ mod tests {
         Ancestry, Approved, Ask, Attachment, InputTokenUsage, Modality, Permission,
         PromptCacheFingerprint, PromptCachePlanned, PromptCachePolicy, PromptCachePolicyVersion,
         PromptCacheScopeDigest, PromptCacheUsageFact, ProviderAttemptId, ProviderUsage, Remember,
-        Sensitivity, Settled, Target, ToolArgs, UsageCost, Verdict,
+        Sensitivity, Settled, Target, ToolArgs, ToolOutput, UsageCost, Verdict,
     };
 
     use super::*;
@@ -1245,7 +1245,7 @@ mod tests {
     fn rewrote(changed: Changed) -> Message {
         Message::ToolResults(vec![ToolResult {
             id: ToolId::new("call-1"),
-            output: ToolOutput::ok("rewrote main.rs").counting(changed),
+            output: RecordedToolOutput::ok("rewrote main.rs").counting(changed),
         }])
     }
 
@@ -1362,7 +1362,9 @@ mod tests {
     fn a_tool_result_and_the_file_it_showed_survive_the_line_that_records_them() {
         let found = Message::ToolResults(vec![ToolResult {
             id: ToolId::new("call-1"),
-            output: ToolOutput::ok("one match").with_attachments(&permitted(), [holiday()]),
+            output: ToolOutput::ok("one match")
+                .with_attachments(&permitted(), [holiday()])
+                .into_recorded(),
         }]);
 
         let read = message(&line(&found)).expect("the line to read back as a message");
@@ -1387,7 +1389,7 @@ mod tests {
         // not change at all under format 7.
         let quiet = Message::ToolResults(vec![ToolResult {
             id: ToolId::new("call-1"),
-            output: ToolOutput::ok("one match"),
+            output: RecordedToolOutput::ok("one match"),
         }]);
 
         assert_eq!(

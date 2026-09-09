@@ -460,7 +460,10 @@ fn a_diff_reaches_the_reader_and_stops_before_the_transcript() {
 
     assert_eq!(shown, [Some(1)]);
 
-    let kept: Vec<Option<&Diff>> = scripted
+    // The transcript's copy has nowhere to put a preview: what crosses into a
+    // record is the header the reader's row can be drawn from again, and the
+    // lines stay behind. So what the growing value holds is two integers.
+    let kept: Vec<Option<crucible_core::Changed>> = scripted
         .runner
         .transcript()
         .messages()
@@ -470,10 +473,10 @@ fn a_diff_reaches_the_reader_and_stops_before_the_transcript() {
             Message::Context(_) | Message::User { .. } | Message::Agent { .. } => None,
         })
         .flatten()
-        .map(|result| result.output.diff())
+        .map(|result| result.output.changed())
         .collect();
 
-    assert_eq!(kept, [None]);
+    assert_eq!(kept, [Some(crucible_core::Changed::new(1, 0))]);
 }
 
 #[test]

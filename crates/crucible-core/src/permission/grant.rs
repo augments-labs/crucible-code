@@ -2,9 +2,9 @@
 
 use std::path::Path;
 
-use crate::tool::{ToolArgs, ToolCall};
 use crate::toolset::ToolGeneration;
 use crate::workspace::{Workspace, WorkspacePath};
+use crucible_types::{ToolArgs, ToolCall};
 
 use super::rule::Denials;
 use super::{Sensitivity, Target, Verdict};
@@ -141,9 +141,9 @@ impl Approved {
 
 #[cfg(test)]
 mod tests {
-    use crate::ids::ToolId;
     use crate::permission::Rules;
-    use crate::tool::ToolArgs;
+    use crucible_types::ToolArgs;
+    use crucible_types::ToolId;
 
     use super::*;
 

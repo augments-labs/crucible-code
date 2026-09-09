@@ -668,7 +668,9 @@ fn worked_in(sessions: &Path) -> Result<HashSet<OsString>, StartupError> {
 /// log of prose alone would measure the cheapest of them. The last word is
 /// [`ENDED`], which is what a probe waits to see.
 fn worked(session: &crucible_runner::Session) {
-    use crucible_core::{Message, StopReason, ToolArgs, ToolCall, ToolId, ToolOutput, ToolResult};
+    use crucible_core::{
+        Message, RecordedToolOutput, StopReason, ToolArgs, ToolCall, ToolId, ToolResult,
+    };
 
     for turn in 0..WORKED {
         let call = ToolId::new(format!("call-{turn}"));
@@ -686,7 +688,7 @@ fn worked(session: &crucible_runner::Session) {
         });
         session.append(&Message::ToolResults(vec![ToolResult {
             id: call,
-            output: ToolOutput::ok(RETURNED),
+            output: RecordedToolOutput::ok(RETURNED),
         }]));
     }
 

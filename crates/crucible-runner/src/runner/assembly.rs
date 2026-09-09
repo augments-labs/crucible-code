@@ -14,7 +14,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crucible_core::{
     ContextSection, ContextSnapshot, EnvironmentSection, Fragment, ModelSection,
     PermissionsSection, Seen, Skill, SkillsSection, ToolsSection, Transcript, TurnError,
-    WorkspaceSection,
+    WorkspaceSection, capture, seen,
 };
 
 use super::Runner;
@@ -153,12 +153,12 @@ impl Assembly<'_> {
         let seen = if self.unknown {
             Seen::Unknown
         } else {
-            self.prior.seen(section, self.transcript)
+            seen(self.prior, section, self.transcript)
         };
         if let Some(fragment) = section.render(seen) {
             self.fragments.push(fragment);
         }
-        self.current.capture(section)
+        capture(&mut self.current, section)
     }
 }
 

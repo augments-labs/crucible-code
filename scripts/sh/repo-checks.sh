@@ -343,27 +343,27 @@ if ! python3 scripts/python/screen-baseline.py; then
 fi
 
 # Both spellings, and the tests with the source. A call written
-# `ToolOutput::replayed(output, ..)` is the same call as `output.replayed(..)`,
-# and a pin that only knew the dot form would be a pin anyone could walk past
-# without meaning to. Occurrences rather than lines, because two calls on one
-# line are two calls.
+# `RecordedToolOutput::replayed(output, ..)` is the same call as
+# `output.replayed(..)`, and a pin that only knew the dot form would be a pin
+# anyone could walk past without meaning to. Occurrences rather than lines,
+# because two calls on one line are two calls.
 doors() {
     grep -rEoh --include='*.rs' "$1" "${@:2}" | wc -l
 }
 
 section "the replay seam"
 replay="crates/crucible-session/src/session/wire.rs"
-opens='(\.|ToolOutput::)replayed\('
+opens='(\.|RecordedToolOutput::)replayed\('
 elsewhere=$(grep -rlE --include='*.rs' "$opens" crates src tests | grep -Fxv "$replay" || true)
 if [[ -n "$elsewhere" ]]; then
     while IFS= read -r file; do
-        printf '    FAIL %s calls ToolOutput::replayed; only %s may\n' "$file" "$replay"
+        printf '    FAIL %s calls RecordedToolOutput::replayed; only %s may\n' "$file" "$replay"
     done <<<"$elsewhere"
     failed=1
 fi
 here=$(doors "$opens" "$replay")
 if ((here != 1)); then
-    printf '    FAIL %s calls ToolOutput::replayed %d times; the replay is one call\n' "$replay" "$here"
+    printf '    FAIL %s calls RecordedToolOutput::replayed %d times; the replay is one call\n' "$replay" "$here"
     failed=1
 fi
 
@@ -455,6 +455,9 @@ if [[ -z "$edges" ]]; then
     failed=1
 fi
 
+# `core` names the four crates its old names now come from. Those four edges are
+# the compatibility facade and go away with the crate that holds them; every
+# other crate still reaches the domain through one name.
 allowed='code auth
 code config
 code core
@@ -470,6 +473,11 @@ code tui
 auth core
 auth privacy
 config core
+core credentials
+core registry
+core storage
+core types
+credentials types
 extension core
 mcp core
 provider core
@@ -477,6 +485,7 @@ runner core
 runner session
 session core
 session privacy
+storage types
 tools core
 tools privacy
 tools sandbox-broker'
@@ -487,7 +496,7 @@ while IFS= read -r edge; do
         failed=1
     fi
 done <<<"$edges"
-for crate in core privacy sandbox-broker tui; do
+for crate in privacy registry sandbox-broker tui types; do
     if grep -qE "^$crate " <<<"$edges"; then
         printf '    FAIL crucible-%s must not depend on another workspace crate\n' "$crate"
         failed=1

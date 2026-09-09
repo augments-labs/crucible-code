@@ -71,7 +71,7 @@ pub struct ModalityError {
 impl FromStr for Modality {
     type Err = ModalityError;
 
-    /// Exact, where [`Effort`](crate::Effort) is forgiving. Nobody types this:
+    /// Exact, where `Effort` is forgiving. Nobody types this:
     /// it is read out of a generated database, so a word in another case is
     /// that vocabulary having moved, and the useful answer to a vocabulary that
     /// moved is a failed build rather than a quiet match.

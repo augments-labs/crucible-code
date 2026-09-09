@@ -9,8 +9,8 @@ use std::sync::{Arc, Mutex};
 use crucible_core::{
     Ancestry, Calibration, CallResultKey, CallResultStoreError, Carried, ContextPatch,
     ContextSnapshot, CustomEntry, Fragment, InvocationId, JournalEntryId, JournalStore, Message,
-    RunItem, SessionId, Spend, StopReason, ToolArgs, ToolCall, ToolId, ToolOutput, ToolResult,
-    Transcript,
+    RecordedToolOutput, RunItem, SessionId, Spend, StopReason, ToolArgs, ToolCall, ToolId,
+    ToolResult, Transcript,
 };
 use serde_json::Value;
 
@@ -44,7 +44,7 @@ fn answering(text: &str) -> Message {
     }
 }
 
-fn answered(id: &str, output: ToolOutput) -> Message {
+fn answered(id: &str, output: RecordedToolOutput) -> Message {
     Message::ToolResults(vec![ToolResult {
         id: ToolId::new(id),
         output,
@@ -213,7 +213,7 @@ fn durable_call_results_are_idempotent_and_content_bound() {
     let key = CallResultKey::derive(Ancestry::new(), InvocationId::new(), &ToolId::new("call-1"));
     let result = ToolResult {
         id: ToolId::new("call-1"),
-        output: ToolOutput::ok("background job #1 accepted"),
+        output: RecordedToolOutput::ok("background job #1 accepted"),
     };
 
     let first = session.put_call_result(key, &result).unwrap();
@@ -222,7 +222,7 @@ fn durable_call_results_are_idempotent_and_content_bound() {
 
     let conflict = ToolResult {
         id: ToolId::new("call-1"),
-        output: ToolOutput::failed("different"),
+        output: RecordedToolOutput::failed("different"),
     };
     assert_eq!(
         session.put_call_result(key, &conflict),
@@ -246,7 +246,7 @@ fn ordinary_tool_results_settle_accepted_sidecars_after_the_log_barrier() {
     let key = CallResultKey::derive(Ancestry::new(), InvocationId::new(), &ToolId::new("call-1"));
     let result = ToolResult {
         id: ToolId::new("call-1"),
-        output: ToolOutput::ok("background job #1 accepted"),
+        output: RecordedToolOutput::ok("background job #1 accepted"),
     };
     session.put_call_result(key, &result).unwrap();
     session.append(&Message::ToolResults(vec![result.clone()]));
@@ -275,7 +275,7 @@ fn resume_commits_an_accepted_result_before_removing_its_sidecar() {
     let key = CallResultKey::derive(Ancestry::new(), InvocationId::new(), &ToolId::new("call-1"));
     let result = ToolResult {
         id: ToolId::new("call-1"),
-        output: ToolOutput::ok("background job #1 accepted"),
+        output: RecordedToolOutput::ok("background job #1 accepted"),
     };
     session.put_call_result(key, &result).unwrap();
     drop(session);
@@ -324,7 +324,7 @@ fn recovery_settles_every_call_when_only_one_result_reached_acceptance() {
     session.append(&calls);
     let result = ToolResult {
         id: ToolId::new("call-1"),
-        output: ToolOutput::ok("background job #1 accepted"),
+        output: RecordedToolOutput::ok("background job #1 accepted"),
     };
     let key = CallResultKey::derive(Ancestry::new(), InvocationId::new(), &result.id);
     session.put_call_result(key, &result).unwrap();
@@ -347,7 +347,7 @@ fn a_non_recording_session_cannot_accept_a_durable_result() {
     let key = CallResultKey::derive(Ancestry::new(), InvocationId::new(), &ToolId::new("call-1"));
     let result = ToolResult {
         id: ToolId::new("call-1"),
-        output: ToolOutput::ok("accepted"),
+        output: RecordedToolOutput::ok("accepted"),
     };
 
     assert_eq!(
@@ -688,7 +688,10 @@ fn a_session_comes_back_exactly_as_it_was_recorded() {
     let messages = vec![
         said("fix the parser"),
         calling("call-1", "read", r#"{"path":"src/main.rs","limit":40}"#),
-        answered("call-1", ToolOutput::failed("src/main.rs does not exist")),
+        answered(
+            "call-1",
+            RecordedToolOutput::failed("src/main.rs does not exist"),
+        ),
         said("try again"),
     ];
 
@@ -857,7 +860,7 @@ fn a_pruned_result_is_cleared_again_when_the_session_is_continued() {
     let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
 
     session.append(&calling("a", "read", r#"{"path":"big.rs"}"#));
-    session.append(&answered("a", ToolOutput::ok("x".repeat(80_000))));
+    session.append(&answered("a", RecordedToolOutput::ok("x".repeat(80_000))));
     session.append(&said("what did it say"));
     session.pruned(80_000, &[ToolId::new("a")]);
     session.append(&said("gone"));
@@ -951,7 +954,10 @@ fn a_restricted_result_is_cleared_again_when_the_session_is_continued() {
     let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
 
     session.append(&calling("a", "web_search", r#"{"query":"rust"}"#));
-    session.append(&answered("a", ToolOutput::ok("restricted results canary")));
+    session.append(&answered(
+        "a",
+        RecordedToolOutput::ok("restricted results canary"),
+    ));
     session.append(&said("what did it say"));
     session.restricted(25, &[ToolId::new("a")], "[cleared — restricted]");
     session.append(&said("gone"));
@@ -981,7 +987,10 @@ fn clearing_a_restricted_result_in_an_old_log_requires_a_new_reader() {
         &[
             sample.header(11, id),
             wire::line(&calling("a", "web_search", r#"{"query":"rust"}"#)),
-            wire::line(&answered("a", ToolOutput::ok("restricted results canary"))),
+            wire::line(&answered(
+                "a",
+                RecordedToolOutput::ok("restricted results canary"),
+            )),
         ],
     );
 
@@ -1016,12 +1025,12 @@ fn a_restricted_result_too_small_to_be_worth_pruning_is_cleared_anyway() {
 
     let small = "no";
     assert!(
-        small.len() < ToolOutput::MIN_PRUNE_BYTES,
+        small.len() < RecordedToolOutput::MIN_PRUNE_BYTES,
         "the point of this"
     );
 
     session.append(&calling("a", "web_search", r#"{"query":"rust"}"#));
-    session.append(&answered("a", ToolOutput::ok(small)));
+    session.append(&answered("a", RecordedToolOutput::ok(small)));
     session.restricted(small.len(), &[ToolId::new("a")], "[cleared — restricted]");
     session.append(&said("gone"));
     drop(session);

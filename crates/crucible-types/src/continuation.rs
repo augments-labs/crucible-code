@@ -10,7 +10,8 @@ use std::mem::size_of;
 
 use sha2::{Digest as _, Sha256};
 
-use crate::{CredentialScopeId, StopReason};
+use crate::ids::CredentialScopeId;
+use crate::transcript::StopReason;
 
 /// Maximum additional retained or encoded bytes in one response's continuation.
 pub const CONTINUATION_BYTES: usize = 1024 * 1024;
@@ -324,7 +325,7 @@ fn encoded_string_bytes(value: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Message, Transcript};
+    use crate::transcript::{Message, Transcript};
 
     fn pending() -> Continuation {
         Continuation::new("test-v1", "test", ContinuationScope::from_digest([0; 32])).unwrap()

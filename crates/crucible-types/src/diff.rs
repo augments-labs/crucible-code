@@ -7,9 +7,9 @@
 //! again from bytes it no longer has. So the tool says it once, here, on its way
 //! out.
 //!
-//! Preview lines never enter provider requests. [`crate::ToolOutput::forget_diff`]
-//! removes them before transcript retention and keeps [`crate::Changed`] as
-//! display metadata. Provider projections send result text and attachments;
+//! Preview lines never enter provider requests. The live result a tool returns
+//! drops them on its way into the record kept for the transcript, which keeps
+//! [`crate::Changed`] as display metadata. Provider projections send result text and attachments;
 //! neither the preview lines nor these counts change the request bytes.
 //!
 //! Bounded previews may be retained in the protected session's display history

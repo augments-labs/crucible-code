@@ -15,8 +15,8 @@ use std::path::{Path, PathBuf};
 use std::str::{self, FromStr as _};
 
 use crucible_core::{
-    Calibration, ContextSnapshot, Message, SessionId, ToolId, ToolOutput, ToolResult, Transcript,
-    Workspace,
+    Calibration, ContextSnapshot, Message, RecordedToolOutput, SessionId, ToolId, ToolResult,
+    Transcript, Workspace,
 };
 
 use super::{SUFFIX, SessionError, results, wire};
@@ -485,7 +485,7 @@ fn recovered_results(
             (Some(record), None) => record.result.clone(),
             (None, None) => ToolResult {
                 id: call.id.clone(),
-                output: ToolOutput::failed(
+                output: RecordedToolOutput::failed(
                     "tool execution was interrupted before a durable result was recorded",
                 ),
             },
@@ -626,7 +626,7 @@ mod tests {
 
     /// What the call in these cases answered with, before anything cleared it.
     ///
-    /// Longer than [`crucible_core::ToolOutput::MIN_PRUNE_BYTES`] on purpose:
+    /// Longer than [`crucible_core::RecordedToolOutput::MIN_PRUNE_BYTES`] on purpose:
     /// under that a
     /// result is left alone, because the placeholder would cost more than the
     /// text it replaced. A shorter string here would make a case about pruning

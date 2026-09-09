@@ -9,6 +9,10 @@ Repository skills live in [`.agents/skills/`](.agents/skills/).
 | Directory | Purpose |
 | --- | --- |
 | `src/` | CLI and application wiring |
+| `crates/crucible-types/` | Shared validated values every crate exchanges |
+| `crates/crucible-registry/` | Bounded, source-aware registries |
+| `crates/crucible-credentials/` | Credential contracts and outgoing redaction |
+| `crates/crucible-storage/` | History, checkpoint and cache contracts |
 | `crates/crucible-core/` | Domain types and extension traits |
 | `crates/crucible-auth/` | Credentials and account authorization |
 | `crates/crucible-config/` | Configuration and settings |
@@ -26,7 +30,9 @@ Repository skills live in [`.agents/skills/`](.agents/skills/).
 | `docs/` | User documentation |
 
 Workspace manifests declare crate dependencies; `scripts/sh/repo-checks.sh`
-enforces their allowed directions.
+enforces their allowed directions. `crucible-core` re-exports the names it no
+longer defines, so a consumer keeps one import path while ownership moves out of
+it; new code names the owning crate.
 
 ## Changing Crucible
 

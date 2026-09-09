@@ -23,27 +23,16 @@ use crate::{
     ToolOutput, ToolOutputRetention, ToolSchema,
 };
 
-/// The most bytes a provider-visible tool name may retain.
-///
-/// Equal to the existing inbound call-name boundary. A descriptor the provider
-/// can be shown but whose returned name the runner would refuse is not a usable
-/// descriptor.
-pub const TOOL_NAME_BYTES: usize = 4 * 1024;
-
-/// The most bytes retained for one provider tool-call identifier.
-pub const TOOL_CALL_ID_BYTES: usize = 16 * 1024;
-
-/// The most bytes retained for one tool call's argument text.
-pub const TOOL_ARGUMENT_BYTES: usize = 1024 * 1024;
+pub use crucible_types::{TOOL_ARGUMENT_BYTES, TOOL_CALL_ID_BYTES, TOOL_NAME_BYTES, ToolOutcome};
 
 /// The most bytes one exact provider schema may retain.
 pub const TOOL_SCHEMA_BYTES: usize = 1024 * 1024;
 
 /// The most bytes in a stable, receipt-safe source identifier.
-pub const TOOL_SOURCE_ID_BYTES: usize = crate::registry::SOURCE_ID_BYTES;
+pub const TOOL_SOURCE_ID_BYTES: usize = crucible_registry::SOURCE_ID_BYTES;
 
 /// The most bytes in the diagnostic spelling of a source.
-pub const TOOL_SOURCE_LABEL_BYTES: usize = crate::registry::SOURCE_LABEL_BYTES;
+pub const TOOL_SOURCE_LABEL_BYTES: usize = crucible_registry::SOURCE_LABEL_BYTES;
 
 /// The most bytes in one resource-exclusion key.
 pub const TOOL_RESOURCE_KEY_BYTES: usize = 4 * 1024;
@@ -200,17 +189,17 @@ impl fmt::Debug for dyn Toolset {
 }
 
 /// Where a tool registration came from: the registry's shared source kind.
-pub type ToolSourceKind = crate::registry::SourceKind;
+pub type ToolSourceKind = crucible_registry::SourceKind;
 
 /// The receipt-safe projection of a tool registration source.
-pub type ToolSourceReceipt = crate::registry::SourceReceipt;
+pub type ToolSourceReceipt = crucible_registry::SourceReceipt;
 
 /// A tool registration's bounded source identity and diagnostic spelling.
 ///
 /// Tools were the first registry; every later contribution kind shares this
 /// record, so it is the registry's [`Provenance`](crate::Provenance) and keeps
 /// its tool name here.
-pub type ToolProvenance = crate::registry::Provenance;
+pub type ToolProvenance = crucible_registry::Provenance;
 
 /// A bounded key whose calls may not overlap.
 #[derive(Clone, PartialEq, Eq)]
@@ -683,31 +672,6 @@ impl fmt::Debug for ToolGeneration {
     }
 }
 
-/// The closed final state recorded for one tool invocation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ToolOutcome {
-    /// The executor returned a successful result.
-    Succeeded,
-    /// The executor or one of its pipeline stages failed.
-    Failed,
-    /// Standing permission policy forbade the call.
-    Forbidden,
-    /// The user refused the call.
-    Refused,
-    /// The run was cancelled before the call could finish.
-    Cancelled,
-    /// The descriptor's cooperative deadline elapsed.
-    TimedOut,
-    /// The call was invalid, unknown, or stale before effects.
-    Rejected,
-    /// An earlier call ended the turn before this call could run.
-    NotRun,
-    /// The per-turn retained-output allowance was exhausted.
-    OutputLimit,
-    /// The executor panicked and was contained by the scheduler.
-    Panicked,
-}
-
 /// Bounded audit and usage evidence emitted with one final result.
 #[derive(Clone)]
 pub struct ToolReceipt {
@@ -957,7 +921,7 @@ impl Default for ToolSnapshot {
 pub enum ToolDescriptorError {
     /// The tool's source could not be described.
     #[error(transparent)]
-    Provenance(#[from] crate::registry::ProvenanceError),
+    Provenance(#[from] crucible_registry::ProvenanceError),
     /// A retained string was empty.
     #[error("{field} must not be empty")]
     Empty {
@@ -995,7 +959,7 @@ pub enum ToolsetError {
     Descriptor(#[from] ToolDescriptorError),
     /// One registration's source could not be described.
     #[error(transparent)]
-    Provenance(#[from] crate::registry::ProvenanceError),
+    Provenance(#[from] crucible_registry::ProvenanceError),
     /// A live source could not be started, read, or released.
     ///
     /// The static roster cannot reach this: it registers what the binary
@@ -1043,12 +1007,12 @@ pub enum ToolsetError {
     },
     /// The tool registry refused a transaction for a reason of its own.
     #[error("the tool registry refused the change: {0}")]
-    Registry(#[source] crate::registry::RegistryError),
+    Registry(#[source] crucible_registry::RegistryError),
 }
 
-impl From<crate::registry::RegistryError> for ToolsetError {
-    fn from(error: crate::registry::RegistryError) -> Self {
-        use crate::registry::RegistryError;
+impl From<crucible_registry::RegistryError> for ToolsetError {
+    fn from(error: crucible_registry::RegistryError) -> Self {
+        use crucible_registry::RegistryError;
         match error {
             RegistryError::Provenance(error) => Self::Provenance(error),
             RegistryError::Duplicate { id, first, second } => Self::Duplicate {

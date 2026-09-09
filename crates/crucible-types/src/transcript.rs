@@ -13,10 +13,11 @@
 
 use std::fmt;
 
+use crate::call::ToolCall;
 use crate::context::Fragment;
 use crate::ids::ToolId;
 use crate::modality::Modality;
-use crate::tool::{ToolCall, ToolOutput};
+use crate::output::RecordedToolOutput;
 
 /// A file the user put in front of the model, named rather than carried.
 ///
@@ -183,7 +184,7 @@ pub struct ToolResult {
     /// The identifier from the call this answers.
     pub id: ToolId,
     /// What the tool produced.
-    pub output: ToolOutput,
+    pub output: RecordedToolOutput,
 }
 
 impl fmt::Debug for ToolResult {
@@ -725,7 +726,7 @@ mod tests {
         transcript
             .push(Message::ToolResults(vec![ToolResult {
                 id: ToolId::new("call-debug-canary"),
-                output: ToolOutput::ok("tool-debug-canary"),
+                output: RecordedToolOutput::ok("tool-debug-canary"),
             }]))
             .expect("valid fixture transcript");
 

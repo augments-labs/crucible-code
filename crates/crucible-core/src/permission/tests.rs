@@ -4,9 +4,9 @@ use std::fs;
 use std::path::Path;
 
 use super::*;
-use crate::ids::ToolId;
-use crate::tool::ToolArgs;
 use crate::workspace::{Workspace, WorkspacePath, written};
+use crucible_types::ToolArgs;
+use crucible_types::ToolId;
 
 /// An answer decided in advance, plus a count of how often it was needed.
 struct Answer {

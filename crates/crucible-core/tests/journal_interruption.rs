@@ -7,9 +7,9 @@ use crucible_core::{
     InvocationRecord, InvocationState, JournalError, JournalStore, MAX_RUN_ITEM_RETAINED_BYTES,
     Message, PendingAction, PendingActions, PendingApproval, PendingExternalTool,
     PendingHumanInput, PromptCacheFingerprint, PromptCachePolicyVersion, PromptCacheResourceId,
-    PromptCacheScopeDigest, RecoveryAction, ResumeDigest, ResumeEvidence, ResumeScope, RunHistory,
-    RunItem, StopReason, TOOL_RESULT_BYTES, ToolArgs, ToolCall, ToolEffect, ToolId, ToolOutcome,
-    ToolOutput, ToolResult,
+    PromptCacheScopeDigest, RecordedToolOutput, RecoveryAction, ResumeDigest, ResumeEvidence,
+    ResumeScope, RunHistory, RunItem, StopReason, TOOL_RESULT_BYTES, ToolArgs, ToolCall,
+    ToolEffect, ToolId, ToolOutcome, ToolResult,
 };
 
 struct MemoryOnlyJournal;
@@ -46,7 +46,7 @@ fn journals_without_a_durable_result_sink_fail_closed() {
     let key = CallResultKey::derive(Ancestry::new(), InvocationId::new(), &ToolId::new("call"));
     let result = ToolResult {
         id: ToolId::new("call"),
-        output: ToolOutput::ok("accepted"),
+        output: RecordedToolOutput::ok("accepted"),
     };
 
     assert_eq!(
@@ -99,7 +99,7 @@ fn provider_projection_refuses_an_unanswered_or_twice_answered_call() {
         ancestry,
         Message::ToolResults(vec![ToolResult {
             id: ToolId::new("call-1"),
-            output: ToolOutput::ok("done"),
+            output: RecordedToolOutput::ok("done"),
         }]),
     )
     .expect("a bounded result");
@@ -147,7 +147,7 @@ fn provider_projection_does_not_let_an_unanswered_call_cross_a_later_message() {
                 ancestry,
                 Message::ToolResults(vec![ToolResult {
                     id: ToolId::new("call-1"),
-                    output: ToolOutput::ok("late"),
+                    output: RecordedToolOutput::ok("late"),
                 }]),
             )
             .unwrap(),
@@ -319,7 +319,7 @@ fn rejected_cancelled_and_external_actions_resume_to_exactly_one_tool_result() {
     pending.reject(rejected_id).unwrap();
     pending.cancel(cancelled_id).unwrap();
     pending
-        .resolve_external(external_id, ToolOutput::ok("remote result"))
+        .resolve_external(external_id, RecordedToolOutput::ok("remote result"))
         .unwrap();
 
     let results = [rejected_id, cancelled_id, external_id]
@@ -543,12 +543,18 @@ fn invocation_recovery_distinguishes_all_three_crash_windows() {
         InvocationRecord::new(call("completed"), ancestry, ToolEffect::NonIdempotent, None);
     completed.start().unwrap();
     completed
-        .finish(ToolOutcome::Succeeded, ToolOutput::ok("stored result"))
+        .finish(
+            ToolOutcome::Succeeded,
+            RecordedToolOutput::ok("stored result"),
+        )
         .unwrap();
     assert_eq!(completed.recovery(), RecoveryAction::UseRecordedResult);
     assert!(
         !completed
-            .finish(ToolOutcome::Succeeded, ToolOutput::ok("stored result"))
+            .finish(
+                ToolOutcome::Succeeded,
+                RecordedToolOutput::ok("stored result")
+            )
             .unwrap()
             .changed()
     );
@@ -582,7 +588,7 @@ fn restored_results_must_already_fit_the_encoded_result_ceiling() {
     assert!(matches!(
         pending.restore(
             PendingAction::ExternalTool(external),
-            Some(ActionResolution::ExternalTool(ToolOutput::ok(
+            Some(ActionResolution::ExternalTool(RecordedToolOutput::ok(
                 encoded_too_large.clone()
             ))),
             false,
@@ -602,7 +608,7 @@ fn restored_results_must_already_fit_the_encoded_result_ceiling() {
         None,
         InvocationState::Finished {
             outcome: ToolOutcome::Succeeded,
-            output: ToolOutput::ok(encoded_too_large),
+            output: RecordedToolOutput::ok(encoded_too_large),
         },
     );
     assert!(matches!(
@@ -653,7 +659,10 @@ fn checkpoint_diagnostics_redact_pending_and_invocation_content() {
         .unwrap();
     checkpoint
         .pending_mut()
-        .resolve_external(external_id, ToolOutput::ok("external-output-secret-canary"))
+        .resolve_external(
+            external_id,
+            RecordedToolOutput::ok("external-output-secret-canary"),
+        )
         .unwrap();
 
     let human = PendingHumanInput::new("question-secret-canary", ancestry, 4_000).unwrap();
@@ -677,7 +686,7 @@ fn checkpoint_diagnostics_redact_pending_and_invocation_content() {
     invocation
         .finish(
             ToolOutcome::Succeeded,
-            ToolOutput::ok("invocation-output-secret-canary"),
+            RecordedToolOutput::ok("invocation-output-secret-canary"),
         )
         .unwrap();
     checkpoint.add_invocation(invocation).unwrap();

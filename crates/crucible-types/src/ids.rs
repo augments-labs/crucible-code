@@ -417,7 +417,7 @@ impl fmt::Debug for CredentialScopeId {
 ///
 /// ```
 /// use std::collections::{BTreeMap, HashMap};
-/// use crucible_core::AgentId;
+/// use crucible_types::AgentId;
 ///
 /// let mut written = BTreeMap::new();
 /// written.insert(AgentId::new("reviewing"), "reads");

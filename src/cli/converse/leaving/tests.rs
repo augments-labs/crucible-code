@@ -62,7 +62,7 @@ fn running_with(
 
         let context = ToolContext::new(Ancestry::new(), call.id.clone(), &cancel, None, &Unwatched)
             .with_call_result_store(InvocationId::new(), &JOURNAL);
-        let mut output = tool.run(approved, &context).expect("the command started");
+        let output = tool.run(approved, &context).expect("the command started");
         assert!(
             !output.is_failed(),
             "a command this test needs running was refused: {}",
@@ -75,10 +75,9 @@ fn running_with(
             .take_call_result()
             .expect("the pending result slot")
             .expect("a detached command leaves a result to accept");
-        output.forget_diff();
         let result = ToolResult {
             id: call.id.clone(),
-            output,
+            output: output.into_recorded(),
         };
         let receipt = JOURNAL
             .put_call_result(pending.key(), &result)

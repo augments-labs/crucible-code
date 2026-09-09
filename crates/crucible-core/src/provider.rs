@@ -11,10 +11,10 @@
 use std::fmt;
 
 use crate::cancel::Cancel;
-use crate::credential::{CredentialError, Redactions};
-use crate::ids::ToolId;
-use crate::modality::{Modalities, Modality};
-use crate::transcript::{StopReason, Transcript};
+use crucible_credentials::{CredentialError, Redactions};
+use crucible_types::ToolId;
+use crucible_types::{Modalities, Modality};
+use crucible_types::{StopReason, Transcript};
 
 /// Why a provider could not produce a response.
 #[derive(Debug, thiserror::Error)]

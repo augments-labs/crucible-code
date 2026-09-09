@@ -315,8 +315,10 @@ impl Work<'_> {
                         approved_entry.descriptor().effect(),
                         approved_entry.tool().idempotency_key(&transformed.args),
                     );
-                    self.journal
-                        .append_run_item(&RunItem::Invocation(record.clone()));
+                    self.journal.append_run_item(&RunItem::Invocation {
+                        record: record.clone(),
+                        preview: None,
+                    });
                     Decision::Ready(Prepared {
                         call: transformed,
                         entry: approved_entry.clone(),
@@ -517,11 +519,9 @@ impl Work<'_> {
         if let Some(pending) = invocation.pending_result.take()
             && !turn_limited
         {
-            let mut durable_output = invocation.output.clone();
-            durable_output.forget_diff();
             let result = ToolResult {
                 id: invocation.call.id.clone(),
-                output: durable_output,
+                output: invocation.output.clone().into_recorded(),
             };
             if let Ok(receipt) = self.journal.put_call_result(pending.key(), &result) {
                 // The result is already durable and replayable. A failed
@@ -546,8 +546,18 @@ impl Work<'_> {
         *produced = produced.saturating_add(invocation.output.text().len());
 
         if let Some(mut recovery) = invocation.recovery.take() {
-            let _ = recovery.finish(invocation.outcome, invocation.output.clone());
-            self.journal.append_run_item(&RunItem::Invocation(recovery));
+            // The preview travels beside the record rather than in it: what the
+            // store keeps is the result the model was sent, and the change
+            // lines are the reader's alone.
+            let preview = invocation.output.diff().cloned();
+            let _ = recovery.finish(
+                invocation.outcome,
+                invocation.output.clone().into_recorded(),
+            );
+            self.journal.append_run_item(&RunItem::Invocation {
+                record: recovery,
+                preview,
+            });
         }
 
         let receipt = ToolReceipt::new(
@@ -563,10 +573,9 @@ impl Work<'_> {
             receipt: Some(receipt),
         });
 
-        invocation.output.forget_diff();
         results.push(ToolResult {
             id: invocation.call.id,
-            output: invocation.output,
+            output: invocation.output.into_recorded(),
         });
     }
 }
@@ -713,8 +722,10 @@ fn execute(prepared: Prepared, host: ExecutionHost<'_>, audit: SandboxAudit) -> 
         mut record,
     } = prepared;
     let _ = record.start();
-    host.journal
-        .append_run_item(&RunItem::Invocation(record.clone()));
+    host.journal.append_run_item(&RunItem::Invocation {
+        record: record.clone(),
+        preview: None,
+    });
     let deadline = entry
         .descriptor()
         .timeout()

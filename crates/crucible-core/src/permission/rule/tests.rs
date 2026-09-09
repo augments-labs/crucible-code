@@ -1,7 +1,7 @@
 use super::super::{Command, Target};
 use super::*;
-use crate::ids::ToolId;
-use crate::tool::ToolArgs;
+use crucible_types::ToolArgs;
+use crucible_types::ToolId;
 
 fn call(name: &str) -> ToolCall {
     ToolCall {

@@ -49,8 +49,8 @@ use crucible_core::{
     Page, PromptCacheFingerprint, PromptCacheIdentity, PromptCacheKey, PromptCacheMechanism,
     PromptCacheMechanisms, PromptCachePlan, PromptCachePolicy, PromptCacheProjection,
     PromptCacheRequest, PromptCacheRetention, PromptCacheScopeDigest, PromptCacheSelected,
-    PromptCacheSelection, Provider, ProviderAttemptId, Question, Request, RequestPurpose,
-    SearchResponse, SourceError, StopReason, ToolArgs, ToolCall, ToolId, ToolOutput,
+    PromptCacheSelection, Provider, ProviderAttemptId, Question, RecordedToolOutput, Request,
+    RequestPurpose, SearchResponse, SourceError, StopReason, ToolArgs, ToolCall, ToolId,
     ToolProvenance, ToolResult, ToolSchema, Transcript, Workspace,
 };
 use crucible_provider::{Anthropic, Google, Moonshot, OpenAi, Response, Transport, TransportError};
@@ -844,7 +844,7 @@ fn spoken() -> Transcript {
     transcript
         .push(Message::ToolResults(vec![ToolResult {
             id: ToolId::new("probe-call-1"),
-            output: ToolOutput::ok("crates/crucible-config/src/document.rs:41"),
+            output: RecordedToolOutput::ok("crates/crucible-config/src/document.rs:41"),
         }]))
         .expect("the tool's result");
     transcript

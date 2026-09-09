@@ -11,7 +11,7 @@
       },
       "case": "provider_projection_refuses_an_unanswered_or_twice_answered_call",
       "source": "crates/crucible-core/tests/journal_interruption.rs",
-      "body_sha256": "25d6a6a6bdeb16fde009e76c493937822bc854228817d5b3e5d08d700f990396",
+      "body_sha256": "42bbc97a37673839a5f8affb53fdf5c35c465ac9748a7da193ae11d2cc0d0eb6",
       "platforms": [
         "linux",
         "macos",
@@ -94,13 +94,13 @@
       "id": "CASE-AUTHORITY-HANDLE-GENERATION",
       "family": "authority",
       "obligation": "A handle resolves only through the generation that minted it.",
-      "package": "crucible-core",
+      "package": "crucible-registry",
       "target": {
         "kind": "lib",
-        "name": "crucible_core"
+        "name": "crucible_registry"
       },
       "case": "registry::tests::a_handle_resolves_only_through_the_generation_that_minted_it",
-      "source": "crates/crucible-core/src/registry.rs",
+      "source": "crates/crucible-registry/src/registry.rs",
       "body_sha256": "06b23a1dcc3deff452664cc364a766f97ade09c1339a801ccbf704e0e266e22f",
       "platforms": [
         "linux",
@@ -112,13 +112,13 @@
       "id": "CASE-AUTHORITY-STALE-TRANSACTION",
       "family": "authority",
       "obligation": "A transaction staged from a replaced generation is refused.",
-      "package": "crucible-core",
+      "package": "crucible-registry",
       "target": {
         "kind": "lib",
-        "name": "crucible_core"
+        "name": "crucible_registry"
       },
       "case": "registry::tests::a_transaction_staged_from_a_replaced_generation_is_refused",
-      "source": "crates/crucible-core/src/registry.rs",
+      "source": "crates/crucible-registry/src/registry.rs",
       "body_sha256": "13252bf19c232158bcba4219a956d15d984e24a1f95423ad1ccfb4fc785e1f18",
       "platforms": [
         "linux",
@@ -245,7 +245,7 @@
       },
       "case": "runner::work::tests::an_approved_effect_journals_one_stable_prepared_started_and_finished_invocation",
       "source": "crates/crucible-runner/src/runner/work/tests.rs",
-      "body_sha256": "8b873183767bb69c309db71d6e3de10a17f8e12b2fb46eb0c14f0a0c893ed998",
+      "body_sha256": "b893e14edf62c5b238ec3253787ad72e37c178ceb4286a1c9fed56f5687815e1",
       "platforms": [
         "linux",
         "macos",
@@ -563,7 +563,7 @@
       },
       "case": "invocation_recovery_distinguishes_all_three_crash_windows",
       "source": "crates/crucible-core/tests/journal_interruption.rs",
-      "body_sha256": "66d06ffb06e78e782a90d4d20a6fef82defc371faedc6f91802db1714c315488",
+      "body_sha256": "ec2a3c87289fc0d032610ad203280d2b08200586764968af94982b83a4234986",
       "platforms": [
         "linux",
         "macos",
@@ -635,7 +635,7 @@
       },
       "case": "every_pending_outcome_survives_stop_and_resume_with_one_provider_result",
       "source": "crates/crucible-session/tests/checkpoint_store.rs",
-      "body_sha256": "654ac5443c6972eac37abdf487bb7578fefac98c59589eedc226c01481357c3c",
+      "body_sha256": "3aca02f53a9bd70e62c9ef00bf0aa300e6b71bd90d8a1b4be68fe21cfa769094",
       "platforms": [
         "linux",
         "macos",
@@ -819,7 +819,7 @@
     {
       "id": "CASE-PRESERVED-SESSION-RECORD",
       "family": "preserved-surfaces",
-      "obligation": "A session writes down the same record of the same turn: the same lines, in the same order, with the same fields — the conversation, the versioned framework companion beside it, and the bounded summaries a continued session reads to rebuild what was sent.",
+      "obligation": "A session writes down the same record of the same turn: the same lines, in the same order, with the same fields \u2014 the conversation, the versioned framework companion beside it, and the bounded summaries a continued session reads to rebuild what was sent.",
       "package": "crucible-code",
       "target": {
         "kind": "test",

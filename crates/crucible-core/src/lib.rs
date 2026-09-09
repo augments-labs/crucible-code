@@ -1,9 +1,11 @@
 //! Domain types and the traits every other crucible crate implements.
 //!
-//! This crate is the bottom of the dependency graph and depends on no other
-//! crucible crate. Providers, tools, the runner and the renderer all depend on
-//! this crate and never on each other; cargo enforces that, so the arrangement
-//! cannot rot.
+//! Providers, tools, the runner and the renderer all depend on this crate and
+//! never on each other; cargo enforces that, so the arrangement cannot rot.
+//! Below it sit the crates that now own the shared values, registries,
+//! credential contracts and storage contracts. This crate re-exports their
+//! names under the paths it published them at, so a consumer keeps one import
+//! while ownership moves out; new code names the owning crate.
 //!
 //! Two kinds of type live here, and the split is deliberate:
 //!
@@ -21,29 +23,21 @@ mod attachable;
 mod cancel;
 mod compaction;
 mod context;
-mod continuation;
-mod credential;
-mod diff;
 mod event;
 mod extension;
-mod ids;
 mod interruption;
 mod journal;
-mod modality;
 mod model;
 mod permission;
 mod prompt;
 mod prompt_cache;
 mod provider;
-mod registry;
 mod revealed;
-mod run;
 mod sandbox;
 mod source;
 mod steer;
 mod tool;
 mod toolset;
-mod transcript;
 mod version;
 mod workspace;
 
@@ -52,15 +46,40 @@ pub use ask::{Answer, Answered, Put, Question};
 pub use attachable::{AttachmentError, CEILING, KINDS, Kind, carried, kind, opened};
 pub use cancel::Cancel;
 pub use compaction::{Compacted, Compacting, RECAP, Room};
-pub use context::{ContextError, ContextPatch, ContextSection, ContextSnapshot, Fragment, Seen};
-pub use continuation::{
-    CONTINUATION_BYTES, CONTINUATION_HISTORY_BYTES, CONTINUATION_PARTS, Continuation,
-    ContinuationData, ContinuationError, ContinuationPart, ContinuationScope, ProviderContinuation,
-};
-pub use credential::{
+pub use context::{ContextSection, capture, seen};
+pub use crucible_credentials::{
     ApiKey, Credential, CredentialError, Header, HeaderKey, Outgoing, Redactions,
 };
-pub use diff::{Change, Diff, Line};
+pub use crucible_registry::{
+    Collision, Provenance, ProvenanceError, REGISTRY_BYTES, REGISTRY_ENTRIES, Registered, Registry,
+    RegistryError, RegistryGeneration, RegistryHandle, RegistryReport, RegistryRow,
+    RegistrySnapshot, SOURCE_ID_BYTES, SOURCE_LABEL_BYTES, Shadow, SourceKind, SourceReceipt,
+    Staged,
+};
+pub use crucible_storage::{
+    ActionId, ActionResolution, ApprovalDecision, CallResultKey, CallResultReceipt,
+    CallResultStoreError, CheckpointId, CompactionRecord, CustomEntry, CustomProjector,
+    IdempotencyKey, InterruptionError, InvocationId, InvocationRecord, InvocationState,
+    JournalEntryId, JournalError, MAX_CHECKPOINT_INVOCATIONS, MAX_CHECKPOINT_SANDBOXES,
+    MAX_CHECKPOINT_WORD_BYTES, MAX_CUSTOM_DATA_BYTES, MAX_HUMAN_INPUT_BYTES,
+    MAX_JOURNAL_WORD_BYTES, MAX_PENDING_ACTIONS, PendingAction, PendingActions, PendingApproval,
+    PendingExternalTool, PendingHumanInput, RecoveryAction, ResolutionChange, ResumeDigest,
+    ResumeScope, ResumedAction, SessionStore, ToolEffect,
+};
+pub use crucible_types::{
+    AgentId, CredentialScopeId, IdError, Modalities, Modality, ModalityError, ProviderAttemptId,
+    RunId, SandboxId, SessionId, ToolId, TurnId,
+};
+pub use crucible_types::{Ancestry, AncestryError, RecordedToolOutput};
+pub use crucible_types::{Attachment, Message, StopReason, ToolResult, Transcript};
+pub use crucible_types::{
+    CONTINUATION_BYTES, CONTINUATION_HISTORY_BYTES, CONTINUATION_PARTS, Change, ContextError,
+    ContextPatch, ContextSnapshot, Continuation, ContinuationData, ContinuationError,
+    ContinuationPart, ContinuationScope, Diff, Fragment, Line, ProviderContinuation, Seen,
+};
+pub use crucible_types::{
+    Changed, TOOL_RESULT_BYTES, TOOL_RESULT_MIN_BYTES, ToolArgs, ToolCall, ToolOutputRetention,
+};
 pub use event::{Event, EventEnvelope, Post, Reporter, TurnError};
 pub use extension::{
     EXTENSION_ID_BYTES, EXTENSION_MANIFEST_BYTES, EXTENSION_REQUESTS, EXTENSION_TEXT_BYTES,
@@ -73,26 +92,13 @@ pub use extension::{
     trust::{ExtensionDecision, ExtensionTrusted, ExtensionUntrusted},
     wire::{FRAME_BYTES, FrameError, Frames, Written},
 };
-pub use ids::{
-    AgentId, CredentialScopeId, IdError, ProviderAttemptId, RunId, SandboxId, SessionId, ToolId,
-    TurnId,
-};
 pub use interruption::{
-    ActionId, ActionResolution, ApprovalDecision, CacheCheckpoint, CheckpointId, CheckpointStore,
-    ExecutionCheckpoint, IdempotencyKey, InterruptionError, InvocationId, InvocationRecord,
-    InvocationState, JournalEntryId, MAX_CHECKPOINT_INVOCATIONS, MAX_CHECKPOINT_SANDBOXES,
-    MAX_CHECKPOINT_WORD_BYTES, MAX_HUMAN_INPUT_BYTES, MAX_PENDING_ACTIONS, PendingAction,
-    PendingActions, PendingApproval, PendingExternalTool, PendingHumanInput, RecoveryAction,
-    ResolutionChange, ResumeDigest, ResumeEvidence, ResumeScope, ResumedAction, ToolEffect,
-    ValidatedResume,
+    CacheCheckpoint, CheckpointStore, ExecutionCheckpoint, ResumeEvidence, ValidatedResume,
 };
 pub use journal::{
-    CallResultKey, CallResultReceipt, CallResultStoreError, CompactionRecord, CustomEntry,
-    CustomProjector, JournalError, JournalStore, MAX_CUSTOM_DATA_BYTES, MAX_JOURNAL_WORD_BYTES,
-    MAX_RUN_HISTORY_BYTES, MAX_RUN_ITEM_BYTES, MAX_RUN_ITEM_RETAINED_BYTES, MAX_RUN_ITEMS,
-    RunHistory, RunItem, SessionStore,
+    JournalStore, MAX_RUN_HISTORY_BYTES, MAX_RUN_ITEM_BYTES, MAX_RUN_ITEM_RETAINED_BYTES,
+    MAX_RUN_ITEMS, RunHistory, RunItem,
 };
-pub use modality::{Modalities, Modality, ModalityError};
 pub use model::{MODEL_NAME_BYTES, ModelCapabilities, ModelError, ModelLimits};
 pub use permission::{
     Approved, Ask, Command, Disposition, Grant, Host, Minted, Mode, Permission, Remember,
@@ -147,14 +153,7 @@ pub use provider::{
     Attached, Calibration, Carried, Content, Delta, DeltaStream, Effort, EffortError, Provider,
     ProviderError, ProviderLimit, Request, RequestPurpose, Spend, ToolSchema,
 };
-pub use registry::{
-    Collision, Provenance, ProvenanceError, REGISTRY_BYTES, REGISTRY_ENTRIES, Registered, Registry,
-    RegistryError, RegistryGeneration, RegistryHandle, RegistryReport, RegistryRow,
-    RegistrySnapshot, SOURCE_ID_BYTES, SOURCE_LABEL_BYTES, Shadow, SourceKind, SourceReceipt,
-    Staged,
-};
 pub use revealed::Revealed;
-pub use run::{Ancestry, AncestryError};
 pub use sandbox::{
     Finish, Heard, MAX_SANDBOX_AUDIT_FACTS, MAX_SANDBOX_AUDIT_LIFECYCLES,
     MAX_SANDBOX_BACKEND_ID_BYTES, MAX_SANDBOX_BACKEND_WORD_BYTES, MAX_SANDBOX_COMMAND_ARGUMENTS,
@@ -183,9 +182,8 @@ pub use sandbox::{
 pub use source::{Fetch, Page, Search, SearchResponse, SearchResult, SourceError};
 pub use steer::Steer;
 pub use tool::{
-    Account, CallResultAcceptance, Changed, Looking, PendingCallResult, Remembered, Summary,
-    TOOL_RESULT_BYTES, TOOL_RESULT_MIN_BYTES, Tool, ToolArgs, ToolCall, ToolContext, ToolError,
-    ToolOutput, ToolOutputRetention, Unwatched, Watch, Wrote,
+    Account, CallResultAcceptance, Looking, PendingCallResult, Remembered, Summary, Tool,
+    ToolContext, ToolError, ToolOutput, Unwatched, Watch, Wrote,
 };
 pub use toolset::{
     ArgumentTransform, DescribeTool, InputGuard, OutputGuard, TOOL_ARGUMENT_BYTES,
@@ -195,6 +193,5 @@ pub use toolset::{
     ToolGeneration, ToolHooks, ToolOutcome, ToolProvenance, ToolReceipt, ToolResourceKey,
     ToolSnapshot, ToolSourceKind, ToolSourceReceipt, Toolset, ToolsetContext, ToolsetError,
 };
-pub use transcript::{Attachment, Message, StopReason, ToolResult, Transcript};
 pub use version::later;
 pub use workspace::{PathError, WalkFiles, Workspace, WorkspacePath, written};

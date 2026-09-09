@@ -14,7 +14,7 @@ use std::fmt;
 
 use globset::GlobMatcher;
 
-use crate::tool::ToolCall;
+use crucible_types::ToolCall;
 
 use super::sensitivity::Wanted;
 use super::{Sensitivity, Target};

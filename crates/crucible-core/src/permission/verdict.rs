@@ -4,7 +4,7 @@
 //! together — an `AllowOnce` beside an `AllowSession` — reads as one enum until
 //! a third duration arrives and has to be spelled out against every decision.
 
-use crate::tool::ToolCall;
+use crucible_types::ToolCall;
 
 use super::Sensitivity;
 
