@@ -17,8 +17,8 @@
 #     stdout   a single JSON document — what CI stores and diffs
 #     stderr   progress, and a readable summary
 #
-# `scripts/sh/bench.sh grep > budgets.json` therefore leaves the summary on the
-# terminal and the record in the file.
+# `scripts/sh/bench.sh grep > generated/json/budgets.json` therefore leaves the
+# summary on the terminal and the record in the file.
 #
 # Each budget is owned by one probe under `src/bin/`, which takes its own
 # measurement so the number and the limit live in the same file and cannot

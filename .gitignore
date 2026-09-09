@@ -6,6 +6,13 @@
 # program, and a stray file under it is one an `add -A` would otherwise commit.
 .tmp/
 
+# Everything a run writes for a person to read afterwards, sorted by what it
+# wrote: `json/` for a single JSON document, `txt/` for plain text, a folder of
+# its own for a tool that writes a tree. `.tmp/` above is a contributor's own
+# scratch space; this is what a command produced and can produce again. A
+# generated file the repository keeps, like `schema/`, is not one of these.
+generated/
+
 # Per-machine Claude Code settings. Shared guidance lives under .agents/;
 # .claude/ links to it, while this settings file belongs to one contributor.
 .claude/settings.local.json

@@ -17,7 +17,9 @@ cd "$(dirname "$0")/../.."
 
 base=${1:?usage: scripts/sh/build-comparison.sh BASE CANDIDATE [OUTPUT_DIRECTORY]}
 candidate=${2:?usage: scripts/sh/build-comparison.sh BASE CANDIDATE [OUTPUT_DIRECTORY]}
-output=${3:-build-comparison}
+# A tree, not one document, so it gets a folder of its own under `generated/`
+# rather than a place among the single JSON files.
+output=${3:-generated/build-comparison}
 
 [[ -x /usr/bin/time ]] || {
     echo 'build comparison requires GNU /usr/bin/time' >&2

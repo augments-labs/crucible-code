@@ -162,6 +162,8 @@ scripts/sh/check.sh
 It aggregates deterministic Rust, repository and Python gates. Run
 `scripts/sh/bench.sh` when startup, rendering, searching, retained session data or
 hot-path allocation changes. Budget changes require an explicit product decision;
-do not widen them merely to make a failing change pass.
+do not widen them merely to make a failing change pass. What a run writes goes
+under `generated/`, which git ignores whole: a document under the directory for
+its format, a tree under a directory of its own. Nothing there is committed.
 Platform matrices, dependency policy, advisories, performance and releases have
 owners in [`.github/workflows/README.md`](.github/workflows/README.md).

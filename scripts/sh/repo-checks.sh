@@ -72,6 +72,22 @@ for language in sh python; do
     fi
 done
 
+section "generated artifacts"
+# A run writes its budgets, campaign and canary reports under `generated/`, so
+# a person can read what one produced without a measurement ever entering the
+# history. The directory earns that only while it is ignored and empty of
+# tracked files: one committed there is a generated file the repository now has
+# to keep true, which is what `schema/` is for instead.
+if ! grep -qx 'generated/' .gitignore; then
+    printf '    FAIL .gitignore does not ignore generated/\n'
+    failed=1
+fi
+while read -r tracked; do
+    [[ -n $tracked ]] || continue
+    printf '    FAIL %s is tracked under generated/\n' "$tracked"
+    failed=1
+done < <(git ls-files -- generated)
+
 section "installer"
 for script in scripts/sh/install.sh scripts/sh/uninstall.sh scripts/sh/install-tests.sh; do
     if ! bash -n "$script"; then

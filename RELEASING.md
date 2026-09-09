@@ -41,7 +41,7 @@ same way afterwards.
 3. **The budgets hold.** On a quiet machine:
 
    ```bash
-   scripts/sh/bench.sh > budgets.json
+   mkdir -p generated/json && scripts/sh/bench.sh > generated/json/budgets.json
    ```
 
    Each probe carries its own limit and exits non-zero when it is over, so the

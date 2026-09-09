@@ -63,9 +63,10 @@ visible history from disk a message batch at a time; it does not build another
 full transcript in memory. Idle and active-turn tests check CPU use and input
 responsiveness, while compaction reduces the context sent on later model requests.
 
-Run `scripts/sh/bench.sh > budgets.json` from a source checkout to measure your own
-machine. The [performance probes](scripts/sh/bench.sh) define each workload and
-threshold; provider latency and child-process memory are separate costs.
+Run `scripts/sh/bench.sh > generated/json/budgets.json` from a source checkout
+to measure your own machine. The [performance probes](scripts/sh/bench.sh)
+define each workload and threshold; provider latency and child-process memory
+are separate costs.
 
 ## Pick up where you left off
 
