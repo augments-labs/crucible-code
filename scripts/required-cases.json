@@ -725,6 +725,42 @@
       "platforms": [
         "linux"
       ]
+    },
+    {
+      "id": "CASE-PRESERVED-COMMAND-LINE",
+      "family": "preserved-surfaces",
+      "obligation": "Every argument-only invocation answers the same text, on the same stream, with the same exit code.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "differential"
+      },
+      "case": "the_argument_only_command_surface_answers_what_it_did",
+      "source": "tests/differential.rs",
+      "body_sha256": "5c259060ab5d9c5cd6d5b443fed05c1b5a8dba7699bb31f65a56c57fed58746e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-PRESERVED-TOOL-SCHEMAS",
+      "family": "preserved-surfaces",
+      "obligation": "Every built-in tool advertises the same name, schema text, effect, scheduling and ceilings.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "differential"
+      },
+      "case": "every_built_in_tool_advertises_what_it_did",
+      "source": "tests/differential.rs",
+      "body_sha256": "a2bc9f34b46a9e341ed82c6844efad92b6190214dc3ce7587947889d2776ecc7",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
     }
   ]
 }
