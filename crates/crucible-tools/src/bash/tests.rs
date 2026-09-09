@@ -1147,3 +1147,76 @@ fn interactive_enablement_is_sampled_for_new_commands_without_losing_kernel_ceil
         "invalid template reached process preparation"
     );
 }
+
+#[test]
+fn a_command_that_begins_by_sleeping_to_reach_a_later_one_is_refused() {
+    // The shape a poll takes when it is written as one call: sleep, then ask
+    // again. Refusing it is the mechanism behind the sentence a backgrounded
+    // command comes back with, which is otherwise only a request.
+    let sample = Sample::new("bash-paced");
+    let tool = compatible(&sample).leaving(Background::new());
+
+    let problem = tool
+        .validate(&ToolArgs::new(
+            r#"{"command":"sleep 15 && gh pr checks 622"}"#,
+        ))
+        .expect_err("a sleep-paced poll was accepted");
+
+    let ToolError::Arguments { problem, .. } = problem else {
+        panic!("the refusal was not about the arguments: {problem:?}");
+    };
+    assert!(
+        problem.contains("background"),
+        "the refusal did not say what to do instead: {problem}"
+    );
+}
+
+#[test]
+fn a_command_that_only_sleeps_is_still_a_command() {
+    // Nothing runs after it, so there is nothing it is polling. A rule that
+    // caught this would be a rule about the word rather than about the shape.
+    let sample = Sample::new("bash-paced-alone");
+    let tool = compatible(&sample).leaving(Background::new());
+
+    tool.validate(&ToolArgs::new(r#"{"command":"sleep 30"}"#))
+        .expect("a bare wait is not a poll");
+}
+
+#[test]
+fn a_sleep_paced_command_left_running_is_not_a_poll() {
+    // Left running, the sleep costs the turn nothing and the registry hands
+    // over what came after it. That is the move this refusal points at, so
+    // refusing it too would leave nowhere to go.
+    let sample = Sample::new("bash-paced-left");
+    let tool = compatible(&sample).leaving(Background::new());
+
+    tool.validate(&ToolArgs::new(
+        r#"{"command":"sleep 15 && gh pr checks 622","background":true}"#,
+    ))
+    .expect("a command left running may pace itself");
+}
+
+#[test]
+fn a_command_that_sleeps_after_doing_something_is_not_a_poll() {
+    // The awkward legal case: a build that pauses partway through, a script
+    // that starts something and waits for it. The sleep is not what the line
+    // is for, and a rule that read it as one would refuse ordinary work.
+    let sample = Sample::new("bash-paced-after");
+    let tool = compatible(&sample).leaving(Background::new());
+
+    tool.validate(&ToolArgs::new(r#"{"command":"printf 'up\n'; sleep 30"}"#))
+        .expect("a sleep that is not the first thing is not a wait for a later one");
+}
+
+#[test]
+fn a_line_whose_text_does_not_say_what_runs_is_not_read_as_a_poll() {
+    // `read` reports this one as opaque, and the permission engine asks about
+    // it. A refusal here would be this rule guessing at a line it cannot read.
+    let sample = Sample::new("bash-paced-opaque");
+    let tool = compatible(&sample).leaving(Background::new());
+
+    tool.validate(&ToolArgs::new(
+        r#"{"command":"(sleep 15) && gh pr checks 622"}"#,
+    ))
+    .expect("an unreadable line is not refused by a rule about a shape");
+}

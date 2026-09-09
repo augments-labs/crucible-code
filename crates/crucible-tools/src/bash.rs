@@ -110,6 +110,28 @@ const LEFT_RUNNING: &str = "when it ends you are given what it printed; do not p
 const PRESSED: &str = "the developer pressed ctrl+b to leave it running rather than keep waiting; \
      carry on with what does not depend on it";
 
+/// What a command that begins by sleeping to reach a later one is refused with.
+///
+/// [`LEFT_RUNNING`] says the answer is coming and asks the model not to go
+/// looking for it. This is what makes that more than a request. A model that
+/// means to wait can write the wait into the command line — `sleep 15 && gh pr
+/// checks 622` is one call, and every word of that sentence is still true of it
+/// — so the refusal belongs here, where the call is read, rather than in prose
+/// somewhere behind it.
+///
+/// It names the move it is asking for instead of only closing one off. The same
+/// line left running costs the turn nothing and comes back with what it printed.
+/// The argument it names is spelled by the constant the parser reads it with,
+/// so a renamed field cannot leave this sentence pointing at one that is gone.
+static PACED: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "a command that begins by sleeping is a wait, and crucible does the waiting: send this \
+         one with \"{left}\": true and you are given what it printed when it ends, or carry on \
+         with what does not depend on it",
+        left = crate::account::LEFT
+    )
+});
+
 /// The root `description` is the tool's own; everything below it describes the
 /// arguments.
 ///
@@ -454,7 +476,7 @@ impl DescribeTool for Bash {
 impl Tool for Bash {
     fn validate(&self, args: &ToolArgs) -> Result<(), ToolError> {
         let args = Args::parse(NAME, args)?;
-        args.text(COMMAND)?;
+        let command = args.text(COMMAND)?;
         let seconds = args.count(TIMEOUT, SECONDS)?;
         let background = args.flag(crate::account::LEFT, false)?;
         if seconds > CEILING {
@@ -463,6 +485,12 @@ impl Tool for Bash {
         if background && args.holds(TIMEOUT) {
             return Err(args
                 .wrong("timeout does not apply to a command left running: send one or the other"));
+        }
+        // Only where there is somewhere to send it. A run with no registry
+        // cannot leave anything running, and pointing at an argument that will
+        // be refused next is worse than letting the wait happen.
+        if !background && self.leaving.is_some() && command::paced(command) {
+            return Err(args.wrong(PACED.as_str()));
         }
         Ok(())
     }

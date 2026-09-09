@@ -53,6 +53,27 @@ pub(super) fn read(line: &str) -> Command {
     }
 }
 
+/// Whether this line begins by sleeping in order to reach something after it.
+///
+/// The one shape of a poll a rule can honestly be written about: a wait, and
+/// then the question the wait was for. A `sleep` with nothing after it is not
+/// polling anything, and a line whose text does not say what runs is not read
+/// as one either — a rule that guessed at those would be a rule about the word
+/// `sleep` rather than about the shape.
+pub(super) fn paced(line: &str) -> bool {
+    let Some(parts) = parts(line, |_| true) else {
+        return false;
+    };
+    let [first, _, ..] = &*parts else {
+        return false;
+    };
+    let program = first.split(IFS).next().unwrap_or_default();
+
+    // `/bin/sleep` is the same wait spelled out, and the scanner keeps the
+    // program word as written.
+    program.rsplit('/').next() == Some("sleep")
+}
+
 /// The simple commands this line decomposes into, or nothing when it holds
 /// something whose text does not say what will run.
 pub(super) fn parts(line: &str, accepts: fn(&str) -> bool) -> Option<Box<[Box<str>]>> {
