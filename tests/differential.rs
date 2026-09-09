@@ -68,10 +68,16 @@ fn frozen(name: &str) -> PathBuf {
 
 /// Compares `observed` against the frozen answer, and says where both are.
 ///
-/// The mismatch is not printed. These renderings run to thousands of bytes and
-/// a diff of two of them in a test failure is unreadable; the two paths are
-/// what somebody actually needs, and the second one is written where a test's
-/// own scratch directory already is.
+/// The whole mismatch is not printed. These renderings run to thousands of
+/// bytes and a diff of two of them in a test failure is unreadable, so the
+/// observed answer is written beside the test's own scratch directory and the
+/// two paths are named.
+///
+/// The first differing line is printed with them. A failure on a machine
+/// somebody is sitting at is answered by the paths; a failure on a build runner
+/// is not, because the file the second path names is gone before anyone can
+/// open it. One line is what makes a remote failure readable without making a
+/// local one unreadable.
 fn same(name: &str, observed: &str) {
     assert!(
         observed.len() > 32,
@@ -89,10 +95,47 @@ fn same(name: &str, observed: &str) {
     fs::write(&spilled, observed)
         .unwrap_or_else(|problem| panic!("{} could not be written: {problem}", spilled.display()));
     panic!(
-        "{name} no longer answers what was frozen for it\n  frozen:   {}\n  observed: {}",
+        "{name} no longer answers what was frozen for it\n{}\n  frozen:   {}\n  observed: {}",
+        parted(&frozen_text, observed),
         expected.display(),
         spilled.display()
     );
+}
+
+/// The first line the two answers disagree on, both sides bounded.
+///
+/// Bounded because one of these lines can be a whole rendered request. A line
+/// that runs past the limit is cut and says so, which is enough to tell a
+/// reordering from a rewording without printing the rest of the answer to find
+/// out.
+fn parted(frozen_text: &str, observed: &str) -> String {
+    /// The most of one line either side prints.
+    const WIDTH: usize = 200;
+
+    let cut = |line: &str| {
+        let kept: String = line.chars().take(WIDTH).collect();
+        if kept.len() < line.len() {
+            format!("{kept}… (line is {} bytes)", line.len())
+        } else {
+            kept
+        }
+    };
+
+    for (number, (was, now)) in frozen_text.lines().zip(observed.lines()).enumerate() {
+        if was != now {
+            return format!(
+                "  first difference at line {}\n    frozen:   {}\n    observed: {}",
+                number + 1,
+                cut(was),
+                cut(now)
+            );
+        }
+    }
+
+    let (frozen_lines, observed_lines) = (frozen_text.lines().count(), observed.lines().count());
+    format!(
+        "  every shared line agrees; the answers are {frozen_lines} and {observed_lines} lines long"
+    )
 }
 
 /// A directory of this probe's own, removed when the probe ends.
