@@ -17,6 +17,12 @@ change in any release with no deprecation period.
   again — exactly the polling the note asks it not to do. Each ending now
   carries the command's output, bounded to a quarter of a result's ceiling so
   four endings in one note cost what one result does.
+- **A command that begins by sleeping to reach a later one is refused.** The
+  shape a model reaches for when it will not wait — `sleep 15 && gh pr checks
+  622` — occupied the agent for the whole sleep and then asked a question whose
+  answer arrives on its own, and repeating it is the polling the background note
+  already asks against. Such a foreground command is now refused with the
+  argument that does work, `"background": true`, named in the refusal.
 
 ## [0.40.1] - 2026-09-09
 

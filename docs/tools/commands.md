@@ -114,6 +114,13 @@ command waited for will reasonably ask for it again.
 command left running has no deadline, so a call that sent both asked for two
 different things.
 
+A command that begins by sleeping to reach a later one — `sleep 15 && gh pr checks
+622` — is refused too. That is a wait written as a command, and waiting is what
+leaving one running is for; the refusal names that move rather than only closing
+this one off, because the same line sent with `background: true` costs the turn
+nothing and comes back with what it printed. A `sleep` with nothing after it is a
+pause rather than a poll and still runs.
+
 **At most four run at once.** A fifth call is refused, naming the four in the way,
 and the command it started is ended rather than left where nobody can see it.
 
