@@ -12,7 +12,7 @@ on:
   # A dependency change can introduce an advisory immediately, so scan that
   # change as well as the weekly schedule.
   push:
-    branches: [main]
+    branches: [main, dev]
     paths: [Cargo.toml, Cargo.lock, deny.toml, .github/workflows/audit.yml]
   pull_request:
     paths: [Cargo.toml, Cargo.lock, deny.toml, .github/workflows/audit.yml]

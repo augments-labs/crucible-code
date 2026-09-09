@@ -1,7 +1,8 @@
 # Workflow ownership
 
-`blocking-ci.yml` is the pull-request and `main` entrypoint. It calls focused
-reusable workflows and exposes `CI required` as the single merge result.
+`blocking-ci.yml` is the pull-request entrypoint, and runs again on every push
+to `dev` and `main`. It calls focused reusable workflows and exposes
+`CI required` as the single merge result.
 
 | Workflow | Owns |
 | --- | --- |

@@ -19,9 +19,27 @@ cargo run -- --help
 [Building](docs/building/index.md) lists platform packages and cross-compilation
 options.
 
+## Branches
+
+`dev` is where work lands and `main` is what shipped. Every commit on `main`
+came through `dev` first, except a hotfix, so `main` is always a state that was
+released or is about to be.
+
+Branch from `dev`, and open the pull request against `dev`. One opened against
+`main` is asked to retarget before anyone reviews it — not as ceremony, but
+because merging it would put an unreleased change into the branch a tag is cut
+from. Only two kinds of branch target `main`: a release branch carrying the
+version bump, and a hotfix for something already published.
+[`RELEASING.md`](RELEASING.md) owns both.
+
+Both branches carry the same ruleset: no direct pushes, no force-pushes, no
+deletion, and `CI required` green before a merge. Everything else is a task
+branch, and merging its pull request deletes it — the work is on `dev` by then,
+and the ruleset is what keeps the same rule from reaching `dev` or `main`.
+
 ## Make a change
 
-1. Branch from `main` and keep one reason to change per pull request.
+1. Branch from `dev` and keep one reason to change per pull request.
 2. Read the module documentation beside the code being changed.
 3. Start new behavior with a failing test; reproduce a bug before fixing it.
 4. Run the narrow test while working, then the complete local gate.
@@ -69,10 +87,22 @@ Scope is decided by purpose, not changed-line arithmetic. A pull request that
 needs two independent summaries is usually two changes; a module whose code and
 proof do not compile apart remains one.
 
-Use the pull-request template. Call out security boundaries, generated files,
-platform-specific behavior and performance-sensitive paths when they moved.
-`CHANGELOG.md` is for user-visible changes, written for someone deciding whether
-to upgrade.
+Use the pull-request template and answer every section it asks for. A blank
+section, kept placeholder text or bundled unrelated changes get the pull
+request closed rather than reviewed. The surfaces it lists — security
+boundaries, durable formats, generated files, platform-specific behavior,
+terminal rendering, performance-sensitive paths and required-case obligations —
+are the ones a reviewer cannot recover from the diff alone. `CHANGELOG.md` is
+for user-visible changes, written for someone deciding whether to upgrade.
+
+It opens by asking who made the change, because a reviewer reads a generated
+diff with different questions than a hand-written one, and which model, harness
+and plugins produced it is part of reproducing the work. It closes by asking
+whether a person has read the complete diff. A green gate is evidence about the
+checks that ran, not about whether the change answers the right problem, so
+that reading is a separate thing a pull request either has or is still waiting
+for — and one nobody has read yet leaves the box empty rather than claiming
+otherwise.
 
 ## Dependencies
 

@@ -3,7 +3,7 @@ name: blocking-ci
 on:
   pull_request: {}
   push:
-    branches: [main]
+    branches: [main, dev]
 
 concurrency:
   group: blocking-ci-${{ github.ref }}

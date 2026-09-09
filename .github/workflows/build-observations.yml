@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       base:
-        description: Base revision (defaults to the first parent or main)
+        description: Base revision (defaults to the first parent or dev)
         required: false
         type: string
   schedule:
@@ -39,7 +39,7 @@ jobs:
           elif git rev-parse --verify HEAD^ >/dev/null 2>&1; then
             base=$(git rev-parse HEAD^)
           else
-            base=$(git rev-parse origin/main)
+            base=$(git rev-parse origin/dev)
           fi
           printf 'base=%s\ncandidate=%s\n' "$base" "$candidate" >> "$GITHUB_OUTPUT"
       - run: scripts/build-comparison.sh '${{ steps.revisions.outputs.base }}' '${{ steps.revisions.outputs.candidate }}' build-observation
