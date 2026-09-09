@@ -232,9 +232,10 @@ not a space, so a path is one word.
 
 <kbd>↑</kbd> and <kbd>↓</kbd> on an empty line walk back through the prompts you
 have already sent from this directory, newest first, up to a hundred of them.
-The top border of the box says where you are — `history 1/100` on the first
-press back, counting up as you go, and always out of a hundred whether you have
-sent that many or three — and Enter sends whatever is in the box.
+The top border of the box says where you are — showing the prompt's chronological
+position within this window, such as `history 80/100` on the first press back when
+eighty prompts are retained, counting down toward `history 1/100` for the oldest —
+and Enter sends whatever is in the box.
 Edit the line instead, by so much as a <kbd>Backspace</kbd>, and the walk ends
 where you edited it: the count goes, and the line is yours again.
 
