@@ -109,7 +109,7 @@ fn the_top_border_says_where_the_arrow_reached_and_says_nothing_once_the_line_is
         .find(|row| row.text().contains("history"))
         .map(crucible_tui::Row::text)
         .unwrap_or_default();
-    assert!(border.contains("history 1/100"), "{:?}", boxed.rows);
+    assert!(border.contains("history 3/100"), "{:?}", boxed.rows);
 
     // The key the reader reaches for when the line is nearly what they wanted.
     editor.press(Key::Backspace);

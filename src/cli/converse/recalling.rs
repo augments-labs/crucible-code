@@ -128,20 +128,14 @@ impl Recalling {
 
     /// Where the border says the line came from, or nothing at all.
     ///
-    /// How many presses back the walk has come, so the first one is `1` and the
-    /// number rises with the key. What a reader is keeping track of while they
-    /// hold the arrow down is how far back they have gone, not which slot of a
-    /// file they have landed in.
-    ///
-    /// Counted against the window rather than against how much of it is filled,
-    /// so the second number is the one fact about the history that never moves.
-    /// A count that grew with every prompt sent would make `1/3` and `1/4` mean
-    /// the same press, and a reader watching the border would be told the
-    /// history had changed size when what changed was that they had typed.
+    /// The chronological place of the recalled prompt in this directory's
+    /// retained history, counted against the window of [`PROMPTS`].
+    /// The newest prompt is shown at its retained index (such as `80/100` when
+    /// eighty prompts are held) and the number counts down toward `1/100` as
+    /// the walk reaches further back.
     pub(super) fn place(&self) -> Recalled {
-        self.at.map_or_else(Recalled::default, |at| {
-            Recalled::new(self.held.len() - at, PROMPTS)
-        })
+        self.at
+            .map_or_else(Recalled::default, |at| Recalled::new(at + 1, PROMPTS))
     }
 
     /// Ends the walk, leaving the line where it is.
