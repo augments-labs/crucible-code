@@ -1455,6 +1455,7 @@ fn ending(called: &str, said: &str, code: Option<i32>, columns: usize) -> String
             said: said.into(),
             code,
             lines: 120,
+            printed: Box::from(""),
         },
         Style::plain(),
     )

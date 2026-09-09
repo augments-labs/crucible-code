@@ -50,7 +50,8 @@ pub(crate) fn said(ended: &[Ended]) -> Option<String> {
 
     let mut said = String::from(
         "crucible, not the developer: commands you left running have ended. They are \
-         gone; nothing is waiting on them, and starting one again is a new call:",
+         gone and nothing is waiting on them; what each of them printed is below, so \
+         there is nothing left to run to find out how one went:",
     );
 
     for one in ended {
@@ -67,9 +68,26 @@ pub(crate) fn said(ended: &[Ended]) -> Option<String> {
             spelled(one.tool, &one.called),
             one.lines
         );
+
+        // Indented under the line it belongs to, because several commands can
+        // end into one note and unindented output would read as the note's own
+        // words — or as the next command's.
+        if !one.printed.trim().is_empty() {
+            let _ = write!(said, " What it printed:\n\n{}", indented(&one.printed));
+        }
     }
 
     Some(said)
+}
+
+/// Every line of `printed` moved in by four spaces.
+fn indented(printed: &str) -> String {
+    printed
+        .trim_end()
+        .lines()
+        .map(|line| format!("    {line}"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[cfg(test)]

@@ -710,7 +710,7 @@ impl Pipe {
     /// thread, but [`Self::close`] joins it and reports that failure before a
     /// `ToolOutput` can be returned; `ended` only bounds how long collection
     /// waits before that definitive result.
-    fn ended(&self) -> bool {
+    pub(super) fn ended(&self) -> bool {
         self.reader
             .as_ref()
             .is_none_or(thread::JoinHandle::is_finished)
@@ -784,6 +784,17 @@ impl Drop for Pipe {
     }
 }
 
+/// How long a command that has exited is held back for, waiting for its readers
+/// to reach the end of its pipes.
+///
+/// The same moment [`settle`] gives a command somebody is waiting on, spent the
+/// other way round: the registry cannot block the thread that draws, so instead
+/// of waiting inside one call it declines to report the ending and is asked
+/// again on the next beat. A grandchild still holding a pipe open is what the
+/// deadline is for — the ending is reported with whatever arrived, rather than
+/// never.
+pub(super) const DRAIN: Duration = SETTLE;
+
 /// Gives the readers a moment to reach the end once the command is over, and
 /// says whether they got there.
 ///
@@ -818,7 +829,17 @@ fn joined(out: &Pipe, err: &Pipe) -> Captured {
     let (rest, from_err) = err.take();
     both.extend(rest);
 
-    captured(&both, from_out.saturating_add(from_err))
+    captured(&both, from_out.saturating_add(from_err), CAPTURE_TEXT)
+}
+
+/// As much of `text` as `budget` allows, cut and annotated the way an answer is.
+///
+/// For text that is not itself a tool result and so never reaches the
+/// invocation pipeline's ceiling: the note about a command that ended while
+/// nobody waited carries what it printed, and carries it under a budget of its
+/// own because several commands can end into one note.
+pub(super) fn excerpt(text: &str, budget: usize) -> String {
+    captured(text.as_bytes(), 0, budget).text
 }
 
 struct Captured {
@@ -835,12 +856,12 @@ struct Captured {
 /// because there is one gap.
 #[cfg(test)]
 fn cut(text: &str, already: usize) -> String {
-    captured(text.as_bytes(), already).text
+    captured(text.as_bytes(), already, CAPTURE_TEXT).text
 }
 
-fn captured(bytes: &[u8], already: usize) -> Captured {
+fn captured(bytes: &[u8], already: usize, budget: usize) -> Captured {
     let original = bytes.len().saturating_add(already);
-    if already == 0 && bytes.len() <= CAPTURE_TEXT {
+    if already == 0 && bytes.len() <= budget {
         return Captured {
             text: String::from_utf8_lossy(bytes).trim_end().to_owned(),
             original,
@@ -848,7 +869,7 @@ fn captured(bytes: &[u8], already: usize) -> Captured {
         };
     }
 
-    let source = CAPTURE_TEXT.min(bytes.len());
+    let source = budget.min(bytes.len());
     let head_budget = source / 2;
     let tail_budget = source.saturating_sub(head_budget);
     let (head_end, tail_start) = match std::str::from_utf8(bytes) {

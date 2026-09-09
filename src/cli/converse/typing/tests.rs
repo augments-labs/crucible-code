@@ -1349,6 +1349,7 @@ fn ended(number: usize, code: Option<i32>) -> Ended {
         said: "".into(),
         code,
         lines: 42,
+        printed: Box::from(""),
     }
 }
 
