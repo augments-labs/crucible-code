@@ -40,6 +40,7 @@ fn a_command_that_ended_while_nobody_waited_is_said_in_the_words_the_model_reads
             said: "".into(),
             code: Some(1),
             lines: 96,
+            printed: Box::from(""),
         },
         Ended {
             tool: "bash",
@@ -48,6 +49,7 @@ fn a_command_that_ended_while_nobody_waited_is_said_in_the_words_the_model_reads
             said: "".into(),
             code: Some(0),
             lines: 4,
+            printed: Box::from(""),
         },
     ];
 
@@ -58,6 +60,49 @@ fn a_command_that_ended_while_nobody_waited_is_said_in_the_words_the_model_reads
     assert!(note.contains("96 lines"), "{note}");
     assert!(note.contains("#2 Bash(cargo watch)"), "{note}");
     assert!(note.contains("finished"), "{note}");
+}
+
+#[test]
+fn what_a_command_printed_travels_with_the_news_that_it_ended() {
+    // The gap this note existed with. Told that a command ended and never what
+    // it said, a model still needs the answer the command was getting, and the
+    // only way left to it is to run something else that asks the same question.
+    let ended = [Ended {
+        tool: "bash",
+        number: 7,
+        called: "gh pr checks 622 --watch".into(),
+        said: "Wait and check PR checks".into(),
+        code: Some(0),
+        lines: 3,
+        printed: "Rust CI / Linux\tpass\nCodeQL\tpass\n".into(),
+    }];
+
+    let note = said(&ended).expect("a note about one command");
+
+    assert!(note.contains("Rust CI / Linux"), "{note}");
+    assert!(note.contains("CodeQL"), "{note}");
+}
+
+#[test]
+fn a_command_that_printed_nothing_adds_no_empty_block_to_the_note() {
+    // A silent command is the ordinary case for a watcher that was killed
+    // before it said anything, and a heading with nothing under it reads as
+    // output that went missing.
+    let ended = [Ended {
+        tool: "bash",
+        number: 8,
+        called: "sleep 30".into(),
+        said: "".into(),
+        code: None,
+        lines: 0,
+        printed: "".into(),
+    }];
+
+    let note = said(&ended).expect("a note about one command");
+
+    assert!(note.contains("#8 Bash(sleep 30)"), "{note}");
+    assert!(note.contains("was killed"), "{note}");
+    assert!(!note.contains("printed:"), "{note}");
 }
 
 #[test]

@@ -94,7 +94,8 @@ as an ordinary result. The answer names the number it is running as:
 VITE v5.4.2  ready in 412 ms
 ➜  Local:   http://localhost:5173/
 
-[left running as #1; completion is reported automatically; do not poll or wait]
+[left running as #1; when it ends you are given what it printed; do not poll
+or wait for it]
 ```
 
 A command you pressed the key on says who let go of it, because the model asked
@@ -102,8 +103,8 @@ for that one to be waited for and is getting it back early:
 
 ```
 [left running as #2; the developer pressed ctrl+b to leave it running rather
-than keep waiting; carry on with what does not depend on it; completion is
-reported automatically; do not poll or wait]
+than keep waiting; carry on with what does not depend on it; when it ends you
+are given what it printed; do not poll or wait for it]
 ```
 
 Without that it reads as its own call coming back, and a model that wanted the
@@ -171,6 +172,13 @@ command ends, the turn that started it has usually scrolled away, so this is the
 one chance to say which of the four it was in words you were shown at the time.
 The command gives up columns before the ending does: how it ended and how much
 it printed is the part nobody can go back and ask for.
+
+The model is told what the command printed, not only that it ended. A note
+carrying an exit status and a line count leaves the question the command was
+answering still open, and the only move left is to run something else that asks
+it again — which is the polling the note exists to make unnecessary. Each ending
+carries a quarter of a result's ceiling, so four commands ending into one note
+cost what one result does, and output cut to fit says so where it was cut.
 
 The model is told the moment there is somewhere to put it. A turn that is
 running takes the ending between one step and the next, so a plan built around a

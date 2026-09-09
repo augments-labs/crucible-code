@@ -8,6 +8,16 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A command that ended while nobody waited hands over what it printed.** The
+  note telling the model a backgrounded command was over carried an exit status
+  and a line count and nothing else, so the question the command was answering
+  stayed open and the only move left was to run something else that asked it
+  again — exactly the polling the note asks it not to do. Each ending now
+  carries the command's output, bounded to a quarter of a result's ceiling so
+  four endings in one note cost what one result does.
+
 ## [0.40.1] - 2026-09-09
 
 ### Fixed

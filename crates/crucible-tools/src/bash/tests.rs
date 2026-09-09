@@ -715,7 +715,7 @@ fn a_command_left_running_answers_at_once_and_keeps_running() {
     assert!(
         output
             .text()
-            .contains("completion is reported automatically; do not poll or wait"),
+            .contains("when it ends you are given what it printed; do not poll or wait for it"),
         "the result invited the model to monitor work Crucible already watches: {}",
         output.text()
     );
@@ -770,7 +770,7 @@ fn a_command_the_developer_let_go_of_says_who_let_go_of_it() {
     assert!(
         output
             .text()
-            .contains("completion is reported automatically; do not poll or wait"),
+            .contains("when it ends you are given what it printed; do not poll or wait for it"),
         "the result invited the model to poll a command Crucible is watching: {}",
         output.text()
     );
@@ -845,6 +845,41 @@ fn an_explicit_background_call_keeps_acceptance_as_its_only_result_after_a_fast_
         thread::sleep(Duration::from_millis(10));
     };
     assert_eq!(ended.first().and_then(|ended| ended.code), Some(7));
+}
+
+#[test]
+fn a_command_that_ended_hands_over_what_it_printed() {
+    // The reason a model polls. Told only that a command it was waiting on has
+    // ended, and never what the command said, the one route left to the answer
+    // is to run something else that asks the same question — which is the work
+    // the command was already doing.
+    let sample = Sample::new("bash-background-printed");
+    let left = Background::new();
+    let tool = compatible(&sample).leaving(left.clone());
+
+    let output = finalized(
+        &tool,
+        r#"{"command":"printf 'the-answer-is-42\n'","background":true}"#,
+    )
+    .expect("the command started");
+    assert!(!output.is_failed(), "{}", output.text());
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let ended = loop {
+        let ended = left.reap();
+        if !ended.is_empty() || Instant::now() >= deadline {
+            break ended;
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+
+    let one = ended.first().expect("the command ended");
+    assert_eq!(one.code, Some(0));
+    assert!(
+        one.printed.contains("the-answer-is-42"),
+        "the model was told the command ended and not what it said: {:?}",
+        one.printed
+    );
 }
 
 #[test]

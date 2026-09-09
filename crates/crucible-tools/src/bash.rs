@@ -90,7 +90,13 @@ const TICK: Duration = Duration::from_millis(20);
 /// The registry owns watching it from that point on. Without this sentence, a
 /// model sees only that the call returned while work continues and may spend the
 /// next step inventing a way to poll it — duplicating the watcher already here.
-const LEFT_RUNNING: &str = "completion is reported automatically; do not poll or wait";
+///
+/// It names what arrives rather than only forbidding the poll. A model told to
+/// stop asking, and not told that the answer is coming anyway, still has the
+/// question the command was answering and one way left to get it; the sentence
+/// that closes the gap is the one that says the output itself will be handed
+/// over. What it promises is kept in `standing::said`.
+const LEFT_RUNNING: &str = "when it ends you are given what it printed; do not poll or wait for it";
 
 /// What the model is told when the developer let go of the command rather than
 /// the call asking to.

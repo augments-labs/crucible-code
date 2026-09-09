@@ -41,6 +41,14 @@ use crucible_core::{CallResultAcceptance, CallResultReceipt, SandboxError, Sandb
 /// refusal naming the four in the way — which the model can act on.
 pub const MOST: usize = 4;
 
+/// How much of what one ended command printed travels in the note about it.
+///
+/// [`MOST`] commands can end into a single note, so the share rather than the
+/// whole: a note carrying every one of them at a result's full ceiling would be
+/// four results in one message. Divided this way the note is bounded by the same
+/// figure one tool result is, however many ended at once.
+const SHARE: usize = crate::bound::OUTPUT / MOST;
+
 /// One command left running, and everything that ends it.
 struct Left {
     /// What the panel calls it, in the words the call sent.
@@ -57,6 +65,9 @@ struct Left {
     out: Pipe,
     err: Pipe,
     since: Instant,
+    /// When the process was first seen to have gone, for the grace its readers
+    /// get to reach the end of its pipes. `None` until it has.
+    exited: Option<Instant>,
     /// Runner finalization has not yet bound the durable result receipt.
     accepting: bool,
 }
@@ -106,6 +117,14 @@ pub struct Ended {
     pub code: Option<i32>,
     /// How many lines it printed in total.
     pub lines: usize,
+    /// What it printed, bounded and cut the way an answer is.
+    ///
+    /// The whole reason the model is told any of this. A note that a command
+    /// ended and never what it said leaves the question the command was
+    /// answering still open, and running something else to ask it again is the
+    /// only move left — which is the polling the note exists to make
+    /// unnecessary.
+    pub printed: Box<str>,
 }
 
 /// Everything left running, behind the one lock that owns it.
@@ -271,6 +290,7 @@ impl Background {
             out: taking.out,
             err: taking.err,
             since: taking.since,
+            exited: None,
             accepting,
         });
 
@@ -396,6 +416,18 @@ impl Background {
             }
             match left.process.try_wait() {
                 Ok(Some(status)) => {
+                    // Exited, but what it printed last may still be in flight:
+                    // the readers own their own threads, and the bytes a
+                    // command wrote as it died land after the status does. The
+                    // ending is worth nothing to the model without them, so it
+                    // is held back — never by blocking, because this runs on the
+                    // beat the thread that draws keeps.
+                    let gone = *left.exited.get_or_insert_with(Instant::now);
+                    if !left.drained() && gone.elapsed() < super::output::DRAIN {
+                        still.push(left);
+                        continue;
+                    }
+
                     // The shell has gone; its descendants have not necessarily,
                     // and this is the one path where nothing else will end them.
                     if super::output::end(left.process.as_mut()).is_err() {
@@ -403,6 +435,7 @@ impl Background {
                         continue;
                     }
                     let (lines, _) = left.counted();
+                    let printed = super::output::excerpt(&left.text(), SHARE);
 
                     ended.push(Ended {
                         tool: super::NAME,
@@ -411,6 +444,7 @@ impl Background {
                         said: left.said.clone(),
                         code: status.code(),
                         lines,
+                        printed: printed.into(),
                     });
                 }
                 // Still running, or a wait that could not be made. A command
@@ -591,6 +625,11 @@ impl Left {
             out_lines.saturating_add(err_lines),
             out_bytes.saturating_add(err_bytes),
         )
+    }
+
+    /// Whether both readers have reached the end of their pipes.
+    fn drained(&self) -> bool {
+        self.out.ended() && self.err.ended()
     }
 
     /// The end of what it has printed, both streams joined.
