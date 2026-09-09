@@ -6,7 +6,7 @@
 //! whether the file can be sent at all, and every answer of no is a sentence
 //! the user reads while they can still act on it.
 
-use std::fs;
+use std::fs::{self, File};
 use std::io::{Cursor, Write as _};
 use std::path::{Path, PathBuf};
 
@@ -264,7 +264,12 @@ enum Named {
 /// The order is the order a person can act in. What the protocol cannot spell
 /// is nothing they can do anything about; what the model cannot read they fix
 /// with `/model`; what is too large they fix with a smaller copy. Reading the
-/// file comes last, because the three answers above it cost nothing.
+/// bytes comes last, because the three answers above it cost nothing.
+///
+/// The file is *opened* first all the same, and the descriptor held across
+/// those answers. That is one lookup where there were three, and it is the
+/// lookup every later question is asked of: what is standing at the name
+/// cannot change into something else between being described and being read.
 fn decide(workspace: &Workspace, asking: Asking<'_>, word: &str, imported: Option<&Path>) -> Named {
     let Asking {
         provider,
@@ -284,7 +289,11 @@ fn decide(workspace: &Workspace, asking: Asking<'_>, word: &str, imported: Optio
         }
         Err(_) => return Named::Nothing,
     };
-    let Some(size) = sized(source.path()) else {
+    // Opened here, where the size used to be asked of the name, and held
+    // across the three answers below: one lookup settles what this is, and
+    // nothing between the answer and the read can turn the file into another
+    // one or into a pipe that never returns.
+    let Some(mut file) = source.opened() else {
         return Named::Nothing;
     };
 
@@ -312,16 +321,20 @@ fn decide(workspace: &Workspace, asking: Asking<'_>, word: &str, imported: Optio
         ));
     }
 
-    if size > CEILING as u64 {
-        return Named::Refused(format!(
-            "{word} is larger than the {} MB one attachment may be, so it is not attached. A \
-             smaller copy of it would be.",
-            CEILING / (1024 * 1024),
-        ));
-    }
-
-    let Ok(bytes) = fs::read(source.path()) else {
-        return Named::Nothing;
+    // The size is settled from that descriptor before a byte is allocated,
+    // which is what the ceiling is for.
+    let bytes = match crucible_core::carried(&mut file) {
+        Ok(bytes) => bytes,
+        Err(crucible_core::AttachmentError::TooLarge) => {
+            return Named::Refused(format!(
+                "{word} is larger than the {} MB one attachment may be, so it is not attached. A \
+                 smaller copy of it would be.",
+                CEILING / (1024 * 1024),
+            ));
+        }
+        Err(
+            crucible_core::AttachmentError::NotFile | crucible_core::AttachmentError::Unread(_),
+        ) => return Named::Nothing,
     };
     if !(kind.confirms)(&bytes) {
         return Named::Refused(format!(
@@ -366,10 +379,16 @@ enum Source {
 }
 
 impl Source {
-    fn path(&self) -> &Path {
+    /// The file itself, opened by whichever authority owns the path.
+    ///
+    /// A workspace path goes through the descriptor walk, which answers
+    /// containment as well; one the user typed in full has no containment
+    /// question and is opened as an attachment. Both refuse anything that is
+    /// not a regular file without waiting on it.
+    fn opened(&self) -> Option<File> {
         match self {
-            Self::Workspace(path) => path.as_path(),
-            Self::External(path) => path,
+            Self::Workspace(path) => path.open_regular().ok(),
+            Self::External(path) => crucible_core::opened(path).ok(),
         }
     }
 }
@@ -396,7 +415,9 @@ fn import(
                 .map_err(crucible_privacy::PrivacyError::into_io)?;
         }
         Err(problem) if problem.kind() == std::io::ErrorKind::AlreadyExists => {
-            if !fs::read(&destination).is_ok_and(|existing| existing == bytes) {
+            let carried = crucible_core::opened(&destination)
+                .and_then(|mut file| crucible_core::carried(&mut file));
+            if !carried.is_ok_and(|existing| existing == bytes) {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::AlreadyExists,
                     "the content-addressed destination holds different bytes",
@@ -521,12 +542,6 @@ fn decoded(text: &str) -> String {
     }
 
     String::from_utf8(bytes).unwrap_or_else(|_| text.to_owned())
-}
-
-/// How large the named file is, or `None` where it is not a regular file.
-fn sized(path: &Path) -> Option<u64> {
-    let about = fs::metadata(path).ok()?;
-    about.is_file().then_some(about.len())
 }
 
 #[cfg(test)]

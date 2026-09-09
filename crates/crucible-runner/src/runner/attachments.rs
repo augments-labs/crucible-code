@@ -18,12 +18,13 @@
 //! alternative is bytes labelled with a kind the request has no word for, which
 //! is a wrong answer rather than a refused one.
 
-use std::fs;
 use std::path::Path;
 
 use sha2::{Digest as _, Sha256};
 
-use crucible_core::{Attached, Attachment, CEILING, Content, Modalities, Modality, Transcript};
+use crucible_core::{
+    Attached, Attachment, AttachmentError, CEILING, Content, Modalities, Modality, Transcript,
+};
 
 /// One request's worth of attachments, owned until the request returns.
 pub(crate) struct Resolved(Vec<Held>);
@@ -82,8 +83,28 @@ fn read(attachment: &Attachment, spent: &mut usize, carries: Modalities) -> Carr
     if !carries.contains(attachment.modality) {
         return unread(attachment);
     }
-    let Ok(bytes) = fs::read(Path::new(attachment.path.as_ref())) else {
-        return instead(attachment, "because it could not be read");
+
+    // Opened before it is read, and bounded from that descriptor: the ceiling
+    // is what one file may be however little of the request is spent, so a file
+    // that has grown past it since it was attached is refused without its bytes
+    // arriving here first. A pipe standing where the file stood is refused by
+    // the same open rather than waited on.
+    let bytes = match crucible_core::opened(Path::new(attachment.path.as_ref()))
+        .and_then(|mut file| crucible_core::carried(&mut file))
+    {
+        Ok(bytes) => bytes,
+        // The line a grown file already got, now reached without reading it.
+        // Every hash recorded was taken over at most the ceiling, so a file
+        // larger than the ceiling cannot be the file that was attached — the
+        // sentence is true before the bytes are seen. The size line below stays
+        // for what it is about: a file that still fits on its own and no longer
+        // fits beside the others.
+        Err(AttachmentError::TooLarge) => {
+            return instead(attachment, "because it changed after it was attached");
+        }
+        Err(AttachmentError::NotFile | AttachmentError::Unread(_)) => {
+            return instead(attachment, "because it could not be read");
+        }
     };
     if <[u8; 32]>::from(Sha256::digest(&bytes)) != attachment.hash {
         return instead(attachment, "because it changed after it was attached");

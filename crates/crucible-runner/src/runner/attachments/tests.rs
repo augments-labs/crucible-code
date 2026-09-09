@@ -222,6 +222,79 @@ fn a_file_that_changed_after_it_was_attached_stands_in() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn a_file_that_became_a_pipe_stands_in_without_waiting_for_a_writer() {
+    // The defect this catches: the whole file was read by name before anything
+    // was checked, and a name can be a pipe by the time the request goes out.
+    // `fs::read` on one blocks until somebody writes, so a turn that had
+    // already been paid for never left this process.
+    let sample = Sample::new("attach-pipe");
+    let under = sample.workspace().root().to_path_buf();
+
+    let attachment = file(&under, "shot.png", &[1; 64]);
+    fs::remove_file(under.join("shot.png")).expect("the file goes");
+    let made = std::process::Command::new("mkfifo")
+        .arg(under.join("shot.png"))
+        .status()
+        .expect("mkfifo runs");
+    assert!(made.success());
+
+    let mut transcript = Transcript::new();
+    transcript
+        .push(asked("what is in this", vec![attachment]))
+        .expect("valid fixture transcript");
+
+    let resolved = resolve(&transcript, READS);
+    let attached = resolved.attached();
+    let one = attached.first().expect("the attachment");
+    let Content::Instead(line) = one.content else {
+        panic!("the pipe stands in rather than being waited on");
+    };
+
+    assert!(line.contains("shot.png"), "the line names the file: {line}");
+    assert!(
+        line.contains("could not be read"),
+        "the line says what happened: {line}"
+    );
+}
+
+#[test]
+fn a_file_that_grew_past_the_ceiling_stands_in_without_being_read() {
+    // A guard rather than a proof: the line was already right, because a hash
+    // taken over at most the ceiling cannot match a file larger than it. What
+    // this holds is that the answer stays the same once the size is settled
+    // from the descriptor instead of from the bytes.
+    let sample = Sample::new("attach-grown");
+    let under = sample.workspace().root().to_path_buf();
+
+    let attachment = file(&under, "shot.png", &[1; 64]);
+    fs::OpenOptions::new()
+        .write(true)
+        .open(under.join("shot.png"))
+        .expect("the file is there")
+        .set_len(CEILING as u64 + 1)
+        .expect("the file grows underneath");
+
+    let mut transcript = Transcript::new();
+    transcript
+        .push(asked("what is in this", vec![attachment]))
+        .expect("valid fixture transcript");
+
+    let resolved = resolve(&transcript, READS);
+    let attached = resolved.attached();
+    let one = attached.first().expect("the attachment");
+    let Content::Instead(line) = one.content else {
+        panic!("the grown file stands in rather than being sent");
+    };
+
+    assert!(line.contains("shot.png"), "the line names the file: {line}");
+    assert!(
+        line.contains("changed after it was attached"),
+        "the line says what happened: {line}"
+    );
+}
+
 #[test]
 fn a_file_that_is_gone_stands_in() {
     let sample = Sample::new("attach-gone");
