@@ -22,9 +22,11 @@ field.
 
 A `doc` case is a documentation example rather than a function, and its hash
 covers the fenced block from the opening fence down. The fence is the assertion
-there: `compile_fail,E0277` names the error the example is about, while a bare
-`compile_fail` passes for any compile error at all, so dropping the code is a
-weakening that leaves the example listed and green.
+there: `compile_fail` is what makes the example a proof, and rewriting it as
+`ignore`, `no_run` or `text` leaves the example listed and green while it proves
+nothing. rustdoc does not check the error code written beside `compile_fail`, so
+that code records which failure the example is about; the hash is what keeps it,
+and the attribute rustdoc does honour, from changing unreviewed.
 
 Platform-specific cases are pending on the platforms that cannot run them, not
 skipped: each supported platform's own run enforces its own rows.
@@ -169,6 +171,17 @@ def self_test():
     if fenced_region(weakened, 2) == fenced:
         print("    FAIL the required-case source reader did not notice a weakened fence")
         return 1
+
+    printed = (
+        "test src/lib.rs - Trouble::oneness (line 40) ... ok\n"
+        "test src/lib.rs - Trouble::one (line 12) - compile fail ... ok\n"
+    )
+    if not reported(printed, "src/lib.rs", "Trouble::one", 12):
+        print("    FAIL the required-case reader did not see its own example pass")
+        return 1
+    if reported(printed, "src/lib.rs", "Trouble::one", 40):
+        print("    FAIL the required-case reader let a neighbour's example answer for it")
+        return 1
     return 0
 
 
@@ -237,19 +250,41 @@ def selector(target):
     }[target["kind"]]
 
 
-def ran(package, arguments, filters):
-    """How many cases passed when cargo was asked for exactly these."""
+def attempted(package, arguments, filters):
+    """What cargo said when asked for exactly these."""
     result = subprocess.run(
         ["cargo", "test", "--locked", "-p", package, *arguments, "--", *filters],
         capture_output=True,
         text=True,
         check=False,
     )
-    if result.returncode != 0:
+    return result.returncode, result.stdout
+
+
+def ran(package, arguments, filters):
+    """How many cases passed when cargo was asked for exactly these."""
+    code, printed = attempted(package, arguments, filters)
+    if code != 0:
         return -1
     return sum(
-        int(line.split()[3]) for line in result.stdout.splitlines() if line.startswith("test result:")
+        int(line.split()[3]) for line in printed.splitlines() if line.startswith("test result:")
     )
+
+
+def reported(printed, source, name, line):
+    """Whether that output says this one example ran and passed.
+
+    A filter matches anywhere in a test's name, so asking for `Item::one` also
+    runs the examples on `Item::oneness`, and counting passes would answer a
+    question nobody asked. rustdoc prints a line per example naming the file and
+    the line its opening fence is on, which no neighbour can answer to.
+    """
+    head = f"test {source} - {name} (line {line})"
+    for one in printed.splitlines():
+        one = one.replace(os.sep, "/")
+        if one.startswith(head) and one.endswith("... ok"):
+            return True
+    return False
 
 
 def check(stream, listing, silenced):
@@ -271,6 +306,7 @@ def check(stream, listing, silenced):
         kind = case["target"]["kind"]
         key = (case["package"], kind, case["target"]["name"])
         name = case["case"]
+        line = None
         if PLATFORM not in case["platforms"]:
             print(f"    pending on {PLATFORM}: {case['id']} — {case['obligation']}")
             continue
@@ -297,7 +333,11 @@ def check(stream, listing, silenced):
                 continue
             if len(where) != 1:
                 places = ", ".join(f"{one} line {two}" for one, two in where)
-                print(f"    FAIL {case['id']} resolves to {len(where)} examples ({places}); name it uniquely")
+                print(
+                    f"    FAIL {case['id']} resolves to {len(where)} examples ({places});"
+                    f" an example has no name of its own, so leave the required one the"
+                    f" only example on {name}"
+                )
                 failed = 1
                 continue
             path, line = where[0]
@@ -355,23 +395,25 @@ def check(stream, listing, silenced):
             print(f"         review the diff, then record {digest} in {MANIFEST}")
             failed = 1
             continue
-        run.setdefault(key, []).append((case, name))
+        run.setdefault(key, []).append((case, name, line))
 
     for key, cases in sorted(run.items()):
         package, kind, target = key
         arguments = selector({"kind": kind, "name": target})
         if kind == "doc":
-            # rustdoc gives an example a name ending in what the example is for,
-            # which `--list` does not print, so each runs under its listed name
-            # as a filter and has to be the one thing that matched. One at a
-            # time, so a failure can say which obligation stopped holding.
-            for case, name in cases:
-                if ran(package, arguments, [name]) != 1:
+            # rustdoc names an example after the item it documents, and the
+            # listed name is the only handle a filter has. A filter matches
+            # anywhere, so what says the obligation ran is the line rustdoc
+            # printed for this exact example, not how many passed beside it. One
+            # at a time, so a failure can say which obligation stopped holding.
+            for case, name, line in cases:
+                code, printed = attempted(package, arguments, [name])
+                if code != 0 or not reported(printed, case["source"], name, line):
                     print(f"    FAIL {case['id']} no longer holds: {name} did not run and pass on its own")
                     print(f"         {case['obligation']}")
                     failed = 1
             continue
-        names = [name for _, name in cases]
+        names = [name for _, name, _ in cases]
         if ran(package, arguments, ["--exact", *names]) != len(names):
             print(
                 f"    FAIL {len(names)} required cases in {package} {kind} {target} did not all pass;"

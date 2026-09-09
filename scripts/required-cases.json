@@ -443,7 +443,7 @@
       },
       "case": "extension::spoken::Trouble",
       "source": "crates/crucible-core/src/extension/spoken.rs",
-      "body_sha256": "67bd205247c458bccb26f6e6bd2989f0270aadf2b29fe35a719db40f3321ce49",
+      "body_sha256": "e10befd4b781aa3f68cda4b8a0d820083ba8cc5b1b4820720a46e3d9d1f7cdb8",
       "platforms": [
         "linux",
         "macos",

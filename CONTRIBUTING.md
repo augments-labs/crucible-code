@@ -96,9 +96,11 @@ edit, and the reviewer is agreeing to the new assertion, not to a green total.
 
 A `doc` entry names a documentation example instead of a function, and its hash
 covers the fenced block including the opening fence. That is where the assertion
-lives for one of those: `compile_fail,E0277` says which error the example is
-about, while a bare `compile_fail` passes for any compile error at all, so
-dropping the code is a change the same reviewer has to agree with.
+lives for one of those: `compile_fail` is what makes the example a proof, and
+`ignore`, `no_run`, `text` or another edition would leave it listed and green
+while it proves nothing. rustdoc does not check the error code written beside
+`compile_fail`, so that code records which failure the example is about rather
+than enforcing it, and the hash is what keeps both from changing unreviewed.
 
 The Rust tests include the whole-screen pseudo-terminal suite. Run that suite on
 its own with:

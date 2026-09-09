@@ -170,12 +170,13 @@ pub enum SpokenError {
 ///
 /// Which is why there is no [`Display`](fmt::Display) here. Reaching the words
 /// means calling [`said`](Self::said), and whoever calls it has to put them
-/// somewhere that says whose they are:
+/// somewhere that says whose they are.
+///
+/// The error code is what this fails with today and not a gate: `compile_fail`
+/// accepts any compile error, so the snippet holds nothing but the printing
+/// that must not compile.
 ///
 /// ```compile_fail,E0277
-/// // Named error code on purpose: `compile_fail` alone passes for any compile
-/// // error, so a rename elsewhere could make this snippet fail for a reason
-/// // that has nothing to do with the seam it guards.
 /// use crucible_core::Trouble;
 ///
 /// let trouble = Trouble::new("could not reach the index").unwrap();
