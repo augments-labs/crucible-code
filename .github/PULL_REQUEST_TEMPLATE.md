@@ -1,14 +1,39 @@
 <!--
+Read this through before filling it in, and read AGENTS.md first if you are a
+coding agent. Every section wants a specific, true answer. A pull request that
+leaves one blank, ships this prompt text in place of an answer, bundles
+unrelated changes, or shows no sign that a person read the diff is closed
+rather than reviewed.
+
+Delete a heading only when this repository genuinely has no such surface. "n/a"
+against a surface the change does touch is not an answer.
+
 Security issues do not belong here. See SECURITY.md.
-
-Fill every section. Delete a heading only when this repository genuinely has no
-such surface — never leave the prompt text in place of an answer, and never
-answer a section with "n/a" where the change does touch what it asks about.
-
-Pull requests target `dev`. `main` carries what has shipped, and only release
-and hotfix branches open against it; anything else opened against `main` will
-be asked to retarget before review.
 -->
+
+> **This pull request targets `dev`, not `main`.** `main` carries what has
+> shipped, and a tag is cut from it; every other change lands on `dev` first
+> through a reviewed pull request. Only release and hotfix branches open
+> against `main`, and anything else opened there is asked to retarget `dev`
+> before review.
+
+## Who made this change? (required)
+
+<!--
+Assume the reader assumes an agent wrote this. Say which one and where it ran,
+or say plainly that it was written by hand. How a change was made is part of
+how it is weighed: a claim reasoned from documentation is held to a different
+bar than one a real session produced. Hiding it is grounds for closing the
+pull request rather than reviewing it.
+-->
+
+| Field | Value |
+| --- | --- |
+| Written by | hand / agent |
+| Model + exact id | <!-- or n/a if by hand --> |
+| Harness + version | <!-- the IDE, CLI or runner, or n/a --> |
+| Installed plugins | <!-- name and version of every plugin loaded, or none --> |
+| Human who reviewed this diff | <!-- a person, not a role --> |
 
 ## Problem
 
@@ -59,18 +84,6 @@ Delete the lines that do not apply; keep and answer the ones that do.
 - Required-case obligations: any `body_sha256` in `scripts/required-cases.json`
   that this change updates, and why the obligation still holds.
 -->
-
-## Authoring environment
-
-<!-- Delete the rows that do not apply. Say so plainly if a model wrote this. -->
-
-| | |
-| --- | --- |
-| Written by | |
-| Model | |
-| Harness | |
-| Harness version | |
-| Human partner who reviewed this diff | |
 
 ## Human review
 
