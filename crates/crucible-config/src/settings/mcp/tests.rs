@@ -272,3 +272,47 @@ fn a_document_cannot_make_startup_walk_further_than_the_record_bounds() {
         assert_eq!(server.args().count(), ARGS, "{}", server.name());
     }
 }
+
+#[test]
+fn printing_a_server_record_names_a_variable_and_shows_nothing_of_its_value() {
+    // A record carries an environment of its own, and that block is where a
+    // key for the server crucible is about to start is written. The derive
+    // that used to print this type printed those values, so a `{record:?}` in
+    // a diagnostic somebody adds later was a leak nobody reviewed.
+    let found = read(
+        r#"{"mcp": {"servers": {"docs": {"command": "docs-mcp",
+           "env": {"DOCS_TOKEN": "hunter2"}}}}}"#,
+    );
+    let [server] = found.as_slice() else {
+        panic!("one server was written down");
+    };
+
+    let printed = format!("{server:?}");
+    assert!(printed.contains("DOCS_TOKEN"), "got {printed}");
+    assert!(!printed.contains("hunter2"), "got {printed}");
+
+    // And the value is still there for the process that needs it.
+    assert_eq!(
+        server.env().collect::<Vec<_>>(),
+        [("DOCS_TOKEN", "hunter2")]
+    );
+}
+
+#[test]
+fn printing_the_settings_shows_nothing_of_a_variable_written_under_a_server() {
+    // The document-level redaction reaches the block a user writes at the top
+    // of a file. A server's own block is nested inside `mcp.servers`, and a
+    // secret written there is the same secret.
+    let settings = Settings::resolve(vec![Document::sample(
+        r#"{"env": {"TOKEN": "hunter2"},
+            "mcp": {"servers": {"docs": {"command": "docs-mcp",
+              "env": {"DOCS_TOKEN": "hunter3"}}}}}"#,
+        Origin::User,
+    )]);
+
+    let printed = format!("{settings:?}");
+    assert!(printed.contains("TOKEN"), "got {printed}");
+    assert!(printed.contains("DOCS_TOKEN"), "got {printed}");
+    assert!(!printed.contains("hunter2"), "got {printed}");
+    assert!(!printed.contains("hunter3"), "got {printed}");
+}
