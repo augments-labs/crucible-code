@@ -2,10 +2,9 @@
 
 # Codex settings for working in this repository.
 #
-# AGENTS.md owns the repository guidance. Rules and remaining skills are
-# canonical under .agents/; .claude/ and CLAUDE.md link back to those sources.
-# Read .agents/rules/ as AGENTS.md directs; Codex does not load that directory
-# automatically. This file only says how Codex should run.
+# AGENTS.md owns the repository guidance. Skills are canonical under .agents/;
+# .claude/ and CLAUDE.md link back to those sources. This file only says how
+# Codex should run.
 
 # Keep commands inside the workspace sandbox. Eligible requests to cross that
 # boundary go to Codex's automatic reviewer; the sandbox still applies unless
