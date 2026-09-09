@@ -32,7 +32,7 @@ Platform-specific cases are pending on the platforms that cannot run them, not
 skipped: each supported platform's own run enforces its own rows.
 
     scripts/python/required-cases.py <artifacts> <doc-list> <doc-ignored-list>
-    scripts/python/required-cases.py --self-test       prove the source reader reads
+    scripts/python/required-cases.py --self-test  prove the source reader reads
 """
 
 import hashlib

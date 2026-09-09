@@ -5,6 +5,12 @@ set -uo pipefail
 
 cd "$(dirname "$0")/../.."
 
+# A snapshot suite that is allowed to write is not a check. Left to the
+# environment, `INSTA_UPDATE=always` makes every capture agree with whatever
+# just drew it, and the run goes green having asserted nothing. The gate
+# decides this, not the shell it was started from.
+export INSTA_UPDATE=no
+
 failed=0
 any=0
 current=""

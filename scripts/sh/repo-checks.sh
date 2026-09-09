@@ -332,6 +332,16 @@ else
     fi
 fi
 
+section "accepted screens"
+# The whole-screen suite proves a capture matches its accepted picture. It
+# cannot prove the picture is still the one a reviewer accepted, because a
+# regenerated picture agrees with whatever drew it. This reads the manifest
+# instead, and is the check a redrawn screen has to be explained to.
+if ! python3 scripts/python/screen-baseline.py; then
+    printf '    FAIL a terminal screen changed without scripts/screen-baseline.json saying so\n'
+    failed=1
+fi
+
 # Both spellings, and the tests with the source. A call written
 # `ToolOutput::replayed(output, ..)` is the same call as `output.replayed(..)`,
 # and a pin that only knew the dot form would be a pin anyone could walk past
