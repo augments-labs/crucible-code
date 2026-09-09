@@ -377,11 +377,19 @@ jobs:
       # one afternoon, half an hour at a time, on the step before the one doing
       # any work. A bounded connection that fails and is retried turns that into
       # a minute, and a mirror that is genuinely down into a job that says so.
+      #
+      # `update` refreshing every index the runner image carries is not the same
+      # question as whether this job can install what it needs. The image ships
+      # third-party sources this job never reads, and one of them answering with
+      # a corrupt index is enough for `update` to exit non-zero and take the
+      # smoke test with it, having measured nothing. So a refresh that reports
+      # trouble is passed on rather than obeyed, and `install` is what decides:
+      # it fails on a missing package, which is the failure worth having.
       - name: bubblewrap, for the sandbox the smoke test runs in
         env:
           APT: -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15
         run: |
-          sudo apt-get $APT update
+          sudo apt-get $APT update || echo "apt-get update reported an error; the install below decides"
           sudo apt-get $APT install -y bubblewrap
           bwrap --version
 
