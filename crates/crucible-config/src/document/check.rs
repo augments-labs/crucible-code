@@ -267,6 +267,7 @@ impl Reader<'_> {
         let Some(object) = value.as_object() else {
             return Err(self.wrong_type(shape, spot));
         };
+        self.within(object.len(), shape.most(), spot)?;
 
         for (key, held) in object {
             if reserved(key) {
@@ -316,6 +317,7 @@ impl Reader<'_> {
         let Some(items) = value.as_array() else {
             return Err(self.wrong_type(shape, spot));
         };
+        self.within(items.len(), shape.most(), spot)?;
 
         for (index, held) in items.iter().enumerate() {
             let path = format!("{}[{index}]", spot.path);
@@ -507,6 +509,29 @@ impl Reader<'_> {
     }
 
     /// The same refusal from three places, built once.
+    /// Refuses a block holding more than the key that declares it reads.
+    ///
+    /// Asked before the entries are walked, so a block somebody generated costs
+    /// one count rather than a walk of everything in it, and so the position
+    /// the refusal carries is the block's own — which is the thing the reader
+    /// has to shorten.
+    fn within(&self, found: usize, most: Option<usize>, spot: Spot<'_>) -> Result<(), ConfigError> {
+        match most {
+            Some(most) if found > most => Err(ConfigError::TooMany {
+                file: self.file.into(),
+                path: if spot.path.is_empty() {
+                    "the document".into()
+                } else {
+                    spot.path.into()
+                },
+                at: spot.at,
+                most,
+                found,
+            }),
+            _ => Ok(()),
+        }
+    }
+
     fn wrong_type(&self, shape: &Shape, spot: Spot<'_>) -> ConfigError {
         ConfigError::WrongType {
             file: self.file.into(),

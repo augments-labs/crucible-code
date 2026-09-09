@@ -34,7 +34,9 @@ fn offering(
         // same way as everything else. The names crucible chose here are walked
         // under the names they have, because those are the ones a document
         // would write.
-        Shape::Named { declared, others } => {
+        Shape::Named {
+            declared, others, ..
+        } => {
             for field in *declared {
                 path.push(field.name);
                 found.push((path.clone(), field));

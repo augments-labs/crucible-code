@@ -105,13 +105,22 @@ fn of(shape: &Shape) -> Value {
         // repeats gets no such keyword, because there the second copy is a
         // second element and the editor would be marking a valid document that
         // crucible accepts.
-        Shape::List { of: inner, repeats } => {
+        Shape::List {
+            of: inner,
+            repeats,
+            most,
+        } => {
             let mut described = Map::from_iter([
                 ("type".to_owned(), Value::from("array")),
                 ("items".to_owned(), of(inner)),
             ]);
             if !repeats {
                 described.insert("uniqueItems".to_owned(), Value::Bool(true));
+            }
+            // Written only where the key declares one, so the editor refuses
+            // the same document the parser refuses rather than a wider one.
+            if let Some(most) = most {
+                described.insert("maxItems".to_owned(), Value::from(*most));
             }
             Value::Object(described)
         }
@@ -276,16 +285,29 @@ fn object(shape: &Shape) -> Value {
         // too, and would then also match the names declared just above — legal,
         // and refused by a validator in strict mode, which is what the registry
         // compiles this file with.
-        Shape::Named { declared, others } => {
+        Shape::Named {
+            declared,
+            others,
+            most,
+        } => {
             for field in *declared {
                 properties.insert(field.name.into(), described(field));
             }
-            json!({
+            let mut described = json!({
                 "type": "object",
                 "properties": properties,
                 "propertyNames": { "anyOf": [{ "pattern": "^[^$]" }, { "enum": RESERVED }] },
                 "additionalProperties": of(others),
-            })
+            });
+            // `maxProperties` counts every key written in the block, and the
+            // walk counts the same way — including `$comment`, which is a key
+            // somebody wrote here. Two counts that agree is worth more than a
+            // block where a note costs nothing: an editor accepting a document
+            // startup refuses is the disagreement this file exists to prevent.
+            if let (Some(most), Some(into)) = (most, described.as_object_mut()) {
+                into.insert("maxProperties".to_owned(), Value::from(*most));
+            }
+            described
         }
 
         Shape::Text

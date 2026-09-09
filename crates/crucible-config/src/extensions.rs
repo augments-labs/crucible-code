@@ -11,11 +11,18 @@
 //! the alternative is a startup that fails for the whole machine because one
 //! extension's author shipped a trailing comma.
 //!
-//! Both boundaries here are about a directory nobody audited. The sweep looks
-//! at [`MAX_EXTENSIONS`] directories, and each manifest is read to the boundary
-//! `crucible-core` holds manifests to — so a planted tree of ten thousand
-//! directories, or one manifest the size of a disk, costs a bounded amount of
-//! startup rather than whatever it asked for.
+//! Both boundaries here are about a directory nobody audited. The sweep stops
+//! reading names one past [`MAX_EXTENSIONS`], and each manifest is read to the
+//! boundary `crucible-core` holds manifests to — so a planted tree of ten
+//! thousand directories, or one manifest the size of a disk, costs a bounded
+//! amount of startup rather than whatever it asked for.
+//!
+//! A directory over that boundary is refused whole rather than answered from
+//! the part of it that was read. Which sixty-four of ten thousand names a sweep
+//! reaches is the filesystem's answer, not a sorted one, so a list built from
+//! them would put extensions in front of somebody in an order the next run
+//! could disagree with — and would decide which of two identical identifiers
+//! keeps it by the same accident.
 
 use std::fs::{self, File};
 use std::io::{self, Read as _};
@@ -31,11 +38,14 @@ const DIRECTORY: &str = "extensions";
 /// What each installed directory keeps its manifest in.
 const MANIFEST: &str = "manifest.json";
 
-/// The most installed directories one sweep will look at.
+/// The most installed directories the extensions directory may hold.
 ///
 /// Far beyond any machine that installs extensions by hand, and small enough
 /// that a directory somebody filled turns into a bounded amount of startup work
 /// rather than into however long it takes to parse whatever is there.
+///
+/// A directory holding more is refused whole, so the sweep reads one name past
+/// this to know it has to and no further.
 pub const MAX_EXTENSIONS: usize = 64;
 
 /// Why one installed directory was not read.
@@ -61,6 +71,22 @@ pub enum Refusal {
         file: Box<str>,
         /// What was wrong with it.
         problem: ExtensionError,
+    },
+
+    /// The extensions directory holds more than the sweep reads.
+    ///
+    /// About the directory rather than about an installation, which is why the
+    /// sweep answers nothing found: see the note at the top of this module for
+    /// why part of it is not an answer.
+    #[error(
+        "{file} holds more than {most} installed directories, so none of them \
+         were read — move what is not an extension out of it"
+    )]
+    Crowded {
+        /// The extensions directory, as the user would name it.
+        file: Box<str>,
+        /// The most it may hold.
+        most: usize,
     },
 
     /// A second directory claimed an identifier already read.
@@ -111,7 +137,8 @@ pub struct Extensions {
     found: Vec<Installed>,
     /// What was not.
     refused: Vec<Refusal>,
-    /// Whether the sweep stopped at [`MAX_EXTENSIONS`].
+    /// Whether the directory held more than [`MAX_EXTENSIONS`], in which case
+    /// nothing was read.
     stopped: bool,
 }
 
@@ -140,14 +167,24 @@ impl Extensions {
             }
         };
 
-        // Sorted before anything is read, because two things below depend on
-        // the order being settled rather than being whatever the filesystem
-        // handed back: which of two directories claiming one identifier keeps
-        // it, and which are dropped when there are more than the sweep looks
-        // at. Neither may change between two runs on the same disk.
-        installed.sort();
+        // One name past the boundary is enough to know the directory is over
+        // it, and the sweep read no further than that — so what is here is
+        // either all of it or a fragment, and a fragment is refused rather than
+        // sorted into an answer.
         let stopped = installed.len() > MAX_EXTENSIONS;
-        installed.truncate(MAX_EXTENSIONS);
+        if stopped {
+            installed.clear();
+            refused.push(Refusal::Crowded {
+                file: named(&at),
+                most: MAX_EXTENSIONS,
+            });
+        }
+
+        // Sorted before anything is read, because what is below depends on the
+        // order being settled rather than being whatever the filesystem handed
+        // back: which of two directories claiming one identifier keeps it may
+        // not change between two runs on the same disk.
+        installed.sort();
 
         for directory in installed {
             let path = directory.join(MANIFEST);
@@ -204,22 +241,29 @@ impl Extensions {
         &self.refused
     }
 
-    /// Whether there were more directories than the sweep looks at.
+    /// Whether the directory held more than the sweep reads.
     ///
-    /// True means the answer is incomplete, which the listing has to say: a
-    /// truncated sweep reported as a complete one is an extension that is
-    /// installed, absent from the list, and impossible to explain.
+    /// True means nothing was read at all and the reason is in
+    /// [`Self::refused`], which the listing has to say before it says how many
+    /// were found: "no extensions" about a directory holding thousands is an
+    /// answer somebody would act on by installing another one.
     #[must_use]
     pub const fn stopped(&self) -> bool {
         self.stopped
     }
 }
 
-/// Every directory inside the extensions directory.
+/// The directories inside the extensions directory, and one more than the sweep
+/// reads where there are that many.
 ///
 /// Directories only. A `README`, an archive left behind by an installer or a
 /// file the desktop wrote is not a half-installed extension, and refusing one
 /// would put a line in front of the user about a file that is doing no harm.
+///
+/// Counted in directories, which is what [`MAX_EXTENSIONS`] is about, and what
+/// the caller has to decide from. Names stop being retained at one past it: a
+/// tree of ten thousand costs sixty-five paths and the walk that reached them,
+/// rather than ten thousand paths held to be sorted and thrown away.
 fn directories(at: &Path) -> io::Result<Vec<PathBuf>> {
     let mut directories = Vec::new();
 
@@ -227,6 +271,9 @@ fn directories(at: &Path) -> io::Result<Vec<PathBuf>> {
         let entry = entry?;
         if entry.file_type()?.is_dir() {
             directories.push(entry.path());
+            if directories.len() > MAX_EXTENSIONS {
+                break;
+            }
         }
     }
 

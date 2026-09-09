@@ -255,22 +255,118 @@ fn what_is_written_down_starts_nothing_and_resolves_nothing() {
     );
 }
 
-#[test]
-fn a_document_cannot_make_startup_walk_further_than_the_record_bounds() {
-    let args = (0..ARGS + 10)
+/// A document holding one server with `count` arguments.
+fn arguments(count: usize) -> String {
+    let args = (0..count)
         .map(|held| format!(r#""{held}""#))
         .collect::<Vec<_>>()
         .join(", ");
-    let servers = (0..SERVERS + 10)
-        .map(|held| format!(r#""server{held}": {{"command": "npx", "args": [{args}]}}"#))
+    format!(r#"{{"mcp": {{"servers": {{"docs": {{"command": "npx", "args": [{args}]}}}}}}}}"#)
+}
+
+/// A document holding one server with `count` entries under `env`.
+fn variables(count: usize) -> String {
+    let env = (0..count)
+        .map(|held| format!(r#""VAR{held}": "held""#))
         .collect::<Vec<_>>()
         .join(", ");
-    let found = read(&format!(r#"{{"mcp": {{"servers": {{{servers}}}}}}}"#));
+    format!(r#"{{"mcp": {{"servers": {{"docs": {{"command": "npx", "env": {{{env}}}}}}}}}}}"#)
+}
 
-    assert_eq!(found.len(), SERVERS);
-    for server in &found {
-        assert_eq!(server.args().count(), ARGS, "{}", server.name());
-    }
+/// A document holding `count` servers.
+fn servers(count: usize) -> String {
+    let servers = (0..count)
+        .map(|held| format!(r#""server{held}": {{"command": "npx"}}"#))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(r#"{{"mcp": {{"servers": {{{servers}}}}}}}"#)
+}
+
+/// What a document was refused for, or the panic that it was not.
+fn refusal(text: &str) -> ConfigError {
+    Document::parse(text, "config.json", Origin::User)
+        .expect_err("a document over one of the record bounds")
+}
+
+#[test]
+fn a_record_written_up_to_each_bound_is_read_back_whole() {
+    // The other half of every refusal below: the boundary is the last accepted
+    // document rather than the first refused one, so a machine configured right
+    // up to it keeps working.
+    let full = read(&arguments(ARGS));
+    let [server] = full.as_slice() else {
+        panic!("one server was written down");
+    };
+    assert_eq!(server.args().count(), ARGS);
+
+    let full = read(&variables(VARIABLES));
+    let [server] = full.as_slice() else {
+        panic!("one server was written down");
+    };
+    assert_eq!(server.env().count(), VARIABLES);
+
+    assert_eq!(read(&servers(SERVERS)).len(), SERVERS);
+}
+
+#[test]
+fn more_arguments_than_the_bound_are_refused_rather_than_dropped_from_the_launch() {
+    // The failure this refuses: a record with three hundred arguments used to
+    // parse, and the server used to start with the first two hundred and
+    // fifty-six of them. An argv that is not the one written down, and nothing
+    // said about which arguments went missing.
+    let refused = refusal(&arguments(ARGS + 1));
+
+    assert!(
+        matches!(
+            &refused,
+            ConfigError::TooMany { path, most, found, .. }
+                if &**path == "mcp.servers.docs.args" && *most == ARGS && *found == ARGS + 1
+        ),
+        "{refused}"
+    );
+}
+
+#[test]
+fn more_variables_than_the_bound_are_refused_rather_than_dropped_from_the_launch() {
+    let refused = refusal(&variables(VARIABLES + 1));
+
+    assert!(
+        matches!(
+            &refused,
+            ConfigError::TooMany { path, most, found, .. }
+                if &**path == "mcp.servers.docs.env"
+                    && *most == VARIABLES
+                    && *found == VARIABLES + 1
+        ),
+        "{refused}"
+    );
+}
+
+#[test]
+fn more_servers_than_the_bound_are_refused_rather_than_hidden_from_the_reader() {
+    let refused = refusal(&servers(SERVERS + 1));
+
+    assert!(
+        matches!(
+            &refused,
+            ConfigError::TooMany { path, most, found, .. }
+                if &**path == "mcp.servers" && *most == SERVERS && *found == SERVERS + 1
+        ),
+        "{refused}"
+    );
+}
+
+#[test]
+fn a_refusal_over_a_bound_says_where_the_block_is_without_showing_what_it_held() {
+    // The diagnostic a person acts on: the file, the setting and the line. What
+    // it must not carry is a value out of the block, which under `env` is a
+    // credential.
+    let said = refusal(&variables(VARIABLES + 1)).to_string();
+
+    assert!(said.contains("config.json"), "{said}");
+    assert!(said.contains("mcp.servers.docs.env"), "{said}");
+    assert!(said.contains(&VARIABLES.to_string()), "{said}");
+    assert!(!said.contains("held"), "{said}");
 }
 
 #[test]

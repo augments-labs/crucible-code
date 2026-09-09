@@ -28,27 +28,24 @@ pub(crate) fn listing(found: &Extensions, settings: &Settings, running: &str) ->
     let mut said = String::new();
     let at = shown(found.at());
 
-    match found.found().len() {
-        0 => {
-            let _ = writeln!(said, "no extensions in {at}");
-        }
-        1 => {
-            let _ = writeln!(said, "1 extension in {at}");
-        }
-        many => {
-            let _ = writeln!(said, "{many} extensions in {at}");
-        }
-    }
-
-    // Said on the first line rather than at the end, where a long listing would
-    // scroll it away: an incomplete answer that reads like a complete one is
-    // how an extension ends up installed, missing from the list, and
-    // impossible to explain.
+    // Ahead of the count, and instead of it: a directory the sweep refused for
+    // holding more than it reads found nothing, and "no extensions in ..."
+    // about a directory holding thousands is a sentence somebody acts on by
+    // installing another one. The reason is among the refusals below.
     if found.stopped() {
-        let _ = writeln!(
-            said,
-            "more are installed than crucible looks at, so this list is short",
-        );
+        let _ = writeln!(said, "{at} was not read");
+    } else {
+        match found.found().len() {
+            0 => {
+                let _ = writeln!(said, "no extensions in {at}");
+            }
+            1 => {
+                let _ = writeln!(said, "1 extension in {at}");
+            }
+            many => {
+                let _ = writeln!(said, "{many} extensions in {at}");
+            }
+        }
     }
 
     let mut any_off = false;

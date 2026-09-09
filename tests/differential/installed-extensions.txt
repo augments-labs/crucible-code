@@ -58,4 +58,4 @@ refused   3
 === sixty-five installed directories ===
 stopped   true
 found     0
-refused   64
+refused   1
