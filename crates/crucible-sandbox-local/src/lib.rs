@@ -37,14 +37,6 @@ mod windows;
 
 pub use local::LocalSandbox;
 
-/// A real child inside the production process wrapper, carrying a synthetic
-/// unconfined inspection record.
-///
-/// The crate that calls a command owns the reaper and the early-return guard
-/// that outlive one; testing those against a stand-in would test the stand-in.
-#[cfg(all(any(test, feature = "testing"), unix))]
-pub use process::unconfined_child;
-
 #[cfg(test)]
 mod sample;
 

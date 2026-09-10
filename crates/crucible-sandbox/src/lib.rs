@@ -12,9 +12,9 @@
 //! policy that cannot be hard-enforced is refused rather than translated into
 //! an ordinary subprocess.
 //!
-//! Nothing here spawns a process, reads a policy file, or names an operating
-//! system. A backend that does those things depends on this crate; this crate
-//! depends on no backend, which is what lets one binary carry several.
+//! Nothing here spawns a process or reads a policy file. A backend that does
+//! those things depends on this crate; this crate depends on no backend, which
+//! is what lets one binary carry several.
 
 mod audit;
 mod capability;

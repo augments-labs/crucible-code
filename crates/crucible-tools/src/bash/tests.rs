@@ -14,15 +14,17 @@ use super::background::{Background, MOST};
 use super::{Bash, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, environment};
 use crate::sample::{Sample, allowed, skipped_without_enforcement};
 
+/// This machine's confinement, as the service contract a tool is given.
+fn local() -> std::sync::Arc<dyn crucible_core::SandboxService> {
+    std::sync::Arc::new(crucible_sandbox_local::LocalSandbox::new())
+}
+
 fn compatibility(tool: Bash) -> Bash {
-    tool.sandboxing(
-        std::sync::Arc::new(crucible_sandbox_local::LocalSandbox::new()),
-        false,
-    )
+    tool.sandboxing(false)
 }
 
 fn compatible(sample: &Sample) -> Bash {
-    compatibility(Bash::new(sample.workspace()))
+    compatibility(Bash::new(sample.workspace(), local()))
 }
 
 fn bash(sample: &Sample, args: &str) -> Result<ToolOutput, ToolError> {
@@ -156,35 +158,15 @@ fn the_command_runs_in_the_workspace_root() {
 
 #[cfg(target_os = "linux")]
 #[test]
-fn a_tool_nobody_gave_a_sandbox_to_refuses_the_command_rather_than_running_it() {
-    // `Bash::new` used to build itself the concrete native service, so a host
-    // that forgot to inject one still ran commands — under whichever backend
-    // that binary happened to link. There is no backend to fall back to now:
-    // the composition root supplies the service, and a tool without one has
-    // nothing to run a command through.
-    let sample = Sample::new("bash-uninjected");
-    let tool = Bash::new(sample.workspace());
-
-    let error = tool
-        .run(
-            allowed(&tool, r#"{"command":"printf 'ran\n'"}"#),
-            &crate::sample::context(),
-        )
-        .expect_err("a tool with no sandbox service cannot run a command");
-
-    assert!(error.to_string().contains("no sandbox service"), "{error}");
-}
-
-#[test]
 fn the_enforcing_linux_backend_cannot_read_an_undeclared_sibling() {
     // Approval settles whether Crucible may ask for the command. It does not
     // grant the command the rest of the host: the workspace is the writable
     // reach of the standard Linux sandbox, and its sibling is outside it.
     let sample = Sample::new("bash-sibling-confined");
     let outside = sample.outside("credential", "not-for-the-command\n");
-    let service = std::sync::Arc::new(crucible_sandbox_local::LocalSandbox::new());
+    let service = local();
     let backend_available = crucible_core::SandboxService::probe(service.as_ref()).is_ok();
-    let tool = Bash::new(sample.workspace()).sandboxing(service, true);
+    let tool = Bash::new(sample.workspace(), service).sandboxing(true);
     let args = format!(r#"{{"command":"cat {outside}"}}"#);
 
     match tool.run(allowed(&tool, &args), &crate::sample::context()) {
@@ -423,7 +405,11 @@ fn the_shell_is_not_something_the_workspace_can_supply() {
         other => std::env::var_os(other),
     };
 
-    let tool = compatibility(Bash::inheriting(sample.workspace(), empty_element_first));
+    let tool = compatibility(Bash::inheriting(
+        sample.workspace(),
+        local(),
+        empty_element_first,
+    ));
     let output = tool
         .run(
             allowed(&tool, r#"{"command":"echo hello"}"#),
@@ -670,7 +656,7 @@ fn a_key_under_a_name_nothing_could_have_guessed_never_reaches_a_command() {
         _ => std::env::var_os(name),
     };
 
-    let tool = compatibility(Bash::inheriting(sample.workspace(), crucibles_own));
+    let tool = compatibility(Bash::inheriting(sample.workspace(), local(), crucibles_own));
     let args = r#"{"command":"echo \"[$WORK_KEY]\"; env"}"#;
     let output = tool
         .run(allowed(&tool, args), &crate::sample::context())
@@ -802,6 +788,18 @@ fn a_command_the_developer_let_go_of_says_who_let_go_of_it() {
 }
 
 #[test]
+fn the_name_a_job_requires_a_backend_by_is_the_one_spelled_outside_this_crate() {
+    // Nothing this crate can import owns the string: the workflow that sets it
+    // is not Rust, and the backend crate that spells it for its own tests
+    // publishes no test harness. Renaming the variable is fine; renaming it in
+    // one place is what turns a required backend into a silent skip.
+    assert_eq!(
+        crate::sample::REQUIRE_ENFORCING_SANDBOX,
+        "CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX"
+    );
+}
+
+#[test]
 fn linux_ctrl_b_uses_owned_durable_detachment_before_go() {
     let service = crucible_sandbox_local::LocalSandbox::new();
     if skipped_without_enforcement(&service) {
@@ -809,8 +807,8 @@ fn linux_ctrl_b_uses_owned_durable_detachment_before_go() {
     }
     let sample = Sample::new("bash-linux-detachable");
     let left = Background::new();
-    let tool = Bash::new(sample.workspace())
-        .sandboxing(std::sync::Arc::new(service), true)
+    let tool = Bash::new(sample.workspace(), std::sync::Arc::new(service))
+        .sandboxing(true)
         .leaving(left.clone());
     left.ask();
 
@@ -913,8 +911,8 @@ fn an_explicit_background_command_has_no_foreground_deadline() {
     let left = Background::new();
     let recording = RecordingSandbox::default();
     let observed = std::sync::Arc::clone(&recording.limits);
-    let tool = Bash::new(sample.workspace())
-        .sandboxing(std::sync::Arc::new(recording), false)
+    let tool = Bash::new(sample.workspace(), std::sync::Arc::new(recording))
+        .sandboxing(false)
         .leaving(left.clone());
 
     finalized(&tool, r#"{"command":"sleep 30","background":true}"#).expect("the command started");
@@ -1049,8 +1047,8 @@ fn configured_command_ceilings_survive_foreground_and_background_requests() {
     let left = Background::new();
     let recording = RecordingSandbox::default();
     let observed = std::sync::Arc::clone(&recording.limits);
-    let mut tool = Bash::new(sample.workspace())
-        .sandboxing(std::sync::Arc::new(recording), false)
+    let mut tool = Bash::new(sample.workspace(), std::sync::Arc::new(recording))
+        .sandboxing(false)
         .leaving(left.clone());
     let configured = SandboxResourceLimits {
         command_time: Some(Duration::from_secs(7)),
@@ -1103,8 +1101,8 @@ fn interactive_enablement_is_sampled_for_new_commands_without_losing_kernel_ceil
     let ceilings = template.limits();
     let control = std::sync::Arc::new(crucible_core::SandboxEnablement::new(false, false));
     let capture = std::sync::Arc::new(Capture(std::sync::Mutex::new(Vec::new())));
-    let tool = Bash::new(sample.workspace())
-        .under_policy(capture.clone(), template.clone())
+    let tool = Bash::new(sample.workspace(), capture.clone())
+        .under_policy(template.clone())
         .following_enablement(control.clone());
     for choice in [false, true, false] {
         control.set_enabled(choice).unwrap();
@@ -1155,8 +1153,8 @@ fn interactive_enablement_is_sampled_for_new_commands_without_losing_kernel_ceil
     );
     // A disabled template has already lost its kernel-only limits and must
     // never be treated as an enforcing template by the interactive builder.
-    let invalid = Bash::new(sample.workspace())
-        .under_policy(capture.clone(), template.with_enabled(false))
+    let invalid = Bash::new(sample.workspace(), capture.clone())
+        .under_policy(template.with_enabled(false))
         .following_enablement(control);
     assert!(
         invalid

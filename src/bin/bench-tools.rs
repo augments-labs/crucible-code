@@ -188,7 +188,7 @@ fn write_latency(scratch: &Scratch, ledger: &Ledger) -> Result<f64, ProbeError> 
 
 fn sandbox_latency(scratch: &Scratch) -> Result<f64, ProbeError> {
     let tool =
-        Bash::new(scratch.workspace.clone()).sandboxing(Arc::new(LocalSandbox::new()), false);
+        Bash::new(scratch.workspace.clone(), Arc::new(LocalSandbox::new())).sandboxing(false);
     let mut readings = Vec::with_capacity(RUNS);
     for _ in 0..RUNS {
         let (output, elapsed) = invoke(

@@ -4,8 +4,9 @@
 //! another; cargo enforces that, so the arrangement cannot rot. The renderer
 //! draws what it is handed and depends on no crucible crate at all.
 //! Below it sit the crates that now own the shared values, registries,
-//! credential contracts, storage contracts, path proofs, attachment ingress and
-//! the controls a turn is steered and stopped by.
+//! credential contracts, storage contracts, path proofs, attachment ingress,
+//! what a confined process may observe or change, and the controls a turn is
+//! steered and stopped by.
 //! This crate re-exports their names under the paths it published them at, so a
 //! consumer keeps one import while ownership moves out; new code names the
 //! owning crate. `crucible-attachments` is re-exported only as far as the names

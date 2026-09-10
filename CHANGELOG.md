@@ -17,6 +17,14 @@ change in any release with no deprecation period.
   run something that asked again. `bash_output` takes the number the call was
   answered with and answers with what that command has printed so far.
 
+### Changed
+
+- **A command tool is handed the confinement it will run under.** `Bash::new`
+  took only a workspace and filled in this machine's own backend, so the tool
+  crate named one machine's answer where it should name only the contract, and a
+  caller that had already resolved a backend could not say so at construction.
+  It now takes the sandbox service alongside the workspace.
+
 ### Fixed
 
 - **A command that ended while nobody waited hands over what it printed.** The

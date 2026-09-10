@@ -345,15 +345,15 @@
     {
       "id": "CASE-SHUTDOWN-PROCESS-GROUP",
       "family": "shutdown",
-      "obligation": "An early return stops the whole process group rather than leaving children behind.",
+      "obligation": "Nothing a command left running is still running after an early return from it.",
       "package": "crucible-tools",
       "target": {
         "kind": "lib",
         "name": "crucible_tools"
       },
-      "case": "bash::output::tests::an_early_return_guard_stops_the_whole_process_group",
+      "case": "bash::output::tests::an_early_return_leaves_no_descendant_of_the_command_running",
       "source": "crates/crucible-tools/src/bash/output/tests.rs",
-      "body_sha256": "20e99377a3a0afe267b7c633fe3b7cac6c59062f10eb72bd2c956d0cd08bbbd5",
+      "body_sha256": "06b9ce127f21dee7dc71017a20769f00960e49bdf38d0b4633ea5d2cbd9d0d12",
       "platforms": [
         "linux",
         "macos",
@@ -755,7 +755,7 @@
       },
       "case": "every_built_in_tool_advertises_what_it_did",
       "source": "tests/differential.rs",
-      "body_sha256": "a2bc9f34b46a9e341ed82c6844efad92b6190214dc3ce7587947889d2776ecc7",
+      "body_sha256": "b5ad8a2a25382c22ed226fdff89ef62df4581732bf69c65400224126396a1876",
       "platforms": [
         "linux",
         "macos",

@@ -542,7 +542,7 @@ if [[ -z "$edges" ]]; then
     failed=1
 fi
 
-# `core` names the seven crates its old names now come from. Those edges are
+# `core` names the eight crates its old names now come from. Those edges are
 # the compatibility facade and go away with the crate that holds them; every
 # other crate still reaches the domain through one name.
 #
@@ -615,21 +615,40 @@ for crate in privacy registry runtime sandbox-broker tui types workspace; do
     fi
 done
 
-# `tools sandbox-local` above is a test-support edge, which the architecture
-# enumerates separately and which never justifies a production one. A tool
-# names the sandbox service contract; naming one machine's answer to it in
-# `[dependencies]` is how that distinction would quietly disappear.
-if awk '
-    /^[[:space:]]*\[/ {
-        header = $0
-        sub(/^[[:space:]]*\[+[[:space:]]*/, "", header)
-        sub(/[[:space:]]*\]+.*$/, "", header)
-        table = (header ~ /(^|\.)dependencies$/ && header !~ /^workspace\./)
-        next
-    }
-    table && /^[[:space:]]*crucible-sandbox-local[[:space:].=]/ { found = 1 }
-    END { exit found ? 0 : 1 }
-' crates/crucible-tools/Cargo.toml; then
+# `tools sandbox-local` above is a test-support edge, and a test-support edge
+# never justifies a shipped one. A tool names the sandbox service contract;
+# naming one machine's answer to it in a table that ships is how that
+# distinction would quietly disappear. Every such table counts, not only
+# `[dependencies]`: a build script that pulls a backend in ships it too.
+shipped_sandbox_local_edge() {
+    awk '
+        /^[[:space:]]*\[/ {
+            header = $0
+            sub(/^[[:space:]]*\[+[[:space:]]*/, "", header)
+            sub(/[[:space:]]*\]+.*$/, "", header)
+            table = (header ~ /(^|[.-])dependencies$/ \
+                && header !~ /(^|\.)dev-dependencies$/ \
+                && header !~ /^workspace\./)
+            next
+        }
+        table && /^[[:space:]]*crucible-sandbox-local[[:space:].=]/ { found = 1 }
+        END { exit found ? 0 : 1 }
+    ' "$1"
+}
+
+# A check that cannot say yes has not said no. Both answers are taken from it
+# here before the manifest that matters is put to it.
+if ! shipped_sandbox_local_edge \
+    <(printf '[build-dependencies]\ncrucible-sandbox-local.workspace = true\n'); then
+    printf '    FAIL the shipped-edge parser did not read a build-dependency\n'
+    failed=1
+fi
+if shipped_sandbox_local_edge \
+    <(printf '[dev-dependencies]\ncrucible-sandbox-local.workspace = true\n'); then
+    printf '    FAIL the shipped-edge parser read a dev-dependency as a shipped one\n'
+    failed=1
+fi
+if shipped_sandbox_local_edge crates/crucible-tools/Cargo.toml; then
     printf '    FAIL crucible-tools must reach crucible-sandbox-local only as a dev-dependency\n'
     failed=1
 fi

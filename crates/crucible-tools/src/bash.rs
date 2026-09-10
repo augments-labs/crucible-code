@@ -217,10 +217,10 @@ pub struct Bash {
     /// Host-owned process boundary. A tool can request one lifecycle but never
     /// receives backend mechanics or a direct-spawn escape hatch.
     ///
-    /// `None` until the composition root supplies one. This tool names no
-    /// implementation, so there is nothing for it to fall back to: a command
-    /// asked of a tool nobody gave a service to is refused.
-    sandbox: Option<Arc<dyn SandboxService>>,
+    /// Supplied at construction by the composition root. This tool names no
+    /// implementation and has nothing to fall back to, so a `Bash` that could
+    /// not run a command is not a value this type can hold.
+    sandbox: Arc<dyn SandboxService>,
     /// Resolved once with the workspace. `Err` is retained so an unusually
     /// long host path fails before spawn without making construction panic.
     policy: Result<SandboxPolicy, Box<str>>,
@@ -265,13 +265,17 @@ impl std::fmt::Debug for Exported<'_> {
 }
 
 impl Bash {
-    /// Runs in `workspace`, through the sandbox service the composition root
-    /// supplies with [`Self::sandboxing`] or [`Self::under_policy`]. Until one
-    /// arrives every command is refused, and the application's opt-in
-    /// configuration is applied by its composition root.
+    /// Runs in `workspace`, through `sandbox`.
+    ///
+    /// The service is taken here rather than added afterwards because this tool
+    /// names no backend and has nothing to fall back to: a `Bash` holding no
+    /// service could only refuse, and a composition root that forgot to supply
+    /// one would learn about it from a failed command mid-turn instead of from
+    /// the compiler. The application's opt-in configuration is applied on top
+    /// by [`Self::sandboxing`] or [`Self::under_policy`].
     #[must_use]
-    pub fn new(workspace: Workspace) -> Self {
-        Self::inheriting(workspace, |name| std::env::var_os(name))
+    pub fn new(workspace: Workspace, sandbox: Arc<dyn SandboxService>) -> Self {
+        Self::inheriting(workspace, sandbox, |name| std::env::var_os(name))
     }
 
     /// The same, reading crucible's own environment through `lookup`.
@@ -284,29 +288,31 @@ impl Bash {
     /// The shell is found the same way and for a second reason: a bare name is
     /// resolved wherever it is spawned, and a command here is spawned in the
     /// workspace. [`shell`] says what that costs.
-    fn inheriting(workspace: Workspace, lookup: impl Fn(&str) -> Option<OsString>) -> Self {
+    fn inheriting(
+        workspace: Workspace,
+        sandbox: Arc<dyn SandboxService>,
+        lookup: impl Fn(&str) -> Option<OsString>,
+    ) -> Self {
         let policy = SandboxPolicy::standard(&workspace).map_err(|error| error.to_string().into());
         Self {
             workspace,
             leaving: None,
             shell: shell::find(&lookup),
             env: environment::inherited(lookup),
-            sandbox: None,
+            sandbox,
             policy,
             enablement: None,
             first: FIRST,
         }
     }
 
-    /// Gives this tool the service it runs commands through, and applies the
-    /// host-authorized enabled choice.
+    /// Applies the host-authorized enabled choice to the standard policy.
     ///
     /// The binary composition root uses this after configuration provenance has
     /// established that only a user layer may disable confinement.
     /// Descendant/project narrowing happens before a policy reaches this tool.
     #[must_use]
-    pub fn sandboxing(mut self, service: Arc<dyn SandboxService>, enabled: bool) -> Self {
-        self.sandbox = Some(service);
+    pub fn sandboxing(mut self, enabled: bool) -> Self {
         self.enablement = None;
         if let Ok(policy) = &mut self.policy {
             *policy = policy.clone().with_enabled(enabled);
@@ -314,14 +320,13 @@ impl Bash {
         self
     }
 
-    /// Gives this tool a service and one complete policy assembled by the host
-    /// from trusted settings.
+    /// Gives this tool one complete policy assembled by the host from trusted
+    /// settings.
     ///
     /// Commands can narrow these limits but cannot replace grants or remove
     /// restrictions. The host must resolve document provenance before calling.
     #[must_use]
-    pub fn under_policy(mut self, service: Arc<dyn SandboxService>, policy: SandboxPolicy) -> Self {
-        self.sandbox = Some(service);
+    pub fn under_policy(mut self, policy: SandboxPolicy) -> Self {
         self.policy = Ok(policy);
         self.enablement = None;
         self
@@ -698,15 +703,6 @@ impl Tool for Bash {
         .map_err(|error| sandbox_io("could not bind sandbox audit attribution", error))?;
         let mut session = self
             .sandbox
-            .as_ref()
-            .ok_or_else(|| {
-                sandbox_io(
-                    "could not prepare operating-system confinement",
-                    crucible_core::SandboxError::BackendUnavailable {
-                        reason: "no sandbox service was given to this tool".into(),
-                    },
-                )
-            })?
             .prepare(request)
             .map_err(|error| sandbox_io("could not prepare operating-system confinement", error))?;
         session

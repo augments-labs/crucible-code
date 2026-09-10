@@ -22,14 +22,13 @@ authors.workspace = true
 # covers a file the tool does not think it covers.
 #
 # `sha2` earns the same bottom-of-graph cost where a policy has to be named by
-# what it says rather than by where it was read from: a sandbox manifest,
-# guardrail, domain set and extension manifest are each identified by a
-# domain-separated one-way digest, so a resumed run can tell that the thing it
-# is about to trust is the thing that was approved. The credential digests that
-# once shared this dependency moved out with their types.
-# The exact-pinned crate is already used by auth, runner, tools and the binary.
+# what it says rather than by where it was read from: an extension manifest is
+# identified by a domain-separated one-way digest, so a resumed run can tell
+# that the thing it is about to trust is the thing that was approved. The
+# credential and sandbox digests that once shared this dependency moved out
+# with their types. The exact-pinned crate is named by most of the workspace.
 
-# The seven crates below are the extraction this crate is being emptied into.
+# The eight crates below are the extraction this crate is being emptied into.
 # Core consumes them so its remaining callers keep compiling against one name
 # while ownership moves; every one of these edges is retired when core is
 # removed.

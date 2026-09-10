@@ -18,7 +18,10 @@ fn inviting(workspace: &Workspace) -> Vec<ToolDescriptor> {
     }
 
     vec![
-        descriptor(&Bash::new(workspace.clone())),
+        descriptor(&Bash::new(
+            workspace.clone(),
+            std::sync::Arc::new(crucible_sandbox_local::LocalSandbox::new()),
+        )),
         descriptor(&Write::new(workspace.clone(), Ledger::new())),
         descriptor(&Edit::new(workspace.clone())),
     ]

@@ -43,8 +43,8 @@ fn running_with(
     // namespace availability. Selecting the compatibility backend explicitly
     // keeps that boundary visible instead of depending on the host running the
     // test to permit nested user namespaces.
-    let tool = Bash::new(here.workspace())
-        .sandboxing(sandbox, false)
+    let tool = Bash::new(here.workspace(), sandbox)
+        .sandboxing(false)
         .leaving(left.clone());
     let mut engine = Permission::with(Mode::FullAccess, Rules::default());
 

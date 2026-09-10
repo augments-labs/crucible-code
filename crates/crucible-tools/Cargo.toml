@@ -23,19 +23,18 @@ serde_json.workspace = true
 
 [dev-dependencies]
 # The confinement a command is actually run under. Tools name the service
-# contract, not a machine; the tests need one machine's answer to it, and its
-# `testing` feature for the real child the reaper and the early-return guard
-# are exercised against.
-crucible-sandbox-local = { workspace = true, features = ["testing"] }
+# contract and never a machine, so the tests take one machine's answer to it
+# to have anything to run a command through.
+crucible-sandbox-local.workspace = true
 
 # SHA-256 of what the test journal writes down, so a stored result is
 # identified by what it contains rather than by when it was put there.
 sha2.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-# Windows refuses std::fs::rename over an existing file, and cannot poll
-# anonymous pipes through std. Those bindings stay inside the atomic boundary;
-# all features and the exact version are pinned once at the workspace root.
+# Windows refuses std::fs::rename over an existing file. Those bindings stay
+# inside the atomic boundary; all features and the exact version are pinned
+# once at the workspace root.
 windows-sys.workspace = true
 
 [lints]

@@ -106,7 +106,10 @@ mod tests {
                 "**/*.rs",
             ),
             (
-                Box::new(Bash::new(workspace)),
+                Box::new(Bash::new(
+                    workspace,
+                    std::sync::Arc::new(crucible_sandbox_local::LocalSandbox::new()),
+                )),
                 "bash",
                 r#"{"command":"cargo test"}"#,
                 "cargo test",

@@ -62,11 +62,11 @@ pub(crate) fn finalize_call_result(context: &ToolContext<'_>, output: &ToolOutpu
 /// enforcing Linux backend fails when that backend is unavailable, instead of
 /// quietly passing over nothing.
 ///
-/// This crate publishes no test harness, so the name is spelled again in
-/// `.github/workflows/rust-ci.yml`, which sets it, and in
-/// `tests/sandbox_conformance.rs`, which cannot reach in here. Changing the
-/// string here reddens the test that pins it, which is where those two are
-/// named.
+/// Spelled here rather than imported because nothing this crate can name owns
+/// it: `.github/workflows/rust-ci.yml` sets it and is not Rust, and the
+/// backend crate that spells it for its own tests publishes no test harness.
+/// Changing the string here reddens the test that pins it, which is where
+/// those are named.
 pub(crate) const REQUIRE_ENFORCING_SANDBOX: &str = "CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX";
 
 /// Whether a test that needs the enforcing backend has to stop here.

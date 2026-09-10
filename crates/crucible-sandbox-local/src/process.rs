@@ -1050,24 +1050,15 @@ fn stop_scope(scope: &Scope, child: &mut Child) -> io::Result<()> {
 
 /// Production process wrapper with a synthetic unconfined inspection record,
 /// for lifetime tests that exercise the wrapper itself.
-///
-/// Published under the `testing` feature because the reaper and the
-/// early-return guard live in the crate that calls a command, not here: their
-/// tests need a real child in the real wrapper, and a stand-in would test the
-/// stand-in.
-///
-/// # Errors
-///
-/// Returns the spawn failure when the child cannot be started.
-#[cfg(all(any(test, feature = "testing"), unix))]
-pub fn unconfined_child(
+#[cfg(all(test, unix))]
+fn unconfined_child(
     command: Command,
     speech: crucible_sandbox::SandboxSpeech,
 ) -> Result<Box<dyn SandboxProcess>, crucible_sandbox::SandboxError> {
     testing_local(command, speech, None).map(|process| Box::new(process) as Box<dyn SandboxProcess>)
 }
 
-#[cfg(all(any(test, feature = "testing"), unix))]
+#[cfg(all(test, unix))]
 fn testing_local(
     command: Command,
     speech: crucible_sandbox::SandboxSpeech,
@@ -1076,7 +1067,7 @@ fn testing_local(
     spawn_local(command, testing_plan(speech, stage)?)
 }
 
-#[cfg(all(any(test, feature = "testing"), unix))]
+#[cfg(all(test, unix))]
 pub(super) fn testing_plan(
     speech: crucible_sandbox::SandboxSpeech,
     stage: Option<Stage>,
