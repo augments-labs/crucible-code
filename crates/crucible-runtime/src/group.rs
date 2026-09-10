@@ -1,7 +1,8 @@
 //! A set of tasks with one owner.
 //!
-//! The thing a group is for is the sentence "when this is over, the owner
-//! knows what became of everything it started". A task spawned and forgotten
+//! The thing a group is for is the sentence "when this is over, every task
+//! the owner started has an end in what it gets back" — an answer, or the
+//! reason there is none. A task spawned and forgotten
 //! keeps a socket, a child process or a lock alive past the turn that wanted
 //! it, and the only evidence is a hang somewhere else much later. Every task
 //! here is held, and [`Group::shutdown`] accounts for each of them.
@@ -233,15 +234,21 @@ impl<T: Send + 'static> Group<T> {
     ///
     /// # Panics
     ///
-    /// Panics if the runtime this is awaited on was built without a time
-    /// driver, which is what [`tokio::time::timeout_at`] does. A runtime that
-    /// runs a group needs `enable_time`.
+    /// Panics if the group is holding a task and the runtime this is awaited
+    /// on was built without a time driver, which is what
+    /// [`tokio::time::timeout_at`] does. A runtime that runs a group needs
+    /// `enable_time`.
     #[must_use]
     pub async fn shutdown(mut self, grace: Duration) -> Vec<Ended<T>> {
         self.cancel.request();
         self.reap_until(deadline_in(grace)).await;
 
         if !self.tasks.is_empty() {
+            // Before the abort as well as after it: a task that returned while
+            // the grace was passing is still in the set until it is joined, and
+            // tokio documents an abort on one of those as likely to come back
+            // cancelled, which would throw away what it answered.
+            self.collect_finished();
             self.tasks.abort_all();
             self.reap_until(deadline_in(grace)).await;
 
@@ -250,10 +257,9 @@ impl<T: Send + 'static> Group<T> {
             // abandoned and throw away what it answered.
             self.collect_finished();
 
-            // What is left was aborted and did not come back: it is inside work
-            // that never yields, where an abort has no await point to land on.
-            // Detached rather than dropped, because dropping the set would
-            // abort them a second time and change nothing.
+            // What is left was aborted and had not come back when the group
+            // stopped waiting. Detached explicitly, so the last thing this does
+            // to those tasks is named here rather than left to a drop.
             for _ in 0..self.tasks.len() {
                 self.ended.push(Ended::Abandoned);
             }
@@ -291,10 +297,8 @@ const AS_GOOD_AS_FOREVER: Duration = Duration::from_hours(24 * 365 * 100);
 /// `grace` from now, or as far from now as the clock can say.
 ///
 /// A `Duration` that overflows the clock is not a grace anyone meant, and the
-/// addition that would name it panics. Every step here is checked, and the last
-/// fallback is now itself: a shutdown that reaps nothing and reports every task
-/// abandoned is wrong about the tasks, where a panic would take the caller's
-/// thread with it.
+/// addition that would name it panics. Every step here is checked, because a
+/// panic would take the caller's thread with it.
 fn deadline_in(grace: Duration) -> tokio::time::Instant {
     let now = tokio::time::Instant::now();
     now.checked_add(grace)
@@ -484,7 +488,7 @@ mod tests {
         let mut group = Group::new(2, &Cancel::new());
         assert!(group.spawn(async { "early" }).is_ok());
 
-        // `len` reaps without draining, so the end is held by the group rather
+        // `is_empty` reaps without draining, so the end is held by the group rather
         // than by this test when shutdown is called.
         for _ in 0..TURNS {
             if group.is_empty() {
@@ -773,7 +777,7 @@ mod tests {
         // ordering assertion would hold for a function that gave up entirely.
         assert!(
             super::deadline_in(std::time::Duration::MAX).saturating_duration_since(now)
-                > std::time::Duration::from_secs(60 * 60 * 24 * 365),
+                > std::time::Duration::from_hours(24 * 365),
             "a grace too large to add to the clock became no grace at all"
         );
     }

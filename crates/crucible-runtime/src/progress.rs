@@ -9,9 +9,10 @@
 //!
 //! There are two ceilings because a line count is not a size. A thousand lines
 //! of a build log and a thousand lines of a minified bundle are the same number
-//! and not the same amount of memory, and it is the bytes that run a machine
-//! out. So a buffer is given both, and whichever binds first is the one that
-//! holds.
+//! and not the same length. So a buffer is given both, and whichever binds
+//! first is the one that holds. The byte ceiling is bytes of text: a caller
+//! handing over `String`s allocated far larger than what they hold is over the
+//! ceiling in memory while under it here.
 //!
 //! It never blocks and never refuses. When it is full it drops the *oldest*
 //! line, because what a reader wants from a stream they have fallen behind is
@@ -41,7 +42,7 @@ impl std::fmt::Debug for Progress {
 
         f.debug_struct("Progress")
             .field("held", &format_args!("{} redacted", bounded.held.len()))
-            .field("bytes", &bounded.weight)
+            .field("weight", &bounded.weight)
             .field("dropped", &bounded.dropped)
             .finish()
     }
@@ -60,6 +61,7 @@ struct Bounded {
 }
 
 /// What was waiting, and what did not survive the wait.
+#[must_use]
 #[derive(Default, PartialEq, Eq)]
 pub struct Told {
     /// The lines, oldest first.
@@ -151,7 +153,6 @@ impl Progress {
     ///
     /// The answer carries the only record of what was dropped, so dropping it
     /// unread is the truncation-nobody-was-told-about this module is for.
-    #[must_use]
     pub fn take(&self) -> Told {
         let mut bounded = self.bounded();
         bounded.weight = 0;

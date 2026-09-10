@@ -16,16 +16,16 @@
 //! The rest is how work is owned. [`Group`] is a set of tasks with one owner
 //! that accounts for every one of them: admission is bounded and refused
 //! rather than queued, shutdown asks and then aborts rather than waiting on
-//! whatever does not cooperate, and every task's end is named — including the
-//! ones that panicked and the ones nothing could stop, which the owner is told
-//! about rather than blocked on. [`Progress`] is the bounded buffer that carries
+//! whatever does not cooperate, and every task is accounted for — including
+//! the ones that panicked and the ones that had not come back when the group
+//! stopped waiting, which the owner is told about rather than blocked on. [`Progress`] is the bounded buffer that carries
 //! what a task is saying while it runs, and it drops the oldest rather than the
 //! newest and says how many it dropped, because a reader shown a truncated
 //! stream that does not say it was truncated has been told something false.
 //!
 //! Nothing here starts a runtime. A library that built its own would decide
-//! for the application how many threads it gets and would deadlock the moment
-//! two of them nested; [`Group`] runs on the runtime of whoever called it.
+//! for the application how many threads it gets; [`Group`] runs on the runtime
+//! of whoever called it.
 
 mod aside;
 mod cancel;

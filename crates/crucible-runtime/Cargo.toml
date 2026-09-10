@@ -23,7 +23,7 @@ tokio = { workspace = true, features = ["rt", "time"] }
 
 # `macros` writes the `#[tokio::test]` attribute, and `test-util` is the paused
 # clock a deadline is asserted against without spending the wall time it names.
-# `rt-multi-thread` is what lets one test put a task inside synchronous work on
+# `rt-multi-thread` is what lets a test put a task inside synchronous work on
 # a worker of its own, which is the only way to observe a shutdown giving up on
 # a task no abort can reach. All three are test-only: nothing of any of them
 # survives into the binary.
