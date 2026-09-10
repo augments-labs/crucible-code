@@ -5,12 +5,12 @@
     shipped-edge.py --self-test
 
 Exits 0 when the package that MANIFEST declares takes CRATE as a normal or a
-build dependency, 3 when it takes it only for tests or not at all, and 2 when
-that could not be answered. The third answer is separate because a check that
-cannot tell "no edge" from "never looked" gives the reassuring one, and "no
-edge" is 3 because 1 is what Python exits with when it crashes. `--self-test`
-exits 0 when every manifest and description whose answer is known gives it,
-and 1 otherwise.
+build dependency, 3 when it takes it only as a dev-dependency or not at all,
+and 2 when that could not be answered. The third answer is separate because a
+check that cannot tell "no edge" from "never looked" gives the reassuring one,
+and "no edge" is 3 because 1 is what Python exits with when it crashes.
+`--self-test` exits 0 when every manifest and description whose answer is known
+gives it, saying why wherever that answer is 2, and 1 otherwise.
 
 Cargo is asked rather than the TOML read here. One dependency can be spelled
 many ways — quoted or bare, dotted or a table of its own, under a `[target]`
@@ -51,24 +51,29 @@ def metadata(manifest):
                 manifest,
             ],
             capture_output=True,
-            encoding="utf-8",
             check=False,
         )
     except OSError as error:
         print(f"cargo could not be run: {error}", file=sys.stderr)
         return None
+    # Cargo's messages are passed on whatever it answered, in a form any host
+    # can show; only the description has to be exactly what Cargo wrote.
+    sys.stderr.write(result.stderr.decode("utf-8", errors="backslashreplace"))
     if result.returncode != 0:
-        sys.stderr.write(result.stderr)
         return None
-    return result.stdout
+    try:
+        return result.stdout.decode("utf-8")
+    except UnicodeDecodeError as error:
+        print(f"cargo described {manifest} in bytes that are not UTF-8: {error}", file=sys.stderr)
+        return None
 
 
 def edge(described, manifest, crate):
     """The answer that description gives for the package this manifest declares."""
     # The metadata describes the whole workspace the manifest belongs to, so an
     # edge another member takes is not this one's.
-    wanted = os.path.realpath(manifest)
     try:
+        wanted = os.path.realpath(manifest)
         declared = next(
             (
                 package
@@ -82,6 +87,9 @@ def edge(described, manifest, crate):
             return UNANSWERED
         kinds = [dependency["kind"] for dependency in declared["dependencies"] if dependency["name"] == crate]
         return SHIPPED_EDGE if any(SHIPPED[kind] for kind in kinds) else NO_SHIPPED_EDGE
+    except UnicodeError as error:
+        print(f"a path in cargo's description of {manifest} cannot be named on this host: {error!r}", file=sys.stderr)
+        return UNANSWERED
     except (ValueError, KeyError, TypeError) as error:
         print(f"cargo described {manifest} in a shape this does not read: {error!r}", file=sys.stderr)
         return UNANSWERED
@@ -107,8 +115,8 @@ def alone(body):
 
 # Each case is a workspace of its own, with the manifest asked about under
 # `ask` when it is not the root one, and the answer Cargo's reading of it has
-# to produce. Every path dependency is there with a target of its own, because
-# Cargo refuses to load one without.
+# to produce. Every package is there with a target of its own, because Cargo
+# refuses to load one without.
 CASES = [
     ("a normal dependency", alone("[dependencies]\n" + EDGE), SHIPPED_EDGE),
     ("a build dependency", alone("[build-dependencies]\n" + EDGE), SHIPPED_EDGE),
@@ -164,9 +172,9 @@ CASES = [
 ]
 
 
-def described(kind="dev", name="crucible-sandbox-local"):
+def described(kind="dev", name="crucible-sandbox-local", path="/fixture/Cargo.toml"):
     dependency = {"name": name, "kind": kind}
-    return json.dumps({"packages": [{"manifest_path": "/fixture/Cargo.toml", "dependencies": [dependency]}]})
+    return json.dumps({"packages": [{"manifest_path": path, "dependencies": [dependency]}]})
 
 
 # A description no manifest makes Cargo write, and the answer it has to produce
@@ -175,18 +183,24 @@ SHAPES = [
     ("a description that is not JSON", "not JSON", UNANSWERED),
     ("a dependency of a kind this does not know", described(kind="optional"), UNANSWERED),
     ("a dependency with no name", described().replace('"name"', '"called"'), UNANSWERED),
+    # A lone surrogate is a path a UTF-8 host cannot name, as a non-ASCII
+    # checkout is to a host whose encoding is ASCII.
+    ("a package path this host cannot name", described(path="/fixture/\ud800/Cargo.toml"), UNANSWERED),
 ]
 
 
 def known(name, expected, question):
-    """Whether a question gets the answer known for it, saying what it said if not."""
+    """Whether a question gets the answer known for it, and says why when it has none."""
     said = io.StringIO()
     with contextlib.redirect_stderr(said):
         got = question()
     if got != expected:
-        print(f"shipped-edge: {name} answered {got}, not {expected}")
-        print(said.getvalue(), end="")
-    return got == expected
+        sys.stderr.write(f"shipped-edge: {name} answered {got}, not {expected}\n{said.getvalue()}")
+        return False
+    if got == UNANSWERED and not said.getvalue():
+        sys.stderr.write(f"shipped-edge: {name} answered {got} without saying why\n")
+        return False
+    return True
 
 
 def self_test():
@@ -204,8 +218,8 @@ def self_test():
                 with open(os.path.join(root, path), "w", encoding="utf-8") as manifest:
                     manifest.write(text)
             # Asked relative, as the gate asks, and through a link, as a checkout
-            # can be reached: Cargo answers with an absolute path it does not
-            # resolve, so neither side of the comparison is canonical until made so.
+            # can be reached: Cargo answers with the absolute path it was asked,
+            # the link unresolved, so the comparison resolves both sides.
             os.makedirs(root, exist_ok=True)
             os.symlink(root, os.path.join(temporary, "link"))
             asked = os.path.relpath(os.path.join(temporary, "link", files.get("ask", "Cargo.toml")))
