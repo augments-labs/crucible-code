@@ -38,6 +38,7 @@ crucible-attachments.workspace = true
 crucible-credentials.workspace = true
 crucible-registry.workspace = true
 crucible-runtime.workspace = true
+crucible-sandbox.workspace = true
 crucible-storage.workspace = true
 crucible-types.workspace = true
 crucible-workspace.workspace = true

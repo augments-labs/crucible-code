@@ -1,0 +1,29 @@
+[package]
+name = "crucible-sandbox"
+description = "What a confined process may observe or change, stated without naming a backend."
+publish.workspace = true
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# A policy names the directories it grants and the call it is attributed to, so
+# this crate takes the two crates that own those values and nothing above them.
+# `crucible-storage` is here for one reason: a sandboxed call hands back the
+# same receipt an unsandboxed one does, and the trait says so in its signature.
+#
+# `thiserror` writes `Display` and `source` for the refusal enums; `sha2`
+# digests a policy so two of them can be compared without either being shown;
+# `globset` compiles the command patterns a guardrail matches.
+[dependencies]
+crucible-storage.workspace = true
+crucible-types.workspace = true
+crucible-workspace.workspace = true
+globset.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

@@ -58,6 +58,31 @@ pub use crucible_registry::{
     Staged,
 };
 pub use crucible_runtime::{Aside, Cancel, Steer};
+pub use crucible_sandbox::{
+    MAX_SANDBOX_AUDIT_FACTS, MAX_SANDBOX_AUDIT_LIFECYCLES, MAX_SANDBOX_BACKEND_ID_BYTES,
+    MAX_SANDBOX_BACKEND_WORD_BYTES, MAX_SANDBOX_COMMAND_ARGUMENTS, MAX_SANDBOX_COMMAND_BYTES,
+    MAX_SANDBOX_CREDENTIAL_HANDLE_BYTES, MAX_SANDBOX_ENVIRONMENT_BYTES,
+    MAX_SANDBOX_ENVIRONMENT_ENTRIES, MAX_SANDBOX_ENVIRONMENT_NAME_BYTES,
+    MAX_SANDBOX_FILESYSTEM_RULES, MAX_SANDBOX_GUARDRAIL_BYTES, MAX_SANDBOX_GUARDRAIL_LAYERS,
+    MAX_SANDBOX_GUARDRAIL_RULES, MAX_SANDBOX_GUARDRAIL_WORDS, MAX_SANDBOX_HOST_BYTES,
+    MAX_SANDBOX_MANIFEST_BYTES, MAX_SANDBOX_MANIFEST_ENTRIES, MAX_SANDBOX_MANIFEST_FILE_BYTES,
+    MAX_SANDBOX_NETWORK_RULES, MAX_SANDBOX_PATH_BYTES, MAX_SANDBOX_PATTERN_COMPONENTS,
+    MAX_SANDBOX_UNREADABLE_PATTERNS, SandboxAudit, SandboxAuditError, SandboxAuditRecord,
+    SandboxAuditRegistry, SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance,
+    SandboxCapabilities, SandboxCapability, SandboxCapabilityError, SandboxCheckpoint,
+    SandboxCleanup, SandboxCommand, SandboxCommandPolicy, SandboxCommandRule, SandboxCommandStage,
+    SandboxCredentialHandle, SandboxCredentialProjection, SandboxCredentialProvenance,
+    SandboxDomainPattern, SandboxDomainPolicy, SandboxEnablement, SandboxEnvironment, SandboxError,
+    SandboxFact, SandboxFactKind, SandboxFailureKind, SandboxFailurePhase, SandboxFeature,
+    SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule,
+    SandboxGuardrailDecision, SandboxGuardrailEffect, SandboxGuardrailError, SandboxInspection,
+    SandboxInvocationMode, SandboxLaunch, SandboxLifecycle, SandboxManifest, SandboxManifestEntry,
+    SandboxManifestError, SandboxNetworkEndpoint, SandboxNetworkInspection, SandboxNetworkPolicy,
+    SandboxNetworkProvenance, SandboxOutput, SandboxPlanInspection, SandboxPolicy,
+    SandboxPolicyError, SandboxProcess, SandboxRead, SandboxRequest, SandboxResourceLimits,
+    SandboxRootInspection, SandboxService, SandboxSession, SandboxSpeech, SandboxUnreadablePattern,
+    SandboxUsage, SandboxViolation,
+};
 pub use crucible_storage::{
     ActionId, ActionResolution, ApprovalDecision, CallResultKey, CallResultReceipt,
     CallResultStoreError, CheckpointId, CompactionRecord, CustomEntry, CustomProjector,
@@ -157,31 +182,7 @@ pub use provider::{
     ProviderError, ProviderLimit, Request, RequestPurpose, Spend, ToolSchema,
 };
 pub use revealed::Revealed;
-pub use sandbox::{
-    Finish, Heard, MAX_SANDBOX_AUDIT_FACTS, MAX_SANDBOX_AUDIT_LIFECYCLES,
-    MAX_SANDBOX_BACKEND_ID_BYTES, MAX_SANDBOX_BACKEND_WORD_BYTES, MAX_SANDBOX_COMMAND_ARGUMENTS,
-    MAX_SANDBOX_COMMAND_BYTES, MAX_SANDBOX_CREDENTIAL_HANDLE_BYTES, MAX_SANDBOX_ENVIRONMENT_BYTES,
-    MAX_SANDBOX_ENVIRONMENT_ENTRIES, MAX_SANDBOX_ENVIRONMENT_NAME_BYTES,
-    MAX_SANDBOX_FILESYSTEM_RULES, MAX_SANDBOX_GUARDRAIL_BYTES, MAX_SANDBOX_GUARDRAIL_LAYERS,
-    MAX_SANDBOX_GUARDRAIL_RULES, MAX_SANDBOX_GUARDRAIL_WORDS, MAX_SANDBOX_HOST_BYTES,
-    MAX_SANDBOX_MANIFEST_BYTES, MAX_SANDBOX_MANIFEST_ENTRIES, MAX_SANDBOX_MANIFEST_FILE_BYTES,
-    MAX_SANDBOX_NETWORK_RULES, MAX_SANDBOX_PATH_BYTES, MAX_SANDBOX_PATTERN_COMPONENTS,
-    MAX_SANDBOX_UNREADABLE_PATTERNS, Muttered, Said, SandboxAudit, SandboxAuditError,
-    SandboxAuditRecord, SandboxAuditRegistry, SandboxBackendId, SandboxBackendIdentity,
-    SandboxBackendProvenance, SandboxCapabilities, SandboxCapability, SandboxCapabilityError,
-    SandboxCheckpoint, SandboxCleanup, SandboxCommand, SandboxCommandPolicy, SandboxCommandRule,
-    SandboxCommandStage, SandboxCredentialHandle, SandboxCredentialProjection,
-    SandboxCredentialProvenance, SandboxDomainPattern, SandboxDomainPolicy, SandboxEnablement,
-    SandboxEnvironment, SandboxError, SandboxFact, SandboxFactKind, SandboxFailureKind,
-    SandboxFailurePhase, SandboxFeature, SandboxFilesystemAccess, SandboxFilesystemProvenance,
-    SandboxFilesystemRule, SandboxGuardrailDecision, SandboxGuardrailEffect, SandboxGuardrailError,
-    SandboxInspection, SandboxInvocationMode, SandboxLaunch, SandboxLifecycle, SandboxManifest,
-    SandboxManifestEntry, SandboxManifestError, SandboxNetworkEndpoint, SandboxNetworkInspection,
-    SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxOutput, SandboxPlanInspection,
-    SandboxPolicy, SandboxPolicyError, SandboxProcess, SandboxRead, SandboxRequest,
-    SandboxResourceLimits, SandboxRootInspection, SandboxService, SandboxSession, SandboxSpeech,
-    SandboxUnreadablePattern, SandboxUsage, SandboxViolation,
-};
+pub use sandbox::{Finish, Heard, Muttered, Said};
 pub use source::{Fetch, Page, Search, SearchResponse, SearchResult, SourceError};
 pub use tool::{
     Account, CallResultAcceptance, Looking, PendingCallResult, Remembered, Summary, Tool,

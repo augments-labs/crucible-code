@@ -16,6 +16,7 @@ Repository skills live in [`.agents/skills/`](.agents/skills/).
 | `crates/crucible-workspace/` | The directories crucible reaches, and path proofs |
 | `crates/crucible-attachments/` | What may be attached, and the one read it comes through |
 | `crates/crucible-runtime/` | The controls a turn is steered and stopped by, and how work is owned |
+| `crates/crucible-sandbox/` | What a confined process may observe or change |
 | `crates/crucible-core/` | Domain types and extension traits |
 | `crates/crucible-auth/` | Credentials and account authorization |
 | `crates/crucible-config/` | Configuration and settings |

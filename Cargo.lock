@@ -400,6 +400,7 @@ dependencies = [
  "crucible-credentials",
  "crucible-registry",
  "crucible-runtime",
+ "crucible-sandbox",
  "crucible-storage",
  "crucible-types",
  "crucible-workspace",
@@ -480,6 +481,18 @@ name = "crucible-runtime"
 version = "0.40.1"
 dependencies = [
  "tokio",
+]
+
+[[package]]
+name = "crucible-sandbox"
+version = "0.40.1"
+dependencies = [
+ "crucible-storage",
+ "crucible-types",
+ "crucible-workspace",
+ "globset",
+ "sha2",
+ "thiserror",
 ]
 
 [[package]]

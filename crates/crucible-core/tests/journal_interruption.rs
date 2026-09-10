@@ -8,8 +8,10 @@ use crucible_core::{
     MAX_RUN_ITEM_RETAINED_BYTES, MAX_RUN_ITEMS, Message, PendingAction, PendingActions,
     PendingApproval, PendingExternalTool, PendingHumanInput, PromptCacheFingerprint,
     PromptCachePolicyVersion, PromptCacheResourceId, PromptCacheScopeDigest, RecordedToolOutput,
-    RecoveryAction, ResumeDigest, ResumeEvidence, ResumeScope, RunHistory, RunItem, StopReason,
-    TOOL_RESULT_BYTES, ToolArgs, ToolCall, ToolEffect, ToolId, ToolOutcome, ToolResult,
+    RecoveryAction, ResumeDigest, ResumeEvidence, ResumeScope, RunHistory, RunItem,
+    SandboxAuditRegistry, SandboxFactKind, SandboxId, SandboxLifecycle, StopReason,
+    TOOL_CALL_ID_BYTES, TOOL_RESULT_BYTES, ToolArgs, ToolCall, ToolEffect, ToolId, ToolOutcome,
+    ToolResult,
 };
 
 struct MemoryOnlyJournal;
@@ -52,6 +54,33 @@ fn journals_without_a_durable_result_sink_fail_closed() {
     assert_eq!(
         MemoryOnlyJournal.put_call_result(key, &result),
         Err(CallResultStoreError::Unavailable)
+    );
+}
+
+#[test]
+fn the_longest_call_a_sandbox_audit_accepts_still_reaches_the_journal() {
+    let call = ToolId::new("x".repeat(TOOL_CALL_ID_BYTES));
+    let collector = SandboxAuditRegistry::new()
+        .collector(Ancestry::new(), call)
+        .expect("the audit ceiling admits this identity");
+    collector
+        .record(
+            SandboxId::new(),
+            SandboxFactKind::Lifecycle(SandboxLifecycle::Prepared),
+        )
+        .expect("a fact under an admitted identity");
+    let records = collector.records().expect("the recorded fact");
+    let [record] = records.as_ref() else {
+        panic!("exactly one fact")
+    };
+
+    assert!(
+        RunItem::sandbox(
+            record.ancestry(),
+            record.call().clone(),
+            record.fact().clone()
+        )
+        .is_ok()
     );
 }
 

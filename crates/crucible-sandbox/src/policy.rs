@@ -4,7 +4,7 @@ use std::net::IpAddr;
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
-use crate::Workspace;
+use crucible_workspace::Workspace;
 use sha2::{Digest, Sha256};
 
 use super::domains::SandboxDomainPolicy;
@@ -1178,7 +1178,7 @@ mod tests {
     #[test]
     fn a_confined_command_is_given_ceilings_a_runaway_reaches_and_a_build_does_not() {
         let workspace =
-            crate::Workspace::open(env!("CARGO_MANIFEST_DIR")).expect("this crate's own directory");
+            Workspace::open(env!("CARGO_MANIFEST_DIR")).expect("this crate's own directory");
         let limits = SandboxPolicy::standard(&workspace)
             .expect("the standard policy for a workspace")
             .limits();

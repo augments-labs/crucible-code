@@ -47,6 +47,7 @@ crucible-provider = { path = "crates/crucible-provider" }
 crucible-registry = { path = "crates/crucible-registry" }
 crucible-runner = { path = "crates/crucible-runner" }
 crucible-runtime = { path = "crates/crucible-runtime" }
+crucible-sandbox = { path = "crates/crucible-sandbox" }
 # Static PID 1 executable and its four-byte raw-wait-status protocol. The
 # library side contains no launcher or application authority; tools uses only
 # the protocol constants while the separately built binary supervises one

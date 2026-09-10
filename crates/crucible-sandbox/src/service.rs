@@ -6,7 +6,8 @@ use std::path::{Component, Path, PathBuf};
 use std::process::ExitStatus;
 use std::time::Duration;
 
-use crate::{Ancestry, CallResultKey, CallResultReceipt, SandboxId, ToolId};
+use crucible_storage::{CallResultKey, CallResultReceipt};
+use crucible_types::{Ancestry, SandboxId, ToolId};
 use sha2::{Digest as _, Sha256};
 
 use super::audit::SandboxAudit;

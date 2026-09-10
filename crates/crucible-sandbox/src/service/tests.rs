@@ -1,7 +1,7 @@
 //! What a sandbox command and its policy promise before anything spawns.
 
 use super::*;
-use crate::sandbox::policy::{SandboxFilesystemProvenance, SandboxFilesystemRule};
+use crate::policy::{SandboxFilesystemProvenance, SandboxFilesystemRule};
 use crate::{
     SandboxBackendId, SandboxBackendProvenance, SandboxDomainPattern, SandboxDomainPolicy,
     SandboxFilesystemAccess, SandboxNetworkProvenance,

@@ -571,6 +571,7 @@ core attachments
 core credentials
 core registry
 core runtime
+core sandbox
 core storage
 core types
 core workspace
@@ -583,6 +584,9 @@ runner core
 runner session
 session core
 session privacy
+sandbox storage
+sandbox types
+sandbox workspace
 storage types
 tools attachments
 tools core
