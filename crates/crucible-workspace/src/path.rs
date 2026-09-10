@@ -16,12 +16,15 @@ use super::{PathError, open, written};
 /// because `write` and `edit` resolve their paths through the containing
 /// entry points themselves.
 ///
-/// There is no public constructor: the only way to hold one is to have asked
-/// a [`Workspace`](super::Workspace) for it, so a function taking this type
-/// cannot be handed a path from anywhere else. That is the whole of what stops
-/// a string a model wrote from becoming authority, so it is checked rather
-/// than asserted — the error code is what this fails with today and not a
-/// gate, since `compile_fail` accepts any compile error:
+/// No public constructor takes a path: the only way to hold one is to have
+/// asked a [`Workspace`](super::Workspace) for it, so a function taking this
+/// type cannot be handed a path from anywhere else. [`Self::walked`] is public
+/// and does mint one, but only from a name found below a proof the caller
+/// already holds, which is a step down from authority rather than a way in to
+/// it. That is the whole of what stops a string a model wrote from becoming
+/// authority, so it is checked rather than asserted — the error code is what
+/// this fails with today and not a gate, since `compile_fail` accepts any
+/// compile error:
 ///
 /// ```compile_fail,E0624
 /// use std::path::PathBuf;

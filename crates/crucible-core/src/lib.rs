@@ -7,9 +7,12 @@
 //! credential contracts, storage contracts, path proofs and attachment ingress.
 //! This crate re-exports their names under the paths it published them at, so a
 //! consumer keeps one import while ownership moves out; new code names the
-//! owning crate. `crucible-attachments` is the one exception a caller must name
-//! itself: its point is that a file becomes attachable bytes exactly one way,
-//! and a facade over the parts would let a caller assemble a second.
+//! owning crate. `crucible-attachments` is re-exported only as far as its
+//! table and its ceiling: `Opened` and `Taken` are withheld, so a caller that
+//! wants to read a file names that crate outright. What actually stops a
+//! second read being assembled is that the halves it is made of are private
+//! there; withholding the types is what makes the dependency show up in the
+//! graph the layering check enforces.
 //!
 //! Two kinds of type live here, and the split is deliberate:
 //!

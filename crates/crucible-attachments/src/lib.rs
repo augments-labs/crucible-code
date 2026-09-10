@@ -25,7 +25,7 @@
 //! use crucible_attachments::{Opened, kind};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let at = std::env::temp_dir().join("crucible-attachments-doc.png");
+//! let at = std::env::temp_dir().join(format!("crucible-doc-{}.png", std::process::id()));
 //! std::fs::write(&at, [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a])?;
 //!
 //! let named = kind("shot.png").expect("png is attachable");
@@ -38,6 +38,7 @@
 //! # }
 //! ```
 
+use std::fmt;
 use std::fs::File;
 use std::io::{self, Read as _};
 use std::path::Path;
@@ -173,18 +174,39 @@ fn carried(file: &mut File) -> Result<Vec<u8>, AttachmentError> {
 ///     Opened(file)
 /// }
 /// ```
-#[derive(Debug)]
 pub struct Opened(File);
+
+/// The descriptor stays; the file it stands at goes.
+///
+/// A `File`'s own `Debug` prints the path the operating system resolved it to,
+/// which is the user content [`Attachment`](crucible_types::Attachment) hand-
+/// writes its own `Debug` to keep out of a panic payload. That there is a
+/// descriptor at all is the fact worth rendering.
+impl fmt::Debug for Opened {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Opened").finish_non_exhaustive()
+    }
+}
 
 impl Opened {
     /// Opens a path the workspace proved, through the descriptor walk.
     ///
     /// # Errors
     ///
-    /// [`AttachmentError::Unreached`] where the walk refused the path — most
-    /// often because something replaced a component of it since it was proved.
+    /// [`AttachmentError::NotFile`] where what the walk reached is not a
+    /// regular file, and [`AttachmentError::Unreached`] where the walk refused
+    /// the path — most often because something replaced a component of it
+    /// since it was proved.
     pub fn reached(path: &WorkspacePath) -> Result<Self, AttachmentError> {
-        Ok(Self(path.open_regular()?))
+        match path.open_regular() {
+            Ok(file) => Ok(Self(file)),
+            // One condition, one variant. The walk refuses a pipe or a device
+            // for the same reason a named open does, and a caller deciding
+            // what to tell the user must not have to know which ingress asked
+            // in order to recognise the same answer.
+            Err(PathError::NotFile { .. }) => Err(AttachmentError::NotFile),
+            Err(refused) => Err(AttachmentError::Unreached(refused)),
+        }
     }
 
     /// Opens a path an external operator named in full.
@@ -218,10 +240,38 @@ impl Opened {
 /// taken somewhere else is a second answer to that question. Nothing here can
 /// be built from bytes a caller already had: the digest is over what
 /// [`Opened::taken`] read, and the ceiling had already been applied to it.
-#[derive(Debug)]
+/// That is what lets a caller compare this digest against a recorded one and
+/// conclude something about the file, so it is checked rather than asserted —
+/// the error code is what this fails with today and not a gate, since
+/// `compile_fail` accepts any compile error:
+///
+/// ```compile_fail,E0451
+/// use crucible_attachments::Taken;
+///
+/// fn anywhere(bytes: Vec<u8>) -> Taken {
+///     Taken { bytes, hash: [0; 32] }
+/// }
+/// ```
 pub struct Taken {
     bytes: Vec<u8>,
     hash: [u8; 32],
+}
+
+/// The file goes; how much of it there was stays.
+///
+/// This holds a whole file somebody attached, and the digest that identifies
+/// it. [`Attachment`](crucible_types::Attachment) redacts that same digest from
+/// its own `Debug` for a reason this type does not escape by holding the bytes
+/// as well: a hash is not reversible, but it confirms which file somebody was
+/// holding to anyone who already has a copy. How many bytes arrived is a fact
+/// about the shape of the turn and names nobody.
+impl fmt::Debug for Taken {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Taken")
+            .field("read", &self.bytes.len())
+            .field("hash", &"[redacted]")
+            .finish()
+    }
 }
 
 impl Taken {
@@ -417,6 +467,10 @@ fn mp4(bytes: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Seek as _;
+
+    use crucible_workspace::Workspace;
+
     use super::*;
 
     /// A directory this test owns, emptied first so a rerun starts clean.
@@ -443,6 +497,14 @@ mod tests {
         let refused = carried(&mut file).expect_err("over the ceiling");
 
         assert!(matches!(refused, AttachmentError::TooLarge), "{refused}");
+        // What the size check buys, made observable. `carried` never seeks, so
+        // an untouched offset is proof the refusal came from asking the
+        // descriptor rather than from reading the file and measuring after.
+        assert_eq!(
+            file.stream_position().expect("an open file has an offset"),
+            0,
+            "the refusal read the file instead of asking its size"
+        );
     }
 
     #[cfg(unix)]
@@ -522,6 +584,51 @@ mod tests {
         let refused = opened(&at).expect_err("a pipe is not attachable");
 
         assert!(matches!(refused, AttachmentError::NotFile), "{refused}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_pipe_the_workspace_proved_is_refused_as_not_a_file() {
+        let base = base("reached-pipe");
+        let at = base.join("waiting.png");
+        let made = std::process::Command::new("mkfifo")
+            .arg(&at)
+            .status()
+            .expect("mkfifo runs");
+        assert!(made.success());
+        let workspace = Workspace::open(&base).expect("a directory opens as a workspace");
+        let proven = workspace
+            .existing("waiting.png")
+            .expect("it is there, and inside");
+
+        let refused = Opened::reached(&proven).expect_err("a pipe is not attachable");
+
+        // One condition, one variant. The walk refuses a pipe for the same
+        // reason a named open does, and a caller deciding what to tell the
+        // user must not have to know which ingress asked.
+        assert!(matches!(refused, AttachmentError::NotFile), "{refused}");
+    }
+
+    #[test]
+    fn neither_the_bytes_nor_the_digest_reach_a_debug_rendering() {
+        // `Attachment` hand-writes its `Debug` to keep the path and the hash
+        // out of a panic payload. These hold the file itself and the same
+        // digest, so deriving one here would put back what that removed.
+        let base = base("debug");
+        let at = base.join("private.png");
+        std::fs::write(&at, [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a])
+            .expect("a writable temporary directory");
+
+        let open = Opened::named(&at).expect("a regular file opens");
+        let shown = format!("{open:?}");
+        assert!(!shown.contains("private"), "{shown}");
+
+        let taken = open.taken().expect("under the ceiling");
+
+        assert_eq!(
+            format!("{taken:?}"),
+            "Taken { read: 8, hash: \"[redacted]\" }"
+        );
     }
 
     /// A minimal whole `ftyp` box with one compatible brand.

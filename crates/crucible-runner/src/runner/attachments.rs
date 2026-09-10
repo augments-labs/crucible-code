@@ -82,8 +82,11 @@ fn read(attachment: &Attachment, spent: &mut usize, carries: Modalities) -> Carr
     }
 
     // The path was resolved and recorded when the file was attached, so it is
-    // named rather than reached: this is the same authority the person who
-    // attached it had, replayed. Opened before it is read and bounded from that
+    // named rather than reached. That is a weaker check than the walk the
+    // attachment came through — a person typing a path and the `read` tool both
+    // record one here — and the hash compared below is what carries the
+    // difference: a name that now leads somewhere else fails it. Opened before
+    // it is read and bounded from that
     // descriptor: the ceiling is what one file may be however little of the
     // request is spent, so a file that has grown past it since it was attached
     // is refused without its bytes arriving here first. A pipe standing where

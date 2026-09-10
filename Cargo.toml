@@ -28,9 +28,9 @@ publish = false
 #   provider   -> core
 #   session    -> core, privacy   one append-only log per session
 #   sandbox-broker -> (nothing)   frozen child-status protocol and PID 1 binary
-#   tools      -> core, sandbox-broker
+#   tools      -> core, sandbox-broker, attachments
 #   extension  -> core            runs somebody else's program and talks to it
-#   runner     -> core, session   drives turns through traits only
+#   runner     -> core, session, attachments   drives turns through traits only
 #   tui        -> (nothing)       draws what it is handed
 #   crucible-code (this package) -> the crates above; the concrete composition root
 #
@@ -258,8 +258,8 @@ libc = "=0.2.189"
 # last published in 2021, which is not what security-critical code should be
 # resting on. Already in the tree as a transitive dependency of `ureq` and
 # `ignore` for Windows targets, so it costs no crate that was not being compiled
-# already. It is confined to the privacy platform boundary, core's final
-# workspace-path validation, and tools' file replacement and process boundary.
+# already. It is confined to the privacy platform boundary, the workspace's
+# final path validation, and tools' file replacement and process boundary.
 # The WDK file-system surface contributes the one ntdll rename call whose
 # directory-relative contract the Win32 wrapper does not honor consistently;
 # JobObjects, ToolHelp and Pipes contain and poll spawned command descendants.

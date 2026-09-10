@@ -30,8 +30,9 @@ rustix.workspace = true
 # Windows has no `openat`, so a name can be redirected through an ancestor
 # between containment and open. `GetFinalPathNameByHandleW` validates the handle
 # that actually opened before a byte is read; std exposes the handle but not
-# that query. The exact-pinned crate and FileSystem feature are already in the
-# workspace for privacy.
+# that query, and the same boundary commits new files under a held parent
+# rather than by name. The exact-pinned crate and FileSystem feature are already
+# in the workspace for privacy.
 windows-sys.workspace = true
 
 [lints]

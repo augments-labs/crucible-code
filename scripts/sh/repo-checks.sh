@@ -417,6 +417,30 @@ if ((here != 1)); then
     failed=1
 fi
 
+# The same shape, for the door the workspace crate had to open in its own wall.
+# `Workspace::intended` was crate-private while the workspace lived inside core;
+# splitting it out made it `pub`, and it is the one entry point that hands back a
+# plain path instead of a proof. That is right for the permission engine, which
+# has to name the call it is settling and must not be given the authority to make
+# it — and wrong for everyone else, because the path it returns resolves through
+# the nearest *existing* ancestor, which is the one shape that must never be
+# opened by name. Cargo cannot express "public to one caller", so the pin is here.
+# The crate that owns the call tests it, as the checks above leave their owners.
+asker="crates/crucible-core/src/permission/sensitivity.rs"
+owner="crates/crucible-workspace/src/resolve.rs"
+tests="crates/crucible-workspace/src/tests.rs"
+asks='\.intended\('
+elsewhere=$(grep -rlE --include='*.rs' "$asks" crates src tests |
+    grep -Fxv "$asker" |
+    grep -Fxv "$owner" |
+    grep -Fxv "$tests" || true)
+if [[ -n "$elsewhere" ]]; then
+    while IFS= read -r file; do
+        printf '    FAIL %s calls Workspace::intended; only %s may\n' "$file" "$asker"
+    done <<<"$elsewhere"
+    failed=1
+fi
+
 member_manifests=(crates/*/Cargo.toml)
 manifests=(Cargo.toml "${member_manifests[@]}")
 

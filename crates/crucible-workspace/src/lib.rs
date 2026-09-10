@@ -24,9 +24,14 @@
 //! happens to a path that is inside is a permission question rather than a
 //! path one.
 //!
-//! Nothing here names another crucible crate, and nothing here can be built
-//! from a string. A caller holding text has exactly the entry points below, and
-//! each of them either returns a proof or an error:
+//! Nothing here names another crucible crate, and no text a caller holds
+//! becomes a proof except by passing through one of the entry points below.
+//! Two of them are deliberately not that: [`Workspace::intended`] answers a
+//! question about a name and hands back a plain `PathBuf`, because the
+//! permission engine needs to describe a call rather than make one, and
+//! [`Workspace::outside`] is the external operator's route, where a person
+//! typed a path crucible was not pointed at and there is no containment to
+//! answer. Everything else refuses a path that leaves the workspace:
 //!
 //! ```
 //! use crucible_workspace::Workspace;
@@ -34,8 +39,9 @@
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let workspace = Workspace::open(std::env::temp_dir())?;
 //!
-//! // The only constructor of the proof is a resolution that was contained.
-//! assert!(workspace.existing("../etc/passwd").is_err());
+//! // The parent of a root exists on every platform and is outside it, so what
+//! // this refuses is containment rather than a path that happened to be absent.
+//! assert!(workspace.existing("..").is_err());
 //! # Ok(())
 //! # }
 //! ```

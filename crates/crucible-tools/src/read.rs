@@ -1381,7 +1381,7 @@ mod tests {
     fn a_picture_too_large_to_carry_is_refused_before_it_is_read() {
         let sample = Sample::new("read-picture-large");
         let mut bytes = PNG.to_vec();
-        bytes.resize(crucible_core::CEILING + 1, 0);
+        bytes.resize(crucible_attachments::CEILING + 1, 0);
         sample.write_bytes("huge.png", &bytes);
 
         let output = read(&sample, r#"{"path":"huge.png"}"#);
