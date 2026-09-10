@@ -12,13 +12,15 @@
 //! standing in front of the reader, which while a turn runs is the turn. Raw
 //! mode is held for the whole session, so it arrives at the loop reading the
 //! keyboard rather than being swallowed as the start of an escape sequence, and
-//! [`Cancel::request`] is what the loop does with it. One producer, on the
-//! thread that draws; the consumers are all on the thread the turn runs on.
+//! [`Cancel::request`] is what the loop does with it.
 //!
-//! The producer clears it too, and that is what keeps a press from being lost
-//! rather than merely tidy — see [`Cancel::reset`]. One thread raises the flag
-//! and clears it, so there is no moment at which a press can be overwritten by
-//! a clearing that was decided before it happened.
+//! Reading it is not confined to one thread. A token is cloned into every task
+//! that has to notice, and a child of it narrows what a request reaches — see
+//! [`Cancel::child`] — so a timed-out call or a task group closing stops what
+//! it owns without ending the run around it.
+//!
+//! Who clears the session's own token is confined, and that is what keeps a
+//! press from being lost rather than merely tidy — see [`Cancel::reset`].
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
