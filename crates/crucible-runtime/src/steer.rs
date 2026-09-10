@@ -18,9 +18,14 @@
 //! The shape is the one [`Cancel`](crate::Cancel) sets: a shared cell, one
 //! producer on the thread that draws, the consumer on the thread the turn runs
 //! on.
+//!
+//! Poisoning is not one of the ways a line is lost. A panic in some other task
+//! says nothing about this queue — nothing here can leave it half-changed — and
+//! answering one by throwing away what the reader had already typed would make
+//! the reader pay for it.
 
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 /// A shared "here is more, while you are at it" queue.
 ///
@@ -33,15 +38,11 @@ pub struct Steer(Arc<Mutex<Waiting>>);
 /// `Event::Steered` redacts the same words on their way out.
 impl std::fmt::Debug for Steer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let (lines, held) = self
-            .0
-            .lock()
-            .map(|waiting| (waiting.lines.len(), waiting.held))
-            .unwrap_or_default();
+        let waiting = self.waiting();
 
         f.debug_struct("Steer")
-            .field("lines", &format_args!("{lines} redacted"))
-            .field("held", &held)
+            .field("lines", &format_args!("{} redacted", waiting.lines.len()))
+            .field("held", &waiting.held)
             .finish()
     }
 }
@@ -72,12 +73,8 @@ impl Steer {
     /// trimming and the empty case are the caller's, which is the editor that
     /// already decided the line was finished.
     ///
-    /// A poisoned lock is not a reason to lose the line: the other side is gone
-    /// and the turn it was steering is over, so the push is simply not seen.
     pub fn say(&self, line: String) {
-        if let Ok(mut waiting) = self.0.lock() {
-            waiting.lines.push_back(line);
-        }
+        self.waiting().lines.push_back(line);
     }
 
     /// Holds every line where it is, until [`Steer::release`].
@@ -91,9 +88,7 @@ impl Steer {
     /// [`Steer::take`] the way an empty one does, which is what the exchange
     /// loop already meets at almost every pass.
     pub fn hold(&self) {
-        if let Ok(mut waiting) = self.0.lock() {
-            waiting.held = true;
-        }
+        self.waiting().held = true;
     }
 
     /// Lets the turn have them again, at its next pass boundary.
@@ -102,9 +97,7 @@ impl Steer {
     /// not, because that is what the queue was for: a burst typed and then gone
     /// over is still one course-correction.
     pub fn release(&self) {
-        if let Ok(mut waiting) = self.0.lock() {
-            waiting.held = false;
-        }
+        self.waiting().held = false;
     }
 
     /// Drops the oldest line that says `line`, and answers whether there was
@@ -119,9 +112,7 @@ impl Steer {
     /// reason the panel's own drop is: the two are not indexed alike once a
     /// turn has taken from the front of this one.
     pub fn forget(&self, line: &str) -> bool {
-        let Ok(mut waiting) = self.0.lock() else {
-            return false;
-        };
+        let mut waiting = self.waiting();
 
         let Some(at) = waiting.lines.iter().position(|said| said == line) else {
             return false;
@@ -132,15 +123,12 @@ impl Steer {
 
     /// Whether a line is waiting to be worked in, and may be.
     ///
-    /// Cheap and lock-light, so the exchange loop can ask it every pass without
-    /// taking the lock when the answer is no — which is almost every pass. A
-    /// held queue answers no however many lines are in it: they are the
+    /// A held queue answers no however many lines are in it: they are the
     /// reader's until they say otherwise.
     #[must_use]
     pub fn any(&self) -> bool {
-        self.0
-            .lock()
-            .is_ok_and(|waiting| !waiting.held && !waiting.lines.is_empty())
+        let waiting = self.waiting();
+        !waiting.held && !waiting.lines.is_empty()
     }
 
     /// Takes every line waiting, oldest first.
@@ -153,18 +141,18 @@ impl Steer {
     /// Nothing while the queue is held: see [`Steer::hold`]. That is the same
     /// answer an empty queue gives, so a turn meeting it is a turn carrying on.
     ///
-    /// A poisoned lock yields nothing, for the reason [`Steer::say`] drops one.
     pub fn take(&self) -> Vec<String> {
-        self.0
-            .lock()
-            .map(|mut waiting| {
-                if waiting.held {
-                    Vec::new()
-                } else {
-                    waiting.lines.drain(..).collect()
-                }
-            })
-            .unwrap_or_default()
+        let mut waiting = self.waiting();
+        if waiting.held {
+            return Vec::new();
+        }
+
+        waiting.lines.drain(..).collect()
+    }
+
+    /// The queue, whether or not a thread came apart while holding it.
+    fn waiting(&self) -> MutexGuard<'_, Waiting> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -182,6 +170,32 @@ mod tests {
         let shown = format!("{steer:?}");
         assert!(!shown.contains("steer-debug-canary"), "{shown}");
         assert!(shown.contains("redacted"), "{shown}");
+    }
+
+    #[test]
+    fn a_task_coming_apart_does_not_take_what_the_reader_typed() {
+        let steer = Steer::new();
+        steer.say("and check the tests".to_owned());
+
+        let poisoner = steer.clone();
+        let came_apart = std::thread::spawn(move || {
+            let _held = poisoner.0.lock().unwrap();
+            panic!("a thread came apart holding the lock");
+        })
+        .join();
+        assert!(came_apart.is_err(), "the thread was supposed to panic");
+
+        steer.say("and the changelog".to_owned());
+
+        assert!(steer.any());
+        assert_eq!(
+            steer.take(),
+            vec![
+                "and check the tests".to_owned(),
+                "and the changelog".to_owned()
+            ],
+            "a panic elsewhere threw away what the reader had already typed"
+        );
     }
 
     #[test]
