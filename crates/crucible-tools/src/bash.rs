@@ -217,9 +217,8 @@ pub struct Bash {
     /// Host-owned process boundary. A tool can request one lifecycle but never
     /// receives backend mechanics or a direct-spawn escape hatch.
     ///
-    /// Supplied at construction by the composition root. This tool names no
-    /// implementation and has nothing to fall back to, so a `Bash` that could
-    /// not run a command is not a value this type can hold.
+    /// Supplied at construction by the composition root, because this tool
+    /// names no implementation and has nothing to fall back to.
     sandbox: Arc<dyn SandboxService>,
     /// Resolved once with the workspace. `Err` is retained so an unusually
     /// long host path fails before spawn without making construction panic.

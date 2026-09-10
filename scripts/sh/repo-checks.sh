@@ -622,12 +622,15 @@ done
 # distinction would quietly disappear. Every such table counts, not only
 # `[dependencies]`: a build script that pulls a backend in ships it too.
 # Exit 0 when a shipped edge is present, 1 when it is absent, 2 when the
-# manifest could not be read at all. Separating the third answer from the second
-# is the point: a manifest that has been renamed away used to leave the caller
-# unable to tell a failure to read from a clean layering, and it printed the
-# reassuring one.
+# manifest could not be read at all. The third answer is separate because a
+# check that cannot tell "no edge" from "never looked" reports the reassuring
+# one, and a manifest renamed away would read as a clean layering.
 shipped_sandbox_local_edge() {
-    [[ -r "$1" ]] || return 2
+    # `-r` alone admits a directory, which awk skips while exiting 0, so the
+    # function would answer "no edge" for something it never read. `-f` is too
+    # narrow the other way: the controls below hand this a process substitution,
+    # which is a pipe.
+    [[ -r "$1" && ! -d "$1" ]] || return 2
     awk '
         /^[[:space:]]*\[/ {
             header = $0
@@ -643,17 +646,28 @@ shipped_sandbox_local_edge() {
                 && header !~ /^workspace\./)
             # A sub-table can name the crate in the header instead of a key.
             if (shipped && header ~ /\.crucible-sandbox-local$/) { found = 1 }
+            seen = 1
             next
         }
         # A whole-line comment is prose about the manifest, not the manifest.
         /^[[:space:]]*#/ { next }
+        # Before the first header a dotted key spells the whole path itself, so
+        # `dependencies.backend.package = "..."` declares a shipped edge with no
+        # table to belong to. Strip the prefix and ask the same two questions.
+        seen == 0 && /^[[:space:]]*(build-)?dependencies\./ {
+            rest = $0
+            sub(/^[[:space:]]*(build-)?dependencies\./, "", rest)
+            if (rest ~ /^[\047"]?crucible-sandbox-local[\047"]?[[:space:].=]/) { found = 1 }
+            if (rest ~ /(^|[[:space:],{.])[\047"]?package[\047"]?[[:space:]]*=[[:space:]]*[\047"]crucible-sandbox-local[\047"]/) { found = 1 }
+            next
+        }
         shipped && /^[[:space:]]*[\047"]?crucible-sandbox-local[\047"]?[[:space:].=]/ { found = 1 }
         # A renamed dependency spells the crate in `package`, under a key that
         # can be anything at all, so the key is no use for finding it. That
         # holds whether the rename is inline, dotted, or a sub-table of its own,
         # which is why this is asked of every shipped dependency table, and why
         # a dot counts as a boundary before `package`.
-        shipped && /(^|[[:space:],{.])package[[:space:]]*=[[:space:]]*[\047"]crucible-sandbox-local[\047"]/ { found = 1 }
+        shipped && /(^|[[:space:],{.])[\047"]?package[\047"]?[[:space:]]*=[[:space:]]*[\047"]crucible-sandbox-local[\047"]/ { found = 1 }
         END { exit found ? 0 : 1 }
     ' "$1"
 }
@@ -689,6 +703,36 @@ fi
 if ! shipped_sandbox_local_edge \
     <(printf '[dependencies]\nbackend.package = "crucible-sandbox-local"\n'); then
     printf '    FAIL the shipped-edge parser did not read a rename spelled as a dotted key\n'
+    failed=1
+fi
+if ! shipped_sandbox_local_edge \
+    <(printf '[dependencies."crucible-sandbox-local"]\nworkspace = true\n'); then
+    printf '    FAIL the shipped-edge parser did not read a quoted sub-table header\n'
+    failed=1
+fi
+if ! shipped_sandbox_local_edge \
+    <(printf "[dependencies]\n'crucible-sandbox-local'.workspace = true\n"); then
+    printf '    FAIL the shipped-edge parser did not read a quoted dependency key\n'
+    failed=1
+fi
+if ! shipped_sandbox_local_edge \
+    <(printf 'dependencies.crucible-sandbox-local.workspace = true\n'); then
+    printf '    FAIL the shipped-edge parser did not read a top-level dotted key\n'
+    failed=1
+fi
+if ! shipped_sandbox_local_edge \
+    <(printf 'dependencies.backend.package = "crucible-sandbox-local"\n'); then
+    printf '    FAIL the shipped-edge parser did not read a top-level dotted rename\n'
+    failed=1
+fi
+if shipped_sandbox_local_edge \
+    <(printf 'dev-dependencies.crucible-sandbox-local.workspace = true\n'); then
+    printf '    FAIL the shipped-edge parser read a top-level dotted dev-dependency as shipped\n'
+    failed=1
+fi
+shipped_sandbox_local_edge crates
+if (($? != 2)); then
+    printf '    FAIL the shipped-edge parser read a directory as an answer\n'
     failed=1
 fi
 if shipped_sandbox_local_edge \
