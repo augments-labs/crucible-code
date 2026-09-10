@@ -216,6 +216,25 @@ mod tests {
     }
 
     #[test]
+    fn a_long_line_evicts_as_many_old_ones_as_the_byte_ceiling_costs() {
+        // Room for ten lines, six bytes of them, and six lines of one byte
+        // waiting: one eviction is not enough to make room for four bytes.
+        let progress = Progress::new(10, 6);
+        for line in ["a", "b", "c", "d", "e", "f"] {
+            progress.say(line.into());
+        }
+        progress.say("aaaa".into());
+
+        let told = progress.take();
+        let held: usize = told.lines.iter().map(String::len).sum();
+        assert!(
+            held <= 6,
+            "the byte ceiling was breached: {held} bytes in {:?}",
+            told.lines
+        );
+    }
+
+    #[test]
     fn the_byte_ceiling_binds_before_the_line_count_does() {
         // Room for ten lines, but only for six bytes of them.
         let progress = Progress::new(10, 6);

@@ -384,6 +384,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_group_admits_again_without_being_asked_what_it_holds() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let done = Arc::new(AtomicBool::new(false));
+        let said = Arc::clone(&done);
+        let mut group = Group::new(1, &Cancel::new());
+
+        assert!(
+            group
+                .spawn(async move {
+                    said.store(true, Ordering::Release);
+                    "first"
+                })
+                .is_ok()
+        );
+
+        // The task's own flag, never the group: asking the group whether it is
+        // empty reaps for it, which is the very thing this is here to make the
+        // next `spawn` do for itself.
+        for _ in 0..TURNS {
+            if done.load(Ordering::Acquire) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        tokio::task::yield_now().await;
+
+        assert!(
+            group.spawn(async { "second" }).is_ok(),
+            "the group refused on a count nobody had looked at since"
+        );
+    }
+
+    #[tokio::test]
     async fn a_group_admits_again_once_a_task_has_finished() {
         let mut group = Group::new(1, &Cancel::new());
 
@@ -734,9 +768,25 @@ mod tests {
     fn a_grace_the_clock_cannot_name_becomes_one_it_can() {
         let now = tokio::time::Instant::now();
 
+        // The distance, not the ordering: `deadline_in` samples its own `now`
+        // after this one, so any answer at all is later than this `now` and an
+        // ordering assertion would hold for a function that gave up entirely.
         assert!(
-            super::deadline_in(std::time::Duration::MAX) > now,
+            super::deadline_in(std::time::Duration::MAX).saturating_duration_since(now)
+                > std::time::Duration::from_secs(60 * 60 * 24 * 365),
             "a grace too large to add to the clock became no grace at all"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_grace_the_clock_cannot_name_still_lets_a_task_return() {
+        let mut group = Group::new(1, &Cancel::new());
+
+        assert!(group.spawn(cooperative(group.cancel().clone())).is_ok());
+        assert_eq!(
+            group.shutdown(std::time::Duration::MAX).await,
+            vec![Ended::Done("noticed")],
+            "a grace too large to name left no time for a task to return in"
         );
     }
 
