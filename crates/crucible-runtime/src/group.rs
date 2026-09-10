@@ -709,8 +709,14 @@ mod tests {
             vec![Ended::Abandoned],
             "a task nothing can stop was reported as though it had ended"
         );
+        // Measured against the task's own duration rather than a multiple of
+        // the grace. One of the two workers is inside the blocking sleep, so
+        // the two deadlines and the timer that fires them all share the other
+        // one, and how long that scheduling takes is a fact about the machine
+        // rather than about this code. What is not is whether the shutdown
+        // outlived the task it could not stop, and that is the whole claim.
         assert!(
-            took < BRIEF * 8,
+            took < BLOCKED_FOR,
             "the shutdown waited for a task no abort can reach: {took:?}"
         );
     }
