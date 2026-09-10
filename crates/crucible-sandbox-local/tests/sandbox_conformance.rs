@@ -27,7 +27,8 @@ use crucible_sandbox_local::conformance::{Conformance, SandboxClaim};
 /// cannot be imported; `src/sample.rs` holds the spelling this crate's own
 /// modules import, and `src/conformance/tests.rs` pins that one. Nothing pins
 /// the spelling below, so renaming the variable has to reach this file too —
-/// a stale name here is never set, and the suite quietly skips.
+/// a stale name here is never set, so on a host with no backend this test
+/// passes where the job needed it to fail.
 const REQUIRE_ENFORCING_SANDBOX: &str = "CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX";
 
 /// A directory the caller owns, which is all the suite asks for.
