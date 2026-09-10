@@ -10,9 +10,8 @@ repository.workspace = true
 authors.workspace = true
 
 # `crucible-types` supplies `Modality`, which is what a kind says a file is to
-# the request being built. `crucible-workspace` is the one ingress a path a
-# model reached comes through; naming it here is what stops a caller from
-# assembling the same read out of a path string.
+# the request being built. `crucible-workspace` supplies the proof a path a
+# model reached carries, which is what the walking half of the read descends.
 #
 # `sha2` derives the digest an attachment is identified by after it is read, so
 # a file that changed between being attached and being sent is refused by the

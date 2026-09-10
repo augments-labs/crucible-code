@@ -512,10 +512,9 @@ fi
 # the compatibility facade and go away with the crate that holds them; every
 # other crate still reaches the domain through one name.
 #
-# The exception is `attachments`, which four crates name outright. Its point is
-# that there is exactly one way a file becomes bytes a request may carry, and
-# the two types that read is made of are withheld from the facade — so a caller
-# that wants one takes the edge, and the edge shows up here.
+# The exception is `attachments`, which three crates name past the facade. The
+# two types a file's bytes are read through are withheld from the facade, so a
+# caller that wants one takes the edge, and the edge shows up here.
 allowed='code attachments
 code auth
 code config

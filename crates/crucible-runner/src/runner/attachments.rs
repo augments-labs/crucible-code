@@ -88,7 +88,7 @@ fn read(attachment: &Attachment, spent: &mut usize, carries: Modalities) -> Carr
     // the ceiling is what one file may be however little of the request is
     // spent, so a file that has grown past it since it was attached is refused
     // without its bytes arriving here first. A pipe standing where the file
-    // stood is refused by the same open rather than waited on.
+    // stood is refused by that same open rather than read from.
     let taken = match Opened::named(Path::new(attachment.path.as_ref())).and_then(Opened::taken) {
         Ok(taken) => taken,
         // The line a grown file already got, now reached without reading it.

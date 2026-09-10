@@ -93,15 +93,20 @@ pub enum AttachmentError {
     /// no `From` conversion, so a later `?` on a `PathError` cannot quietly
     /// route [`PathError::NotFile`] back here after `reached` has sorted it
     /// into [`AttachmentError::NotFile`].
+    ///
+    /// `#[source]` is not `#[from]`: what it keeps is the refusal underneath
+    /// reachable, which is the rest of this enum's habit, without minting the
+    /// conversion the paragraph above is about.
     #[error("{0}")]
-    Unreached(PathError),
+    Unreached(#[source] PathError),
 }
 
 /// Opens a file whose path did not come from the workspace, for its bytes.
 ///
 /// What it answers is the pair that a name cannot: a pipe or a device standing
-/// where a file stood is refused on the opened descriptor rather than waited
-/// on, so the read never blocks on a writer who is not coming.
+/// where a file stood is refused on the opened descriptor rather than trusted
+/// by name. On Unix the open itself is non-blocking, so reaching that refusal
+/// does not wait on a writer who is not coming.
 ///
 /// # Errors
 ///
@@ -111,9 +116,9 @@ fn opened(path: &Path) -> Result<File, AttachmentError> {
     let mut options = File::options();
     options.read(true);
 
-    // Opening a pipe for reading blocks until somebody writes. Asking for a
-    // descriptor without waiting is the only way to be told what this is, and
-    // the check below is what then refuses it.
+    // Opening a pipe for reading blocks until somebody writes, so on Unix the
+    // descriptor is asked for without waiting; the check below is what then
+    // refuses it. Other platforms reach the same refusal, having waited.
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt as _;
@@ -496,9 +501,12 @@ mod tests {
         drop(file);
 
         let mut file = opened(&at).expect("a regular file opens");
-        let refused = carried(&mut file).expect_err("over the ceiling");
+        // Matched rather than unwrapped: an `expect_err` here formats the four
+        // megabytes it was handed when this regresses, and a failure nobody can
+        // read is a failure nobody acts on.
+        let refused = carried(&mut file);
 
-        assert!(matches!(refused, AttachmentError::TooLarge), "{refused}");
+        assert!(matches!(refused, Err(AttachmentError::TooLarge)));
         // What the size check buys, made observable. `carried` never seeks, so
         // an untouched offset is proof the refusal came from asking the
         // descriptor rather than from reading the file and measuring after.
@@ -520,9 +528,9 @@ mod tests {
         // which is the point: this is about the guard behind that refusal.
         let mut file = File::open("/dev/zero").expect("every unix has one");
 
-        let refused = carried(&mut file).expect_err("more than the ceiling arrived");
+        let refused = carried(&mut file);
 
-        assert!(matches!(refused, AttachmentError::TooLarge), "{refused}");
+        assert!(matches!(refused, Err(AttachmentError::TooLarge)));
     }
 
     #[test]
@@ -549,6 +557,24 @@ mod tests {
                 0x2d, 0x20, 0xda, 0xb6
             ]
         );
+    }
+
+    #[test]
+    fn a_file_of_exactly_the_ceiling_is_carried_whole() {
+        // The largest file the ceiling promises, which is the value both guards
+        // are written against. Without this, either `>` may become `>=` and
+        // nothing goes red: the file below is 64 bytes, and every other case is
+        // far enough from the edge to survive the wrong comparison.
+        let base = base("edge");
+        let at = base.join("exact.png");
+        let file = File::create(&at).expect("a writable temporary directory");
+        file.set_len(CEILING as u64).expect("a sparse file");
+        drop(file);
+
+        let mut file = opened(&at).expect("a regular file opens");
+        let bytes = carried(&mut file).expect("the ceiling is a file that fits");
+
+        assert_eq!(bytes.len(), CEILING);
     }
 
     #[test]

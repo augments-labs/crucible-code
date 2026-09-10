@@ -24,14 +24,14 @@
 //! happens to a path that is inside is a permission question rather than a
 //! path one.
 //!
-//! Nothing here names another crucible crate. Text a caller holds becomes a
-//! contained proof through [`Workspace::existing`] and
-//! [`Workspace::creatable`], and nowhere else; both refuse a path that resolves
-//! outside. Two neighbours of theirs deliberately answer something else.
-//! [`Workspace::intended`] hands back a plain `PathBuf`, because the permission
-//! engine describes a call rather than makes one. [`Workspace::outside`] takes
-//! a path a person typed that crucible was not pointed at, where there is no
-//! containment to answer.
+//! Nothing here names another crucible crate. [`Workspace::existing`] and
+//! [`Workspace::creatable`] are the two that turn text a caller holds into a
+//! contained proof; both refuse a path that resolves outside. Two neighbours of
+//! theirs deliberately answer something else. [`Workspace::intended`] hands back
+//! a plain `PathBuf`, because the permission engine describes a call rather than
+//! makes one. [`Workspace::outside`] is the external operator's route: a path a
+//! person typed that crucible was not pointed at, proved against its own parent
+//! when it really is outside and against the root when it turns out not to be.
 //!
 //! ```
 //! use crucible_workspace::Workspace;
@@ -101,9 +101,10 @@ impl Workspace {
 
     /// Widens the workspace to reach directories outside the root.
     ///
-    /// Called once, by the wiring, with what configuration said. It is not a
-    /// capability the running agent can grant itself: a widened workspace is
-    /// built before the first turn and never after one.
+    /// Called by the wiring, with what configuration or the person at the
+    /// terminal said, before the turn that will use it. Taking `self` is what
+    /// makes a widening visible at the call: the caller has to hand its
+    /// workspace over and keep what comes back.
     ///
     /// # Errors
     ///

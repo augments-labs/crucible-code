@@ -665,7 +665,7 @@ impl Read {
         // path below opens that way: a last component replaced since the path
         // was resolved is refused by the open rather than followed, and what a
         // pipe is standing there is answered from the descriptor instead of
-        // waited on. The size comes from that same descriptor, so a file too
+        // read from. The size comes from that same descriptor, so a file too
         // large to carry is never read into this process to find that out.
         //
         // Anything this cannot open falls through to the text path, which has
