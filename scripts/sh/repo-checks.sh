@@ -480,10 +480,16 @@ if [[ -z "$edges" ]]; then
     failed=1
 fi
 
-# `core` names the four crates its old names now come from. Those four edges are
+# `core` names the six crates its old names now come from. Those six edges are
 # the compatibility facade and go away with the crate that holds them; every
 # other crate still reaches the domain through one name.
-allowed='code auth
+#
+# The exception is `attachments`, which four crates name outright. Its point is
+# that there is exactly one way a file becomes bytes a request may carry, and a
+# caller reaching it through a facade would be free to assemble the same read
+# out of the parts instead.
+allowed='code attachments
+code auth
 code config
 code core
 code extension
@@ -495,22 +501,28 @@ code session
 code tools
 code sandbox-broker
 code tui
+attachments types
+attachments workspace
 auth core
 auth privacy
 config core
+core attachments
 core credentials
 core registry
 core storage
 core types
+core workspace
 credentials types
 extension core
 mcp core
 provider core
+runner attachments
 runner core
 runner session
 session core
 session privacy
 storage types
+tools attachments
 tools core
 tools privacy
 tools sandbox-broker'
@@ -521,7 +533,7 @@ while IFS= read -r edge; do
         failed=1
     fi
 done <<<"$edges"
-for crate in privacy registry sandbox-broker tui types; do
+for crate in privacy registry sandbox-broker tui types workspace; do
     if grep -qE "^$crate " <<<"$edges"; then
         printf '    FAIL crucible-%s must not depend on another workspace crate\n' "$crate"
         failed=1

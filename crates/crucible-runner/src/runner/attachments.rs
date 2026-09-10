@@ -20,11 +20,8 @@
 
 use std::path::Path;
 
-use sha2::{Digest as _, Sha256};
-
-use crucible_core::{
-    Attached, Attachment, AttachmentError, CEILING, Content, Modalities, Modality, Transcript,
-};
+use crucible_attachments::{AttachmentError, CEILING, Opened};
+use crucible_core::{Attached, Attachment, Content, Modalities, Modality, Transcript};
 
 /// One request's worth of attachments, owned until the request returns.
 pub(crate) struct Resolved(Vec<Held>);
@@ -84,15 +81,15 @@ fn read(attachment: &Attachment, spent: &mut usize, carries: Modalities) -> Carr
         return unread(attachment);
     }
 
-    // Opened before it is read, and bounded from that descriptor: the ceiling
-    // is what one file may be however little of the request is spent, so a file
-    // that has grown past it since it was attached is refused without its bytes
-    // arriving here first. A pipe standing where the file stood is refused by
-    // the same open rather than waited on.
-    let bytes = match crucible_core::opened(Path::new(attachment.path.as_ref()))
-        .and_then(|mut file| crucible_core::carried(&mut file))
-    {
-        Ok(bytes) => bytes,
+    // The path was resolved and recorded when the file was attached, so it is
+    // named rather than reached: this is the same authority the person who
+    // attached it had, replayed. Opened before it is read and bounded from that
+    // descriptor: the ceiling is what one file may be however little of the
+    // request is spent, so a file that has grown past it since it was attached
+    // is refused without its bytes arriving here first. A pipe standing where
+    // the file stood is refused by the same open rather than waited on.
+    let taken = match Opened::named(Path::new(attachment.path.as_ref())).and_then(Opened::taken) {
+        Ok(taken) => taken,
         // The line a grown file already got, now reached without reading it.
         // Every hash recorded was taken over at most the ceiling, so a file
         // larger than the ceiling cannot be the file that was attached — the
@@ -102,18 +99,23 @@ fn read(attachment: &Attachment, spent: &mut usize, carries: Modalities) -> Carr
         Err(AttachmentError::TooLarge) => {
             return instead(attachment, "because it changed after it was attached");
         }
-        Err(AttachmentError::NotFile | AttachmentError::Unread(_)) => {
+        // `Unreached` cannot arrive from a named path — it is the workspace
+        // walk's refusal — but it is answered rather than ignored, so a route
+        // added here later has to say what it means.
+        Err(
+            AttachmentError::NotFile | AttachmentError::Unread(_) | AttachmentError::Unreached(_),
+        ) => {
             return instead(attachment, "because it could not be read");
         }
     };
-    if <[u8; 32]>::from(Sha256::digest(&bytes)) != attachment.hash {
+    if taken.hash() != attachment.hash {
         return instead(attachment, "because it changed after it was attached");
     }
-    if bytes.len() > CEILING.saturating_sub(*spent) {
+    if taken.bytes().len() > CEILING.saturating_sub(*spent) {
         return instead(attachment, "to keep the request within its size limit");
     }
-    *spent = spent.saturating_add(bytes.len());
-    Carried::Bytes(bytes)
+    *spent = spent.saturating_add(taken.bytes().len());
+    Carried::Bytes(taken.into_bytes())
 }
 
 /// One line, in place of one file.

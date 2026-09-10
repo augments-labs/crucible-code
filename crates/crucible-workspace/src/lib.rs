@@ -23,6 +23,22 @@
 //! difference to anything downstream: reach is settled here, once, and what
 //! happens to a path that is inside is a permission question rather than a
 //! path one.
+//!
+//! Nothing here names another crucible crate, and nothing here can be built
+//! from a string. A caller holding text has exactly the entry points below, and
+//! each of them either returns a proof or an error:
+//!
+//! ```
+//! use crucible_workspace::Workspace;
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let workspace = Workspace::open(std::env::temp_dir())?;
+//!
+//! // The only constructor of the proof is a resolution that was contained.
+//! assert!(workspace.existing("../etc/passwd").is_err());
+//! # Ok(())
+//! # }
+//! ```
 
 use std::path::Path;
 

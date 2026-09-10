@@ -28,7 +28,13 @@ impl Workspace {
     /// The ancestor that does exist is still canonicalised and contained; only
     /// the ordinary names below it are appended. A `..` among the missing
     /// components therefore resolves nothing rather than being guessed at.
-    pub(crate) fn intended(&self, requested: &str) -> Option<PathBuf> {
+    ///
+    /// What comes back is a plain [`PathBuf`], never a [`WorkspacePath`]. The
+    /// permission engine that calls this lives in another crate and needs the
+    /// name to describe the call it is settling; handing it a proof instead
+    /// would let a question about a path become the authority to open one.
+    #[must_use]
+    pub fn intended(&self, requested: &str) -> Option<PathBuf> {
         if Path::new(requested)
             .components()
             .any(|part| matches!(part, Component::ParentDir))

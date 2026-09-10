@@ -3,12 +3,12 @@
 use std::io::{self, BufRead, BufReader, ErrorKind, Read as _};
 use std::sync::LazyLock;
 
+use crucible_attachments::{AttachmentError, Kind, Opened, kind};
 use crucible_core::{
-    Approved, Attachment, Cancel, DescribeTool, Kind, Looking, Modality, Remembered, Sensitivity,
+    Approved, Attachment, Cancel, DescribeTool, Looking, Modality, Remembered, Sensitivity,
     Summary, Tool, ToolArgs, ToolContext, ToolEffect, ToolError, ToolOutput, Workspace,
-    WorkspacePath, kind, written,
+    WorkspacePath, written,
 };
-use sha2::{Digest as _, Sha256};
 
 use crate::args::Args;
 use crate::bound::OUTPUT;
@@ -667,26 +667,26 @@ impl Read {
         // pipe is standing there is answered from the descriptor instead of
         // waited on. Anything this cannot open falls through to the text path,
         // which has the sentence for it.
-        let mut file = path.open_regular().ok()?;
-
         // The size comes from that descriptor, so a file too large to carry is
         // never read into this process to find that out.
-        let bytes = match crucible_core::carried(&mut file) {
-            Ok(bytes) => bytes,
-            Err(crucible_core::AttachmentError::TooLarge) => {
+        let taken = match Opened::reached(path).and_then(Opened::taken) {
+            Ok(taken) => taken,
+            Err(AttachmentError::TooLarge) => {
                 return Some(ToolOutput::failed(format!(
                     "{requested} is larger than the {} MB a request may carry, so it is not \
                      attached. A smaller copy of it would be.",
-                    crucible_core::CEILING / (1024 * 1024),
+                    crucible_attachments::CEILING / (1024 * 1024),
                 )));
             }
             Err(
-                crucible_core::AttachmentError::NotFile | crucible_core::AttachmentError::Unread(_),
+                AttachmentError::NotFile
+                | AttachmentError::Unread(_)
+                | AttachmentError::Unreached(_),
             ) => {
                 return None;
             }
         };
-        if !(kind.confirms)(&bytes) {
+        if !taken.is(kind) {
             return None;
         }
 
@@ -704,7 +704,7 @@ impl Read {
                     path: written(path.as_path()).into_boxed_str(),
                     modality: kind.modality,
                     media_type: kind.media_type.into(),
-                    hash: <[u8; 32]>::from(Sha256::digest(&bytes)),
+                    hash: taken.hash(),
                 }],
             ),
         )

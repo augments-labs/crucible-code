@@ -11,12 +11,40 @@
 //! What this does *not* decide is whether the request being built can carry the
 //! kind it names. That is the model's half and the provider's, settled per
 //! request, and it is not a property of the file.
+//!
+//! There is one way in, in two halves. [`Opened`] is the descriptor — reached
+//! through the workspace where a model chose the path, named directly where an
+//! external operator typed one — and [`Taken`] is what a bounded read of it
+//! came to, bytes and the digest that identifies them together. The halves stay
+//! apart because a caller may have cheap reasons to refuse a file after it is
+//! standing at the descriptor and before its bytes are worth reading; they are
+//! one pipeline because a second spelling of read-then-digest is a second answer
+//! to "is this the file that was attached":
+//!
+//! ```
+//! use crucible_attachments::{Opened, kind};
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let at = std::env::temp_dir().join("crucible-attachments-doc.png");
+//! std::fs::write(&at, [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a])?;
+//!
+//! let named = kind("shot.png").expect("png is attachable");
+//! let taken = Opened::named(&at)?.taken()?;
+//!
+//! assert!(taken.is(named));
+//! assert_eq!(taken.bytes().len(), 8);
+//! # std::fs::remove_file(&at)?;
+//! # Ok(())
+//! # }
+//! ```
 
 use std::fs::File;
 use std::io::{self, Read as _};
 use std::path::Path;
 
-use crate::Modality;
+use crucible_types::Modality;
+use crucible_workspace::{PathError, WorkspacePath};
+use sha2::{Digest as _, Sha256};
 
 /// The most raw attachment bytes one request may carry.
 ///
@@ -40,7 +68,7 @@ use crate::Modality;
 ///
 /// A single file larger than this can never be carried whatever else a request
 /// holds, which is what lets a caller refuse one before it has read the bytes.
-/// [`carried`] is where that refusal is made, from the descriptor.
+/// [`Opened::taken`] is where that refusal is made, from the descriptor.
 pub const CEILING: usize = 4 * 1024 * 1024;
 
 /// Why a named file did not become attachable bytes.
@@ -56,28 +84,28 @@ pub enum AttachmentError {
     /// The open or the read did not finish.
     #[error("could not be read: {0}")]
     Unread(#[from] io::Error),
+    /// The workspace refused the path before anything was opened.
+    ///
+    /// Only [`Opened::reached`] can produce this: a path the workspace proved
+    /// can still be swapped under the descriptor walk, and what that walk
+    /// refuses is a path question rather than an attachment one. It is carried
+    /// rather than flattened so a caller can tell "the tree moved" from "the
+    /// file is not attachable".
+    #[error("{0}")]
+    Unreached(#[from] PathError),
 }
 
 /// Opens a file whose path did not come from the workspace, for its bytes.
 ///
-/// The two callers are the prompt, where a person typed an absolute path, and
-/// a request going out, where the path was resolved and recorded earlier. A
-/// path a model can reach goes through [`WorkspacePath::open_regular`] instead,
-/// which walks the tree by descriptor and answers containment as well; these
-/// two have no containment question to answer, and mixing them would give one
-/// ingress the other's authority.
-///
-/// What it does answer is the pair that a name cannot: a pipe or a device
-/// standing where a file stood is refused on the opened descriptor rather than
-/// waited on, so the read never blocks on a writer who is not coming.
-///
-/// [`WorkspacePath::open_regular`]: crate::WorkspacePath::open_regular
+/// What it answers is the pair that a name cannot: a pipe or a device standing
+/// where a file stood is refused on the opened descriptor rather than waited
+/// on, so the read never blocks on a writer who is not coming.
 ///
 /// # Errors
 ///
 /// [`AttachmentError::NotFile`] where what opened is not a regular file, and
 /// [`AttachmentError::Unread`] where the open itself failed.
-pub fn opened(path: &Path) -> Result<File, AttachmentError> {
+fn opened(path: &Path) -> Result<File, AttachmentError> {
     let mut options = File::options();
     options.read(true);
 
@@ -109,7 +137,7 @@ pub fn opened(path: &Path) -> Result<File, AttachmentError> {
 ///
 /// [`AttachmentError::TooLarge`] where the file is over the ceiling at either
 /// question, and [`AttachmentError::Unread`] where the read did not finish.
-pub fn carried(file: &mut File) -> Result<Vec<u8>, AttachmentError> {
+fn carried(file: &mut File) -> Result<Vec<u8>, AttachmentError> {
     let size = file.metadata()?.len();
     if size > CEILING as u64 {
         return Err(AttachmentError::TooLarge);
@@ -125,6 +153,93 @@ pub fn carried(file: &mut File) -> Result<Vec<u8>, AttachmentError> {
         return Err(AttachmentError::TooLarge);
     }
     Ok(bytes)
+}
+
+/// A descriptor standing at a file that is going to be attached.
+///
+/// Which constructor made it is the whole of the authority question. A path a
+/// model reached is opened by walking the tree the workspace proved, one
+/// component at a time against descriptors already held; a path an external
+/// operator typed has no containment to answer and is opened by name. Mixing
+/// the two would hand one ingress the other's authority, which is why there is
+/// no way to build this from a `File` a caller opened itself.
+#[derive(Debug)]
+pub struct Opened(File);
+
+impl Opened {
+    /// Opens a path the workspace proved, through the descriptor walk.
+    ///
+    /// # Errors
+    ///
+    /// [`AttachmentError::Unreached`] where the walk refused the path — most
+    /// often because something replaced a component of it since it was proved.
+    pub fn reached(path: &WorkspacePath) -> Result<Self, AttachmentError> {
+        Ok(Self(path.open_regular()?))
+    }
+
+    /// Opens a path an external operator named in full.
+    ///
+    /// # Errors
+    ///
+    /// [`AttachmentError::NotFile`] where what opened is not a regular file,
+    /// and [`AttachmentError::Unread`] where the open itself failed.
+    pub fn named(path: &Path) -> Result<Self, AttachmentError> {
+        Ok(Self(opened(path)?))
+    }
+
+    /// The bytes, bounded by [`CEILING`], and the digest that identifies them.
+    ///
+    /// # Errors
+    ///
+    /// [`AttachmentError::TooLarge`] where the file is over the ceiling at
+    /// either question, and [`AttachmentError::Unread`] where the read did not
+    /// finish.
+    pub fn taken(mut self) -> Result<Taken, AttachmentError> {
+        let bytes = carried(&mut self.0)?;
+        let hash = <[u8; 32]>::from(Sha256::digest(&bytes));
+        Ok(Taken { bytes, hash })
+    }
+}
+
+/// One file's bytes, and the digest they are identified by.
+///
+/// The two travel together because every caller that holds the bytes also has
+/// to answer whether they are still the file that was attached, and a digest
+/// taken somewhere else is a second answer to that question. Nothing here can
+/// be built from bytes a caller already had: the digest is over what
+/// [`Opened::taken`] read, and the ceiling had already been applied to it.
+#[derive(Debug)]
+pub struct Taken {
+    bytes: Vec<u8>,
+    hash: [u8; 32],
+}
+
+impl Taken {
+    /// What was read.
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// The digest of what was read.
+    #[must_use]
+    pub fn hash(&self) -> [u8; 32] {
+        self.hash
+    }
+
+    /// Whether the bytes are what a kind says they should be.
+    ///
+    /// The name said what somebody meant; this says whether the file agrees.
+    #[must_use]
+    pub fn is(&self, kind: &Kind) -> bool {
+        (kind.confirms)(&self.bytes)
+    }
+
+    /// The bytes alone, for a caller handing them on.
+    #[must_use]
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
 }
 
 /// The kind a path's extension names, where it names one this build attaches.
@@ -318,6 +433,41 @@ mod tests {
         let refused = carried(&mut file).expect_err("over the ceiling");
 
         assert!(matches!(refused, AttachmentError::TooLarge), "{refused}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_descriptor_yielding_more_than_it_said_it_held_is_refused() {
+        // The growth case, made deterministic. A file that grows between the
+        // two questions is a race no test can schedule; a character device is
+        // the same shape standing still — it reports no size and then yields
+        // bytes without end, so it reaches the second check exactly as a grown
+        // file does. Opened directly because `Opened::named` refuses a device,
+        // which is the point: this is about the guard behind that refusal.
+        let mut file = File::open("/dev/zero").expect("every unix has one");
+
+        let refused = carried(&mut file).expect_err("more than the ceiling arrived");
+
+        assert!(matches!(refused, AttachmentError::TooLarge), "{refused}");
+    }
+
+    #[test]
+    fn the_digest_travels_with_the_bytes_it_was_taken_over() {
+        let base = base("digest");
+        let at = base.join("shot.png");
+        std::fs::write(&at, [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a])
+            .expect("a writable temporary directory");
+
+        let taken = Opened::named(&at)
+            .expect("a regular file opens")
+            .taken()
+            .expect("under the ceiling");
+
+        assert!(taken.is(kind("shot.png").expect("png is attachable")));
+        assert_eq!(
+            taken.hash(),
+            <[u8; 32]>::from(Sha256::digest(taken.bytes()))
+        );
     }
 
     #[test]

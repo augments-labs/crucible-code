@@ -13,12 +13,17 @@ authors.workspace = true
 # `dyn Tool`; naming a concrete one here is the design failure this crate exists
 # to prevent.
 [dependencies]
+# The one bounded ingress an attachment's bytes come through. Resolving an
+# attachment reads the recorded file again, and doing that here would be a
+# second answer to what one request may carry.
+crucible-attachments.workspace = true
 crucible-core.workspace = true
 # The log a turn is recorded to. Re-exported, so the wiring names one crate
 # for the loop and the session alike.
 crucible-session.workspace = true
-# An attachment records the hash of what was attached; resolving one checks the
-# file still hashes to it before sending bytes the transcript did not promise.
+# The prompt-cache scope is named by a domain-separated digest of what it
+# covers, so a resumed run reuses a cache entry only where the same inputs
+# produced it.
 sha2.workspace = true
 
 [lints]

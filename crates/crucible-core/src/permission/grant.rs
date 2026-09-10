@@ -3,8 +3,8 @@
 use std::path::Path;
 
 use crate::toolset::ToolGeneration;
-use crate::workspace::{Workspace, WorkspacePath};
 use crucible_types::{ToolArgs, ToolCall};
+use crucible_workspace::{Workspace, WorkspacePath};
 
 use super::rule::Denials;
 use super::{Sensitivity, Target, Verdict};

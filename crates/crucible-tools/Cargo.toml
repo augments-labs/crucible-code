@@ -10,6 +10,10 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+# The one bounded ingress a picture handed back by `read` comes through, and the
+# closed table saying which files are pictures at all. A second reading here
+# would let a file be attachable to a tool and not to a prompt.
+crucible-attachments.workspace = true
 crucible-core.workspace = true
 crucible-sandbox-broker.workspace = true
 globset.workspace = true
@@ -24,10 +28,9 @@ getrandom.workspace = true
 base64.workspace = true
 serde_json.workspace = true
 
-# SHA-256 of a picture handed back, which is the record of what was attached: a
-# request reads the file again when it goes out, and a file changed since is a
-# line saying so rather than different bytes under the same answer. Already in
-# the tree — the runner compares the same digest at the other end.
+# SHA-256 of a sandbox helper's own bytes, which is the provenance a run is
+# admitted on: the executable about to isolate a command is identified by what
+# it contains rather than by where it was found.
 sha2.workspace = true
 
 # `kill` on a process group, which is how a command's whole pipeline is stopped

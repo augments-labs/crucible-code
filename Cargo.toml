@@ -19,7 +19,9 @@ publish = false
 #   registry   -> (nothing)       bounded source-aware registries
 #   credentials -> types          applying a secret without exposing it
 #   storage    -> types           history, checkpoint and cache contracts
-#   core       -> types, registry, credentials, storage
+#   workspace  -> (nothing)       the directories crucible reaches, and path proofs
+#   attachments -> types, workspace  the one bounded read an attachment comes through
+#   core       -> types, registry, credentials, storage, workspace, attachments
 #   privacy    -> (nothing)       owner-only local files
 #   auth       -> core            the keys `/login` wrote down
 #   config     -> core            where crucible's files are and what they say
@@ -30,7 +32,7 @@ publish = false
 #   extension  -> core            runs somebody else's program and talks to it
 #   runner     -> core, session   drives turns through traits only
 #   tui        -> (nothing)       draws what it is handed
-#   crucible-code (this package) -> workspace crates; the concrete composition root
+#   crucible-code (this package) -> the crates above; the concrete composition root
 #
 # `config` sits beside the others rather than above them: it reads files into
 # settings and hands them to the wiring, which is what applies them. Nothing
@@ -48,6 +50,7 @@ arboard = { version = "=3.6.1", features = ["wayland-data-control"] }
 image = { version = "=0.25.10", default-features = false, features = ["png"] }
 # This workspace's own crates. Path dependencies, released together, so there is
 # no version to pin and no third party whose publish could move them.
+crucible-attachments = { path = "crates/crucible-attachments" }
 crucible-auth = { path = "crates/crucible-auth" }
 crucible-config = { path = "crates/crucible-config" }
 crucible-core = { path = "crates/crucible-core" }
@@ -68,6 +71,7 @@ crucible-storage = { path = "crates/crucible-storage" }
 crucible-tools = { path = "crates/crucible-tools" }
 crucible-tui = { path = "crates/crucible-tui" }
 crucible-types = { path = "crates/crucible-types" }
+crucible-workspace = { path = "crates/crucible-workspace" }
 
 # Argument parsing. `derive` keeps the CLI surface declared next to the type it
 # produces rather than in a builder chain that drifts from it.
@@ -385,6 +389,7 @@ path = "src/main.rs"
 [dependencies]
 arboard.workspace = true
 clap.workspace = true
+crucible-attachments.workspace = true
 crucible-auth.workspace = true
 crucible-config.workspace = true
 crucible-core.workspace = true
