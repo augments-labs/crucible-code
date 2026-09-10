@@ -374,9 +374,11 @@ fi
 # value walks out through, so an attachment still reaches a request only from a
 # value the permission engine bound. Unlike the seam above there is no dot form
 # to pin -- `recorded` takes no `self` -- and the bare name belongs to other
-# types, so the spelling is the qualified one only.
+# types, so only qualified spellings are pinned: the type's own name, and
+# `Self`, which is how a second door would be opened from inside the file that
+# defines it, beside the builders already living there.
 mints="crates/crucible-core/src/tool.rs"
-attaches='RecordedToolOutput::recorded\('
+attaches='(RecordedToolOutput|Self)::recorded\('
 elsewhere=$(grep -rlE --include='*.rs' "$attaches" crates src tests | grep -Fxv "$mints" || true)
 if [[ -n "$elsewhere" ]]; then
     while IFS= read -r file; do
