@@ -621,10 +621,11 @@ done
 # naming one machine's answer to it in a table that ships is how that
 # distinction would quietly disappear. Every such table counts, not only
 # `[dependencies]`: a build script that pulls a backend in ships it too. Cargo
-# answers which tables those are, and the reader is put to manifests whose
-# answer is known before it is put to the one that matters.
+# answers which tables those are, so this section runs `cargo`, and it asks
+# manifests whose answer is known as well as the one that matters. Only 3 is a
+# clean answer, because 1 is also what a crashed reader exits with.
 if ! python3 scripts/python/shipped-edge.py --self-test; then
-    printf '    FAIL the shipped-edge reader misread a manifest whose answer is known\n'
+    printf '    FAIL the shipped-edge check missed an answer it is known to give\n'
     failed=1
 fi
 python3 scripts/python/shipped-edge.py crates/crucible-tools/Cargo.toml crucible-sandbox-local
@@ -633,9 +634,9 @@ case $? in
         printf '    FAIL crucible-tools must reach crucible-sandbox-local only as a dev-dependency\n'
         failed=1
         ;;
-    1) ;;
+    3) ;;
     *)
-        printf '    FAIL the shipped-edge check could not read crates/crucible-tools/Cargo.toml\n'
+        printf '    FAIL the shipped-edge check gave no answer for crates/crucible-tools/Cargo.toml\n'
         failed=1
         ;;
 esac
