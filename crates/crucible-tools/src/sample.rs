@@ -63,10 +63,9 @@ pub(crate) fn finalize_call_result(context: &ToolContext<'_>, output: &ToolOutpu
 /// quietly passing over nothing.
 ///
 /// Spelled here rather than imported because nothing this crate can name owns
-/// it: `.github/workflows/rust-ci.yml` sets it and is not Rust, and the
-/// backend crate that spells it for its own tests publishes no test harness.
-/// Changing the string here reddens the test that pins it, which is where
-/// those are named.
+/// it: the workflows that set it are not Rust, and the backend crate that
+/// spells it for its own tests publishes no test harness. Changing the string
+/// here reddens the test that pins it.
 pub(crate) const REQUIRE_ENFORCING_SANDBOX: &str = "CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX";
 
 /// Whether a test that needs the enforcing backend has to stop here.

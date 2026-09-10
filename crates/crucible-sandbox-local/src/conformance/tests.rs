@@ -629,9 +629,9 @@ fn the_report_separates_the_families_and_names_the_backend_they_belong_to() {
 fn the_name_a_job_requires_a_backend_by_is_the_one_spelled_outside_this_crate() {
     // The workflows that set it and the suites that read it are outside this
     // module and cannot import the constant, so each spells the string. This
-    // pins the one spelling that can be imported; renaming the variable is
-    // fine, and renaming it in one place is what turns a required backend into
-    // a silent skip.
+    // pins the spelling this crate imports; renaming the variable is fine, and
+    // renaming it in one place is what turns a required backend into a silent
+    // skip.
     assert_eq!(
         REQUIRE_ENFORCING_SANDBOX,
         "CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX"

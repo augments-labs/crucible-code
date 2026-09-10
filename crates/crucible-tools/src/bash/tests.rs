@@ -164,7 +164,7 @@ fn the_default_linux_backend_cannot_read_an_undeclared_sibling() {
     // reach of the standard Linux sandbox, and its sibling is outside it.
     //
     // Nothing between the constructor and the command configures confinement,
-    // and that is what this test is for: it is the only place that observes
+    // and that is what this test is for: it is the only place that asserts on
     // what `Bash::new` alone leaves a command under. `docs/security/
     // sandboxing.md` promises an SDK caller that policy arrives enabled, and
     // asking for it here with `sandboxing(true)` would assert that promise
@@ -791,8 +791,8 @@ fn a_command_the_developer_let_go_of_says_who_let_go_of_it() {
 
 #[test]
 fn the_name_a_job_requires_a_backend_by_is_the_one_spelled_outside_this_crate() {
-    // Nothing this crate can import owns the string: the workflow that sets it
-    // is not Rust, and the backend crate that spells it for its own tests
+    // Nothing this crate can import owns the string: the workflows that set it
+    // are not Rust, and the backend crate that spells it for its own tests
     // publishes no test harness. Renaming the variable is fine; renaming it in
     // one place is what turns a required backend into a silent skip.
     assert_eq!(

@@ -24,8 +24,8 @@ use crucible_sandbox_local::conformance::{Conformance, SandboxClaim};
 /// and says nothing about which it is. This test makes the same decision the
 /// in-crate ones do, and spells the name rather than importing it because the
 /// crate does not publish a test harness. The string is spelled wherever it
-/// cannot be imported, in this crate's other suites and in the workflows that
-/// set it; `src/sample.rs` holds the one importable spelling and pins it.
+/// cannot be imported; `src/sample.rs` holds the spelling this crate's own
+/// modules import, and pins it.
 const REQUIRE_ENFORCING_SANDBOX: &str = "CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX";
 
 /// A directory the caller owns, which is all the suite asks for.

@@ -49,10 +49,11 @@ crucible-runner = { path = "crates/crucible-runner" }
 crucible-runtime = { path = "crates/crucible-runtime" }
 crucible-sandbox = { path = "crates/crucible-sandbox" }
 crucible-sandbox-local = { path = "crates/crucible-sandbox-local" }
-# Static PID 1 executable and its four-byte raw-wait-status protocol. The
-# library side contains no launcher or application authority: what the native
-# backends name here describes and probes a launch, while supervising one
-# confined command is the separately built binary's alone.
+# Static PID 1 executable and its four-byte raw-wait-status protocol. What the
+# native backends name on the library side describes and probes a launch;
+# supervising one confined command is the separately built binary's alone. The
+# Windows account the native backend runs under is created and removed here
+# too, which is why the CLI reaches this crate directly for those two commands.
 crucible-sandbox-broker = { path = "crates/crucible-sandbox-broker" }
 crucible-session = { path = "crates/crucible-session" }
 crucible-storage = { path = "crates/crucible-storage" }
