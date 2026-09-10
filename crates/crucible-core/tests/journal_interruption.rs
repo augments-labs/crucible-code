@@ -2,14 +2,14 @@
 
 use crucible_core::{
     ActionResolution, Ancestry, ApprovalDecision, CacheCheckpoint, CallResultKey,
-    CallResultStoreError, CheckpointId, CompactionRecord, CustomEntry, CustomProjector,
-    ExecutionCheckpoint, IdempotencyKey, InputTokenUsage, InterruptionError, InvocationId,
-    InvocationRecord, InvocationState, JournalError, JournalStore, MAX_RUN_ITEM_RETAINED_BYTES,
-    Message, PendingAction, PendingActions, PendingApproval, PendingExternalTool,
-    PendingHumanInput, PromptCacheFingerprint, PromptCachePolicyVersion, PromptCacheResourceId,
-    PromptCacheScopeDigest, RecordedToolOutput, RecoveryAction, ResumeDigest, ResumeEvidence,
-    ResumeScope, RunHistory, RunItem, StopReason, TOOL_RESULT_BYTES, ToolArgs, ToolCall,
-    ToolEffect, ToolId, ToolOutcome, ToolResult,
+    CallResultStoreError, Change, CheckpointId, CompactionRecord, CustomEntry, CustomProjector,
+    Diff, ExecutionCheckpoint, IdempotencyKey, InputTokenUsage, InterruptionError, InvocationId,
+    InvocationRecord, InvocationState, JournalError, JournalStore, Line,
+    MAX_RUN_ITEM_RETAINED_BYTES, MAX_RUN_ITEMS, Message, PendingAction, PendingActions,
+    PendingApproval, PendingExternalTool, PendingHumanInput, PromptCacheFingerprint,
+    PromptCachePolicyVersion, PromptCacheResourceId, PromptCacheScopeDigest, RecordedToolOutput,
+    RecoveryAction, ResumeDigest, ResumeEvidence, ResumeScope, RunHistory, RunItem, StopReason,
+    TOOL_RESULT_BYTES, ToolArgs, ToolCall, ToolEffect, ToolId, ToolOutcome, ToolResult,
 };
 
 struct MemoryOnlyJournal;
@@ -577,6 +577,59 @@ fn retained_phase_four_fields_are_rejected_before_storage() {
     assert_eq!(usage.uncached, Some(60));
 }
 
+#[test]
+fn a_preview_travelling_beside_a_record_does_not_spend_the_history_s_bytes() {
+    // The preview is the renderer's copy of lines the result no longer holds.
+    // Before it travelled beside the record it travelled inside the output,
+    // where this accounting never walked it, so a history that held this many
+    // invocations has to hold them still: moving a field between two places in
+    // the same item is not a reason for the store to start compacting sooner.
+    let preview =
+        Diff::new((1..=13).map(|number| Line::new(number, Change::Added, "x".repeat(Line::TEXT))));
+    let mut history = RunHistory::new();
+
+    for nth in 0..MAX_RUN_ITEMS {
+        let mut record = InvocationRecord::new(
+            call("edit-many"),
+            Ancestry::new(),
+            ToolEffect::ReadOnly,
+            None,
+        );
+        record
+            .finish(
+                ToolOutcome::Succeeded,
+                RecordedToolOutput::ok("x".repeat(4_000)),
+            )
+            .unwrap();
+        let item = RunItem::Invocation {
+            record,
+            preview: Some(preview.clone()),
+        };
+        assert!(
+            history.push(item).is_ok(),
+            "the {nth}th invocation was refused",
+        );
+    }
+
+    // Full on the count it was always full on, not on bytes a reader's copy
+    // started being charged for.
+    let mut record = InvocationRecord::new(
+        call("edit-last"),
+        Ancestry::new(),
+        ToolEffect::ReadOnly,
+        None,
+    );
+    record
+        .finish(ToolOutcome::Succeeded, RecordedToolOutput::ok("done"))
+        .unwrap();
+    assert!(matches!(
+        history.push(RunItem::Invocation {
+            record,
+            preview: Some(preview),
+        }),
+        Err(JournalError::TooManyItems(MAX_RUN_ITEMS)),
+    ));
+}
 #[test]
 fn restored_results_must_already_fit_the_encoded_result_ceiling() {
     let ancestry = Ancestry::new();

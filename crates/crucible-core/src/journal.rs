@@ -511,14 +511,17 @@ fn item_retained_bytes(item: &RunItem) -> usize {
                 call_retained_bytes,
             )
             .saturating_add(256),
-        RunItem::Invocation { record, preview } => {
+        RunItem::Invocation { record, .. } => {
             let state = match record.state() {
                 InvocationState::Finished { output, .. } => output_retained_bytes(output),
                 InvocationState::Prepared | InvocationState::Started => 0,
             };
+            // The preview is charged nowhere, exactly as it was charged nowhere
+            // when it travelled inside the output this walks. What bounds it is
+            // its own shape -- a fixed line count of fixed-width lines -- not
+            // this ceiling.
             call_retained_bytes(record.call())
                 .saturating_add(state)
-                .saturating_add(preview.as_ref().map_or(0, Diff::retained))
                 .saturating_add(record.idempotency_key().map_or(0, |key| key.as_str().len()))
         }
         RunItem::Compaction(_) => 128,

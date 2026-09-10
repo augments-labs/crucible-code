@@ -754,6 +754,7 @@ impl ToolOutput {
     /// model-visible note states the original encoded size and the encoded
     /// bytes omitted. Callers must supply at least [`crate::TOOL_RESULT_MIN_BYTES`],
     /// which descriptor construction enforces for local limits.
+    #[must_use]
     pub fn limit_encoded(&mut self, maximum: usize) -> ToolOutputRetention {
         let (text, retention) = limit_encoded(&self.text, self.capture, maximum);
         if let Some(text) = text {

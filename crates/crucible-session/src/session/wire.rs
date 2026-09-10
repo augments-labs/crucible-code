@@ -133,6 +133,13 @@ pub(crate) fn journal(item: &RunItem) -> Option<String> {
                     if let Some(diff) = preview
                         && let Some(fields) = result.as_object_mut()
                     {
+                        // The lines and the count off them are the same fact
+                        // twice, and this line keeps the lines. Dropping the
+                        // count is what holds these bytes to what a build
+                        // before the record and its preview came apart wrote:
+                        // there, the count was set as the lines were let go,
+                        // so a record still holding them had none to write.
+                        fields.remove("change");
                         fields.insert("display_diff".into(), super::display::preview(diff));
                     }
                     json!({
@@ -1193,10 +1200,11 @@ pub(crate) fn result(value: &Value) -> Option<ToolResult> {
 mod tests {
     use crucible_core::ContextPatch;
     use crucible_core::{
-        Ancestry, Approved, Ask, Attachment, InputTokenUsage, Modality, Permission,
-        PromptCacheFingerprint, PromptCachePlanned, PromptCachePolicy, PromptCachePolicyVersion,
-        PromptCacheScopeDigest, PromptCacheUsageFact, ProviderAttemptId, ProviderUsage, Remember,
-        Sensitivity, Settled, Target, ToolArgs, ToolOutput, UsageCost, Verdict,
+        Ancestry, Approved, Ask, Attachment, Change, Diff, InputTokenUsage, InvocationRecord, Line,
+        Modality, Permission, PromptCacheFingerprint, PromptCachePlanned, PromptCachePolicy,
+        PromptCachePolicyVersion, PromptCacheScopeDigest, PromptCacheUsageFact, ProviderAttemptId,
+        ProviderUsage, Remember, Sensitivity, Settled, Target, ToolArgs, ToolOutput, UsageCost,
+        Verdict,
     };
 
     use super::*;
@@ -1470,6 +1478,59 @@ mod tests {
         assert!(written.contains(r#""kind":"message""#));
         assert!(!written.contains("prompt-plaintext-canary"));
         assert!(message(&written).is_none());
+    }
+
+    /// A finished invocation, its preview beside it as the runner sends it.
+    fn invoked(preview: Option<Diff>) -> RunItem {
+        let call = ToolCall {
+            id: ToolId::new("edit-1"),
+            name: "edit".into(),
+            args: ToolArgs::new(r#"{"path":"main.rs"}"#),
+        };
+        let mut record = InvocationRecord::new(call, Ancestry::new(), ToolEffect::ReadOnly, None);
+        record
+            .finish(
+                ToolOutcome::Succeeded,
+                RecordedToolOutput::ok("edited").counting(Changed::new(2, 1)),
+            )
+            .unwrap();
+        RunItem::Invocation { record, preview }
+    }
+
+    /// The recorded result inside one invocation journal line.
+    fn result(line: Option<String>) -> Value {
+        serde_json::from_str::<Value>(&line.expect("bounded invocation metadata"))
+            .expect("a journal line is one JSON object")
+            .pointer("/run_item/body/invocation_state/result")
+            .expect("a finished invocation records its result")
+            .clone()
+    }
+
+    #[test]
+    fn an_invocation_line_that_carries_its_lines_does_not_also_carry_their_count() {
+        // The two say the same thing, and only one of them is the line's. A
+        // reader draws the header from the lines it was given; the count is
+        // what is left once they are gone. Writing both would put a key in a
+        // line that the format before this one never wrote there, and this
+        // format did not change its number.
+        let showing = result(journal(&invoked(Some(Diff::new(vec![Line::new(
+            1,
+            Change::Added,
+            "fn main() {}",
+        )])))));
+
+        assert!(showing.get("display_diff").is_some());
+        assert_eq!(showing.get("change"), None);
+
+        // With no lines to draw from, the count is all a reader has, and it
+        // goes down exactly as it always did.
+        let counted = result(journal(&invoked(None)));
+
+        assert_eq!(counted.get("display_diff"), None);
+        assert_eq!(
+            counted.get("change"),
+            Some(&json!({ "added": 2, "removed": 1 })),
+        );
     }
 
     // The fixtures are POSIX absolute paths, which no Windows path type accepts;
