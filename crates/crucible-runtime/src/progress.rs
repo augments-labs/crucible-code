@@ -60,7 +60,7 @@ struct Bounded {
 }
 
 /// What was waiting, and what did not survive the wait.
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Default, PartialEq, Eq)]
 pub struct Told {
     /// The lines, oldest first.
     pub lines: Vec<String>,
@@ -69,6 +69,18 @@ pub struct Told {
     /// Non-zero means the reader is looking at less than happened, and
     /// whatever shows it says so.
     pub dropped: usize,
+}
+
+/// By hand, for the reason [`Progress`]'s is, and because this is where the
+/// lines end up: a buffer that redacts what it is holding and hands it to a
+/// struct that prints it has redacted nothing.
+impl std::fmt::Debug for Told {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Told")
+            .field("lines", &format_args!("{} redacted", self.lines.len()))
+            .field("dropped", &self.dropped)
+            .finish()
+    }
 }
 
 impl Progress {
@@ -136,6 +148,10 @@ impl Progress {
     /// Take-once, and the count is taken with them: it is the number of lines
     /// lost since the last take, so a reader shown two takes in a row is not
     /// told about the same loss twice.
+    ///
+    /// The answer carries the only record of what was dropped, so dropping it
+    /// unread is the truncation-nobody-was-told-about this module is for.
+    #[must_use]
     pub fn take(&self) -> Told {
         let mut bounded = self.bounded();
         bounded.weight = 0;
@@ -272,20 +288,36 @@ mod tests {
 
     #[test]
     fn taking_the_lines_gives_back_the_room_they_held() {
+        // Six bytes, taken in threes: the second pair only fits if the first
+        // line stopped being counted when it was handed over. A single line
+        // after a take would be admitted either way, because a buffer holding
+        // nothing has nothing to drop and admits regardless of its weight.
         let progress = Progress::new(10, 6);
-        progress.say("aaaaaa".into());
-        assert_eq!(progress.take().lines, vec!["aaaaaa".to_owned()]);
+        progress.say("aaa".into());
+        assert_eq!(progress.take().lines, vec!["aaa".to_owned()]);
 
-        progress.say("bbbbbb".into());
+        progress.say("bbb".into());
+        progress.say("ccc".into());
 
         assert_eq!(
             progress.take(),
             Told {
-                lines: vec!["bbbbbb".into()],
+                lines: vec!["bbb".into(), "ccc".into()],
                 dropped: 0,
             },
             "the buffer was still counting bytes a reader had already been given"
         );
+    }
+
+    #[test]
+    fn what_the_buffer_hands_over_shows_no_more_than_the_buffer_did() {
+        let progress = Progress::new(2, ROOMY);
+        progress.say("sk-live-0123456789".into());
+
+        let shown = format!("{:?}", progress.take());
+
+        assert!(!shown.contains("sk-live"), "rendered as {shown}");
+        assert!(shown.contains("1 redacted"), "rendered as {shown}");
     }
 
     #[test]

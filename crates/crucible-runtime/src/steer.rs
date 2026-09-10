@@ -15,10 +15,6 @@
 //! that was already finishing ignores it and lets the line be answered as its
 //! own prompt.
 //!
-//! The shape is the one [`Cancel`](crate::Cancel) sets: a shared cell, one
-//! producer on the thread that draws, the consumer on the thread the turn runs
-//! on.
-//!
 //! Poisoning is not one of the ways a line is lost. A panic in some other task
 //! says nothing about this queue — nothing here can leave it half-changed — and
 //! answering one by throwing away what the reader had already typed would make
@@ -72,7 +68,6 @@ impl Steer {
     /// Called on the thread that reads the keyboard. The line is taken whole:
     /// trimming and the empty case are the caller's, which is the editor that
     /// already decided the line was finished.
-    ///
     pub fn say(&self, line: String) {
         self.waiting().lines.push_back(line);
     }
@@ -140,7 +135,6 @@ impl Steer {
     ///
     /// Nothing while the queue is held: see [`Steer::hold`]. That is the same
     /// answer an empty queue gives, so a turn meeting it is a turn carrying on.
-    ///
     pub fn take(&self) -> Vec<String> {
         let mut waiting = self.waiting();
         if waiting.held {

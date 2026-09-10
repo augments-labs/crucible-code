@@ -11,9 +11,9 @@
 //! impossible — see [`Cancel`]. An abort is cooperative too, in a way that is
 //! easy to miss: it takes the task at its next await point, so a task inside a
 //! blocking read or a compute loop is not stopped by anyone, and waiting for
-//! one to come back is waiting forever. So shutdown is bounded twice — it asks,
-//! then it aborts, then it stops waiting — and a task that never came back is
-//! reported [`Ended::Abandoned`] rather than quietly waited on.
+//! one to come back is waiting forever. So shutdown asks, then it aborts, then
+//! it stops waiting, and a task that never came back is reported
+//! [`Ended::Abandoned`] rather than quietly waited on.
 //!
 //! Admission is bounded and refused rather than queued: a caller told [`Full`]
 //! can decide what to do about it, where a caller whose spawn silently waited
@@ -53,21 +53,21 @@ pub enum Ended<T> {
     /// could be read. The panic is not resumed on the owner's thread: one task
     /// coming apart is not a reason for the shutdown reaping it to stop.
     ///
+    /// A cleanup that unwinds while the task is being aborted arrives here
+    /// too, carrying what the destructor came apart with: tokio catches it and
+    /// reports the join as a panic rather than as the stop it was asked for.
+    ///
     /// The message is carried so the owner can put it somewhere a reader will
     /// find it. It is not printed here, and nothing in this crate prints it.
     Panicked(String),
-    /// It was aborted, and it stopped.
-    ///
-    /// This covers a cleanup that came apart as well as one that went to plan:
-    /// an abort wins over a panic in a destructor, so a task whose `Drop`
-    /// unwound during the abort arrives here and not at [`Ended::Panicked`].
+    /// It was aborted, and it stopped without its cleanup coming apart.
     Stopped,
-    /// It was aborted, and it had not stopped when the group gave up waiting.
+    /// It was aborted, and it had not come back when the group gave up waiting.
     ///
-    /// It is still running. Nothing can take a task that never reaches an await
-    /// point, so this is the honest end of the account rather than a failure of
-    /// the shutdown: the owner is told what it does not control instead of
-    /// being blocked on it.
+    /// Nothing can take a task that never reaches an await point, so this is
+    /// the honest end of the account rather than a failure of the shutdown:
+    /// the owner is told what it does not control instead of being blocked on
+    /// it.
     Abandoned,
 }
 
@@ -220,8 +220,13 @@ impl<T: Send + 'static> Group<T> {
     ///
     /// What has not come back by then never reached an await point and no abort
     /// can take it, so the group stops waiting and reports it
-    /// [`Ended::Abandoned`]. This is what bounds the call: it returns after at
-    /// most twice `grace`, and it never waits on a task nothing can stop.
+    /// [`Ended::Abandoned`] rather than waiting on a task nothing can stop.
+    ///
+    /// Both deadlines bound what this waits *for*, not how long the caller is
+    /// here. It is a future, and it advances only while something polls it: a
+    /// task inside synchronous work holds the worker it is on, so where no
+    /// other worker is free this is not polled until that task returns of its
+    /// own accord — and by then there is nothing left to give up on.
     ///
     /// The order of the returned ends is the order they arrived in, which is
     /// not the order they were spawned in.
@@ -240,10 +245,15 @@ impl<T: Send + 'static> Group<T> {
             self.tasks.abort_all();
             self.reap_until(deadline_in(grace)).await;
 
-            // Still held after being aborted and waited for: the task is inside
-            // work that never yields, so no join will ever return it. Detached
-            // rather than dropped, because dropping the set would abort them a
-            // second time and change nothing.
+            // A task that finished while the deadline was passing is still in
+            // the set until it is joined, and counting it here would report it
+            // abandoned and throw away what it answered.
+            self.collect_finished();
+
+            // What is left was aborted and did not come back: it is inside work
+            // that never yields, where an abort has no await point to land on.
+            // Detached rather than dropped, because dropping the set would
+            // abort them a second time and change nothing.
             for _ in 0..self.tasks.len() {
                 self.ended.push(Ended::Abandoned);
             }
@@ -361,6 +371,16 @@ mod tests {
             Err(super::Full),
             "the second task was admitted past the limit of one"
         );
+        assert_eq!(
+            group.len(),
+            1,
+            "the refused task was started anyway and only the answer was withheld"
+        );
+        assert_eq!(group.limit(), 1, "the group misreported what it admits");
+        assert_eq!(
+            super::Full.to_string(),
+            "the group is already holding as many tasks as it admits"
+        );
     }
 
     #[tokio::test]
@@ -426,6 +446,63 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn shutdown_hands_over_ends_collected_before_it_was_called() {
+        let mut group = Group::new(2, &Cancel::new());
+        assert!(group.spawn(async { "early" }).is_ok());
+
+        // `len` reaps without draining, so the end is held by the group rather
+        // than by this test when shutdown is called.
+        for _ in 0..TURNS {
+            if group.is_empty() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+
+        assert_eq!(
+            group.shutdown(GRACE).await,
+            vec![Ended::Done("early")],
+            "shutdown threw away what the group had already collected"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_task_that_came_apart_before_shutdown_is_still_accounted_for() {
+        let mut group: Group<()> = Group::new(2, &Cancel::new());
+        assert!(group.spawn(async { panic!("the task came apart") }).is_ok());
+
+        for _ in 0..TURNS {
+            if group.is_empty() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+
+        match group.shutdown(GRACE).await.as_slice() {
+            [Ended::Panicked(said)] => assert!(
+                said.contains("the task came apart"),
+                "the panic message was lost: {said}"
+            ),
+            other => panic!("a task that came apart was dropped from the account: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_panic_message_built_at_runtime_is_carried_too() {
+        let mut group: Group<()> = Group::new(1, &Cancel::new());
+        let said = "the task came apart".to_owned();
+        assert!(group.spawn(async move { panic!("{said}") }).is_ok());
+
+        match group.shutdown(GRACE).await.as_slice() {
+            [Ended::Panicked(said)] => assert!(
+                said.contains("the task came apart"),
+                "an owned panic message was reported as unreadable: {said}"
+            ),
+            other => panic!("expected one panicked task, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
     async fn a_panicking_task_is_reported_rather_than_lost() {
         let mut group = Group::new(1, &Cancel::new());
 
@@ -460,7 +537,13 @@ mod tests {
     async fn a_group_shows_its_counts_without_showing_its_answers() {
         let mut group = Group::new(3, &Cancel::new());
         assert!(group.spawn(async { "sk-live-0123456789" }).is_ok());
-        while group.ends().is_empty() {
+        // `is_empty` reaps into the collected ends without draining them, so
+        // the answer is still inside the group when it is rendered. Waiting on
+        // `ends()` would take it out first and leave nothing to leak.
+        for _ in 0..TURNS {
+            if group.is_empty() {
+                break;
+            }
             tokio::task::yield_now().await;
         }
 
@@ -580,8 +663,80 @@ mod tests {
             "a task nothing can stop was reported as though it had ended"
         );
         assert!(
-            took < BLOCKED_FOR,
+            took < BRIEF * 8,
             "the shutdown waited for a task no abort can reach: {took:?}"
+        );
+    }
+
+    /// Two workers so the shutdown reaping the tasks is not the thing being
+    /// starved, and a limit above the number spawned so admission is not
+    /// either. Both tasks are inside synchronous work no abort can reach.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+    async fn every_task_no_abort_could_reach_is_reported_rather_than_one_of_them() {
+        /// Longer than any grace this test spends, so neither task can finish
+        /// inside the shutdown and turn this into a test of something else.
+        const BLOCKED_FOR: std::time::Duration = std::time::Duration::from_millis(500);
+        const BRIEF: std::time::Duration = std::time::Duration::from_millis(20);
+
+        let mut group = Group::new(4, &Cancel::new());
+        for _ in 0..2 {
+            assert!(
+                group
+                    .spawn(async {
+                        std::thread::sleep(BLOCKED_FOR);
+                        "finished anyway"
+                    })
+                    .is_ok()
+            );
+        }
+
+        assert_eq!(
+            group.shutdown(BRIEF).await,
+            vec![Ended::Abandoned, Ended::Abandoned],
+            "the account named fewer tasks than the group was still holding"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_cleanup_that_came_apart_is_reported_as_coming_apart() {
+        /// Unwinds when the task's future is dropped, which for an aborted
+        /// task is the abort itself doing the dropping.
+        struct ComesApartOnTheWayOut;
+
+        impl Drop for ComesApartOnTheWayOut {
+            fn drop(&mut self) {
+                panic!("the cleanup came apart");
+            }
+        }
+
+        let mut group = Group::new(1, &Cancel::new());
+        assert!(
+            group
+                .spawn(async {
+                    let _cleanup = ComesApartOnTheWayOut;
+                    loop {
+                        tokio::time::sleep(TICK).await;
+                    }
+                })
+                .is_ok()
+        );
+
+        match group.shutdown(GRACE).await.as_slice() {
+            [Ended::Panicked(said)] => assert!(
+                said.contains("the cleanup came apart"),
+                "the destructor's message was lost: {said}"
+            ),
+            other => panic!("a cleanup that came apart was reported as a clean stop: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_grace_the_clock_cannot_name_becomes_one_it_can() {
+        let now = tokio::time::Instant::now();
+
+        assert!(
+            super::deadline_in(std::time::Duration::MAX) > now,
+            "a grace too large to add to the clock became no grace at all"
         );
     }
 

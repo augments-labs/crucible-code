@@ -14,10 +14,11 @@
 //! reaching the others.
 //!
 //! The rest is how work is owned. [`Group`] is a set of tasks with one owner
-//! and no way to outlive it: admission is bounded and refused rather than
-//! queued, shutdown is bounded whether or not the tasks cooperate, and every
-//! task's end is accounted for by name — including the ones that panicked and
-//! the ones nothing could stop. [`Progress`] is the bounded buffer that carries
+//! that accounts for every one of them: admission is bounded and refused
+//! rather than queued, shutdown asks and then aborts rather than waiting on
+//! whatever does not cooperate, and every task's end is named — including the
+//! ones that panicked and the ones nothing could stop, which the owner is told
+//! about rather than blocked on. [`Progress`] is the bounded buffer that carries
 //! what a task is saying while it runs, and it drops the oldest rather than the
 //! newest and says how many it dropped, because a reader shown a truncated
 //! stream that does not say it was truncated has been told something false.

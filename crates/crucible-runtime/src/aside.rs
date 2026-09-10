@@ -74,7 +74,6 @@ impl Aside {
     /// behind is nothing. Called at the boundary between one pass and the next
     /// by the turn, and once more by the caller when the turn is over — which
     /// is how a note pushed after the last pass is still owed rather than lost.
-    ///
     pub fn take(&self) -> Vec<String> {
         self.notes().drain(..).collect()
     }

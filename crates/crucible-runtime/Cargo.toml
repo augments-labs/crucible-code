@@ -15,9 +15,9 @@ authors.workspace = true
 #
 # `tokio` supplies the task set the owned group holds its work in, and the
 # timer its shutdown is bounded by. Nothing here builds or chooses a runtime —
-# a group runs on whichever one its caller is already on — so the scheduler
-# features are not enabled, and neither are the process, network and file ones,
-# which arrive with the crates that own those boundaries.
+# a group runs on whichever one its caller is already on — so the work-stealing
+# scheduler is not enabled, and neither are the process, network and file
+# features, which arrive with the crates that own those boundaries.
 [dependencies]
 tokio = { workspace = true, features = ["rt", "time"] }
 

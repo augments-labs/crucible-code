@@ -595,6 +595,9 @@ while IFS= read -r edge; do
         failed=1
     fi
 done <<<"$edges"
+# Tighter than the allowed-edge list above for these crates, and for
+# crucible-runtime tighter than the architecture's maximum: giving one of them
+# a workspace dependency is a decision to take here rather than a line to add.
 for crate in privacy registry runtime sandbox-broker tui types workspace; do
     if grep -qE "^$crate " <<<"$edges"; then
         printf '    FAIL crucible-%s must not depend on another workspace crate\n' "$crate"
