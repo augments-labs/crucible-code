@@ -10,8 +10,8 @@ and 2 when that could not be answered. The third answer is separate because a
 check that cannot tell "no edge" from "never looked" gives the reassuring one,
 and "no edge" is 3 because 1 is what Python exits with when it crashes.
 `--self-test` exits 0 when every manifest and description whose answer is known
-gives it, draws no warning from Cargo and says why wherever that answer is 2;
-it exits 1 otherwise.
+gives it, with a reason of this reader's or an error of Cargo's wherever that
+answer is 2, and 1 otherwise.
 
 Cargo is asked rather than the TOML read here. One dependency can be spelled
 many ways — quoted or bare, dotted or a table of its own, under a `[target]`
@@ -36,6 +36,15 @@ SHIPPED_EDGE, UNANSWERED, NO_SHIPPED_EDGE = 0, 2, 3
 # dependency is written with a null kind.
 SHIPPED = {None: True, "build": True, "dev": False}
 
+# How every reason this reader gives for a question it cannot answer begins, so
+# that the self-test can tell a reason from whatever else a Cargo setting has
+# Cargo write.
+REASON = "shipped-edge: "
+
+
+def say(reason):
+    print(f"{REASON}{reason}", file=sys.stderr)
+
 
 def metadata(manifest):
     """What Cargo says about the workspace the manifest is in, or None."""
@@ -48,6 +57,8 @@ def metadata(manifest):
                 "--offline",
                 "--format-version",
                 "1",
+                # Uncolored, so an error Cargo writes begins with `error:`
+                # whatever color the environment forces.
                 "--color",
                 "never",
                 "--manifest-path",
@@ -57,20 +68,26 @@ def metadata(manifest):
             check=False,
         )
     except OSError as error:
-        print(f"cargo could not be run: {error}", file=sys.stderr)
+        say(f"cargo could not be run: {error}")
         return None
     # Cargo's messages are passed on whatever it answered: bytes that are not
     # UTF-8 are escaped here, and stderr escapes what the host cannot show.
     # Only the description has to be exactly what Cargo wrote.
-    sys.stderr.write(result.stderr.decode("utf-8", errors="backslashreplace"))
+    passed = result.stderr.decode("utf-8", errors="backslashreplace")
+    # Ended on a line of its own, so that a reason given after it begins one.
+    if passed and not passed.endswith("\n"):
+        passed += "\n"
+    sys.stderr.write(passed)
     if result.returncode != 0:
-        if not result.stderr.strip():
-            print(f"cargo exited {result.returncode} describing {manifest} and said nothing", file=sys.stderr)
+        # A warning or a log line is not why Cargo failed; only an error is.
+        if not any(line.startswith(b"error:") for line in result.stderr.splitlines()):
+            ended = f"was killed by signal {-result.returncode}" if result.returncode < 0 else f"exited {result.returncode}"
+            say(f"cargo {ended} describing {manifest} without an error")
         return None
     try:
         return result.stdout.decode("utf-8")
     except UnicodeDecodeError as error:
-        print(f"cargo described {manifest} in bytes that are not UTF-8: {error}", file=sys.stderr)
+        say(f"cargo described {manifest} in bytes that are not UTF-8: {error}")
         return None
 
 
@@ -89,15 +106,15 @@ def edge(described, manifest, crate):
             None,
         )
         if declared is None:
-            print(f"{manifest} declares no package of its own", file=sys.stderr)
+            say(f"{manifest} declares no package of its own")
             return UNANSWERED
         kinds = [dependency["kind"] for dependency in declared["dependencies"] if dependency["name"] == crate]
         return SHIPPED_EDGE if any(SHIPPED[kind] for kind in kinds) else NO_SHIPPED_EDGE
     except UnicodeError as error:
-        print(f"{manifest} or a path in cargo's description of it cannot be named on this host: {error!r}", file=sys.stderr)
+        say(f"{manifest} or a path in cargo's description of it cannot be named on this host: {error!r}")
         return UNANSWERED
     except (ValueError, KeyError, TypeError) as error:
-        print(f"cargo described {manifest} in a shape this does not read: {error!r}", file=sys.stderr)
+        say(f"cargo described {manifest} in a shape this does not read: {error!r}")
         return UNANSWERED
 
 
@@ -122,8 +139,7 @@ def alone(body):
 # Each case is a workspace of its own, with the manifest asked about under
 # `ask` when it is not the root one, and the answer Cargo's reading of it has
 # to produce. Every package is there with a target of its own, because Cargo
-# refuses to load one without, and every workspace with no package names its
-# resolver, because Cargo warns about one that does not.
+# refuses to load one without.
 CASES = [
     ("a normal dependency", alone("[dependencies]\n" + EDGE), SHIPPED_EDGE),
     ("a build dependency", alone("[build-dependencies]\n" + EDGE), SHIPPED_EDGE),
@@ -132,7 +148,7 @@ CASES = [
     (
         "a dependency renamed in the workspace table it is inherited from",
         {
-            "Cargo.toml": '[workspace]\nmembers = ["member"]\nresolver = "3"\n[workspace.dependencies]\n' + RENAMED,
+            "Cargo.toml": '[workspace]\nmembers = ["member"]\n[workspace.dependencies]\n' + RENAMED,
             "dep/Cargo.toml": DEP,
             "member/Cargo.toml": package("member", "[dependencies]\nbackend.workspace = true\n"),
             "ask": "member/Cargo.toml",
@@ -170,7 +186,7 @@ CASES = [
     (
         "a workspace manifest that declares no package",
         {
-            "Cargo.toml": '[workspace]\nmembers = ["member"]\nresolver = "3"\n',
+            "Cargo.toml": '[workspace]\nmembers = ["member"]\n',
             "member/Cargo.toml": package("member", "[dependencies]\n" + EDGE),
             "member/dep/Cargo.toml": DEP,
         },
@@ -199,21 +215,19 @@ SHAPES = [
 
 
 def known(name, expected, question):
-    """Whether a question gets the answer known for it without a warning from Cargo, and says why when it has none."""
+    """Whether a question gets the answer known for it, and says why when it has none."""
     said = io.StringIO()
     with contextlib.redirect_stderr(said):
         got = question()
     if got != expected:
-        sys.stderr.write(f"shipped-edge: {name} answered {got}, not {expected}\n{said.getvalue()}")
+        sys.stderr.write(f"{REASON}{name} answered {got}, not {expected}\n{said.getvalue()}")
         return False
-    # A warning Cargo gives about the fixture would pass for the reason a
-    # question went unanswered, so no fixture may draw one. Cargo is asked for
-    # no color, so a warning starts the same whatever the environment forces.
-    if any(line.startswith("warning:") for line in said.getvalue().splitlines()):
-        sys.stderr.write(f"shipped-edge: cargo warned about {name}\n{said.getvalue()}")
-        return False
-    if got == UNANSWERED and not said.getvalue():
-        sys.stderr.write(f"shipped-edge: {name} answered {got} without saying why\n")
+    # Only a reason of this reader's or an error of Cargo's says why. Anything
+    # else, such as a warning or a log line a Cargo setting turns on, can be
+    # there with no reason among it.
+    reasons = [line for line in said.getvalue().splitlines() if line.startswith((REASON, "error:"))]
+    if got == UNANSWERED and not reasons:
+        sys.stderr.write(f"{REASON}{name} answered {got} without saying why\n{said.getvalue()}")
         return False
     return True
 
