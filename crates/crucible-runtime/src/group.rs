@@ -218,7 +218,9 @@ mod tests {
         assert!(ends.contains(&Ended::Done(1)));
     }
 
-    #[tokio::test]
+    /// The clock is paused, so `GRACE` is spent only if the shutdown actually
+    /// waits it out; a test that returns before it costs no wall time at all.
+    #[tokio::test(start_paused = true)]
     async fn a_cooperative_task_returns_inside_the_grace() {
         let mut group = Group::new(1, Cancel::new());
         let cancel = group.cancel().clone();
@@ -232,10 +234,21 @@ mod tests {
             })
             .expect("room");
 
-        assert_eq!(group.shutdown(GRACE).await, vec![Ended::Done("noticed")]);
+        let began = tokio::time::Instant::now();
+        let ends = group.shutdown(GRACE).await;
+
+        assert_eq!(ends, vec![Ended::Done("noticed")]);
+        assert!(
+            began.elapsed() < GRACE,
+            "a task that stopped when asked must not be waited out to the grace"
+        );
     }
 
-    #[tokio::test]
+    /// Paused, so the grace below is virtual: the task never finishes, the
+    /// runtime goes idle, and the clock jumps to the deadline. What the
+    /// assertions then read is the deadline doing the stopping, rather than a
+    /// wall-clock wait that happened to be long enough.
+    #[tokio::test(start_paused = true)]
     async fn no_task_survives_the_owner_shutting_down() {
         let mut group = Group::new(1, Cancel::new());
 
@@ -251,8 +264,14 @@ mod tests {
             })
             .expect("room");
 
-        let ends = group.shutdown(Duration::from_millis(50)).await;
+        let began = tokio::time::Instant::now();
+        let ends = group.shutdown(GRACE).await;
 
+        assert_eq!(
+            began.elapsed(),
+            GRACE,
+            "a task that will not stop is given the grace, and no longer"
+        );
         assert_eq!(
             ends,
             vec![Ended::Stopped],
