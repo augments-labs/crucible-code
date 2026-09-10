@@ -1,10 +1,19 @@
 //! A set of tasks with one owner.
 //!
-//! The thing a group is for is the sentence "when this is over, nothing it
-//! started is still running". A task spawned and forgotten keeps a socket, a
-//! child process or a lock alive past the turn that wanted it, and the only
-//! evidence is a hang somewhere else much later. Every task here is held, and
-//! [`Group::shutdown`] answers for each of them by name.
+//! The thing a group is for is the sentence "when this is over, the owner
+//! knows what became of everything it started". A task spawned and forgotten
+//! keeps a socket, a child process or a lock alive past the turn that wanted
+//! it, and the only evidence is a hang somewhere else much later. Every task
+//! here is held, and [`Group::shutdown`] accounts for each of them.
+//!
+//! It accounts for them; it cannot promise they all stopped. Cancellation is
+//! cooperative, because that is the only kind that leaves a half-written file
+//! impossible — see [`Cancel`]. An abort is cooperative too, in a way that is
+//! easy to miss: it takes the task at its next await point, so a task inside a
+//! blocking read or a compute loop is not stopped by anyone, and waiting for
+//! one to come back is waiting forever. So shutdown is bounded twice — it asks,
+//! then it aborts, then it stops waiting — and a task that never came back is
+//! reported [`Ended::Abandoned`] rather than quietly waited on.
 //!
 //! Admission is bounded and refused rather than queued: a caller told [`Full`]
 //! can decide what to do about it, where a caller whose spawn silently waited
@@ -12,10 +21,9 @@
 //! tell it apart from — [`Group::shutdown`] takes the group by value, so a
 //! group that has been shut down is one nobody still holds to spawn into.
 //!
-//! Cancellation is cooperative, because that is the only kind that leaves a
-//! half-written file impossible — see [`Cancel`]. Shutdown therefore asks
-//! first and waits, and only what is still running when the grace runs out is
-//! aborted, reported as [`Ended::Stopped`] rather than counted as finished.
+//! The bound is on how many run at once, not on how much is remembered. Ends
+//! pile up as tasks finish, so a group that outlives many of them wants
+//! [`Group::ends`] as it goes; what is left is what shutdown returns.
 
 use std::future::Future;
 use std::time::Duration;
@@ -28,24 +36,63 @@ use crate::Cancel;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Full;
 
+impl std::fmt::Display for Full {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the group is already holding as many tasks as it admits")
+    }
+}
+
+impl std::error::Error for Full {}
+
 /// What a task came to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum Ended<T> {
     /// It ran to the end, and this is what it answered.
     Done(T),
-    /// It unwound. The panic is not resumed on the owner's thread: one task
+    /// It unwound, and this is what it came apart with, as far as the payload
+    /// could be read. The panic is not resumed on the owner's thread: one task
     /// coming apart is not a reason for the shutdown reaping it to stop.
-    Panicked,
-    /// It was still running when the grace ran out, and was aborted.
+    ///
+    /// The message is carried so the owner can put it somewhere a reader will
+    /// find it. It is not printed here, and nothing in this crate prints it.
+    Panicked(String),
+    /// It was aborted, and it stopped.
+    ///
+    /// This covers a cleanup that came apart as well as one that went to plan:
+    /// an abort wins over a panic in a destructor, so a task whose `Drop`
+    /// unwound during the abort arrives here and not at [`Ended::Panicked`].
     Stopped,
+    /// It was aborted, and it had not stopped when the group gave up waiting.
+    ///
+    /// It is still running. Nothing can take a task that never reaches an await
+    /// point, so this is the honest end of the account rather than a failure of
+    /// the shutdown: the owner is told what it does not control instead of
+    /// being blocked on it.
+    Abandoned,
+}
+
+/// By hand, because [`Ended::Done`] carries whatever the task answered and
+/// [`Ended::Panicked`] carries what it came apart with. A task's answer is a
+/// command's output or a provider's reply, and a panic message is written by
+/// whoever wrote the `panic!`; neither belongs in a `{:?}` that reaches a log.
+/// Which end it was is the whole of what a reader of a `{:?}` needs.
+impl<T> std::fmt::Debug for Ended<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Done(_) => f.write_str("Done(redacted)"),
+            Self::Panicked(_) => f.write_str("Panicked(redacted)"),
+            Self::Stopped => f.write_str("Stopped"),
+            Self::Abandoned => f.write_str("Abandoned"),
+        }
+    }
 }
 
 /// Tasks owned as one thing.
 ///
-/// Dropping a group aborts whatever it still holds, so a group that goes out
-/// of scope on an error path leaves nothing running either. That is the floor;
-/// [`Group::shutdown`] is the door, and it is the one that reports.
-#[derive(Debug)]
+/// Dropping a group aborts whatever it still holds and does not wait for the
+/// aborts to land, so a task inside blocking work runs on until its next await
+/// point — and any end already collected is discarded with the group. That is
+/// the floor. [`Group::shutdown`] is the door, and it is the one that reports.
 pub struct Group<T> {
     tasks: JoinSet<T>,
     ended: Vec<Ended<T>>,
@@ -53,26 +100,53 @@ pub struct Group<T> {
     limit: usize,
 }
 
-impl<T: Send + 'static> Group<T> {
-    /// A group that holds at most `limit` tasks at once, stopped by `cancel`.
-    ///
-    /// The token is the group's own to raise: [`Group::shutdown`] raises it.
-    /// Pass a child of the run's token — see [`Cancel::child`] — so that
-    /// shutting one group down does not stop the run around it.
-    #[must_use]
-    pub fn new(limit: usize, cancel: Cancel) -> Self {
-        Self {
-            tasks: JoinSet::new(),
-            ended: Vec::new(),
-            cancel,
-            limit,
-        }
+/// By hand, for the reason [`Ended`]'s is: the collected ends carry what the
+/// tasks answered.
+impl<T> std::fmt::Debug for Group<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Group")
+            .field("running", &self.tasks.len())
+            .field("ended", &self.ended.len())
+            .field("limit", &self.limit)
+            .field("cancel", &self.cancel)
+            .finish()
     }
+}
 
-    /// The token every task in this group should be checking.
+impl<T> Group<T> {
+    /// The token this group's tasks are stopped by.
+    ///
+    /// A child of the one the group was made from, so raising it stops this
+    /// group's tasks and nothing else, while a request on the parent still
+    /// reaches every task here.
     #[must_use]
     pub fn cancel(&self) -> &Cancel {
         &self.cancel
+    }
+
+    /// How many tasks this group admits at once.
+    #[must_use]
+    pub fn limit(&self) -> usize {
+        self.limit
+    }
+}
+
+impl<T: Send + 'static> Group<T> {
+    /// A group that holds at most `limit` tasks at once, stopped by a child of
+    /// `cancel`.
+    ///
+    /// The child is made here rather than asked for, because [`Group::shutdown`]
+    /// raises whatever token it was given: a group handed the run's own token
+    /// would end the run on its way out. Taking a reference and narrowing it is
+    /// what makes that unwritable.
+    #[must_use]
+    pub fn new(limit: usize, cancel: &Cancel) -> Self {
+        Self {
+            tasks: JoinSet::new(),
+            ended: Vec::new(),
+            cancel: cancel.child(),
+            limit,
+        }
     }
 
     /// Starts `work`, or says why it did not.
@@ -80,7 +154,15 @@ impl<T: Send + 'static> Group<T> {
     /// # Errors
     ///
     /// [`Full`] where the group already holds `limit` tasks that have not
-    /// finished.
+    /// finished. The refused future is dropped; a caller that wants to try
+    /// again builds it again.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called outside a Tokio runtime, which is what
+    /// [`tokio::task::JoinSet::spawn`] does. A group is made and spawned into
+    /// by code the runtime is already running; there is no fallible form of
+    /// this to return instead.
     pub fn spawn<F>(&mut self, work: F) -> Result<(), Full>
     where
         F: Future<Output = T> + Send + 'static,
@@ -89,7 +171,6 @@ impl<T: Send + 'static> Group<T> {
         // its limit whose tasks have all ended admits rather than refusing on
         // a count nobody has looked at since.
         self.collect_finished();
-
         if self.tasks.len() >= self.limit {
             return Err(Full);
         }
@@ -98,49 +179,91 @@ impl<T: Send + 'static> Group<T> {
         Ok(())
     }
 
-    /// How many tasks are held, finished ones excluded.
-    #[must_use]
-    pub fn len(&self) -> usize {
+    /// How many tasks are running, finished ones excluded.
+    ///
+    /// Takes `&mut self` because excluding them means reaping them: a finished
+    /// task stays in the set until it is joined, and a count that did not reap
+    /// first would disagree with the one [`Group::spawn`] enforces the bound
+    /// against. One fact, one answer.
+    pub fn len(&mut self) -> usize {
+        self.collect_finished();
         self.tasks.len()
     }
 
-    /// Whether the group holds nothing.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.tasks.is_empty()
+    /// Whether the group has anything still running.
+    pub fn is_empty(&mut self) -> bool {
+        self.len() == 0
     }
 
-    /// Stops admitting, asks every task to stop, and answers for each one.
+    /// Takes every end collected so far, and leaves the group running.
     ///
-    /// Cooperative first: the token is raised and the group waits up to
-    /// `grace` for tasks to notice and return, which is what lets a task
-    /// finish the write it had started. Whatever is still running when that
-    /// runs out is aborted and reported [`Ended::Stopped`] — a task the owner
-    /// had to take away is a cleanup that did not go to plan, and it is
-    /// visible in the answer rather than counted among the finished.
+    /// Ends accumulate as tasks finish and are only otherwise handed over by
+    /// [`Group::shutdown`], so a group that outlives many short tasks holds
+    /// every answer they gave until it dies. Draining as they arrive is what
+    /// bounds that, and it is also the only way to see a task come apart
+    /// before the group closes.
+    #[must_use]
+    pub fn ends(&mut self) -> Vec<Ended<T>> {
+        self.collect_finished();
+        std::mem::take(&mut self.ended)
+    }
+
+    /// Stops admitting, asks every task to stop, and accounts for each one.
+    ///
+    /// Cooperative first: the token is raised and the group waits up to `grace`
+    /// for tasks to notice and return, which is what lets a task finish the
+    /// write it had started. Whatever is still running then is aborted and
+    /// given a second `grace` to come back, reported [`Ended::Stopped`] if it
+    /// does — a task the owner had to take away is a cleanup that did not go to
+    /// plan, and it is visible in the answer rather than counted among the
+    /// finished.
+    ///
+    /// What has not come back by then never reached an await point and no abort
+    /// can take it, so the group stops waiting and reports it
+    /// [`Ended::Abandoned`]. This is what bounds the call: it returns after at
+    /// most twice `grace`, and it never waits on a task nothing can stop.
     ///
     /// The order of the returned ends is the order they arrived in, which is
     /// not the order they were spawned in.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the runtime this is awaited on was built without a time
+    /// driver, which is what [`tokio::time::timeout_at`] does. A runtime that
+    /// runs a group needs `enable_time`.
+    #[must_use]
     pub async fn shutdown(mut self, grace: Duration) -> Vec<Ended<T>> {
         self.cancel.request();
+        self.reap_until(deadline_in(grace)).await;
 
-        let deadline = tokio::time::Instant::now() + grace;
-        while !self.tasks.is_empty() {
-            match tokio::time::timeout_at(deadline, self.tasks.join_next()).await {
-                Ok(Some(joined)) => self.ended.push(ended(joined)),
-                // No tasks left to join; the loop's own condition ends it.
-                Ok(None) => break,
-                Err(_) => {
-                    self.tasks.abort_all();
-                    while let Some(joined) = self.tasks.join_next().await {
-                        self.ended.push(ended(joined));
-                    }
-                    break;
-                }
+        if !self.tasks.is_empty() {
+            self.tasks.abort_all();
+            self.reap_until(deadline_in(grace)).await;
+
+            // Still held after being aborted and waited for: the task is inside
+            // work that never yields, so no join will ever return it. Detached
+            // rather than dropped, because dropping the set would abort them a
+            // second time and change nothing.
+            for _ in 0..self.tasks.len() {
+                self.ended.push(Ended::Abandoned);
             }
+            self.tasks.detach_all();
         }
 
         self.ended
+    }
+
+    /// Joins tasks into the collected ends until the set empties or `deadline`
+    /// passes, whichever comes first.
+    async fn reap_until(&mut self, deadline: tokio::time::Instant) {
+        while !self.tasks.is_empty() {
+            match tokio::time::timeout_at(deadline, self.tasks.join_next()).await {
+                Ok(Some(joined)) => self.ended.push(ended(joined)),
+                // `join_next` answers `None` only on an empty set, which the
+                // loop's own condition already excludes; `Err` is the deadline.
+                Ok(None) | Err(_) => break,
+            }
+        }
     }
 
     /// Moves every task that has already finished into the collected ends.
@@ -151,12 +274,45 @@ impl<T: Send + 'static> Group<T> {
     }
 }
 
+/// A century. Not forever, but further off than any grace a shutdown means,
+/// and near enough to now that the clock can still represent it.
+const AS_GOOD_AS_FOREVER: Duration = Duration::from_hours(24 * 365 * 100);
+
+/// `grace` from now, or as far from now as the clock can say.
+///
+/// A `Duration` that overflows the clock is not a grace anyone meant, and the
+/// addition that would name it panics. Every step here is checked, and the last
+/// fallback is now itself: a shutdown that reaps nothing and reports every task
+/// abandoned is wrong about the tasks, where a panic would take the caller's
+/// thread with it.
+fn deadline_in(grace: Duration) -> tokio::time::Instant {
+    let now = tokio::time::Instant::now();
+    now.checked_add(grace)
+        .or_else(|| now.checked_add(AS_GOOD_AS_FOREVER))
+        .unwrap_or(now)
+}
+
 /// What a join answered, said in this crate's words.
 fn ended<T>(joined: Result<T, tokio::task::JoinError>) -> Ended<T> {
     match joined {
         Ok(answer) => Ended::Done(answer),
         Err(join) if join.is_cancelled() => Ended::Stopped,
-        Err(_) => Ended::Panicked,
+        // Everything else is the task coming apart. `JoinError` is opaque over
+        // a private enum, so a tokio that grows a third way to fail arrives
+        // here rather than being reported as a clean stop it was not.
+        Err(join) => Ended::Panicked(came_apart_with(join)),
+    }
+}
+
+/// The panic message, or the best account of the join that can be given.
+fn came_apart_with(join: tokio::task::JoinError) -> String {
+    match join.try_into_panic() {
+        Ok(payload) => payload
+            .downcast_ref::<&'static str>()
+            .map(|said| (*said).to_owned())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "a panic payload that is not a string".to_owned()),
+        Err(join) => join.to_string(),
     }
 }
 
@@ -164,146 +320,326 @@ fn ended<T>(joined: Result<T, tokio::task::JoinError>) -> Ended<T> {
 mod tests {
     use std::sync::Arc;
 
-    use super::*;
+    use super::{Ended, Group};
+    use crate::Cancel;
 
-    /// Long enough that a cooperative task returns inside it, short enough that
-    /// a test waiting out the whole of it is still quick.
-    const GRACE: Duration = Duration::from_millis(500);
+    /// Long enough that a cooperative task returning inside it is a fact about
+    /// the code rather than about how busy the machine is. The tests that
+    /// spend it run on a paused clock, so it costs no wall time.
+    const GRACE: std::time::Duration = std::time::Duration::from_millis(500);
+
+    /// How long a cooperative task waits between checks of the token. Small
+    /// against `GRACE`, and a real await point rather than a yield: a task that
+    /// only yields keeps the runtime from ever going idle, and a paused clock
+    /// only advances when it does — which would turn a broken shutdown into a
+    /// hang instead of a failure.
+    const TICK: std::time::Duration = std::time::Duration::from_millis(10);
+
+    /// The most turns of the scheduler a test will give a task to reach a
+    /// state, before deciding it never will. A bound rather than a fixed count
+    /// of yields: the count that happens to work today is one scheduler change
+    /// away from hanging the suite.
+    const TURNS: usize = 1_000;
+
+    /// A task that returns as soon as its group is shut down, and says so.
+    async fn cooperative(cancel: Cancel) -> &'static str {
+        loop {
+            if cancel.requested() {
+                return "noticed";
+            }
+            tokio::time::sleep(TICK).await;
+        }
+    }
 
     #[tokio::test]
     async fn a_full_group_refuses_rather_than_queueing() {
-        let mut group = Group::new(1, Cancel::new());
+        let mut group = Group::new(1, &Cancel::new());
 
-        group
-            .spawn(std::future::pending::<()>())
-            .expect("the first task fits");
-
+        assert!(group.spawn(cooperative(group.cancel().clone())).is_ok());
         assert_eq!(
-            group.spawn(std::future::pending::<()>()),
-            Err(Full),
-            "a bounded group must refuse, not queue behind the bound"
+            group.spawn(cooperative(group.cancel().clone())),
+            Err(super::Full),
+            "the second task was admitted past the limit of one"
         );
     }
 
     #[tokio::test]
     async fn a_group_admits_again_once_a_task_has_finished() {
-        let mut group = Group::new(1, Cancel::new());
+        let mut group = Group::new(1, &Cancel::new());
 
-        group.spawn(async { 1 }).expect("the first task fits");
+        assert!(group.spawn(async { "first" }).is_ok());
+        for _ in 0..TURNS {
+            if group.is_empty() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
 
-        // The task has to be given the chance to run before its slot is free.
-        tokio::task::yield_now().await;
+        assert!(
+            group.spawn(async { "second" }).is_ok(),
+            "the group refused although the task it was holding had finished"
+        );
+    }
 
-        group
-            .spawn(async { 2 })
-            .expect("a finished task must not go on holding its slot");
+    #[tokio::test]
+    async fn a_task_that_finished_is_not_counted_as_running() {
+        let mut group = Group::new(2, &Cancel::new());
+        assert!(group.is_empty());
+
+        assert!(group.spawn(async { "done" }).is_ok());
+        assert_eq!(group.len(), 1);
+
+        for _ in 0..TURNS {
+            if group.is_empty() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(group.len(), 0, "a finished task was still counted");
+        assert!(group.is_empty());
+    }
+
+    #[tokio::test]
+    async fn ends_hands_over_what_finished_and_leaves_the_group_running() {
+        let mut group = Group::new(2, &Cancel::new());
+
+        assert!(group.spawn(async { "early" }).is_ok());
+        let mut taken = Vec::new();
+        for _ in 0..TURNS {
+            taken = group.ends();
+            if !taken.is_empty() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+
+        assert_eq!(taken, vec![Ended::Done("early")]);
+        assert!(
+            group.ends().is_empty(),
+            "the same end was handed over twice"
+        );
+        assert!(
+            group.spawn(async { "later" }).is_ok(),
+            "draining the ends left the group unusable"
+        );
+        assert_eq!(group.shutdown(GRACE).await, vec![Ended::Done("later")]);
     }
 
     #[tokio::test]
     async fn a_panicking_task_is_reported_rather_than_lost() {
-        let mut group = Group::new(2, Cancel::new());
+        let mut group = Group::new(1, &Cancel::new());
 
-        group.spawn(async { 1 }).expect("room");
-        group
-            .spawn(async { panic!("a task came apart") })
-            .expect("room");
+        assert!(group.spawn(async { panic!("the task came apart") }).is_ok());
+        let ends: Vec<Ended<()>> = group.shutdown(GRACE).await;
 
-        let ends = group.shutdown(GRACE).await;
-
-        assert_eq!(ends.len(), 2, "shutdown answers for every task it held");
-        assert!(
-            ends.contains(&Ended::Panicked),
-            "a panic must reach the owner as an end, not vanish: got {ends:?}"
-        );
-        assert!(ends.contains(&Ended::Done(1)));
+        match ends.as_slice() {
+            [Ended::Panicked(said)] => assert!(
+                said.contains("the task came apart"),
+                "the panic message was lost: {said}"
+            ),
+            other => panic!("expected one panicked task, got {other:?}"),
+        }
     }
 
-    /// The clock is paused, so `GRACE` is spent only if the shutdown actually
-    /// waits it out; a test that returns before it costs no wall time at all.
+    #[tokio::test]
+    async fn what_a_task_answered_stays_out_of_the_debug_rendering() {
+        let ends = vec![
+            Ended::Done("sk-live-0123456789"),
+            Ended::Panicked("sk-live-0123456789".to_owned()),
+        ];
+
+        let rendered = format!("{ends:?}");
+        assert!(
+            !rendered.contains("sk-live"),
+            "the ends carried their payloads into a `{{:?}}`: {rendered}"
+        );
+        assert_eq!(rendered, "[Done(redacted), Panicked(redacted)]");
+    }
+
+    #[tokio::test]
+    async fn a_group_shows_its_counts_without_showing_its_answers() {
+        let mut group = Group::new(3, &Cancel::new());
+        assert!(group.spawn(async { "sk-live-0123456789" }).is_ok());
+        while group.ends().is_empty() {
+            tokio::task::yield_now().await;
+        }
+
+        let rendered = format!("{group:?}");
+        assert!(
+            !rendered.contains("sk-live"),
+            "the group carried a task's answer into a `{{:?}}`: {rendered}"
+        );
+    }
+
     #[tokio::test(start_paused = true)]
     async fn a_cooperative_task_returns_inside_the_grace() {
-        let mut group = Group::new(1, Cancel::new());
-        let cancel = group.cancel().clone();
-
-        group
-            .spawn(async move {
-                while !cancel.requested() {
-                    tokio::task::yield_now().await;
-                }
-                "noticed"
-            })
-            .expect("room");
-
-        let began = tokio::time::Instant::now();
-        let ends = group.shutdown(GRACE).await;
-
-        assert_eq!(ends, vec![Ended::Done("noticed")]);
-        assert!(
-            began.elapsed() < GRACE,
-            "a task that stopped when asked must not be waited out to the grace"
-        );
-    }
-
-    /// Paused, so the grace below is virtual: the task never finishes, the
-    /// runtime goes idle, and the clock jumps to the deadline. What the
-    /// assertions then read is the deadline doing the stopping, rather than a
-    /// wall-clock wait that happened to be long enough.
-    #[tokio::test(start_paused = true)]
-    async fn no_task_survives_the_owner_shutting_down() {
-        let mut group = Group::new(1, Cancel::new());
-
-        // Held by the task and by this test. If the task is still alive after
-        // shutdown, so is its clone, and the count says so.
-        let held = Arc::new(());
-        let carried = Arc::clone(&held);
-
-        group
-            .spawn(async move {
-                std::future::pending::<()>().await;
-                drop(carried);
-            })
-            .expect("room");
+        let mut group = Group::new(1, &Cancel::new());
+        assert!(group.spawn(cooperative(group.cancel().clone())).is_ok());
 
         let began = tokio::time::Instant::now();
         let ends = group.shutdown(GRACE).await;
 
         assert_eq!(
-            began.elapsed(),
-            GRACE,
-            "a task that will not stop is given the grace, and no longer"
+            ends,
+            vec![Ended::Done("noticed")],
+            "the task was taken away rather than being allowed to return"
         );
+        assert!(
+            began.elapsed() < GRACE,
+            "returning took the whole grace: {:?}",
+            began.elapsed()
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn every_task_is_accounted_for_when_several_are_running() {
+        let mut group = Group::new(3, &Cancel::new());
+        for _ in 0..3 {
+            assert!(group.spawn(cooperative(group.cancel().clone())).is_ok());
+        }
+
+        let ends = group.shutdown(GRACE).await;
+
+        assert_eq!(
+            ends,
+            vec![
+                Ended::Done("noticed"),
+                Ended::Done("noticed"),
+                Ended::Done("noticed")
+            ],
+            "the shutdown stopped accounting before every task was joined"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn no_task_survives_the_owner_shutting_down() {
+        let held = Arc::new(());
+        let mut group = Group::new(1, &Cancel::new());
+        let kept = Arc::clone(&held);
+        assert!(
+            group
+                .spawn(async move {
+                    // Named so the task's future owns it; the count outside is
+                    // what says whether that future is still alive.
+                    let _ = &kept;
+                    loop {
+                        tokio::time::sleep(TICK).await;
+                    }
+                })
+                .is_ok()
+        );
+
+        let began = tokio::time::Instant::now();
+        let ends = group.shutdown(GRACE).await;
+
         assert_eq!(
             ends,
             vec![Ended::Stopped],
-            "a task that would not stop must be reported as taken away"
+            "a task that ignored the request was not reported as taken away"
+        );
+        assert!(
+            began.elapsed() >= GRACE,
+            "the grace was cut short: {:?}",
+            began.elapsed()
         );
         assert_eq!(
             Arc::strong_count(&held),
             1,
-            "the task was still holding what it was given, so it is still running"
+            "the task was still holding what it borrowed after shutdown returned"
+        );
+    }
+
+    /// The multi-threaded flavor is what makes this a test of the shutdown
+    /// rather than of the runtime: a task doing synchronous work occupies a
+    /// worker, and the shutdown reaping it has to be on another one to get an
+    /// answer at all.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_task_that_never_yields_is_given_up_on_rather_than_waited_for() {
+        /// Long enough that no scheduling delay can make the grace outlast it.
+        const BLOCKED_FOR: std::time::Duration = std::time::Duration::from_millis(500);
+        /// Short enough that twice it is far inside `BLOCKED_FOR`.
+        const BRIEF: std::time::Duration = std::time::Duration::from_millis(20);
+
+        let mut group = Group::new(1, &Cancel::new());
+        assert!(
+            group
+                .spawn(async {
+                    std::thread::sleep(BLOCKED_FOR);
+                    "finished anyway"
+                })
+                .is_ok()
+        );
+
+        let began = std::time::Instant::now();
+        let ends = group.shutdown(BRIEF).await;
+        let took = began.elapsed();
+
+        assert_eq!(
+            ends,
+            vec![Ended::Abandoned],
+            "a task nothing can stop was reported as though it had ended"
+        );
+        assert!(
+            took < BLOCKED_FOR,
+            "the shutdown waited for a task no abort can reach: {took:?}"
         );
     }
 
     #[tokio::test]
     async fn a_group_dropped_on_an_error_path_leaves_nothing_running() {
         let held = Arc::new(());
-        let carried = Arc::clone(&held);
+        let run = Cancel::new();
+        let kept = Arc::clone(&held);
 
         {
-            let mut group = Group::new(1, Cancel::new());
-            group
-                .spawn(async move {
-                    std::future::pending::<()>().await;
-                    drop(carried);
-                })
-                .expect("room");
+            let mut group = Group::new(1, &run);
+            assert!(
+                group
+                    .spawn(async move {
+                        // Named so the task's future owns it; the count outside
+                        // is what says whether that future is still alive.
+                        let _ = &kept;
+                        loop {
+                            tokio::task::yield_now().await;
+                        }
+                    })
+                    .is_ok()
+            );
         }
 
-        // Dropping the group aborts what it held; the abort is what releases
-        // the task's own clone, and it takes a scheduler pass to land.
-        tokio::task::yield_now().await;
-        tokio::task::yield_now().await;
+        for _ in 0..TURNS {
+            if Arc::strong_count(&held) == 1 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(
+            Arc::strong_count(&held),
+            1,
+            "dropping the group left its task running"
+        );
+    }
 
-        assert_eq!(Arc::strong_count(&held), 1);
+    #[tokio::test]
+    async fn shutting_a_group_down_does_not_stop_the_run_it_belongs_to() {
+        let run = Cancel::new();
+        let group: Group<()> = Group::new(1, &run);
+
+        assert!(group.shutdown(GRACE).await.is_empty());
+        assert!(
+            !run.requested(),
+            "the group raised the token of the run that owns it"
+        );
+    }
+
+    #[tokio::test]
+    async fn stopping_the_run_reaches_the_tasks_of_a_group_inside_it() {
+        let run = Cancel::new();
+        let mut group = Group::new(1, &run);
+        assert!(group.spawn(cooperative(group.cancel().clone())).is_ok());
+
+        run.request();
+
+        assert_eq!(group.shutdown(GRACE).await, vec![Ended::Done("noticed")]);
     }
 }

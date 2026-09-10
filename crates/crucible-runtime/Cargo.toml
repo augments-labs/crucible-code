@@ -13,19 +13,22 @@ authors.workspace = true
 # workspace crate: a control a turn is stopped by that had to agree with a
 # domain value would be a second thing every consumer of the control depends on.
 #
-# `tokio` supplies the executor the owned task group runs on. What is used of it
-# is the multi-threaded scheduler, its `JoinSet`, and the synchronization and
-# time primitives the group's shutdown is written in; the process, network and
-# file features are not enabled here and arrive with the crates that own those
-# boundaries.
+# `tokio` supplies the task set the owned group holds its work in, and the
+# timer its shutdown is bounded by. Nothing here builds or chooses a runtime —
+# a group runs on whichever one its caller is already on — so the scheduler
+# features are not enabled, and neither are the process, network and file ones,
+# which arrive with the crates that own those boundaries.
 [dependencies]
-tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time"] }
+tokio = { workspace = true, features = ["rt", "time"] }
 
 # `macros` writes the `#[tokio::test]` attribute, and `test-util` is the paused
 # clock a deadline is asserted against without spending the wall time it names.
-# Both are test-only: nothing of either survives into the binary.
+# `rt-multi-thread` is what lets one test put a task inside synchronous work on
+# a worker of its own, which is the only way to observe a shutdown giving up on
+# a task no abort can reach. All three are test-only: nothing of any of them
+# survives into the binary.
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "test-util"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
 
 [lints]
 workspace = true
