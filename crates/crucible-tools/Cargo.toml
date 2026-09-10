@@ -28,10 +28,11 @@ getrandom.workspace = true
 base64.workspace = true
 serde_json.workspace = true
 
-# SHA-256 of what a sandbox is admitted on: the helper about to isolate a
-# command, and the probe or projection describing what it will see, are each
-# identified by what they contain rather than by where they were found. The
-# picture digest that used to share this dependency moved out with its ingress.
+# SHA-256 of what a sandbox is admitted on, and of what it writes down. What a
+# sandbox is admitted on is identified by what it contains rather than by where
+# it was found; a record of one is sealed by its own contents, so a resumed run
+# can tell a frame apart from a frame that was edited under it. The picture
+# digest that used to share this dependency moved out with its ingress.
 sha2.workspace = true
 
 # `kill` on a process group, which is how a command's whole pipeline is stopped

@@ -13,9 +13,9 @@
 //! request, and it is not a property of the file.
 //!
 //! There is one way in, in two halves. [`Opened`] is the descriptor — reached
-//! through the workspace where a model chose the path, named directly where an
-//! external operator typed one — and [`Taken`] is what a bounded read of it
-//! came to, bytes and the digest that identifies them together. The halves stay
+//! through the workspace where a proof was held, opened by name where there was
+//! none to walk down — and [`Taken`] is what a bounded read of it came to,
+//! bytes and the digest that identifies them together. The halves stay
 //! apart because a caller may have cheap reasons to refuse a file after it is
 //! standing at the descriptor and before its bytes are worth reading; they are
 //! one pipeline because a second spelling of read-then-digest is a second answer
@@ -85,15 +85,16 @@ pub enum AttachmentError {
     /// The open or the read did not finish.
     #[error("could not be read: {0}")]
     Unread(#[from] io::Error),
-    /// The workspace refused the path before anything was opened.
+    /// The descriptor walk refused the path.
     ///
-    /// Only [`Opened::reached`] can produce this: a path the workspace proved
-    /// can still be swapped under the descriptor walk, and what that walk
-    /// refuses is a path question rather than an attachment one. It is carried
-    /// rather than flattened so a caller can tell "the tree moved" from "the
-    /// file is not attachable".
+    /// Only [`Opened::reached`] produces this, and only by naming it: a path
+    /// the workspace proved can still be swapped under the walk, and what the
+    /// walk refuses is a path question rather than an attachment one. There is
+    /// no `From` conversion, so a later `?` on a `PathError` cannot quietly
+    /// route [`PathError::NotFile`] back here after `reached` has sorted it
+    /// into [`AttachmentError::NotFile`].
     #[error("{0}")]
-    Unreached(#[from] PathError),
+    Unreached(PathError),
 }
 
 /// Opens a file whose path did not come from the workspace, for its bytes.
@@ -160,10 +161,10 @@ fn carried(file: &mut File) -> Result<Vec<u8>, AttachmentError> {
 ///
 /// Which constructor made it is the whole of the authority question. A path a
 /// model reached is opened by walking the tree the workspace proved, one
-/// component at a time against descriptors already held; a path an external
-/// operator typed has no containment to answer and is opened by name. Mixing
-/// the two would hand one ingress the other's authority, which is why there is
-/// no way to build this from a `File` a caller opened itself. The error code is
+/// component at a time against descriptors already held; a path with no proof
+/// behind it has no containment to answer and is opened by name. Mixing the two
+/// would hand one ingress the other's authority, which is why there is no way
+/// to build this from a `File` a caller opened itself. The error code is
 /// what that fails with today and not a gate, since `compile_fail` accepts any
 /// compile error:
 ///
@@ -209,7 +210,7 @@ impl Opened {
         }
     }
 
-    /// Opens a path an external operator named in full.
+    /// Opens a path by name, where there is no proof to walk down.
     ///
     /// # Errors
     ///
@@ -469,6 +470,7 @@ fn mp4(bytes: &[u8]) -> bool {
 mod tests {
     use std::io::Seek as _;
 
+    #[cfg(unix)]
     use crucible_workspace::Workspace;
 
     use super::*;
@@ -536,9 +538,16 @@ mod tests {
             .expect("under the ceiling");
 
         assert!(taken.is(kind("shot.png").expect("png is attachable")));
+        // The published SHA-256 of those eight bytes, written down rather than
+        // recomputed here: an oracle that runs the same algorithm over the same
+        // input agrees with the code even when both are wrong.
         assert_eq!(
             taken.hash(),
-            <[u8; 32]>::from(Sha256::digest(taken.bytes()))
+            [
+                0x4c, 0x4b, 0x6a, 0x3b, 0xe1, 0x31, 0x4a, 0xb8, 0x61, 0x38, 0xbe, 0xf4, 0x31, 0x4d,
+                0xde, 0x02, 0x2e, 0x60, 0x09, 0x60, 0xd8, 0x68, 0x9a, 0x2c, 0x8f, 0x86, 0x31, 0x80,
+                0x2d, 0x20, 0xda, 0xb6
+            ]
         );
     }
 
@@ -620,8 +629,10 @@ mod tests {
             .expect("a writable temporary directory");
 
         let open = Opened::named(&at).expect("a regular file opens");
-        let shown = format!("{open:?}");
-        assert!(!shown.contains("private"), "{shown}");
+        // Pinned exactly, like the rendering below: asserting only that the
+        // filename is absent would pass a future field that carries the path
+        // under another name.
+        assert_eq!(format!("{open:?}"), "Opened { .. }");
 
         let taken = open.taken().expect("under the ceiling");
 

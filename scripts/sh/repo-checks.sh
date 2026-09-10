@@ -417,19 +417,18 @@ if ((here != 1)); then
     failed=1
 fi
 
-# The same shape, for the door the workspace crate had to open in its own wall.
-# `Workspace::intended` was crate-private while the workspace lived inside core;
-# splitting it out made it `pub`, and it is the one entry point that hands back a
-# plain path instead of a proof. That is right for the permission engine, which
-# has to name the call it is settling and must not be given the authority to make
-# it — and wrong for everyone else, because the path it returns resolves through
-# the nearest *existing* ancestor, which is the one shape that must never be
-# opened by name. Cargo cannot express "public to one caller", so the pin is here.
-# The crate that owns the call tests it, as the checks above leave their owners.
+section "the path that is described, not opened"
+# `Workspace::intended` hands back a plain path instead of a proof, and it
+# resolves through the nearest *existing* ancestor — the one shape that must
+# never be opened by name. The permission engine needs exactly that, because it
+# describes a call rather than making one. Splitting the workspace out of core
+# turned the call `pub`, and Cargo cannot say "public to one caller", so the pin
+# says it here. The owning crate defines and tests it, as the pins above leave
+# their owners.
 asker="crates/crucible-core/src/permission/sensitivity.rs"
 owner="crates/crucible-workspace/src/resolve.rs"
 tests="crates/crucible-workspace/src/tests.rs"
-asks='\.intended\('
+asks='(\.|Workspace::|Self::)intended\('
 elsewhere=$(grep -rlE --include='*.rs' "$asks" crates src tests |
     grep -Fxv "$asker" |
     grep -Fxv "$owner" |
@@ -438,6 +437,11 @@ if [[ -n "$elsewhere" ]]; then
     while IFS= read -r file; do
         printf '    FAIL %s calls Workspace::intended; only %s may\n' "$file" "$asker"
     done <<<"$elsewhere"
+    failed=1
+fi
+here=$(doors "$asks" "$asker")
+if ((here != 1)); then
+    printf '    FAIL %s calls Workspace::intended %d times; the question is asked once\n' "$asker" "$here"
     failed=1
 fi
 
@@ -509,9 +513,9 @@ fi
 # other crate still reaches the domain through one name.
 #
 # The exception is `attachments`, which four crates name outright. Its point is
-# that there is exactly one way a file becomes bytes a request may carry, and a
-# caller reaching it through a facade would be free to assemble the same read
-# out of the parts instead.
+# that there is exactly one way a file becomes bytes a request may carry, and
+# the two types that read is made of are withheld from the facade — so a caller
+# that wants one takes the edge, and the edge shows up here.
 allowed='code attachments
 code auth
 code config
