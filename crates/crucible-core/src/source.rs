@@ -22,7 +22,7 @@
 
 use std::fmt;
 
-use crate::cancel::Cancel;
+use crate::Cancel;
 use crate::permission::Host;
 
 /// Why a source could not answer.

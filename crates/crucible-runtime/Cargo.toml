@@ -1,0 +1,18 @@
+[package]
+name = "crucible-runtime"
+description = "The controls a turn is steered and stopped by."
+publish.workspace = true
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# This crate answers about work in flight and nothing else, so it names no
+# workspace crate: a control a turn is stopped by that had to agree with a
+# domain value would be a second thing every consumer of the control depends on.
+[dependencies]
+
+[lints]
+workspace = true

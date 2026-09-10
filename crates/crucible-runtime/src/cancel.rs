@@ -19,9 +19,6 @@
 //! rather than merely tidy — see [`Cancel::reset`]. One thread raises the flag
 //! and clears it, so there is no moment at which a press can be overwritten by
 //! a clearing that was decided before it happened.
-//!
-//! It lives in core because [`crate::provider::Provider`] takes one, and core
-//! owns every type its own traits name.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};

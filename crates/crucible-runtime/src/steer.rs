@@ -15,10 +15,9 @@
 //! that was already finishing ignores it and lets the line be answered as its
 //! own prompt.
 //!
-//! It lives in core beside [`crate::Cancel`] because the runner's exchange loop
-//! takes one, and core owns every type its own loop names. The shape is the one
-//! `Cancel` sets: a shared cell, one producer on the thread that draws, the
-//! consumer on the thread the turn runs on.
+//! The shape is the one [`Cancel`](crate::Cancel) sets: a shared cell, one
+//! producer on the thread that draws, the consumer on the thread the turn runs
+//! on.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -31,7 +30,7 @@ use std::sync::{Arc, Mutex};
 pub struct Steer(Arc<Mutex<Waiting>>);
 
 /// By hand: the lines are the reader's own words waiting to join the turn, and
-/// [`crate::Event::Steered`] redacts the same words on their way out.
+/// `Event::Steered` redacts the same words on their way out.
 impl std::fmt::Debug for Steer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let (lines, held) = self
@@ -176,7 +175,7 @@ mod tests {
     #[test]
     fn the_queue_never_shows_what_the_reader_typed() {
         // The lines are the reader's own words waiting to join the turn, and
-        // [`crate::Event::Steered`] redacts the same words on their way out.
+        // `Event::Steered` redacts the same words on their way out.
         let steer = Steer::new();
         steer.say("steer-debug-canary".to_owned());
 

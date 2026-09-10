@@ -399,6 +399,7 @@ dependencies = [
  "crucible-attachments",
  "crucible-credentials",
  "crucible-registry",
+ "crucible-runtime",
  "crucible-storage",
  "crucible-types",
  "crucible-workspace",
@@ -473,6 +474,10 @@ dependencies = [
  "crucible-session",
  "sha2",
 ]
+
+[[package]]
+name = "crucible-runtime"
+version = "0.40.1"
 
 [[package]]
 name = "crucible-sandbox-broker"

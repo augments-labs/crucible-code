@@ -24,9 +24,7 @@
 //! Authentication is a separate axis from the wire protocol: a `Provider`
 //! receives an already-resolved `Credential` and never learns what kind it is.
 
-mod aside;
 mod ask;
-mod cancel;
 mod compaction;
 mod context;
 mod event;
@@ -41,14 +39,11 @@ mod provider;
 mod revealed;
 mod sandbox;
 mod source;
-mod steer;
 mod tool;
 mod toolset;
 mod version;
 
-pub use aside::Aside;
 pub use ask::{Answer, Answered, Put, Question};
-pub use cancel::Cancel;
 pub use compaction::{Compacted, Compacting, RECAP, Room};
 pub use context::{ContextSection, capture, seen};
 pub use crucible_attachments::{AttachmentError, CEILING, KINDS, Kind, kind};
@@ -61,6 +56,7 @@ pub use crucible_registry::{
     RegistrySnapshot, SOURCE_ID_BYTES, SOURCE_LABEL_BYTES, Shadow, SourceKind, SourceReceipt,
     Staged,
 };
+pub use crucible_runtime::{Aside, Cancel, Steer};
 pub use crucible_storage::{
     ActionId, ActionResolution, ApprovalDecision, CallResultKey, CallResultReceipt,
     CallResultStoreError, CheckpointId, CompactionRecord, CustomEntry, CustomProjector,
@@ -186,7 +182,6 @@ pub use sandbox::{
     SandboxUnreadablePattern, SandboxUsage, SandboxViolation,
 };
 pub use source::{Fetch, Page, Search, SearchResponse, SearchResult, SourceError};
-pub use steer::Steer;
 pub use tool::{
     Account, CallResultAcceptance, Looking, PendingCallResult, Remembered, Summary, Tool,
     ToolContext, ToolError, ToolOutput, Unwatched, Watch, Wrote,

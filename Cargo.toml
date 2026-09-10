@@ -46,6 +46,7 @@ crucible-privacy = { path = "crates/crucible-privacy" }
 crucible-provider = { path = "crates/crucible-provider" }
 crucible-registry = { path = "crates/crucible-registry" }
 crucible-runner = { path = "crates/crucible-runner" }
+crucible-runtime = { path = "crates/crucible-runtime" }
 # Static PID 1 executable and its four-byte raw-wait-status protocol. The
 # library side contains no launcher or application authority; tools uses only
 # the protocol constants while the separately built binary supervises one
@@ -144,12 +145,11 @@ httparse = "=1.10.1"
 # grammar, including bracketed IPv6 and absolute-form targets. Already in ureq.
 http = "=1.5.0"
 
-# HTTP. Blocking by design: this workspace runs threads rather than an async
-# runtime, and the alternative client would pull `tokio` in to serve one socket
-# per turn. Brings `rustls` rather than linking a system OpenSSL, so a release
-# binary is the same on every machine. Confined to one file behind `Transport`.
-# Default features minus `gzip`: a response here is an event stream that is read
-# as it arrives, and compressing one buys nothing for the `flate2` it costs.
+# HTTP. Blocking by design. Brings `rustls` rather than linking a system
+# OpenSSL, so a release binary is the same on every machine. Confined to one
+# file behind `Transport`. Default features minus `gzip`: a response here is an
+# event stream that is read as it arrives, and compressing one buys nothing for
+# the `flate2` it costs.
 ureq = { version = "=3.4.1", default-features = false, features = ["rustls"] }
 
 # JWT claims are base64url without padding. OpenAI subscription login needs the

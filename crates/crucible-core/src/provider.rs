@@ -10,7 +10,7 @@
 
 use std::fmt;
 
-use crate::cancel::Cancel;
+use crate::Cancel;
 use crucible_credentials::{CredentialError, Redactions};
 use crucible_types::ToolId;
 use crucible_types::{Modalities, Modality};

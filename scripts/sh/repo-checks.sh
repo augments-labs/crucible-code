@@ -542,7 +542,7 @@ if [[ -z "$edges" ]]; then
     failed=1
 fi
 
-# `core` names the six crates its old names now come from. Those six edges are
+# `core` names the seven crates its old names now come from. Those edges are
 # the compatibility facade and go away with the crate that holds them; every
 # other crate still reaches the domain through one name.
 #
@@ -570,6 +570,7 @@ config core
 core attachments
 core credentials
 core registry
+core runtime
 core storage
 core types
 core workspace

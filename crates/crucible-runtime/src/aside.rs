@@ -18,10 +18,6 @@
 //! the model exactly once: whoever drains it has delivered it, and whatever is
 //! still in it when the turn ends was never delivered and is still owed. The
 //! caller on the other side reads that back and puts it under the next turn.
-//!
-//! It lives in core beside [`crate::Steer`] and [`crate::Cancel`] because the
-//! runner's exchange loop takes one, and core owns every type its own loop
-//! names.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
