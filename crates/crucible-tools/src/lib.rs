@@ -62,8 +62,8 @@
 //! `bash` is the exception, and deliberately. It runs a shell, and a shell
 //! reaches anything the user can; the workspace gives it a directory to start
 //! in, not a fence. Two things bound that tool. The permission engine asks
-//! about the program the command is about to run, which is why that is what
-//! the question names. The confinement its host handed it does the rest, and
+//! about the command line about to run, which is why that whole line is what
+//! the question shows. The confinement its host handed it does the rest, and
 //! this crate names that as a service and never as an operating system.
 
 mod account;

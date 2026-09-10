@@ -626,55 +626,123 @@ done
 # check that cannot tell "no edge" from "never looked" reports the reassuring
 # one, and a manifest renamed away would read as a clean layering.
 shipped_sandbox_local_edge() {
-    # `-r` alone admits a directory, which awk skips while exiting 0, so the
-    # function would answer "no edge" for something it never read. `-f` is too
-    # narrow the other way: the controls below hand this a process substitution,
-    # which is a pipe.
+    # A manifest that cannot be opened has to be answered here: the redirect
+    # below fails before awk runs, and that failure would read as "no edge". A
+    # directory is refused here as well rather than handed to awk, which warns
+    # and reads nothing. `-f` would be too narrow: the controls below hand this
+    # a process substitution, which is a pipe. The manifest arrives on standard
+    # input rather than as an operand, because an operand shaped like
+    # `name=value` is an awk assignment and would leave it reading whatever
+    # standard input the gate itself was started with.
     [[ -r "$1" && ! -d "$1" ]] || return 2
     awk '
+        # Cargo accepts one dependency in many spellings: quoted or bare,
+        # dotted or nested, a table of its own or a value inside one, with or
+        # without a `[target.<cfg>]` prefix. What none of them can vary is the
+        # key path the entry ends up at, so every line is reduced to that path
+        # first and only the path is asked about. Matching the spellings
+        # instead is how a manifest gets to declare an edge this never sees.
+
+        # Quotes and spacing are presentation. `=` ends the path and begins the
+        # value; inside a string it is neither.
+        function flatten(text,   i, c, q, out) {
+            q = ""
+            out = ""
+            for (i = 1; i <= length(text); i++) {
+                c = substr(text, i, 1)
+                if (q == "") {
+                    if (c == "=") break
+                    if (c == "\"" || c == "\047") { q = c; continue }
+                    if (c == " " || c == "\t") continue
+                } else if (c == q) {
+                    q = ""
+                    continue
+                }
+                out = out c
+            }
+            return out
+        }
+        # A `#` inside a string is part of a path; only an unquoted one is prose.
+        function code(text,   i, c, q, out) {
+            q = ""
+            out = ""
+            for (i = 1; i <= length(text); i++) {
+                c = substr(text, i, 1)
+                if (q == "") {
+                    if (c == "#") break
+                    if (c == "\"" || c == "\047") q = c
+                } else if (c == q) {
+                    q = ""
+                }
+                out = out c
+            }
+            return out
+        }
+        # Which kind of table a path lands in, with `key` left holding the
+        # dependency it names. `inherit` is a path that names no table itself
+        # and belongs to whichever one it was written under. A dependency table
+        # and every sub-table under it are one thing here: `[dependencies.x]`
+        # is where Cargo puts an entry needing more than a single key, and it
+        # ships exactly as much as `[dependencies]` does. Workspace dependency
+        # tables agree versions across members; they take no edge.
+        function classify(path,   n, i, seg) {
+            key = ""
+            n = split(path, seg, "\\.")
+            if (seg[1] == "workspace") return "none"
+            for (i = 1; i <= n; i++) {
+                if (seg[i] ~ /^(dev-|build-)?dependencies$/) {
+                    if (i < n) key = seg[i + 1]
+                    return seg[i] == "dev-dependencies" ? "dev" : "shipped"
+                }
+            }
+            key = seg[1]
+            return "inherit"
+        }
         /^[[:space:]]*\[/ {
             header = $0
             sub(/^[[:space:]]*\[+[[:space:]]*/, "", header)
             sub(/[[:space:]]*\]+.*$/, "", header)
-            gsub(/[\047"]/, "", header)
-            # A dependency table and every sub-table under it are one thing
-            # here: `[dependencies.backend]` is where Cargo puts an entry that
-            # needs more than a single key, and it ships exactly as much as
-            # `[dependencies]` does.
-            shipped = (header ~ /(^|[.-])dependencies(\.|$)/ \
-                && header !~ /(^|\.)dev-dependencies(\.|$)/ \
-                && header !~ /^workspace\./)
-            # A sub-table can name the crate in the header instead of a key.
-            if (shipped && header ~ /\.crucible-sandbox-local$/) { found = 1 }
-            seen = 1
+            kind = classify(flatten(header))
+            table = (kind == "shipped" || kind == "dev") ? kind : ""
+            # A sub-table names the crate in the header instead of a key.
+            if (table == "shipped" && key == "crucible-sandbox-local") { found = 1 }
+            content = 1
             next
         }
-        # A whole-line comment is prose about the manifest, not the manifest.
-        /^[[:space:]]*#/ { next }
-        # Before the first header a dotted key spells the whole path itself, so
-        # `dependencies.backend.package = "..."` declares a shipped edge with no
-        # table to belong to. Strip the prefix and ask the same two questions.
-        seen == 0 && /^[[:space:]]*(build-)?dependencies\./ {
-            rest = $0
-            sub(/^[[:space:]]*(build-)?dependencies\./, "", rest)
-            if (rest ~ /^[\047"]?crucible-sandbox-local[\047"]?[[:space:].=]/) { found = 1 }
-            if (rest ~ /(^|[[:space:],{.])[\047"]?package[\047"]?[[:space:]]*=[[:space:]]*[\047"]crucible-sandbox-local[\047"]/) { found = 1 }
-            next
+        {
+            line = code($0)
+            path = flatten(line)
+            if (path == "") next
+            content = 1
+            kind = classify(path)
+            if (kind == "inherit") kind = table
+            if (kind != "shipped") next
+            if (key == "crucible-sandbox-local") { found = 1; next }
+            # A renamed dependency spells the crate in `package`, under a key
+            # that can be anything at all, so the key is no use for finding it.
+            if (line ~ /(^|[[:space:],{.])[\047"]?package[\047"]?[[:space:]]*=[[:space:]]*[\047"]crucible-sandbox-local[\047"]/) {
+                found = 1
+                next
+            }
+            # `dependencies = { … }` puts the entries in a value rather than
+            # under a path, so there is no key to read them from.
+            if (key == "" && index(line, "crucible-sandbox-local")) { found = 1 }
         }
-        shipped && /^[[:space:]]*[\047"]?crucible-sandbox-local[\047"]?[[:space:].=]/ { found = 1 }
-        # A renamed dependency spells the crate in `package`, under a key that
-        # can be anything at all, so the key is no use for finding it. That
-        # holds whether the rename is inline, dotted, or a sub-table of its own,
-        # which is why this is asked of every shipped dependency table, and why
-        # a dot counts as a boundary before `package`.
-        shipped && /(^|[[:space:],{.])[\047"]?package[\047"]?[[:space:]]*=[[:space:]]*[\047"]crucible-sandbox-local[\047"]/ { found = 1 }
-        END { exit found ? 0 : 1 }
-    ' "$1"
+        # A file that yielded no table and no key is not a manifest that says
+        # there is no edge; it is a manifest nothing was read out of.
+        END { exit content ? (found ? 0 : 1) : 2 }
+    ' < "$1"
 }
 
 # A check that cannot say yes has not said no, and one that cannot tell "no
-# edge" from "no manifest" has said nothing at all. Every answer is taken from
-# it here before the manifest that matters is put to it.
+# edge" from "no manifest" has said nothing at all. Every spelling below is
+# one Cargo resolves to the same edge, and every one of them is put to the
+# parser here before the manifest that matters is.
+if ! shipped_sandbox_local_edge \
+    <(printf '[dependencies]\ncrucible-sandbox-local.workspace = true\n'); then
+    printf '    FAIL the shipped-edge parser did not read a plain shipped dependency\n'
+    failed=1
+fi
 if ! shipped_sandbox_local_edge \
     <(printf '[build-dependencies]\ncrucible-sandbox-local.workspace = true\n'); then
     printf '    FAIL the shipped-edge parser did not read a build-dependency\n'
@@ -683,26 +751,6 @@ fi
 if ! shipped_sandbox_local_edge \
     <(printf '[dependencies.crucible-sandbox-local]\nworkspace = true\n'); then
     printf '    FAIL the shipped-edge parser did not read a dependency sub-table\n'
-    failed=1
-fi
-if ! shipped_sandbox_local_edge \
-    <(printf '[dependencies]\nbackend = { package = "crucible-sandbox-local" }\n'); then
-    printf '    FAIL the shipped-edge parser did not read a renamed dependency\n'
-    failed=1
-fi
-if ! shipped_sandbox_local_edge \
-    <(printf '[dependencies.backend]\npackage = "crucible-sandbox-local"\n'); then
-    printf '    FAIL the shipped-edge parser did not read a rename spelled as a sub-table\n'
-    failed=1
-fi
-if ! shipped_sandbox_local_edge \
-    <(printf "[dependencies.backend]\npackage = 'crucible-sandbox-local'\n"); then
-    printf '    FAIL the shipped-edge parser did not read a literal-string rename\n'
-    failed=1
-fi
-if ! shipped_sandbox_local_edge \
-    <(printf '[dependencies]\nbackend.package = "crucible-sandbox-local"\n'); then
-    printf '    FAIL the shipped-edge parser did not read a rename spelled as a dotted key\n'
     failed=1
 fi
 if ! shipped_sandbox_local_edge \
@@ -716,6 +764,41 @@ if ! shipped_sandbox_local_edge \
     failed=1
 fi
 if ! shipped_sandbox_local_edge \
+    <(printf "[target.'cfg(unix)'.dependencies]\ncrucible-sandbox-local.workspace = true\n"); then
+    printf '    FAIL the shipped-edge parser did not read a conditional dependency table\n'
+    failed=1
+fi
+if ! shipped_sandbox_local_edge \
+    <(printf '[target."cfg(target_os = \\"linux\\")".dependencies]\ncrucible-sandbox-local.workspace = true\n'); then
+    printf '    FAIL the shipped-edge parser did not read a cfg predicate holding an equals sign\n'
+    failed=1
+fi
+if ! shipped_sandbox_local_edge \
+    <(printf '[dependencies]\nbackend = { package = "crucible-sandbox-local" }\n'); then
+    printf '    FAIL the shipped-edge parser did not read a renamed dependency\n'
+    failed=1
+fi
+if ! shipped_sandbox_local_edge \
+    <(printf '[dependencies.backend]\npackage = "crucible-sandbox-local"\n'); then
+    printf '    FAIL the shipped-edge parser did not read a rename spelled as a sub-table\n'
+    failed=1
+fi
+if ! shipped_sandbox_local_edge \
+    <(printf '[dependencies]\nbackend.package = "crucible-sandbox-local"\n'); then
+    printf '    FAIL the shipped-edge parser did not read a rename spelled as a dotted key\n'
+    failed=1
+fi
+if ! shipped_sandbox_local_edge \
+    <(printf "[dependencies.backend]\npackage = 'crucible-sandbox-local'\n"); then
+    printf '    FAIL the shipped-edge parser did not read a literal-string rename\n'
+    failed=1
+fi
+if ! shipped_sandbox_local_edge \
+    <(printf '[dependencies.backend]\n"package" = "crucible-sandbox-local"\n'); then
+    printf '    FAIL the shipped-edge parser did not read a quoted package key\n'
+    failed=1
+fi
+if ! shipped_sandbox_local_edge \
     <(printf 'dependencies.crucible-sandbox-local.workspace = true\n'); then
     printf '    FAIL the shipped-edge parser did not read a top-level dotted key\n'
     failed=1
@@ -725,36 +808,94 @@ if ! shipped_sandbox_local_edge \
     printf '    FAIL the shipped-edge parser did not read a top-level dotted rename\n'
     failed=1
 fi
-if shipped_sandbox_local_edge \
-    <(printf 'dev-dependencies.crucible-sandbox-local.workspace = true\n'); then
-    printf '    FAIL the shipped-edge parser read a top-level dotted dev-dependency as shipped\n'
+if ! shipped_sandbox_local_edge \
+    <(printf 'build-dependencies.crucible-sandbox-local.path = "../dep"\n'); then
+    printf '    FAIL the shipped-edge parser did not read a top-level dotted build-dependency\n'
     failed=1
 fi
-shipped_sandbox_local_edge crates
-if (($? != 2)); then
-    printf '    FAIL the shipped-edge parser read a directory as an answer\n'
+if ! shipped_sandbox_local_edge \
+    <(printf '"dependencies".crucible-sandbox-local.path = "../dep"\n'); then
+    printf '    FAIL the shipped-edge parser did not read a top-level quoted path segment\n'
     failed=1
 fi
+if ! shipped_sandbox_local_edge \
+    <(printf 'dependencies . crucible-sandbox-local . path = "../dep"\n'); then
+    printf '    FAIL the shipped-edge parser did not read a dotted key written with spaces\n'
+    failed=1
+fi
+if ! shipped_sandbox_local_edge \
+    <(printf "target.'cfg(unix)'.dependencies.crucible-sandbox-local.path = \"../dep\"\n"); then
+    printf '    FAIL the shipped-edge parser did not read a top-level conditional dotted key\n'
+    failed=1
+fi
+if ! shipped_sandbox_local_edge \
+    <(printf 'dependencies = { crucible-sandbox-local = { path = "../dep" } }\n'); then
+    printf '    FAIL the shipped-edge parser did not read a dependency table written inline\n'
+    failed=1
+fi
+if ! shipped_sandbox_local_edge \
+    <(printf 'dependencies = { backend = { package = "crucible-sandbox-local" } }\n'); then
+    printf '    FAIL the shipped-edge parser did not read a rename inside an inline table\n'
+    failed=1
+fi
+
+# The same reduction has to leave test-support edges, version agreements and
+# prose alone, or the gate reddens for a layering that is correct.
 if shipped_sandbox_local_edge \
-    <(printf '[dependencies]\n# package = "crucible-sandbox-local" is dev-only\nserde.workspace = true\n'); then
-    printf '    FAIL the shipped-edge parser read a comment as a dependency\n'
+    <(printf '[dev-dependencies]\ncrucible-sandbox-local.workspace = true\n'); then
+    printf '    FAIL the shipped-edge parser read a dev-dependency as a shipped edge\n'
     failed=1
 fi
 if shipped_sandbox_local_edge \
     <(printf '[dev-dependencies.backend]\npackage = "crucible-sandbox-local"\n'); then
-    printf '    FAIL the shipped-edge parser read a renamed dev-dependency as a shipped one\n'
+    printf '    FAIL the shipped-edge parser read a renamed dev-dependency as a shipped edge\n'
     failed=1
 fi
 if shipped_sandbox_local_edge \
-    <(printf '[dev-dependencies]\ncrucible-sandbox-local.workspace = true\n'); then
-    printf '    FAIL the shipped-edge parser read a dev-dependency as a shipped one\n'
+    <(printf 'dev-dependencies.crucible-sandbox-local.workspace = true\n'); then
+    printf '    FAIL the shipped-edge parser read a top-level dotted dev-dependency as a shipped edge\n'
     failed=1
 fi
-shipped_sandbox_local_edge crates/crucible-tools/does-not-exist.toml
+if shipped_sandbox_local_edge \
+    <(printf 'dev-dependencies = { crucible-sandbox-local = { path = "../dep" } }\n'); then
+    printf '    FAIL the shipped-edge parser read a dev-dependency table written inline as a shipped edge\n'
+    failed=1
+fi
+if shipped_sandbox_local_edge \
+    <(printf '[workspace.dependencies]\ncrucible-sandbox-local = { path = "crates/crucible-sandbox-local" }\n'); then
+    printf '    FAIL the shipped-edge parser read a workspace version agreement as a shipped edge\n'
+    failed=1
+fi
+if shipped_sandbox_local_edge \
+    <(printf '[dependencies]\n# package = "crucible-sandbox-local" is dev-only\nserde.workspace = true\n'); then
+    printf '    FAIL the shipped-edge parser read a comment on its own line as a shipped edge\n'
+    failed=1
+fi
+if shipped_sandbox_local_edge \
+    <(printf '[dependencies]\nserde.workspace = true # package = "crucible-sandbox-local"\n'); then
+    printf '    FAIL the shipped-edge parser read a comment after a dependency as a shipped edge\n'
+    failed=1
+fi
+if shipped_sandbox_local_edge \
+    <(printf '[package]\nname = "crucible-sandbox-local"\n'); then
+    printf '    FAIL the shipped-edge parser read the package name itself as a shipped edge\n'
+    failed=1
+fi
+
+# The third answer, which is the one a silent check would never give.
+for probe in crates crates/crucible-tools/does-not-exist.toml; do
+    shipped_sandbox_local_edge "$probe"
+    if (($? != 2)); then
+        printf '    FAIL the shipped-edge parser answered for %s, which it cannot read\n' "$probe"
+        failed=1
+    fi
+done
+shipped_sandbox_local_edge <(printf '# a manifest with nothing in it\n')
 if (($? != 2)); then
-    printf '    FAIL the shipped-edge parser read an absent manifest as an answer\n'
+    printf '    FAIL the shipped-edge parser read an empty manifest as a clean one\n'
     failed=1
 fi
+
 shipped_sandbox_local_edge crates/crucible-tools/Cargo.toml
 case $? in
     0)
