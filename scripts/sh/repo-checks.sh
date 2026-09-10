@@ -625,7 +625,7 @@ done
 # manifests whose answer is known as well as the one that matters. Only 3 is a
 # clean answer, because 1 is also what a crashed reader exits with.
 if ! python3 scripts/python/shipped-edge.py --self-test; then
-    printf '    FAIL the shipped-edge check did not give every answer it is known to give\n'
+    printf '    FAIL the shipped-edge check failed its self-test\n'
     failed=1
 fi
 python3 scripts/python/shipped-edge.py crates/crucible-tools/Cargo.toml crucible-sandbox-local

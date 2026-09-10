@@ -10,7 +10,8 @@ and 2 when that could not be answered. The third answer is separate because a
 check that cannot tell "no edge" from "never looked" gives the reassuring one,
 and "no edge" is 3 because 1 is what Python exits with when it crashes.
 `--self-test` exits 0 when every manifest and description whose answer is known
-gives it, saying why wherever that answer is 2, and 1 otherwise.
+gives it, draws no warning from Cargo, and says why wherever that answer is 2,
+and 1 otherwise.
 
 Cargo is asked rather than the TOML read here. One dependency can be spelled
 many ways — quoted or bare, dotted or a table of its own, under a `[target]`
@@ -56,8 +57,9 @@ def metadata(manifest):
     except OSError as error:
         print(f"cargo could not be run: {error}", file=sys.stderr)
         return None
-    # Cargo's messages are passed on whatever it answered, in a form any host
-    # can show; only the description has to be exactly what Cargo wrote.
+    # Cargo's messages are passed on whatever it answered: bytes that are not
+    # UTF-8 are escaped here, and stderr escapes what the host cannot show.
+    # Only the description has to be exactly what Cargo wrote.
     sys.stderr.write(result.stderr.decode("utf-8", errors="backslashreplace"))
     if result.returncode != 0:
         return None
@@ -88,7 +90,7 @@ def edge(described, manifest, crate):
         kinds = [dependency["kind"] for dependency in declared["dependencies"] if dependency["name"] == crate]
         return SHIPPED_EDGE if any(SHIPPED[kind] for kind in kinds) else NO_SHIPPED_EDGE
     except UnicodeError as error:
-        print(f"a path in cargo's description of {manifest} cannot be named on this host: {error!r}", file=sys.stderr)
+        print(f"{manifest} or a path in cargo's description of it cannot be named on this host: {error!r}", file=sys.stderr)
         return UNANSWERED
     except (ValueError, KeyError, TypeError) as error:
         print(f"cargo described {manifest} in a shape this does not read: {error!r}", file=sys.stderr)
@@ -116,7 +118,8 @@ def alone(body):
 # Each case is a workspace of its own, with the manifest asked about under
 # `ask` when it is not the root one, and the answer Cargo's reading of it has
 # to produce. Every package is there with a target of its own, because Cargo
-# refuses to load one without.
+# refuses to load one without, and every workspace with no package names its
+# resolver, because Cargo warns about one that does not.
 CASES = [
     ("a normal dependency", alone("[dependencies]\n" + EDGE), SHIPPED_EDGE),
     ("a build dependency", alone("[build-dependencies]\n" + EDGE), SHIPPED_EDGE),
@@ -125,7 +128,7 @@ CASES = [
     (
         "a dependency renamed in the workspace table it is inherited from",
         {
-            "Cargo.toml": '[workspace]\nmembers = ["member"]\n[workspace.dependencies]\n' + RENAMED,
+            "Cargo.toml": '[workspace]\nmembers = ["member"]\nresolver = "3"\n[workspace.dependencies]\n' + RENAMED,
             "dep/Cargo.toml": DEP,
             "member/Cargo.toml": package("member", "[dependencies]\nbackend.workspace = true\n"),
             "ask": "member/Cargo.toml",
@@ -163,7 +166,7 @@ CASES = [
     (
         "a workspace manifest that declares no package",
         {
-            "Cargo.toml": '[workspace]\nmembers = ["member"]\n',
+            "Cargo.toml": '[workspace]\nmembers = ["member"]\nresolver = "3"\n',
             "member/Cargo.toml": package("member", "[dependencies]\n" + EDGE),
             "member/dep/Cargo.toml": DEP,
         },
@@ -183,8 +186,10 @@ SHAPES = [
     ("a description that is not JSON", "not JSON", UNANSWERED),
     ("a dependency of a kind this does not know", described(kind="optional"), UNANSWERED),
     ("a dependency with no name", described().replace('"name"', '"called"'), UNANSWERED),
-    # A lone surrogate is a path a UTF-8 host cannot name, as a non-ASCII
-    # checkout is to a host whose encoding is ASCII.
+    # No POSIX host can encode a path holding U+D800, as a host whose encoding
+    # is ASCII cannot encode a non-ASCII checkout. U+DC80 to U+DCFF would not
+    # do: they stand for bytes a name held that the host could not decode, and
+    # encode back to those bytes.
     ("a package path this host cannot name", described(path="/fixture/\ud800/Cargo.toml"), UNANSWERED),
 ]
 
@@ -196,6 +201,11 @@ def known(name, expected, question):
         got = question()
     if got != expected:
         sys.stderr.write(f"shipped-edge: {name} answered {got}, not {expected}\n{said.getvalue()}")
+        return False
+    # A warning Cargo gives about the fixture would pass for the reason a
+    # question went unanswered, so no fixture may draw one.
+    if any(line.startswith("warning:") for line in said.getvalue().splitlines()):
+        sys.stderr.write(f"shipped-edge: cargo warned about {name}\n{said.getvalue()}")
         return False
     if got == UNANSWERED and not said.getvalue():
         sys.stderr.write(f"shipped-edge: {name} answered {got} without saying why\n")
@@ -218,8 +228,9 @@ def self_test():
                 with open(os.path.join(root, path), "w", encoding="utf-8") as manifest:
                     manifest.write(text)
             # Asked relative, as the gate asks, and through a link, as a checkout
-            # can be reached: Cargo answers with the absolute path it was asked,
-            # the link unresolved, so the comparison resolves both sides.
+            # can be reached: Cargo answers with the absolute form of the path it
+            # was asked, the link unresolved, and the comparison resolves links
+            # on both sides.
             os.makedirs(root, exist_ok=True)
             os.symlink(root, os.path.join(temporary, "link"))
             asked = os.path.relpath(os.path.join(temporary, "link", files.get("ask", "Cargo.toml")))
