@@ -1,6 +1,6 @@
 [package]
 name = "crucible-runtime"
-description = "The controls a turn is steered and stopped by."
+description = "The controls a turn is steered and stopped by, and the bounded ways work is owned."
 publish.workspace = true
 version.workspace = true
 edition.workspace = true
@@ -12,7 +12,20 @@ authors.workspace = true
 # This crate answers about work in flight and nothing else, so it names no
 # workspace crate: a control a turn is stopped by that had to agree with a
 # domain value would be a second thing every consumer of the control depends on.
+#
+# `tokio` supplies the executor the owned task group runs on. What is used of it
+# is the multi-threaded scheduler, its `JoinSet`, and the synchronization and
+# time primitives the group's shutdown is written in; the process, network and
+# file features are not enabled here and arrive with the crates that own those
+# boundaries.
 [dependencies]
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time"] }
+
+# `macros` writes the `#[tokio::test]` attribute, and `test-util` is the paused
+# clock a deadline is asserted against without spending the wall time it names.
+# Both are test-only: nothing of either survives into the binary.
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "test-util"] }
 
 [lints]
 workspace = true

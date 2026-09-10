@@ -59,6 +59,15 @@ crucible-tui = { path = "crates/crucible-tui" }
 crucible-types = { path = "crates/crucible-types" }
 crucible-workspace = { path = "crates/crucible-workspace" }
 
+# The executor work in flight is owned by. `std` has threads but no way to own a
+# set of them as one thing: a scheduler that can stop admitting, cancel what it
+# started and be awaited to empty is what keeps a turn's tasks from outliving
+# the turn, and writing that over `std::thread` means writing the scheduler.
+# Features are named per crate rather than here, so a crate that needs the
+# executor does not compile the process, network and file integrations that
+# belong to the boundaries owning them; `full` is not used anywhere.
+tokio = { version = "=1.53.1", default-features = false }
+
 # Argument parsing. `derive` keeps the CLI surface declared next to the type it
 # produces rather than in a builder chain that drifts from it.
 clap = { version = "=4.6.6", features = ["derive"] }
