@@ -384,7 +384,7 @@ impl Source {
     /// A workspace path goes through the descriptor walk, which answers
     /// containment as well; one the user typed in full has no containment
     /// question and is opened as an attachment. Both refuse anything that is
-    /// not a regular file without waiting on it.
+    /// not a regular file.
     fn opened(&self) -> Option<Opened> {
         match self {
             Self::Workspace(path) => Opened::reached(path).ok(),

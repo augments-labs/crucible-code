@@ -445,6 +445,42 @@ if ((here != 1)); then
     failed=1
 fi
 
+section "the file opened by walking, not by name"
+# `Opened::named` opens a path the way the operating system resolves it, which
+# is right for one the person at the keyboard typed in full and wrong for one a
+# model reached: the workspace settled containment at an earlier instant, and
+# only the descriptor walk behind `Opened::reached` proves the tree still agrees
+# at the open. Both constructors take a path and return the same type, so
+# swapping one for the other compiles and every test stays green — which is why
+# the choice is pinned here rather than left to the call site.
+owner="crates/crucible-attachments/src/lib.rs"
+typed=(
+    "crates/crucible-runner/src/runner/attachments.rs"
+    "src/cli/converse/attaching.rs"
+)
+by_name='Opened::named\('
+elsewhere=$(grep -rlE --include='*.rs' "$by_name" crates src tests |
+    grep -Fxv "$owner" |
+    grep -Fxv "${typed[0]}" |
+    grep -Fxv "${typed[1]}" || true)
+if [[ -n "$elsewhere" ]]; then
+    while IFS= read -r file; do
+        printf '    FAIL %s opens an attachment by name; a reached path takes the walk\n' "$file"
+    done <<<"$elsewhere"
+    failed=1
+fi
+# The counter-assertion the negative check cannot make: `attaching.rs` is
+# allowed to open by name, so nothing above would notice its workspace arm
+# turning into a second one. Each of these reaches for the walk exactly once.
+by_walk='Opened::reached\('
+for reader in crates/crucible-tools/src/read.rs src/cli/converse/attaching.rs; do
+    here=$(doors "$by_walk" "$reader")
+    if ((here != 1)); then
+        printf '    FAIL %s opens a workspace path through the walk %d times; it is opened once\n' "$reader" "$here"
+        failed=1
+    fi
+done
+
 member_manifests=(crates/*/Cargo.toml)
 manifests=(Cargo.toml "${member_manifests[@]}")
 

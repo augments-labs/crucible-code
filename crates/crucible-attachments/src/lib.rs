@@ -44,7 +44,10 @@ use std::io::{self, Read as _};
 use std::path::Path;
 
 use crucible_types::Modality;
-use crucible_workspace::{PathError, WorkspacePath};
+// Public because this crate's own surface is written in them: `Opened::reached`
+// takes a `WorkspacePath` and `AttachmentError::Unreached` carries a
+// `PathError`, so a caller that depends on this crate alone can name both.
+pub use crucible_workspace::{PathError, WorkspacePath};
 use sha2::{Digest as _, Sha256};
 
 /// The most raw attachment bytes one request may carry.
@@ -503,10 +506,15 @@ mod tests {
         let mut file = opened(&at).expect("a regular file opens");
         // Matched rather than unwrapped: an `expect_err` here formats the four
         // megabytes it was handed when this regresses, and a failure nobody can
-        // read is a failure nobody acts on.
+        // read is a failure nobody acts on. The error side still says what it
+        // got, which is the half that fits on a line.
         let refused = carried(&mut file);
 
-        assert!(matches!(refused, Err(AttachmentError::TooLarge)));
+        match refused {
+            Err(AttachmentError::TooLarge) => {}
+            Ok(bytes) => panic!("carried {} bytes", bytes.len()),
+            Err(other) => panic!("{other}"),
+        }
         // What the size check buys, made observable. `carried` never seeks, so
         // an untouched offset is proof the refusal came from asking the
         // descriptor rather than from reading the file and measuring after.
@@ -530,7 +538,11 @@ mod tests {
 
         let refused = carried(&mut file);
 
-        assert!(matches!(refused, Err(AttachmentError::TooLarge)));
+        match refused {
+            Err(AttachmentError::TooLarge) => {}
+            Ok(bytes) => panic!("carried {} bytes", bytes.len()),
+            Err(other) => panic!("{other}"),
+        }
     }
 
     #[test]

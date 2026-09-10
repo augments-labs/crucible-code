@@ -29,9 +29,8 @@
 //! contained proof; both refuse a path that resolves outside. Two neighbours of
 //! theirs deliberately answer something else. [`Workspace::intended`] hands back
 //! a plain `PathBuf`, because the permission engine describes a call rather than
-//! makes one. [`Workspace::outside`] is the external operator's route: a path a
-//! person typed that crucible was not pointed at, proved against its own parent
-//! when it really is outside and against the root when it turns out not to be.
+//! makes one. [`Workspace::outside`] takes a path a person typed that crucible
+//! was not pointed at.
 //!
 //! ```
 //! use crucible_workspace::Workspace;
@@ -100,11 +99,6 @@ impl Workspace {
     }
 
     /// Widens the workspace to reach directories outside the root.
-    ///
-    /// Called by the wiring, with what configuration or the person at the
-    /// terminal said, before the turn that will use it. Taking `self` is what
-    /// makes a widening visible at the call: the caller has to hand its
-    /// workspace over and keep what comes back.
     ///
     /// # Errors
     ///

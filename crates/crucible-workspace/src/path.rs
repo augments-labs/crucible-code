@@ -11,11 +11,10 @@ use super::{PathError, open, written};
 ///
 /// Almost always a directory the workspace reaches, which is why everything
 /// below speaks of the workspace. The one exception is a read the user was
-/// asked about: [`Workspace::outside`](super::Workspace::outside) proves such
-/// a path against its own parent. `write` and `edit` resolve their own paths
-/// through the containing entry points, so an outside proof does not reach
-/// them today; the type does not say so, and a route that handed one to a
-/// write would compile.
+/// asked about, which [`Workspace::outside`](super::Workspace::outside) proves.
+/// `write` and `edit` resolve their own paths through the containing entry
+/// points, so an outside proof does not reach them today; the type does not say
+/// so, and a route that handed one to a write would compile.
 ///
 /// The field is private and `proven` is not public, so the only way to
 /// hold one is to have asked a [`Workspace`](super::Workspace) for it. The two

@@ -4,12 +4,10 @@
 //! cannot be resolved the same way: the first can be canonicalised whole, and
 //! the second has a last component that is not there yet. [`Workspace::existing`]
 //! and [`Workspace::creatable`] are the two that mint a proof from either
-//! shape. Beside them, [`Workspace::outside`] is the external operator's
-//! route, which only a read the user was asked about may hold: it proves an
-//! outside path against its own parent, and a path that turns out to be
-//! contained after all against the root, so it mints too. [`Workspace::intended`]
-//! is the one that mints nothing — it answers about a name, which is what the
-//! permission boundary needs.
+//! shape. Beside them, [`Workspace::outside`] mints one too, which only a read
+//! the user was asked about may hold. [`Workspace::intended`] is the one that
+//! mints nothing — it answers about a name, which is what the permission
+//! boundary needs.
 //!
 //! The three that mint a proof answer about an instant. What a canonical path
 //! settles is where a name led when it was asked, and a second writer can move

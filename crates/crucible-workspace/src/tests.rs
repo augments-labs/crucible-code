@@ -414,6 +414,27 @@ fn a_link_planted_where_a_new_file_goes_is_not_created_through() {
 }
 
 #[test]
+fn a_file_that_arrives_where_a_new_one_goes_is_not_created_over() {
+    // The other half of what `O_EXCL` refuses, and the half `O_NOFOLLOW` does
+    // not: the link case above is caught by either flag, so it alone cannot
+    // tell them apart. A plain file another writer put at the name since it was
+    // proven free is refused by `O_EXCL` and by nothing else, and the bytes it
+    // already holds are what a create that opened it instead would sit on.
+    let f = Fixture::new("createover");
+    let path = f.workspace.creatable("fresh.txt").unwrap();
+
+    fs::write(f.workspace.root().join("fresh.txt"), "already here").unwrap();
+
+    let err = path.create().unwrap_err();
+
+    assert!(matches!(err, PathError::Swapped { .. }), "got {err:?}");
+    assert_eq!(
+        fs::read_to_string(f.workspace.root().join("fresh.txt")).unwrap(),
+        "already here"
+    );
+}
+
+#[test]
 fn a_successful_create_still_exists_after_its_handle_closes() {
     let f = Fixture::new("create-persists");
     let path = f.workspace.creatable("fresh.txt").unwrap();
@@ -516,13 +537,16 @@ fn a_walked_path_accepts_only_ordinary_names_below_its_start() {
         from.walked(&f.workspace.root().join("sub/../kept.txt"))
             .is_none()
     );
-    // A Windows canonical path is verbatim, and `PathBuf::join` resolves its
-    // parent components before `walked` receives it. Check the raw-spelling
-    // guard directly rather than pretending that spelling survived the join.
+    // A Windows canonical path is verbatim, where `..` is an ordinary
+    // component to `std` — so the component check above cannot see one and the
+    // raw-spelling guard is the only thing that does. Asked at the call site
+    // rather than of the guard alone, which would leave `walked` free to stop
+    // consulting it with this still green.
     #[cfg(windows)]
-    assert!(super::path::has_parent(Path::new(
-        r"C:\workspace\sub\..\kept.txt"
-    )));
+    {
+        let raw = PathBuf::from(format!(r"{}\sub\..\kept.txt", f.workspace.root().display()));
+        assert!(from.walked(&raw).is_none());
+    }
     assert!(from.walked(&f.outside.join("secret.txt")).is_none());
 }
 
@@ -554,6 +578,33 @@ fn a_directory_swapped_above_a_proven_path_cannot_reach_outside() {
     assert!(
         !f.outside.join("fresh.txt").exists(),
         "a file was created outside the workspace"
+    );
+}
+
+#[cfg(any(unix, windows))]
+#[test]
+fn a_directory_swapped_two_levels_up_cannot_reach_outside() {
+    // The swap above is at the component directly below the root, which one
+    // open of the whole path still refuses: `O_NOFOLLOW` applies to the last
+    // name, and there the last name is the one that moved. Two levels up, only
+    // a walk that opens each component against the descriptor for the one
+    // before can see it — so this is what tells that walk apart from a single
+    // call with the same flags.
+    let f = Fixture::new("swapdeep");
+    fs::create_dir_all(f.workspace.root().join("a/b")).unwrap();
+    fs::create_dir_all(f.outside.join("b")).unwrap();
+    fs::write(f.workspace.root().join("a/b/one.txt"), "in").unwrap();
+    fs::write(f.outside.join("b/one.txt"), "out").unwrap();
+    let existing = f.workspace.existing("a/b/one.txt").unwrap();
+
+    fs::remove_dir_all(f.workspace.root().join("a")).unwrap();
+    symlink_directory(&f.outside, f.workspace.root().join("a"));
+
+    let err = existing.open().unwrap_err();
+
+    assert!(
+        matches!(err, PathError::Swapped { .. }),
+        "a file outside the workspace was opened for reading: {err:?}"
     );
 }
 
