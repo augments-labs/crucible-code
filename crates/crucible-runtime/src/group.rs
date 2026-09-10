@@ -65,10 +65,10 @@ pub enum Ended<T> {
     Stopped,
     /// It was aborted, and it had not come back when the group gave up waiting.
     ///
-    /// Nothing can take a task that never reaches an await point, so this is
-    /// the honest end of the account rather than a failure of the shutdown:
-    /// the owner is told what it does not control instead of being blocked on
-    /// it.
+    /// The owner is told this rather than blocked on it. Whether the task is
+    /// still running is not something the group knows: a task that never
+    /// reaches an await point cannot be taken at all, and one that would have
+    /// come back reads the same way under a grace too short to reach it.
     Abandoned,
 }
 
@@ -228,9 +228,6 @@ impl<T: Send + 'static> Group<T> {
     /// task inside synchronous work holds the worker it is on, so where no
     /// other worker is free this is not polled until that task returns of its
     /// own accord — and by then there is nothing left to give up on.
-    ///
-    /// The order of the returned ends is the order they arrived in, which is
-    /// not the order they were spawned in.
     ///
     /// # Panics
     ///
@@ -779,6 +776,19 @@ mod tests {
             super::deadline_in(std::time::Duration::MAX).saturating_duration_since(now)
                 > std::time::Duration::from_hours(24 * 365),
             "a grace too large to add to the clock became no grace at all"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_grace_too_short_to_reach_a_task_reports_it_the_same_as_one_nothing_could_reach() {
+        let mut group = Group::new(1, &Cancel::new());
+
+        assert!(group.spawn(cooperative(group.cancel().clone())).is_ok());
+        assert_eq!(
+            group.shutdown(std::time::Duration::ZERO).await,
+            vec![Ended::Abandoned],
+            "a cooperative task under a zero grace was reported as something \
+             other than not having come back"
         );
     }
 

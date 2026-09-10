@@ -180,7 +180,12 @@ mod tests {
         assert!(came_apart.is_err(), "the thread was supposed to panic");
 
         steer.say("and the changelog".to_owned());
+        steer.say("and the release notes".to_owned());
 
+        assert!(
+            steer.forget("and the release notes"),
+            "a line the reader took back was reported as never having been there"
+        );
         assert!(steer.any());
         assert_eq!(
             steer.take(),
