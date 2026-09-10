@@ -353,11 +353,10 @@
       },
       "case": "bash::output::tests::an_early_return_leaves_no_descendant_of_the_command_running",
       "source": "crates/crucible-tools/src/bash/output/tests.rs",
-      "body_sha256": "06b9ce127f21dee7dc71017a20769f00960e49bdf38d0b4633ea5d2cbd9d0d12",
+      "body_sha256": "0f17a8c7f0e8c09b2356bddf7df6bf43688abc4a0b7069f5d2f2d6ce82bac5fd",
       "platforms": [
         "linux",
-        "macos",
-        "windows"
+        "macos"
       ]
     },
     {

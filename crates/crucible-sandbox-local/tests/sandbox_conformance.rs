@@ -23,11 +23,9 @@ use crucible_sandbox_local::conformance::{Conformance, SandboxClaim};
 /// backend is a skip or a failure, so the suite reports that host as an error
 /// and says nothing about which it is. This test makes the same decision the
 /// in-crate ones do, and spells the name rather than importing it because the
-/// crate does not publish a test harness: the other spellings are `src/sample.rs`,
-/// which pins this string, `crates/crucible-tools/src/sample.rs`, which pins it
-/// for the one tool test that needs the backend, and
-/// `.github/workflows/rust-ci.yml`, which sets it on the jobs that install
-/// a backend.
+/// crate does not publish a test harness. The string is spelled wherever it
+/// cannot be imported, in this crate's other suites and in the workflows that
+/// set it; `src/sample.rs` holds the one importable spelling and pins it.
 const REQUIRE_ENFORCING_SANDBOX: &str = "CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX";
 
 /// A directory the caller owns, which is all the suite asks for.

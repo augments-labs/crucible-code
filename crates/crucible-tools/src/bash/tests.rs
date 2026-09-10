@@ -158,34 +158,36 @@ fn the_command_runs_in_the_workspace_root() {
 
 #[cfg(target_os = "linux")]
 #[test]
-fn the_enforcing_linux_backend_cannot_read_an_undeclared_sibling() {
+fn the_default_linux_backend_cannot_read_an_undeclared_sibling() {
     // Approval settles whether Crucible may ask for the command. It does not
     // grant the command the rest of the host: the workspace is the writable
     // reach of the standard Linux sandbox, and its sibling is outside it.
+    //
+    // Nothing between the constructor and the command configures confinement,
+    // and that is what this test is for: it is the only place that observes
+    // what `Bash::new` alone leaves a command under. `docs/security/
+    // sandboxing.md` promises an SDK caller that policy arrives enabled, and
+    // asking for it here with `sandboxing(true)` would assert that promise
+    // into place instead of reading it back.
     let sample = Sample::new("bash-sibling-confined");
     let outside = sample.outside("credential", "not-for-the-command\n");
-    let service = local();
-    let backend_available = crucible_core::SandboxService::probe(service.as_ref()).is_ok();
-    let tool = Bash::new(sample.workspace(), service).sandboxing(true);
+    let service = crucible_sandbox_local::LocalSandbox::new();
+    if skipped_without_enforcement(&service) {
+        return;
+    }
+    let tool = Bash::new(sample.workspace(), std::sync::Arc::new(service));
     let args = format!(r#"{{"command":"cat {outside}"}}"#);
 
-    match tool.run(allowed(&tool, &args), &crate::sample::context()) {
-        Ok(output) => {
-            assert!(output.is_failed(), "{}", output.text());
-            assert!(
-                !output.text().contains("not-for-the-command"),
-                "the command read an undeclared sibling: {}",
-                output.text()
-            );
-        }
-        Err(error) => {
-            assert!(!backend_available, "a suitable backend was probed: {error}");
-            assert!(
-                error.to_string().contains("sandbox backend unavailable"),
-                "required mode failed for an unrelated reason: {error}"
-            );
-        }
-    }
+    let output = tool
+        .run(allowed(&tool, &args), &crate::sample::context())
+        .expect("a probed backend ran the command");
+
+    assert!(output.is_failed(), "{}", output.text());
+    assert!(
+        !output.text().contains("not-for-the-command"),
+        "the command read an undeclared sibling: {}",
+        output.text()
+    );
 }
 
 #[test]
@@ -807,9 +809,7 @@ fn linux_ctrl_b_uses_owned_durable_detachment_before_go() {
     }
     let sample = Sample::new("bash-linux-detachable");
     let left = Background::new();
-    let tool = Bash::new(sample.workspace(), std::sync::Arc::new(service))
-        .sandboxing(true)
-        .leaving(left.clone());
+    let tool = Bash::new(sample.workspace(), std::sync::Arc::new(service)).leaving(left.clone());
     left.ask();
 
     let output = finalized(&tool, r#"{"command":"printf 'up\n'; sleep 30"}"#)

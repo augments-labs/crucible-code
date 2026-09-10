@@ -19,6 +19,12 @@ change in any release with no deprecation period.
 
 ### Changed
 
+- **The confinement contracts and this machine's backend have crates of their
+  own.** `crucible_tools::LocalSandbox` and `crucible_tools::conformance` moved
+  to `crucible-sandbox-local`, and the backend-neutral contracts they answer to
+  `crucible-sandbox`. An adapter outside this tree now depends on the contract
+  crate alone, rather than on a tool crate that carried one machine's launcher
+  with it.
 - **A command tool is handed the confinement it will run under.** `Bash::new`
   took only a workspace and filled in this machine's own backend, so the tool
   crate named one machine's answer where it should name only the contract, and a

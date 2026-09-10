@@ -50,9 +50,9 @@ crucible-runtime = { path = "crates/crucible-runtime" }
 crucible-sandbox = { path = "crates/crucible-sandbox" }
 crucible-sandbox-local = { path = "crates/crucible-sandbox-local" }
 # Static PID 1 executable and its four-byte raw-wait-status protocol. The
-# library side contains no launcher or application authority; the native
-# backends name only the protocol constants while the separately built binary
-# supervises one confined command.
+# library side contains no launcher or application authority: what the native
+# backends name here describes and probes a launch, while supervising one
+# confined command is the separately built binary's alone.
 crucible-sandbox-broker = { path = "crates/crucible-sandbox-broker" }
 crucible-session = { path = "crates/crucible-session" }
 crucible-storage = { path = "crates/crucible-storage" }

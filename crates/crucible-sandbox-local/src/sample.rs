@@ -2,8 +2,7 @@
 //!
 //! These backends are about what a process may reach on a real filesystem, so
 //! testing them against a fake one would test the fake. Each fixture gets its
-//! own directory under the system temporary directory and removes it when it
-//! drops.
+//! own temporary directory and removes it when it drops.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -15,11 +14,10 @@ use crucible_workspace::{Workspace, written};
 /// enforcing Linux backend fails when that backend is unavailable, instead of
 /// quietly passing over nothing.
 ///
-/// This crate publishes no test harness, so the name is spelled again in
-/// `.github/workflows/rust-ci.yml`, which sets it, and in
-/// `tests/sandbox_conformance.rs`, which cannot reach in here. Changing the
-/// string here reddens the test that pins it, which is where those two are
-/// named.
+/// This crate publishes no test harness, so the name is spelled again wherever
+/// it cannot be imported: the workflows that set it, and the suites that read
+/// it from outside this module. Changing the string here reddens the test that
+/// pins it.
 pub(crate) const REQUIRE_ENFORCING_SANDBOX: &str = "CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX";
 
 /// Whether a test that needs the enforcing backend has to stop here.

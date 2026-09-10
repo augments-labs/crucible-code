@@ -10,10 +10,9 @@ repository.workspace = true
 authors.workspace = true
 
 # `crucible-sandbox` states what a backend must satisfy; everything here is one
-# machine's answer to it. The other four are what a launch is described in: the
-# frame the broker binary is handed, the identities a call is attributed by,
-# the directories it is allowed to reach, and the receipt a background
-# command's result is accepted against.
+# machine's answer to it. The other three are what a launch is described in:
+# the frame the broker binary is handed, the identities a call is attributed
+# by, and the receipt a background command's result is accepted against.
 #
 # A private per-command proxy is the only route a confined command has out, so
 # `http` and `httparse` read what crosses it, `base64` writes the one
@@ -25,7 +24,6 @@ crucible-sandbox.workspace = true
 crucible-sandbox-broker.workspace = true
 crucible-storage.workspace = true
 crucible-types.workspace = true
-crucible-workspace.workspace = true
 base64.workspace = true
 getrandom.workspace = true
 http.workspace = true
@@ -50,6 +48,11 @@ crucible-privacy.workspace = true
 # inside this crate; all features and the exact version are pinned once at the
 # workspace root.
 windows-sys.workspace = true
+
+# A backend confines paths it is handed and never resolves one itself, so the
+# workspace type is reached only by the fixtures that build a tree to confine.
+[dev-dependencies]
+crucible-workspace.workspace = true
 
 [lints]
 workspace = true

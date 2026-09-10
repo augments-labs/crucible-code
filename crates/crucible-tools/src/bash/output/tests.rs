@@ -237,7 +237,9 @@ fn a_live_child_is_never_reaped_with_an_unbounded_wait() {
 /// the guard ends the scope on the way out, and the process wrapper it hands
 /// back ends anything still there. Either one alone satisfies this, and the
 /// thing worth pinning is that a background descendant of a command nobody is
-/// waiting for any more cannot still be writing to the workspace afterwards.
+/// waiting for any more cannot still be writing anywhere afterwards. The
+/// marker it would write sits outside the fixture's workspace for that reason:
+/// reaching it proves the descendant ran, not that it escaped confinement.
 ///
 /// The command says when it has forked, and the wait below is not a courtesy:
 /// stopping a shell that has not reached its own first line yet leaves nothing

@@ -546,9 +546,10 @@ fi
 # the compatibility facade and go away with the crate that holds them; every
 # other crate still reaches the domain through one name.
 #
-# The exception is `attachments`, which three crates name past the facade. The
-# two types a file's bytes are read through are withheld from the facade, so a
-# caller that wants one takes the edge, and the edge shows up here.
+# Edges past the facade are listed here as they are taken. `attachments` is
+# named directly because the two types a file's bytes are read through are
+# withheld from the facade; the sandbox crates are named directly because a
+# backend and the contract it answers are what this split gave their own names.
 allowed='code attachments
 code auth
 code config
@@ -620,27 +621,52 @@ done
 # naming one machine's answer to it in a table that ships is how that
 # distinction would quietly disappear. Every such table counts, not only
 # `[dependencies]`: a build script that pulls a backend in ships it too.
+# Exit 0 when a shipped edge is present, 1 when it is absent, 2 when the
+# manifest could not be read at all. A manifest that has been renamed away is
+# the one answer this must not give as "absent": awk would report no edge for a
+# file it never opened, and the caller would print that as a clean layering.
 shipped_sandbox_local_edge() {
+    [[ -r "$1" ]] || return 2
     awk '
         /^[[:space:]]*\[/ {
             header = $0
             sub(/^[[:space:]]*\[+[[:space:]]*/, "", header)
             sub(/[[:space:]]*\]+.*$/, "", header)
+            gsub(/"/, "", header)
+            # `[dependencies.crucible-sandbox-local]` names the crate in the
+            # header rather than in a key, and reads as a table of its own.
+            if (header ~ /(^|[.-])dependencies\.crucible-sandbox-local$/ \
+                && header !~ /(^|\.)dev-dependencies\./ \
+                && header !~ /^workspace\./) { found = 1 }
             table = (header ~ /(^|[.-])dependencies$/ \
                 && header !~ /(^|\.)dev-dependencies$/ \
                 && header !~ /^workspace\./)
             next
         }
-        table && /^[[:space:]]*crucible-sandbox-local[[:space:].=]/ { found = 1 }
+        table && /^[[:space:]]*"?crucible-sandbox-local"?[[:space:].=]/ { found = 1 }
+        # A renamed dependency spells the crate in `package` and can be keyed
+        # by anything at all, so the key is no use for finding it.
+        table && /package[[:space:]]*=[[:space:]]*"crucible-sandbox-local"/ { found = 1 }
         END { exit found ? 0 : 1 }
     ' "$1"
 }
 
-# A check that cannot say yes has not said no. Both answers are taken from it
-# here before the manifest that matters is put to it.
+# A check that cannot say yes has not said no, and one that cannot tell "no
+# edge" from "no manifest" has said nothing at all. Every answer is taken from
+# it here before the manifest that matters is put to it.
 if ! shipped_sandbox_local_edge \
     <(printf '[build-dependencies]\ncrucible-sandbox-local.workspace = true\n'); then
     printf '    FAIL the shipped-edge parser did not read a build-dependency\n'
+    failed=1
+fi
+if ! shipped_sandbox_local_edge \
+    <(printf '[dependencies.crucible-sandbox-local]\nworkspace = true\n'); then
+    printf '    FAIL the shipped-edge parser did not read a dependency sub-table\n'
+    failed=1
+fi
+if ! shipped_sandbox_local_edge \
+    <(printf '[dependencies]\nbackend = { package = "crucible-sandbox-local" }\n'); then
+    printf '    FAIL the shipped-edge parser did not read a renamed dependency\n'
     failed=1
 fi
 if shipped_sandbox_local_edge \
@@ -648,10 +674,23 @@ if shipped_sandbox_local_edge \
     printf '    FAIL the shipped-edge parser read a dev-dependency as a shipped one\n'
     failed=1
 fi
-if shipped_sandbox_local_edge crates/crucible-tools/Cargo.toml; then
-    printf '    FAIL crucible-tools must reach crucible-sandbox-local only as a dev-dependency\n'
+shipped_sandbox_local_edge crates/crucible-tools/does-not-exist.toml
+if (($? != 2)); then
+    printf '    FAIL the shipped-edge parser read an absent manifest as an answer\n'
     failed=1
 fi
+shipped_sandbox_local_edge crates/crucible-tools/Cargo.toml
+case $? in
+    0)
+        printf '    FAIL crucible-tools must reach crucible-sandbox-local only as a dev-dependency\n'
+        failed=1
+        ;;
+    1) ;;
+    *)
+        printf '    FAIL the shipped-edge check could not read crates/crucible-tools/Cargo.toml\n'
+        failed=1
+        ;;
+esac
 
 section "workspace inheritance"
 if ((${#member_manifests[@]} == 0)); then

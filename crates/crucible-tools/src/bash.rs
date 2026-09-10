@@ -267,12 +267,14 @@ impl std::fmt::Debug for Exported<'_> {
 impl Bash {
     /// Runs in `workspace`, through `sandbox`.
     ///
-    /// The service is taken here rather than added afterwards because this tool
-    /// names no backend and has nothing to fall back to: a `Bash` holding no
-    /// service could only refuse, and a composition root that forgot to supply
-    /// one would learn about it from a failed command mid-turn instead of from
-    /// the compiler. The application's opt-in configuration is applied on top
-    /// by [`Self::sandboxing`] or [`Self::under_policy`].
+    /// The service is taken here rather than defaulted because this crate names
+    /// no backend: filling one in would put one machine's answer in the crate
+    /// that should only name the contract, and would leave a caller that had
+    /// already resolved a backend unable to say so at construction. The
+    /// application's opt-in configuration is applied on top by
+    /// [`Self::sandboxing`] or [`Self::under_policy`]; the policy this starts
+    /// from is enabled, which `docs/security/sandboxing.md` promises SDK
+    /// callers and `bash::tests` reads back.
     #[must_use]
     pub fn new(workspace: Workspace, sandbox: Arc<dyn SandboxService>) -> Self {
         Self::inheriting(workspace, sandbox, |name| std::env::var_os(name))
@@ -306,7 +308,7 @@ impl Bash {
         }
     }
 
-    /// Applies the host-authorized enabled choice to the standard policy.
+    /// Applies the host-authorized enabled choice to the policy held now.
     ///
     /// The binary composition root uses this after configuration provenance has
     /// established that only a user layer may disable confinement.
