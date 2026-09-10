@@ -372,6 +372,7 @@ dependencies = [
  "crucible-provider",
  "crucible-runner",
  "crucible-sandbox-broker",
+ "crucible-sandbox-local",
  "crucible-session",
  "crucible-tools",
  "crucible-tui",
@@ -507,6 +508,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "crucible-sandbox-local"
+version = "0.40.1"
+dependencies = [
+ "base64 0.23.1",
+ "crucible-privacy",
+ "crucible-sandbox",
+ "crucible-sandbox-broker",
+ "crucible-storage",
+ "crucible-types",
+ "crucible-workspace",
+ "getrandom 0.4.3",
+ "http",
+ "httparse",
+ "rustix",
+ "sha2",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "crucible-session"
 version = "0.40.1"
 dependencies = [
@@ -533,19 +553,13 @@ dependencies = [
 name = "crucible-tools"
 version = "0.40.1"
 dependencies = [
- "base64 0.23.1",
  "crucible-attachments",
  "crucible-core",
- "crucible-privacy",
- "crucible-sandbox-broker",
- "getrandom 0.4.3",
+ "crucible-sandbox-local",
  "globset",
  "grep-regex",
  "grep-searcher",
- "http",
- "httparse",
  "ignore",
- "rustix",
  "serde_json",
  "sha2",
  "windows-sys 0.61.2",

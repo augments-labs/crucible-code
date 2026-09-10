@@ -28,7 +28,6 @@ mod background;
 mod command;
 mod environment;
 mod output;
-pub(crate) mod platform;
 mod reading;
 mod reporting;
 mod shell;

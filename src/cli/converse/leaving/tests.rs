@@ -9,7 +9,8 @@ use crucible_core::{
     InvocationId, JournalStore, Mode, Permission, Remember, Rules, RunItem, Sensitivity, Settled,
     Tool, ToolArgs, ToolCall, ToolContext, ToolId, ToolResult, Unwatched, Verdict,
 };
-use crucible_tools::{Background, Bash, LocalSandbox};
+use crucible_sandbox_local::LocalSandbox;
+use crucible_tools::{Background, Bash};
 use sha2::{Digest, Sha256};
 
 use crate::cli::sample::Sample;

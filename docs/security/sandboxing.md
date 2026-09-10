@@ -288,7 +288,7 @@ the claims are asked about rather than trusted, by a suite Crucible publishes
 rather than keeps to itself:
 
 ```rust
-use crucible_tools::conformance::{Conformance, SandboxClaim};
+use crucible_sandbox_local::conformance::{Conformance, SandboxClaim};
 
 let audited = Conformance::audit(&backend, workspace_root)?;
 assert!(audited.faults().next().is_none());
@@ -335,10 +335,10 @@ caller it can do nothing there.
 
 This is published because the backends that must pass it are not all in this
 repository. A container, a Kubernetes executor, a hosted session or another
-operating system's adapter can depend on `crucible-tools`, run the suite over a
-directory it owns and get the same verdicts from the same table, before it is
-wired to anything. Nothing is materialized and no command is started: each
-session is prepared to see whether it can be, and dropped.
+operating system's adapter can depend on `crucible-sandbox-local`, run the
+suite over a directory it owns and get the same verdicts from the same table,
+before it is wired to anything. Nothing is materialized and no command is
+started: each session is prepared to see whether it can be, and dropped.
 
 ## Unconfined execution
 

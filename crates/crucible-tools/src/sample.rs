@@ -43,19 +43,6 @@ pub(crate) fn context() -> ToolContext<'static> {
     cancelled_by(&Cancel::new())
 }
 
-/// A durable direct-test context attributed to a chosen call.
-#[cfg(target_os = "linux")]
-pub(crate) fn context_for(call: &str) -> ToolContext<'static> {
-    ToolContext::new(
-        Ancestry::new(),
-        ToolId::new(call),
-        &Cancel::new(),
-        None,
-        &Unwatched,
-    )
-    .with_call_result_store(InvocationId::new(), &TEST_JOURNAL)
-}
-
 /// Completes the runner-owned result seam for direct tool tests.
 pub(crate) fn finalize_call_result(context: &ToolContext<'_>, output: &ToolOutput) {
     let Some(pending) = context.take_call_result().expect("pending result slot") else {
@@ -88,7 +75,7 @@ pub(crate) const REQUIRE_ENFORCING_SANDBOX: &str = "CRUCIBLE_TEST_REQUIRE_ENFORC
 /// is the honest answer for a boundary nobody can exercise there. Where the job
 /// has declared that the backend must exist, an unavailable backend is a failure
 /// naming the reason, so a suite that measured nothing cannot report green.
-pub(crate) fn skipped_without_enforcement(service: &crate::LocalSandbox) -> bool {
+pub(crate) fn skipped_without_enforcement(service: &crucible_sandbox_local::LocalSandbox) -> bool {
     match crucible_core::SandboxService::probe(service) {
         Ok(_) => false,
         Err(problem) => {
@@ -148,16 +135,6 @@ impl Sample {
     /// what makes a counter enough.
     pub(crate) fn new(name: &str) -> Self {
         Self::below(name, &std::env::temp_dir())
-    }
-
-    /// Unix socket names must fit Darwin's 104-byte sockaddr field. Its usual
-    /// per-user temporary directory alone can consume most of that field.
-    #[cfg(unix)]
-    pub(crate) fn socket(name: &str) -> Self {
-        let temporary = Path::new("/tmp")
-            .canonicalize()
-            .expect("canonical temporary root");
-        Self::below(name, &temporary)
     }
 
     fn below(name: &str, temporary: &Path) -> Self {

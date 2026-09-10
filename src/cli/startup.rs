@@ -28,9 +28,10 @@ use crucible_provider::{
 use crucible_runner::{
     AgentSpec, Bounds, Compaction, ContextInputs, Model, RunPolicy, Runner, Session, Tools,
 };
+use crucible_sandbox_local::LocalSandbox;
 use crucible_tools::{
-    AskUser, Background, Bash, BashOutput, Edit, Glob, Grep, Held, Ledger, LocalSandbox, Plan,
-    Read, TodoWrite, ToolSearch, WebFetch, WebSearch, Write,
+    AskUser, Background, Bash, BashOutput, Edit, Glob, Grep, Held, Ledger, Plan, Read, TodoWrite,
+    ToolSearch, WebFetch, WebSearch, Write,
 };
 
 use super::hosting::{Hosting, selecting};

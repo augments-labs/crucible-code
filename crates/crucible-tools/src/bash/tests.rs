@@ -15,7 +15,10 @@ use super::{Bash, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, environmen
 use crate::sample::{Sample, allowed, skipped_without_enforcement};
 
 fn compatibility(tool: Bash) -> Bash {
-    tool.sandboxing(std::sync::Arc::new(crate::LocalSandbox::new()), false)
+    tool.sandboxing(
+        std::sync::Arc::new(crucible_sandbox_local::LocalSandbox::new()),
+        false,
+    )
 }
 
 fn compatible(sample: &Sample) -> Bash {
@@ -40,7 +43,7 @@ fn finalized(tool: &Bash, args: &str) -> Result<ToolOutput, ToolError> {
 
 #[derive(Clone, Default)]
 struct RecordingSandbox {
-    inner: crate::LocalSandbox,
+    inner: crucible_sandbox_local::LocalSandbox,
     limits: std::sync::Arc<std::sync::Mutex<Vec<SandboxResourceLimits>>>,
 }
 
@@ -179,7 +182,7 @@ fn the_enforcing_linux_backend_cannot_read_an_undeclared_sibling() {
     // reach of the standard Linux sandbox, and its sibling is outside it.
     let sample = Sample::new("bash-sibling-confined");
     let outside = sample.outside("credential", "not-for-the-command\n");
-    let service = std::sync::Arc::new(crate::LocalSandbox::new());
+    let service = std::sync::Arc::new(crucible_sandbox_local::LocalSandbox::new());
     let backend_available = crucible_core::SandboxService::probe(service.as_ref()).is_ok();
     let tool = Bash::new(sample.workspace()).sandboxing(service, true);
     let args = format!(r#"{{"command":"cat {outside}"}}"#);
@@ -800,7 +803,7 @@ fn a_command_the_developer_let_go_of_says_who_let_go_of_it() {
 
 #[test]
 fn linux_ctrl_b_uses_owned_durable_detachment_before_go() {
-    let service = crate::LocalSandbox::new();
+    let service = crucible_sandbox_local::LocalSandbox::new();
     if skipped_without_enforcement(&service) {
         return;
     }

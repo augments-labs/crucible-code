@@ -561,6 +561,7 @@ code runner
 code session
 code tools
 code sandbox-broker
+code sandbox-local
 code tui
 attachments types
 attachments workspace
@@ -587,11 +588,16 @@ session privacy
 sandbox storage
 sandbox types
 sandbox workspace
+sandbox-local privacy
+sandbox-local sandbox
+sandbox-local sandbox-broker
+sandbox-local storage
+sandbox-local types
+sandbox-local workspace
 storage types
 tools attachments
 tools core
-tools privacy
-tools sandbox-broker'
+tools sandbox-local'
 while IFS= read -r edge; do
     [[ -z "$edge" ]] && continue
     if ! grep -Fxq "$edge" <<<"$allowed"; then
@@ -608,6 +614,25 @@ for crate in privacy registry runtime sandbox-broker tui types workspace; do
         failed=1
     fi
 done
+
+# `tools sandbox-local` above is a test-support edge, which the architecture
+# enumerates separately and which never justifies a production one. A tool
+# names the sandbox service contract; naming one machine's answer to it in
+# `[dependencies]` is how that distinction would quietly disappear.
+if awk '
+    /^[[:space:]]*\[/ {
+        header = $0
+        sub(/^[[:space:]]*\[+[[:space:]]*/, "", header)
+        sub(/[[:space:]]*\]+.*$/, "", header)
+        table = (header ~ /(^|\.)dependencies$/ && header !~ /^workspace\./)
+        next
+    }
+    table && /^[[:space:]]*crucible-sandbox-local[[:space:].=]/ { found = 1 }
+    END { exit found ? 0 : 1 }
+' crates/crucible-tools/Cargo.toml; then
+    printf '    FAIL crucible-tools must reach crucible-sandbox-local only as a dev-dependency\n'
+    failed=1
+fi
 
 section "workspace inheritance"
 if ((${#member_manifests[@]} == 0)); then

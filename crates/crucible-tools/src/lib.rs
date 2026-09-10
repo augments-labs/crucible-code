@@ -1,10 +1,9 @@
 //! Filesystem, search and process tools the agent can call, and the one that
 //! writes down its plan.
 //!
-//! Its only dependency on another crucible crate is `crucible-core`, and it is
-//! a sibling of `crucible-provider`: neither may reach the other. Each tool
-//! implements `Tool` from core, so the runner dispatches to them without naming
-//! any of them.
+//! It is a sibling of `crucible-provider`: neither may reach the other. Each
+//! tool implements `Tool` from core, so the runner dispatches to them without
+//! naming any of them.
 //!
 //! Every tool takes an `Approved` as an argument rather than asking for one —
 //! the grant the permission engine minted, bound to the call it was reached
@@ -63,7 +62,9 @@
 //! `bash` is the exception, and deliberately. It runs a shell, and a shell
 //! reaches anything the user can; the workspace gives it a directory to start
 //! in, not a fence. What bounds that tool is the permission engine, which is
-//! why the question it asks names the program the command is about to run.
+//! why the question it asks names the program the command is about to run — and
+//! the confinement its host handed it, which this crate names as a service and
+//! never as an operating system.
 
 mod account;
 mod args;
@@ -82,7 +83,6 @@ pub mod program;
 mod read;
 #[cfg(test)]
 mod sample;
-mod sandbox;
 mod schema;
 mod summary;
 mod target;
@@ -100,7 +100,5 @@ pub use ledger::Ledger;
 pub use lookup::{Held, ToolSearch};
 pub use plan::{Plan, State, Task, TodoWrite};
 pub use read::Read;
-pub use sandbox::LocalSandbox;
-pub use sandbox::conformance;
 pub use web::{WebFetch, WebSearch};
 pub use write::Write;
