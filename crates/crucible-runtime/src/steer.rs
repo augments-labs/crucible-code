@@ -186,6 +186,15 @@ mod tests {
             steer.forget("and the release notes"),
             "a line the reader took back was reported as never having been there"
         );
+
+        steer.hold();
+        assert!(
+            steer.take().is_empty(),
+            "a hold the reader asked for was dropped, and the turn read a line \
+             they still had open"
+        );
+        steer.release();
+
         assert!(steer.any());
         assert_eq!(
             steer.take(),

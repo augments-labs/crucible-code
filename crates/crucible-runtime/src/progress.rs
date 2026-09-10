@@ -382,5 +382,9 @@ mod tests {
 
         assert!(!shown.contains("sk-live"), "rendered as {shown}");
         assert!(shown.contains("1 redacted"), "rendered as {shown}");
+        assert!(
+            shown.contains("weight: 18"),
+            "the field was labelled as something other than what it holds: {shown}"
+        );
     }
 }

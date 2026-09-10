@@ -517,6 +517,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_panic_carrying_something_that_is_not_a_message_is_still_an_end() {
+        let mut group: Group<()> = Group::new(1, &Cancel::new());
+        assert!(group.spawn(async { std::panic::panic_any(42_u32) }).is_ok());
+
+        match group.shutdown(GRACE).await.as_slice() {
+            [Ended::Panicked(said)] => assert_eq!(
+                said, "a panic payload that is not a string",
+                "a panic nobody wrote a message for was reported as one that was"
+            ),
+            other => panic!("a task that came apart was dropped from the account: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
     async fn a_panic_message_built_at_runtime_is_carried_too() {
         let mut group: Group<()> = Group::new(1, &Cancel::new());
         let said = "the task came apart".to_owned();
@@ -580,6 +594,10 @@ mod tests {
         assert!(
             !rendered.contains("sk-live"),
             "the group carried a task's answer into a `{{:?}}`: {rendered}"
+        );
+        assert!(
+            rendered.contains("ended: 1"),
+            "the group rendered its ends as something other than a count: {rendered}"
         );
     }
 
