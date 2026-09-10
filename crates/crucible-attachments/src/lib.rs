@@ -162,7 +162,17 @@ fn carried(file: &mut File) -> Result<Vec<u8>, AttachmentError> {
 /// component at a time against descriptors already held; a path an external
 /// operator typed has no containment to answer and is opened by name. Mixing
 /// the two would hand one ingress the other's authority, which is why there is
-/// no way to build this from a `File` a caller opened itself.
+/// no way to build this from a `File` a caller opened itself. The error code is
+/// what that fails with today and not a gate, since `compile_fail` accepts any
+/// compile error:
+///
+/// ```compile_fail,E0423
+/// use crucible_attachments::Opened;
+///
+/// fn anywhere(file: std::fs::File) -> Opened {
+///     Opened(file)
+/// }
+/// ```
 #[derive(Debug)]
 pub struct Opened(File);
 

@@ -18,7 +18,21 @@ use super::{PathError, open, written};
 ///
 /// There is no public constructor: the only way to hold one is to have asked
 /// a [`Workspace`](super::Workspace) for it, so a function taking this type
-/// cannot be handed a path from anywhere else.
+/// cannot be handed a path from anywhere else. That is the whole of what stops
+/// a string a model wrote from becoming authority, so it is checked rather
+/// than asserted — the error code is what this fails with today and not a
+/// gate, since `compile_fail` accepts any compile error:
+///
+/// ```compile_fail,E0624
+/// use std::path::PathBuf;
+/// use std::sync::Arc;
+///
+/// use crucible_workspace::WorkspacePath;
+///
+/// fn anywhere() -> WorkspacePath {
+///     WorkspacePath::proven(Arc::from(PathBuf::from("/")), PathBuf::from("/etc/passwd"))
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct WorkspacePath {
     /// The directory containment was settled against — the root, or whichever
