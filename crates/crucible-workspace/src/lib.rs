@@ -23,6 +23,27 @@
 //! difference to anything downstream: reach is settled here, once, and what
 //! happens to a path that is inside is a permission question rather than a
 //! path one.
+//!
+//! Nothing here names another crucible crate. [`Workspace::existing`] and
+//! [`Workspace::creatable`] are the two that turn text a caller holds into a
+//! contained proof; both refuse a path that resolves outside. Two neighbours of
+//! theirs deliberately answer something else. [`Workspace::intended`] hands back
+//! a plain `PathBuf`, because the permission engine describes a call rather than
+//! makes one. [`Workspace::outside`] takes a path a person typed that crucible
+//! was not pointed at.
+//!
+//! ```
+//! use crucible_workspace::Workspace;
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let workspace = Workspace::open(std::env::temp_dir())?;
+//!
+//! // A path leading out of the root does not resolve to a proof. Which error
+//! // it is depends on how the platform spells the root.
+//! assert!(workspace.existing("..").is_err());
+//! # Ok(())
+//! # }
+//! ```
 
 use std::path::Path;
 
@@ -78,10 +99,6 @@ impl Workspace {
     }
 
     /// Widens the workspace to reach directories outside the root.
-    ///
-    /// Called once, by the wiring, with what configuration said. It is not a
-    /// capability the running agent can grant itself: a widened workspace is
-    /// built before the first turn and never after one.
     ///
     /// # Errors
     ///

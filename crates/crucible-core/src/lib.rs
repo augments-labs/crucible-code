@@ -4,9 +4,15 @@
 //! another; cargo enforces that, so the arrangement cannot rot. The renderer
 //! draws what it is handed and depends on no crucible crate at all.
 //! Below it sit the crates that now own the shared values, registries,
-//! credential contracts and storage contracts. This crate re-exports their
-//! names under the paths it published them at, so a consumer keeps one import
-//! while ownership moves out; new code names the owning crate.
+//! credential contracts, storage contracts, path proofs and attachment ingress.
+//! This crate re-exports their names under the paths it published them at, so a
+//! consumer keeps one import while ownership moves out; new code names the
+//! owning crate. `crucible-attachments` is re-exported only as far as the names
+//! that describe an attachment; `Opened` and `Taken` are withheld, so a caller
+//! that wants to read a file names that crate outright. What actually stops a
+//! second read being assembled is that the halves it is made of are private
+//! there; withholding the types is what makes the dependency show up in the
+//! graph the layering check enforces.
 //!
 //! Two kinds of type live here, and the split is deliberate:
 //!
@@ -20,7 +26,6 @@
 
 mod aside;
 mod ask;
-mod attachable;
 mod cancel;
 mod compaction;
 mod context;
@@ -40,14 +45,13 @@ mod steer;
 mod tool;
 mod toolset;
 mod version;
-mod workspace;
 
 pub use aside::Aside;
 pub use ask::{Answer, Answered, Put, Question};
-pub use attachable::{AttachmentError, CEILING, KINDS, Kind, carried, kind, opened};
 pub use cancel::Cancel;
 pub use compaction::{Compacted, Compacting, RECAP, Room};
 pub use context::{ContextSection, capture, seen};
+pub use crucible_attachments::{AttachmentError, CEILING, KINDS, Kind, kind};
 pub use crucible_credentials::{
     ApiKey, Credential, CredentialError, Header, HeaderKey, Outgoing, Redactions,
 };
@@ -81,6 +85,7 @@ pub use crucible_types::{
 pub use crucible_types::{
     Changed, TOOL_RESULT_BYTES, TOOL_RESULT_MIN_BYTES, ToolArgs, ToolCall, ToolOutputRetention,
 };
+pub use crucible_workspace::{PathError, WalkFiles, Workspace, WorkspacePath, written};
 pub use event::{Event, EventEnvelope, Post, Reporter, TurnError};
 pub use extension::{
     EXTENSION_ID_BYTES, EXTENSION_MANIFEST_BYTES, EXTENSION_REQUESTS, EXTENSION_TEXT_BYTES,
@@ -195,4 +200,3 @@ pub use toolset::{
     ToolSnapshot, ToolSourceKind, ToolSourceReceipt, Toolset, ToolsetContext, ToolsetError,
 };
 pub use version::later;
-pub use workspace::{PathError, WalkFiles, Workspace, WorkspacePath, written};

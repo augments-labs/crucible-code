@@ -13,6 +13,8 @@ Repository skills live in [`.agents/skills/`](.agents/skills/).
 | `crates/crucible-registry/` | Bounded, source-aware registries |
 | `crates/crucible-credentials/` | Credential contracts and outgoing redaction |
 | `crates/crucible-storage/` | History, checkpoint and cache contracts |
+| `crates/crucible-workspace/` | The directories crucible reaches, and path proofs |
+| `crates/crucible-attachments/` | What may be attached, and the one read it comes through |
 | `crates/crucible-core/` | Domain types and extension traits |
 | `crates/crucible-auth/` | Credentials and account authorization |
 | `crates/crucible-config/` | Configuration and settings |

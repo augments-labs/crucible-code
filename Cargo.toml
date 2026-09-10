@@ -12,25 +12,12 @@ authors = ["Peguy Njoyim"]
 publish = false
 
 # Layering lives here. A crate can only reach what its own `[dependencies]`
-# names, and cargo rejects cycles outright — so the arrows below are compiled,
-# not reviewed:
-#
-#   types      -> (nothing)       the shared values every crate exchanges
-#   registry   -> (nothing)       bounded source-aware registries
-#   credentials -> types          applying a secret without exposing it
-#   storage    -> types           history, checkpoint and cache contracts
-#   core       -> types, registry, credentials, storage
-#   privacy    -> (nothing)       owner-only local files
-#   auth       -> core            the keys `/login` wrote down
-#   config     -> core            where crucible's files are and what they say
-#   provider   -> core
-#   session    -> core, privacy   one append-only log per session
-#   sandbox-broker -> (nothing)   frozen child-status protocol and PID 1 binary
-#   tools      -> core, sandbox-broker
-#   extension  -> core            runs somebody else's program and talks to it
-#   runner     -> core, session   drives turns through traits only
-#   tui        -> (nothing)       draws what it is handed
-#   crucible-code (this package) -> workspace crates; the concrete composition root
+# names, and cargo rejects cycles outright, so the edges are compiled rather
+# than reviewed. Which edges are allowed is one list, in the crate-layering
+# section of `scripts/sh/repo-checks.sh`, checked against these manifests on
+# every run. It is not restated here: an arrow written down twice goes stale in
+# one of the two places without anything failing. What each crate is for is in
+# CLAUDE.md.
 #
 # `config` sits beside the others rather than above them: it reads files into
 # settings and hands them to the wiring, which is what applies them. Nothing
@@ -48,6 +35,7 @@ arboard = { version = "=3.6.1", features = ["wayland-data-control"] }
 image = { version = "=0.25.10", default-features = false, features = ["png"] }
 # This workspace's own crates. Path dependencies, released together, so there is
 # no version to pin and no third party whose publish could move them.
+crucible-attachments = { path = "crates/crucible-attachments" }
 crucible-auth = { path = "crates/crucible-auth" }
 crucible-config = { path = "crates/crucible-config" }
 crucible-core = { path = "crates/crucible-core" }
@@ -68,6 +56,7 @@ crucible-storage = { path = "crates/crucible-storage" }
 crucible-tools = { path = "crates/crucible-tools" }
 crucible-tui = { path = "crates/crucible-tui" }
 crucible-types = { path = "crates/crucible-types" }
+crucible-workspace = { path = "crates/crucible-workspace" }
 
 # Argument parsing. `derive` keeps the CLI surface declared next to the type it
 # produces rather than in a builder chain that drifts from it.
@@ -230,12 +219,14 @@ unicode-width = "=0.2.2"
 # is `unsafe` through `libc`, which this workspace denies, and this is the safe
 # wrapper for it. Unix targets only, where `openat` is the platform's own idea;
 # already in the tree under `crossterm`, so this turns a feature on rather than
-# adding a crate. Confined to `workspace/open/descent.rs`.
+# adding a crate. Every call stays behind the boundary of the crate that made
+# it; the manifests naming this crate are the list of those boundaries.
 #
 # `process` is the same argument about a second call. Stopping a command means
 # stopping the pipeline it started rather than the shell at the head of it, and
 # that is `kill` on a negated process group id — which `std` has no call for
-# either. Confined to `bash/platform/unix.rs`.
+# either. It is a separate feature, so the manifests turning it on are the list
+# of crates that may make that call.
 rustix = { version = "=1.1.4", features = ["fs"] }
 
 # Compiles the bounded Linux seccomp program without hand-maintained BPF or
@@ -254,14 +245,14 @@ libc = "=0.2.189"
 # last published in 2021, which is not what security-critical code should be
 # resting on. Already in the tree as a transitive dependency of `ureq` and
 # `ignore` for Windows targets, so it costs no crate that was not being compiled
-# already. It is confined to the privacy platform boundary, core's final
-# workspace-path validation, and tools' file replacement and process boundary.
+# already. Every call stays behind the target-gated boundary of the crate that
+# made it; the manifests naming this crate are the list of those boundaries.
 # The WDK file-system surface contributes the one ntdll rename call whose
 # directory-relative contract the Win32 wrapper does not honor consistently;
 # JobObjects, ToolHelp and Pipes contain and poll spawned command descendants.
 # Native sandbox setup additionally uses the local-account, DPAPI, Windows
 # Filtering Platform, registry and synchronization APIs. The bindings add no
-# runtime library; every call stays behind a target-gated Crucible boundary.
+# runtime library.
 windows-sys = { version = "=0.61.2", features = [
     "Wdk_Storage_FileSystem",
     "Win32_Foundation",
@@ -379,12 +370,14 @@ ignored = ["crucible-session"]
 name = "crucible"
 path = "src/main.rs"
 
-# All eight, and only here. The binary uses the lower-level privacy boundary for
-# its user configuration; that crate knows nothing about settings. The arrows
-# that make a provider and a tool meet a runner are still drawn here or nowhere.
+# Every crate the binary composes, and only here. It uses the lower-level
+# privacy boundary for its user configuration; that crate knows nothing about
+# settings. The arrows that make a provider and a tool meet a runner are still
+# drawn here or nowhere.
 [dependencies]
 arboard.workspace = true
 clap.workspace = true
+crucible-attachments.workspace = true
 crucible-auth.workspace = true
 crucible-config.workspace = true
 crucible-core.workspace = true
@@ -436,10 +429,10 @@ insta.workspace = true
 # crucible the way a person does drives it through a pty the same way. `std`
 # can spawn the process and read the descriptors but cannot open the pty pair,
 # put its far side in raw mode, set its window size or bound a pipe. `rustix`
-# and its version are already in the runtime graph through core, so this turns
-# features on rather than adding a crate; only the safe system-call wrappers
-# the probes and that test name become reachable, and no pty or pipe code is
-# reached by crucible itself.
+# and its version are already in the runtime graph, so this turns features on
+# rather than adding a crate; only the safe system-call wrappers the probes and
+# that test name become reachable, and no pty or pipe code is reached by
+# crucible itself.
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix = { workspace = true, features = ["pipe", "pty", "termios"] }
 

@@ -11,14 +11,30 @@ use super::{PathError, open, written};
 ///
 /// Almost always a directory the workspace reaches, which is why everything
 /// below speaks of the workspace. The one exception is a read the user was
-/// asked about: [`Workspace::outside`](super::Workspace::outside) proves such
-/// a path against its own parent, and nothing that writes can be handed one,
-/// because `write` and `edit` resolve their paths through the containing
-/// entry points themselves.
+/// asked about, which [`Workspace::outside`](super::Workspace::outside) proves.
+/// `write` and `edit` resolve their own paths through the containing entry
+/// points, so an outside proof does not reach them today; the type does not say
+/// so, and a route that handed one to a write would compile.
 ///
-/// There is no public constructor: the only way to hold one is to have asked
-/// a [`Workspace`](super::Workspace) for it, so a function taking this type
-/// cannot be handed a path from anywhere else.
+/// The field is private and `proven` is not public, so the only way to
+/// hold one is to have asked a [`Workspace`](super::Workspace) for it. The two
+/// that mint one without asking — [`Self::walked`] and
+/// [`WalkFiles::open_regular`] — take a name found below a proof the caller
+/// already holds, which is a step down from authority rather than a way into
+/// it. That is what stops a string a model wrote from becoming authority, so it
+/// is checked rather than asserted — the error code is what this fails with
+/// today and not a gate, since `compile_fail` accepts any compile error:
+///
+/// ```compile_fail,E0624
+/// use std::path::PathBuf;
+/// use std::sync::Arc;
+///
+/// use crucible_workspace::WorkspacePath;
+///
+/// fn anywhere() -> WorkspacePath {
+///     WorkspacePath::proven(Arc::from(PathBuf::from("/")), PathBuf::from("/etc/passwd"))
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct WorkspacePath {
     /// The directory containment was settled against — the root, or whichever

@@ -13,7 +13,7 @@
 use std::fmt;
 use std::path::Path;
 
-use crate::workspace::{Workspace, WorkspacePath, written};
+use crucible_workspace::{Workspace, WorkspacePath, written};
 
 /// What a call would do.
 #[derive(Debug, Clone, PartialEq, Eq)]

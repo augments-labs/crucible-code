@@ -29,36 +29,22 @@ authors.workspace = true
 # once shared this dependency moved out with their types.
 # The exact-pinned crate is already used by auth, runner, tools and the binary.
 
-# The four crates below are the extraction this crate is being emptied into.
+# The six crates below are the extraction this crate is being emptied into.
 # Core consumes them so its remaining callers keep compiling against one name
 # while ownership moves; every one of these edges is retired when core is
 # removed.
 [dependencies]
+crucible-attachments.workspace = true
 crucible-credentials.workspace = true
 crucible-registry.workspace = true
 crucible-storage.workspace = true
 crucible-types.workspace = true
+crucible-workspace.workspace = true
 globset.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
-
-# The descriptor walk that opens a path the workspace proved, which is what
-# makes containment hold against something else writing into the tree at the
-# same time. Every crate above inherits it, on Unix targets — and there it is
-# already being compiled for `crossterm`, so what arrives is a feature rather
-# than a crate. Windows has no `openat`; the separate target dependency below
-# validates final opened handles and commits new files under a held parent.
-[target.'cfg(unix)'.dependencies]
-rustix.workspace = true
-
-[target.'cfg(windows)'.dependencies]
-# A name can be redirected through an ancestor between containment and open.
-# GetFinalPathNameByHandleW validates the handle actually opened before a byte
-# is read; std exposes the handle but not that query. The exact-pinned crate and
-# FileSystem feature are already in the workspace for privacy.
-windows-sys.workspace = true
 
 [lints]
 workspace = true

@@ -332,6 +332,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "crucible-attachments"
+version = "0.40.1"
+dependencies = [
+ "crucible-types",
+ "crucible-workspace",
+ "rustix",
+ "sha2",
+ "thiserror",
+]
+
+[[package]]
 name = "crucible-auth"
 version = "0.40.1"
 dependencies = [
@@ -351,6 +362,7 @@ version = "0.40.1"
 dependencies = [
  "arboard",
  "clap",
+ "crucible-attachments",
  "crucible-auth",
  "crucible-config",
  "crucible-core",
@@ -384,17 +396,17 @@ dependencies = [
 name = "crucible-core"
 version = "0.40.1"
 dependencies = [
+ "crucible-attachments",
  "crucible-credentials",
  "crucible-registry",
  "crucible-storage",
  "crucible-types",
+ "crucible-workspace",
  "globset",
- "rustix",
  "serde_json",
  "sha2",
  "thiserror",
  "uuid",
- "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -456,6 +468,7 @@ dependencies = [
 name = "crucible-runner"
 version = "0.40.1"
 dependencies = [
+ "crucible-attachments",
  "crucible-core",
  "crucible-session",
  "sha2",
@@ -500,6 +513,7 @@ name = "crucible-tools"
 version = "0.40.1"
 dependencies = [
  "base64 0.23.1",
+ "crucible-attachments",
  "crucible-core",
  "crucible-privacy",
  "crucible-sandbox-broker",
@@ -538,6 +552,15 @@ dependencies = [
  "sha2",
  "thiserror",
  "uuid",
+]
+
+[[package]]
+name = "crucible-workspace"
+version = "0.40.1"
+dependencies = [
+ "rustix",
+ "thiserror",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

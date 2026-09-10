@@ -417,6 +417,68 @@ if ((here != 1)); then
     failed=1
 fi
 
+section "the path that is described, not opened"
+# `Workspace::intended` hands back a plain path instead of a proof, and it
+# resolves through the nearest *existing* ancestor — the one shape that must
+# never be opened by name. The permission engine needs exactly that, because it
+# describes a call rather than making one. Splitting the workspace out of core
+# turned the call `pub`, and Cargo cannot say "public to one caller", so the pin
+# says it here. The owning crate defines and tests it, as the pins above leave
+# their owners.
+asker="crates/crucible-core/src/permission/sensitivity.rs"
+owner="crates/crucible-workspace/src/resolve.rs"
+tests="crates/crucible-workspace/src/tests.rs"
+asks='(\.|Workspace::|Self::)intended\('
+elsewhere=$(grep -rlE --include='*.rs' "$asks" crates src tests |
+    grep -Fxv "$asker" |
+    grep -Fxv "$owner" |
+    grep -Fxv "$tests" || true)
+if [[ -n "$elsewhere" ]]; then
+    while IFS= read -r file; do
+        printf '    FAIL %s calls Workspace::intended; only %s may\n' "$file" "$asker"
+    done <<<"$elsewhere"
+    failed=1
+fi
+here=$(doors "$asks" "$asker")
+if ((here != 1)); then
+    printf '    FAIL %s calls Workspace::intended %d times; the question is asked once\n' "$asker" "$here"
+    failed=1
+fi
+
+section "the file opened by walking, not by name"
+# `Opened::named` opens a path the way the operating system resolves it, which
+# is right for one the person at the keyboard typed in full and wrong for one a
+# model reached: the workspace settled containment at an earlier instant, and
+# only the descriptor walk behind `Opened::reached` proves the tree still agrees
+# at the open.
+owner="crates/crucible-attachments/src/lib.rs"
+typed=(
+    "crates/crucible-runner/src/runner/attachments.rs"
+    "src/cli/converse/attaching.rs"
+)
+by_name='Opened::named\('
+elsewhere=$(grep -rlE --include='*.rs' "$by_name" crates src tests |
+    grep -Fxv "$owner" |
+    grep -Fxv "${typed[0]}" |
+    grep -Fxv "${typed[1]}" || true)
+if [[ -n "$elsewhere" ]]; then
+    while IFS= read -r file; do
+        printf '    FAIL %s opens an attachment by name; a reached path takes the walk\n' "$file"
+    done <<<"$elsewhere"
+    failed=1
+fi
+# The counter-assertion the negative check cannot make: `attaching.rs` is
+# allowed to open by name, so nothing above would notice its workspace arm
+# turning into a second one. Each of these reaches for the walk exactly once.
+by_walk='Opened::reached\('
+for reader in crates/crucible-tools/src/read.rs src/cli/converse/attaching.rs; do
+    here=$(doors "$by_walk" "$reader")
+    if ((here != 1)); then
+        printf '    FAIL %s opens a workspace path through the walk %d times; it is opened once\n' "$reader" "$here"
+        failed=1
+    fi
+done
+
 member_manifests=(crates/*/Cargo.toml)
 manifests=(Cargo.toml "${member_manifests[@]}")
 
@@ -480,10 +542,15 @@ if [[ -z "$edges" ]]; then
     failed=1
 fi
 
-# `core` names the four crates its old names now come from. Those four edges are
+# `core` names the six crates its old names now come from. Those six edges are
 # the compatibility facade and go away with the crate that holds them; every
 # other crate still reaches the domain through one name.
-allowed='code auth
+#
+# The exception is `attachments`, which three crates name past the facade. The
+# two types a file's bytes are read through are withheld from the facade, so a
+# caller that wants one takes the edge, and the edge shows up here.
+allowed='code attachments
+code auth
 code config
 code core
 code extension
@@ -495,22 +562,28 @@ code session
 code tools
 code sandbox-broker
 code tui
+attachments types
+attachments workspace
 auth core
 auth privacy
 config core
+core attachments
 core credentials
 core registry
 core storage
 core types
+core workspace
 credentials types
 extension core
 mcp core
 provider core
+runner attachments
 runner core
 runner session
 session core
 session privacy
 storage types
+tools attachments
 tools core
 tools privacy
 tools sandbox-broker'
@@ -521,7 +594,7 @@ while IFS= read -r edge; do
         failed=1
     fi
 done <<<"$edges"
-for crate in privacy registry sandbox-broker tui types; do
+for crate in privacy registry sandbox-broker tui types workspace; do
     if grep -qE "^$crate " <<<"$edges"; then
         printf '    FAIL crucible-%s must not depend on another workspace crate\n' "$crate"
         failed=1

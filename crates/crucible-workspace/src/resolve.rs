@@ -1,17 +1,21 @@
 //! Turning a path a caller wrote into one the workspace has proven it reaches.
 //!
-//! Two entry points, because a path that must already exist and a path that is
-//! about to be created cannot be resolved the same way: the first can be
-//! canonicalised whole, and the second has a last component that is not there
-//! yet.
+//! A path that must already exist and a path that is about to be created
+//! cannot be resolved the same way: the first can be canonicalised whole, and
+//! the second has a last component that is not there yet. [`Workspace::existing`]
+//! and [`Workspace::creatable`] are the two that mint a proof from either
+//! shape. Beside them, [`Workspace::outside`] mints one too, which only a read
+//! the user was asked about may hold. [`Workspace::intended`] is the one that
+//! mints nothing — it answers about a name, which is what the permission
+//! boundary needs.
 //!
-//! Both answer about an instant. What a canonical path settles is where a name
-//! led when it was asked, and a second writer can move it afterwards — so what
-//! comes back is a resolved path with no symbolic link anywhere in it, and
-//! [`open`](super::WorkspacePath::open) is what proves that still true by
-//! walking it. The division is the point: containment is decided here, once,
-//! about text somebody sent; whether the tree still agrees is decided there,
-//! at the moment of the call.
+//! The three that mint a proof answer about an instant. What a canonical path
+//! settles is where a name led when it was asked, and a second writer can move
+//! it afterwards — so what comes back is a resolved path with no symbolic link
+//! anywhere in it, and [`open`](super::WorkspacePath::open) is what proves that
+//! still true by walking it. The division is the point: containment is decided
+//! here, once, about text somebody sent; whether the tree still agrees is
+//! decided there, at the moment of the call.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -28,7 +32,13 @@ impl Workspace {
     /// The ancestor that does exist is still canonicalised and contained; only
     /// the ordinary names below it are appended. A `..` among the missing
     /// components therefore resolves nothing rather than being guessed at.
-    pub(crate) fn intended(&self, requested: &str) -> Option<PathBuf> {
+    ///
+    /// What comes back is a plain [`PathBuf`], never a [`WorkspacePath`]. The
+    /// permission engine that calls this lives in another crate and needs the
+    /// name to describe the call it is settling; handing it a proof instead
+    /// would let a question about a path become the authority to open one.
+    #[must_use]
+    pub fn intended(&self, requested: &str) -> Option<PathBuf> {
         if Path::new(requested)
             .components()
             .any(|part| matches!(part, Component::ParentDir))
