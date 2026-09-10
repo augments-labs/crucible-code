@@ -153,15 +153,35 @@ fn the_command_runs_in_the_workspace_root() {
 
 #[cfg(target_os = "linux")]
 #[test]
-fn the_default_linux_backend_cannot_read_an_undeclared_sibling() {
+fn a_tool_nobody_gave_a_sandbox_to_refuses_the_command_rather_than_running_it() {
+    // `Bash::new` used to build itself the concrete native service, so a host
+    // that forgot to inject one still ran commands — under whichever backend
+    // that binary happened to link. There is no backend to fall back to now:
+    // the composition root supplies the service, and a tool without one has
+    // nothing to run a command through.
+    let sample = Sample::new("bash-uninjected");
+    let tool = Bash::new(sample.workspace());
+
+    let error = tool
+        .run(
+            allowed(&tool, r#"{"command":"printf 'ran\n'"}"#),
+            &crate::sample::context(),
+        )
+        .expect_err("a tool with no sandbox service cannot run a command");
+
+    assert!(error.to_string().contains("no sandbox service"), "{error}");
+}
+
+#[test]
+fn the_enforcing_linux_backend_cannot_read_an_undeclared_sibling() {
     // Approval settles whether Crucible may ask for the command. It does not
     // grant the command the rest of the host: the workspace is the writable
     // reach of the standard Linux sandbox, and its sibling is outside it.
     let sample = Sample::new("bash-sibling-confined");
     let outside = sample.outside("credential", "not-for-the-command\n");
-    let tool = Bash::new(sample.workspace());
-    let backend_available =
-        crucible_core::SandboxService::probe(&crate::LocalSandbox::new()).is_ok();
+    let service = std::sync::Arc::new(crate::LocalSandbox::new());
+    let backend_available = crucible_core::SandboxService::probe(service.as_ref()).is_ok();
+    let tool = Bash::new(sample.workspace()).sandboxing(service, true);
     let args = format!(r#"{{"command":"cat {outside}"}}"#);
 
     match tool.run(allowed(&tool, &args), &crate::sample::context()) {
@@ -786,7 +806,9 @@ fn linux_ctrl_b_uses_owned_durable_detachment_before_go() {
     }
     let sample = Sample::new("bash-linux-detachable");
     let left = Background::new();
-    let tool = Bash::new(sample.workspace()).leaving(left.clone());
+    let tool = Bash::new(sample.workspace())
+        .sandboxing(std::sync::Arc::new(service), true)
+        .leaving(left.clone());
     left.ask();
 
     let output = finalized(&tool, r#"{"command":"printf 'up\n'; sleep 30"}"#)
