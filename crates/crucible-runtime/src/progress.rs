@@ -103,8 +103,8 @@ impl Progress {
         })))
     }
 
-    /// Adds a line, dropping the oldest for as long as that is what the bounds
-    /// cost.
+    /// Takes a line, dropping the oldest for as long as that is what the
+    /// bounds cost, or dropping this one if nothing could make room for it.
     ///
     /// Never blocks and never refuses: the caller is a task in the middle of
     /// doing something, and a bound it had to handle would be a bound handed

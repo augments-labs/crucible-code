@@ -1,11 +1,11 @@
 //! A set of tasks with one owner.
 //!
-//! The thing a group is for is the sentence "when this is over, every task
-//! the owner started has an end in what it gets back" — an answer, or the
-//! reason there is none. A task spawned and forgotten
-//! keeps a socket, a child process or a lock alive past the turn that wanted
-//! it, and the only evidence is a hang somewhere else much later. Every task
-//! here is held, and [`Group::shutdown`] accounts for each of them.
+//! The thing a group is for is the sentence "when this is over, every task the
+//! owner started has an end in what it gets back" — an answer, or the reason
+//! there is none. A task spawned and forgotten keeps a socket, a child process
+//! or a lock alive past the turn that wanted it, and the only evidence is a
+//! hang somewhere else much later. Every task here is held, and
+//! [`Group::shutdown`] accounts for each of them.
 //!
 //! It accounts for them; it cannot promise they all stopped. Cancellation is
 //! cooperative, because that is the only kind that leaves a half-written file
@@ -219,9 +219,8 @@ impl<T: Send + 'static> Group<T> {
     /// plan, and it is visible in the answer rather than counted among the
     /// finished.
     ///
-    /// What has not come back by then never reached an await point and no abort
-    /// can take it, so the group stops waiting and reports it
-    /// [`Ended::Abandoned`] rather than waiting on a task nothing can stop.
+    /// What has not come back by then is reported [`Ended::Abandoned`] rather
+    /// than waited on further.
     ///
     /// Both deadlines bound what this waits *for*, not how long the caller is
     /// here. It is a future, and it advances only while something polls it: a
@@ -241,11 +240,6 @@ impl<T: Send + 'static> Group<T> {
         self.reap_until(deadline_in(grace)).await;
 
         if !self.tasks.is_empty() {
-            // Before the abort as well as after it: a task that returned while
-            // the grace was passing is still in the set until it is joined, and
-            // tokio documents an abort on one of those as likely to come back
-            // cancelled, which would throw away what it answered.
-            self.collect_finished();
             self.tasks.abort_all();
             self.reap_until(deadline_in(grace)).await;
 
@@ -703,7 +697,7 @@ mod tests {
         );
     }
 
-    /// Two workers so the shutdown reaping the tasks is not the thing being
+    /// Three workers so the shutdown reaping the tasks is not the thing being
     /// starved, and a limit above the number spawned so admission is not
     /// either. Both tasks are inside synchronous work no abort can reach.
     #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
@@ -770,8 +764,9 @@ mod tests {
         let now = tokio::time::Instant::now();
 
         // The distance, not the ordering: `deadline_in` samples its own `now`
-        // after this one, so any answer at all is later than this `now` and an
-        // ordering assertion would hold for a function that gave up entirely.
+        // after this one, so any answer at all is no earlier than this `now`
+        // and an ordering assertion would hold for a function that gave up
+        // entirely.
         assert!(
             super::deadline_in(std::time::Duration::MAX).saturating_duration_since(now)
                 > std::time::Duration::from_hours(24 * 365),
