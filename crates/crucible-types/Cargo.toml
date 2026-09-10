@@ -10,7 +10,7 @@ repository.workspace = true
 authors.workspace = true
 
 # This crate is the root of the graph, so a dependency here is one every other
-# crate inherits. Three earn it.
+# crate inherits. Four earn it.
 #
 # `thiserror` writes the `Display` and `source` impls for the module-owned error
 # enums the repository requires on every fallible function, and is derive-only:
@@ -24,6 +24,11 @@ authors.workspace = true
 # `sha2` supplies the domain-separated one-way digests persisted facts are keyed
 # by — a continuation scope must survive restart without its credential entering
 # the record that names it.
+#
+# `serde_json` owns the one shape a context fragment is exchanged as. The values
+# are already parsed when they arrive here, so this is the type they are held in
+# rather than a parser this crate runs: writing a second representation of it
+# would be a second thing for a fragment to disagree with itself about.
 [dependencies]
 serde_json.workspace = true
 sha2.workspace = true

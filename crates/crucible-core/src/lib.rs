@@ -1,7 +1,8 @@
 //! Domain types and the traits every other crucible crate implements.
 //!
-//! Providers, tools, the runner and the renderer all depend on this crate and
-//! never on each other; cargo enforces that, so the arrangement cannot rot.
+//! Providers, tools and the runner depend on this crate rather than on one
+//! another; cargo enforces that, so the arrangement cannot rot. The renderer
+//! draws what it is handed and depends on no crucible crate at all.
 //! Below it sit the crates that now own the shared values, registries,
 //! credential contracts and storage contracts. This crate re-exports their
 //! names under the paths it published them at, so a consumer keeps one import
