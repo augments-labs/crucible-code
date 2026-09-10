@@ -124,10 +124,13 @@ impl ToolOutputRetention {
 /// written somewhere a diff may never go.
 ///
 /// There is no constructor here that turns one of these back into the live
-/// value a tool returns, and none that mints files outside the one protected
-/// restore below. A record somebody edited can therefore put a readable path
-/// into a request, exactly as a prompt line already can, and can grant nothing
-/// further.
+/// value a tool returns. Files arrive by two doors: the protected restore
+/// below, and [`Self::recorded`], which the live value walks out through on its
+/// way to being kept. This crate cannot name the permission proof the live
+/// constructor demands for the same files, so what stands in for the type is a
+/// repository check holding `recorded` to that one caller. A record somebody
+/// edited can therefore put a readable path into a request, exactly as a prompt
+/// line already can, and can grant nothing further.
 #[derive(Clone, PartialEq, Eq)]
 pub struct RecordedToolOutput {
     text: Box<str>,
@@ -316,6 +319,7 @@ impl RecordedToolOutput {
     /// model-visible note states the original encoded size and the encoded
     /// bytes omitted. Callers must supply at least [`TOOL_RESULT_MIN_BYTES`],
     /// which descriptor construction enforces for local limits.
+    #[must_use]
     pub fn limit_encoded(&mut self, maximum: usize) -> ToolOutputRetention {
         let (text, retention) = limit_encoded(&self.text, self.capture, maximum);
         if let Some(text) = text {
@@ -371,6 +375,7 @@ impl RecordedToolOutput {
 /// ceiling at different moments of one call's life. Returns the replacement
 /// text only where something was removed, so an untouched result reallocates
 /// nothing.
+#[must_use]
 pub fn limit_encoded(
     text: &str,
     capture: Option<CaptureElision>,

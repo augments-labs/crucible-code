@@ -367,6 +367,29 @@ if ((here != 1)); then
     failed=1
 fi
 
+# The door the extraction opened. `RecordedToolOutput` lives in a crate that
+# cannot name `Approved`, so the constructor that mints one with attachments
+# cannot ask for the permission proof the live `with_attachments` requires. What
+# stands in for the type is this: one caller, inside the conversion the live
+# value walks out through, so an attachment still reaches a request only from a
+# value the permission engine bound. Unlike the seam above there is no dot form
+# to pin -- `recorded` takes no `self` -- and the bare name belongs to other
+# types, so the spelling is the qualified one only.
+mints="crates/crucible-core/src/tool.rs"
+attaches='RecordedToolOutput::recorded\('
+elsewhere=$(grep -rlE --include='*.rs' "$attaches" crates src tests | grep -Fxv "$mints" || true)
+if [[ -n "$elsewhere" ]]; then
+    while IFS= read -r file; do
+        printf '    FAIL %s calls RecordedToolOutput::recorded; only %s may\n' "$file" "$mints"
+    done <<<"$elsewhere"
+    failed=1
+fi
+here=$(doors "$attaches" "$mints")
+if ((here != 1)); then
+    printf '    FAIL %s calls RecordedToolOutput::recorded %d times; the recording is one call\n' "$mints" "$here"
+    failed=1
+fi
+
 # The other half of the same seam. What a pruning cleared is held beside the
 # transcript so a resumed screen can say it again, and Pruned::showed is the one
 # door out of that side-table. A second caller is how text the model was told to
