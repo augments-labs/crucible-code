@@ -10,8 +10,8 @@ and 2 when that could not be answered. The third answer is separate because a
 check that cannot tell "no edge" from "never looked" gives the reassuring one,
 and "no edge" is 3 because 1 is what Python exits with when it crashes.
 `--self-test` exits 0 when every manifest and description whose answer is known
-gives it, draws no warning from Cargo, and says why wherever that answer is 2,
-and 1 otherwise.
+gives it, draws no warning from Cargo and says why wherever that answer is 2;
+it exits 1 otherwise.
 
 Cargo is asked rather than the TOML read here. One dependency can be spelled
 many ways — quoted or bare, dotted or a table of its own, under a `[target]`
@@ -48,6 +48,8 @@ def metadata(manifest):
                 "--offline",
                 "--format-version",
                 "1",
+                "--color",
+                "never",
                 "--manifest-path",
                 manifest,
             ],
@@ -62,6 +64,8 @@ def metadata(manifest):
     # Only the description has to be exactly what Cargo wrote.
     sys.stderr.write(result.stderr.decode("utf-8", errors="backslashreplace"))
     if result.returncode != 0:
+        if not result.stderr.strip():
+            print(f"cargo exited {result.returncode} describing {manifest} and said nothing", file=sys.stderr)
         return None
     try:
         return result.stdout.decode("utf-8")
@@ -195,7 +199,7 @@ SHAPES = [
 
 
 def known(name, expected, question):
-    """Whether a question gets the answer known for it, and says why when it has none."""
+    """Whether a question gets the answer known for it without a warning from Cargo, and says why when it has none."""
     said = io.StringIO()
     with contextlib.redirect_stderr(said):
         got = question()
@@ -203,7 +207,8 @@ def known(name, expected, question):
         sys.stderr.write(f"shipped-edge: {name} answered {got}, not {expected}\n{said.getvalue()}")
         return False
     # A warning Cargo gives about the fixture would pass for the reason a
-    # question went unanswered, so no fixture may draw one.
+    # question went unanswered, so no fixture may draw one. Cargo is asked for
+    # no color, so a warning starts the same whatever the environment forces.
     if any(line.startswith("warning:") for line in said.getvalue().splitlines()):
         sys.stderr.write(f"shipped-edge: cargo warned about {name}\n{said.getvalue()}")
         return False
