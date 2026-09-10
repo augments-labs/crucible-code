@@ -46,6 +46,7 @@ crucible-privacy = { path = "crates/crucible-privacy" }
 crucible-provider = { path = "crates/crucible-provider" }
 crucible-registry = { path = "crates/crucible-registry" }
 crucible-runner = { path = "crates/crucible-runner" }
+crucible-runtime = { path = "crates/crucible-runtime" }
 # Static PID 1 executable and its four-byte raw-wait-status protocol. The
 # library side contains no launcher or application authority; tools uses only
 # the protocol constants while the separately built binary supervises one
@@ -57,6 +58,15 @@ crucible-tools = { path = "crates/crucible-tools" }
 crucible-tui = { path = "crates/crucible-tui" }
 crucible-types = { path = "crates/crucible-types" }
 crucible-workspace = { path = "crates/crucible-workspace" }
+
+# The executor work in flight is owned by. `std` has threads but no way to own a
+# set of them as one thing: a scheduler that can stop admitting, cancel what it
+# started and be awaited to empty is what keeps a turn's tasks from outliving
+# the turn, and writing that over `std::thread` means writing the scheduler.
+# Features are named per crate rather than here, so a crate that needs the
+# executor does not compile the process, network and file integrations that
+# belong to the boundaries owning them; `full` is not used anywhere.
+tokio = { version = "=1.53.1", default-features = false }
 
 # Argument parsing. `derive` keeps the CLI surface declared next to the type it
 # produces rather than in a builder chain that drifts from it.
@@ -144,12 +154,11 @@ httparse = "=1.10.1"
 # grammar, including bracketed IPv6 and absolute-form targets. Already in ureq.
 http = "=1.5.0"
 
-# HTTP. Blocking by design: this workspace runs threads rather than an async
-# runtime, and the alternative client would pull `tokio` in to serve one socket
-# per turn. Brings `rustls` rather than linking a system OpenSSL, so a release
-# binary is the same on every machine. Confined to one file behind `Transport`.
-# Default features minus `gzip`: a response here is an event stream that is read
-# as it arrives, and compressing one buys nothing for the `flate2` it costs.
+# HTTP. Blocking by design. Brings `rustls` rather than linking a system
+# OpenSSL, so a release binary is the same on every machine. Confined to one
+# file behind `Transport`. Default features minus `gzip`: a response here is an
+# event stream that is read as it arrives, and compressing one buys nothing for
+# the `flate2` it costs.
 ureq = { version = "=3.4.1", default-features = false, features = ["rustls"] }
 
 # JWT claims are base64url without padding. OpenAI subscription login needs the

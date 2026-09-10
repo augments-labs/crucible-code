@@ -4,7 +4,8 @@
 //! another; cargo enforces that, so the arrangement cannot rot. The renderer
 //! draws what it is handed and depends on no crucible crate at all.
 //! Below it sit the crates that now own the shared values, registries,
-//! credential contracts, storage contracts, path proofs and attachment ingress.
+//! credential contracts, storage contracts, path proofs, attachment ingress and
+//! the controls a turn is steered and stopped by.
 //! This crate re-exports their names under the paths it published them at, so a
 //! consumer keeps one import while ownership moves out; new code names the
 //! owning crate. `crucible-attachments` is re-exported only as far as the names
@@ -24,9 +25,7 @@
 //! Authentication is a separate axis from the wire protocol: a `Provider`
 //! receives an already-resolved `Credential` and never learns what kind it is.
 
-mod aside;
 mod ask;
-mod cancel;
 mod compaction;
 mod context;
 mod event;
@@ -41,14 +40,11 @@ mod provider;
 mod revealed;
 mod sandbox;
 mod source;
-mod steer;
 mod tool;
 mod toolset;
 mod version;
 
-pub use aside::Aside;
 pub use ask::{Answer, Answered, Put, Question};
-pub use cancel::Cancel;
 pub use compaction::{Compacted, Compacting, RECAP, Room};
 pub use context::{ContextSection, capture, seen};
 pub use crucible_attachments::{AttachmentError, CEILING, KINDS, Kind, kind};
@@ -61,6 +57,7 @@ pub use crucible_registry::{
     RegistrySnapshot, SOURCE_ID_BYTES, SOURCE_LABEL_BYTES, Shadow, SourceKind, SourceReceipt,
     Staged,
 };
+pub use crucible_runtime::{Aside, Cancel, Steer};
 pub use crucible_storage::{
     ActionId, ActionResolution, ApprovalDecision, CallResultKey, CallResultReceipt,
     CallResultStoreError, CheckpointId, CompactionRecord, CustomEntry, CustomProjector,
@@ -186,7 +183,6 @@ pub use sandbox::{
     SandboxUnreadablePattern, SandboxUsage, SandboxViolation,
 };
 pub use source::{Fetch, Page, Search, SearchResponse, SearchResult, SourceError};
-pub use steer::Steer;
 pub use tool::{
     Account, CallResultAcceptance, Looking, PendingCallResult, Remembered, Summary, Tool,
     ToolContext, ToolError, ToolOutput, Unwatched, Watch, Wrote,

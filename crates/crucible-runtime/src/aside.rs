@@ -19,12 +19,13 @@
 //! still in it when the turn ends was never delivered and is still owed. The
 //! caller on the other side reads that back and puts it under the next turn.
 //!
-//! It lives in core beside [`crate::Steer`] and [`crate::Cancel`] because the
-//! runner's exchange loop takes one, and core owns every type its own loop
-//! names.
+//! Poisoning is not one of the ways a note is lost. A panic in some other task
+//! says nothing about this queue — nothing here can leave it half-changed — and
+//! answering one by throwing away every note nobody had collected yet would
+//! turn one failure into a second, quieter one.
 
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 /// A shared "while you were working, this happened" queue.
 ///
@@ -39,10 +40,8 @@ pub struct Aside(Arc<Mutex<VecDeque<String>>>);
 /// needs.
 impl std::fmt::Debug for Aside {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let notes = self.0.lock().map(|notes| notes.len()).unwrap_or_default();
-
         f.debug_struct("Aside")
-            .field("notes", &format_args!("{notes} redacted"))
+            .field("notes", &format_args!("{} redacted", self.notes().len()))
             .finish()
     }
 }
@@ -59,23 +58,14 @@ impl Aside {
     /// Called on the thread that draws. The note is taken whole: what it says
     /// is the caller's, which is the one place that knows both the fact and the
     /// words the model is told it in.
-    ///
-    /// A poisoned lock is not a reason to lose the note, but it is a reason not
-    /// to claim it was delivered — see [`Aside::say`]'s caller, which keeps
-    /// what it could not hand over.
     pub fn say(&self, note: String) {
-        if let Ok(mut notes) = self.0.lock() {
-            notes.push_back(note);
-        }
+        self.notes().push_back(note);
     }
 
     /// Whether anything is waiting to be worked in.
-    ///
-    /// Cheap and lock-light, so the exchange loop can ask it every pass without
-    /// taking the lock when the answer is no — which is almost every pass.
     #[must_use]
     pub fn any(&self) -> bool {
-        self.0.lock().is_ok_and(|notes| !notes.is_empty())
+        !self.notes().is_empty()
     }
 
     /// Takes every note waiting, oldest first.
@@ -84,14 +74,13 @@ impl Aside {
     /// behind is nothing. Called at the boundary between one pass and the next
     /// by the turn, and once more by the caller when the turn is over — which
     /// is how a note pushed after the last pass is still owed rather than lost.
-    ///
-    /// A poisoned lock yields nothing, and the note stays unsaid rather than
-    /// being reported as said.
     pub fn take(&self) -> Vec<String> {
-        self.0
-            .lock()
-            .map(|mut notes| notes.drain(..).collect())
-            .unwrap_or_default()
+        self.notes().drain(..).collect()
+    }
+
+    /// The notes, whether or not a thread came apart while holding them.
+    fn notes(&self) -> MutexGuard<'_, VecDeque<String>> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -109,6 +98,32 @@ mod tests {
         let shown = format!("{aside:?}");
         assert!(!shown.contains("aside-debug-canary"), "{shown}");
         assert!(shown.contains("redacted"), "{shown}");
+    }
+
+    #[test]
+    fn a_task_coming_apart_does_not_take_the_notes_with_it() {
+        let aside = Aside::new();
+        aside.say("#1 finished".to_owned());
+
+        let poisoner = aside.clone();
+        let came_apart = std::thread::spawn(move || {
+            let _held = poisoner.0.lock().unwrap();
+            panic!("a thread came apart holding the lock");
+        })
+        .join();
+        assert!(came_apart.is_err(), "the thread was supposed to panic");
+
+        aside.say("#2 failed with exit status 1".to_owned());
+
+        assert!(aside.any());
+        assert_eq!(
+            aside.take(),
+            vec![
+                "#1 finished".to_owned(),
+                "#2 failed with exit status 1".to_owned()
+            ],
+            "a panic elsewhere threw away facts the turn was still owed"
+        );
     }
 
     #[test]

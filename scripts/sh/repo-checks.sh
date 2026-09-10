@@ -542,7 +542,7 @@ if [[ -z "$edges" ]]; then
     failed=1
 fi
 
-# `core` names the six crates its old names now come from. Those six edges are
+# `core` names the seven crates its old names now come from. Those edges are
 # the compatibility facade and go away with the crate that holds them; every
 # other crate still reaches the domain through one name.
 #
@@ -570,6 +570,7 @@ config core
 core attachments
 core credentials
 core registry
+core runtime
 core storage
 core types
 core workspace
@@ -594,7 +595,10 @@ while IFS= read -r edge; do
         failed=1
     fi
 done <<<"$edges"
-for crate in privacy registry sandbox-broker tui types workspace; do
+# Tighter than the allowed-edge list above for these crates, and for
+# crucible-runtime tighter than the architecture's maximum: giving one of them
+# a workspace dependency is a decision to take here rather than a line to add.
+for crate in privacy registry runtime sandbox-broker tui types workspace; do
     if grep -qE "^$crate " <<<"$edges"; then
         printf '    FAIL crucible-%s must not depend on another workspace crate\n' "$crate"
         failed=1
