@@ -450,9 +450,7 @@ section "the file opened by walking, not by name"
 # is right for one the person at the keyboard typed in full and wrong for one a
 # model reached: the workspace settled containment at an earlier instant, and
 # only the descriptor walk behind `Opened::reached` proves the tree still agrees
-# at the open. Both constructors take a path and return the same type, so
-# swapping one for the other compiles and every test stays green — which is why
-# the choice is pinned here rather than left to the call site.
+# at the open.
 owner="crates/crucible-attachments/src/lib.rs"
 typed=(
     "crates/crucible-runner/src/runner/attachments.rs"

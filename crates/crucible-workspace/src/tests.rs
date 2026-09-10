@@ -537,14 +537,14 @@ fn a_walked_path_accepts_only_ordinary_names_below_its_start() {
         from.walked(&f.workspace.root().join("sub/../kept.txt"))
             .is_none()
     );
-    // A Windows canonical path is verbatim, where `..` is an ordinary
-    // component to `std` — so the component check above cannot see one and the
-    // raw-spelling guard is the only thing that does. Asked at the call site
-    // rather than of the guard alone, which would leave `walked` free to stop
-    // consulting it with this still green.
+    // A forward slash, because a canonical Windows path is verbatim and `/` is
+    // not a separator there: the tail arrives as one `Component::Normal`, which
+    // the check below `has_parent` accepts, so this is red if `walked` stops
+    // consulting the raw spelling. Asked at the call site rather than of the
+    // guard alone, which would leave it free to stop.
     #[cfg(windows)]
     {
-        let raw = PathBuf::from(format!(r"{}\sub\..\kept.txt", f.workspace.root().display()));
+        let raw = PathBuf::from(format!(r"{}\sub/../kept.txt", f.workspace.root().display()));
         assert!(from.walked(&raw).is_none());
     }
     assert!(from.walked(&f.outside.join("secret.txt")).is_none());
@@ -584,12 +584,6 @@ fn a_directory_swapped_above_a_proven_path_cannot_reach_outside() {
 #[cfg(any(unix, windows))]
 #[test]
 fn a_directory_swapped_two_levels_up_cannot_reach_outside() {
-    // The swap above is at the component directly below the root, which one
-    // open of the whole path still refuses: `O_NOFOLLOW` applies to the last
-    // name, and there the last name is the one that moved. Two levels up, only
-    // a walk that opens each component against the descriptor for the one
-    // before can see it — so this is what tells that walk apart from a single
-    // call with the same flags.
     let f = Fixture::new("swapdeep");
     fs::create_dir_all(f.workspace.root().join("a/b")).unwrap();
     fs::create_dir_all(f.outside.join("b")).unwrap();

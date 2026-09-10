@@ -43,10 +43,11 @@ use std::fs::File;
 use std::io::{self, Read as _};
 use std::path::Path;
 
-use crucible_types::Modality;
-// Public because this crate's own surface is written in them: `Opened::reached`
-// takes a `WorkspacePath` and `AttachmentError::Unreached` carries a
-// `PathError`, so a caller that depends on this crate alone can name both.
+// Public because this crate's public surface is written in them:
+// `Opened::reached` takes a `WorkspacePath`, `AttachmentError::Unreached`
+// carries a `PathError`, and `Kind::modality` is a public field of type
+// `Modality`. A caller that depends on this crate alone can name each here.
+pub use crucible_types::Modality;
 pub use crucible_workspace::{PathError, WorkspacePath};
 use sha2::{Digest as _, Sha256};
 
