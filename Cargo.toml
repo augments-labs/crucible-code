@@ -29,7 +29,7 @@ publish = false
 #   tools      -> core, sandbox-broker
 #   extension  -> core            runs somebody else's program and talks to it
 #   runner     -> core, session   drives turns through traits only
-#   tui        -> core
+#   tui        -> (nothing)       draws what it is handed
 #   crucible-code (this package) -> workspace crates; the concrete composition root
 #
 # `config` sits beside the others rather than above them: it reads files into
