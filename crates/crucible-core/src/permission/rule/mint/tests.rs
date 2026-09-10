@@ -3,9 +3,9 @@
 use super::super::super::{Command, Sensitivity, Target};
 use super::super::{Disposition, Rules};
 use super::*;
-use crate::ids::ToolId;
-use crate::tool::ToolArgs;
 use crate::workspace::Workspace;
+use crucible_types::ToolArgs;
+use crucible_types::ToolId;
 
 fn call(name: &str) -> ToolCall {
     ToolCall {

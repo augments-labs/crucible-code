@@ -15,8 +15,8 @@ use std::time::Duration;
 
 use crucible_auth::Store;
 use crucible_core::{
-    AgentId, Cancel, Message, Revealed, SessionId, StopReason, ToolArgs, ToolCall, ToolId,
-    ToolOutput, ToolResult,
+    AgentId, Cancel, Message, RecordedToolOutput, Revealed, SessionId, StopReason, ToolArgs,
+    ToolCall, ToolId, ToolResult,
 };
 use crucible_runner::{AgentSpec, Model, Runner, Tools};
 use crucible_tools::{Ledger, Plan};
@@ -415,7 +415,7 @@ fn the_plan_that_comes_back_is_the_one_the_session_picked_up_wrote() {
     // call nothing answered is a turn that broke off, and the replay drops it.
     planned.append(&Message::ToolResults(vec![crucible_core::ToolResult {
         id: ToolId::new("call-1"),
-        output: crucible_core::ToolOutput::ok("1 task planned"),
+        output: crucible_core::RecordedToolOutput::ok("1 task planned"),
     }]));
     drop(planned);
 
@@ -554,7 +554,7 @@ fn the_preview_holds_the_work_a_session_did_and_not_only_what_was_said() {
     });
     session.append(&Message::ToolResults(vec![ToolResult {
         id: call,
-        output: ToolOutput::ok("theme = midnight"),
+        output: RecordedToolOutput::ok("theme = midnight"),
     }]));
     drop(session);
 

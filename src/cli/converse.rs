@@ -1754,7 +1754,13 @@ fn settling<T: Terminal>(
         return Ok(());
     };
 
-    draw::came_back(renderer, &mut held.kept, &alone.call, output, style)
+    draw::came_back(
+        renderer,
+        &mut held.kept,
+        &alone.call,
+        draw::Shown::live(output),
+        style,
+    )
 }
 
 /// Draws one thing the worker sent, and answers it if it was a question.

@@ -5,7 +5,7 @@
 //! to account for all of it, or the part nobody wrote a rule about runs
 //! unwatched alongside the part somebody did.
 
-use crate::tool::ToolCall;
+use crucible_types::ToolCall;
 
 use super::super::sensitivity::Wanted;
 use super::super::{Command, Host, Sensitivity, Target};

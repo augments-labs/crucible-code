@@ -16,10 +16,10 @@ use crucible_core::{
     InvocationRecord, InvocationState, MAX_HUMAN_INPUT_BYTES, Modality, PendingAction,
     PendingActions, PendingApproval, PendingExternalTool, PendingHumanInput,
     PromptCacheFingerprint, PromptCacheResourceId, PromptCacheScopeDigest, ProviderAttemptId,
-    ResumeDigest, ResumeScope, RunId, SandboxBackendId, SandboxBackendIdentity,
+    RecordedToolOutput, ResumeDigest, ResumeScope, RunId, SandboxBackendId, SandboxBackendIdentity,
     SandboxBackendProvenance, SandboxCapabilities, SandboxCapability, SandboxCheckpoint,
     SandboxFeature, SandboxId, SandboxNetworkInspection, TOOL_RESULT_BYTES, ToolArgs, ToolCall,
-    ToolEffect, ToolId, ToolOutcome, ToolOutput,
+    ToolEffect, ToolId, ToolOutcome,
 };
 use serde_json::{Value, json};
 
@@ -259,7 +259,7 @@ fn retained_resolution_bytes(resolution: &ActionResolution) -> usize {
     }
 }
 
-fn retained_output_bytes(output: &ToolOutput) -> usize {
+fn retained_output_bytes(output: &RecordedToolOutput) -> usize {
     output.attachments().iter().fold(
         output.text().len().saturating_add(256),
         |bytes, attachment| {
@@ -623,7 +623,7 @@ fn decode_call(value: &Value) -> Result<ToolCall, CheckpointError> {
     })
 }
 
-fn encode_output(output: &ToolOutput) -> Value {
+fn encode_output(output: &RecordedToolOutput) -> Value {
     json!({
         "text": output.text(),
         "failed": output.is_failed(),
@@ -640,11 +640,11 @@ fn encode_output(output: &ToolOutput) -> Value {
     })
 }
 
-fn decode_output(value: &Value) -> Result<ToolOutput, CheckpointError> {
+fn decode_output(value: &Value) -> Result<RecordedToolOutput, CheckpointError> {
     let mut output = if boolean(value, "failed")? {
-        ToolOutput::failed(text(value, "text")?)
+        RecordedToolOutput::failed(text(value, "text")?)
     } else {
-        ToolOutput::ok(text(value, "text")?)
+        RecordedToolOutput::ok(text(value, "text")?)
     };
     let mut retention_probe = output.clone();
     if retention_probe.limit_encoded(TOOL_RESULT_BYTES).omitted() > 0 {

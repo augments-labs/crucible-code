@@ -4,7 +4,7 @@ use crate::extension::{
     EXTENSION_MANIFEST_BYTES, ExtensionCapability, ExtensionContribution, ExtensionError,
     ExtensionManifest, ExtensionProtocol,
 };
-use crate::registry::SourceKind;
+use crucible_registry::SourceKind;
 
 /// A manifest file with everything written, as its author would write it.
 const WHOLE: &str = r#"{

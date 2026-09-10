@@ -10,7 +10,7 @@ use super::{
 };
 use crate::{
     Ask, ContextSection, ContextSnapshot, Effort, Permission, Remember, Seen, Sensitivity, Settled,
-    Target, ToolArgs, ToolCall, ToolId, ToolSnapshot, Verdict,
+    Target, ToolArgs, ToolCall, ToolId, ToolSnapshot, Verdict, capture,
 };
 
 /// A skill named and described, at a path under the workspace.
@@ -83,8 +83,7 @@ fn every_shipped_section_has_non_null_state_and_a_full_first_render() {
 
         let before = ContextSnapshot::new();
         let mut current = ContextSnapshot::new();
-        current
-            .capture(section)
+        capture(&mut current, section)
             .unwrap_or_else(|problem| panic!("{}: {problem}", section.id()));
         let patch = current
             .patch_from(&before)
@@ -114,7 +113,7 @@ fn an_unchanged_shipped_section_renders_nothing_after_its_first_fragment() {
     let root = PathBuf::from("/src/thing");
     let section = WorkspaceSection::new(&root);
     let mut snapshot = ContextSnapshot::new();
-    snapshot.capture(&section).unwrap();
+    capture(&mut snapshot, &section).unwrap();
     let prior = snapshot.get(WorkspaceSection::ID).unwrap();
 
     assert!(section.render(Seen::Known(prior)).is_none());

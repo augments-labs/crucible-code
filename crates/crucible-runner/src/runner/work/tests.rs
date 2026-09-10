@@ -608,7 +608,7 @@ fn an_approved_effect_journals_one_stable_prepared_started_and_finished_invocati
     let invocations = held
         .iter()
         .filter_map(|item| match item {
-            RunItem::Invocation(invocation) => Some(invocation),
+            RunItem::Invocation { record, .. } => Some(record),
             _ => None,
         })
         .collect::<Vec<_>>();

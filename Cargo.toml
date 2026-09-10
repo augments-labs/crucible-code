@@ -15,7 +15,11 @@ publish = false
 # names, and cargo rejects cycles outright — so the arrows below are compiled,
 # not reviewed:
 #
-#   core       -> (nothing)
+#   types      -> (nothing)       the shared values every crate exchanges
+#   registry   -> (nothing)       bounded source-aware registries
+#   credentials -> types          applying a secret without exposing it
+#   storage    -> types           history, checkpoint and cache contracts
+#   core       -> types, registry, credentials, storage
 #   privacy    -> (nothing)       owner-only local files
 #   auth       -> core            the keys `/login` wrote down
 #   config     -> core            where crucible's files are and what they say
@@ -25,7 +29,7 @@ publish = false
 #   tools      -> core, sandbox-broker
 #   extension  -> core            runs somebody else's program and talks to it
 #   runner     -> core, session   drives turns through traits only
-#   tui        -> core
+#   tui        -> (nothing)       draws what it is handed
 #   crucible-code (this package) -> workspace crates; the concrete composition root
 #
 # `config` sits beside the others rather than above them: it reads files into
@@ -47,10 +51,12 @@ image = { version = "=0.25.10", default-features = false, features = ["png"] }
 crucible-auth = { path = "crates/crucible-auth" }
 crucible-config = { path = "crates/crucible-config" }
 crucible-core = { path = "crates/crucible-core" }
+crucible-credentials = { path = "crates/crucible-credentials" }
 crucible-extension = { path = "crates/crucible-extension" }
 crucible-mcp = { path = "crates/crucible-mcp" }
 crucible-privacy = { path = "crates/crucible-privacy" }
 crucible-provider = { path = "crates/crucible-provider" }
+crucible-registry = { path = "crates/crucible-registry" }
 crucible-runner = { path = "crates/crucible-runner" }
 # Static PID 1 executable and its four-byte raw-wait-status protocol. The
 # library side contains no launcher or application authority; tools uses only
@@ -58,8 +64,10 @@ crucible-runner = { path = "crates/crucible-runner" }
 # confined command.
 crucible-sandbox-broker = { path = "crates/crucible-sandbox-broker" }
 crucible-session = { path = "crates/crucible-session" }
+crucible-storage = { path = "crates/crucible-storage" }
 crucible-tools = { path = "crates/crucible-tools" }
 crucible-tui = { path = "crates/crucible-tui" }
+crucible-types = { path = "crates/crucible-types" }
 
 # Argument parsing. `derive` keeps the CLI surface declared next to the type it
 # produces rather than in a builder chain that drifts from it.

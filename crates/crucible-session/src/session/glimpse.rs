@@ -16,7 +16,7 @@ use std::fs::File;
 use std::io::{Read as _, Seek as _, SeekFrom};
 use std::path::Path;
 
-use crucible_core::{Message, SessionId, ToolOutput, ToolResult, Workspace};
+use crucible_core::{Message, RecordedToolOutput, SessionId, ToolResult, Workspace};
 
 use super::wire;
 
@@ -183,9 +183,9 @@ pub fn glimpse(
 fn safely(result: ToolResult) -> ToolResult {
     let text = cleaned(result.output.text());
     let output = if result.output.is_failed() {
-        ToolOutput::failed(text)
+        RecordedToolOutput::failed(text)
     } else {
-        ToolOutput::ok(text)
+        RecordedToolOutput::ok(text)
     };
 
     ToolResult {

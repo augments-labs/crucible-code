@@ -26,8 +26,8 @@ use std::thread::{self, JoinHandle};
 
 use crucible_core::{
     Attachment, Calibration, CallResultKey, CallResultReceipt, CallResultStoreError, ContextError,
-    ContextPatch, ContextSnapshot, JournalStore, Message, RunItem, SessionId, SessionStore,
-    ToolOutput, ToolResult, Transcript, Workspace,
+    ContextPatch, ContextSnapshot, JournalStore, Message, RecordedToolOutput, RunItem, SessionId,
+    SessionStore, ToolResult, Transcript, Workspace,
 };
 
 mod beside;
@@ -44,9 +44,9 @@ mod results;
 mod wire;
 
 pub(crate) fn restored_output(
-    output: ToolOutput,
+    output: RecordedToolOutput,
     attachments: impl Into<Box<[Attachment]>>,
-) -> ToolOutput {
+) -> RecordedToolOutput {
     wire::restored_output(output, attachments)
 }
 

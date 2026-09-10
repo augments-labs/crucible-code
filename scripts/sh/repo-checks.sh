@@ -343,27 +343,52 @@ if ! python3 scripts/python/screen-baseline.py; then
 fi
 
 # Both spellings, and the tests with the source. A call written
-# `ToolOutput::replayed(output, ..)` is the same call as `output.replayed(..)`,
-# and a pin that only knew the dot form would be a pin anyone could walk past
-# without meaning to. Occurrences rather than lines, because two calls on one
-# line are two calls.
+# `RecordedToolOutput::replayed(output, ..)` is the same call as
+# `output.replayed(..)`, and a pin that only knew the dot form would be a pin
+# anyone could walk past without meaning to. Occurrences rather than lines,
+# because two calls on one line are two calls.
 doors() {
     grep -rEoh --include='*.rs' "$1" "${@:2}" | wc -l
 }
 
 section "the replay seam"
 replay="crates/crucible-session/src/session/wire.rs"
-opens='(\.|ToolOutput::)replayed\('
+opens='(\.|RecordedToolOutput::)replayed\('
 elsewhere=$(grep -rlE --include='*.rs' "$opens" crates src tests | grep -Fxv "$replay" || true)
 if [[ -n "$elsewhere" ]]; then
     while IFS= read -r file; do
-        printf '    FAIL %s calls ToolOutput::replayed; only %s may\n' "$file" "$replay"
+        printf '    FAIL %s calls RecordedToolOutput::replayed; only %s may\n' "$file" "$replay"
     done <<<"$elsewhere"
     failed=1
 fi
 here=$(doors "$opens" "$replay")
 if ((here != 1)); then
-    printf '    FAIL %s calls ToolOutput::replayed %d times; the replay is one call\n' "$replay" "$here"
+    printf '    FAIL %s calls RecordedToolOutput::replayed %d times; the replay is one call\n' "$replay" "$here"
+    failed=1
+fi
+
+# The door the extraction opened. `RecordedToolOutput` lives in a crate that
+# cannot name `Approved`, so the constructor that mints one with attachments
+# cannot ask for the permission proof the live `with_attachments` requires. What
+# stands in for the type is this: one caller, inside the conversion the live
+# value walks out through, so an attachment still reaches a request only from a
+# value the permission engine bound. Unlike the seam above there is no dot form
+# to pin -- `recorded` takes no `self` -- and the bare name belongs to other
+# types, so only qualified spellings are pinned: the type's own name, and
+# `Self`, which is how a second door would be opened from inside the file that
+# defines it, beside the builders already living there.
+mints="crates/crucible-core/src/tool.rs"
+attaches='(RecordedToolOutput|Self)::recorded\('
+elsewhere=$(grep -rlE --include='*.rs' "$attaches" crates src tests | grep -Fxv "$mints" || true)
+if [[ -n "$elsewhere" ]]; then
+    while IFS= read -r file; do
+        printf '    FAIL %s calls RecordedToolOutput::recorded; only %s may\n' "$file" "$mints"
+    done <<<"$elsewhere"
+    failed=1
+fi
+here=$(doors "$attaches" "$mints")
+if ((here != 1)); then
+    printf '    FAIL %s calls RecordedToolOutput::recorded %d times; the recording is one call\n' "$mints" "$here"
     failed=1
 fi
 
@@ -455,6 +480,9 @@ if [[ -z "$edges" ]]; then
     failed=1
 fi
 
+# `core` names the four crates its old names now come from. Those four edges are
+# the compatibility facade and go away with the crate that holds them; every
+# other crate still reaches the domain through one name.
 allowed='code auth
 code config
 code core
@@ -470,6 +498,11 @@ code tui
 auth core
 auth privacy
 config core
+core credentials
+core registry
+core storage
+core types
+credentials types
 extension core
 mcp core
 provider core
@@ -477,6 +510,7 @@ runner core
 runner session
 session core
 session privacy
+storage types
 tools core
 tools privacy
 tools sandbox-broker'
@@ -487,7 +521,7 @@ while IFS= read -r edge; do
         failed=1
     fi
 done <<<"$edges"
-for crate in core privacy sandbox-broker tui; do
+for crate in privacy registry sandbox-broker tui types; do
     if grep -qE "^$crate " <<<"$edges"; then
         printf '    FAIL crucible-%s must not depend on another workspace crate\n' "$crate"
         failed=1

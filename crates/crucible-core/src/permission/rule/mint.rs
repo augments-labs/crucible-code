@@ -7,7 +7,7 @@
 
 use std::fmt;
 
-use crate::tool::ToolCall;
+use crucible_types::ToolCall;
 
 use super::super::{Command, Host, Sensitivity};
 

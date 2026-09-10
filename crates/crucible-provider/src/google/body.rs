@@ -245,8 +245,8 @@ mod tests {
     #[test]
     fn signed_history_is_replayed_exactly_across_google_model_switch_and_compaction() {
         use crucible_core::{
-            Continuation, ContinuationData, ContinuationPart, StopReason, ToolArgs, ToolCall,
-            ToolId, ToolOutput, ToolResult,
+            Continuation, ContinuationData, ContinuationPart, RecordedToolOutput, StopReason,
+            ToolArgs, ToolCall, ToolId, ToolResult,
         };
         let mut state =
             Continuation::new(super::super::PROTOCOL, "gemini-3.7-flash", scope()).unwrap();
@@ -298,7 +298,7 @@ mod tests {
         transcript
             .push(Message::ToolResults(vec![ToolResult {
                 id: ToolId::new("call-1"),
-                output: ToolOutput::ok("contents"),
+                output: RecordedToolOutput::ok("contents"),
             }]))
             .unwrap();
         transcript.compacted(1, "recap");

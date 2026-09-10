@@ -384,6 +384,10 @@ dependencies = [
 name = "crucible-core"
 version = "0.40.1"
 dependencies = [
+ "crucible-credentials",
+ "crucible-registry",
+ "crucible-storage",
+ "crucible-types",
  "globset",
  "rustix",
  "serde_json",
@@ -391,6 +395,15 @@ dependencies = [
  "thiserror",
  "uuid",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "crucible-credentials"
+version = "0.40.1"
+dependencies = [
+ "crucible-types",
+ "sha2",
+ "thiserror",
 ]
 
 [[package]]
@@ -432,6 +445,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "crucible-registry"
+version = "0.40.1"
+dependencies = [
+ "thiserror",
+ "uuid",
+]
+
+[[package]]
 name = "crucible-runner"
 version = "0.40.1"
 dependencies = [
@@ -461,6 +482,17 @@ dependencies = [
  "sha2",
  "thiserror",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "crucible-storage"
+version = "0.40.1"
+dependencies = [
+ "crucible-types",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "uuid",
 ]
 
 [[package]]
@@ -496,6 +528,16 @@ dependencies = [
  "thiserror",
  "two-face",
  "unicode-width",
+]
+
+[[package]]
+name = "crucible-types"
+version = "0.40.1"
+dependencies = [
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "uuid",
 ]
 
 [[package]]

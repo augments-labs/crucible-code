@@ -61,11 +61,9 @@ pub(crate) fn finalize_call_result(context: &ToolContext<'_>, output: &ToolOutpu
     let Some(pending) = context.take_call_result().expect("pending result slot") else {
         return;
     };
-    let mut output = output.clone();
-    output.forget_diff();
     let result = ToolResult {
         id: context.call().clone(),
-        output,
+        output: output.clone().into_recorded(),
     };
     let receipt = TEST_JOURNAL
         .put_call_result(pending.key(), &result)

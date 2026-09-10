@@ -1,4 +1,4 @@
-use crucible_core::{Change, Changed, Diff, Line, ToolOutput, ToolResult};
+use crucible_core::{Change, Changed, Diff, Line, RecordedToolOutput, ToolOutput, ToolResult};
 
 use super::*;
 
@@ -24,7 +24,7 @@ fn attaching(bytes: usize) -> Message {
 fn results(bytes: usize) -> Message {
     Message::ToolResults(vec![ToolResult {
         id: crucible_core::ToolId::new("call-1"),
-        output: ToolOutput::ok("x".repeat(bytes)),
+        output: RecordedToolOutput::ok("x".repeat(bytes)),
     }])
 }
 
@@ -599,11 +599,9 @@ fn an_attachment_aged_out_of_the_request_stops_being_charged() {
 fn results_showing(bytes: usize) -> Message {
     Message::ToolResults(vec![ToolResult {
         id: crucible_core::ToolId::new("call-1"),
-        output: ToolOutput::ok("x".repeat(bytes)).showing(Diff::new([Line::new(
-            1,
-            Change::Added,
-            "x".repeat(bytes),
-        )])),
+        output: ToolOutput::ok("x".repeat(bytes))
+            .showing(Diff::new([Line::new(1, Change::Added, "x".repeat(bytes))]))
+            .into_recorded(),
     }])
 }
 
@@ -616,7 +614,7 @@ fn results_showing(bytes: usize) -> Message {
 fn results_counting(bytes: usize) -> Message {
     Message::ToolResults(vec![ToolResult {
         id: crucible_core::ToolId::new("call-1"),
-        output: ToolOutput::ok("x".repeat(bytes)).counting(Changed::new(2, 1)),
+        output: RecordedToolOutput::ok("x".repeat(bytes)).counting(Changed::new(2, 1)),
     }])
 }
 

@@ -28,7 +28,9 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use crate::tool::{ToolCall, ToolError};
+use crucible_types::ToolCall;
+
+use crate::tool::ToolError;
 use crate::toolset::{ToolAdmission, ToolGeneration};
 
 mod grant;

@@ -90,11 +90,11 @@ fn sandbox_facts_are_evented_and_journaled_before_the_tool_finishes() {
     let held = journal.0.lock().unwrap();
     assert!(
         matches!(held.as_slice(), [
-        RunItem::Invocation(_),
-        RunItem::Invocation(_),
+        RunItem::Invocation { .. },
+        RunItem::Invocation { .. },
         RunItem::Sandbox { call: first, .. },
         RunItem::Sandbox { call: second, .. },
-        RunItem::Invocation(_),
+        RunItem::Invocation { .. },
     ] if first == second && first.as_str() == "audited-call"),
         "{held:#?}"
     );

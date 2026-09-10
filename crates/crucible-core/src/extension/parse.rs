@@ -15,7 +15,7 @@
 use serde_json::{Map, Value};
 use sha2::{Digest as _, Sha256};
 
-use crate::registry::SourceKind;
+use crucible_registry::SourceKind;
 
 use super::{
     EXTENSION_MANIFEST_BYTES, ExtensionCapability, ExtensionContribution, ExtensionError,

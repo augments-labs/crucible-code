@@ -19,7 +19,7 @@ use std::fmt;
 
 use sha2::{Digest as _, Sha256};
 
-use crate::CredentialScopeId;
+use crucible_types::CredentialScopeId;
 
 /// Why a credential could not be resolved or applied.
 #[derive(Debug, thiserror::Error)]
@@ -540,8 +540,8 @@ mod tests {
     struct Stale;
 
     impl Credential for Stale {
-        fn scope(&self) -> crate::CredentialScopeId {
-            crate::CredentialScopeId::new()
+        fn scope(&self) -> crucible_types::CredentialScopeId {
+            crucible_types::CredentialScopeId::new()
         }
 
         fn authorize(&self, _request: &mut Outgoing) -> Result<(), CredentialError> {

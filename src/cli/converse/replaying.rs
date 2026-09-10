@@ -12,7 +12,7 @@
 
 use std::collections::HashMap;
 
-use crucible_core::{Message, RECAP, ToolId};
+use crucible_core::{Diff, Message, RECAP, ToolId};
 use crucible_runner::{DisplayHistory, DisplayItem, Pruned, Runner, SessionError};
 use crucible_tui::{Recording, Renderer, Row, Slot, Terminal, clip};
 
@@ -57,10 +57,18 @@ pub(super) fn replayed<T: Terminal>(
     walked(
         renderer,
         against.runner.transcript().messages(),
+        &Previews::new(),
         against,
         kept,
     )
 }
+
+/// The change lines a log kept for one batch of results, for the reader alone.
+///
+/// Empty for a transcript replayed without its log, and for a log written
+/// before previews were kept: both draw the recorded counts instead, which is
+/// what those sessions were shown.
+type Previews = HashMap<ToolId, Diff>;
 
 /// Keeps only the current message and its following result batch in memory.
 /// Grouping needs that one-message lookahead to distinguish failed calls.
@@ -70,28 +78,32 @@ fn streamed<T: Terminal>(
     against: &Replay<'_>,
     kept: &mut Kept,
 ) -> Result<(), Fatal> {
-    let mut pending = None;
+    let mut pending: Option<(Message, Previews)> = None;
     for item in history {
         let item = item.map_err(|source| SessionError::Log {
             at: against.runner.session().path().display().to_string().into(),
             source,
         })?;
         match item {
-            DisplayItem::Message(message) => {
-                if let Some(previous) = pending.take() {
-                    if matches!(&previous, Message::Agent { calls, .. } if !calls.is_empty())
+            DisplayItem::Message { message, previews } => {
+                if let Some((earlier, mut kept_previews)) = pending.take() {
+                    if matches!(&earlier, Message::Agent { calls, .. } if !calls.is_empty())
                         && matches!(&message, Message::ToolResults(_))
                     {
-                        walked(renderer, &[previous, message], against, kept)?;
+                        // The call line and the results under it go down as one
+                        // batch, so the previews the results carry travel with
+                        // it: only one of the two messages ever holds any.
+                        kept_previews.extend(previews);
+                        walked(renderer, &[earlier, message], &kept_previews, against, kept)?;
                         continue;
                     }
-                    walked(renderer, &[previous], against, kept)?;
+                    walked(renderer, &[earlier], &kept_previews, against, kept)?;
                 }
-                pending = Some(message);
+                pending = Some((message, previews));
             }
             DisplayItem::Compacted(details) => {
-                if let Some(previous) = pending.take() {
-                    walked(renderer, &[previous], against, kept)?;
+                if let Some((earlier, previews)) = pending.take() {
+                    walked(renderer, &[earlier], &previews, against, kept)?;
                 }
                 renderer.apart()?;
                 renderer.present(&draw::compacted_rows(
@@ -101,8 +113,8 @@ fn streamed<T: Terminal>(
                 ))?;
             }
             DisplayItem::LegacyCompacted { replaced } => {
-                if let Some(previous) = pending.take() {
-                    walked(renderer, &[previous], against, kept)?;
+                if let Some((earlier, previews)) = pending.take() {
+                    walked(renderer, &[earlier], &previews, against, kept)?;
                 }
                 renderer.apart()?;
                 let detail = if replaced == 0 {
@@ -115,14 +127,14 @@ fn streamed<T: Terminal>(
             DisplayItem::ContextReset => {
                 // Old /clear reset model context but left terminal scrollback
                 // and its result offers visible. Only message grouping ends.
-                if let Some(previous) = pending.take() {
-                    walked(renderer, &[previous], against, kept)?;
+                if let Some((earlier, previews)) = pending.take() {
+                    walked(renderer, &[earlier], &previews, against, kept)?;
                 }
             }
         }
     }
-    if let Some(previous) = pending {
-        walked(renderer, &[previous], against, kept)?;
+    if let Some((earlier, previews)) = pending {
+        walked(renderer, &[earlier], &previews, against, kept)?;
     }
     renderer.settle()?;
     Ok(())
@@ -164,7 +176,13 @@ pub(super) fn glimpsed(
 
     // A held of its own, dropped with the renderer: what a key would open is
     // the business of the session on the screen, and this one is not on it.
-    walked(&mut renderer, messages, against, &mut Kept::default())?;
+    walked(
+        &mut renderer,
+        messages,
+        &Previews::new(),
+        against,
+        &mut Kept::default(),
+    )?;
 
     Ok(renderer.tail(most))
 }
@@ -173,20 +191,24 @@ pub(super) fn glimpsed(
 fn walked<T: Terminal>(
     renderer: &mut Renderer<T>,
     messages: &[Message],
+    previews: &Previews,
     against: &Replay<'_>,
     kept: &mut Kept,
 ) -> Result<(), Fatal> {
     // Counted before a row goes down, because the first row of a run is the
     // one that says how long the run is.
-    let mut folded = Folded::of(messages, against.runner);
+    let mut batch = Batch {
+        folded: Folded::of(messages, against.runner),
+        previews,
+    };
 
     for message in messages {
-        said(renderer, against, kept, &mut folded, message)?;
+        said(renderer, against, kept, &mut batch, message)?;
     }
 
     // A call the log never answered -- the session ended while it was out --
     // still went down as a line the reader watched, so it goes down here too.
-    folded.unanswered(renderer, against.style, kept)?;
+    batch.folded.unanswered(renderer, against.style, kept)?;
 
     // Whatever the last message left live, ended: a session whose last turn was
     // the model talking leaves a tail in the region the renderer owns, and what
@@ -241,7 +263,7 @@ fn said<T: Terminal>(
     renderer: &mut Renderer<T>,
     against: &Replay<'_>,
     kept: &mut Kept,
-    folded: &mut Folded,
+    batch: &mut Batch<'_>,
     message: &Message,
 ) -> Result<(), Fatal> {
     let columns = renderer.columns();
@@ -250,7 +272,7 @@ fn said<T: Terminal>(
     // Whatever the batch before this one never answered goes down first, where
     // the live path would have left it: a call line with nothing under it.
     if !matches!(message, Message::ToolResults(_)) {
-        folded.unanswered(renderer, style, kept)?;
+        batch.folded.unanswered(renderer, style, kept)?;
     }
 
     match message {
@@ -312,10 +334,10 @@ fn said<T: Terminal>(
                 // run came to stands where the first of those rows would have,
                 // and every call after it adds nothing to the screen. What each
                 // of them said is still reachable, from that one line.
-                if folded.holds(&call.id) {
-                    if let Some(said) = folded.opens(&call.id).map(ToOwned::to_owned) {
+                if batch.folded.holds(&call.id) {
+                    if let Some(said) = batch.folded.opens(&call.id).map(ToOwned::to_owned) {
                         let at = draw::gathered(renderer, &said, style)?;
-                        folded.went(&call.id, at);
+                        batch.folded.went(&call.id, at);
                     }
 
                     continue;
@@ -325,7 +347,7 @@ fn said<T: Terminal>(
                 // the call answers, with the result directly under it -- so a
                 // batch of three reads as three pairs, not as three lines and
                 // then three results. Held until the answer comes past.
-                folded.named(call.id.clone(), line);
+                batch.folded.named(call.id.clone(), line);
             }
 
             // An answer that did not end the way the model meant it to is worth
@@ -355,22 +377,26 @@ fn said<T: Terminal>(
                 // The transcript keeps the placeholder, because that is what the
                 // model is being sent; the row gets the words back, because that
                 // is what the reader was shown. Neither is told about the other.
+                let shown = draw::Shown::replayed(
+                    result.output.clone(),
+                    batch.previews.get(&result.id).cloned(),
+                );
                 let output = match against.pruned.showed(&result.id) {
-                    Some(showed) => result.output.clone().saying(showed),
-                    None => result.output.clone(),
+                    Some(showed) => shown.saying(showed),
+                    None => shown,
                 };
 
                 // A call the line above it counted. There is no row of its
                 // own to hang this under, so it is kept whole against the line
                 // that stands for the run — which is the door to all of them.
-                if folded.holds(&result.id) {
-                    kept.gathered(&result.id, output.into_text(), folded.at(&result.id));
+                if batch.folded.holds(&result.id) {
+                    kept.gathered(&result.id, output.into_text(), batch.folded.at(&result.id));
                     continue;
                 }
 
                 // The call's own line, directly over its result: the pair the
                 // turn drew when the answer came in.
-                if let Some(line) = folded.answering(&result.id) {
+                if let Some(line) = batch.folded.answering(&result.id) {
                     draw::returned(renderer, &line, style)?;
                 }
 
@@ -380,6 +406,18 @@ fn said<T: Terminal>(
     }
 
     Ok(())
+}
+
+/// What one batch of messages is drawn with beside the transcript itself.
+///
+/// Both halves are worked out per batch, which is what keeps them out of
+/// [`Replay`]: that value is everything a replay does not change while it runs,
+/// and neither of these survives the batch it was read for.
+struct Batch<'a> {
+    /// Which of the batch's calls share a line, settled before the first row.
+    folded: Folded,
+    /// The change lines the log kept for the batch's results, for the reader.
+    previews: &'a Previews,
 }
 
 /// Which calls a walk folds into one line, worked out before it draws a row.
@@ -544,8 +582,8 @@ impl Folded {
 #[cfg(test)]
 mod tests {
     use crucible_core::{
-        AgentId, Cancel, Effort, Fetch, Host, Page, Search, SearchResponse, SourceError,
-        StopReason, ToolArgs, ToolCall, ToolId, ToolOutput, ToolResult, Transcript, Workspace,
+        AgentId, Cancel, Effort, Fetch, Host, Page, RecordedToolOutput, Search, SearchResponse,
+        SourceError, StopReason, ToolArgs, ToolCall, ToolId, ToolResult, Transcript, Workspace,
     };
     use crucible_runner::{AgentSpec, Model, Session, Tools};
     use crucible_tui::Picture;
@@ -712,7 +750,7 @@ mod tests {
         transcript
             .push(Message::ToolResults(vec![ToolResult {
                 id: ToolId::new("c-1"),
-                output: ToolOutput::ok("theme = midnight\nand nine hundred lines after it"),
+                output: RecordedToolOutput::ok("theme = midnight\nand nine hundred lines after it"),
             }]))
             .expect("valid fixture transcript");
         transcript
@@ -812,7 +850,7 @@ mod tests {
                     .enumerate()
                     .map(|(at, id)| ToolResult {
                         id: id.clone(),
-                        output: ToolOutput::ok(format!(
+                        output: RecordedToolOutput::ok(format!(
                             "line one of {}\nand nine hundred after it",
                             at + 1
                         )),
@@ -852,7 +890,7 @@ mod tests {
         let mut transcript = Transcript::new();
         for mut message in source.messages().iter().cloned() {
             if let Message::ToolResults(results) = &mut message {
-                results.get_mut(1).unwrap().output = ToolOutput::failed("file missing");
+                results.get_mut(1).unwrap().output = RecordedToolOutput::failed("file missing");
             }
             transcript.push(message).unwrap();
         }
@@ -934,7 +972,7 @@ mod tests {
         transcript
             .push(Message::ToolResults(vec![ToolResult {
                 id: ToolId::new("c-1"),
-                output: ToolOutput::ok("[cleared to make room — 4096 bytes]"),
+                output: RecordedToolOutput::ok("[cleared to make room — 4096 bytes]"),
             }]))
             .expect("valid fixture transcript");
 
@@ -1021,7 +1059,7 @@ mod tests {
         transcript
             .push(Message::ToolResults(vec![ToolResult {
                 id: ToolId::new("c-1"),
-                output: ToolOutput::ok("one line and no more"),
+                output: RecordedToolOutput::ok("one line and no more"),
             }]))
             .expect("valid fixture transcript");
 
@@ -1194,7 +1232,9 @@ mod tests {
             transcript
                 .push(Message::ToolResults(vec![ToolResult {
                     id,
-                    output: ToolOutput::ok(format!("1. {answer}\n   https://example.com\n")),
+                    output: RecordedToolOutput::ok(format!(
+                        "1. {answer}\n   https://example.com\n"
+                    )),
                 }]))
                 .unwrap();
         }
@@ -1268,7 +1308,10 @@ mod tests {
         // Held to the live builder itself rather than to words copied out of
         // it: what this keeps true is that the two agree, and a second list of
         // expected strings here would be a second thing to keep in step.
-        let output = ToolOutput::ok("theme = midnight\nand nine hundred lines after it");
+        let output = draw::Shown::replayed(
+            RecordedToolOutput::ok("theme = midnight\nand nine hundred lines after it"),
+            None,
+        );
         let live = draw::finished_rows(&output, 80, Style::plain(), false);
         let screen = screen(everything(), 80);
         println!("\n{screen}");

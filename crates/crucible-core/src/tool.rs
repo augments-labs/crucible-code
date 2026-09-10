@@ -12,21 +12,13 @@ use std::fmt;
 use std::sync::Mutex;
 use std::time::Instant;
 
-use crate::diff::Diff;
-use crate::ids::{RunId, ToolId};
+use crucible_types::output::{CaptureElision, limit_encoded};
+use crucible_types::{
+    Attachment, Changed, Diff, RecordedToolOutput, RunId, ToolArgs, ToolId, ToolOutputRetention,
+};
+
 use crate::permission::{Approved, Sensitivity};
-use crate::transcript::Attachment;
 use crate::{Ancestry, Cancel, IdempotencyKey};
-
-/// The most encoded bytes one retained tool result may occupy.
-///
-/// Owned here because both invocation and request-load reservation enforce the
-/// same boundary. The encoded JSON string is measured, including its quotes
-/// and escapes, rather than the raw UTF-8 that can grow during serialization.
-pub const TOOL_RESULT_BYTES: usize = 30_000;
-
-/// The smallest descriptor-local result limit that can always state elision.
-pub const TOOL_RESULT_MIN_BYTES: usize = 160;
 
 /// Why a tool call did not produce a result.
 ///
@@ -81,54 +73,6 @@ pub enum ToolError {
         /// The provider-visible name, without either generation identity.
         tool: Box<str>,
     },
-}
-
-/// The model asking to run a tool.
-#[derive(Clone, PartialEq, Eq)]
-pub struct ToolCall {
-    /// The provider's identifier, used to match the result back to the call.
-    pub id: ToolId,
-    /// Which tool.
-    pub name: Box<str>,
-    /// The arguments, still as the model wrote them.
-    pub args: ToolArgs,
-}
-
-impl fmt::Debug for ToolCall {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ToolCall")
-            .field("id", &"[redacted]")
-            .field("name", &"[redacted]")
-            .field("args", &"[redacted]")
-            .finish()
-    }
-}
-
-/// Tool arguments as JSON text.
-///
-/// Deliberately not a parsed value: argument validation and interpretation
-/// belong to the tool whose schema describes them, not to the execution core.
-#[derive(Clone, PartialEq, Eq)]
-pub struct ToolArgs(Box<str>);
-
-impl ToolArgs {
-    /// Takes the argument text a provider streamed.
-    #[must_use]
-    pub fn new(json: impl Into<Box<str>>) -> Self {
-        Self(json.into())
-    }
-
-    /// The JSON text, for the owning tool to parse.
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Debug for ToolArgs {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("ToolArgs([redacted])")
-    }
 }
 
 /// What a call is about, in the words the transcript shows beside the tool's
@@ -654,62 +598,20 @@ impl Watch for ToolContext<'_> {
     }
 }
 
-/// How many lines a call changed, once the lines themselves are gone.
-///
-/// The two numbers a change header is written from — `Added 3 lines`, and the
-/// rest of that wording — and nothing else. A [`Diff`] is the detail under that
-/// header and is for the reader alone; this is the header itself, and it names
-/// no file and holds no line, which is what lets it outlive the diff and be
-/// written down where a diff may never go.
-///
-/// Not `dropped`. That is a fact about a block of lines that was drawn, and
-/// somewhere with no lines to draw it would let a header claim rows nothing is
-/// showing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Changed {
-    added: usize,
-    removed: usize,
-}
-
-impl Changed {
-    /// The counts a call ended with.
-    #[must_use]
-    pub fn new(added: usize, removed: usize) -> Self {
-        Self { added, removed }
-    }
-
-    /// How many lines the change put in.
-    #[must_use]
-    pub fn added(&self) -> usize {
-        self.added
-    }
-
-    /// How many it took out.
-    #[must_use]
-    pub fn removed(&self) -> usize {
-        self.removed
-    }
-
-    /// Whether the call left the file exactly as it was.
-    ///
-    /// The same question [`Diff::is_empty`] answers and the same answer, so a
-    /// call that changed nothing reads as nothing to say from either side of
-    /// the moment the lines were dropped.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.added == 0 && self.removed == 0
-    }
-}
-
 /// What a tool produced, on its way back to the model.
 ///
 /// And on its way to the reader, which is not the same journey. The text is
 /// what both are shown; a [`Diff`] is what only the reader is, and it comes off
-/// at [`ToolOutput::forget_diff`] where the two copies part company. What
+/// at [`ToolOutput::into_recorded`] where the two copies part company. What
 /// survives that is [`Changed`], two integers naming no file, because the header
 /// a reader was shown has to be drawable again from the copy that was kept.
 /// Files go the other way: they are for the model to look at, so they stay on
 /// the copy the transcript keeps and are absent from the row that is drawn.
+///
+/// This is the live value, and it is the only one a tool may return. It holds
+/// the files an [`Approved`] admitted, so it is the value permission is about;
+/// [`RecordedToolOutput`] is what survives into a log, and the crossing between
+/// them runs one way. Nothing reconstructs this from a record.
 #[derive(Clone, PartialEq, Eq)]
 pub struct ToolOutput {
     text: Box<str>,
@@ -718,40 +620,6 @@ pub struct ToolOutput {
     diff: Option<Diff>,
     changed: Option<Changed>,
     attachments: Box<[Attachment]>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct CaptureElision {
-    original: usize,
-    omitted: usize,
-}
-
-/// What one encoded-result bound retained and omitted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ToolOutputRetention {
-    original: usize,
-    retained: usize,
-    omitted: usize,
-}
-
-impl ToolOutputRetention {
-    /// The original JSON-string size, including quotes and escapes.
-    #[must_use]
-    pub const fn original(self) -> usize {
-        self.original
-    }
-
-    /// The final JSON-string size retained for the model.
-    #[must_use]
-    pub const fn retained(self) -> usize {
-        self.retained
-    }
-
-    /// Encoded source bytes removed from the middle.
-    #[must_use]
-    pub const fn omitted(self) -> usize {
-        self.omitted
-    }
 }
 
 impl fmt::Debug for ToolOutput {
@@ -810,10 +678,7 @@ impl ToolOutput {
     /// The same result, with the header a reader was shown and no lines under
     /// it.
     ///
-    /// What [`ToolOutput::forget_diff`] leaves behind, said outright. A result
-    /// read back from somewhere a diff may not go arrives already parted from
-    /// its lines, and this is how it says so — there is nothing to draw a
-    /// header from otherwise, and nothing to work one out from either.
+    /// What [`ToolOutput::into_recorded`] leaves behind, said outright.
     #[must_use]
     pub fn counting(mut self, changed: Changed) -> Self {
         self.changed = Some(changed);
@@ -847,47 +712,6 @@ impl ToolOutput {
         self
     }
 
-    /// The files this result showed, restored from protected persistence this
-    /// build wrote.
-    ///
-    /// The one way files reach a result without the proof that admitted them,
-    /// and it is here because that proof is not a thing a log can hold: a
-    /// verdict is reached about a call, and the call is long over. What stands
-    /// in its place is where the record came from — an owner-only session or
-    /// checkpoint that this build wrote only after the engine had allowed the
-    /// call. Reading back what was recorded is not deciding it again.
-    ///
-    /// A log somebody has edited can put any readable path into a request this
-    /// way. It can already do that with a prompt line, which carries no proof
-    /// either, so what this rests on is the log file's own boundary rather than
-    /// a new one. What must stay true is that nothing else calls it, and that
-    /// is not left to a comment: `scripts/sh/check.sh` holds it to the one module
-    /// that replays a log.
-    #[must_use]
-    pub fn replayed(mut self, attachments: impl Into<Box<[Attachment]>>) -> Self {
-        self.attachments = attachments.into();
-        self
-    }
-
-    /// The same result, saying again what it said before something replaced
-    /// its text.
-    ///
-    /// What replaces it is a pruning: a long session gives back the room its
-    /// oldest results are taking by putting a sentence in place of what they
-    /// held, so the model stops being sent them. The reader never stopped being
-    /// shown them — the rows went down when the calls answered, and are still
-    /// what the session looks like — so a screen drawing that session again puts
-    /// the words back on the row and leaves the transcript as it is.
-    ///
-    /// Only the text. Whether the call failed, and what it changed, are what
-    /// they always were: a pruning takes the words and touches nothing else, so
-    /// nothing else is worth putting back.
-    #[must_use]
-    pub fn saying(mut self, text: impl Into<Box<str>>) -> Self {
-        self.text = text.into();
-        self
-    }
-
     /// The files this result asks the model to look at.
     #[must_use]
     pub fn attachments(&self) -> &[Attachment] {
@@ -901,13 +725,6 @@ impl ToolOutput {
     }
 
     /// The same text, out of the result and into whatever asked for it.
-    ///
-    /// For the reader's copy of a result, which arrives owned and is otherwise
-    /// dropped once the row for it has been drawn. A reader who asks to see the
-    /// whole of a result that was cut down to a row is asking for text that has
-    /// already been allocated twice — once for the transcript the model is
-    /// replayed, once for the event that drew it — and this is what keeps the
-    /// answer from being a third copy.
     #[must_use]
     pub fn into_text(self) -> Box<str> {
         self.text
@@ -925,8 +742,8 @@ impl ToolOutput {
     /// counts here lets a later encoded-size pass repeat the fact if it must
     /// replace that middle marker with its own.
     #[must_use]
-    pub fn with_capture_elision(mut self, original: usize, omitted: usize) -> Self {
-        self.capture = (omitted > 0).then_some(CaptureElision { original, omitted });
+    pub const fn with_capture_elision(mut self, original: usize, omitted: usize) -> Self {
+        self.capture = CaptureElision::new(original, omitted);
         self
     }
 
@@ -935,39 +752,15 @@ impl ToolOutput {
     /// Both ends survive: the head carries setup and the tail usually carries
     /// the failure or final status. When anything is removed, the inserted
     /// model-visible note states the original encoded size and the encoded
-    /// bytes omitted. Callers must supply at least [`TOOL_RESULT_MIN_BYTES`],
+    /// bytes omitted. Callers must supply at least [`crate::TOOL_RESULT_MIN_BYTES`],
     /// which descriptor construction enforces for local limits.
     #[must_use]
     pub fn limit_encoded(&mut self, maximum: usize) -> ToolOutputRetention {
-        let original = encoded_string_bytes(&self.text);
-        if original <= maximum {
-            return ToolOutputRetention {
-                original,
-                retained: original,
-                omitted: 0,
-            };
+        let (text, retention) = limit_encoded(&self.text, self.capture, maximum);
+        if let Some(text) = text {
+            self.text = text;
         }
-
-        // Use the largest possible omission count to reserve the marker. The
-        // actual count can have fewer digits but never more, so the final text
-        // remains at or below the requested encoded ceiling without a sizing
-        // loop whose answer could oscillate at a decimal boundary.
-        let reserved = elision(original, original, self.capture);
-        let source = maximum
-            .saturating_sub(2)
-            .saturating_sub(encoded_content_bytes(&reserved));
-        let (head, tail, kept) = encoded_ends(&self.text, source);
-        let omitted = original.saturating_sub(2).saturating_sub(kept);
-        let marker = elision(original, omitted, self.capture);
-        self.text = format!("{head}{marker}{tail}").into();
-        let retained = encoded_string_bytes(&self.text);
-
-        debug_assert!(maximum < TOOL_RESULT_MIN_BYTES || retained <= maximum);
-        ToolOutputRetention {
-            original,
-            retained,
-            omitted,
-        }
+        retention
     }
 
     /// What the call changed, where it changed a file and said so.
@@ -999,116 +792,34 @@ impl ToolOutput {
         }
     }
 
-    /// Replaces the text with a placeholder saying it was cleared, and says how
-    /// much that freed.
+    /// Finishes this live result into the value persistence acknowledges.
     ///
-    /// The lightest-touch form of compaction: a result deep enough in the
-    /// transcript that the model has long since used it is bulk it will never
-    /// read again, and a placeholder of a few words answers the only question
-    /// the gap could raise — the call has a result, and the result is gone on
-    /// purpose. The original is untouched in the session log, which is the
-    /// record; this is only what the model is sent from here on. Returns the
-    /// bytes freed, so the caller can decide whether clearing paid.
+    /// The crossing runs one way. The change lines come off here and their
+    /// header stays, because the row a reader was shown has to be drawable
+    /// again from the copy that was kept; the files stay, because they are what
+    /// the model was told to look at and the approval that admitted them is
+    /// what put them here. Nothing turns the result back into a live one, so a
+    /// record that is read back — or edited — carries no authority to run
+    /// anything. There is no reverse constructor to name, and a record is not
+    /// the type a tool returns:
     ///
-    /// A result small enough that the placeholder would cost more than it saves
-    /// is left alone and frees nothing — clearing is for the results that
-    /// dominate a transcript, and churning the small ones buys nothing.
-    pub fn prune(&mut self) -> usize {
-        let freed = self.text.len();
-        if freed < Self::MIN_PRUNE_BYTES {
-            return 0;
-        }
-
-        self.text = format!("[cleared to make room — {freed} bytes]").into();
-        self.capture = None;
-
-        // The files go with the words. They cost the transcript almost
-        // nothing — an attachment is a path — but a request reads every one it
-        // still holds, so a result nobody will read again would go on sending
-        // whole pictures for a sentence saying it is gone.
-        self.attachments = Box::new([]);
-        freed
-    }
-
-    /// Replaces the output text with a placeholder unconditionally.
-    pub fn clear(&mut self, notice: &str) -> usize {
-        let freed = self.text.len();
-        self.text = notice.into();
-        self.capture = None;
-        self.attachments = Box::new([]);
-        freed
-    }
-
-    /// The smallest result worth clearing, in bytes.
+    /// ```compile_fail,E0308
+    /// use crucible_core::{RecordedToolOutput, ToolOutput};
     ///
-    /// Under it the placeholder costs more than the result did, and clearing
-    /// would grow the very thing it is meant to shrink. On the type rather than
-    /// in a module, so the caller that estimates what a pass would recover
-    /// reads the same figure the clearing enforces — two copies would drift
-    /// apart the first time one moved.
-    pub const MIN_PRUNE_BYTES: usize = 64;
-}
-
-fn elision(original: usize, omitted: usize, capture: Option<CaptureElision>) -> String {
-    let captured = capture.map_or_else(String::new, |capture| {
-        format!(
-            "process output was {} bytes; {} bytes omitted during capture; ",
-            capture.original, capture.omitted
+    /// fn ran() -> ToolOutput {
+    ///     RecordedToolOutput::ok("read back out of a log")
+    /// }
+    /// ```
+    #[must_use]
+    pub fn into_recorded(mut self) -> RecordedToolOutput {
+        self.forget_diff();
+        RecordedToolOutput::recorded(
+            self.text,
+            self.failed,
+            self.capture,
+            self.changed,
+            self.attachments,
         )
-    });
-    format!(
-        "\n\n[{captured}tool result was {original} encoded bytes; {omitted} encoded bytes omitted from the middle]\n\n"
-    )
-}
-
-fn encoded_ends(text: &str, budget: usize) -> (&str, &str, usize) {
-    let head_budget = budget / 2;
-    let tail_budget = budget.saturating_sub(head_budget);
-
-    let mut head_end = 0;
-    let mut head_cost = 0_usize;
-    for (at, character) in text.char_indices() {
-        let cost = encoded_character_bytes(character);
-        if head_cost.saturating_add(cost) > head_budget {
-            break;
-        }
-        head_cost = head_cost.saturating_add(cost);
-        head_end = at.saturating_add(character.len_utf8());
-    }
-
-    let mut tail_start = text.len();
-    let mut tail_cost = 0_usize;
-    for (relative, character) in text[head_end..].char_indices().rev() {
-        let cost = encoded_character_bytes(character);
-        if tail_cost.saturating_add(cost) > tail_budget {
-            break;
-        }
-        tail_cost = tail_cost.saturating_add(cost);
-        tail_start = head_end.saturating_add(relative);
-    }
-
-    (
-        text.get(..head_end).unwrap_or_default(),
-        text.get(tail_start..).unwrap_or_default(),
-        head_cost.saturating_add(tail_cost),
-    )
-}
-
-fn encoded_string_bytes(text: &str) -> usize {
-    2_usize.saturating_add(encoded_content_bytes(text))
-}
-
-fn encoded_content_bytes(text: &str) -> usize {
-    text.chars().fold(0_usize, |bytes, character| {
-        bytes.saturating_add(encoded_character_bytes(character))
-    })
-}
-
-const fn encoded_character_bytes(character: char) -> usize {
-    match character {
-        '"' | '\\' | '\u{08}' | '\u{0c}' | '\n' | '\r' | '\t' => 2,
-        '\u{00}'..='\u{1f}' => 6,
-        other => other.len_utf8(),
     }
 }
 
@@ -1242,8 +953,8 @@ mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
 
-    use crate::diff::{Change, Line};
-    use crate::modality::Modality;
+    use crucible_types::{Change, Line, Modality, ToolCall};
+
     use crate::permission::{Ask, Permission, Remember, Settled, Target, Verdict};
 
     /// Nobody to ask. A read is settled without a question in every mode, so a
@@ -1287,43 +998,16 @@ mod tests {
     }
 
     #[test]
-    fn a_result_is_bounded_by_its_encoded_size_and_names_what_was_omitted() {
-        let source = format!("HEAD{}TAIL", "\"\\\n".repeat(12_000));
-        assert!(source.len() > TOOL_RESULT_BYTES);
-        let original = encoded_string_bytes(&source);
-        let mut output = ToolOutput::ok(source);
+    fn clearing_a_result_takes_the_files_it_showed_with_it() {
+        let mut output = ToolOutput::ok("m".repeat(RecordedToolOutput::MIN_PRUNE_BYTES))
+            .with_attachments(&permitted(), [holiday()])
+            .into_recorded();
 
-        let retained = output.limit_encoded(TOOL_RESULT_BYTES);
-
-        assert_eq!(retained.original(), original);
-        assert!(retained.omitted() > 0);
-        assert!(retained.retained() <= TOOL_RESULT_BYTES);
-        assert_eq!(encoded_string_bytes(output.text()), retained.retained());
-        assert!(output.text().starts_with("HEAD"), "{}", output.text());
-        assert!(output.text().ends_with("TAIL"), "{}", output.text());
+        assert!(output.prune() > 0);
         assert!(
-            output.text().contains(&original.to_string()),
-            "{}",
-            output.text()
+            output.attachments().is_empty(),
+            "a result the model will never read again is not still sending a picture"
         );
-        assert!(
-            output.text().contains(&retained.omitted().to_string()),
-            "{}",
-            output.text()
-        );
-    }
-
-    #[test]
-    fn escaping_can_cross_the_result_ceiling_when_raw_bytes_do_not() {
-        let source = "\"".repeat(TOOL_RESULT_BYTES / 2 + 1);
-        assert!(source.len() < TOOL_RESULT_BYTES);
-        assert!(encoded_string_bytes(&source) > TOOL_RESULT_BYTES);
-        let mut output = ToolOutput::ok(source);
-
-        let retained = output.limit_encoded(TOOL_RESULT_BYTES);
-
-        assert!(retained.omitted() > 0);
-        assert!(encoded_string_bytes(output.text()) <= TOOL_RESULT_BYTES);
     }
 
     #[test]
@@ -1479,18 +1163,6 @@ mod tests {
     }
 
     #[test]
-    fn clearing_a_result_takes_the_files_it_showed_with_it() {
-        let mut output = ToolOutput::ok("m".repeat(ToolOutput::MIN_PRUNE_BYTES))
-            .with_attachments(&permitted(), [holiday()]);
-
-        assert!(output.prune() > 0);
-        assert!(
-            output.attachments().is_empty(),
-            "a result the model will never read again is not still sending a picture"
-        );
-    }
-
-    #[test]
     fn output_carries_whether_the_model_should_treat_it_as_a_failure() {
         assert!(!ToolOutput::ok("done").is_failed());
         assert!(ToolOutput::failed("no such file").is_failed());
@@ -1533,33 +1205,6 @@ mod tests {
             );
         }
         assert!(shown.contains("redacted"));
-    }
-
-    #[test]
-    fn arguments_are_kept_as_written() {
-        let args = ToolArgs::new(r#"{"path":"src/main.rs"}"#);
-        assert_eq!(args.as_str(), r#"{"path":"src/main.rs"}"#);
-    }
-
-    #[test]
-    fn argument_debug_never_shows_the_arguments() {
-        let args = ToolArgs::new(r#"{"token":"debug-canary"}"#);
-        let shown = format!("{args:?}");
-        assert!(!shown.contains("debug-canary"), "{shown}");
-        assert!(shown.contains("redacted"));
-    }
-
-    #[test]
-    fn call_debug_never_shows_provider_output() {
-        let call = ToolCall {
-            id: ToolId::new("id-debug-canary"),
-            name: "name-debug-canary".into(),
-            args: ToolArgs::new(r#"{"token":"args-debug-canary"}"#),
-        };
-        let shown = format!("{call:?}");
-        for canary in ["id-debug-canary", "name-debug-canary", "args-debug-canary"] {
-            assert!(!shown.contains(canary), "{shown}");
-        }
     }
 
     #[test]

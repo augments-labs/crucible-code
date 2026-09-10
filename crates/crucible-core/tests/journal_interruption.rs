@@ -2,14 +2,14 @@
 
 use crucible_core::{
     ActionResolution, Ancestry, ApprovalDecision, CacheCheckpoint, CallResultKey,
-    CallResultStoreError, CheckpointId, CompactionRecord, CustomEntry, CustomProjector,
-    ExecutionCheckpoint, IdempotencyKey, InputTokenUsage, InterruptionError, InvocationId,
-    InvocationRecord, InvocationState, JournalError, JournalStore, MAX_RUN_ITEM_RETAINED_BYTES,
-    Message, PendingAction, PendingActions, PendingApproval, PendingExternalTool,
-    PendingHumanInput, PromptCacheFingerprint, PromptCachePolicyVersion, PromptCacheResourceId,
-    PromptCacheScopeDigest, RecoveryAction, ResumeDigest, ResumeEvidence, ResumeScope, RunHistory,
-    RunItem, StopReason, TOOL_RESULT_BYTES, ToolArgs, ToolCall, ToolEffect, ToolId, ToolOutcome,
-    ToolOutput, ToolResult,
+    CallResultStoreError, Change, CheckpointId, CompactionRecord, CustomEntry, CustomProjector,
+    Diff, ExecutionCheckpoint, IdempotencyKey, InputTokenUsage, InterruptionError, InvocationId,
+    InvocationRecord, InvocationState, JournalError, JournalStore, Line,
+    MAX_RUN_ITEM_RETAINED_BYTES, MAX_RUN_ITEMS, Message, PendingAction, PendingActions,
+    PendingApproval, PendingExternalTool, PendingHumanInput, PromptCacheFingerprint,
+    PromptCachePolicyVersion, PromptCacheResourceId, PromptCacheScopeDigest, RecordedToolOutput,
+    RecoveryAction, ResumeDigest, ResumeEvidence, ResumeScope, RunHistory, RunItem, StopReason,
+    TOOL_RESULT_BYTES, ToolArgs, ToolCall, ToolEffect, ToolId, ToolOutcome, ToolResult,
 };
 
 struct MemoryOnlyJournal;
@@ -46,7 +46,7 @@ fn journals_without_a_durable_result_sink_fail_closed() {
     let key = CallResultKey::derive(Ancestry::new(), InvocationId::new(), &ToolId::new("call"));
     let result = ToolResult {
         id: ToolId::new("call"),
-        output: ToolOutput::ok("accepted"),
+        output: RecordedToolOutput::ok("accepted"),
     };
 
     assert_eq!(
@@ -99,7 +99,7 @@ fn provider_projection_refuses_an_unanswered_or_twice_answered_call() {
         ancestry,
         Message::ToolResults(vec![ToolResult {
             id: ToolId::new("call-1"),
-            output: ToolOutput::ok("done"),
+            output: RecordedToolOutput::ok("done"),
         }]),
     )
     .expect("a bounded result");
@@ -147,7 +147,7 @@ fn provider_projection_does_not_let_an_unanswered_call_cross_a_later_message() {
                 ancestry,
                 Message::ToolResults(vec![ToolResult {
                     id: ToolId::new("call-1"),
-                    output: ToolOutput::ok("late"),
+                    output: RecordedToolOutput::ok("late"),
                 }]),
             )
             .unwrap(),
@@ -319,7 +319,7 @@ fn rejected_cancelled_and_external_actions_resume_to_exactly_one_tool_result() {
     pending.reject(rejected_id).unwrap();
     pending.cancel(cancelled_id).unwrap();
     pending
-        .resolve_external(external_id, ToolOutput::ok("remote result"))
+        .resolve_external(external_id, RecordedToolOutput::ok("remote result"))
         .unwrap();
 
     let results = [rejected_id, cancelled_id, external_id]
@@ -543,12 +543,18 @@ fn invocation_recovery_distinguishes_all_three_crash_windows() {
         InvocationRecord::new(call("completed"), ancestry, ToolEffect::NonIdempotent, None);
     completed.start().unwrap();
     completed
-        .finish(ToolOutcome::Succeeded, ToolOutput::ok("stored result"))
+        .finish(
+            ToolOutcome::Succeeded,
+            RecordedToolOutput::ok("stored result"),
+        )
         .unwrap();
     assert_eq!(completed.recovery(), RecoveryAction::UseRecordedResult);
     assert!(
         !completed
-            .finish(ToolOutcome::Succeeded, ToolOutput::ok("stored result"))
+            .finish(
+                ToolOutcome::Succeeded,
+                RecordedToolOutput::ok("stored result")
+            )
             .unwrap()
             .changed()
     );
@@ -572,6 +578,59 @@ fn retained_phase_four_fields_are_rejected_before_storage() {
 }
 
 #[test]
+fn a_preview_travelling_beside_a_record_does_not_spend_the_history_s_bytes() {
+    // The preview is the renderer's copy of lines the result no longer holds.
+    // Before it travelled beside the record it travelled inside the output,
+    // where this accounting never walked it, so a history that held this many
+    // invocations has to hold them still: moving a field between two places in
+    // the same item is not a reason for the store to start compacting sooner.
+    let preview =
+        Diff::new((1..=13).map(|number| Line::new(number, Change::Added, "x".repeat(Line::TEXT))));
+    let mut history = RunHistory::new();
+
+    for nth in 0..MAX_RUN_ITEMS {
+        let mut record = InvocationRecord::new(
+            call("edit-many"),
+            Ancestry::new(),
+            ToolEffect::ReadOnly,
+            None,
+        );
+        record
+            .finish(
+                ToolOutcome::Succeeded,
+                RecordedToolOutput::ok("x".repeat(4_000)),
+            )
+            .unwrap();
+        let item = RunItem::Invocation {
+            record,
+            preview: Some(preview.clone()),
+        };
+        assert!(
+            history.push(item).is_ok(),
+            "the {nth}th invocation was refused",
+        );
+    }
+
+    // Full on the count it was always full on, not on bytes a reader's copy
+    // started being charged for.
+    let mut record = InvocationRecord::new(
+        call("edit-last"),
+        Ancestry::new(),
+        ToolEffect::ReadOnly,
+        None,
+    );
+    record
+        .finish(ToolOutcome::Succeeded, RecordedToolOutput::ok("done"))
+        .unwrap();
+    assert!(matches!(
+        history.push(RunItem::Invocation {
+            record,
+            preview: Some(preview),
+        }),
+        Err(JournalError::TooManyItems(MAX_RUN_ITEMS)),
+    ));
+}
+#[test]
 fn restored_results_must_already_fit_the_encoded_result_ceiling() {
     let ancestry = Ancestry::new();
     let encoded_too_large = "\"".repeat(TOOL_RESULT_BYTES / 2 + 1);
@@ -582,7 +641,7 @@ fn restored_results_must_already_fit_the_encoded_result_ceiling() {
     assert!(matches!(
         pending.restore(
             PendingAction::ExternalTool(external),
-            Some(ActionResolution::ExternalTool(ToolOutput::ok(
+            Some(ActionResolution::ExternalTool(RecordedToolOutput::ok(
                 encoded_too_large.clone()
             ))),
             false,
@@ -602,7 +661,7 @@ fn restored_results_must_already_fit_the_encoded_result_ceiling() {
         None,
         InvocationState::Finished {
             outcome: ToolOutcome::Succeeded,
-            output: ToolOutput::ok(encoded_too_large),
+            output: RecordedToolOutput::ok(encoded_too_large),
         },
     );
     assert!(matches!(
@@ -653,7 +712,10 @@ fn checkpoint_diagnostics_redact_pending_and_invocation_content() {
         .unwrap();
     checkpoint
         .pending_mut()
-        .resolve_external(external_id, ToolOutput::ok("external-output-secret-canary"))
+        .resolve_external(
+            external_id,
+            RecordedToolOutput::ok("external-output-secret-canary"),
+        )
         .unwrap();
 
     let human = PendingHumanInput::new("question-secret-canary", ancestry, 4_000).unwrap();
@@ -677,7 +739,7 @@ fn checkpoint_diagnostics_redact_pending_and_invocation_content() {
     invocation
         .finish(
             ToolOutcome::Succeeded,
-            ToolOutput::ok("invocation-output-secret-canary"),
+            RecordedToolOutput::ok("invocation-output-secret-canary"),
         )
         .unwrap();
     checkpoint.add_invocation(invocation).unwrap();
