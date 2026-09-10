@@ -8,7 +8,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crucible_workspace::{Workspace, written};
+#[cfg(unix)]
+use crucible_workspace::Workspace;
+#[cfg(target_os = "linux")]
+use crucible_workspace::written;
 
 /// The variable a continuous-integration job sets so that a test needing the
 /// enforcing Linux backend fails when that backend is unavailable, instead of
@@ -94,6 +97,7 @@ impl Sample {
     }
 
     /// The workspace a command is confined to.
+    #[cfg(unix)]
     pub(crate) fn workspace(&self) -> Workspace {
         Workspace::open(&self.root).expect("the root exists")
     }
@@ -102,6 +106,7 @@ impl Sample {
     /// call names it. The counterpart to [`Self::outside`], for the tests about
     /// a directory the workspace was widened to reach on purpose rather than
     /// one it must refuse.
+    #[cfg(target_os = "linux")]
     pub(crate) fn beside(&self, name: &str) -> String {
         let path = self.base.join(name);
         fs::create_dir_all(&path).expect("a writable temporary directory");
@@ -124,6 +129,7 @@ impl Sample {
 
     /// Writes a file outside the workspace and returns its absolute path, for
     /// the tests that check a command cannot reach it.
+    #[cfg(target_os = "linux")]
     pub(crate) fn outside(&self, name: &str, text: &str) -> String {
         let path = self.base.join("outside").join(name);
         fs::write(&path, text).expect("a writable temporary directory");
@@ -144,19 +150,9 @@ impl Drop for Sample {
 
 /// A symbolic link at `link` pointing at `target`, which need not exist.
 ///
-/// Every link here stands in for one a cloned repository shipped, so the far end
-/// is always a file. Windows has a call per kind and no way to make one for a
-/// target that is not there yet, which is why the kind is in the name rather
-/// than read off the target.
-///
-/// Making one on Windows is a privilege: developer mode, or an elevated shell.
 /// Failing loudly is right — a link that was not made turns a containment test
 /// into one that passes because there was nothing to escape through.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) fn symlink(target: impl AsRef<Path>, link: impl AsRef<Path>) {
-    #[cfg(unix)]
-    let made = std::os::unix::fs::symlink(target, link);
-    #[cfg(windows)]
-    let made = std::os::windows::fs::symlink_file(target, link);
-
-    made.expect("a symbolic link: on Windows this needs developer mode");
+    std::os::unix::fs::symlink(target, link).expect("a symbolic link");
 }

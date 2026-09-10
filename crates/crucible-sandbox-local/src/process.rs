@@ -1050,7 +1050,7 @@ fn stop_scope(scope: &Scope, child: &mut Child) -> io::Result<()> {
 
 /// Production process wrapper with a synthetic unconfined inspection record,
 /// for lifetime tests that exercise the wrapper itself.
-#[cfg(all(test, unix))]
+#[cfg(all(test, target_os = "linux"))]
 fn unconfined_child(
     command: Command,
     speech: crucible_sandbox::SandboxSpeech,
@@ -1058,7 +1058,7 @@ fn unconfined_child(
     testing_local(command, speech, None).map(|process| Box::new(process) as Box<dyn SandboxProcess>)
 }
 
-#[cfg(all(test, unix))]
+#[cfg(all(test, target_os = "linux"))]
 fn testing_local(
     command: Command,
     speech: crucible_sandbox::SandboxSpeech,
@@ -1067,7 +1067,7 @@ fn testing_local(
     spawn_local(command, testing_plan(speech, stage)?)
 }
 
-#[cfg(all(test, unix))]
+#[cfg(all(test, target_os = "linux"))]
 pub(super) fn testing_plan(
     speech: crucible_sandbox::SandboxSpeech,
     stage: Option<Stage>,
