@@ -70,6 +70,9 @@ impl SandboxProcess for Process {
             self.observed.stopped_early.store(true, Ordering::Relaxed);
         }
         if self.observed.cleanup_allowed.load(Ordering::Relaxed) {
+            // A stop that confirms the scope ended has reaped the leader, so a
+            // look after it answers, the way the real one does.
+            self.observed.exited.store(true, Ordering::Relaxed);
             Ok(())
         } else {
             Err(io::Error::other("synthetic cleanup failure"))
@@ -493,7 +496,7 @@ fn a_cancelled_turn_stops_a_command_whose_publication_never_finishes() {
 
     let said = said.expect("a cancel waits for a publication only so long");
     waiting.join().expect("the waiting thread");
-    assert!(said.starts_with("error:"), "{said}");
+    assert!(said.contains("cancelled"), "{said}");
     assert!(observed.stops.load(Ordering::Relaxed) > 0, "{said}");
 }
 
