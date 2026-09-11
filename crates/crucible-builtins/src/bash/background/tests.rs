@@ -31,6 +31,8 @@ struct Observed {
     /// Whether it was asked to stop before its ending was complete, which
     /// discards what it wrote.
     stopped_early: AtomicBool,
+    /// How many times it was asked how it ended.
+    looks: AtomicUsize,
 }
 
 struct Process {
@@ -52,6 +54,7 @@ impl SandboxProcess for Process {
     }
 
     fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        self.observed.looks.fetch_add(1, Ordering::Relaxed);
         if self.observed.failed.load(Ordering::Relaxed) {
             return Err(io::Error::other(
                 "writable root changed after the command started",
@@ -533,4 +536,11 @@ fn letting_the_registry_go_ends_a_command_whose_ending_went_wrong() {
 
     assert_eq!(observed.stops.load(Ordering::Relaxed), 1);
     assert!(observed.dropped.load(Ordering::Relaxed));
+    // Left at once rather than waited out: an ending that went wrong is an
+    // answer, and the patience is for one that has not answered yet.
+    let looks = observed.looks.load(Ordering::Relaxed);
+    assert!(
+        looks <= 5,
+        "the registry kept asking a command that had answered: {looks}"
+    );
 }

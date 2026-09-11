@@ -314,10 +314,10 @@ A command that has ended can wait for another command's publication before its
 own; neither its timeout nor <kbd>Esc</kbd> stops it then, and stopping it from
 the panel leaves it to be reported. That wait has a ceiling of a minute, after
 which the command is stopped and reported as having run too long, because what
-it waits for can be held by another crucible of this user. A command that wrote into a root another
-command published into after it started publishes nothing, and its result says
-so, or, for a background command, the note about its ending. The rules are
-described in
+it waits for can be held by another crucible of this user. A command that wrote
+into a root another command published into after it started publishes nothing,
+and its result says so, or, for a background command, the note about its ending.
+The rules are described in
 [Writable roots and publication](../security/sandboxing.md#writable-roots-and-publication).
 
 ## Why it is always asked about
