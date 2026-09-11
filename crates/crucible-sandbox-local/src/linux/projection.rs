@@ -123,6 +123,9 @@ struct Root {
     directory: bool,
     exclusions: Vec<PathBuf>,
     baseline: Snapshot,
+    /// What this user's publications had done to this root when the baseline was
+    /// taken. `None` where nothing remembered it, which counts as moved.
+    generation: Option<u64>,
 }
 
 /// One durable command lifecycle plus any host-owned writable copies.
@@ -278,6 +281,16 @@ impl Projection {
                     "writable root changed while its private projection was prepared",
                 ));
             }
+            // Read while the publication lock is held, with the baseline, so
+            // the two describe the same moment.
+            let generation = super::generations::current(
+                &state_directory,
+                &[super::generations::key(&destination)],
+            )
+            .map_err(|source| failed("writable root generations are unavailable", source))?
+            .into_iter()
+            .next()
+            .flatten();
             roots.push(Root {
                 authority,
                 destination,
@@ -285,6 +298,7 @@ impl Projection {
                 directory,
                 exclusions,
                 baseline: before,
+                generation,
             });
         }
         transaction
@@ -407,6 +421,19 @@ impl Projection {
         }))
     }
 
+    /// Rolls the transaction back for a publication that will not happen.
+    fn abort_publication(&mut self, problem: io::Error) -> publish::Failure {
+        match self.transaction.finish_abort(false) {
+            Ok(()) => publish::Failure::rolled_back(problem),
+            Err(journal) => {
+                self.retain_evidence();
+                publish::Failure::quarantined(io::Error::other(format!(
+                    "publication was refused and rollback could not be journaled: {problem}; {journal}"
+                )))
+            }
+        }
+    }
+
     /// Publishes the command's writes, which only a caller let in can ask for.
     fn publish(
         &mut self,
@@ -437,6 +464,7 @@ impl Projection {
             &publish::Seen {
                 first: broker_baselines,
                 last: finals,
+                state: &self.state,
             },
             &canonical,
             &mut self.transaction,

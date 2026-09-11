@@ -623,6 +623,115 @@ fn a_publication_that_cannot_record_its_fact_still_says_what_the_command_did() {
 }
 
 #[test]
+fn a_writer_publishes_nothing_of_a_root_another_publication_touched_while_it_ran() {
+    // A command sees its root through an overlay, so another command's
+    // publication into that root shows in what the command itself is scanned as
+    // holding. If the root is then back as this command found it — because the
+    // other publication rolled back, or because what it wrote was written over
+    // again — the baseline check sees nothing wrong, and the difference the scan
+    // carries is published as this command's own work.
+    let service = LocalSandbox::new();
+    if skipped_without_enforcement(&service) {
+        return;
+    }
+    let sample = Sample::new("sandbox-root-touched-while-it-ran");
+    sample.write("shared.txt", "baseline\n");
+    let mut session = service
+        .prepare(request(&sample, SandboxManifest::empty()))
+        .expect("a writer");
+    session.materialize().expect("materialized workspace");
+    let mut process = session
+        .start(command("read go; printf 'mine\n' > mine.txt").spoken_to())
+        .expect("started command");
+
+    // Another command publishes into the same root while the first one runs.
+    let mut other = service
+        .prepare(request(&sample, SandboxManifest::empty()))
+        .expect("another writer into the same root");
+    other.materialize().expect("the other writer materialized");
+    let (status, _, _) = finish(
+        other
+            .start(command("printf 'theirs\n' > shared.txt"))
+            .expect("the other writer started"),
+    );
+    assert!(status.success(), "{status}");
+
+    let_go(process.as_mut());
+    once_ended(process.as_mut(), Duration::from_secs(5));
+    // Put the root back the way the first command found it, so that nothing but
+    // the generation says a publication happened at all.
+    sample.write("shared.txt", "baseline\n");
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let refused = loop {
+        match process.try_wait() {
+            Err(problem) => break problem,
+            Ok(None) => {}
+            Ok(Some(status)) => panic!(
+                "a writer published across another command's publication: {status}, and shared.txt now holds {:?}",
+                std::fs::read_to_string(sample.root().join("shared.txt")).unwrap_or_default()
+            ),
+        }
+        assert!(Instant::now() < deadline, "the command did not end");
+        thread::sleep(Duration::from_millis(10));
+    };
+
+    assert!(refused.to_string().contains("writable root"), "{refused}");
+    assert_eq!(
+        std::fs::read_to_string(sample.root().join("shared.txt")).expect("the root's own content"),
+        "baseline\n",
+        "another command's content was published as this one's"
+    );
+    assert!(!sample.root().join("mine.txt").exists());
+}
+
+#[test]
+fn a_writer_publishes_nothing_when_a_publication_touched_its_root_as_it_ran() {
+    // The witness the baseline check lacks. A publication into this root moved
+    // its generation while the command ran, so what the command was scanned as
+    // holding may be that publication's work rather than its own — however the
+    // root looks now.
+    let service = LocalSandbox::new();
+    if skipped_without_enforcement(&service) {
+        return;
+    }
+    let sample = Sample::new("sandbox-root-generation-moved");
+    let _serial = super::transaction::TestSerialLease::acquire().expect("test writer coordination");
+    let mut session = service
+        .prepare(request(&sample, SandboxManifest::empty()))
+        .expect("a writer");
+    session.materialize().expect("materialized workspace");
+    let mut process = session
+        .start(command("read go; printf 'mine\n' > mine.txt").spoken_to())
+        .expect("started command");
+
+    let state = super::transaction::state_directory(&request(&sample, SandboxManifest::empty()))
+        .expect("transaction state");
+    let held = held_publication(&sample);
+    super::generations::advance(&state, &[super::generations::key(sample.root())])
+        .expect("a publication moves the root's generation");
+    drop(held);
+
+    let_go(process.as_mut());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let refused = loop {
+        match process.try_wait() {
+            Err(problem) => break problem,
+            Ok(None) => {}
+            Ok(Some(status)) => panic!("a writer published across another publication: {status}"),
+        }
+        assert!(Instant::now() < deadline, "the command did not end");
+        thread::sleep(Duration::from_millis(10));
+    };
+
+    assert!(
+        refused.to_string().contains("touched a writable root"),
+        "{refused}"
+    );
+    assert!(!sample.root().join("mine.txt").exists());
+}
+
+#[test]
 fn a_publication_that_cannot_ask_for_admission_says_the_same_thing_twice() {
     use std::os::unix::fs::PermissionsExt as _;
 

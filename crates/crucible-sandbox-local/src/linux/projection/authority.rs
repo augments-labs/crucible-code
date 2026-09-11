@@ -288,6 +288,7 @@ mod tests {
             baseline: Snapshot {
                 entries: BTreeMap::new(),
             },
+            generation: None,
         };
 
         let problem = create_directory(&root, Path::new("swapped/escaped"))

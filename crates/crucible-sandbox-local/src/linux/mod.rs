@@ -3,6 +3,7 @@
 mod broker;
 mod command;
 mod fd;
+mod generations;
 mod materialize;
 mod network;
 mod probe;

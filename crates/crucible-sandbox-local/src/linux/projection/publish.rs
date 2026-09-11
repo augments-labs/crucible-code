@@ -19,6 +19,8 @@ type ContentKey = (u64, [u8; 32], Vec<(u64, u64)>);
 pub(super) struct Seen<'a> {
     pub(super) first: &'a [Snapshot],
     pub(super) last: &'a [Snapshot],
+    /// This user's transaction state directory, where the generations live.
+    pub(super) state: &'a Path,
 }
 
 pub(super) struct Failure {
@@ -251,6 +253,18 @@ pub(super) fn apply(
         Ok(left_alone) => left_alone,
         Err(problem) => return abort_without_staging(transaction, problem),
     };
+    // Moved before anything is written, and only for the roots this publication
+    // will write into: a root it leaves alone is not one another command has to
+    // be refused over.
+    let writing: Vec<String> = roots
+        .iter()
+        .zip(&left_alone)
+        .filter(|(_, alone)| !**alone)
+        .map(|(root, _)| super::super::generations::key(&root.destination))
+        .collect();
+    if let Err(problem) = super::super::generations::advance(seen.state, &writing) {
+        return abort_without_staging(transaction, problem);
+    }
 
     let publication = stage.join("publication");
     if let Err(problem) = create_private_directory(&publication) {
@@ -406,6 +420,18 @@ fn validate_before_publication(
         if left_as_found(first, last, &current) {
             left_alone.push(true);
             continue;
+        }
+        // What the command is scanned as holding includes anything published
+        // into this root beneath it, and a root put back the way this command
+        // found it says nothing about that. The generation does.
+        let standing = super::super::generations::current(
+            seen.state,
+            &[super::super::generations::key(&root.destination)],
+        )?;
+        if standing.first().copied().flatten() != root.generation {
+            return Err(io::Error::other(
+                "a publication touched a writable root while the command ran, so what it wrote was not published",
+            ));
         }
         if current != root.baseline {
             return Err(io::Error::other(format!(
