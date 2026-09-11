@@ -14,6 +14,16 @@ use super::{Sensitivity, Target, Verdict};
 /// The field is private to this module — not to the crate. Widening it to
 /// `pub(crate)` would let any module in the crate mint one, which ends the
 /// guarantee that a verdict was reached at all.
+///
+/// Issuing one outside this crate does not compile — the error code is what
+/// this fails with today and not a gate, since `compile_fail` accepts any
+/// compile error:
+///
+/// ```compile_fail,E0624
+/// use crucible_tools::{Grant, Verdict};
+///
+/// let forged = Grant::issue(Verdict::Allow);
+/// ```
 #[derive(Debug)]
 pub struct Grant(());
 
@@ -41,6 +51,17 @@ impl Grant {
 /// the same reason. A verdict is reached about `write` changing a file; the
 /// value that says so names `write`, so the tool it reaches is not something a
 /// caller looks up again beside it.
+///
+/// Building one outside this crate does not compile. The arguments are
+/// placeholders, so the private constructor is the only thing that fails — the
+/// error code is what this fails with today and not a gate, since
+/// `compile_fail` accepts any compile error:
+///
+/// ```compile_fail,E0624
+/// use crucible_tools::Approved;
+///
+/// let forged: Approved = Approved::new(todo!(), todo!(), todo!(), todo!(), todo!());
+/// ```
 #[derive(Debug)]
 pub struct Approved {
     call: ToolCall,

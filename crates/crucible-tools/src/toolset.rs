@@ -637,6 +637,19 @@ impl ToolGeneration {
 /// Constructed only by [`ToolSnapshot::admit`]. It is intentionally not an
 /// executor handle: resolving it through a snapshot rechecks the opaque
 /// generation before any tool behavior becomes reachable.
+///
+/// Building one anywhere else does not compile — the error code is what this
+/// fails with today and not a gate, since `compile_fail` accepts any compile
+/// error:
+///
+/// ```compile_fail,E0451
+/// use crucible_tools::{ToolAdmission, ToolGeneration};
+/// use crucible_types::ToolCall;
+///
+/// fn admitted(generation: ToolGeneration, call: ToolCall) -> ToolAdmission {
+///     ToolAdmission { generation, index: 0, call }
+/// }
+/// ```
 #[derive(Debug, Clone)]
 pub struct ToolAdmission {
     generation: ToolGeneration,

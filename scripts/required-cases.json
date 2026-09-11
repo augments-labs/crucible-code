@@ -199,6 +199,78 @@
       ]
     },
     {
+      "id": "CASE-AUTHORITY-GRANT-UNFORGED",
+      "family": "authority",
+      "obligation": "Code outside the crate cannot issue a grant through `Grant::issue`.",
+      "package": "crucible-tools",
+      "target": {
+        "kind": "doc",
+        "name": "crucible_tools"
+      },
+      "case": "permissions::grant::Grant",
+      "source": "crates/crucible-tools/src/permissions/grant.rs",
+      "body_sha256": "d43433878af62a5beb7f6616de7bf57fcf51e0c16b4f23900459682023906786",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-AUTHORITY-APPROVAL-UNFORGED",
+      "family": "authority",
+      "obligation": "Code outside the crate cannot build an approval through `Approved::new`.",
+      "package": "crucible-tools",
+      "target": {
+        "kind": "doc",
+        "name": "crucible_tools"
+      },
+      "case": "permissions::grant::Approved",
+      "source": "crates/crucible-tools/src/permissions/grant.rs",
+      "body_sha256": "dea7f58c182fbd1cab9cc63de8969a06ee52f70ca3315f05a40d2a2cb44e7be4",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-AUTHORITY-ADMISSION-UNFORGED",
+      "family": "authority",
+      "obligation": "Code outside the crate cannot build a `ToolAdmission` from its fields.",
+      "package": "crucible-tools",
+      "target": {
+        "kind": "doc",
+        "name": "crucible_tools"
+      },
+      "case": "toolset::ToolAdmission",
+      "source": "crates/crucible-tools/src/toolset.rs",
+      "body_sha256": "0c43fa49f4218ff921f9a3ddaab0a1ad0cc832fcb48525746e3e6efe82fe172e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-AUTHORITY-APPROVAL-SPENT",
+      "family": "authority",
+      "obligation": "Code outside the crate cannot clone an approval to run it a second time.",
+      "package": "crucible-tools",
+      "target": {
+        "kind": "doc",
+        "name": "crucible_tools"
+      },
+      "case": "tool::Tool::run",
+      "source": "crates/crucible-tools/src/tool.rs",
+      "body_sha256": "dbcad5dff5d6f659116391f7cccba2fcf63882456a07ed33305ceaecaf954c9f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
       "id": "CASE-AUTHORITY-RUN-CONTEXT-ROOT",
       "family": "authority",
       "obligation": "A run context cannot be descended from outside the crate that mints one.",

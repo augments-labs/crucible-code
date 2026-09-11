@@ -912,6 +912,18 @@ pub trait Tool: Send + Sync {
     /// separate `args` parameter, and a handle found beside the call, both
     /// left that to the caller's care.
     ///
+    /// It is taken by value and cannot be cloned, so one approval runs one
+    /// call — the error code is what this fails with today and not a gate,
+    /// since `compile_fail` accepts any compile error:
+    ///
+    /// ```compile_fail,E0599
+    /// use crucible_tools::Approved;
+    ///
+    /// fn twice(approved: Approved) -> (Approved, Approved) {
+    ///     (approved.clone(), approved)
+    /// }
+    /// ```
+    ///
     /// `context` carries per-call cancellation/deadline and the only output
     /// sink this executor may use. Most tools report nothing while running;
     /// commands are the reason the sink is present.
