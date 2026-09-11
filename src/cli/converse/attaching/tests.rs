@@ -119,7 +119,7 @@ fn videos() -> Spelling {
     }
 }
 
-/// A minimal MP4 `ftyp` box accepted by the core attachment detector.
+/// A minimal MP4 `ftyp` box accepted by the attachment detector.
 fn mp4() -> Vec<u8> {
     let mut bytes = Vec::from(&20_u32.to_be_bytes()[..]);
     bytes.extend_from_slice(b"ftypisom");

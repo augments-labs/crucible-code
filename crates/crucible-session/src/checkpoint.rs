@@ -47,7 +47,7 @@ pub enum CheckpointError {
     /// The encoded or on-disk document crossed its fixed ceiling.
     #[error("execution checkpoint exceeds its {MAX_CHECKPOINT_BYTES}-byte limit")]
     TooLarge,
-    /// Typed core validation rejected restored state.
+    /// Typed validation rejected restored state.
     #[error("execution checkpoint contains invalid state: {0}")]
     Invalid(#[from] InterruptionError),
 }
