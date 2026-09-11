@@ -945,7 +945,9 @@ impl ProjectedProcess {
                         projection.retain_evidence();
                         SandboxLifecycle::Quarantined
                     };
-                    self.lifecycle(lifecycle)?;
+                    if let Err(cleanup) = self.lifecycle(lifecycle) {
+                        return Err(self.failed(cleanup));
+                    }
                 }
                 return Err(problem);
             }
@@ -956,7 +958,9 @@ impl ProjectedProcess {
             let _ = projection.abort(true);
             projection.retain_evidence();
             let problem = self.failed(problem);
-            self.lifecycle(SandboxLifecycle::Quarantined)?;
+            if let Err(cleanup) = self.lifecycle(SandboxLifecycle::Quarantined) {
+                return Err(self.failed(cleanup));
+            }
             return Err(problem);
         }
         self.reported = Some(terminal);
@@ -995,13 +999,19 @@ impl ProjectedProcess {
                 }
                 Err(problem) => {
                     let problem = self.failed(problem);
-                    self.discard()?;
+                    // The cleanup's own failure becomes the answer, so that the
+                    // look that returns it and every later look agree.
+                    if let Err(cleanup) = self.discard() {
+                        return Err(self.failed(cleanup));
+                    }
                     return Err(problem);
                 }
             };
             if let Err(problem) = self.lifecycle(SandboxLifecycle::PublicationStarted) {
                 let problem = self.failed(problem);
-                self.discard()?;
+                if let Err(cleanup) = self.discard() {
+                    return Err(self.failed(cleanup));
+                }
                 return Err(problem);
             }
             let publication = self.projection.as_mut().map_or(Ok(()), |projection| {
@@ -1014,7 +1024,9 @@ impl ProjectedProcess {
                     SandboxLifecycle::RolledBack
                 };
                 let problem = self.failed(problem.into_io());
-                self.lifecycle(lifecycle)?;
+                if let Err(cleanup) = self.lifecycle(lifecycle) {
+                    return Err(self.failed(cleanup));
+                }
                 return Err(problem);
             }
             self.terminal = true;

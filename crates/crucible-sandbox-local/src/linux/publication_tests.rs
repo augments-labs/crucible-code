@@ -623,6 +623,51 @@ fn a_publication_that_cannot_record_its_fact_still_says_what_the_command_did() {
 }
 
 #[test]
+fn a_publication_that_cannot_ask_for_admission_says_the_same_thing_twice() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let service = LocalSandbox::new();
+    if skipped_without_enforcement(&service) {
+        return;
+    }
+    let sample = Sample::new("sandbox-admission-unavailable");
+    let _serial = super::transaction::TestSerialLease::acquire().expect("test writer coordination");
+    let writer = request(&sample, SandboxManifest::empty());
+    let audit = writer.audit().clone();
+    let mut session = service.prepare(writer).expect("a writer");
+    session.materialize().expect("materialized workspace");
+    let mut process = session
+        .start(command("read go; printf 'after\n' > after.txt").spoken_to())
+        .expect("started command");
+    let_go(process.as_mut());
+    once_ended(process.as_mut(), Duration::from_secs(5));
+    // Neither held nor free: a lock that cannot be opened at all is the one
+    // admission failure a caller cannot act on. The collector is full as well,
+    // so the cleanup that follows fails with something else again — which is how
+    // an ending that answers two different things shows itself.
+    let state = super::transaction::state_directory(&request(&sample, SandboxManifest::empty()))
+        .expect("transaction state");
+    let lock = state.join("writable.lock");
+    let restore = std::fs::metadata(&lock).expect("the lock").permissions();
+    std::fs::set_permissions(&lock, std::fs::Permissions::from_mode(0))
+        .expect("an unopenable lock");
+    fill_audit(&audit, crucible_sandbox::MAX_SANDBOX_AUDIT_FACTS);
+
+    let first = process
+        .try_wait()
+        .expect_err("an admission nobody can ask for is an ending that went wrong");
+    let again = process.try_wait();
+
+    std::fs::set_permissions(&lock, restore).expect("the lock is restored");
+    assert_eq!(
+        again.as_ref().map_err(ToString::to_string),
+        Err(first.to_string()),
+        "an ending that went wrong answered differently when asked again"
+    );
+    assert!(!sample.root().join("after.txt").exists());
+}
+
+#[test]
 fn a_publication_whose_start_cannot_be_recorded_discards_what_the_command_wrote() {
     let service = LocalSandbox::new();
     if skipped_without_enforcement(&service) {
