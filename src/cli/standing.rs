@@ -9,9 +9,9 @@
 
 use std::fmt::Write as _;
 
+use crucible_builtins::Ended;
 use crucible_config::Settings;
 use crucible_core::SystemPrompt;
-use crucible_tools::Ended;
 
 use crate::cli::draw::spelled;
 

@@ -32,9 +32,9 @@
 use std::borrow::Cow;
 use std::time::{Duration, Instant};
 
+use crucible_builtins::{Background, Ended};
 use crucible_core::{Aside, Cancel, Effort, Mode};
 use crucible_runner::Runner;
-use crucible_tools::{Background, Ended};
 use crucible_tui::{
     Caret, Editor, Glyphs, Key, Listed, Menu, Pressed, Prompt, Recalled, Renderer, Row, Slot,
     Terminal, Typed, characters, pressed,

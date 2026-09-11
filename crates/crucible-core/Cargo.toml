@@ -15,12 +15,6 @@ authors.workspace = true
 # `Display` and `source` impls at compile time and nothing of the crate survives
 # into the binary.
 #
-# `globset` earns it because a permission rule is a glob and the `glob` tool is
-# already matched with this crate. Writing a second matcher here would mean
-# `src/**` could come to mean one thing in a rule and another in a search, and
-# the two would disagree exactly where it costs most — a rule that looks like it
-# covers a file the tool does not think it covers.
-#
 # `sha2` earns the same bottom-of-graph cost where a policy has to be named by
 # what it says rather than by where it was read from: an extension manifest is
 # identified by a domain-separated one-way digest, so a resumed run can tell
@@ -29,7 +23,7 @@ authors.workspace = true
 # with their types. The exact-pinned crate is named by every crate that
 # identifies something by what it says.
 
-# The eight crates below are the extraction this crate is being emptied into.
+# The nine crates below are the extraction this crate is being emptied into.
 # Core consumes them so its remaining callers keep compiling against one name
 # while ownership moves; every one of these edges is retired when core is
 # removed.
@@ -40,9 +34,9 @@ crucible-registry.workspace = true
 crucible-runtime.workspace = true
 crucible-sandbox.workspace = true
 crucible-storage.workspace = true
+crucible-tools.workspace = true
 crucible-types.workspace = true
 crucible-workspace.workspace = true
-globset.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true

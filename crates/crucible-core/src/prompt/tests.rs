@@ -10,7 +10,7 @@ use super::{
 };
 use crate::{
     Ask, ContextSection, ContextSnapshot, Effort, Permission, Remember, Seen, Sensitivity, Settled,
-    Target, ToolArgs, ToolCall, ToolId, ToolSnapshot, Verdict, capture,
+    Target, ToolArgs, ToolCall, ToolId, ToolSnapshot, Verdict, Workspace, capture,
 };
 
 /// A skill named and described, at a path under the workspace.
@@ -137,6 +137,7 @@ fn the_permissions_section_bounds_scopes_and_states_exactly_what_it_omits() {
         }
     }
 
+    let workspace = Workspace::open(env!("CARGO_MANIFEST_DIR")).expect("the crate's own directory");
     let mut permission = Permission::new();
     let mut answer = Remembering;
     for number in 0..APPROVALS + 3 {
@@ -147,7 +148,7 @@ fn the_permissions_section_bounds_scopes_and_states_exactly_what_it_omits() {
         };
         let relative = format!("scope-{number:03}-{}", "x".repeat(APPROVAL_SCOPE + 20));
         let sensitivity = Sensitivity::MutatesFile {
-            target: Target::at(&format!("/work/{relative}"), Some(&relative)),
+            target: Target::intended(&workspace, &relative),
         };
 
         assert!(matches!(

@@ -19,6 +19,13 @@ change in any release with no deprecation period.
 
 ### Changed
 
+- **The tool contracts and the built-in tools have crates of their own.**
+  `crucible-tools` now holds what a tool is, the roster a request is admitted
+  against and the permission engine that issues `Approved`; the implementations
+  that crate used to hold are `crucible-builtins`. An adapter outside this tree
+  implements `Tool` against `crucible-tools` without compiling the built-in tools,
+  and `ToolContext::with_call_result_store` is now `with_invocation`, because the
+  context never read the store it was handed.
 - **The confinement contracts and this machine's backend have crates of their
   own.** `crucible_tools::LocalSandbox` and `crucible_tools::conformance` moved
   to `crucible-sandbox-local`, and the backend-neutral contracts they answer to
