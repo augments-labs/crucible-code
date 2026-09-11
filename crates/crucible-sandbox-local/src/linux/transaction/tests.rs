@@ -696,6 +696,67 @@ fn a_stale_journal_lock_lent_to_a_departing_child_is_recovered_not_skipped() {
 }
 
 #[test]
+fn a_publication_lease_whose_lock_was_replaced_is_no_longer_the_lock() {
+    // An age-based cleaner of the temporary directory can remove a lock file
+    // that is never written, and the next process to ask creates a fresh one.
+    // Two publications would then hold what each believes is the only lock.
+    let sample = crate::sample::Sample::new("sandbox-replaced-writable-lock");
+    let state = sample.root().join("state");
+    let held = Lease::try_acquire_in(&state)
+        .expect("lock state")
+        .expect("a lease");
+    held.confirm().expect("the lock it was taken on");
+
+    std::fs::remove_file(state.join("writable.lock")).expect("the lock is removed");
+    let replacement = Lease::try_acquire_in(&state)
+        .expect("lock state")
+        .expect("a lease on the lock that replaced it");
+
+    assert!(
+        held.confirm().is_err(),
+        "a replaced lock still read as the lock the lease was taken on"
+    );
+    drop(replacement);
+}
+
+#[test]
+fn taking_the_publication_lock_keeps_its_file_from_ageing() {
+    use std::fs::FileTimes;
+    use std::time::{Duration, SystemTime};
+
+    let sample = crate::sample::Sample::new("sandbox-ageing-writable-lock");
+    let state = sample.root().join("state");
+    drop(
+        Lease::try_acquire_in(&state)
+            .expect("lock state")
+            .expect("a lease that creates the lock"),
+    );
+    let lock = state.join("writable.lock");
+    let long_ago = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+    std::fs::File::options()
+        .write(true)
+        .open(&lock)
+        .expect("the lock")
+        .set_times(FileTimes::new().set_modified(long_ago))
+        .expect("an old lock");
+
+    drop(
+        Lease::try_acquire_in(&state)
+            .expect("lock state")
+            .expect("a lease that takes the lock again"),
+    );
+
+    let modified = std::fs::metadata(&lock)
+        .expect("the lock")
+        .modified()
+        .expect("its modification time");
+    assert!(
+        modified > long_ago,
+        "a lock nothing ever writes reads as old enough to remove"
+    );
+}
+
+#[test]
 fn a_publication_lease_lent_to_a_departing_child_is_free_once_the_child_is_gone() {
     let sample = crate::sample::Sample::new("sandbox-lent-writable-lease");
     let state = sample.root().join("state");

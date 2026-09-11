@@ -147,6 +147,19 @@ struct Admission {
     _lease: Option<transaction::Lease>,
 }
 
+impl Admission {
+    /// Whether the lock this admission was let in on is still that lock.
+    #[expect(
+        clippy::used_underscore_binding,
+        reason = "the admission holds the lease only to keep the lock; confirming reads it"
+    )]
+    fn confirm(&self) -> io::Result<()> {
+        self._lease
+            .as_ref()
+            .map_or(Ok(()), transaction::Lease::confirm)
+    }
+}
+
 impl Projection {
     pub(super) fn network_socket(&self) -> PathBuf {
         self.stage.root().join("network.sock")
@@ -437,7 +450,7 @@ impl Projection {
     /// Publishes the command's writes, which only a caller let in can ask for.
     fn publish(
         &mut self,
-        _admission: &Admission,
+        admission: &Admission,
         broker_baselines: &[Snapshot],
         finals: &[Snapshot],
     ) -> Result<(), publish::Failure> {
@@ -458,6 +471,12 @@ impl Projection {
                 };
             }
         };
+        // Asked again before anything is written: a lock file removed and
+        // remade under this lease would leave two publications each holding
+        // what it believes is the only one.
+        if let Err(problem) = admission.confirm() {
+            return Err(self.abort_publication(problem));
+        }
         let publication = publish::apply(
             &self.roots,
             self.stage.root(),

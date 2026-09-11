@@ -1098,6 +1098,32 @@ impl Lease {
 }
 
 impl Lease {
+    /// Whether the name this lease was taken on still means this lease.
+    ///
+    /// The lock file is created empty and never written, so its timestamps do
+    /// not advance on their own and an age-based cleaner of the temporary
+    /// directory may remove it. The next process to ask for it then creates a
+    /// fresh one and takes that, while this lease still holds the old: two
+    /// publications, each having passed its own baseline check. Asked again
+    /// before anything is written, so a replaced lock refuses the publication
+    /// rather than racing it.
+    #[expect(
+        clippy::used_underscore_binding,
+        reason = "the lease holds these only to keep the lock; confirming reads them"
+    )]
+    pub(super) fn confirm(&self) -> io::Result<()> {
+        let named = rustix::fs::statat(
+            &self._state,
+            WRITABLE_LOCK,
+            rustix::fs::AtFlags::SYMLINK_NOFOLLOW,
+        )?;
+        let held = self._lock.metadata()?;
+        if named.st_dev != held.dev() || named.st_ino != held.ino() {
+            return Err(invalid("sandbox transaction lock identity changed"));
+        }
+        Ok(())
+    }
+
     /// Takes the lock in `state` without waiting, or `None` while it is held.
     ///
     /// Not waited for here, because the one asking polls: a process that has
@@ -1116,6 +1142,11 @@ impl Lease {
         }
         validate_state(state, &directory)?;
         validate_lock(state, WRITABLE_LOCK, &lock)?;
+        // Touched whenever it is taken, so a cleaner of the temporary
+        // directory reads the lock as in use rather than as forgotten: it is
+        // created empty and never written, so nothing else advances it.
+        let _ =
+            lock.set_times(std::fs::FileTimes::new().set_modified(std::time::SystemTime::now()));
         Ok(Some(Self {
             _state: directory,
             _lock: lock,
