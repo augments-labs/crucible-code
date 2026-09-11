@@ -1073,6 +1073,9 @@ impl RegistryLease {
 /// The command itself runs without it: a command left running with no end of its
 /// own, or a server kept for a whole run, would otherwise keep every other
 /// command from writing for as long as it lived.
+///
+/// A command being prepared holds it while it takes its baselines, so that no
+/// baseline is half of another command's publication.
 pub(super) struct Lease {
     _state: File,
     _lock: File,
@@ -1113,6 +1116,30 @@ impl Lease {
             _state: directory,
             _lock: lock,
         }))
+    }
+
+    /// Takes the lock in `state`, waiting while a publication holds it.
+    ///
+    /// Waited for, unlike [`Self::try_acquire_in`], because the one asking is a
+    /// preparation about to take its baselines, on the thread starting the
+    /// command, and what it waits for is one publication, which ends.
+    pub(super) fn acquire_in(state: &Path) -> io::Result<Self> {
+        create_state_directory(state)?;
+        let directory = open_state_directory(state)?;
+        let lock = open_lock(&directory, WRITABLE_LOCK)?;
+        loop {
+            match rustix::fs::flock(&lock, FlockOperation::LockExclusive) {
+                Ok(()) => break,
+                Err(rustix::io::Errno::INTR) => {}
+                Err(problem) => return Err(problem.into()),
+            }
+        }
+        validate_state(state, &directory)?;
+        validate_lock(state, WRITABLE_LOCK, &lock)?;
+        Ok(Self {
+            _state: directory,
+            _lock: lock,
+        })
     }
 }
 

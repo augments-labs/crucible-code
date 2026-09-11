@@ -78,6 +78,7 @@ fn startup_unconfirmed_cleanup_retains_linux_projection_and_audits_failed() -> i
         call_result_key: None,
         owner_transferred: false,
         released: false,
+        serial: None,
     };
     let problem = super::super::process::spawn(
         std::process::Command::new(sample.root().join("absent-program")),
@@ -180,6 +181,7 @@ fn pretransfer_network_cleanup_failure_is_quarantined_and_never_complete() -> io
         call_result_key: None,
         owner_transferred: false,
         released: false,
+        serial: None,
     };
     launch.startup_failed(&problem);
     drop(launch);
@@ -286,6 +288,7 @@ fn pretransfer_materialization_cleanup_failure_retains_projection_evidence() -> 
         call_result_key: None,
         owner_transferred: false,
         released: false,
+        serial: None,
     };
     launch.startup_failed(&problem);
     drop(launch);

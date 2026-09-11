@@ -83,7 +83,8 @@ pub(super) fn prepare(
     })?;
     drop(registry);
     // Writers in one test process run one at a time, as those tests assume. Taken
-    // here, after the registry is let go and before anything a test times.
+    // here, after the registry is let go and before anything a test times, and
+    // carried with the command until its process is let go.
     #[cfg(test)]
     let serial = if request
         .policy()
@@ -128,7 +129,7 @@ pub(super) fn prepare(
         materialized: false,
         transferred: false,
         #[cfg(test)]
-        _serial: serial,
+        serial,
     }))
 }
 
@@ -143,7 +144,7 @@ struct LinuxSession {
     materialized: bool,
     transferred: bool,
     #[cfg(test)]
-    _serial: Option<transaction::TestSerialLease>,
+    serial: Option<transaction::TestSerialLease>,
 }
 
 impl SandboxSession for LinuxSession {
@@ -243,6 +244,8 @@ impl SandboxSession for LinuxSession {
             call_result_key: self.request.call_result_key(),
             owner_transferred: false,
             released: false,
+            #[cfg(test)]
+            serial: self.serial.take(),
         };
         self.transferred = true;
         launch.network = match self.request.policy().network() {
@@ -387,6 +390,8 @@ struct LinuxLaunch {
     call_result_key: Option<crucible_storage::CallResultKey>,
     owner_transferred: bool,
     released: bool,
+    #[cfg(test)]
+    serial: Option<transaction::TestSerialLease>,
 }
 
 impl SandboxLaunch for LinuxLaunch {
@@ -509,6 +514,8 @@ impl SandboxLaunch for LinuxLaunch {
                 sandbox: self.sandbox,
                 invocation: self.invocation,
                 call_result_key: self.call_result_key,
+                #[cfg(test)]
+                serial: self.serial.take(),
             },
         );
         wrapped.map_err(SandboxError::Lifecycle)

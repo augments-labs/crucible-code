@@ -38,6 +38,39 @@ fn unconfirmed_cleanup_refuses_server_replacement() {
 }
 
 #[test]
+fn a_server_whose_writes_were_refused_says_so_and_can_be_started_again() {
+    // It went when told, and its scope was reaped, but what it wrote was not
+    // published. That is a loss worth a sentence, not an unconfirmed cleanup:
+    // nothing about it keeps the next turn from starting the server again.
+    let sandbox = Pretend::new([
+        Answers::Refused(dialogue("docs")),
+        Answers::Says(dialogue("docs")),
+    ]);
+    let hosting = Hosting::new(
+        builtin(&[]),
+        sandbox.clone() as Arc<dyn SandboxService>,
+        vec![chosen("docs")],
+    );
+    let context = lifecycle();
+    hosting.prepare(&context).unwrap();
+
+    let error = hosting
+        .dispose(&context)
+        .expect_err("a refused publication is not a clean disposal");
+
+    assert!(
+        error.to_string().contains("nothing it wrote was published"),
+        "{error}"
+    );
+    assert_eq!(sandbox.server(0).stop_attempts.load(Ordering::Relaxed), 0);
+    hosting
+        .prepare(&context)
+        .expect("a server whose scope was reaped can be started again");
+    assert_eq!(sandbox.started(), 2);
+    hosting.dispose(&context).expect("the second one stopped");
+}
+
+#[test]
 fn unconfirmed_disposal_remains_failed_and_blocks_repreparation() {
     let sandbox = Pretend::new([
         Answers::Unreapable(dialogue("docs")),

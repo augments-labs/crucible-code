@@ -5,7 +5,10 @@
 //! grandchildren holding its pipes, a long one fills a pipe buffer and blocks
 //! until somebody reads it, and either one turns a naive wait into a hang. So
 //! the pipes are drained on threads from the moment the command starts, and
-//! every wait in this module is bounded.
+//! every wait in this module is bounded. One is bounded by something other than
+//! the deadline: a command that has ended and waits its turn to publish what it
+//! wrote waits for the publication ahead of it, because stopping it then would
+//! discard what it did in time.
 //!
 //! A command can also outlive the *call* — that is [`super::background`], and it
 //! is the one path out of here that does not end what it was waiting on. What
@@ -111,12 +114,16 @@ pub(super) fn collect(
         // Asked before the deadline and before the cancel, because it is the one
         // of the three that keeps the command: a press and a timeout landing in
         // the same tick should leave the command running rather than kill it.
-        if cancel.requested() {
+        // Neither the cancel nor the deadline ends a command that has already
+        // ended. One whose writes wait their turn behind another command's
+        // publication is not running any more, and stopping it would discard what
+        // it wrote after it finished.
+        if cancel.requested() && !running.taking()?.ended() {
             let _ = running.stop()?;
             return Err(ToolError::Cancelled(NAME.into()));
         }
 
-        if Instant::now() >= deadline {
+        if Instant::now() >= deadline && !running.taking()?.ended() {
             let status = running.stop()?;
             expired = true;
             break status;

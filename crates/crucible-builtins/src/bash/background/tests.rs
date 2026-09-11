@@ -3,6 +3,7 @@
 use std::io;
 use std::process::ExitStatus;
 use std::sync::atomic::AtomicUsize;
+use std::thread;
 
 use crucible_runtime::Cancel;
 use crucible_sandbox::{
@@ -22,6 +23,14 @@ struct Observed {
     exited: AtomicBool,
     dropped: AtomicBool,
     stops: AtomicUsize,
+    /// It has ended, while its ending waits on something else: a look at it
+    /// says nothing until `exited` does.
+    ended: AtomicBool,
+    /// Its ending went wrong, and a look at it says how.
+    failed: AtomicBool,
+    /// Whether it was asked to stop before its ending was complete, which
+    /// discards what it wrote.
+    stopped_early: AtomicBool,
 }
 
 struct Process {
@@ -43,11 +52,23 @@ impl SandboxProcess for Process {
     }
 
     fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        if self.observed.failed.load(Ordering::Relaxed) {
+            return Err(io::Error::other(
+                "writable root changed after the command started",
+            ));
+        }
         Ok(self.observed.exited.load(Ordering::Relaxed).then(exited))
+    }
+
+    fn ended(&mut self) -> bool {
+        self.observed.ended.load(Ordering::Relaxed) || self.observed.exited.load(Ordering::Relaxed)
     }
 
     fn stop(&mut self) -> io::Result<()> {
         self.observed.stops.fetch_add(1, Ordering::Relaxed);
+        if !self.observed.exited.load(Ordering::Relaxed) {
+            self.observed.stopped_early.store(true, Ordering::Relaxed);
+        }
         if self.observed.cleanup_allowed.load(Ordering::Relaxed) {
             Ok(())
         } else {
@@ -83,7 +104,7 @@ fn exited() -> ExitStatus {
     ExitStatus::from_raw(0)
 }
 
-fn keep(left: &Background, observed: &Arc<Observed>, accepting: bool) -> Kept {
+fn process(observed: &Arc<Observed>) -> Process {
     let identity = SandboxBackendIdentity::new(
         SandboxBackendId::new("background-test").expect("backend name"),
         "1",
@@ -117,10 +138,14 @@ fn keep(left: &Background, observed: &Arc<Observed>, accepting: bool) -> Kept {
         SandboxCleanup::Pending,
     )
     .expect("inspection");
-    let process = Process {
+    Process {
         observed: Arc::clone(observed),
         inspection,
-    };
+    }
+}
+
+fn keep(left: &Background, observed: &Arc<Observed>, accepting: bool) -> Kept {
+    let process = process(observed);
     let taken = output::collect(
         Box::new(process),
         &output::Waiting {
@@ -248,4 +273,158 @@ fn abandoned_receipt_keeps_failed_cleanup_visible_and_retryable() {
     let _ = left.stop(number);
     assert_eq!(left.count(), 0);
     assert!(left.reported().is_empty());
+}
+
+/// Marks `observed` as having completed its ending once `after` has passed.
+fn completes(observed: &Arc<Observed>, after: Duration) -> thread::JoinHandle<()> {
+    let later = Arc::clone(observed);
+    thread::spawn(move || {
+        thread::sleep(after);
+        later.exited.store(true, Ordering::Relaxed);
+    })
+}
+
+#[test]
+fn a_command_that_ended_in_time_is_not_stopped_while_its_ending_completes() {
+    // A command that finished before its deadline can still be waiting for
+    // another command's publication when the deadline passes. Stopping it then
+    // would discard what it wrote and report that it ran too long, and neither
+    // is true.
+    let observed = Arc::new(Observed::default());
+    observed.ended.store(true, Ordering::Relaxed);
+    observed.cleanup_allowed.store(true, Ordering::Relaxed);
+    let completing = completes(&observed, Duration::from_millis(300));
+
+    let answered = output::collect(
+        Box::new(process(&observed)),
+        &output::Waiting {
+            allowed: Duration::from_millis(50),
+            cancel: &Cancel::new(),
+            watch: &Unwatched,
+            leaving: None,
+        },
+    );
+    completing.join().expect("the ending completed");
+
+    assert!(
+        !observed.stopped_early.load(Ordering::Relaxed),
+        "a command that ended in time was stopped before its ending completed"
+    );
+    let Ok(output::Left::Answered(report)) = answered else {
+        panic!("a command that ended in time did not answer");
+    };
+    assert!(!report.text().contains("ran too long"), "{}", report.text());
+}
+
+#[test]
+fn a_cancelled_turn_keeps_a_command_that_had_already_ended() {
+    // The cancel stops what is still running. A command that has ended is not,
+    // and stopping it while its ending waits its turn would discard what it
+    // wrote after it had done its work.
+    let observed = Arc::new(Observed::default());
+    observed.ended.store(true, Ordering::Relaxed);
+    observed.cleanup_allowed.store(true, Ordering::Relaxed);
+    let cancel = Cancel::new();
+    cancel.request();
+    let completing = completes(&observed, Duration::from_millis(300));
+
+    let answered = output::collect(
+        Box::new(process(&observed)),
+        &output::Waiting {
+            allowed: Duration::from_secs(10),
+            cancel: &cancel,
+            watch: &Unwatched,
+            leaving: None,
+        },
+    );
+    completing.join().expect("the ending completed");
+
+    assert!(
+        !observed.stopped_early.load(Ordering::Relaxed),
+        "a cancel discarded a command that had already ended"
+    );
+    assert!(
+        matches!(answered, Ok(output::Left::Answered(_))),
+        "a command that had ended lost its result to the cancel"
+    );
+}
+
+#[test]
+fn stopping_a_command_that_has_ended_leaves_it_to_be_reported() {
+    // The panel draws from a list a beat old, and a command whose ending waits
+    // its turn still stands on it. Stopping that one would discard what it
+    // wrote, and it is about to be reported anyway.
+    let left = Background::new();
+    let observed = Arc::new(Observed::default());
+    let number = keep(&left, &observed, false).number();
+    observed.ended.store(true, Ordering::Relaxed);
+    observed.cleanup_allowed.store(true, Ordering::Relaxed);
+
+    left.stop(number)
+        .expect("a command that has ended needs no stopping");
+
+    assert!(
+        !observed.stopped_early.load(Ordering::Relaxed),
+        "stopping it discarded what it wrote"
+    );
+    assert_eq!(left.count(), 1, "it went without being reported");
+    observed.exited.store(true, Ordering::Relaxed);
+    let ended = left.reap();
+    assert_eq!(ended.first().map(|one| one.number), Some(number));
+}
+
+#[test]
+fn a_command_whose_ending_went_wrong_is_reported_once_with_why() {
+    // Kept as though still running, it would stand on the panel forever and
+    // the model would never hear that what it wrote was not published.
+    let left = Background::new();
+    let observed = Arc::new(Observed::default());
+    let number = keep(&left, &observed, false).number();
+    observed.ended.store(true, Ordering::Relaxed);
+    observed.failed.store(true, Ordering::Relaxed);
+    observed.cleanup_allowed.store(true, Ordering::Relaxed);
+
+    let ended = left.reap();
+
+    assert_eq!(
+        ended.len(),
+        1,
+        "a command whose ending went wrong was kept as though it still ran"
+    );
+    let one = ended.first().expect("one ending");
+    assert_eq!(one.number, number);
+    assert!(
+        one.unpublished
+            .as_deref()
+            .is_some_and(|why| why.contains("writable root changed")),
+        "{one:?}"
+    );
+    assert_eq!(left.count(), 0);
+    assert!(left.reap().is_empty(), "reported twice");
+    assert_eq!(left.reported(), ended);
+}
+
+#[test]
+fn letting_the_registry_go_waits_for_a_command_that_has_ended() {
+    // The end of a run is when a command left running is most likely to have
+    // just finished. Ending it before its ending completes would discard what
+    // it wrote on the way out.
+    let left = Background::new();
+    let observed = Arc::new(Observed::default());
+    drop(keep(&left, &observed, false));
+    observed.ended.store(true, Ordering::Relaxed);
+    observed.cleanup_allowed.store(true, Ordering::Relaxed);
+    let completing = completes(&observed, Duration::from_millis(200));
+
+    drop(left);
+    completing.join().expect("the ending completed");
+
+    assert!(
+        observed.dropped.load(Ordering::Relaxed),
+        "the registry kept it"
+    );
+    assert!(
+        !observed.stopped_early.load(Ordering::Relaxed),
+        "the registry ended a command before its ending completed"
+    );
 }
