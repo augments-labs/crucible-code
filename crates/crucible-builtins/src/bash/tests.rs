@@ -16,7 +16,7 @@ use crucible_types::{ToolCall, ToolId};
 
 use super::background::{Background, MOST};
 use super::{Bash, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, environment};
-use crate::sample::{Sample, allowed, skipped_without_enforcement};
+use crate::sample::{Sample, allowed, enforcing};
 
 /// This machine's confinement, as the service contract a tool is given.
 fn local() -> std::sync::Arc<dyn crucible_sandbox::SandboxService> {
@@ -176,9 +176,9 @@ fn the_default_linux_backend_cannot_read_an_undeclared_sibling() {
     let sample = Sample::new("bash-sibling-confined");
     let outside = sample.outside("credential", "not-for-the-command\n");
     let service = crucible_sandbox_local::LocalSandbox::new();
-    if skipped_without_enforcement(&service) {
+    let Some(_enforcing) = enforcing(&service) else {
         return;
-    }
+    };
     let tool = Bash::new(sample.workspace(), std::sync::Arc::new(service));
     let args = format!(r#"{{"command":"cat {outside}"}}"#);
 
@@ -808,9 +808,9 @@ fn the_name_a_job_requires_a_backend_by_is_the_one_spelled_outside_this_crate() 
 #[test]
 fn linux_ctrl_b_uses_owned_durable_detachment_before_go() {
     let service = crucible_sandbox_local::LocalSandbox::new();
-    if skipped_without_enforcement(&service) {
+    let Some(_enforcing) = enforcing(&service) else {
         return;
-    }
+    };
     let sample = Sample::new("bash-linux-detachable");
     let left = Background::new();
     let tool = Bash::new(sample.workspace(), std::sync::Arc::new(service)).leaving(left.clone());
