@@ -326,13 +326,16 @@ fn a_command_that_ended_in_time_is_not_stopped_while_its_ending_completes() {
 fn a_cancelled_turn_keeps_a_command_that_had_already_ended() {
     // The cancel stops what is still running. A command that has ended is not,
     // and stopping it while its ending waits its turn would discard what it
-    // wrote after it had done its work.
+    // wrote after it had done its work. Its ending completes inside the cancel's
+    // own patience, which is shorter than the deadline's because somebody is
+    // waiting for the turn to end; how long that patience is belongs to
+    // `a_cancel_waits_less_for_a_publication_than_a_deadline_does`.
     let observed = Arc::new(Observed::default());
     observed.ended.store(true, Ordering::Relaxed);
     observed.cleanup_allowed.store(true, Ordering::Relaxed);
     let cancel = Cancel::new();
     cancel.request();
-    let completing = completes(&observed, Duration::from_millis(300));
+    let completing = completes(&observed, Duration::from_millis(20));
 
     let answered = output::collect(
         Box::new(process(&observed)),
@@ -465,6 +468,80 @@ fn a_command_whose_publication_never_finishes_is_stopped_once_its_patience_has_p
     let said = said.expect("the deadline's wait for a publication has a ceiling");
     waiting.join().expect("the waiting thread");
     assert!(said.contains("ran too long"), "{said}");
+    // The ceiling discarded what it wrote. A command told only that it ran too
+    // long is told the opposite of what happened: it finished, and lost its files.
+    assert!(said.contains("nothing it wrote was published"), "{said}");
+}
+
+#[test]
+fn a_kept_command_that_cannot_publish_is_reported_once_its_patience_has_passed() {
+    // Nothing else ends it: the panel's stop leaves anything that has ended to
+    // be reported, and only the registry's drop ever looked again. Held for the
+    // rest of the run, it keeps one of the slots and says nothing.
+    let left = Background::new();
+    let observed = Arc::new(Observed::default());
+    drop(keep(&left, &observed, false));
+    observed.ended.store(true, Ordering::Relaxed);
+    observed.cleanup_allowed.store(true, Ordering::Relaxed);
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let one = loop {
+        if let Some(one) = left.reap().into_iter().next() {
+            break one;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "a command that cannot publish was never reported"
+        );
+        thread::sleep(Duration::from_millis(10));
+    };
+
+    assert!(one.unpublished.is_some(), "{one:?}");
+    assert_eq!(left.count(), 0, "it kept its slot");
+}
+
+#[test]
+fn a_cancel_waits_less_for_a_publication_than_a_deadline_does() {
+    // A deadline's patience is a machine's; a cancel's is a person's, who is
+    // waiting for the turn to end.
+    let observed = Arc::new(Observed::default());
+    observed.ended.store(true, Ordering::Relaxed);
+    observed.cleanup_allowed.store(true, Ordering::Relaxed);
+    let process = process(&observed);
+    let (told, hears) = std::sync::mpsc::channel();
+    let waiting = thread::spawn(move || {
+        let cancel = Cancel::new();
+        cancel.request();
+        let began = Instant::now();
+        let answered = output::collect(
+            Box::new(process),
+            &output::Waiting {
+                allowed: Duration::from_secs(30),
+                cancel: &cancel,
+                watch: &Unwatched,
+                leaving: None,
+            },
+        );
+        told.send((
+            began.elapsed(),
+            match answered {
+                Ok(_) => "answered".to_owned(),
+                Err(problem) => format!("error: {problem}"),
+            },
+        ))
+        .expect("the test hears how it went");
+    });
+
+    let (took, said) = hears
+        .recv_timeout(Duration::from_secs(20))
+        .expect("a cancel answers");
+
+    waiting.join().expect("the waiting thread");
+    assert!(said.contains("cancelled"), "{said}");
+    assert!(
+        took < Duration::from_millis(200),
+        "a cancel waited the deadline's ceiling: {took:?}"
+    );
 }
 
 #[test]

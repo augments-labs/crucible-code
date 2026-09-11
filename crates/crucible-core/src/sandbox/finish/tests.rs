@@ -187,7 +187,7 @@ fn a_process_whose_ending_went_wrong_says_why_rather_than_being_stopped() {
 }
 
 #[test]
-fn a_process_whose_publication_never_finishes_is_stopped_once_its_patience_has_passed() {
+fn a_process_whose_publication_never_finishes_says_so_once_its_patience_has_passed() {
     // The wait for an ending is worth making only while it can end. A lock held
     // by something outside this process — an older crucible, say — would
     // otherwise keep a turn and a shutdown waiting for ever.
@@ -206,6 +206,8 @@ fn a_process_whose_publication_never_finishes_is_stopped_once_its_patience_has_p
 
     let finish = finish.expect("the wait for a publication that never ends has a ceiling");
     waiting.join().expect("the waiting thread");
-    assert!(finish.starts_with("Stopped"), "{finish}");
+    // Stopped, and said so: the ceiling discarded what it wrote, and an ending
+    // reported as a clean stop tells the caller nothing was lost.
+    assert!(finish.starts_with("Unpublished"), "{finish}");
     assert_eq!(ending.stops.load(Ordering::Relaxed), 1);
 }

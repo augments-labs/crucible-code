@@ -20,6 +20,7 @@ fn a_command_stopped_for_running_too_long_says_so_once() {
         omitted: 0,
         arriving: true,
         expired: true,
+        unpublished: false,
         output_limited: false,
     }
     .report();
@@ -48,6 +49,7 @@ fn a_command_stopped_for_output_says_which_ceiling_it_crossed() {
         omitted: 86,
         arriving: false,
         expired: false,
+        unpublished: false,
         output_limited: true,
     }
     .report();

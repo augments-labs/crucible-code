@@ -67,6 +67,16 @@ const PUBLICATION: Duration = Duration::from_mins(1);
 #[cfg(test)]
 const PUBLICATION: Duration = Duration::from_millis(300);
 
+/// How long a cancelled command that has ended is given for the same thing.
+///
+/// Shorter than the deadline's, because the deadline's patience is a machine's
+/// and a cancel's is a person's: somebody pressed a key and is waiting for the
+/// turn to end.
+#[cfg(not(test))]
+const CANCELLATION: Duration = Duration::from_secs(5);
+#[cfg(test)]
+const CANCELLATION: Duration = Duration::from_millis(100);
+
 /// How long the readers get to reach the end of their pipes once the command
 /// itself is over. Reading what is already buffered takes no time at all, so
 /// this is only ever spent when something else is still holding a pipe open.
@@ -99,6 +109,8 @@ pub(super) fn collect(
     let mut expired = false;
     // When a command that has ended began waiting for its turn to publish.
     let mut publishing: Option<Instant> = None;
+    // Whether the wait for that turn ran out, so what it wrote was discarded.
+    let mut discarded = false;
 
     // A child is not one of this program's threads: nothing in it will notice
     // the flag, so the only way to stop it is to kill it.
@@ -132,15 +144,23 @@ pub(super) fn collect(
         // publication is not running any more, and stopping it would discard what
         // it wrote after it finished.
         if cancel.requested() || Instant::now() >= deadline {
-            let waiting = running.taking()?.ended()
-                && publishing.get_or_insert_with(Instant::now).elapsed() < PUBLICATION;
-            if !waiting {
+            let ended = running.taking()?.ended();
+            let since = *publishing.get_or_insert_with(Instant::now);
+            let ceiling = if cancel.requested() {
+                CANCELLATION
+            } else {
+                PUBLICATION
+            };
+            if !(ended && since.elapsed() < ceiling) {
                 if cancel.requested() {
                     let _ = running.stop()?;
                     return Err(ToolError::Cancelled(NAME.into()));
                 }
                 let status = running.stop()?;
                 expired = true;
+                // Stopping it discarded whatever it had not published, which is
+                // the part of "ran too long" that is not true of it.
+                discarded = ended;
                 break status;
             }
         }
@@ -192,6 +212,7 @@ pub(super) fn collect(
             omitted: captured.omitted,
             arriving: !ended,
             expired,
+            unpublished: discarded,
             output_limited: violation == Some(SandboxViolation::Output),
         }
         .report(),
@@ -412,6 +433,8 @@ struct Finished {
     /// for them ran out, which makes `out` a prefix of the output.
     arriving: bool,
     expired: bool,
+    /// Whether it had ended and its writes were discarded by the stop.
+    unpublished: bool,
     output_limited: bool,
 }
 
@@ -440,8 +463,14 @@ impl Finished {
                 ""
             };
 
+            let lost = if self.unpublished {
+                ", and nothing it wrote was published"
+            } else {
+                ""
+            };
+
             return ToolOutput::failed(format!(
-                "{body}\n\n[stopped: the command ran too long{held}]"
+                "{body}\n\n[stopped: the command ran too long{held}{lost}]"
             ))
             .with_capture_elision(self.original, self.omitted);
         }

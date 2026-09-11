@@ -81,6 +81,9 @@ struct Left {
     /// When the process was first seen to have gone, for the grace its readers
     /// get to reach the end of its pipes. `None` until it has.
     exited: Option<Instant>,
+    /// When it was first seen to have ended with its publication unfinished.
+    /// `None` until it has, and the ceiling its wait gets is counted from it.
+    publishing: Option<Instant>,
     /// Runner finalization has not yet bound the durable result receipt.
     accepting: bool,
 }
@@ -319,6 +322,7 @@ impl Background {
             err: taking.err,
             since: taking.since,
             exited: None,
+            publishing: None,
             accepting,
         });
 
@@ -458,6 +462,22 @@ impl Background {
                     None,
                     Some(super::output::excerpt(&problem.to_string(), SHARE)),
                 ),
+                // It has ended, and its writes are waiting their turn to
+                // publish. Kept rather than stopped, because stopping it
+                // discards them — but not for the whole run: what it waits for
+                // can be held by another crucible of this user, and a command
+                // nothing ever reports holds one of the few slots there are.
+                Ok(None) if left.process.ended() => {
+                    let since = *left.publishing.get_or_insert_with(Instant::now);
+                    if since.elapsed() < PUBLICATION {
+                        still.push(left);
+                        continue;
+                    }
+                    (
+                        None,
+                        Some("its publication did not finish in time".to_owned()),
+                    )
+                }
                 // Still running, or a wait that could not be made. A command whose
                 // status cannot be read is kept rather than reported: it is still
                 // holding resources, and `stop` and this module's drop are both

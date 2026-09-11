@@ -31,10 +31,12 @@ const WATCH: Duration = Duration::from_millis(5);
 /// publishing what it wrote.
 ///
 /// Bounded because what it waits for can be held by another crucible of this
-/// user, and a wait with no end would keep this run from finishing. Shorter
-/// under test, where nothing holds a publication up.
+/// user, and a wait with no end would keep this run from finishing. Seconds
+/// rather than minutes, because every caller of this is a disposal or a
+/// restart, and a turn cannot end until each of its servers has. Shorter under
+/// test, where nothing holds a publication up.
 #[cfg(not(test))]
-const PUBLICATION: Duration = Duration::from_mins(1);
+const PUBLICATION: Duration = Duration::from_secs(5);
 #[cfg(test)]
 const PUBLICATION: Duration = Duration::from_millis(300);
 
@@ -68,6 +70,10 @@ impl Finish {
     #[must_use]
     pub fn after(process: &mut dyn SandboxProcess, grace: Duration) -> Self {
         let began = Instant::now();
+        // Whether the wait ended at the publication ceiling rather than because
+        // the process would not go. What it wrote is discarded either way, but
+        // only one of the two is worth telling the caller about.
+        let mut unpublished = false;
         loop {
             match process.try_wait() {
                 Ok(Some(status)) => return Self::Exited(status),
@@ -86,10 +92,19 @@ impl Finish {
                 None if process.ended() && began.elapsed() < grace.saturating_add(PUBLICATION) => {
                     thread::sleep(WATCH);
                 }
-                None => break,
+                None => {
+                    unpublished = process.ended();
+                    break;
+                }
             }
         }
         match process.stop() {
+            // It had ended, and the stop below discarded what it wrote. Reported
+            // as a clean stop, that reads as though nothing was lost.
+            Ok(()) if unpublished => Self::Unpublished(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "its publication did not finish in time",
+            )),
             Ok(()) => Self::Stopped,
             Err(source) => Self::Unreaped(source),
         }
