@@ -15,14 +15,15 @@ pregenerated, so no assembler is needed and no C++ is compiled anywhere in the
 tree — the packages below carry a C++ compiler because that is how they are
 shipped, not because a build asks for one.
 
-**A POSIX shell, to run the gate.** `scripts/sh/check.sh` is bash. On Windows that
-means Git Bash or a Windows Subsystem for Linux shell; the build itself needs no
-shell.
+**A POSIX shell and Python 3.11, to run the gate.** `scripts/sh/check.sh` is bash,
+and some of the checks it runs are Python scripts; the crate-layering one needs
+Python 3.11 or later. On Windows the shell means Git Bash or a Windows Subsystem
+for Linux shell; the build itself needs neither.
 
-Nothing else: no OpenSSL, no `pkg-config`, no cmake, no Python, no node. A
-dependency that wanted one would need the justification comment every entry in
-`Cargo.toml` carries, and this list is part of what that comment is weighed
-against.
+Nothing else: no OpenSSL, no `pkg-config`, no cmake, no node, and no Python for
+the build. A dependency that wanted one would need the justification comment
+every entry in `Cargo.toml` carries, and this list is part of what that comment
+is weighed against.
 
 ## Linux
 
