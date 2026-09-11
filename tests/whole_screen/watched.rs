@@ -548,7 +548,7 @@ impl Watched {
             }
         }
 
-        let spent = Spent::by(self.child.id()).since(&before);
+        let charged = Spent::by(self.child.id()).since(&before);
         let watched = started.elapsed();
 
         assert!(
@@ -558,8 +558,8 @@ impl Watched {
         );
         let allowed = ACTIVE_CPU_PER_SECOND.mul_f64(watched.as_secs_f64());
         assert!(
-            spent <= allowed,
-            "the active animation spent at least {spent:?} of CPU in {watched:?}, allowed {allowed:?}"
+            charged <= allowed,
+            "the active animation spent at least {charged:?} of CPU in {watched:?}, allowed {allowed:?}"
         );
 
         self.terminal
@@ -676,7 +676,7 @@ impl Watched {
             }
         }
 
-        let spent = Spent::by(self.child.id()).since(&before);
+        let charged = Spent::by(self.child.id()).since(&before);
         let watched = started.elapsed();
         assert_eq!(
             written,
@@ -686,8 +686,8 @@ impl Watched {
         );
         let allowed = IDLE_CPU_PER_SECOND.mul_f64(watched.as_secs_f64());
         assert!(
-            spent <= allowed,
-            "the settled prompt spent at least {spent:?} of CPU in {watched:?}, allowed {allowed:?}"
+            charged <= allowed,
+            "the settled prompt spent at least {charged:?} of CPU in {watched:?}, allowed {allowed:?}"
         );
     }
 
