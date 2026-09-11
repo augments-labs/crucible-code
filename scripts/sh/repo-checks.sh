@@ -471,7 +471,7 @@ fi
 # allowed to open by name, so nothing above would notice its workspace arm
 # turning into a second one. Each of these reaches for the walk exactly once.
 by_walk='Opened::reached\('
-for reader in crates/crucible-tools/src/read.rs src/cli/converse/attaching.rs; do
+for reader in crates/crucible-builtins/src/read.rs src/cli/converse/attaching.rs; do
     here=$(doors "$by_walk" "$reader")
     if ((here != 1)); then
         printf '    FAIL %s opens a workspace path through the walk %d times; it is opened once\n' "$reader" "$here"
@@ -560,7 +560,7 @@ code privacy
 code provider
 code runner
 code session
-code tools
+code builtins
 code sandbox-broker
 code sandbox-local
 code tui
@@ -596,9 +596,9 @@ sandbox-local storage
 sandbox-local types
 sandbox-local workspace
 storage types
-tools attachments
-tools core
-tools sandbox-local'
+builtins attachments
+builtins core
+builtins sandbox-local'
 while IFS= read -r edge; do
     [[ -z "$edge" ]] && continue
     if ! grep -Fxq "$edge" <<<"$allowed"; then
@@ -616,7 +616,7 @@ for crate in privacy registry runtime sandbox-broker tui types workspace; do
     fi
 done
 
-# `tools sandbox-local` above is a test-support edge, and a test-support edge
+# `builtins sandbox-local` above is a test-support edge, and a test-support edge
 # never justifies a shipped one. A tool names the sandbox service contract;
 # naming one machine's answer to it in a table that ships is how that
 # distinction would quietly disappear. Every such table counts, not only
@@ -628,15 +628,15 @@ if ! python3 scripts/python/shipped-edge.py --self-test; then
     printf '    FAIL the shipped-edge check failed its self-test\n'
     failed=1
 fi
-python3 scripts/python/shipped-edge.py crates/crucible-tools/Cargo.toml crucible-sandbox-local
+python3 scripts/python/shipped-edge.py crates/crucible-builtins/Cargo.toml crucible-sandbox-local
 case $? in
     0)
-        printf '    FAIL crucible-tools must reach crucible-sandbox-local only as a dev-dependency\n'
+        printf '    FAIL crucible-builtins must reach crucible-sandbox-local only as a dev-dependency\n'
         failed=1
         ;;
     3) ;;
     *)
-        printf '    FAIL the shipped-edge check gave no answer for crates/crucible-tools/Cargo.toml\n'
+        printf '    FAIL the shipped-edge check gave no answer for crates/crucible-builtins/Cargo.toml\n'
         failed=1
         ;;
 esac

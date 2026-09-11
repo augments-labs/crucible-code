@@ -4,13 +4,13 @@
 //! the process's own — so what is tested is the function of a key, which is where
 //! the decision actually lives.
 
+use crucible_builtins::{Background, Bash};
 use crucible_core::{
     Ancestry, Ask, CallResultKey, CallResultReceipt, CallResultStoreError, Cancel, DescribeTool,
     InvocationId, JournalStore, Mode, Permission, Remember, Rules, RunItem, Sensitivity, Settled,
     Tool, ToolArgs, ToolCall, ToolContext, ToolId, ToolResult, Unwatched, Verdict,
 };
 use crucible_sandbox_local::LocalSandbox;
-use crucible_tools::{Background, Bash};
 use sha2::{Digest, Sha256};
 
 use crate::cli::sample::Sample;

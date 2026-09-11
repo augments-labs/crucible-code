@@ -171,7 +171,7 @@ impl Words {
             Sensitivity::SpawnsProcess { command } => (
                 format!("{name} command"),
                 flattened(command.sent()),
-                if crucible_tools::backgrounded(&call.args) {
+                if crucible_builtins::backgrounded(&call.args) {
                     "This command needs your verdict. It will be left running \
                      after the turn that starts it has ended."
                 } else {

@@ -37,6 +37,7 @@ image = { version = "=0.25.10", default-features = false, features = ["png"] }
 # no version to pin and no third party whose publish could move them.
 crucible-attachments = { path = "crates/crucible-attachments" }
 crucible-auth = { path = "crates/crucible-auth" }
+crucible-builtins = { path = "crates/crucible-builtins" }
 crucible-config = { path = "crates/crucible-config" }
 crucible-core = { path = "crates/crucible-core" }
 crucible-credentials = { path = "crates/crucible-credentials" }
@@ -57,7 +58,6 @@ crucible-sandbox-broker = { path = "crates/crucible-sandbox-broker" }
 crucible-sandbox-local = { path = "crates/crucible-sandbox-local" }
 crucible-session = { path = "crates/crucible-session" }
 crucible-storage = { path = "crates/crucible-storage" }
-crucible-tools = { path = "crates/crucible-tools" }
 crucible-tui = { path = "crates/crucible-tui" }
 crucible-types = { path = "crates/crucible-types" }
 crucible-workspace = { path = "crates/crucible-workspace" }
@@ -391,6 +391,7 @@ arboard.workspace = true
 clap.workspace = true
 crucible-attachments.workspace = true
 crucible-auth.workspace = true
+crucible-builtins.workspace = true
 crucible-config.workspace = true
 crucible-core.workspace = true
 # The restart budget an ended program is started again under, and the question
@@ -416,7 +417,6 @@ crucible-sandbox-broker.workspace = true
 # confinement to every tool that runs a command, so no tool has to name an
 # operating system.
 crucible-sandbox-local.workspace = true
-crucible-tools.workspace = true
 crucible-tui.workspace = true
 image.workspace = true
 # The hash an attachment is recorded under, taken here because this is where a

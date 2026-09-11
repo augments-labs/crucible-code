@@ -227,7 +227,7 @@ pub(super) fn asked<T: Terminal>(
         // the only thing that shows it: the row a call gets in the transcript
         // is drawn from what the tool made of the arguments, and this is the
         // model's own sentence about them.
-        let account = crucible_tools::account(&call.args);
+        let account = crucible_builtins::account(&call.args);
 
         // Nothing is drawn under it. The panel stood over the transcript and
         // the rows it covered are back, so a call that was allowed reads exactly

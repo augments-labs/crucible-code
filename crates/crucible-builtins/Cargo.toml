@@ -1,5 +1,5 @@
 [package]
-name = "crucible-tools"
+name = "crucible-builtins"
 description = "Filesystem, search and process tools the agent can call."
 publish.workspace = true
 version.workspace = true

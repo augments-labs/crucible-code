@@ -12,11 +12,11 @@ use std::io::Cursor;
 use std::sync::atomic::Ordering;
 
 use crucible_auth::StoredCredentials;
+use crucible_builtins::Ledger;
 use crucible_core::{
     Delta, Message, Mode, Permission, Revealed, Rules, StopReason, ToolId, Workspace,
 };
 use crucible_runner::{Session, Tools};
-use crucible_tools::Ledger;
 use crucible_tui::{Prompt, Recording, Renderer};
 
 use crate::cli::converse::{Answers, Held, Terms, command, converse};
@@ -93,10 +93,13 @@ fn untouched(sample: &Sample, ledger: &Ledger) -> Tools {
     let workspace: Workspace = sample.workspace();
     let mut offered = Tools::new();
     offered
-        .add_builtin(crucible_tools::Read::new(workspace.clone(), ledger.clone()))
+        .add_builtin(crucible_builtins::Read::new(
+            workspace.clone(),
+            ledger.clone(),
+        ))
         .unwrap();
     offered
-        .add_builtin(crucible_tools::Write::new(workspace, ledger.clone()))
+        .add_builtin(crucible_builtins::Write::new(workspace, ledger.clone()))
         .unwrap();
     offered
 }

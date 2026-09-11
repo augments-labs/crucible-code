@@ -60,7 +60,7 @@ fn installed(
 ) -> (PathBuf, impl Fn(&str) -> Option<OsString> + use<>) {
     let directory = sample.root().join("bin");
     fs::create_dir_all(&directory).expect("a temporary directory");
-    let at = directory.join(crucible_tools::program::spelled(command));
+    let at = directory.join(crucible_builtins::program::spelled(command));
     fs::write(&at, "").expect("a temporary directory");
 
     let mut held: HashMap<String, OsString> = also

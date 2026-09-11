@@ -20,9 +20,9 @@ use crucible_tui::{Glyphs, Row};
 #[derive(Debug)]
 pub(super) struct Planning {
     /// The other end of what the tool writes into.
-    plan: crucible_tools::Plan,
+    plan: crucible_builtins::Plan,
     /// The tasks as they stood when it last moved.
-    tasks: Vec<crucible_tools::Task>,
+    tasks: Vec<crucible_builtins::Task>,
     /// How many times the plan had been written when those tasks were taken.
     read: u64,
     /// Whether the reader has asked for the whole of it. Owned here rather than
@@ -37,7 +37,7 @@ impl Planning {
     /// Not empty on a resumed session: the wiring replays the last plan the
     /// transcript holds before this is made, so what the panel opens with is
     /// what the agent was working to when the session stopped.
-    pub(super) fn new(plan: crucible_tools::Plan) -> Self {
+    pub(super) fn new(plan: crucible_builtins::Plan) -> Self {
         let read = plan.writes();
         let tasks = plan.tasks();
 
@@ -109,11 +109,11 @@ impl Planning {
 /// Two enums rather than one because neither crate can name the other's: the
 /// panel depends on nothing at all, and the tool depends on `core`. Pairing them
 /// is the wiring's job, and this is the whole of it.
-fn shown(state: crucible_tools::State) -> crucible_tui::State {
+fn shown(state: crucible_builtins::State) -> crucible_tui::State {
     match state {
-        crucible_tools::State::Open => crucible_tui::State::Open,
-        crucible_tools::State::Doing => crucible_tui::State::Doing,
-        crucible_tools::State::Done => crucible_tui::State::Done,
+        crucible_builtins::State::Open => crucible_tui::State::Open,
+        crucible_builtins::State::Doing => crucible_tui::State::Doing,
+        crucible_builtins::State::Done => crucible_tui::State::Done,
     }
 }
 

@@ -20,6 +20,7 @@ Repository skills live in [`.agents/skills/`](.agents/skills/).
 | `crates/crucible-sandbox-local/` | The confinement this machine can enforce, and the processes it runs |
 | `crates/crucible-core/` | Domain types and extension traits |
 | `crates/crucible-auth/` | Credentials and account authorization |
+| `crates/crucible-builtins/` | Built-in tools |
 | `crates/crucible-config/` | Configuration and settings |
 | `crates/crucible-extension/` | External program integration |
 | `crates/crucible-mcp/` | Model Context Protocol client |
@@ -28,7 +29,6 @@ Repository skills live in [`.agents/skills/`](.agents/skills/).
 | `crates/crucible-runner/` | Agent turn execution |
 | `crates/crucible-sandbox-broker/` | Isolated child execution and status |
 | `crates/crucible-session/` | Session storage and replay |
-| `crates/crucible-tools/` | Built-in tools |
 | `crates/crucible-tui/` | Terminal rendering and interaction |
 | `schema/` | Generated configuration schema |
 | `scripts/` | Checks, benchmarks and release helpers, under `sh/` and `python/` |
