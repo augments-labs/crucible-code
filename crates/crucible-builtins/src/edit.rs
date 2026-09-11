@@ -14,10 +14,13 @@
 
 use std::io::{self, Read as _};
 
-use crucible_core::{
-    Approved, Cancel, DescribeTool, Remembered, Sensitivity, Summary, Tool, ToolArgs, ToolContext,
-    ToolError, ToolOutput, Workspace,
+use crucible_runtime::Cancel;
+use crucible_tools::{
+    Approved, DescribeTool, Remembered, Sensitivity, Summary, Tool, ToolContext, ToolError,
+    ToolOutput,
 };
+use crucible_types::ToolArgs;
+use crucible_workspace::Workspace;
 
 use std::sync::LazyLock;
 

@@ -17,11 +17,15 @@ use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::{
-    Ancestry, Approved, Cancel, RunId, SandboxAudit, SandboxAuditError, SandboxAuditRegistry,
-    Sensitivity, TOOL_RESULT_MIN_BYTES, Tool, ToolArgs, ToolCall, ToolEffect, ToolError, ToolId,
-    ToolOutput, ToolOutputRetention, ToolSchema,
+use crucible_runtime::Cancel;
+use crucible_sandbox::{SandboxAudit, SandboxAuditError, SandboxAuditRegistry};
+use crucible_storage::ToolEffect;
+use crucible_types::{
+    Ancestry, RunId, TOOL_RESULT_MIN_BYTES, ToolArgs, ToolCall, ToolId, ToolOutputRetention,
+    ToolSchema,
 };
+
+use crate::{Approved, Sensitivity, Tool, ToolError, ToolOutput};
 
 pub use crucible_types::{TOOL_ARGUMENT_BYTES, TOOL_CALL_ID_BYTES, TOOL_NAME_BYTES, ToolOutcome};
 
@@ -197,8 +201,8 @@ pub type ToolSourceReceipt = crucible_registry::SourceReceipt;
 /// A tool registration's bounded source identity and diagnostic spelling.
 ///
 /// Tools were the first registry; every later contribution kind shares this
-/// record, so it is the registry's [`Provenance`](crate::Provenance) and keeps
-/// its tool name here.
+/// record, so it is the registry's
+/// [`Provenance`](crucible_registry::Provenance) and keeps its tool name here.
 pub type ToolProvenance = crucible_registry::Provenance;
 
 /// A bounded key whose calls may not overlap.

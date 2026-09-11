@@ -2,8 +2,8 @@
 //! writes down its plan.
 //!
 //! It is a sibling of `crucible-provider`: neither may reach the other. Each
-//! tool implements `Tool` from core, so the runner dispatches to them without
-//! naming any of them.
+//! tool implements `Tool` from `crucible-tools`, so the runner dispatches to
+//! them without naming any of them.
 //!
 //! Every tool takes an `Approved` as an argument rather than asking for one —
 //! the grant the permission engine minted, bound to the call it was reached

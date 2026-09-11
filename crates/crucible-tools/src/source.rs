@@ -11,9 +11,9 @@
 //! answers every call with *not served*.
 //!
 //! Neither trait names a transport, a credential or a vendor. That is what lets
-//! the tools live in `crucible-tools`, which has no HTTP and must not gain any:
-//! the concrete source is built where every other concrete type is, in the
-//! binary's own wiring.
+//! the tools live in `crucible-builtins`, which has no HTTP: the concrete
+//! source is built where every other concrete type is, in the binary's own
+//! wiring.
 //!
 //! **What a source hands back is not trusted.** It is a page somebody else
 //! wrote, arriving in the same transcript as the user's words and the model's,
@@ -22,8 +22,9 @@
 
 use std::fmt;
 
-use crate::Cancel;
-use crate::permission::Host;
+use crucible_runtime::Cancel;
+
+use crate::permissions::Host;
 
 /// Why a source could not answer.
 ///

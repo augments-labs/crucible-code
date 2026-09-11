@@ -16,7 +16,9 @@
 //! later; what this buys is that it is never *allowed* by a rule somebody wrote
 //! about somewhere else.
 
-use crucible_core::{Approved, PathError, Sensitivity, Target, ToolArgs, Workspace, WorkspacePath};
+use crucible_tools::{Approved, Sensitivity, Target};
+use crucible_types::ToolArgs;
+use crucible_workspace::{PathError, Workspace, WorkspacePath};
 
 use crate::args::Args;
 
@@ -157,7 +159,10 @@ fn requested(tool: &'static str, args: &ToolArgs, field: &str) -> Option<String>
 }
 
 /// A resolution that either landed somewhere nameable or did not.
-fn found<E>(workspace: &Workspace, resolved: Result<crucible_core::WorkspacePath, E>) -> Target {
+fn found<E>(
+    workspace: &Workspace,
+    resolved: Result<crucible_workspace::WorkspacePath, E>,
+) -> Target {
     match resolved {
         Ok(path) => Target::resolved(workspace, &path),
         Err(_) => Target::unresolved(),

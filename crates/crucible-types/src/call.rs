@@ -1,4 +1,4 @@
-//! The call a model makes and the arguments it wrote.
+//! The tools a model is offered, the call it makes and the arguments it wrote.
 //!
 //! A call is data on its way between a provider and the tool that answers it.
 //! Neither end owns it, so it lives here rather than beside either, and it
@@ -67,6 +67,15 @@ impl fmt::Debug for ToolArgs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("ToolArgs([redacted])")
     }
+}
+
+/// A tool as advertised to a provider.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ToolSchema<'a> {
+    /// The name the model calls.
+    pub name: &'a str,
+    /// The JSON Schema for the arguments.
+    pub schema: &'a str,
 }
 
 #[cfg(test)]

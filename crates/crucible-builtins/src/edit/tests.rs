@@ -4,7 +4,7 @@ use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
 
-use crucible_core::Change;
+use crucible_types::Change;
 
 use super::{Cancel, Edit, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput};
 use crate::sample::{Sample, allowed};
@@ -344,7 +344,7 @@ fn a_stopped_turn_does_not_scan_or_change_the_file() {
 
     assert!(matches!(
         problem,
-        crucible_core::ToolError::Cancelled(ref tool) if &**tool == "edit"
+        crucible_tools::ToolError::Cancelled(ref tool) if &**tool == "edit"
     ));
     assert_eq!(
         fs::metadata(sample.root().join("one.txt")).unwrap().len(),

@@ -4,18 +4,22 @@ use std::ffi::OsString;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crucible_core::{
-    Ask, Cancel, Command, DescribeTool, Looking, Mode, Permission, Remember, Rules,
+use crucible_runtime::Cancel;
+use crucible_sandbox::{
     SandboxBackendIdentity, SandboxCapabilities, SandboxError, SandboxRequest,
-    SandboxResourceLimits, SandboxService, SandboxSession, ToolCall, ToolId, Verdict,
+    SandboxResourceLimits, SandboxService, SandboxSession,
 };
+use crucible_tools::{
+    Ask, Command, DescribeTool, Looking, Mode, Permission, Remember, Rules, Verdict,
+};
+use crucible_types::{ToolCall, ToolId};
 
 use super::background::{Background, MOST};
 use super::{Bash, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, environment};
 use crate::sample::{Sample, allowed, skipped_without_enforcement};
 
 /// This machine's confinement, as the service contract a tool is given.
-fn local() -> std::sync::Arc<dyn crucible_core::SandboxService> {
+fn local() -> std::sync::Arc<dyn crucible_sandbox::SandboxService> {
     std::sync::Arc::new(crucible_sandbox_local::LocalSandbox::new())
 }
 
@@ -66,8 +70,8 @@ impl SandboxService for RecordingSandbox {
 #[derive(Default)]
 struct Watched(std::sync::Mutex<String>);
 
-impl crucible_core::Watch for Watched {
-    fn wrote(&self, text: crucible_core::Wrote) {
+impl crucible_tools::Watch for Watched {
+    fn wrote(&self, text: crucible_tools::Wrote) {
         if let Ok(mut held) = self.0.lock() {
             held.push_str(text.as_str());
         }
@@ -1079,7 +1083,7 @@ fn configured_command_ceilings_survive_foreground_and_background_requests() {
 
 #[test]
 fn interactive_enablement_is_sampled_for_new_commands_without_losing_kernel_ceilings() {
-    struct Capture(std::sync::Mutex<Vec<crucible_core::SandboxPolicy>>);
+    struct Capture(std::sync::Mutex<Vec<crucible_sandbox::SandboxPolicy>>);
     impl SandboxService for Capture {
         fn probe(&self) -> Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError> {
             Err(SandboxError::BackendUnavailable {
@@ -1097,9 +1101,9 @@ fn interactive_enablement_is_sampled_for_new_commands_without_losing_kernel_ceil
         }
     }
     let sample = Sample::new("interactive-policy-samples");
-    let template = crucible_core::SandboxPolicy::standard(&sample.workspace()).unwrap();
+    let template = crucible_sandbox::SandboxPolicy::standard(&sample.workspace()).unwrap();
     let ceilings = template.limits();
-    let control = std::sync::Arc::new(crucible_core::SandboxEnablement::new(false, false));
+    let control = std::sync::Arc::new(crucible_sandbox::SandboxEnablement::new(false, false));
     let capture = std::sync::Arc::new(Capture(std::sync::Mutex::new(Vec::new())));
     let tool = Bash::new(sample.workspace(), capture.clone())
         .under_policy(template.clone())

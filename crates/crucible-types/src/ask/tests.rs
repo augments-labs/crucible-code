@@ -109,39 +109,3 @@ fn a_question_moved_on_from_with_nothing_chosen_is_answered_rather_than_unanswer
     assert_eq!(answered.chosen().len(), 0);
     assert_eq!(answered.note(), "");
 }
-
-#[test]
-fn what_answers_a_question_is_reached_as_a_trait_and_may_answer_nobody() {
-    struct Nobody;
-    impl Put for Nobody {
-        fn put(&self, _questions: &[Question]) -> Option<Vec<Answered>> {
-            None
-        }
-    }
-
-    struct Always(&'static str);
-    impl Put for Always {
-        fn put(&self, questions: &[Question]) -> Option<Vec<Answered>> {
-            Some(questions.iter().map(|_| Answered::new([self.0])).collect())
-        }
-    }
-
-    let asked = [
-        Question::new("One", "Which?", [Answer::new("Rust")]),
-        Question::new("Two", "And?", [Answer::new("Python")]),
-    ];
-
-    let nobody: &dyn Put = &Nobody;
-    assert!(nobody.put(&asked).is_none());
-
-    let always: &dyn Put = &Always("Rust");
-    let given = always.put(&asked).expect("an answer to every question");
-    assert_eq!(given.len(), 2);
-    assert_eq!(
-        given
-            .iter()
-            .map(|one| one.chosen().collect::<Vec<_>>())
-            .collect::<Vec<_>>(),
-        [["Rust"], ["Rust"]]
-    );
-}

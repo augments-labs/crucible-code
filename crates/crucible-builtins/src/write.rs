@@ -9,10 +9,12 @@
 use std::fs;
 use std::io::Read as _;
 
-use crucible_core::{
-    Approved, DescribeTool, PathError, Remembered, Sensitivity, Summary, Tool, ToolArgs,
-    ToolContext, ToolError, ToolOutput, Workspace,
+use crucible_tools::{
+    Approved, DescribeTool, Remembered, Sensitivity, Summary, Tool, ToolContext, ToolError,
+    ToolOutput,
 };
+use crucible_types::ToolArgs;
+use crucible_workspace::{PathError, Workspace};
 
 use std::sync::LazyLock;
 

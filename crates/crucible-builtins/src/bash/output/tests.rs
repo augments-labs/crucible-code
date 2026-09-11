@@ -185,11 +185,12 @@ fn admitted(
     sample: &crate::sample::Sample,
     command: &str,
     environment: &[(&str, &std::ffi::OsStr)],
-) -> Box<dyn crucible_core::SandboxProcess> {
-    use crucible_core::{
-        Ancestry, SandboxCommand, SandboxEnvironment, SandboxId, SandboxManifest, SandboxPolicy,
-        SandboxRequest, SandboxService, ToolId,
+) -> Box<dyn crucible_sandbox::SandboxProcess> {
+    use crucible_sandbox::{
+        SandboxCommand, SandboxEnvironment, SandboxManifest, SandboxPolicy, SandboxRequest,
+        SandboxService,
     };
+    use crucible_types::{Ancestry, SandboxId, ToolId};
 
     let policy = SandboxPolicy::standard(&sample.workspace())
         .expect("a standard policy for the fixture workspace")

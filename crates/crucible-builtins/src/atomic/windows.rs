@@ -14,7 +14,7 @@ use std::os::windows::io::AsRawHandle as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crucible_core::{PathError, WorkspacePath};
+use crucible_workspace::{PathError, WorkspacePath};
 use windows_sys::Wdk::Storage::FileSystem::{
     FILE_RENAME_INFORMATION, FILE_RENAME_INFORMATION_0, FILE_RENAME_POSIX_SEMANTICS,
     FILE_RENAME_REPLACE_IF_EXISTS, FileRenameInformation, FileRenameInformationEx,

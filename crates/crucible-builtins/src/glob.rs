@@ -4,10 +4,12 @@ use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::time::SystemTime;
 
-use crucible_core::{
-    Approved, DescribeTool, Looking, Sensitivity, Summary, Tool, ToolArgs, ToolContext, ToolEffect,
-    ToolError, ToolOutput, Workspace,
+use crucible_tools::{
+    Approved, DescribeTool, Looking, Sensitivity, Summary, Tool, ToolContext, ToolEffect,
+    ToolError, ToolOutput,
 };
+use crucible_types::ToolArgs;
+use crucible_workspace::Workspace;
 use globset::GlobBuilder;
 
 use std::sync::LazyLock;
@@ -411,7 +413,8 @@ fn halted(stopped: bool, sort: Sort) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crucible_core::{Cancel, Disposition, Looking};
+    use crucible_runtime::Cancel;
+    use crucible_tools::{Disposition, Looking};
 
     use crate::sample::{Sample, allowed, under};
 

@@ -12,8 +12,8 @@ use super::{Sensitivity, Target, Verdict};
 /// Proof that a verdict was reached and it was to allow.
 ///
 /// The field is private to this module — not to the crate. Widening it to
-/// `pub(crate)` would let any core module mint one, which ends the guarantee
-/// that a verdict was reached at all.
+/// `pub(crate)` would let any module in the crate mint one, which ends the
+/// guarantee that a verdict was reached at all.
 #[derive(Debug)]
 pub struct Grant(());
 
@@ -141,7 +141,7 @@ impl Approved {
 
 #[cfg(test)]
 mod tests {
-    use crate::permission::Rules;
+    use crate::permissions::Rules;
     use crucible_types::ToolArgs;
     use crucible_types::ToolId;
 

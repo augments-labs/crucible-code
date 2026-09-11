@@ -40,7 +40,7 @@ pub enum Remember {
 /// How a call is put to whoever is answering.
 ///
 /// Implemented above this crate, because asking is a matter of whatever is on
-/// screen and core knows nothing about that.
+/// screen and this crate knows nothing about that.
 pub trait Ask {
     /// Puts one call to the user and waits for the answer.
     ///

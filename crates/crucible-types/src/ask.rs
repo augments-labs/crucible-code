@@ -2,18 +2,14 @@
 //!
 //! A tool that needs a decision only a person can make sends the questions and
 //! blocks until they come back. The thread that would answer is the one drawing
-//! the screen, so the questions cross a thread boundary — which is why the two
-//! values and the trait carrying them live here rather than in the crate that
-//! asks or the one that draws. Neither of those may depend on the other.
-//!
-//! [`Put`] is a trait for the reason [`crate::Post`] and [`crate::Watch`] are:
-//! a second way of answering — a different front end, a test — must need no
-//! edit to this crate.
+//! the screen, so the questions cross a thread boundary — which is why these
+//! values live here rather than in the crate that asks or the one that draws.
+//! Neither of those may depend on the other. What carries them across is `Put`,
+//! in `crucible-tools`.
 //!
 //! Every string here is somebody's own words: the questions are the model's and
 //! the answers are the reader's. So all three values write `Debug` by hand and
-//! redact, the same as [`crate::Account`], which carries the model's prose about
-//! a command for the same reason.
+//! redact.
 
 use std::fmt;
 
@@ -191,26 +187,6 @@ impl fmt::Debug for Answered {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("Answered([redacted])")
     }
-}
-
-/// Where a tool puts its questions to whoever can answer them.
-///
-/// A trait for the reason [`crate::Post`] and [`crate::Watch`] are: the thing
-/// that answers is a front end, and a second one must need no edit here.
-///
-/// It is the neighbour of [`crate::Ask`] and answers a different question.
-/// That one asks whether a call may run and is owed a verdict, so its silence
-/// has to be a refusal — running a tool nobody agreed to is worse than
-/// stopping. This one asks a person to decide something, and nothing runs
-/// either way, so its silence is nobody answering.
-pub trait Put: Send + Sync {
-    /// Puts `questions` and blocks until they are answered.
-    ///
-    /// One [`Answered`] per question, in the order they were asked. `None` is
-    /// nobody answered — the ask was left, or there was never anybody there —
-    /// and it is not a failure: the tool turns it into a result the turn
-    /// survives.
-    fn put(&self, questions: &[Question]) -> Option<Vec<Answered>>;
 }
 
 #[cfg(test)]

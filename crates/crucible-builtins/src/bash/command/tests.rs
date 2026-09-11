@@ -1,7 +1,7 @@
 //! Which command lines a rule may be written about, and which ones nothing
 //! but a blanket covers.
 
-use crucible_core::Command;
+use crucible_tools::Command;
 
 use super::read;
 

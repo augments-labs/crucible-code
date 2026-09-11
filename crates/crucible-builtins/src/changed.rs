@@ -22,7 +22,7 @@
 //! tool already holds. A line is copied only as it is handed to [`Diff`], which
 //! frees the ones past its bound, so a whole-file rewrite costs a line at a time.
 
-use crucible_core::{Change, Diff, Line};
+use crucible_types::{Change, Diff, Line};
 
 /// How many unchanged lines are kept on each side of what moved.
 ///

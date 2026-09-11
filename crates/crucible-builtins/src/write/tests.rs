@@ -4,7 +4,7 @@ use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
 
-use crucible_core::Change;
+use crucible_types::Change;
 
 use super::{Ledger, Sensitivity, Tool, ToolArgs, ToolOutput, Write};
 use crate::sample::{Sample, allowed, symlink};

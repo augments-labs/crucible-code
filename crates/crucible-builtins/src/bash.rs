@@ -3,8 +3,8 @@
 //! The command runs in the workspace root through `sh -c`, so the model gets
 //! pipes and redirection without this file growing a shell of its own. The
 //! permission engine still decides whether Crucible may invoke it; an injected
-//! [`crucible_core::SandboxService`] separately owns the operating-system view,
-//! spawn, descendants, limits, and cleanup.
+//! [`crucible_sandbox::SandboxService`] separately owns the operating-system
+//! view, spawn, descendants, limits, and cleanup.
 //!
 //! What a command is *started with* is confined. crucible's own environment
 //! holds the provider credential, so a child is given a chosen set of variables
@@ -38,11 +38,15 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub use background::{Background, Ended, MOST, Standing};
-use crucible_core::{
-    Approved, DescribeTool, Looking, SandboxCommand, SandboxEnablement, SandboxEnvironment,
-    SandboxManifest, SandboxPolicy, SandboxRequest, SandboxResourceLimits, SandboxService,
-    Sensitivity, Summary, Tool, ToolArgs, ToolContext, ToolError, ToolOutput, Workspace,
+use crucible_sandbox::{
+    SandboxCommand, SandboxEnablement, SandboxEnvironment, SandboxManifest, SandboxPolicy,
+    SandboxRequest, SandboxResourceLimits, SandboxService,
 };
+use crucible_tools::{
+    Approved, DescribeTool, Looking, Sensitivity, Summary, Tool, ToolContext, ToolError, ToolOutput,
+};
+use crucible_types::ToolArgs;
+use crucible_workspace::Workspace;
 pub use reading::BashOutput;
 
 use std::sync::LazyLock;
@@ -524,7 +528,7 @@ impl Tool for Bash {
                 // to be given a sensitivity first — and the safe answer to "what is
                 // about to run" when nobody can read it is everything that was
                 // sent, reported as unreadable.
-                Err(_) => crucible_core::Command::Opaque(args.as_str().into()),
+                Err(_) => crucible_tools::Command::Opaque(args.as_str().into()),
             };
 
         Sensitivity::SpawnsProcess { command }
@@ -599,24 +603,24 @@ impl Tool for Bash {
             (false, _) => None,
         };
         let invocation = if background {
-            crucible_core::SandboxInvocationMode::Background
+            crucible_sandbox::SandboxInvocationMode::Background
         } else if ownership.is_some() {
-            crucible_core::SandboxInvocationMode::Detachable
+            crucible_sandbox::SandboxInvocationMode::Detachable
         } else {
-            crucible_core::SandboxInvocationMode::Foreground
+            crucible_sandbox::SandboxInvocationMode::Foreground
         };
         let leaving = match invocation {
-            crucible_core::SandboxInvocationMode::Background => {
+            crucible_sandbox::SandboxInvocationMode::Background => {
                 self.leaving.as_ref().map(|left| output::Leaving {
                     left,
                     after: Some(Duration::ZERO),
                 })
             }
-            crucible_core::SandboxInvocationMode::Detachable => self
+            crucible_sandbox::SandboxInvocationMode::Detachable => self
                 .leaving
                 .as_ref()
                 .map(|left| output::Leaving { left, after: None }),
-            crucible_core::SandboxInvocationMode::Foreground => None,
+            crucible_sandbox::SandboxInvocationMode::Foreground => None,
         };
 
         let shell = self.shell.as_ref().ok_or_else(|| {
@@ -679,7 +683,7 @@ impl Tool for Bash {
                 std::io::Error::other(error),
             )
         })?;
-        let sandbox = crucible_core::SandboxId::new();
+        let sandbox = crucible_types::SandboxId::new();
         let audit = context.sandbox_audit();
         let request = SandboxRequest::new(
             sandbox,
@@ -689,7 +693,7 @@ impl Tool for Bash {
             SandboxManifest::empty(),
         )
         .with_invocation_mode(invocation);
-        let request = if invocation == crucible_core::SandboxInvocationMode::Foreground {
+        let request = if invocation == crucible_sandbox::SandboxInvocationMode::Foreground {
             request
         } else {
             let key = context.call_result_key().ok_or_else(|| {
@@ -751,7 +755,7 @@ fn io(problem: &'static str, source: std::io::Error) -> ToolError {
 
 /// A sandbox failure, kept typed until the tool boundary and redacted by its
 /// module-owned display implementation.
-fn sandbox_io(problem: &'static str, source: crucible_core::SandboxError) -> ToolError {
+fn sandbox_io(problem: &'static str, source: crucible_sandbox::SandboxError) -> ToolError {
     let detail = source.to_string();
     ToolError::Io {
         tool: NAME.into(),

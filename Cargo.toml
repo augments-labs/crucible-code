@@ -58,6 +58,7 @@ crucible-sandbox-broker = { path = "crates/crucible-sandbox-broker" }
 crucible-sandbox-local = { path = "crates/crucible-sandbox-local" }
 crucible-session = { path = "crates/crucible-session" }
 crucible-storage = { path = "crates/crucible-storage" }
+crucible-tools = { path = "crates/crucible-tools" }
 crucible-tui = { path = "crates/crucible-tui" }
 crucible-types = { path = "crates/crucible-types" }
 crucible-workspace = { path = "crates/crucible-workspace" }

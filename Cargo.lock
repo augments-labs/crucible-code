@@ -361,8 +361,12 @@ name = "crucible-builtins"
 version = "0.40.1"
 dependencies = [
  "crucible-attachments",
- "crucible-core",
+ "crucible-runtime",
+ "crucible-sandbox",
  "crucible-sandbox-local",
+ "crucible-tools",
+ "crucible-types",
+ "crucible-workspace",
  "globset",
  "grep-regex",
  "grep-searcher",
@@ -419,9 +423,9 @@ dependencies = [
  "crucible-runtime",
  "crucible-sandbox",
  "crucible-storage",
+ "crucible-tools",
  "crucible-types",
  "crucible-workspace",
- "globset",
  "serde_json",
  "sha2",
  "thiserror",
@@ -561,6 +565,21 @@ dependencies = [
  "crucible-types",
  "serde_json",
  "sha2",
+ "thiserror",
+ "uuid",
+]
+
+[[package]]
+name = "crucible-tools"
+version = "0.40.1"
+dependencies = [
+ "crucible-registry",
+ "crucible-runtime",
+ "crucible-sandbox",
+ "crucible-storage",
+ "crucible-types",
+ "crucible-workspace",
+ "globset",
  "thiserror",
  "uuid",
 ]

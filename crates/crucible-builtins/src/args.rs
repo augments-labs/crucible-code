@@ -8,7 +8,8 @@
 //! Every problem is phrased for the model, because the model is what reads it
 //! and what can send a corrected call.
 
-use crucible_core::{ToolArgs, ToolError};
+use crucible_tools::ToolError;
+use crucible_types::ToolArgs;
 use serde_json::Value;
 
 /// One call's arguments, parsed.

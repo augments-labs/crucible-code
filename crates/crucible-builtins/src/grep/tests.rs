@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use crucible_core::{Disposition, Looking};
+use crucible_tools::{Disposition, Looking};
 
 use super::{
     CEILING, Cancel, Found, Grep, Hit, MAX_LINE, Mode, NAMED, Partial, REACH, RegexMatcherBuilder,

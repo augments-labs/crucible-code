@@ -12,7 +12,8 @@
 //! is allowed to shrug, because the alternative is a transcript row that
 //! reports an error the next row reports properly.
 
-use crucible_core::{Remembered, Summary, ToolArgs};
+use crucible_tools::{Remembered, Summary};
+use crucible_types::ToolArgs;
 
 use crate::args::Args;
 
@@ -58,7 +59,7 @@ pub(crate) fn remembered(
 
 #[cfg(test)]
 mod tests {
-    use crucible_core::Tool;
+    use crucible_tools::Tool;
 
     use super::*;
     use crate::sample::Sample;

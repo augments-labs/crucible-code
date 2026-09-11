@@ -13,10 +13,10 @@
 
 /// The most one tool may say, in encoded bytes.
 ///
-/// Core owns the figure because invocation enforces it and load accounting
-/// reserves against it. This private spelling keeps the existing tool-local
-/// call sites readable without declaring a second value.
-pub(crate) use crucible_core::TOOL_RESULT_BYTES as OUTPUT;
+/// `crucible-types` owns the figure because invocation enforces it and load
+/// accounting reserves against it. This private spelling keeps the existing
+/// tool-local call sites readable without declaring a second value.
+pub(crate) use crucible_types::TOOL_RESULT_BYTES as OUTPUT;
 
 /// As much of `lines` as fits inside [`OUTPUT`], and how many were left out.
 ///

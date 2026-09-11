@@ -32,10 +32,10 @@
 use std::fmt;
 use std::sync::{Arc, LazyLock, Mutex};
 
-use crucible_core::{
-    Approved, DescribeTool, Sensitivity, Summary, Target, Tool, ToolArgs, ToolContext, ToolError,
-    ToolOutput,
+use crucible_tools::{
+    Approved, DescribeTool, Sensitivity, Summary, Target, Tool, ToolContext, ToolError, ToolOutput,
 };
+use crucible_types::ToolArgs;
 
 use crate::args::Args;
 use crate::schema::{Field, Schema, Shape};

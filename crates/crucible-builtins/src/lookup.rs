@@ -26,10 +26,11 @@
 use std::fmt::Write as _;
 use std::sync::LazyLock;
 
-use crucible_core::{
-    Approved, DescribeTool, Revealed, Sensitivity, Summary, Target, Tool, ToolArgs, ToolContext,
-    ToolEffect, ToolError, ToolOutput,
+use crucible_tools::{
+    Approved, DescribeTool, Revealed, Sensitivity, Summary, Target, Tool, ToolContext, ToolEffect,
+    ToolError, ToolOutput,
 };
+use crucible_types::ToolArgs;
 
 use crate::args::Args;
 use crate::schema::{Field, Schema, Shape};

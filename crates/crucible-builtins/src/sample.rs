@@ -8,35 +8,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crucible_core::{
-    Ancestry, Approved, Ask, CallResultKey, CallResultReceipt, CallResultStoreError, Cancel,
-    DescribeTool, Disposition, InvocationId, JournalStore, Permission, Remember, Rules, RunItem,
-    Sensitivity, Settled, Tool, ToolArgs, ToolCall, ToolContext, ToolId, ToolOutput, ToolResult,
-    Unwatched, Verdict, Watch, Workspace,
+use crucible_runtime::Cancel;
+use crucible_tools::{
+    Approved, Ask, CallResultReceipt, DescribeTool, Disposition, InvocationId, Permission,
+    Remember, Rules, Sensitivity, Settled, Tool, ToolContext, ToolOutput, Unwatched, Verdict,
+    Watch,
 };
+use crucible_types::{Ancestry, ToolArgs, ToolCall, ToolId, ToolResult};
+use crucible_workspace::Workspace;
 use sha2::{Digest as _, Sha256};
-
-struct TestJournal;
-
-impl JournalStore for TestJournal {
-    fn append_run_item(&self, _item: &RunItem) {}
-
-    fn put_call_result(
-        &self,
-        key: CallResultKey,
-        result: &ToolResult,
-    ) -> Result<CallResultReceipt, CallResultStoreError> {
-        let mut digest = Sha256::new();
-        digest.update(b"crucible:test-call-result:v1\0");
-        digest.update(key.bytes());
-        digest.update(result.id.as_str().as_bytes());
-        digest.update(result.output.text().as_bytes());
-        digest.update([u8::from(result.output.is_failed())]);
-        Ok(CallResultReceipt::from_digest(digest.finalize().into()))
-    }
-}
-
-static TEST_JOURNAL: TestJournal = TestJournal;
 
 /// A fresh run context for a direct tool test that watches nothing.
 pub(crate) fn context() -> ToolContext<'static> {
@@ -52,9 +32,13 @@ pub(crate) fn finalize_call_result(context: &ToolContext<'_>, output: &ToolOutpu
         id: context.call().clone(),
         output: output.clone().into_recorded(),
     };
-    let receipt = TEST_JOURNAL
-        .put_call_result(pending.key(), &result)
-        .expect("test result receipt");
+    let mut digest = Sha256::new();
+    digest.update(b"crucible:test-call-result:v1\0");
+    digest.update(pending.key().bytes());
+    digest.update(result.id.as_str().as_bytes());
+    digest.update(result.output.text().as_bytes());
+    digest.update([u8::from(result.output.is_failed())]);
+    let receipt = CallResultReceipt::from_digest(digest.finalize().into());
     pending.accept(receipt).expect("test result acceptance");
 }
 
@@ -75,7 +59,7 @@ pub(crate) const REQUIRE_ENFORCING_SANDBOX: &str = "CRUCIBLE_TEST_REQUIRE_ENFORC
 /// has declared that the backend must exist, an unavailable backend is a failure
 /// naming the reason, so a suite that measured nothing cannot report green.
 pub(crate) fn skipped_without_enforcement(service: &crucible_sandbox_local::LocalSandbox) -> bool {
-    match crucible_core::SandboxService::probe(service) {
+    match crucible_sandbox::SandboxService::probe(service) {
         Ok(_) => false,
         Err(problem) => {
             assert!(
@@ -96,7 +80,7 @@ pub(crate) fn cancelled_by(cancel: &Cancel) -> ToolContext<'static> {
         None,
         &Unwatched,
     )
-    .with_call_result_store(InvocationId::new(), &TEST_JOURNAL)
+    .with_invocation(InvocationId::new())
 }
 
 /// A direct-test context that forwards incremental output to `watch`.
@@ -108,7 +92,7 @@ pub(crate) fn watching(watch: &dyn Watch) -> ToolContext<'_> {
         None,
         watch,
     )
-    .with_call_result_store(InvocationId::new(), &TEST_JOURNAL)
+    .with_invocation(InvocationId::new())
 }
 
 /// A workspace with a directory beside it that is deliberately outside.
@@ -175,7 +159,7 @@ impl Sample {
     pub(crate) fn beside(&self, name: &str) -> String {
         let path = self.base.join(name);
         fs::create_dir_all(&path).expect("a writable temporary directory");
-        crucible_core::written(&path)
+        crucible_workspace::written(&path)
     }
 
     /// Writes a text file, creating the directories above it.
@@ -197,7 +181,7 @@ impl Sample {
     pub(crate) fn outside(&self, name: &str, text: &str) -> String {
         let path = self.base.join("outside").join(name);
         fs::write(&path, text).expect("a writable temporary directory");
-        crucible_core::written(&path)
+        crucible_workspace::written(&path)
     }
 
     /// The workspace root, for the tests that need an absolute path into it.
@@ -213,7 +197,7 @@ impl Sample {
     /// not a path but a parse error a few characters in, so the tool refuses the
     /// arguments and never reaches the refusal the test is about.
     pub(crate) fn named(&self) -> String {
-        crucible_core::written(&self.root)
+        crucible_workspace::written(&self.root)
     }
 }
 
@@ -290,7 +274,7 @@ where
     };
 
     let sensitivity = tool.sensitivity(&call.args);
-    match Permission::with(crucible_core::Mode::default(), rules).decide(
+    match Permission::with(crucible_tools::Mode::default(), rules).decide(
         &call,
         &sensitivity,
         &mut Yes,

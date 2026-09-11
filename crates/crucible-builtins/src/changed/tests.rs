@@ -1,6 +1,6 @@
 //! What the two versions of a file say happened between them.
 
-use crucible_core::{Change, Diff};
+use crucible_types::{Change, Diff};
 
 use super::between;
 

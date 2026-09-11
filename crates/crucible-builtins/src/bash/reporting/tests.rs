@@ -67,7 +67,7 @@ fn directory_changes_and_print_only_sed_can_join_a_lookup_run() {
         assert!(
             matches!(
                 super::command::read(line),
-                crucible_core::Command::Opaque(_)
+                crucible_tools::Command::Opaque(_)
             ),
             "display classification must not widen permission rules: {line}"
         );

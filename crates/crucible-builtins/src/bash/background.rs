@@ -31,7 +31,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use super::output::Pipe;
-use crucible_core::{CallResultAcceptance, CallResultReceipt, SandboxError, SandboxProcess};
+use crucible_sandbox::{SandboxError, SandboxProcess};
+use crucible_tools::{CallResultAcceptance, CallResultReceipt};
 
 /// How many commands may be left running at once.
 ///
@@ -78,8 +79,8 @@ struct Left {
 /// beside a [`ToolCall`]: how a row spells a tool is the row's decision, and a
 /// name already capitalised here would be this crate deciding it.
 ///
-/// [`Summary`]: crucible_core::Summary
-/// [`ToolCall`]: crucible_core::ToolCall
+/// [`Summary`]: crucible_tools::Summary
+/// [`ToolCall`]: crucible_types::ToolCall
 ///
 /// A copy of the facts rather than a borrow of the command: the thread that draws
 /// asks between frames and must not hold a lock across one.
@@ -175,9 +176,9 @@ impl Drop for Held {
 pub struct Background {
     standing: Arc<Mutex<Held>>,
     /// Set by the thread that reads keys and read by the one waiting on a
-    /// command. A flag rather than a channel for the reason [`crucible_core`]'s
-    /// cancel is one: it is asked about between two twenty-millisecond ticks, and
-    /// nothing needs to be delivered.
+    /// command. A flag rather than a channel for the reason
+    /// [`crucible_runtime::Cancel`] is one: it is asked about between two
+    /// twenty-millisecond ticks, and nothing needs to be delivered.
     asked: Arc<AtomicBool>,
 }
 

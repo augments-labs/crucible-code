@@ -1,8 +1,8 @@
 //! What the two web tools answer with, over sources that answer from memory.
 
-use crucible_core::{
-    Cancel, Fetch, Host, Page, Search, SearchResponse, SearchResult, SourceError, Tool, ToolArgs,
-};
+use crucible_runtime::Cancel;
+use crucible_tools::{Fetch, Host, Page, Search, SearchResponse, SearchResult, SourceError, Tool};
+use crucible_types::ToolArgs;
 
 use super::*;
 use crate::sample;

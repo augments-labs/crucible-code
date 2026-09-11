@@ -106,9 +106,8 @@ impl Planning {
 
 /// The tool's word for a state, in the panel's own.
 ///
-/// Two enums rather than one because neither crate can name the other's: the
-/// panel depends on nothing at all, and the tool depends on `core`. Pairing them
-/// is the wiring's job, and this is the whole of it.
+/// Two enums rather than one because neither crate can name the other's.
+/// Pairing them is the wiring's job, and this is the whole of it.
 fn shown(state: crucible_builtins::State) -> crucible_tui::State {
     match state {
         crucible_builtins::State::Open => crucible_tui::State::Open,

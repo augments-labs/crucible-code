@@ -4,21 +4,26 @@
 //! dispatches over `dyn Tool` and never names `read`, `grep` or `bash`.
 //!
 //! Arguments arrive from the model as JSON text and stay text until the tool
-//! that owns them parses them. That keeps core free of every tool's argument
-//! shape, and it means an argument is validated exactly once, by the code that
-//! knows what it means.
+//! that owns them parses them. That keeps this crate free of every tool's
+//! argument shape, and it means an argument is validated exactly once, by the
+//! code that knows what it means.
 
 use std::fmt;
 use std::sync::Mutex;
 use std::time::Instant;
 
+use crucible_runtime::Cancel;
+use crucible_sandbox::{SandboxAudit, SandboxAuditError, SandboxAuditRecord, SandboxError};
+use crucible_storage::{
+    CallResultKey, CallResultReceipt, CallResultStoreError, IdempotencyKey, InvocationId,
+};
 use crucible_types::output::{CaptureElision, limit_encoded};
 use crucible_types::{
-    Attachment, Changed, Diff, RecordedToolOutput, RunId, ToolArgs, ToolId, ToolOutputRetention,
+    Ancestry, Attachment, Changed, Diff, RecordedToolOutput, RunId, ToolArgs, ToolId,
+    ToolOutputRetention,
 };
 
-use crate::permission::{Approved, Sensitivity};
-use crate::{Ancestry, Cancel, IdempotencyKey};
+use crate::permissions::{Approved, Sensitivity};
 
 /// Why a tool call did not produce a result.
 ///
@@ -283,11 +288,9 @@ impl fmt::Debug for Account {
 /// material: a command's own output, which is how a model reads a file and how
 /// it runs `env`. A key printed once is a key in every `{:?}` this value reaches.
 ///
-/// [`Delta`] is the neighbouring type and is deliberately not redacted, which is
+/// `Delta` is the neighbouring type and is deliberately not redacted, which is
 /// the distinction worth keeping: that is the model's prose, written to be put on
 /// screen, and this is whatever a program on this machine happened to print.
-///
-/// [`Delta`]: crate::Event::Delta
 #[derive(Clone, PartialEq, Eq)]
 pub struct Wrote(Box<str>);
 
@@ -313,8 +316,8 @@ impl fmt::Debug for Wrote {
 
 /// Where a tool reports what it has printed, while it is still running.
 ///
-/// A trait for the reason [`crate::Post`] is one, and narrower than it on
-/// purpose: [`crate::Event`] can say that a turn finished, and a tool has no
+/// A trait for the reason `Post` is one, and narrower than it on
+/// purpose: `Event` can say that a turn finished, and a tool has no
 /// business saying so. The one sentence a running tool can utter is *here is
 /// more of my output*, and this is that sentence.
 ///
@@ -325,7 +328,7 @@ impl fmt::Debug for Wrote {
 pub trait Watch: Send + Sync {
     /// Reports what has been produced since the last time this was called.
     ///
-    /// Cannot fail, for the reason [`crate::Post::post`] cannot: a tool that
+    /// Cannot fail, for the reason `Post::post` cannot: a tool that
     /// stopped to handle nobody listening would be stopping for the one
     /// condition that means nobody is waiting for it either.
     fn wrote(&self, text: Wrote);
@@ -355,22 +358,19 @@ pub trait CallResultAcceptance: Send {
     /// # Errors
     ///
     /// The executor could not durably close its acceptance transition.
-    fn accept(
-        self: Box<Self>,
-        receipt: crate::CallResultReceipt,
-    ) -> Result<(), crate::SandboxError>;
+    fn accept(self: Box<Self>, receipt: CallResultReceipt) -> Result<(), SandboxError>;
 }
 
 /// One source-qualified result waiting for runner-owned finalization.
 pub struct PendingCallResult {
-    key: crate::CallResultKey,
+    key: CallResultKey,
     acceptance: Box<dyn CallResultAcceptance>,
 }
 
 impl PendingCallResult {
     /// The fixed durable identity derived before the tool ran.
     #[must_use]
-    pub const fn key(&self) -> crate::CallResultKey {
+    pub const fn key(&self) -> CallResultKey {
         self.key
     }
 
@@ -379,7 +379,7 @@ impl PendingCallResult {
     /// # Errors
     ///
     /// The executor could not durably close its acceptance transition.
-    pub fn accept(self, receipt: crate::CallResultReceipt) -> Result<(), crate::SandboxError> {
+    pub fn accept(self, receipt: CallResultReceipt) -> Result<(), SandboxError> {
         self.acceptance.accept(receipt)
     }
 }
@@ -404,8 +404,8 @@ pub struct ToolContext<'a> {
     cancel: Cancel,
     deadline: Option<Instant>,
     watch: &'a dyn Watch,
-    sandbox: crate::SandboxAudit,
-    call_result: Option<(crate::CallResultKey, &'a dyn crate::JournalStore)>,
+    sandbox: SandboxAudit,
+    call_result: Option<CallResultKey>,
     pending_result: Mutex<Option<PendingCallResult>>,
 }
 
@@ -419,7 +419,7 @@ impl<'a> ToolContext<'a> {
         deadline: Option<Instant>,
         watch: &'a dyn Watch,
     ) -> Self {
-        let sandbox = crate::SandboxAudit::new(ancestry, call.clone());
+        let sandbox = SandboxAudit::new(ancestry, call.clone());
         Self {
             ancestry,
             call,
@@ -432,20 +432,10 @@ impl<'a> ToolContext<'a> {
         }
     }
 
-    /// Binds the call's source-qualified durable result identity and sink.
-    ///
-    /// The sink remains unreachable as a general journal: the tool can only
-    /// ask this context to store a result for its own fixed call identity.
+    /// Binds the source-qualified identity this call's durable result is kept under.
     #[must_use]
-    pub fn with_call_result_store(
-        mut self,
-        invocation: crate::InvocationId,
-        store: &'a dyn crate::JournalStore,
-    ) -> Self {
-        self.call_result = Some((
-            crate::CallResultKey::derive(self.ancestry, invocation, &self.call),
-            store,
-        ));
+    pub fn with_invocation(mut self, invocation: InvocationId) -> Self {
+        self.call_result = Some(CallResultKey::derive(self.ancestry, invocation, &self.call));
         self
     }
 
@@ -455,12 +445,9 @@ impl<'a> ToolContext<'a> {
     /// # Errors
     ///
     /// The collector was created for another ancestry or call.
-    pub fn with_sandbox_audit(
-        mut self,
-        sandbox: crate::SandboxAudit,
-    ) -> Result<Self, crate::SandboxAuditError> {
+    pub fn with_sandbox_audit(mut self, sandbox: SandboxAudit) -> Result<Self, SandboxAuditError> {
         if !sandbox.belongs_to(self.ancestry, &self.call) {
-            return Err(crate::SandboxAuditError::AttributionMismatch);
+            return Err(SandboxAuditError::AttributionMismatch);
         }
         self.sandbox = sandbox;
         Ok(self)
@@ -486,8 +473,8 @@ impl<'a> ToolContext<'a> {
 
     /// Source-qualified key fixed before this call began.
     #[must_use]
-    pub fn call_result_key(&self) -> Option<crate::CallResultKey> {
-        self.call_result.map(|(key, _)| key)
+    pub fn call_result_key(&self) -> Option<CallResultKey> {
+        self.call_result
     }
 
     /// Transfers one background executor into runner-owned result finalization.
@@ -499,16 +486,14 @@ impl<'a> ToolContext<'a> {
     pub fn defer_call_result(
         &self,
         acceptance: Box<dyn CallResultAcceptance>,
-    ) -> Result<(), crate::CallResultStoreError> {
-        let (key, _) = self
-            .call_result
-            .ok_or(crate::CallResultStoreError::Unavailable)?;
+    ) -> Result<(), CallResultStoreError> {
+        let key = self.call_result.ok_or(CallResultStoreError::Unavailable)?;
         let mut pending = self
             .pending_result
             .lock()
-            .map_err(|_| crate::CallResultStoreError::Storage)?;
+            .map_err(|_| CallResultStoreError::Storage)?;
         if pending.is_some() {
-            return Err(crate::CallResultStoreError::Conflict);
+            return Err(CallResultStoreError::Conflict);
         }
         *pending = Some(PendingCallResult { key, acceptance });
         Ok(())
@@ -519,13 +504,11 @@ impl<'a> ToolContext<'a> {
     /// # Errors
     ///
     /// The bounded ownership slot became unavailable.
-    pub fn take_call_result(
-        &self,
-    ) -> Result<Option<PendingCallResult>, crate::CallResultStoreError> {
+    pub fn take_call_result(&self) -> Result<Option<PendingCallResult>, CallResultStoreError> {
         self.pending_result
             .lock()
             .map(|mut pending| pending.take())
-            .map_err(|_| crate::CallResultStoreError::Storage)
+            .map_err(|_| CallResultStoreError::Storage)
     }
 
     /// Cancellation local to this call and inherited from its run.
@@ -554,7 +537,7 @@ impl<'a> ToolContext<'a> {
 
     /// Fixed-attribution collector for host-owned sandbox services.
     #[must_use]
-    pub fn sandbox_audit(&self) -> crate::SandboxAudit {
+    pub fn sandbox_audit(&self) -> SandboxAudit {
         self.sandbox.clone()
     }
 
@@ -563,9 +546,7 @@ impl<'a> ToolContext<'a> {
     /// # Errors
     ///
     /// The bounded collector became unavailable.
-    pub fn sandbox_facts(
-        &self,
-    ) -> Result<Box<[crate::SandboxAuditRecord]>, crate::SandboxAuditError> {
+    pub fn sandbox_facts(&self) -> Result<Box<[SandboxAuditRecord]>, SandboxAuditError> {
         self.sandbox.records()
     }
 
@@ -574,9 +555,7 @@ impl<'a> ToolContext<'a> {
     /// # Errors
     ///
     /// The bounded collector became unavailable.
-    pub fn take_sandbox_facts(
-        &self,
-    ) -> Result<Box<[crate::SandboxAuditRecord]>, crate::SandboxAuditError> {
+    pub fn take_sandbox_facts(&self) -> Result<Box<[SandboxAuditRecord]>, SandboxAuditError> {
         self.sandbox.take_records()
     }
 }
@@ -698,7 +677,7 @@ impl ToolOutput {
     /// engine, so a tool that has not been permitted cannot reach this at all.
     ///
     /// ```compile_fail,E0061
-    /// use crucible_core::ToolOutput;
+    /// use crucible_tools::ToolOutput;
     ///
     /// let output = ToolOutput::ok("one match").with_attachments(Vec::new());
     /// ```
@@ -752,8 +731,9 @@ impl ToolOutput {
     /// Both ends survive: the head carries setup and the tail usually carries
     /// the failure or final status. When anything is removed, the inserted
     /// model-visible note states the original encoded size and the encoded
-    /// bytes omitted. Callers must supply at least [`crate::TOOL_RESULT_MIN_BYTES`],
-    /// which descriptor construction enforces for local limits.
+    /// bytes omitted. Callers must supply at least
+    /// [`crucible_types::TOOL_RESULT_MIN_BYTES`], which descriptor construction
+    /// enforces for local limits.
     #[must_use]
     pub fn limit_encoded(&mut self, maximum: usize) -> ToolOutputRetention {
         let (text, retention) = limit_encoded(&self.text, self.capture, maximum);
@@ -804,7 +784,8 @@ impl ToolOutput {
     /// the type a tool returns:
     ///
     /// ```compile_fail,E0308
-    /// use crucible_core::{RecordedToolOutput, ToolOutput};
+    /// use crucible_tools::ToolOutput;
+    /// use crucible_types::RecordedToolOutput;
     ///
     /// fn ran() -> ToolOutput {
     ///     RecordedToolOutput::ok("read back out of a log")
@@ -844,7 +825,8 @@ pub trait Tool: Send + Sync {
     fn sensitivity(&self, args: &ToolArgs) -> Sensitivity;
 
     /// Stable executor key that makes repeating this exact admitted call one
-    /// effect, where the descriptor declares [`crate::ToolEffect::Idempotent`].
+    /// effect, where the descriptor declares
+    /// [`crucible_storage::ToolEffect::Idempotent`].
     ///
     /// The default is no such guarantee. A returned key is retained only in a
     /// protected execution checkpoint and redacted from ordinary diagnostics.
@@ -955,7 +937,7 @@ mod tests {
 
     use crucible_types::{Change, Line, Modality, ToolCall};
 
-    use crate::permission::{Ask, Permission, Remember, Settled, Target, Verdict};
+    use crate::permissions::{Ask, Permission, Remember, Settled, Target, Verdict};
 
     /// Nobody to ask. A read is settled without a question in every mode, so a
     /// test that reaches this has stopped testing what it meant to.
@@ -1028,26 +1010,37 @@ mod tests {
         assert!(!parent.requested());
     }
 
-    struct Accepted(Arc<Mutex<Option<crate::CallResultReceipt>>>);
+    struct Accepted(Arc<Mutex<Option<CallResultReceipt>>>);
 
     impl CallResultAcceptance for Accepted {
-        fn accept(
-            self: Box<Self>,
-            receipt: crate::CallResultReceipt,
-        ) -> Result<(), crate::SandboxError> {
+        fn accept(self: Box<Self>, receipt: CallResultReceipt) -> Result<(), SandboxError> {
             *self.0.lock().unwrap() = Some(receipt);
             Ok(())
         }
     }
 
     #[test]
+    fn a_context_bound_to_no_invocation_has_no_result_to_defer() {
+        let accepted = Arc::new(Mutex::new(None));
+        let context = ToolContext::new(
+            Ancestry::new(),
+            ToolId::new("call-unbound"),
+            &Cancel::new(),
+            None,
+            &Unwatched,
+        );
+
+        assert!(context.call_result_key().is_none());
+        assert!(matches!(
+            context.defer_call_result(Box::new(Accepted(Arc::clone(&accepted)))),
+            Err(CallResultStoreError::Unavailable)
+        ));
+        assert!(context.take_call_result().unwrap().is_none());
+        assert!(accepted.lock().unwrap().is_none());
+    }
+
+    #[test]
     fn a_tool_context_transfers_one_pending_result_to_runner_finalization() {
-        struct Journal;
-
-        impl crate::JournalStore for Journal {
-            fn append_run_item(&self, _item: &crate::RunItem) {}
-        }
-
         let accepted = Arc::new(Mutex::new(None));
         let context = ToolContext::new(
             Ancestry::new(),
@@ -1056,7 +1049,7 @@ mod tests {
             None,
             &Unwatched,
         )
-        .with_call_result_store(crate::InvocationId::new(), &Journal);
+        .with_invocation(InvocationId::new());
         context
             .defer_call_result(Box::new(Accepted(Arc::clone(&accepted))))
             .unwrap();
@@ -1068,7 +1061,7 @@ mod tests {
         );
 
         let pending = context.take_call_result().unwrap().expect("pending result");
-        let receipt = crate::CallResultReceipt::from_digest([0x5a; 32]);
+        let receipt = CallResultReceipt::from_digest([0x5a; 32]);
         pending.accept(receipt).unwrap();
 
         assert_eq!(*accepted.lock().unwrap(), Some(receipt));

@@ -4,11 +4,13 @@ use std::io::{self, BufRead, BufReader, ErrorKind, Read as _};
 use std::sync::LazyLock;
 
 use crucible_attachments::{AttachmentError, Kind, Opened, kind};
-use crucible_core::{
-    Approved, Attachment, Cancel, DescribeTool, Looking, Modality, Remembered, Sensitivity,
-    Summary, Tool, ToolArgs, ToolContext, ToolEffect, ToolError, ToolOutput, Workspace,
-    WorkspacePath, written,
+use crucible_runtime::Cancel;
+use crucible_tools::{
+    Approved, DescribeTool, Looking, Remembered, Sensitivity, Summary, Tool, ToolContext,
+    ToolEffect, ToolError, ToolOutput,
 };
+use crucible_types::{Attachment, Modality, ToolArgs};
+use crucible_workspace::{Workspace, WorkspacePath, written};
 
 use crate::args::Args;
 use crate::bound::OUTPUT;
@@ -654,7 +656,7 @@ impl Read {
         requested: &str,
         path: &WorkspacePath,
     ) -> Option<ToolOutput> {
-        // A match rather than an equality, so a modality added to the core enum
+        // A match rather than an equality, so a modality added to the enum
         // arrives here as a compiler error asking whether `read` hands it back.
         match kind.modality {
             Modality::Image => {}
@@ -927,7 +929,7 @@ fn finish_utf8(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crucible_core::Looking;
+    use crucible_tools::Looking;
 
     use crate::sample::{Sample, allowed};
 
@@ -1090,10 +1092,11 @@ mod tests {
 
     #[test]
     fn an_outside_path_is_put_to_the_user_before_it_is_read() {
-        use crucible_core::{Mode, Permission, Remember, Rules, Settled, ToolCall, Verdict};
+        use crucible_tools::{Mode, Permission, Remember, Rules, Settled, Verdict};
+        use crucible_types::ToolCall;
 
         struct Counting(usize);
-        impl crucible_core::Ask for Counting {
+        impl crucible_tools::Ask for Counting {
             fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
                 self.0 += 1;
                 (Verdict::Allow, Remember::Never)
@@ -1104,7 +1107,7 @@ mod tests {
         let outside = sample.outside("secret.txt", "classified");
         let tool = Read::new(sample.workspace(), Ledger::new());
         let call = ToolCall {
-            id: crucible_core::ToolId::new("outside-1"),
+            id: crucible_types::ToolId::new("outside-1"),
             name: tool.name().into(),
             args: ToolArgs::new(format!(r#"{{"path":"{outside}"}}"#)),
         };

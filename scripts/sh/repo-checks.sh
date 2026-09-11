@@ -377,7 +377,7 @@ fi
 # types, so only qualified spellings are pinned: the type's own name, and
 # `Self`, which is how a second door would be opened from inside the file that
 # defines it, beside the builders already living there.
-mints="crates/crucible-core/src/tool.rs"
+mints="crates/crucible-tools/src/tool.rs"
 attaches='(RecordedToolOutput|Self)::recorded\('
 elsewhere=$(grep -rlE --include='*.rs' "$attaches" crates src tests | grep -Fxv "$mints" || true)
 if [[ -n "$elsewhere" ]]; then
@@ -425,7 +425,7 @@ section "the path that is described, not opened"
 # turned the call `pub`, and Cargo cannot say "public to one caller", so the pin
 # says it here. The owning crate defines and tests it, as the pins above leave
 # their owners.
-asker="crates/crucible-core/src/permission/sensitivity.rs"
+asker="crates/crucible-tools/src/permissions/sensitivity.rs"
 owner="crates/crucible-workspace/src/resolve.rs"
 tests="crates/crucible-workspace/src/tests.rs"
 asks='(\.|Workspace::|Self::)intended\('
@@ -542,14 +542,15 @@ if [[ -z "$edges" ]]; then
     failed=1
 fi
 
-# `core` names the eight crates its old names now come from. Those edges are
-# the compatibility facade and go away with the crate that holds them; every
-# other crate still reaches the domain through one name.
+# `core` names the nine crates its old names now come from. Those edges are
+# the compatibility facade and go away with the crate that holds them.
 #
 # Edges past the facade are listed here as they are taken. `attachments` is
 # named directly because the two types a file's bytes are read through are
 # withheld from the facade; the sandbox crates are named directly because a
-# backend and the contract it answers are what this split gave their own names.
+# backend and the contract it answers are what this split gave their own names;
+# `tools` and `builtins` name their owners directly because neither may reach
+# back into core.
 allowed='code attachments
 code auth
 code config
@@ -575,6 +576,7 @@ core registry
 core runtime
 core sandbox
 core storage
+core tools
 core types
 core workspace
 credentials types
@@ -596,9 +598,19 @@ sandbox-local storage
 sandbox-local types
 sandbox-local workspace
 storage types
+tools registry
+tools runtime
+tools sandbox
+tools storage
+tools types
+tools workspace
 builtins attachments
-builtins core
-builtins sandbox-local'
+builtins runtime
+builtins sandbox
+builtins sandbox-local
+builtins tools
+builtins types
+builtins workspace'
 while IFS= read -r edge; do
     [[ -z "$edge" ]] && continue
     if ! grep -Fxq "$edge" <<<"$allowed"; then

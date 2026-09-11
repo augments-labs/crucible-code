@@ -20,10 +20,11 @@
 
 use std::sync::{Arc, LazyLock};
 
-use crucible_core::{
-    Approved, DescribeTool, Fetch, Host, Looking, Search, Sensitivity, Summary, Tool, ToolArgs,
-    ToolContext, ToolEffect, ToolError, ToolOutput,
+use crucible_tools::{
+    Approved, DescribeTool, Fetch, Host, Looking, Search, Sensitivity, Summary, Tool, ToolContext,
+    ToolEffect, ToolError, ToolOutput,
 };
+use crucible_types::ToolArgs;
 
 #[cfg(test)]
 mod tests;
@@ -390,10 +391,10 @@ impl Tool for WebFetch {
 /// user stopped this, and nothing about it should reach the model as an answer.
 fn failed(
     tool: &'static str,
-    problem: &crucible_core::SourceError,
+    problem: &crucible_tools::SourceError,
 ) -> Result<ToolOutput, ToolError> {
     match problem {
-        crucible_core::SourceError::Cancelled(_) => Err(ToolError::Cancelled(tool.into())),
+        crucible_tools::SourceError::Cancelled(_) => Err(ToolError::Cancelled(tool.into())),
 
         // Bounded like any other answer. A refusal carries the service's own
         // reply, which is somebody else's bytes and can be a whole error page —

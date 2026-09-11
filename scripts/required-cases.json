@@ -58,13 +58,13 @@
       "id": "CASE-AUTHORITY-ONE-CALL",
       "family": "authority",
       "obligation": "An approval names the tool and the arguments of the one call it settled.",
-      "package": "crucible-core",
+      "package": "crucible-tools",
       "target": {
         "kind": "lib",
-        "name": "crucible_core"
+        "name": "crucible_tools"
       },
-      "case": "permission::grant::tests::an_approval_names_the_tool_and_the_arguments_of_the_one_call",
-      "source": "crates/crucible-core/src/permission/grant.rs",
+      "case": "permissions::grant::tests::an_approval_names_the_tool_and_the_arguments_of_the_one_call",
+      "source": "crates/crucible-tools/src/permissions/grant.rs",
       "body_sha256": "0da10405a14b90a834153e01e75a0d08434100f01d953d2555b964787d3ead35",
       "platforms": [
         "linux",
@@ -76,13 +76,13 @@
       "id": "CASE-AUTHORITY-MINTED-RULE-SCOPE",
       "family": "authority",
       "obligation": "A rule minted from a decision covers what it came from and nothing beside it.",
-      "package": "crucible-core",
+      "package": "crucible-tools",
       "target": {
         "kind": "lib",
-        "name": "crucible_core"
+        "name": "crucible_tools"
       },
-      "case": "permission::rule::mint::tests::a_minted_rule_covers_what_it_came_from_and_nothing_beside_it",
-      "source": "crates/crucible-core/src/permission/rule/mint/tests.rs",
+      "case": "permissions::rule::mint::tests::a_minted_rule_covers_what_it_came_from_and_nothing_beside_it",
+      "source": "crates/crucible-tools/src/permissions/rule/mint/tests.rs",
       "body_sha256": "42bf20603f063d1e3590e2ce6b35ec945feb0c9ea50543b80fd0473a84269199",
       "platforms": [
         "linux",
@@ -184,14 +184,14 @@
       "id": "CASE-AUTHORITY-ATTACHMENT-PROOF",
       "family": "authority",
       "obligation": "Attaching files to a tool result takes the proof that the call was permitted.",
-      "package": "crucible-core",
+      "package": "crucible-tools",
       "target": {
         "kind": "doc",
-        "name": "crucible_core"
+        "name": "crucible_tools"
       },
       "case": "tool::ToolOutput::with_attachments",
-      "source": "crates/crucible-core/src/tool.rs",
-      "body_sha256": "473d0ae563f1634f4dee1d259e366a8d77f34fa1a396149487c179a124bb63ab",
+      "source": "crates/crucible-tools/src/tool.rs",
+      "body_sha256": "98ca51604a80cb4cbf94245c37dab20b3f7fed092838ce9c91a829191b1ee97e",
       "platforms": [
         "linux",
         "macos",

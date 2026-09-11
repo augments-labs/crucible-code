@@ -7,13 +7,13 @@
 //!
 //! One set, shared between the tool that reveals a name and the roster that
 //! decides what to advertise. Cloning shares it rather than copying, the same
-//! bargain [`crate::Cancel`] makes and for the same reason — the thing doing the
-//! revealing and the thing reading the answer are not the same object and must
-//! not be able to disagree.
+//! bargain [`crucible_runtime::Cancel`] makes and for the same reason — the
+//! thing doing the revealing and the thing reading the answer are not the same
+//! object and must not be able to disagree.
 //!
-//! It lives in core because the two crates that hold it must not depend on each
-//! other: the tool is in `crucible-tools` and the roster is in
-//! `crucible-runner`, and the arrow between them is one core exists to avoid.
+//! It lives here because the two crates that hold it must not depend on each
+//! other: the tool is in `crucible-builtins` and the roster is in
+//! `crucible-runner`.
 //!
 //! Bound to the session rather than to a turn. Having looked a tool up once,
 //! the model keeps it — a set that emptied between turns would make it look the

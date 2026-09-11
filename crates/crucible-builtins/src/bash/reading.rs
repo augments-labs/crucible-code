@@ -18,10 +18,10 @@
 
 use std::sync::LazyLock;
 
-use crucible_core::{
-    Approved, DescribeTool, Sensitivity, Summary, Target, Tool, ToolArgs, ToolContext, ToolError,
-    ToolOutput,
+use crucible_tools::{
+    Approved, DescribeTool, Sensitivity, Summary, Target, Tool, ToolContext, ToolError, ToolOutput,
 };
+use crucible_types::ToolArgs;
 
 use super::background::Background;
 use crate::args::Args;

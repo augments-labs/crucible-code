@@ -132,7 +132,7 @@ impl Permission {
     /// A sorted copy makes the snapshot deterministic. These strings are not
     /// grants: the only execution authority remains [`Approved`], minted by
     /// this engine after the ordinary policy path.
-    pub(crate) fn context_state(&self) -> (Mode, Vec<&str>) {
+    pub fn context_state(&self) -> (Mode, Vec<&str>) {
         let mut remembered: Vec<&str> = self.remembered.iter().map(AsRef::as_ref).collect();
         remembered.sort_unstable();
         (self.mode, remembered)

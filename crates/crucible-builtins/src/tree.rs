@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use crucible_core::Workspace;
+use crucible_workspace::Workspace;
 use ignore::WalkBuilder;
 
 /// A walk rooted at `from`, skipping what the workspace says to skip.
@@ -36,5 +36,5 @@ pub(crate) fn walk(from: &Path) -> WalkBuilder {
 /// ways, because the name is what the model hands back as the next call's
 /// `path` and what somebody writes a deny rule about.
 pub(crate) fn named(workspace: &Workspace, reached: &Path) -> String {
-    crucible_core::written(reached.strip_prefix(workspace.root()).unwrap_or(reached))
+    crucible_workspace::written(reached.strip_prefix(workspace.root()).unwrap_or(reached))
 }

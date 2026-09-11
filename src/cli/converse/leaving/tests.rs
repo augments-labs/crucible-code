@@ -62,7 +62,7 @@ fn running_with(
         };
 
         let context = ToolContext::new(Ancestry::new(), call.id.clone(), &cancel, None, &Unwatched)
-            .with_call_result_store(InvocationId::new(), &JOURNAL);
+            .with_invocation(InvocationId::new());
         let output = tool.run(approved, &context).expect("the command started");
         assert!(
             !output.is_failed(),

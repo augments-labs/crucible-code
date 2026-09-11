@@ -1,6 +1,8 @@
 //! What a call is read as having said about itself.
 
-use crucible_core::{DescribeTool, ToolArgs, ToolDescriptor, ToolProvenance, Workspace};
+use crucible_tools::{DescribeTool, ToolDescriptor, ToolProvenance};
+use crucible_types::ToolArgs;
+use crucible_workspace::Workspace;
 
 use super::of;
 use crate::sample::Sample;

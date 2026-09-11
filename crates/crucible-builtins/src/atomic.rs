@@ -3,8 +3,8 @@
 //! A replacement is prepared under a fresh name in the destination directory,
 //! flushed, and renamed over the destination. The original name changes in one
 //! operation and is untouched on every failure before it. Unix performs the
-//! walk and rename against the proven parent descriptor in `crucible-core` and
-//! flushes that directory after commit. Windows validates and holds the
+//! walk and rename against the proven parent descriptor and flushes that
+//! directory after commit. Windows validates and holds the
 //! destination directory, then renames the prepared file relative to that
 //! handle and flushes the renamed file; its handle-relative rename API has no
 //! write-through flag that proves the directory entry durable. Its public path
@@ -14,7 +14,7 @@
 use std::fs::{File, Permissions};
 use std::io::{self, Write as _};
 
-use crucible_core::{PathError, WorkspacePath};
+use crucible_workspace::{PathError, WorkspacePath};
 
 #[cfg(windows)]
 mod windows;

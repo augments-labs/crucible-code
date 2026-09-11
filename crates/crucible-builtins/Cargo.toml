@@ -14,7 +14,11 @@ authors.workspace = true
 # closed table saying which files are pictures at all. A second reading here
 # would let a file be attachable to a tool and not to a prompt.
 crucible-attachments.workspace = true
-crucible-core.workspace = true
+crucible-runtime.workspace = true
+crucible-sandbox.workspace = true
+crucible-tools.workspace = true
+crucible-types.workspace = true
+crucible-workspace.workspace = true
 globset.workspace = true
 grep-regex.workspace = true
 grep-searcher.workspace = true
@@ -27,8 +31,8 @@ serde_json.workspace = true
 # to have anything to run a command through.
 crucible-sandbox-local.workspace = true
 
-# SHA-256 of what the test journal writes down, so a stored result is
-# identified by what it contains rather than by when it was put there.
+# SHA-256 of a finished test result, so its receipt is identified by what it
+# contains rather than by when it was put there.
 sha2.workspace = true
 
 [target.'cfg(windows)'.dependencies]

@@ -21,10 +21,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crucible_core::{
-    Cancel, SandboxOutput, SandboxProcess, SandboxRead, SandboxViolation, ToolError, ToolOutput,
-    Watch, Wrote,
-};
+use crucible_runtime::Cancel;
+use crucible_sandbox::{SandboxOutput, SandboxProcess, SandboxRead, SandboxViolation};
+use crucible_tools::{ToolError, ToolOutput, Watch, Wrote};
 
 use super::background::{Background, Taking};
 

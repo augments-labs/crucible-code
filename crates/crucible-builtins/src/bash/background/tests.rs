@@ -4,12 +4,14 @@ use std::io;
 use std::process::ExitStatus;
 use std::sync::atomic::AtomicUsize;
 
-use crucible_core::{
-    Cancel, SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance,
-    SandboxCapabilities, SandboxCleanup, SandboxFilesystemAccess, SandboxFilesystemProvenance,
-    SandboxFilesystemRule, SandboxInspection, SandboxManifest, SandboxNetworkPolicy, SandboxOutput,
-    SandboxPolicy, SandboxResourceLimits, SandboxUsage, SandboxViolation, Unwatched,
+use crucible_runtime::Cancel;
+use crucible_sandbox::{
+    SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities,
+    SandboxCleanup, SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule,
+    SandboxInspection, SandboxManifest, SandboxNetworkPolicy, SandboxOutput, SandboxPolicy,
+    SandboxResourceLimits, SandboxUsage, SandboxViolation,
 };
+use crucible_tools::Unwatched;
 
 use super::*;
 use crate::bash::output;
@@ -105,7 +107,7 @@ fn keep(left: &Background, observed: &Arc<Observed>, accepting: bool) -> Kept {
     )
     .expect("policy");
     let inspection = SandboxInspection::new(
-        crucible_core::SandboxId::new(),
+        crucible_types::SandboxId::new(),
         identity,
         SandboxCapabilities::none(),
         &policy,

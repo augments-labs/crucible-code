@@ -19,10 +19,13 @@ use std::io;
 use std::str;
 use std::sync::{LazyLock, Mutex};
 
-use crucible_core::{
-    Approved, Cancel, DescribeTool, Looking, Sensitivity, Summary, Tool, ToolArgs, ToolContext,
-    ToolEffect, ToolError, ToolOutput, Workspace, WorkspacePath,
+use crucible_runtime::Cancel;
+use crucible_tools::{
+    Approved, DescribeTool, Looking, Sensitivity, Summary, Tool, ToolContext, ToolEffect,
+    ToolError, ToolOutput,
 };
+use crucible_types::ToolArgs;
+use crucible_workspace::{Workspace, WorkspacePath};
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
 use grep_searcher::{
     BinaryDetection, MmapChoice, Searcher, SearcherBuilder, Sink, SinkContext, SinkMatch,

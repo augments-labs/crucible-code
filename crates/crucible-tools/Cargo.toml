@@ -1,0 +1,27 @@
+[package]
+name = "crucible-tools"
+description = "What a tool is, what may run one, and the proof that it may."
+publish.workspace = true
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+crucible-registry.workspace = true
+crucible-runtime.workspace = true
+crucible-sandbox.workspace = true
+crucible-storage.workspace = true
+crucible-types.workspace = true
+crucible-workspace.workspace = true
+# A permission rule is a glob, and the `glob` tool matches with this crate too:
+# a second matcher would let `src/**` mean one thing in a rule and another in a
+# search, and the two would disagree exactly where it costs most.
+globset.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

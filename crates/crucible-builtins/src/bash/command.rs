@@ -16,7 +16,7 @@
 //! so `cargo   test` and `cargo test` are the same thing to a rule, which is
 //! what somebody writing one would expect.
 
-use crucible_core::Command;
+use crucible_tools::Command;
 
 use super::wrapper;
 

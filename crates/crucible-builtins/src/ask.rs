@@ -31,10 +31,11 @@
 use std::fmt::Write as _;
 use std::sync::{Arc, LazyLock};
 
-use crucible_core::{
-    Answer, Answered, Approved, DescribeTool, Put, Question, Sensitivity, Summary, Target, Tool,
-    ToolArgs, ToolContext, ToolError, ToolOutput,
+use crucible_tools::{
+    Approved, DescribeTool, Put, Sensitivity, Summary, Target, Tool, ToolContext, ToolError,
+    ToolOutput,
 };
+use crucible_types::{Answer, Answered, Question, ToolArgs};
 
 use crate::args::Args;
 use crate::schema::{Field, Schema, Shape};
@@ -228,8 +229,9 @@ impl AskUser {
 
 impl std::fmt::Debug for AskUser {
     /// Written by hand because what it holds is a trait object this crate does
-    /// not own, the way core writes one for `dyn Tool`. There is nothing to
-    /// redact: the questions arrive with the call and are never held here.
+    /// not own, the way `crucible-tools` writes one for `dyn Tool`. There is
+    /// nothing to redact: the questions arrive with the call and are never held
+    /// here.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("AskUser")
     }

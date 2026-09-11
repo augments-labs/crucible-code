@@ -1,12 +1,12 @@
 //! Domain types and the traits every other crucible crate implements.
 //!
-//! Providers, tools and the runner depend on this crate rather than on one
+//! Providers and the runner depend on this crate rather than on one
 //! another; cargo enforces that, so the arrangement cannot rot. The renderer
 //! draws what it is handed and depends on no crucible crate at all.
 //! Below it sit the crates that now own the shared values, registries,
 //! credential contracts, storage contracts, path proofs, attachment ingress,
-//! what a confined process may observe or change, and the controls a turn is
-//! steered and stopped by.
+//! what a confined process may observe or change, the controls a turn is
+//! steered and stopped by, and what a tool is and what may run one.
 //! This crate re-exports their names under the paths it published them at, so a
 //! consumer keeps one import while ownership moves out; new code names the
 //! owning crate. `crucible-attachments` is re-exported only as far as the names
@@ -18,15 +18,14 @@
 //!
 //! Two kinds of type live here, and the split is deliberate:
 //!
-//! - **Closed sets are enums.** Events, verdicts and errors are owned here, so
-//!   adding a variant breaks every `match` and forces each site to decide.
-//! - **Open sets are traits.** `Provider`, `Credential` and `Tool` are
-//!   implemented in the crates above, so adding one must never edit this crate.
+//! - **Closed sets are enums.** Events and errors are owned here, so adding a
+//!   variant breaks every `match` and forces each site to decide.
+//! - **Open sets are traits.** `Provider` is implemented in the crates above, so
+//!   adding one must never edit this crate.
 //!
 //! Authentication is a separate axis from the wire protocol: a `Provider`
 //! receives an already-resolved `Credential` and never learns what kind it is.
 
-mod ask;
 mod compaction;
 mod context;
 mod event;
@@ -34,18 +33,12 @@ mod extension;
 mod interruption;
 mod journal;
 mod model;
-mod permission;
 mod prompt;
 mod prompt_cache;
 mod provider;
-mod revealed;
 mod sandbox;
-mod source;
-mod tool;
-mod toolset;
 mod version;
 
-pub use ask::{Answer, Answered, Put, Question};
 pub use compaction::{Compacted, Compacting, RECAP, Room};
 pub use context::{ContextSection, capture, seen};
 pub use crucible_attachments::{AttachmentError, CEILING, KINDS, Kind, kind};
@@ -94,11 +87,24 @@ pub use crucible_storage::{
     PendingExternalTool, PendingHumanInput, RecoveryAction, ResolutionChange, ResumeDigest,
     ResumeScope, ResumedAction, SessionStore, ToolEffect,
 };
+pub use crucible_tools::{
+    Account, Approved, ArgumentTransform, Ask, CallResultAcceptance, Command, DescribeTool,
+    Disposition, Fetch, Grant, Host, InputGuard, Looking, Minted, Mode, OutputGuard, Page,
+    PendingCallResult, Permission, Put, Remember, Remembered, Revealed, RuleError, Rules, Search,
+    SearchResponse, SearchResult, Sensitivity, Settled, SourceError, Summary, TOOL_ARGUMENT_BYTES,
+    TOOL_CALL_ID_BYTES, TOOL_NAME_BYTES, TOOL_RESOURCE_KEY_BYTES, TOOL_SCHEMA_BYTES,
+    TOOL_SNAPSHOT_BYTES, TOOL_SNAPSHOT_ENTRIES, TOOL_SOURCE_ID_BYTES, TOOL_SOURCE_LABEL_BYTES,
+    Target, Tool, ToolAdmission, ToolContext, ToolDescriptor, ToolDescriptorError, ToolEntry,
+    ToolError, ToolExecutionMode, ToolGeneration, ToolHooks, ToolOutcome, ToolOutput,
+    ToolProvenance, ToolReceipt, ToolResourceKey, ToolSnapshot, ToolSourceKind, ToolSourceReceipt,
+    Toolset, ToolsetContext, ToolsetError, Unwatched, Verdict, Watch, Wrote, narrowest,
+};
 pub use crucible_types::{
     AgentId, CredentialScopeId, IdError, Modalities, Modality, ModalityError, ProviderAttemptId,
     RunId, SandboxId, SessionId, ToolId, TurnId,
 };
 pub use crucible_types::{Ancestry, AncestryError, RecordedToolOutput};
+pub use crucible_types::{Answer, Answered, Question, ToolSchema};
 pub use crucible_types::{Attachment, Message, StopReason, ToolResult, Transcript};
 pub use crucible_types::{
     CONTINUATION_BYTES, CONTINUATION_HISTORY_BYTES, CONTINUATION_PARTS, Change, ContextError,
@@ -129,10 +135,6 @@ pub use journal::{
     MAX_RUN_ITEMS, RunHistory, RunItem,
 };
 pub use model::{MODEL_NAME_BYTES, ModelCapabilities, ModelError, ModelLimits};
-pub use permission::{
-    Approved, Ask, Command, Disposition, Grant, Host, Minted, Mode, Permission, Remember,
-    RuleError, Rules, Sensitivity, Settled, Target, Verdict, narrowest,
-};
 pub use prompt::{
     EnvironmentSection, Identity, ModelSection, PermissionsSection, Skill, SkillsSection,
     SystemPrompt, Tone, ToneError, ToolsSection, WorkspaceSection,
@@ -180,21 +182,7 @@ pub use prompt_cache::{
 };
 pub use provider::{
     Attached, Calibration, Carried, Content, Delta, DeltaStream, Effort, EffortError, Provider,
-    ProviderError, ProviderLimit, Request, RequestPurpose, Spend, ToolSchema,
+    ProviderError, ProviderLimit, Request, RequestPurpose, Spend,
 };
-pub use revealed::Revealed;
 pub use sandbox::{Finish, Heard, Muttered, Said};
-pub use source::{Fetch, Page, Search, SearchResponse, SearchResult, SourceError};
-pub use tool::{
-    Account, CallResultAcceptance, Looking, PendingCallResult, Remembered, Summary, Tool,
-    ToolContext, ToolError, ToolOutput, Unwatched, Watch, Wrote,
-};
-pub use toolset::{
-    ArgumentTransform, DescribeTool, InputGuard, OutputGuard, TOOL_ARGUMENT_BYTES,
-    TOOL_CALL_ID_BYTES, TOOL_NAME_BYTES, TOOL_RESOURCE_KEY_BYTES, TOOL_SCHEMA_BYTES,
-    TOOL_SNAPSHOT_BYTES, TOOL_SNAPSHOT_ENTRIES, TOOL_SOURCE_ID_BYTES, TOOL_SOURCE_LABEL_BYTES,
-    ToolAdmission, ToolDescriptor, ToolDescriptorError, ToolEntry, ToolExecutionMode,
-    ToolGeneration, ToolHooks, ToolOutcome, ToolProvenance, ToolReceipt, ToolResourceKey,
-    ToolSnapshot, ToolSourceKind, ToolSourceReceipt, Toolset, ToolsetContext, ToolsetError,
-};
 pub use version::later;

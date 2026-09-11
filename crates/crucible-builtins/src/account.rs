@@ -23,7 +23,8 @@
 //! whose arguments do not hold up is refused a moment later by the tool that
 //! owns them.
 
-use crucible_core::{Account, ToolArgs};
+use crucible_tools::Account;
+use crucible_types::ToolArgs;
 
 use crate::args::Args;
 use crate::schema::{Field, Shape};
