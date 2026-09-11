@@ -56,8 +56,10 @@ const TURN_BEATS: Duration = Duration::from_secs(1);
 /// What an active turn may spend of the CPU for each second it is watched.
 ///
 /// An active marker may wake on its four beats, but not burn a scheduler slice
-/// between them. The allowance covers drawing the faces and the terminal work
-/// around them; the key echo is timed on its own rather than charged here.
+/// between them. The allowance covers everything the process does while the
+/// faces turn: drawing them, the terminal work around them, and supervising the
+/// command the held turn left running. The key echo is timed on its own rather
+/// than charged here.
 const ACTIVE_CPU_PER_SECOND: Duration = Duration::from_millis(40);
 
 /// How long a settled prompt is watched.
@@ -65,9 +67,11 @@ const IDLE_SAMPLE: Duration = Duration::from_secs(1);
 
 /// What a settled prompt may spend of the CPU for each second it is watched.
 ///
-/// One scheduler tick's worth. Read to the nanosecond rather than counted in
-/// ticks, a process that keeps waking while nobody types shows up as the time it
-/// spent, not as whether a tick boundary happened to fall inside the sample.
+/// Ten milliseconds, one `/proc` clock tick at the usual `USER_HZ` of 100, which is
+/// what the tick count this replaced allowed. Read to the nanosecond rather than
+/// counted in ticks, a process that keeps waking while nobody types shows up as
+/// the time it spent, not as whether a tick boundary happened to fall inside the
+/// sample.
 const IDLE_CPU_PER_SECOND: Duration = Duration::from_millis(10);
 
 /// How long one step may take before the screen is called stuck.
@@ -648,8 +652,8 @@ impl Watched {
         );
     }
 
-    /// Proves the ordinary prompt stays byte-quiet and spends no more than a
-    /// scheduler tick's worth of CPU once its opening frame has settled.
+    /// Proves the ordinary prompt stays byte-quiet and spends no more than ten
+    /// milliseconds of CPU a second once its opening frame has settled.
     ///
     /// Linux exposes child CPU accounting in `/proc`; this whole test target is
     /// Linux-only, so reading it here adds no portability fiction. Active turns
@@ -847,12 +851,15 @@ fn working_face(picture: &str) -> Option<char> {
 /// What a process has spent of the CPU, as Linux keeps two counts of it.
 ///
 /// Each thread's `schedstat` says how long it has run, in nanoseconds, so what a
-/// one-second window costs is read exactly rather than as how many ten-millisecond
-/// ticks fell inside it. A thread that ends takes that count with it, though, so
-/// work moved into short-lived threads would drop out of the sum. The process's
-/// user and system ticks in `stat` keep what ended threads ran; each of the two is
-/// rounded down on its own, so a window they count `n` ticks across ran for more
-/// than `n - 2` ticks. A window is charged whichever reading is larger.
+/// one-second window costs is read exactly rather than as how many `/proc` clock
+/// ticks fell inside it. A thread that ends takes that count with it, though, and a
+/// thread id reused inside the window reads as the thread that had it, so work in
+/// short-lived threads can drop out of the sum. The process's user and system
+/// ticks in `stat` keep what ended threads ran. Each of the two is rounded down on
+/// its own, so a window they count `n` ticks across ran for more than `n - 2`
+/// ticks, and one that ran `r` ticks is counted more than `r - 2`: work in threads
+/// that end can go uncharged by up to four ticks a window. A window is charged
+/// whichever reading is larger.
 struct Spent {
     /// Nanoseconds each thread alive at the reading has run, by thread id.
     threads: BTreeMap<u32, u64>,
@@ -874,9 +881,20 @@ impl Spent {
                 .and_then(|name| name.parse::<u32>().ok())
                 .expect("a thread is listed by its id");
             // A thread that ended between the listing and this read leaves its
-            // time only in the process's ticks, which still hold it.
-            let Ok(schedstat) = fs::read_to_string(task.path().join("schedstat")) else {
-                continue;
+            // time only in the process's ticks, which still hold it. Any other
+            // failure is not a thread that ended, and skipping it would charge a
+            // live thread its whole life on the next reading.
+            let schedstat = match fs::read_to_string(task.path().join("schedstat")) {
+                Ok(schedstat) => schedstat,
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::NotFound
+                        || error.raw_os_error() == Some(rustix::io::Errno::SRCH.raw_os_error()) =>
+                {
+                    continue;
+                }
+                Err(error) => {
+                    panic!("the schedstat of thread {thread} of {pid} could not be read: {error}")
+                }
             };
             let ran = schedstat
                 .split_whitespace()
@@ -887,7 +905,7 @@ impl Spent {
         }
         assert!(
             threads.values().any(|ran| *ran > 0),
-            "Linux reports no run time for any thread of {pid}; this kernel keeps no schedstat"
+            "Linux reported no run time for any thread of {pid}, so its schedstat cannot measure this process"
         );
 
         Self {
@@ -912,7 +930,7 @@ impl Spent {
     }
 }
 
-/// User and system scheduler ticks consumed by `pid` according to Linux.
+/// User and system `/proc` clock ticks consumed by `pid`, ended threads included.
 fn ticks(pid: u32) -> u64 {
     let stat = fs::read_to_string(format!("/proc/{pid}/stat"))
         .expect("Linux reports CPU accounting for the watched process");
