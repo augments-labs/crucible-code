@@ -66,6 +66,10 @@ scripts/sh/repo-checks.sh     # cross-file repository policy and crate layering
 scripts/sh/python-checks.sh   # canary and campaign harness fixtures and reports
 ```
 
+`scripts/sh/repo-checks.sh` needs `python3` 3.11 or later: its crate-layering
+check reads Cargo manifests and configuration with the standard library's
+`tomllib`.
+
 A script lives under `scripts/sh` if a shell runs it and `scripts/python` if
 python3 does, so looking for one language means opening one directory. A new
 script goes in the directory for its language; `scripts/sh/repo-checks.sh`

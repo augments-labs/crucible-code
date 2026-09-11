@@ -483,61 +483,24 @@ member_manifests=(crates/*/Cargo.toml)
 manifests=(Cargo.toml "${member_manifests[@]}")
 
 section "crate layering"
-crate_edges() {
-    awk '
-        FNR == 1 {
-            crate = FILENAME
-            sub(/^crates\//, "", crate)
-            sub(/\/Cargo.toml$/, "", crate)
-            if (FILENAME == "Cargo.toml") crate = "crucible-code"
-            # Process substitution names files `/dev/fd/N`; `N` is the fixture
-            # crate name, which keeps the expected output independent of Bash.
-            if (FILENAME ~ /^\/dev\/fd\//) {
-                sub(/^.*\//, "", crate)
-                crate = "fixture-" crate
-            }
-            # Both ends of an edge are written the short way, so the allowed
-            # list reads as the layering rather than package names.
-            sub(/^crucible-/, "", crate)
-            table = 0
-        }
-        /^[[:space:]]*\[/ {
-            header = $0
-            sub(/^[[:space:]]*\[+[[:space:]]*/, "", header)
-            sub(/[[:space:]]*\]+.*$/, "", header)
-            # Workspace dependencies agree versions; they do not take edges.
-            table = (header ~ /(^|\.)(dependencies|dev-dependencies|build-dependencies)$/ &&
-                     header !~ /^workspace\./)
-            next
-        }
-        # Dotted keys and inline tables both end the name at dot, space or `=`.
-        table && /^[[:space:]]*crucible-[a-z0-9-]+[[:space:].=]/ {
-            dependency = $0
-            sub(/^[[:space:]]*/, "", dependency)
-            sub(/[[:space:].=].*$/, "", dependency)
-            sub(/^crucible-/, "", dependency)
-            print crate " " dependency
-        }
-    ' "$@"
-}
-
-# Pin both Cargo spellings the parser promises to understand. Accepting the
-# workspace's current dotted keys alone would let an inline-table refactor
-# silently empty part of the graph.
-layer_fixture=$(crate_edges \
-    <(printf '[dependencies]\ncrucible-core.workspace = true\n') \
-    <(printf '[dev-dependencies]\ncrucible-session = { workspace = true, features = ["proof"] }\n'))
-if [[ $(printf '%s\n' "$layer_fixture" | sed 's/^fixture-[0-9][0-9]* //') != $'core\nsession' ]]; then
-    printf '    FAIL the crate-layer parser did not read dotted and inline dependency spellings\n'
+# Cargo is asked which crates each crate takes. A reader of the manifests here
+# sees only the spellings it was written for, and an edge spelled another way
+# would pass unseen. Every manifest is handed over as well, and the reader refuses
+# unless they are exactly the workspace's packages, because a crate Cargo does
+# not count as a member is one whose edges it never describes. It also refuses a
+# workspace that patches, replaces or overrides a dependency, or includes
+# configuration that could, because Cargo names where such a dependency comes from
+# only when resolving.
+if ! python3 scripts/python/crate-edges.py --self-test; then
+    printf '    FAIL the crate-edge reader failed its self-test\n'
     failed=1
 fi
-
-if ((${#manifests[@]} < 2)); then
-    printf '    FAIL no manifest under crates/; the dependency graph measured nothing\n'
+# Both ends of an edge are written the short way, so the allowed list reads as
+# the layering rather than package names.
+if ! edges=$(python3 scripts/python/crate-edges.py Cargo.toml "${manifests[@]}" | sed -E 's/(^| )crucible-/\1/g'); then
+    printf '    FAIL the crate-edge reader gave no answer for Cargo.toml\n'
     failed=1
-fi
-edges=$(crate_edges "${manifests[@]}")
-if [[ -z "$edges" ]]; then
+elif [[ -z "$edges" ]]; then
     printf '    FAIL no internal dependency edges found; this check measured nothing\n'
     failed=1
 fi
