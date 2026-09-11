@@ -269,7 +269,7 @@ impl Settings {
     /// Whether operating-system confinement is enabled, false unless a document
     /// opts in with `sandbox.enabled`.
     /// Workspace layers may require confinement but cannot disable it.
-    /// Core policy constructors remain conservative; hosts apply this choice.
+    /// Policy constructors remain conservative; hosts apply this choice.
     #[must_use]
     pub fn sandbox_enabled(&self) -> bool {
         self.sandbox.enabled()

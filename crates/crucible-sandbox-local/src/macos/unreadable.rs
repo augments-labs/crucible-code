@@ -1,4 +1,4 @@
-//! Bounded expansion of the core unreadable wildcard grammar.
+//! Bounded expansion of the unreadable wildcard grammar.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::fs;
