@@ -15,6 +15,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crucible_auth::StoredCredentials;
+use crucible_builtins::{
+    AskUser, Background, Bash, BashOutput, Edit, Glob, Grep, Held, Ledger, Plan, Read, TodoWrite,
+    ToolSearch, WebFetch, WebSearch, Write,
+};
 use crucible_config::Settings;
 use crucible_core::{
     AgentId, ApiKey, Credential, DescribeTool, Effort, Fetch, Header, HeaderKey, Message,
@@ -29,10 +33,6 @@ use crucible_runner::{
     AgentSpec, Bounds, Compaction, ContextInputs, Model, RunPolicy, Runner, Session, Tools,
 };
 use crucible_sandbox_local::LocalSandbox;
-use crucible_tools::{
-    AskUser, Background, Bash, BashOutput, Edit, Glob, Grep, Held, Ledger, Plan, Read, TodoWrite,
-    ToolSearch, WebFetch, WebSearch, Write,
-};
 
 use super::hosting::{Hosting, selecting};
 use super::seen::Putting;

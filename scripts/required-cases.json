@@ -58,13 +58,13 @@
       "id": "CASE-AUTHORITY-ONE-CALL",
       "family": "authority",
       "obligation": "An approval names the tool and the arguments of the one call it settled.",
-      "package": "crucible-core",
+      "package": "crucible-tools",
       "target": {
         "kind": "lib",
-        "name": "crucible_core"
+        "name": "crucible_tools"
       },
-      "case": "permission::grant::tests::an_approval_names_the_tool_and_the_arguments_of_the_one_call",
-      "source": "crates/crucible-core/src/permission/grant.rs",
+      "case": "permissions::grant::tests::an_approval_names_the_tool_and_the_arguments_of_the_one_call",
+      "source": "crates/crucible-tools/src/permissions/grant.rs",
       "body_sha256": "0da10405a14b90a834153e01e75a0d08434100f01d953d2555b964787d3ead35",
       "platforms": [
         "linux",
@@ -76,13 +76,13 @@
       "id": "CASE-AUTHORITY-MINTED-RULE-SCOPE",
       "family": "authority",
       "obligation": "A rule minted from a decision covers what it came from and nothing beside it.",
-      "package": "crucible-core",
+      "package": "crucible-tools",
       "target": {
         "kind": "lib",
-        "name": "crucible_core"
+        "name": "crucible_tools"
       },
-      "case": "permission::rule::mint::tests::a_minted_rule_covers_what_it_came_from_and_nothing_beside_it",
-      "source": "crates/crucible-core/src/permission/rule/mint/tests.rs",
+      "case": "permissions::rule::mint::tests::a_minted_rule_covers_what_it_came_from_and_nothing_beside_it",
+      "source": "crates/crucible-tools/src/permissions/rule/mint/tests.rs",
       "body_sha256": "42bf20603f063d1e3590e2ce6b35ec945feb0c9ea50543b80fd0473a84269199",
       "platforms": [
         "linux",
@@ -184,14 +184,86 @@
       "id": "CASE-AUTHORITY-ATTACHMENT-PROOF",
       "family": "authority",
       "obligation": "Attaching files to a tool result takes the proof that the call was permitted.",
-      "package": "crucible-core",
+      "package": "crucible-tools",
       "target": {
         "kind": "doc",
-        "name": "crucible_core"
+        "name": "crucible_tools"
       },
       "case": "tool::ToolOutput::with_attachments",
-      "source": "crates/crucible-core/src/tool.rs",
-      "body_sha256": "473d0ae563f1634f4dee1d259e366a8d77f34fa1a396149487c179a124bb63ab",
+      "source": "crates/crucible-tools/src/tool.rs",
+      "body_sha256": "98ca51604a80cb4cbf94245c37dab20b3f7fed092838ce9c91a829191b1ee97e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-AUTHORITY-GRANT-UNFORGED",
+      "family": "authority",
+      "obligation": "Code outside the crate cannot issue a grant through `Grant::issue`.",
+      "package": "crucible-tools",
+      "target": {
+        "kind": "doc",
+        "name": "crucible_tools"
+      },
+      "case": "permissions::grant::Grant",
+      "source": "crates/crucible-tools/src/permissions/grant.rs",
+      "body_sha256": "d43433878af62a5beb7f6616de7bf57fcf51e0c16b4f23900459682023906786",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-AUTHORITY-APPROVAL-UNFORGED",
+      "family": "authority",
+      "obligation": "Code outside the crate cannot build an approval through `Approved::new`.",
+      "package": "crucible-tools",
+      "target": {
+        "kind": "doc",
+        "name": "crucible_tools"
+      },
+      "case": "permissions::grant::Approved",
+      "source": "crates/crucible-tools/src/permissions/grant.rs",
+      "body_sha256": "dea7f58c182fbd1cab9cc63de8969a06ee52f70ca3315f05a40d2a2cb44e7be4",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-AUTHORITY-ADMISSION-UNFORGED",
+      "family": "authority",
+      "obligation": "Code outside the crate cannot build a `ToolAdmission` from its fields.",
+      "package": "crucible-tools",
+      "target": {
+        "kind": "doc",
+        "name": "crucible_tools"
+      },
+      "case": "toolset::ToolAdmission",
+      "source": "crates/crucible-tools/src/toolset.rs",
+      "body_sha256": "0c43fa49f4218ff921f9a3ddaab0a1ad0cc832fcb48525746e3e6efe82fe172e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-AUTHORITY-APPROVAL-SPENT",
+      "family": "authority",
+      "obligation": "Code outside the crate cannot clone an approval to run it a second time.",
+      "package": "crucible-tools",
+      "target": {
+        "kind": "doc",
+        "name": "crucible_tools"
+      },
+      "case": "tool::Tool::run",
+      "source": "crates/crucible-tools/src/tool.rs",
+      "body_sha256": "dbcad5dff5d6f659116391f7cccba2fcf63882456a07ed33305ceaecaf954c9f",
       "platforms": [
         "linux",
         "macos",
@@ -346,13 +418,13 @@
       "id": "CASE-SHUTDOWN-PROCESS-GROUP",
       "family": "shutdown",
       "obligation": "Nothing a command left running is still running after an early return from it.",
-      "package": "crucible-tools",
+      "package": "crucible-builtins",
       "target": {
         "kind": "lib",
-        "name": "crucible_tools"
+        "name": "crucible_builtins"
       },
       "case": "bash::output::tests::an_early_return_leaves_no_descendant_of_the_command_running",
-      "source": "crates/crucible-tools/src/bash/output/tests.rs",
+      "source": "crates/crucible-builtins/src/bash/output/tests.rs",
       "body_sha256": "0f17a8c7f0e8c09b2356bddf7df6bf43688abc4a0b7069f5d2f2d6ce82bac5fd",
       "platforms": [
         "linux",
@@ -417,13 +489,13 @@
       "id": "CASE-CREDENTIAL-NO-ENV-LEAK",
       "family": "credentials",
       "obligation": "A variable Crucible was started with reaches no command unless the list names it.",
-      "package": "crucible-tools",
+      "package": "crucible-builtins",
       "target": {
         "kind": "lib",
-        "name": "crucible_tools"
+        "name": "crucible_builtins"
       },
       "case": "bash::tests::a_variable_crucible_was_started_with_reaches_no_command_unless_the_list_names_it",
-      "source": "crates/crucible-tools/src/bash/tests.rs",
+      "source": "crates/crucible-builtins/src/bash/tests.rs",
       "body_sha256": "31f65091da7642d8c9c2684caab02114a5fe44f267ca0b299f7ea921d3bb1fed",
       "platforms": [
         "linux",
@@ -453,13 +525,13 @@
       "id": "CASE-FILES-OUTSIDE-UNREAD",
       "family": "files-and-sandbox",
       "obligation": "A path outside the workspace is refused without reading it.",
-      "package": "crucible-tools",
+      "package": "crucible-builtins",
       "target": {
         "kind": "lib",
-        "name": "crucible_tools"
+        "name": "crucible_builtins"
       },
       "case": "edit::tests::a_path_outside_the_workspace_is_refused_without_reading_it",
-      "source": "crates/crucible-tools/src/edit/tests.rs",
+      "source": "crates/crucible-builtins/src/edit/tests.rs",
       "body_sha256": "4fbf986b06bee86155df5440dadb0ab3cae1a4b0e0fc3c2bff53154c72c062a5",
       "platforms": [
         "linux",
@@ -471,13 +543,13 @@
       "id": "CASE-FILES-LINK-RETARGETED",
       "family": "files-and-sandbox",
       "obligation": "A link retargeted after the verdict leads outside and is refused.",
-      "package": "crucible-tools",
+      "package": "crucible-builtins",
       "target": {
         "kind": "lib",
-        "name": "crucible_tools"
+        "name": "crucible_builtins"
       },
       "case": "read::tests::a_link_retargeted_after_the_verdict_leads_outside_and_is_refused",
-      "source": "crates/crucible-tools/src/read.rs",
+      "source": "crates/crucible-builtins/src/read.rs",
       "body_sha256": "d4fc8b5c4fc5cba62dc8a4a15f0009f08f59e786c95f4c21b88d6a528e3d1695",
       "platforms": [
         "linux",

@@ -651,18 +651,22 @@ mod tests {
     fn resumed(transcript: Transcript) -> Runner {
         let mut offered = Tools::new();
         offered
-            .add_builtin(crucible_tools::Read::new(
+            .add_builtin(crucible_builtins::Read::new(
                 Workspace::open(std::env::current_dir().expect("a directory"))
                     .expect("a workspace"),
-                crucible_tools::Ledger::default(),
+                crucible_builtins::Ledger::default(),
             ))
             .unwrap();
         offered
-            .defer_builtin(crucible_tools::WebSearch::new(std::sync::Arc::new(Nowhere)))
+            .defer_builtin(crucible_builtins::WebSearch::new(std::sync::Arc::new(
+                Nowhere,
+            )))
             .unwrap();
 
         offered
-            .defer_builtin(crucible_tools::WebFetch::new(std::sync::Arc::new(Nowhere)))
+            .defer_builtin(crucible_builtins::WebFetch::new(std::sync::Arc::new(
+                Nowhere,
+            )))
             .unwrap();
 
         Runner::new(

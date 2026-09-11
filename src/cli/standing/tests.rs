@@ -3,7 +3,7 @@
 use crucible_config::Settings;
 use crucible_core::SystemPrompt;
 
-use crucible_tools::Ended;
+use crucible_builtins::Ended;
 
 use super::{said, under};
 

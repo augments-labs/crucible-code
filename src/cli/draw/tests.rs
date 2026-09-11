@@ -1451,7 +1451,7 @@ fn ending(called: &str, said: &str, code: Option<i32>, columns: usize) -> String
 
     gone(
         &mut renderer,
-        &crucible_tools::Ended {
+        &crucible_builtins::Ended {
             tool: "bash",
             number: 1,
             called: called.into(),

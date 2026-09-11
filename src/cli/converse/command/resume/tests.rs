@@ -14,12 +14,12 @@ use std::cell::Cell;
 use std::time::Duration;
 
 use crucible_auth::Store;
+use crucible_builtins::{Ledger, Plan};
 use crucible_core::{
     AgentId, Cancel, Message, RecordedToolOutput, Revealed, SessionId, StopReason, ToolArgs,
     ToolCall, ToolId, ToolResult,
 };
 use crucible_runner::{AgentSpec, Model, Runner, Tools};
-use crucible_tools::{Ledger, Plan};
 use crucible_tui::{Recording, Renderer, Row};
 
 use crate::cli::converse::{Answers, Held};
@@ -102,7 +102,7 @@ fn terms(sample: &Sample) -> Terms {
         revealed: Revealed::new(),
         plan: Plan::new(),
         putting: crate::cli::seen::Putting::new(),
-        leaving: crucible_tools::Background::new(),
+        leaving: crucible_builtins::Background::new(),
         provider: std::cell::Cell::new(Some("anthropic")),
         pending_model: std::cell::Cell::new(None),
         pending_mode: std::cell::Cell::new(None),
@@ -440,7 +440,7 @@ fn the_plan_that_comes_back_is_the_one_the_session_picked_up_wrote() {
     let tasks = terms.plan.tasks();
     assert_eq!(tasks.len(), 1, "{tasks:?}");
     assert_eq!(
-        tasks.first().map(crucible_tools::Task::said),
+        tasks.first().map(crucible_builtins::Task::said),
         Some("Write the contributor guide")
     );
 }

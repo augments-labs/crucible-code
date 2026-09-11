@@ -377,7 +377,7 @@ fi
 # types, so only qualified spellings are pinned: the type's own name, and
 # `Self`, which is how a second door would be opened from inside the file that
 # defines it, beside the builders already living there.
-mints="crates/crucible-core/src/tool.rs"
+mints="crates/crucible-tools/src/tool.rs"
 attaches='(RecordedToolOutput|Self)::recorded\('
 elsewhere=$(grep -rlE --include='*.rs' "$attaches" crates src tests | grep -Fxv "$mints" || true)
 if [[ -n "$elsewhere" ]]; then
@@ -425,7 +425,7 @@ section "the path that is described, not opened"
 # turned the call `pub`, and Cargo cannot say "public to one caller", so the pin
 # says it here. The owning crate defines and tests it, as the pins above leave
 # their owners.
-asker="crates/crucible-core/src/permission/sensitivity.rs"
+asker="crates/crucible-tools/src/permissions/sensitivity.rs"
 owner="crates/crucible-workspace/src/resolve.rs"
 tests="crates/crucible-workspace/src/tests.rs"
 asks='(\.|Workspace::|Self::)intended\('
@@ -471,7 +471,7 @@ fi
 # allowed to open by name, so nothing above would notice its workspace arm
 # turning into a second one. Each of these reaches for the walk exactly once.
 by_walk='Opened::reached\('
-for reader in crates/crucible-tools/src/read.rs src/cli/converse/attaching.rs; do
+for reader in crates/crucible-builtins/src/read.rs src/cli/converse/attaching.rs; do
     here=$(doors "$by_walk" "$reader")
     if ((here != 1)); then
         printf '    FAIL %s opens a workspace path through the walk %d times; it is opened once\n' "$reader" "$here"
@@ -542,14 +542,15 @@ if [[ -z "$edges" ]]; then
     failed=1
 fi
 
-# `core` names the eight crates its old names now come from. Those edges are
-# the compatibility facade and go away with the crate that holds them; every
-# other crate still reaches the domain through one name.
+# `core` names the nine crates its old names now come from. Those edges are
+# the compatibility facade and go away with the crate that holds them.
 #
 # Edges past the facade are listed here as they are taken. `attachments` is
 # named directly because the two types a file's bytes are read through are
 # withheld from the facade; the sandbox crates are named directly because a
-# backend and the contract it answers are what this split gave their own names.
+# backend and the contract it answers are what this split gave their own names;
+# `tools` and `builtins` name their owners directly because neither may reach
+# back into core.
 allowed='code attachments
 code auth
 code config
@@ -560,7 +561,7 @@ code privacy
 code provider
 code runner
 code session
-code tools
+code builtins
 code sandbox-broker
 code sandbox-local
 code tui
@@ -575,6 +576,7 @@ core registry
 core runtime
 core sandbox
 core storage
+core tools
 core types
 core workspace
 credentials types
@@ -596,9 +598,19 @@ sandbox-local storage
 sandbox-local types
 sandbox-local workspace
 storage types
-tools attachments
-tools core
-tools sandbox-local'
+tools registry
+tools runtime
+tools sandbox
+tools storage
+tools types
+tools workspace
+builtins attachments
+builtins runtime
+builtins sandbox
+builtins sandbox-local
+builtins tools
+builtins types
+builtins workspace'
 while IFS= read -r edge; do
     [[ -z "$edge" ]] && continue
     if ! grep -Fxq "$edge" <<<"$allowed"; then
@@ -616,7 +628,7 @@ for crate in privacy registry runtime sandbox-broker tui types workspace; do
     fi
 done
 
-# `tools sandbox-local` above is a test-support edge, and a test-support edge
+# `builtins sandbox-local` above is a test-support edge, and a test-support edge
 # never justifies a shipped one. A tool names the sandbox service contract;
 # naming one machine's answer to it in a table that ships is how that
 # distinction would quietly disappear. Every such table counts, not only
@@ -628,15 +640,15 @@ if ! python3 scripts/python/shipped-edge.py --self-test; then
     printf '    FAIL the shipped-edge check failed its self-test\n'
     failed=1
 fi
-python3 scripts/python/shipped-edge.py crates/crucible-tools/Cargo.toml crucible-sandbox-local
+python3 scripts/python/shipped-edge.py crates/crucible-builtins/Cargo.toml crucible-sandbox-local
 case $? in
     0)
-        printf '    FAIL crucible-tools must reach crucible-sandbox-local only as a dev-dependency\n'
+        printf '    FAIL crucible-builtins must reach crucible-sandbox-local only as a dev-dependency\n'
         failed=1
         ;;
     3) ;;
     *)
-        printf '    FAIL the shipped-edge check gave no answer for crates/crucible-tools/Cargo.toml\n'
+        printf '    FAIL the shipped-edge check gave no answer for crates/crucible-builtins/Cargo.toml\n'
         failed=1
         ;;
 esac

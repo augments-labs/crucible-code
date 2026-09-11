@@ -12,9 +12,9 @@ use std::fmt;
 
 use crate::Cancel;
 use crucible_credentials::{CredentialError, Redactions};
-use crucible_types::ToolId;
 use crucible_types::{Modalities, Modality};
 use crucible_types::{StopReason, Transcript};
+use crucible_types::{ToolId, ToolSchema};
 
 /// Why a provider could not produce a response.
 #[derive(Debug, thiserror::Error)]
@@ -433,15 +433,6 @@ impl std::str::FromStr for Effort {
                 named: text.trim().into(),
             })
     }
-}
-
-/// A tool as advertised to a provider.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ToolSchema<'a> {
-    /// The name the model calls.
-    pub name: &'a str,
-    /// The JSON Schema for the arguments.
-    pub schema: &'a str,
 }
 
 /// What a response has cost, counted in the tokens the model produced.

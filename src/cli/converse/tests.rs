@@ -72,7 +72,7 @@ pub(super) fn plain() -> Terms {
         revealed: Revealed::new(),
         plan: Plan::new(),
         putting: crate::cli::seen::Putting::new(),
-        leaving: crucible_tools::Background::new(),
+        leaving: crucible_builtins::Background::new(),
         // A provider, so `/model` has a name to write its answer under, and a
         // file inside the same absent tree so nothing a test types reaches a
         // configuration anybody keeps.
@@ -929,7 +929,9 @@ fn a_turn_that_asks_a_loop_with_nobody_at_it_is_told_so_and_carries_on() {
 
     let mut offered = Tools::new();
     offered
-        .add_builtin(crucible_tools::AskUser::new(std::sync::Arc::new(putting)))
+        .add_builtin(crucible_builtins::AskUser::new(std::sync::Arc::new(
+            putting,
+        )))
         .unwrap();
 
     let asking = vec![

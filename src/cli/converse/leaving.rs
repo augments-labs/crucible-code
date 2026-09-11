@@ -16,7 +16,7 @@
 //! was started by a call somebody allowed, and stopping it is the reason this is
 //! reachable at all. `esc`, and the key that opened it, close it.
 
-use crucible_tools::{Background, Standing};
+use crucible_builtins::{Background, Standing};
 use crucible_tui::{
     Command, Expanded, Glyphs, Key, Pressed, Renderer, Row, Running, Shown, Slot, Terminal,
 };

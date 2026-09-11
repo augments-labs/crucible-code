@@ -98,8 +98,8 @@ fn program(command: &str, lookup: &impl Fn(&str) -> Option<OsString>) -> Option<
     if written.is_absolute() {
         return Some(written.to_path_buf());
     }
-    let spelling = crucible_tools::program::spelled(command);
-    crucible_tools::program::on_path(lookup, &spelling)
+    let spelling = crucible_builtins::program::spelled(command);
+    crucible_builtins::program::on_path(lookup, &spelling)
 }
 
 /// Everything the server is started with, and nothing else.

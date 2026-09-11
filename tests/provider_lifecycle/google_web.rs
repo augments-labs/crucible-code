@@ -5,10 +5,10 @@
 //! state never joins coding history. A new recipient/key must be used by both.
 
 use super::*;
+use crucible_builtins::{WebFetch, WebSearch};
 use crucible_core::{AgentId, ApiKey, ContinuationPart, Effort, Header, HeaderKey};
 use crucible_provider::{Endpoint, GoogleWeb, Https};
 use crucible_runner::{AgentSpec, Compaction, ContextInputs, Model, RunPolicy, Runner, Tools};
-use crucible_tools::{WebFetch, WebSearch};
 use serde_json::{Value, json};
 use std::fmt::Write as _;
 use std::sync::Arc;

@@ -12,6 +12,7 @@
 //! object — those carry authority or behavior, and a crate that only needs to
 //! read a session back should not have to compile them.
 
+pub mod ask;
 pub mod call;
 pub mod context;
 pub mod continuation;
@@ -22,7 +23,10 @@ pub mod output;
 pub mod run;
 pub mod transcript;
 
-pub use call::{TOOL_ARGUMENT_BYTES, TOOL_CALL_ID_BYTES, TOOL_NAME_BYTES, ToolArgs, ToolCall};
+pub use ask::{Answer, Answered, Question};
+pub use call::{
+    TOOL_ARGUMENT_BYTES, TOOL_CALL_ID_BYTES, TOOL_NAME_BYTES, ToolArgs, ToolCall, ToolSchema,
+};
 pub use context::{ContextError, ContextPatch, ContextSnapshot, Fragment, Seen};
 pub use continuation::{
     CONTINUATION_BYTES, CONTINUATION_HISTORY_BYTES, CONTINUATION_PARTS, Continuation,

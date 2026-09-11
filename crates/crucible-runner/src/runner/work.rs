@@ -741,7 +741,7 @@ fn execute(prepared: Prepared, host: ExecutionHost<'_>, audit: SandboxAudit) -> 
         deadline,
         &watching,
     )
-    .with_call_result_store(record.id(), host.journal)
+    .with_invocation(record.id())
     .with_sandbox_audit(audit)
     {
         Ok(context) => context,

@@ -39,6 +39,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 
+use crucible_builtins::{
+    AskUser, Bash, Edit, Glob, Grep, Held, Ledger, Plan, Read, TodoWrite, ToolSearch, WebFetch,
+    WebSearch, Write,
+};
 use crucible_config::{Extensions, HOME, Home, Settings};
 use crucible_core::{
     Ancestry, Calibration, Carried, ContextSnapshot, Fragment, RunId, RunItem, Spend,
@@ -55,10 +59,6 @@ use crucible_core::{
 };
 use crucible_provider::{Anthropic, Google, Moonshot, OpenAi, Response, Transport, TransportError};
 use crucible_session::Session;
-use crucible_tools::{
-    AskUser, Bash, Edit, Glob, Grep, Held, Ledger, Plan, Read, TodoWrite, ToolSearch, WebFetch,
-    WebSearch, Write,
-};
 
 /// The frozen answer for `name`, as a path.
 fn frozen(name: &str) -> PathBuf {

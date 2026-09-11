@@ -357,6 +357,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "crucible-builtins"
+version = "0.40.1"
+dependencies = [
+ "crucible-attachments",
+ "crucible-runtime",
+ "crucible-sandbox",
+ "crucible-sandbox-local",
+ "crucible-tools",
+ "crucible-types",
+ "crucible-workspace",
+ "globset",
+ "grep-regex",
+ "grep-searcher",
+ "ignore",
+ "serde_json",
+ "sha2",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "crucible-code"
 version = "0.40.1"
 dependencies = [
@@ -364,6 +384,7 @@ dependencies = [
  "clap",
  "crucible-attachments",
  "crucible-auth",
+ "crucible-builtins",
  "crucible-config",
  "crucible-core",
  "crucible-extension",
@@ -374,7 +395,6 @@ dependencies = [
  "crucible-sandbox-broker",
  "crucible-sandbox-local",
  "crucible-session",
- "crucible-tools",
  "crucible-tui",
  "image",
  "insta",
@@ -403,9 +423,9 @@ dependencies = [
  "crucible-runtime",
  "crucible-sandbox",
  "crucible-storage",
+ "crucible-tools",
  "crucible-types",
  "crucible-workspace",
- "globset",
  "serde_json",
  "sha2",
  "thiserror",
@@ -553,16 +573,15 @@ dependencies = [
 name = "crucible-tools"
 version = "0.40.1"
 dependencies = [
- "crucible-attachments",
- "crucible-core",
- "crucible-sandbox-local",
+ "crucible-registry",
+ "crucible-runtime",
+ "crucible-sandbox",
+ "crucible-storage",
+ "crucible-types",
+ "crucible-workspace",
  "globset",
- "grep-regex",
- "grep-searcher",
- "ignore",
- "serde_json",
- "sha2",
- "windows-sys 0.61.2",
+ "thiserror",
+ "uuid",
 ]
 
 [[package]]
