@@ -170,10 +170,10 @@ fn rejected_catalogue_preserves_unconfirmed_replacement_cleanup() {
 }
 
 #[test]
-fn a_server_whose_writes_were_refused_is_not_started_again_in_this_run() {
+fn a_server_whose_writes_were_refused_is_not_started_again_behind_that_call() {
     // Its scope ended and was reaped, so nothing keeps the next turn from
-    // starting it. This run is another matter: what the server wrote is in a
-    // state only a fresh run should settle, so the call says so and no
+    // starting it. The call it failed is another matter: what the server wrote
+    // is in a state only a fresh start should settle, so the call says so and no
     // replacement is started behind it.
     let sandbox = Pretend::new([
         Answers::Refused(dialogue("docs")),

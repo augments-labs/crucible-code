@@ -186,7 +186,9 @@ impl Drop for Held {
         //
         // One that has ended is waiting its turn to publish what it wrote, and is
         // let finish that first, because ending it would discard it. What it waits
-        // for is another command's publication, which ends.
+        // for is another command's publication, which ends — but the wait is
+        // bounded, because that publication may belong to another crucible of
+        // this user and crucible itself is on its way out.
         for left in &mut self.left {
             let waited = Instant::now();
             while left.process.ended()

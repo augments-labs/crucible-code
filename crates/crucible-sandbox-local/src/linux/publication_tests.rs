@@ -6,7 +6,8 @@
 //! prepared across it. A test takes the lock only after its own writer has
 //! started, because preparation waits for it too — except the read-only case,
 //! which may take it first, since a command with no writable root never asks for
-//! it.
+//! it, and the tests of preparation itself, which hold the lock first on purpose
+//! to watch what preparation does when it cannot have it.
 
 use std::process::ExitStatus;
 use std::thread;

@@ -412,9 +412,9 @@ crucible closes its input, at a restart or at the end of the run, and
 discarded when it has to be stopped instead. A server that has exited is not
 stopped while its writes wait for another command's publication. Where they
 cannot be published, because a root it wrote into changed while it ran, the
-restart or the disposal fails with that reason. That server is not started again
-for the rest of the run, because what it wrote is in a state only a fresh run
-should settle; the next turn starts it as usual.
+restart or the disposal fails with that reason. No replacement is started behind
+that call, because what it wrote is in a state only a fresh start should settle;
+the next turn starts the server as usual.
 
 Inspection retains backend ID/version/provenance, capability claims, separate
 hashed requested and effective policies and redacted plans, manifest,
@@ -547,7 +547,7 @@ Publication is decided by how the command ended:
 - Termination by a signal, a deadline, <kbd>Esc</kbd>, an output ceiling or a
   refusal discards the projection. Nothing partial reaches the workspace. A
   command that has already ended is not stopped by a deadline or <kbd>Esc</kbd>
-  while its writes wait their turn to publish.
+  while its writes wait their turn to publish, until the ceiling below passes.
 - A command that wrote into a root which changed after it started, whether
   another command published into it or something outside the sandbox wrote to
   it, publishes nothing. The delta is discarded rather than merged, and the

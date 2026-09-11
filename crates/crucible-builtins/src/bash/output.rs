@@ -140,9 +140,10 @@ pub(super) fn collect(
         // of the three that keeps the command: a press and a timeout landing in
         // the same tick should leave the command running rather than kill it.
         // Neither the cancel nor the deadline ends a command that has already
-        // ended. One whose writes wait their turn behind another command's
-        // publication is not running any more, and stopping it would discard what
-        // it wrote after it finished.
+        // ended, until its own ceiling passes. One whose writes wait their turn
+        // behind another command's publication is not running any more, and
+        // stopping it would discard what it wrote after it finished — so it is
+        // waited for, and told apart from a command that really did run too long.
         if cancel.requested() || Instant::now() >= deadline {
             let ended = running.taking()?.ended();
             let since = *publishing.get_or_insert_with(Instant::now);

@@ -16,6 +16,9 @@
 //! A program that has ended is not stopped for the wait that follows. What it
 //! wrote can wait its turn behind another command's publication for longer than
 //! any grace, and stopping it then would discard what it did exactly as asked.
+//! That wait has an end, because what it waits for can be held by a crucible
+//! outside this process: past it the program is stopped, and the ending says
+//! that nothing it wrote was published rather than reading as a clean stop.
 
 use std::io;
 use std::process::ExitStatus;
