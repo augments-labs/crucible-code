@@ -185,3 +185,27 @@ fn a_process_whose_ending_went_wrong_says_why_rather_than_being_stopped() {
     }
     assert_eq!(ending.stops.load(Ordering::Relaxed), 0);
 }
+
+#[test]
+fn a_process_whose_publication_never_finishes_is_stopped_once_its_patience_has_passed() {
+    // The wait for an ending is worth making only while it can end. A lock held
+    // by something outside this process — an older crucible, say — would
+    // otherwise keep a turn and a shutdown waiting for ever.
+    let ending = Arc::new(Ending {
+        ended: AtomicBool::new(true),
+        ..Ending::default()
+    });
+    let mut process = process(&ending);
+    let (told, hears) = std::sync::mpsc::channel();
+    let waiting = thread::spawn(move || {
+        let finish = Finish::after(&mut process, Duration::ZERO);
+        told.send(format!("{finish:?}")).expect("the test hears it");
+    });
+
+    let finish = hears.recv_timeout(Duration::from_secs(20));
+
+    let finish = finish.expect("the wait for a publication that never ends has a ceiling");
+    waiting.join().expect("the waiting thread");
+    assert!(finish.starts_with("Stopped"), "{finish}");
+    assert_eq!(ending.stops.load(Ordering::Relaxed), 1);
+}

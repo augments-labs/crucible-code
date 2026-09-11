@@ -6,6 +6,7 @@ use std::io::{self, Read as _, Seek as _, SeekFrom, Write as _};
 use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use crucible_sandbox::{SandboxError, SandboxRequest};
 use crucible_storage::CallResultKey;
@@ -1064,6 +1065,9 @@ impl RegistryLease {
     }
 }
 
+/// How long a preparation waits between looks at the publication lock.
+const LOCK_POLL: Duration = Duration::from_millis(20);
+
 /// This user's host-wide publication lock, held while one command publishes.
 ///
 /// A command's writes reach its roots only through publication, which checks
@@ -1118,28 +1122,27 @@ impl Lease {
         }))
     }
 
-    /// Takes the lock in `state`, waiting while a publication holds it.
+    /// Takes the lock in `state` within `patience`, or `None` where a
+    /// publication holds it for longer than that.
     ///
     /// Waited for, unlike [`Self::try_acquire_in`], because the one asking is a
-    /// preparation about to take its baselines, on the thread starting the
-    /// command, and what it waits for is one publication, which ends.
-    pub(super) fn acquire_in(state: &Path) -> io::Result<Self> {
-        create_state_directory(state)?;
-        let directory = open_state_directory(state)?;
-        let lock = open_lock(&directory, WRITABLE_LOCK)?;
+    /// preparation about to take its baselines, and a baseline taken halfway
+    /// through a publication would be half of one. Bounded, because the holder
+    /// need not be a command of this process: another crucible of this user —
+    /// including one from before this lock was narrowed, which keeps it for a
+    /// whole run — would otherwise hold up every command that writes, with
+    /// nothing to end the wait.
+    pub(super) fn acquire_in(state: &Path, patience: Duration) -> io::Result<Option<Self>> {
+        let deadline = Instant::now() + patience;
         loop {
-            match rustix::fs::flock(&lock, FlockOperation::LockExclusive) {
-                Ok(()) => break,
-                Err(rustix::io::Errno::INTR) => {}
-                Err(problem) => return Err(problem.into()),
+            if let Some(lease) = Self::try_acquire_in(state)? {
+                return Ok(Some(lease));
             }
+            if Instant::now() >= deadline {
+                return Ok(None);
+            }
+            std::thread::sleep(LOCK_POLL);
         }
-        validate_state(state, &directory)?;
-        validate_lock(state, WRITABLE_LOCK, &lock)?;
-        Ok(Self {
-            _state: directory,
-            _lock: lock,
-        })
     }
 }
 

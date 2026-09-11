@@ -168,3 +168,43 @@ fn rejected_catalogue_preserves_unconfirmed_replacement_cleanup() {
     assert_eq!(sandbox.started(), 2);
     assert_eq!(sandbox.server(1).stop_attempts.load(Ordering::Relaxed), 1);
 }
+
+#[test]
+fn a_server_whose_writes_were_refused_is_not_started_again_in_this_run() {
+    // Its scope ended and was reaped, so nothing keeps the next turn from
+    // starting it. This run is another matter: what the server wrote is in a
+    // state only a fresh run should settle, so the call says so and no
+    // replacement is started behind it.
+    let sandbox = Pretend::new([
+        Answers::Refused(dialogue("docs")),
+        Answers::Says(dialogue("docs")),
+    ]);
+    let hosting = Hosting::new(
+        builtin(&[]),
+        sandbox.clone() as Arc<dyn SandboxService>,
+        vec![chosen("docs").restarting(3)],
+    );
+    let context = lifecycle();
+    hosting.prepare(&context).unwrap();
+    let snapshot = hosting.snapshot(&context).unwrap();
+    let entry = snapshot.find("mcp:docs/search").unwrap();
+    sandbox.server(0).departs();
+
+    let error = calls(entry.tool(), "mcp:docs/search", "{}", &Cancel::new())
+        .expect_err("a refused publication is not a restart");
+
+    assert!(
+        error.to_string().contains("nothing it wrote was published"),
+        "{error}"
+    );
+    assert_eq!(
+        sandbox.started(),
+        1,
+        "a server whose writes were refused was started again"
+    );
+    hosting.dispose(&context).ok();
+    hosting
+        .prepare(&context)
+        .expect("the next turn may start servers again");
+    assert_eq!(sandbox.started(), 2);
+}

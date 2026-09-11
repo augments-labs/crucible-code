@@ -33,6 +33,17 @@ use super::transaction;
 const MAX_PROJECTED_ENTRIES: usize = 262_144;
 const MAX_PROJECTED_DEPTH: usize = 64;
 
+/// How long a command being prepared waits for a publication to finish before
+/// it is refused instead.
+///
+/// Refused rather than waited out, because the lock may be held by another
+/// crucible of this user, and a caller can act on a refusal. Shorter under test,
+/// where the holder is a fixture rather than a command.
+#[cfg(not(test))]
+const PUBLICATION_PATIENCE: std::time::Duration = std::time::Duration::from_mins(1);
+#[cfg(test)]
+const PUBLICATION_PATIENCE: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// One complete semantic view used for source-stability checks.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Snapshot {
@@ -219,11 +230,18 @@ impl Projection {
         let _publication = if specifications.is_empty() {
             None
         } else {
-            Some(
-                transaction::Lease::acquire_in(&state_directory).map_err(|source| {
-                    failed("the writable publication lock is unavailable", source)
-                })?,
-            )
+            match transaction::Lease::acquire_in(&state_directory, PUBLICATION_PATIENCE) {
+                Ok(Some(lease)) => Some(lease),
+                // The refusal this path gave before the lock was narrowed. A
+                // caller can act on it; a wait with no end only holds the turn.
+                Ok(None) => return Err(SandboxError::Concurrency),
+                Err(source) => {
+                    return Err(failed(
+                        "the writable publication lock is unavailable",
+                        source,
+                    ));
+                }
+            }
         };
         let roots_directory = stage.root().join("roots");
         create_private_directory(&roots_directory)
@@ -797,6 +815,7 @@ pub(super) fn wrap(
         terminal: false,
         reported: None,
         failure: None,
+        unrecorded: None,
         audit,
         sandbox,
         control: Some(control),
@@ -856,6 +875,9 @@ struct ProjectedProcess {
     /// How the ending went wrong, where it did, answered again on every later
     /// look.
     failure: Option<(io::ErrorKind, Box<str>)>,
+    /// A fact about a publication that went ahead, which the audit could not
+    /// take. Reported with the cleanup rather than as the ending.
+    unrecorded: Option<io::Error>,
     audit: SandboxAudit,
     sandbox: SandboxId,
     control: Option<std::os::unix::net::UnixStream>,
@@ -997,7 +1019,13 @@ impl ProjectedProcess {
             }
             self.terminal = true;
             self.status = Some(status);
-            self.lifecycle(SandboxLifecycle::Published)?;
+            // The publication is done. A fact that cannot be recorded is a
+            // cleanup failure, not an ending that went wrong: reported as one, it
+            // would tell the model to write everything again over the files that
+            // are already there.
+            if let Err(problem) = self.lifecycle(SandboxLifecycle::Published) {
+                self.unrecorded = Some(problem);
+            }
             return Ok(Some(status));
         } else if let Err(problem) = self.discard() {
             return Err(self.failed(problem));
@@ -1030,7 +1058,9 @@ impl SandboxProcess for ProjectedProcess {
         }
         if self.terminal {
             // Stopped before its report was read, so how the leader ended is how
-            // the command ended.
+            // the command ended. A zero here says the leader exited, not that
+            // what the command wrote was published: stopping discards whatever
+            // had not been published yet.
             return self.process.try_wait();
         }
         if self.reported.is_none() {
@@ -1105,10 +1135,12 @@ impl SandboxProcess for ProjectedProcess {
         } else {
             crucible_sandbox::SandboxCleanup::Failed
         };
+        let unrecorded = self.unrecorded.take().map_or(Ok(()), Err);
         let mut result = cancellation
             .and(process_cleanup)
             .and(terminal_cleanup)
-            .and(projection_cleanup);
+            .and(projection_cleanup)
+            .and(unrecorded);
         self.inspection = self.inspection.clone().cleaned(cleanup);
         self.cleanup = cleanup;
         let audited = self.audit_cleanup(cleanup);

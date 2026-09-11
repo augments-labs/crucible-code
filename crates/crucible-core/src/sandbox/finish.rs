@@ -27,6 +27,17 @@ use crucible_sandbox::SandboxProcess;
 /// How long the wait for a process to finish sleeps between looks.
 const WATCH: Duration = Duration::from_millis(5);
 
+/// How long a process that has ended is given, past its grace, to finish
+/// publishing what it wrote.
+///
+/// Bounded because what it waits for can be held by another crucible of this
+/// user, and a wait with no end would keep this run from finishing. Shorter
+/// under test, where nothing holds a publication up.
+#[cfg(not(test))]
+const PUBLICATION: Duration = Duration::from_mins(1);
+#[cfg(test)]
+const PUBLICATION: Duration = Duration::from_millis(300);
+
 /// How a confined process finished.
 #[derive(Debug)]
 pub enum Finish {
@@ -43,8 +54,9 @@ pub enum Finish {
 
     /// It did not, and stopping it failed.
     ///
-    /// The sandbox could not confirm scope termination and leader exit,
-    /// which is the one ending that is somebody's problem afterwards.
+    /// The sandbox could not confirm scope termination and leader exit: one of
+    /// the two endings, with an ending that went wrong, that are somebody's
+    /// problem afterwards.
     Unreaped(io::Error),
 }
 
@@ -69,8 +81,11 @@ impl Finish {
             match grace.checked_sub(began.elapsed()) {
                 Some(left) => thread::sleep(left.min(WATCH)),
                 // Past the grace, one that has ended is waiting its turn to
-                // publish, not refusing to go.
-                None if process.ended() => thread::sleep(WATCH),
+                // publish, not refusing to go — for as long as that wait can be
+                // worth making.
+                None if process.ended() && began.elapsed() < grace.saturating_add(PUBLICATION) => {
+                    thread::sleep(WATCH);
+                }
                 None => break,
             }
         }

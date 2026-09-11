@@ -64,6 +64,9 @@ pub(crate) fn said(ended: &[Ended]) -> Option<String> {
         // In the same sentence, because a model told only that a command ended
         // would go on as though the files it wrote were there.
         let unpublished = one.unpublished.as_ref().map_or_else(String::new, |why| {
+            // One line of it: the note is a list, and a reason carrying its own
+            // line break would read as the next command's line.
+            let why = why.split_whitespace().collect::<Vec<_>>().join(" ");
             format!(", but nothing it wrote was published: {why}")
         });
 

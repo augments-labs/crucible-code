@@ -56,6 +56,17 @@ pub(super) const CAPTURE_TEXT: usize = OUTPUT - 256;
 /// of what is shown.
 const FRESH: usize = 8 * 1024;
 
+/// How long a command that has ended is given to finish publishing what it
+/// wrote, once its deadline has passed or its turn was cancelled.
+///
+/// Bounded because what it waits for can be held by another crucible of this
+/// user, and a wait with no end would leave the call unanswerable. Shorter under
+/// test, where nothing holds a publication up.
+#[cfg(not(test))]
+const PUBLICATION: Duration = Duration::from_mins(1);
+#[cfg(test)]
+const PUBLICATION: Duration = Duration::from_millis(300);
+
 /// How long the readers get to reach the end of their pipes once the command
 /// itself is over. Reading what is already buffered takes no time at all, so
 /// this is only ever spent when something else is still holding a pipe open.
@@ -86,6 +97,8 @@ pub(super) fn collect(
 
     let deadline = started + *allowed;
     let mut expired = false;
+    // When a command that has ended began waiting for its turn to publish.
+    let mut publishing: Option<Instant> = None;
 
     // A child is not one of this program's threads: nothing in it will notice
     // the flag, so the only way to stop it is to kill it.
@@ -118,15 +131,18 @@ pub(super) fn collect(
         // ended. One whose writes wait their turn behind another command's
         // publication is not running any more, and stopping it would discard what
         // it wrote after it finished.
-        if cancel.requested() && !running.taking()?.ended() {
-            let _ = running.stop()?;
-            return Err(ToolError::Cancelled(NAME.into()));
-        }
-
-        if Instant::now() >= deadline && !running.taking()?.ended() {
-            let status = running.stop()?;
-            expired = true;
-            break status;
+        if cancel.requested() || Instant::now() >= deadline {
+            let waiting = running.taking()?.ended()
+                && publishing.get_or_insert_with(Instant::now).elapsed() < PUBLICATION;
+            if !waiting {
+                if cancel.requested() {
+                    let _ = running.stop()?;
+                    return Err(ToolError::Cancelled(NAME.into()));
+                }
+                let status = running.stop()?;
+                expired = true;
+                break status;
+            }
         }
 
         // Handed over here rather than from the reader threads, and that is the

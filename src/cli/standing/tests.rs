@@ -151,3 +151,30 @@ fn a_turn_with_nothing_ended_is_told_nothing_about_it() {
     assert!(!said.contains("left running"), "{said}");
     assert!(!said.contains("have ended"), "{said}");
 }
+
+#[test]
+fn a_reason_with_a_line_break_reaches_the_model_as_one_line() {
+    // The note is a list, and a reason carrying its own newline would read as
+    // the next command's line rather than as this one's reason.
+    let ended = [Ended {
+        tool: "bash",
+        number: 4,
+        called: "npm run build".into(),
+        said: "".into(),
+        code: None,
+        lines: 1,
+        printed: "".into(),
+        unpublished: Some(
+            "writable root changed after the command started\nterminal delta category: path-set"
+                .into(),
+        ),
+    }];
+
+    let note = said(&ended).expect("a note about one command");
+
+    let line = note
+        .lines()
+        .find(|line| line.contains("nothing it wrote was published"))
+        .expect("the line about the ending");
+    assert!(line.contains("terminal delta category"), "{note}");
+}

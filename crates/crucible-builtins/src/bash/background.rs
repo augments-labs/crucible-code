@@ -43,6 +43,17 @@ use crucible_tools::{CallResultAcceptance, CallResultReceipt};
 /// refusal naming the four in the way — which the model can act on.
 pub const MOST: usize = 4;
 
+/// How long a command that has ended is given, on the way out, to finish
+/// publishing what it wrote.
+///
+/// Shorter than the wait a call makes, because somebody is waiting for this
+/// process to be gone, and what the wait is for may be held by another crucible
+/// of this user.
+#[cfg(not(test))]
+const PUBLICATION: Duration = Duration::from_secs(5);
+#[cfg(test)]
+const PUBLICATION: Duration = Duration::from_millis(300);
+
 /// How much of what one ended command printed travels in the note about it.
 ///
 /// [`MOST`] commands can end into a single note, so the share rather than the
@@ -174,7 +185,11 @@ impl Drop for Held {
         // let finish that first, because ending it would discard it. What it waits
         // for is another command's publication, which ends.
         for left in &mut self.left {
-            while left.process.ended() && matches!(left.process.try_wait(), Ok(None)) {
+            let waited = Instant::now();
+            while left.process.ended()
+                && matches!(left.process.try_wait(), Ok(None))
+                && waited.elapsed() < PUBLICATION
+            {
                 thread::sleep(super::TICK);
             }
             let _ = super::output::end(left.process.as_mut());

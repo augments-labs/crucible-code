@@ -4,7 +4,9 @@
 //! hold it themselves, the way another command's publication would, and watch a
 //! writer end while it is held: waiting its turn, stopped, killed, refused, or
 //! prepared across it. A test takes the lock only after its own writer has
-//! started, because preparation waits for it too.
+//! started, because preparation waits for it too — except the read-only case,
+//! which may take it first, since a command with no writable root never asks for
+//! it.
 
 use std::process::ExitStatus;
 use std::thread;
@@ -47,6 +49,29 @@ fn held_publication(sample: &Sample) -> super::transaction::Lease {
 fn let_go(process: &mut dyn SandboxProcess) {
     let mut input = process.take_stdin().expect("the command's input");
     std::io::Write::write_all(&mut input, b"go\n").expect("the command is let go");
+}
+
+/// Waits until `process` reads as ended, so that what is done next happens
+/// after every fact its ending has recorded and before it publishes.
+fn once_ended(process: &mut dyn SandboxProcess, patience: Duration) {
+    let deadline = Instant::now() + patience;
+    while !process.ended() {
+        assert!(Instant::now() < deadline, "the command did not end");
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Says that nothing of `sandbox` is left in this user's state directory.
+///
+/// A stage left there is read by every later preparation as a lifecycle needing
+/// recovery, which refuses it.
+fn nothing_left_of(sandbox: SandboxId) {
+    let stage = super::transaction::stage_root(sandbox).expect("the stage path");
+    assert!(
+        !stage.exists(),
+        "a stage was left behind, which refuses every later preparation: {}",
+        stage.display()
+    );
 }
 
 /// How `process` ended, once it has, within `patience`.
@@ -510,4 +535,132 @@ fn a_read_only_command_ends_while_another_publishes() {
         finished.expect("a reader, with nothing to publish, waited for another's publication");
     assert!(status.success(), "{}", String::from_utf8_lossy(&errors));
     assert_eq!(output, b"seen\n");
+}
+
+/// Fills `audit` until it holds `wanted` facts, so that the next fact recorded
+/// after that finds it full.
+fn fill_audit(audit: &crucible_sandbox::SandboxAudit, wanted: usize) {
+    while audit.records().expect("audit records").len() < wanted {
+        audit
+            .record(
+                SandboxId::new(),
+                crucible_sandbox::SandboxFactKind::Lifecycle(SandboxLifecycle::Prepared),
+            )
+            .expect("a fact fits while the collector has room");
+    }
+}
+
+#[test]
+fn a_writer_prepared_while_a_publication_will_not_end_is_refused_rather_than_waiting() {
+    let service = LocalSandbox::new();
+    if skipped_without_enforcement(&service) {
+        return;
+    }
+    let sample = Sample::new("sandbox-writer-refused-by-a-stuck-publication");
+    let _serial = super::transaction::TestSerialLease::acquire().expect("test writer coordination");
+    // Held for longer than a preparation may wait, the way another crucible of
+    // this user, holding it for a whole run, would hold it.
+    let publishing = held_publication(&sample);
+    let mut session = service
+        .prepare(request(&sample, SandboxManifest::empty()))
+        .expect("a writer");
+    session.materialize().expect("materialized workspace");
+
+    let (told, hears) = std::sync::mpsc::channel();
+    let writer = thread::spawn(move || {
+        let outcome = session.start(command("printf 'after\\n' > after.txt"));
+        told.send(outcome.err().map(|problem| problem.to_string()))
+            .expect("the test hears how the writer went");
+    });
+    let outcome = hears.recv_timeout(Duration::from_secs(20));
+    drop(publishing);
+    writer.join().expect("the writer thread");
+
+    let refused = outcome
+        .expect("a writer waited on a publication that never ends")
+        .expect("a writer is refused while another publication holds the lock");
+    assert!(refused.contains("concurrency"), "{refused}");
+    assert!(!sample.root().join("after.txt").exists());
+}
+
+#[test]
+fn a_publication_that_cannot_record_its_fact_still_says_what_the_command_did() {
+    let service = LocalSandbox::new();
+    if skipped_without_enforcement(&service) {
+        return;
+    }
+    let sample = Sample::new("sandbox-publication-fact-unrecorded");
+    let _serial = super::transaction::TestSerialLease::acquire().expect("test writer coordination");
+    let writer = request(&sample, SandboxManifest::empty());
+    let sandbox = writer.id();
+    let audit = writer.audit().clone();
+    let mut session = service.prepare(writer).expect("a writer");
+    session.materialize().expect("materialized workspace");
+    let mut process = session
+        .start(command("read go; printf 'after\\n' > after.txt").spoken_to())
+        .expect("started command");
+    let_go(process.as_mut());
+    // Filled once the command has ended, so that one slot is left at the
+    // publication: its start takes that, and the fact that it finished finds the
+    // collector full.
+    once_ended(process.as_mut(), Duration::from_secs(5));
+    fill_audit(&audit, crucible_sandbox::MAX_SANDBOX_AUDIT_FACTS - 1);
+
+    let status = ended_within(process.as_mut(), Duration::from_secs(5));
+
+    let stopped = process.stop();
+    assert!(status.success(), "{status}");
+    assert_eq!(
+        std::fs::read_to_string(sample.root().join("after.txt")).expect("published file"),
+        "after\n"
+    );
+    assert!(
+        stopped.is_err(),
+        "a fact that could not be recorded was never reported"
+    );
+    nothing_left_of(sandbox);
+}
+
+#[test]
+fn a_publication_whose_start_cannot_be_recorded_discards_what_the_command_wrote() {
+    let service = LocalSandbox::new();
+    if skipped_without_enforcement(&service) {
+        return;
+    }
+    let sample = Sample::new("sandbox-publication-start-unrecorded");
+    let _serial = super::transaction::TestSerialLease::acquire().expect("test writer coordination");
+    let writer = request(&sample, SandboxManifest::empty());
+    let sandbox = writer.id();
+    let audit = writer.audit().clone();
+    let mut session = service.prepare(writer).expect("a writer");
+    session.materialize().expect("materialized workspace");
+    let mut process = session
+        .start(command("read go; printf 'after\\n' > after.txt").spoken_to())
+        .expect("started command");
+    let_go(process.as_mut());
+    // Filled once the command has ended, so that the publication's own start is
+    // the fact that finds the collector full.
+    once_ended(process.as_mut(), Duration::from_secs(5));
+    fill_audit(&audit, crucible_sandbox::MAX_SANDBOX_AUDIT_FACTS);
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let refused = loop {
+        match process.try_wait() {
+            Err(problem) => break problem,
+            Ok(None) => {}
+            Ok(Some(status)) => panic!("a publication nobody could record went ahead: {status}"),
+        }
+        assert!(Instant::now() < deadline, "the command did not end");
+        thread::sleep(Duration::from_millis(10));
+    };
+    let again = process.try_wait();
+
+    assert_eq!(
+        again.as_ref().map_err(ToString::to_string),
+        Err(refused.to_string()),
+        "an ending that went wrong answered differently when asked again"
+    );
+    assert!(!sample.root().join("after.txt").exists());
+    drop(process);
+    nothing_left_of(sandbox);
 }

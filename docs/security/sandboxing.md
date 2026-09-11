@@ -412,8 +412,9 @@ crucible closes its input, at a restart or at the end of the run, and
 discarded when it has to be stopped instead. A server that has exited is not
 stopped while its writes wait for another command's publication. Where they
 cannot be published, because a root it wrote into changed while it ran, the
-restart or the disposal fails with that reason, and the server can still be
-started again.
+restart or the disposal fails with that reason. That server is not started again
+for the rest of the run, because what it wrote is in a state only a fresh run
+should settle; the next turn starts it as usual.
 
 Inspection retains backend ID/version/provenance, capability claims, separate
 hashed requested and effective policies and redacted plans, manifest,
@@ -578,7 +579,13 @@ through one. A command that ends cleanly while another is publishing waits for
 that publication to finish before its own begins; one killed, or stopped by a
 limit, has nothing to publish and does not wait. Waiting commands are not served
 in order, and each keeps its place among the commands allowed to run at once
-until its own publication finishes.
+until its own publication finishes. Every wait for the lock has a ceiling: a
+command being prepared is refused if the lock does not come free within a
+minute, and a command that has ended is stopped after a minute of waiting, or
+after five seconds when the run itself is ending. The holder may be another
+crucible of this user, including one from before this release, which keeps the
+lock for as long as its commands run; a wait with no end would hold up the turn,
+the cancel and the exit instead.
 
 A detached command follows the same rules when it ends later. Its start result
 is accepted only after it is durably stored, and its terminal publication is

@@ -428,3 +428,106 @@ fn letting_the_registry_go_waits_for_a_command_that_has_ended() {
         "the registry ended a command before its ending completed"
     );
 }
+
+#[test]
+fn a_command_whose_publication_never_finishes_is_stopped_once_its_patience_has_passed() {
+    let observed = Arc::new(Observed::default());
+    observed.ended.store(true, Ordering::Relaxed);
+    observed.cleanup_allowed.store(true, Ordering::Relaxed);
+    let process = process(&observed);
+    let (told, hears) = std::sync::mpsc::channel();
+    let waiting = thread::spawn(move || {
+        let answered = output::collect(
+            Box::new(process),
+            &output::Waiting {
+                allowed: Duration::from_millis(50),
+                cancel: &Cancel::new(),
+                watch: &Unwatched,
+                leaving: None,
+            },
+        );
+        told.send(match answered {
+            Ok(output::Left::Answered(report)) => report.text().to_owned(),
+            Ok(output::Left::Running(_)) => "handed over".to_owned(),
+            Err(problem) => format!("error: {problem}"),
+        })
+        .expect("the test hears how it went");
+    });
+
+    let said = hears.recv_timeout(Duration::from_secs(20));
+
+    let said = said.expect("the deadline's wait for a publication has a ceiling");
+    waiting.join().expect("the waiting thread");
+    assert!(said.contains("ran too long"), "{said}");
+}
+
+#[test]
+fn a_cancelled_turn_stops_a_command_whose_publication_never_finishes() {
+    let observed = Arc::new(Observed::default());
+    observed.ended.store(true, Ordering::Relaxed);
+    observed.cleanup_allowed.store(true, Ordering::Relaxed);
+    let process = process(&observed);
+    let (told, hears) = std::sync::mpsc::channel();
+    let watching = Arc::clone(&observed);
+    let waiting = thread::spawn(move || {
+        let cancel = Cancel::new();
+        cancel.request();
+        let answered = output::collect(
+            Box::new(process),
+            &output::Waiting {
+                allowed: Duration::from_secs(30),
+                cancel: &cancel,
+                watch: &Unwatched,
+                leaving: None,
+            },
+        );
+        told.send(match answered {
+            Ok(_) => "answered".to_owned(),
+            Err(problem) => format!("error: {problem}"),
+        })
+        .expect("the test hears how it went");
+        drop(watching);
+    });
+
+    let said = hears.recv_timeout(Duration::from_secs(20));
+
+    let said = said.expect("a cancel waits for a publication only so long");
+    waiting.join().expect("the waiting thread");
+    assert!(said.starts_with("error:"), "{said}");
+    assert!(observed.stops.load(Ordering::Relaxed) > 0, "{said}");
+}
+
+#[test]
+fn letting_the_registry_go_stops_waiting_once_its_patience_has_passed() {
+    let left = Background::new();
+    let observed = Arc::new(Observed::default());
+    drop(keep(&left, &observed, false));
+    observed.ended.store(true, Ordering::Relaxed);
+    observed.cleanup_allowed.store(true, Ordering::Relaxed);
+    let (told, hears) = std::sync::mpsc::channel();
+    let letting_go = thread::spawn(move || {
+        drop(left);
+        told.send(()).expect("the test hears it let go");
+    });
+
+    let went = hears.recv_timeout(Duration::from_secs(20));
+
+    went.expect("the registry's wait for a publication has a ceiling");
+    letting_go.join().expect("the dropping thread");
+    assert!(observed.dropped.load(Ordering::Relaxed));
+}
+
+#[test]
+fn letting_the_registry_go_ends_a_command_whose_ending_went_wrong() {
+    let left = Background::new();
+    let observed = Arc::new(Observed::default());
+    drop(keep(&left, &observed, false));
+    observed.ended.store(true, Ordering::Relaxed);
+    observed.failed.store(true, Ordering::Relaxed);
+    observed.cleanup_allowed.store(true, Ordering::Relaxed);
+
+    drop(left);
+
+    assert_eq!(observed.stops.load(Ordering::Relaxed), 1);
+    assert!(observed.dropped.load(Ordering::Relaxed));
+}
