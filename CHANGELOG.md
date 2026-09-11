@@ -17,6 +17,20 @@ change in any release with no deprecation period.
   run something that asked again. `bash_output` takes the number the call was
   answered with and answers with what that command has printed so far.
 
+### Changed
+
+- **The confinement contracts and this machine's backend have crates of their
+  own.** `crucible_tools::LocalSandbox` and `crucible_tools::conformance` moved
+  to `crucible-sandbox-local`, and the backend-neutral contracts they answer to
+  `crucible-sandbox`. An adapter outside this tree implements those contracts
+  against `crucible-sandbox`, and reaches the conformance suite through a
+  backend crate rather than through a crate of built-in tools.
+- **A command tool is handed the confinement it will run under.** `Bash::new`
+  took only a workspace and filled in this machine's own backend, so the tool
+  crate named one machine's answer where it should name only the contract, and a
+  caller that had already resolved a backend could not say so at construction.
+  It now takes the sandbox service alongside the workspace.
+
 ### Fixed
 
 - **A command that ended while nobody waited hands over what it printed.** The

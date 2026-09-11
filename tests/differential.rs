@@ -362,7 +362,10 @@ fn every_built_in_tool_advertises_what_it_did() {
 
     let tools: [Box<dyn DescribeTool>; 11] = [
         Box::new(AskUser::new(Arc::new(Silent))),
-        Box::new(Bash::new(workspace.clone())),
+        Box::new(Bash::new(
+            workspace.clone(),
+            Arc::new(crucible_sandbox_local::LocalSandbox::new()),
+        )),
         Box::new(Edit::new(workspace.clone())),
         Box::new(Glob::new(workspace.clone())),
         Box::new(Grep::new(workspace.clone())),

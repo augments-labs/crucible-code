@@ -28,9 +28,10 @@ use crucible_provider::{
 use crucible_runner::{
     AgentSpec, Bounds, Compaction, ContextInputs, Model, RunPolicy, Runner, Session, Tools,
 };
+use crucible_sandbox_local::LocalSandbox;
 use crucible_tools::{
-    AskUser, Background, Bash, BashOutput, Edit, Glob, Grep, Held, Ledger, LocalSandbox, Plan,
-    Read, TodoWrite, ToolSearch, WebFetch, WebSearch, Write,
+    AskUser, Background, Bash, BashOutput, Edit, Glob, Grep, Held, Ledger, Plan, Read, TodoWrite,
+    ToolSearch, WebFetch, WebSearch, Write,
 };
 
 use super::hosting::{Hosting, selecting};
@@ -822,8 +823,8 @@ fn tools(
     // rather than copying it, which is what lets the loop draw what is running and
     // stop one — and what makes the caller's copy the thing that ends them all.
     tools.add_builtin(
-        Bash::new(workspace.clone())
-            .under_policy(sandbox, settings.sandbox().enforcing_policy(workspace)?)
+        Bash::new(workspace.clone(), sandbox)
+            .under_policy(settings.sandbox().enforcing_policy(workspace)?)
             .following_enablement(settings.sandbox().enablement())
             .exporting(settings.env())
             .leaving(leaving.clone()),

@@ -8,9 +8,12 @@ use crate::bash::Bash;
 use crate::sample::{Sample, allowed};
 
 fn started(sample: &Sample, left: &Background, command: &str) -> Bash {
-    let tool = Bash::new(sample.workspace())
-        .sandboxing(std::sync::Arc::new(crate::LocalSandbox::new()), false)
-        .leaving(left.clone());
+    let tool = Bash::new(
+        sample.workspace(),
+        std::sync::Arc::new(crucible_sandbox_local::LocalSandbox::new()),
+    )
+    .sandboxing(false)
+    .leaving(left.clone());
     let context = crate::sample::context();
     let args = format!(r#"{{"command":{command},"background":true}}"#);
     let output = tool

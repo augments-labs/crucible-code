@@ -10,7 +10,7 @@ use crucible_core::{
     SandboxError, SandboxInspection, SandboxLaunch, SandboxOutput, SandboxProcess, SandboxRequest,
     SandboxService, SandboxSession, SandboxUsage, SandboxViolation,
 };
-use crucible_tools::LocalSandbox;
+use crucible_sandbox_local::LocalSandbox;
 
 pub(super) const PRIVATE_ERROR: &str = "synthetic-private-cleanup-details";
 

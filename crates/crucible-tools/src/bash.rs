@@ -28,7 +28,6 @@ mod background;
 mod command;
 mod environment;
 mod output;
-pub(crate) mod platform;
 mod reading;
 mod reporting;
 mod shell;
@@ -217,6 +216,9 @@ pub struct Bash {
     env: Vec<(Box<str>, OsString)>,
     /// Host-owned process boundary. A tool can request one lifecycle but never
     /// receives backend mechanics or a direct-spawn escape hatch.
+    ///
+    /// Supplied at construction by the composition root, because this tool
+    /// names no implementation and has nothing to fall back to.
     sandbox: Arc<dyn SandboxService>,
     /// Resolved once with the workspace. `Err` is retained so an unusually
     /// long host path fails before spawn without making construction panic.
@@ -262,12 +264,19 @@ impl std::fmt::Debug for Exported<'_> {
 }
 
 impl Bash {
-    /// Runs in `workspace`, requiring confinement unless the host explicitly
-    /// disables confinement through [`Self::sandboxing`]. The application's
-    /// opt-in configuration is applied by its composition root.
+    /// Runs in `workspace`, through `sandbox`.
+    ///
+    /// The service is taken here rather than defaulted because this crate names
+    /// no backend: filling one in would put one machine's answer in the crate
+    /// that should only name the contract, and would leave a caller that had
+    /// already resolved a backend unable to say so at construction. The
+    /// application's opt-in configuration is applied on top by
+    /// [`Self::sandboxing`] or [`Self::under_policy`]; the policy this starts
+    /// from is enabled, which `docs/security/sandboxing.md` promises SDK
+    /// callers and `bash::tests` reads back.
     #[must_use]
-    pub fn new(workspace: Workspace) -> Self {
-        Self::inheriting(workspace, |name| std::env::var_os(name))
+    pub fn new(workspace: Workspace, sandbox: Arc<dyn SandboxService>) -> Self {
+        Self::inheriting(workspace, sandbox, |name| std::env::var_os(name))
     }
 
     /// The same, reading crucible's own environment through `lookup`.
@@ -280,28 +289,31 @@ impl Bash {
     /// The shell is found the same way and for a second reason: a bare name is
     /// resolved wherever it is spawned, and a command here is spawned in the
     /// workspace. [`shell`] says what that costs.
-    fn inheriting(workspace: Workspace, lookup: impl Fn(&str) -> Option<OsString>) -> Self {
+    fn inheriting(
+        workspace: Workspace,
+        sandbox: Arc<dyn SandboxService>,
+        lookup: impl Fn(&str) -> Option<OsString>,
+    ) -> Self {
         let policy = SandboxPolicy::standard(&workspace).map_err(|error| error.to_string().into());
         Self {
             workspace,
             leaving: None,
             shell: shell::find(&lookup),
             env: environment::inherited(lookup),
-            sandbox: Arc::new(crate::LocalSandbox::new()),
+            sandbox,
             policy,
             enablement: None,
             first: FIRST,
         }
     }
 
-    /// Replaces the local service and applies the host-authorized enabled choice.
+    /// Applies the host-authorized enabled choice to the policy held now.
     ///
     /// The binary composition root uses this after configuration provenance has
     /// established that only a user layer may disable confinement.
     /// Descendant/project narrowing happens before a policy reaches this tool.
     #[must_use]
-    pub fn sandboxing(mut self, service: Arc<dyn SandboxService>, enabled: bool) -> Self {
-        self.sandbox = service;
+    pub fn sandboxing(mut self, enabled: bool) -> Self {
         self.enablement = None;
         if let Ok(policy) = &mut self.policy {
             *policy = policy.clone().with_enabled(enabled);
@@ -309,13 +321,13 @@ impl Bash {
         self
     }
 
-    /// Applies one complete policy assembled by the host from trusted settings.
+    /// Gives this tool one complete policy assembled by the host from trusted
+    /// settings.
     ///
     /// Commands can narrow these limits but cannot replace grants or remove
     /// restrictions. The host must resolve document provenance before calling.
     #[must_use]
-    pub fn under_policy(mut self, service: Arc<dyn SandboxService>, policy: SandboxPolicy) -> Self {
-        self.sandbox = service;
+    pub fn under_policy(mut self, policy: SandboxPolicy) -> Self {
         self.policy = Ok(policy);
         self.enablement = None;
         self

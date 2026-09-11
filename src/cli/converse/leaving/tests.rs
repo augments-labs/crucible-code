@@ -9,7 +9,8 @@ use crucible_core::{
     InvocationId, JournalStore, Mode, Permission, Remember, Rules, RunItem, Sensitivity, Settled,
     Tool, ToolArgs, ToolCall, ToolContext, ToolId, ToolResult, Unwatched, Verdict,
 };
-use crucible_tools::{Background, Bash, LocalSandbox};
+use crucible_sandbox_local::LocalSandbox;
+use crucible_tools::{Background, Bash};
 use sha2::{Digest, Sha256};
 
 use crate::cli::sample::Sample;
@@ -42,8 +43,8 @@ fn running_with(
     // namespace availability. Selecting the compatibility backend explicitly
     // keeps that boundary visible instead of depending on the host running the
     // test to permit nested user namespaces.
-    let tool = Bash::new(here.workspace())
-        .sandboxing(sandbox, false)
+    let tool = Bash::new(here.workspace(), sandbox)
+        .sandboxing(false)
         .leaving(left.clone());
     let mut engine = Permission::with(Mode::FullAccess, Rules::default());
 

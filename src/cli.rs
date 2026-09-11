@@ -53,7 +53,8 @@ use crucible_core::{
 };
 use crucible_provider::EndpointError;
 use crucible_runner::SessionError;
-use crucible_tools::{Background, Ledger, LocalSandbox, Plan};
+use crucible_sandbox_local::LocalSandbox;
+use crucible_tools::{Background, Ledger, Plan};
 use crucible_tui::{
     RawError, Renderer, ScreenError, SystemTerminal, TerminalError, Title, TitleError, Welcome,
 };

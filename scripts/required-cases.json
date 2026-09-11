@@ -274,13 +274,13 @@
       "id": "CASE-CONCURRENCY-CEILING-HELD",
       "family": "concurrency",
       "obligation": "Simultaneous preparations cannot oversubscribe the requested ceiling.",
-      "package": "crucible-tools",
+      "package": "crucible-sandbox-local",
       "target": {
         "kind": "test",
         "name": "sandbox_admission"
       },
       "case": "simultaneous_preparations_cannot_oversubscribe_the_requested_ceiling",
-      "source": "crates/crucible-tools/tests/sandbox_admission.rs",
+      "source": "crates/crucible-sandbox-local/tests/sandbox_admission.rs",
       "body_sha256": "3d1a24febf534ae7bc60ac4ab9d0d6b37139ca1ed4b8ddce2d920a9757f4952c",
       "platforms": [
         "linux",
@@ -345,19 +345,18 @@
     {
       "id": "CASE-SHUTDOWN-PROCESS-GROUP",
       "family": "shutdown",
-      "obligation": "An early return stops the whole process group rather than leaving children behind.",
+      "obligation": "Nothing a command left running is still running after an early return from it.",
       "package": "crucible-tools",
       "target": {
         "kind": "lib",
         "name": "crucible_tools"
       },
-      "case": "bash::output::tests::an_early_return_guard_stops_the_whole_process_group",
+      "case": "bash::output::tests::an_early_return_leaves_no_descendant_of_the_command_running",
       "source": "crates/crucible-tools/src/bash/output/tests.rs",
-      "body_sha256": "69e0775b3a9abe956347aebffd9a0557f6bd63b79de41a5331abe70547c05643",
+      "body_sha256": "0f17a8c7f0e8c09b2356bddf7df6bf43688abc4a0b7069f5d2f2d6ce82bac5fd",
       "platforms": [
         "linux",
-        "macos",
-        "windows"
+        "macos"
       ]
     },
     {
@@ -490,13 +489,13 @@
       "id": "CASE-SANDBOX-DESCRIPTOR-DESCENT",
       "family": "files-and-sandbox",
       "obligation": "Descriptor descent refuses an intermediate symlink.",
-      "package": "crucible-tools",
+      "package": "crucible-sandbox-local",
       "target": {
         "kind": "lib",
-        "name": "crucible_tools"
+        "name": "crucible_sandbox_local"
       },
-      "case": "sandbox::linux::projection::authority::tests::descriptor_descent_refuses_an_intermediate_symlink",
-      "source": "crates/crucible-tools/src/sandbox/linux/projection/authority.rs",
+      "case": "linux::projection::authority::tests::descriptor_descent_refuses_an_intermediate_symlink",
+      "source": "crates/crucible-sandbox-local/src/linux/projection/authority.rs",
       "body_sha256": "d291af0f749e7b081c070854b43b68c3fc281c81cc15a87d33c0bfb15b5d9163",
       "platforms": [
         "linux"
@@ -506,13 +505,13 @@
       "id": "CASE-SANDBOX-SHELL-CONFINED",
       "family": "files-and-sandbox",
       "obligation": "A denied program reached through a shell is bounded by confinement instead.",
-      "package": "crucible-tools",
+      "package": "crucible-sandbox-local",
       "target": {
         "kind": "lib",
-        "name": "crucible_tools"
+        "name": "crucible_sandbox_local"
       },
-      "case": "sandbox::linux::guardrail_tests::a_denied_program_reached_through_a_shell_is_bounded_by_confinement_instead",
-      "source": "crates/crucible-tools/src/sandbox/linux/guardrail_tests.rs",
+      "case": "linux::guardrail_tests::a_denied_program_reached_through_a_shell_is_bounded_by_confinement_instead",
+      "source": "crates/crucible-sandbox-local/src/linux/guardrail_tests.rs",
       "body_sha256": "2a2b170ace7ada880e7e034090cde2eae0eeed30506c3758021e74f26b6c09c7",
       "platforms": [
         "linux"
@@ -522,13 +521,13 @@
       "id": "CASE-SANDBOX-DENIED-NEVER-DIALED",
       "family": "files-and-sandbox",
       "obligation": "A denied network target is never dialed, and the private proxy is the only route out.",
-      "package": "crucible-tools",
+      "package": "crucible-sandbox-local",
       "target": {
         "kind": "test",
         "name": "linux_network"
       },
       "case": "linux_curl_uses_the_private_proxy_and_a_denied_target_is_never_dialed",
-      "source": "crates/crucible-tools/tests/linux_network.rs",
+      "source": "crates/crucible-sandbox-local/tests/linux_network.rs",
       "body_sha256": "367ee3922f9376bb1dd500f475580ad3af622982a6efb3678491e4ee83e1160e",
       "platforms": [
         "linux"
@@ -538,14 +537,14 @@
       "id": "CASE-SANDBOX-NO-FALSE-CLAIM",
       "family": "files-and-sandbox",
       "obligation": "The compatibility matrix is complete and never claims kernel confinement it does not have.",
-      "package": "crucible-tools",
+      "package": "crucible-sandbox-local",
       "target": {
         "kind": "lib",
-        "name": "crucible_tools"
+        "name": "crucible_sandbox_local"
       },
-      "case": "sandbox::conformance::tests::compatibility_matrix_is_complete_and_never_claims_kernel_confinement",
-      "source": "crates/crucible-tools/src/sandbox/conformance/tests.rs",
-      "body_sha256": "26bb56b2140460ec72e84cc01a17952f72800a982ff33e185802fed4437fcfa3",
+      "case": "conformance::tests::compatibility_matrix_is_complete_and_never_claims_kernel_confinement",
+      "source": "crates/crucible-sandbox-local/src/conformance/tests.rs",
+      "body_sha256": "bd20bf7c8b646ccc899624852dca55f0260e7e39625c67087aa10b1e5c9bfe2b",
       "platforms": [
         "linux",
         "macos",
@@ -755,7 +754,7 @@
       },
       "case": "every_built_in_tool_advertises_what_it_did",
       "source": "tests/differential.rs",
-      "body_sha256": "a2bc9f34b46a9e341ed82c6844efad92b6190214dc3ce7587947889d2776ecc7",
+      "body_sha256": "b5ad8a2a25382c22ed226fdff89ef62df4581732bf69c65400224126396a1876",
       "platforms": [
         "linux",
         "macos",

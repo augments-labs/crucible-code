@@ -171,13 +171,57 @@ fn byte_counts_saturate_instead_of_wrapping() {
     assert!(shown.contains(&usize::MAX.to_string()), "{shown}");
 }
 
+/// A real child of the production process wrapper, admitted the way a command
+/// is.
+///
+/// The reaper and the early-return guard below outlive a process, so the thing
+/// they are tested against has to be one. It is admitted through the same
+/// service a tool is given, under a policy with confinement switched off,
+/// rather than spawned beside that path: a stand-in would test the stand-in,
+/// and a private spawn would prove the guards work on a process nothing else
+/// in this crate ever produces.
+#[cfg(unix)]
+fn admitted(
+    sample: &crate::sample::Sample,
+    command: &str,
+    environment: &[(&str, &std::ffi::OsStr)],
+) -> Box<dyn crucible_core::SandboxProcess> {
+    use crucible_core::{
+        Ancestry, SandboxCommand, SandboxEnvironment, SandboxId, SandboxManifest, SandboxPolicy,
+        SandboxRequest, SandboxService, ToolId,
+    };
+
+    let policy = SandboxPolicy::standard(&sample.workspace())
+        .expect("a standard policy for the fixture workspace")
+        .with_enabled(false);
+    let command = SandboxCommand::new(
+        super::super::shell::find(|name| std::env::var_os(name)).expect("a POSIX shell"),
+        [
+            std::ffi::OsString::from("-c"),
+            std::ffi::OsString::from(command),
+        ],
+        SandboxEnvironment::new(environment.iter().copied()).expect("the command environment"),
+    )
+    .expect("the sandbox command");
+    let request = SandboxRequest::new(
+        SandboxId::new(),
+        Ancestry::new(),
+        ToolId::new("bash"),
+        policy,
+        SandboxManifest::empty(),
+    );
+    let mut session = crucible_sandbox_local::LocalSandbox::new()
+        .prepare(request)
+        .expect("a prepared session");
+    session.materialize().expect("an empty manifest");
+    session.start(command).expect("the child started")
+}
+
 #[cfg(unix)]
 #[test]
 fn a_live_child_is_never_reaped_with_an_unbounded_wait() {
-    let mut command = std::process::Command::new("sh");
-    command.args(["-c", "sleep 5"]);
-    let mut process =
-        crate::sandbox::process::testing(command, crucible_core::SandboxSpeech::Closed).unwrap();
+    let sample = crate::sample::Sample::new("bash-reap-live");
+    let mut process = admitted(&sample, "sleep 5", &[]);
     let started = std::time::Instant::now();
 
     let status = super::reap(process.as_mut(), std::time::Duration::from_millis(40)).unwrap();
@@ -187,22 +231,49 @@ fn a_live_child_is_never_reaped_with_an_unbounded_wait() {
     process.stop().unwrap();
 }
 
+/// What a command leaves running does not outlive the command.
+///
+/// Named for the outcome rather than for whichever participant produced it:
+/// the guard ends the scope on the way out, and the process wrapper it hands
+/// back ends anything still there. Either one alone satisfies this, and the
+/// thing worth pinning is that a background descendant of a command nobody is
+/// waiting for any more cannot still be writing anywhere afterwards. The
+/// marker it would write sits outside the fixture's workspace for that reason:
+/// reaching it proves the descendant ran, not that it escaped confinement.
+///
+/// The command says when it has forked, and the wait below is not a courtesy:
+/// stopping a shell that has not reached its own first line yet leaves nothing
+/// behind to survive, so without it this passes whether or not a descendant is
+/// ever cleaned up.
 #[cfg(unix)]
 #[test]
-fn an_early_return_guard_stops_the_whole_process_group() {
+fn an_early_return_leaves_no_descendant_of_the_command_running() {
+    let sample = crate::sample::Sample::new("bash-guard-group");
     let base = std::env::temp_dir().join(format!("crucible-bash-guard-{}", std::process::id()));
+    let forked = base.with_extension("forked");
     let _ = std::fs::remove_file(&base);
-    let mut command = std::process::Command::new("sh");
-    command
-        .args(["-c", "(sleep 0.3; printf x > \"$MARKER\") & wait"])
-        .env("MARKER", &base);
-    let process =
-        crate::sandbox::process::testing(command, crucible_core::SandboxSpeech::Closed).unwrap();
+    let _ = std::fs::remove_file(&forked);
+    let process = admitted(
+        &sample,
+        "(sleep 0.3; printf x > \"$MARKER\") & printf f > \"$FORKED\"; wait",
+        &[("MARKER", base.as_os_str()), ("FORKED", forked.as_os_str())],
+    );
 
+    let waiting = std::time::Instant::now();
+    while !forked.exists() {
+        assert!(
+            waiting.elapsed() < std::time::Duration::from_secs(5),
+            "the command never reached the line that forks a descendant"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
     drop(super::Waited::new(process));
     std::thread::sleep(std::time::Duration::from_millis(450));
 
-    assert!(!base.exists(), "a descendant survived early-return cleanup");
+    let survived = base.exists();
+    let _ = std::fs::remove_file(&base);
+    let _ = std::fs::remove_file(&forked);
+    assert!(!survived, "a descendant survived early-return cleanup");
 }
 
 #[test]

@@ -19,7 +19,8 @@ use crucible_core::{
     Ancestry, Ask, Cancel, Mode, Permission, Remember, Sensitivity, Settled, Tool, ToolArgs,
     ToolCall, ToolContext, ToolError, ToolId, ToolOutput, Unwatched, Verdict, Workspace,
 };
-use crucible_tools::{Bash, Edit, Glob, Ledger, LocalSandbox, Read, Write};
+use crucible_sandbox_local::LocalSandbox;
+use crucible_tools::{Bash, Edit, Glob, Ledger, Read, Write};
 
 /// Median invocations retained for each operation.
 const RUNS: usize = 31;
@@ -187,7 +188,7 @@ fn write_latency(scratch: &Scratch, ledger: &Ledger) -> Result<f64, ProbeError> 
 
 fn sandbox_latency(scratch: &Scratch) -> Result<f64, ProbeError> {
     let tool =
-        Bash::new(scratch.workspace.clone()).sandboxing(Arc::new(LocalSandbox::new()), false);
+        Bash::new(scratch.workspace.clone(), Arc::new(LocalSandbox::new())).sandboxing(false);
     let mut readings = Vec::with_capacity(RUNS);
     for _ in 0..RUNS {
         let (output, elapsed) = invoke(

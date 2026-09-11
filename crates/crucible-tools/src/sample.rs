@@ -43,19 +43,6 @@ pub(crate) fn context() -> ToolContext<'static> {
     cancelled_by(&Cancel::new())
 }
 
-/// A durable direct-test context attributed to a chosen call.
-#[cfg(target_os = "linux")]
-pub(crate) fn context_for(call: &str) -> ToolContext<'static> {
-    ToolContext::new(
-        Ancestry::new(),
-        ToolId::new(call),
-        &Cancel::new(),
-        None,
-        &Unwatched,
-    )
-    .with_call_result_store(InvocationId::new(), &TEST_JOURNAL)
-}
-
 /// Completes the runner-owned result seam for direct tool tests.
 pub(crate) fn finalize_call_result(context: &ToolContext<'_>, output: &ToolOutput) {
     let Some(pending) = context.take_call_result().expect("pending result slot") else {
@@ -75,11 +62,10 @@ pub(crate) fn finalize_call_result(context: &ToolContext<'_>, output: &ToolOutpu
 /// enforcing Linux backend fails when that backend is unavailable, instead of
 /// quietly passing over nothing.
 ///
-/// This crate publishes no test harness, so the name is spelled again in
-/// `.github/workflows/rust-ci.yml`, which sets it, and in
-/// `tests/sandbox_conformance.rs`, which cannot reach in here. Changing the
-/// string here reddens the test that pins it, which is where those two are
-/// named.
+/// Spelled here rather than imported because nothing this crate can name owns
+/// it: the workflows that set it are not Rust, and the backend crate that
+/// spells it for its own tests publishes no test harness. Changing the string
+/// here reddens the test that pins it.
 pub(crate) const REQUIRE_ENFORCING_SANDBOX: &str = "CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX";
 
 /// Whether a test that needs the enforcing backend has to stop here.
@@ -88,7 +74,7 @@ pub(crate) const REQUIRE_ENFORCING_SANDBOX: &str = "CRUCIBLE_TEST_REQUIRE_ENFORC
 /// is the honest answer for a boundary nobody can exercise there. Where the job
 /// has declared that the backend must exist, an unavailable backend is a failure
 /// naming the reason, so a suite that measured nothing cannot report green.
-pub(crate) fn skipped_without_enforcement(service: &crate::LocalSandbox) -> bool {
+pub(crate) fn skipped_without_enforcement(service: &crucible_sandbox_local::LocalSandbox) -> bool {
     match crucible_core::SandboxService::probe(service) {
         Ok(_) => false,
         Err(problem) => {
@@ -148,16 +134,6 @@ impl Sample {
     /// what makes a counter enough.
     pub(crate) fn new(name: &str) -> Self {
         Self::below(name, &std::env::temp_dir())
-    }
-
-    /// Unix socket names must fit Darwin's 104-byte sockaddr field. Its usual
-    /// per-user temporary directory alone can consume most of that field.
-    #[cfg(unix)]
-    pub(crate) fn socket(name: &str) -> Self {
-        let temporary = Path::new("/tmp")
-            .canonicalize()
-            .expect("canonical temporary root");
-        Self::below(name, &temporary)
     }
 
     fn below(name: &str, temporary: &Path) -> Self {

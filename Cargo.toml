@@ -47,11 +47,14 @@ crucible-provider = { path = "crates/crucible-provider" }
 crucible-registry = { path = "crates/crucible-registry" }
 crucible-runner = { path = "crates/crucible-runner" }
 crucible-runtime = { path = "crates/crucible-runtime" }
-# Static PID 1 executable and its four-byte raw-wait-status protocol. The
-# library side contains no launcher or application authority; tools uses only
-# the protocol constants while the separately built binary supervises one
-# confined command.
+crucible-sandbox = { path = "crates/crucible-sandbox" }
+# Static PID 1 executable and its four-byte raw-wait-status protocol. What the
+# native backends name on the library side describes and probes a launch;
+# supervising one confined command is the separately built binary's alone. The
+# Windows account the native backend runs under is created and removed here
+# too, which is why the CLI reaches this crate directly for those two commands.
 crucible-sandbox-broker = { path = "crates/crucible-sandbox-broker" }
+crucible-sandbox-local = { path = "crates/crucible-sandbox-local" }
 crucible-session = { path = "crates/crucible-session" }
 crucible-storage = { path = "crates/crucible-storage" }
 crucible-tools = { path = "crates/crucible-tools" }
@@ -409,6 +412,10 @@ crucible-runner.workspace = true
 # already-selected Crucible image directly avoids elevating a mutable sibling
 # helper or a command assembled through a shell.
 crucible-sandbox-broker.workspace = true
+# The composition root is where a machine is named: it hands the native
+# confinement to every tool that runs a command, so no tool has to name an
+# operating system.
+crucible-sandbox-local.workspace = true
 crucible-tools.workspace = true
 crucible-tui.workspace = true
 image.workspace = true

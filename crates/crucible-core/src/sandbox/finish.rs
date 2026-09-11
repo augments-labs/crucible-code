@@ -17,7 +17,7 @@ use std::process::ExitStatus;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::SandboxProcess;
+use crucible_sandbox::SandboxProcess;
 
 /// How long the wait for a process to finish sleeps between looks.
 const WATCH: Duration = Duration::from_millis(5);
