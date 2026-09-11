@@ -28,6 +28,7 @@
 //! open, a read of the near side blocks forever instead of ending when the
 //! child does, and a test that hangs is worse than one that fails.
 
+use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read as _, Write as _};
@@ -52,17 +53,22 @@ const QUIET: Duration = Duration::from_millis(400);
 /// Long enough to cross more than one quarter-second face of the working mark.
 const TURN_BEATS: Duration = Duration::from_secs(1);
 
-/// An active marker may wake on its four beats, but not burn a scheduler slice
-/// between them. The allowance includes terminal parsing and the key echo.
-const ACTIVE_TICKS: u64 = 4;
-
-/// A settled prompt should spend no measurable scheduler tick over this span.
+/// What an active turn may spend of the CPU for each second it is watched.
 ///
-/// A tick is the kernel's accounting quantum, not a percentage sampled by a
-/// monitor. One tick is allowed for the reads around the sample itself and for
-/// an unlucky boundary; two means the process kept waking while nobody typed.
+/// An active marker may wake on its four beats, but not burn a scheduler slice
+/// between them. The allowance covers drawing the faces and the terminal work
+/// around them; the key echo is timed on its own rather than charged here.
+const ACTIVE_CPU_PER_SECOND: Duration = Duration::from_millis(40);
+
+/// How long a settled prompt is watched.
 const IDLE_SAMPLE: Duration = Duration::from_secs(1);
-const IDLE_TICKS: u64 = 1;
+
+/// What a settled prompt may spend of the CPU for each second it is watched.
+///
+/// One scheduler tick's worth. Read to the nanosecond rather than counted in
+/// ticks, a process that keeps waking while nobody types shows up as the time it
+/// spent, not as whether a tick boundary happened to fall inside the sample.
+const IDLE_CPU_PER_SECOND: Duration = Duration::from_millis(10);
 
 /// How long one step may take before the screen is called stuck.
 const CEILING: Duration = Duration::from_secs(20);
@@ -512,9 +518,14 @@ impl Watched {
     /// therefore the application's own active-turn frames. The faces themselves
     /// come from the shipped binary rather than from [`Screen`]'s interpretation
     /// of one final picture.
+    ///
+    /// What the turn spends of the CPU is read across the faces alone. The key's
+    /// echo is timed on its own, so a slow echo is reported as one rather than as
+    /// an animation over its allowance.
     pub(crate) fn turns_then_echoes(&mut self, key: &str) {
-        let before = cpu_ticks(self.child.id());
-        let deadline = Instant::now() + TURN_BEATS;
+        let before = Spent::by(self.child.id());
+        let started = Instant::now();
+        let deadline = started + TURN_BEATS;
         let mut faces = Vec::new();
 
         while Instant::now() < deadline {
@@ -537,10 +548,18 @@ impl Watched {
             }
         }
 
+        let spent = Spent::by(self.child.id()).since(&before);
+        let watched = started.elapsed();
+
         assert!(
             faces.len() >= 2,
             "the held turn drew fewer than two working faces: {faces:?}\n{}",
             self.picture()
+        );
+        let allowed = ACTIVE_CPU_PER_SECOND.mul_f64(watched.as_secs_f64());
+        assert!(
+            spent <= allowed,
+            "the active animation spent at least {spent:?} of CPU in {watched:?}, allowed {allowed:?}"
         );
 
         self.terminal
@@ -569,12 +588,6 @@ impl Watched {
         assert!(
             latency <= QUIET,
             "{key:?} took {latency:?} to reach the held-turn box; allowed {QUIET:?}"
-        );
-
-        let ticks = cpu_ticks(self.child.id()).saturating_sub(before);
-        assert!(
-            ticks <= ACTIVE_TICKS,
-            "the active animation and key echo used {ticks} CPU ticks in {TURN_BEATS:?}, allowed {ACTIVE_TICKS}"
         );
     }
 
@@ -635,15 +648,16 @@ impl Watched {
         );
     }
 
-    /// Proves the ordinary prompt stays byte-quiet and consumes no scheduler
-    /// time once its opening frame has settled.
+    /// Proves the ordinary prompt stays byte-quiet and spends no more than a
+    /// scheduler tick's worth of CPU once its opening frame has settled.
     ///
     /// Linux exposes child CPU accounting in `/proc`; this whole test target is
     /// Linux-only, so reading it here adds no portability fiction. Active turns
     /// intentionally redraw and are measured separately by [`Self::turns_then_echoes`].
     pub(crate) fn stays_idle(&mut self) {
-        let before = cpu_ticks(self.child.id());
-        let ended = Instant::now() + IDLE_SAMPLE;
+        let before = Spent::by(self.child.id());
+        let started = Instant::now();
+        let ended = started + IDLE_SAMPLE;
         let mut written = 0;
 
         while Instant::now() < ended {
@@ -662,16 +676,18 @@ impl Watched {
             }
         }
 
-        let ticks = cpu_ticks(self.child.id()).saturating_sub(before);
+        let spent = Spent::by(self.child.id()).since(&before);
+        let watched = started.elapsed();
         assert_eq!(
             written,
             0,
             "the settled prompt wrote {written} bytes in {IDLE_SAMPLE:?}\n{}",
             self.picture()
         );
+        let allowed = IDLE_CPU_PER_SECOND.mul_f64(watched.as_secs_f64());
         assert!(
-            ticks <= IDLE_TICKS,
-            "the settled prompt used {ticks} CPU ticks in {IDLE_SAMPLE:?}, allowed {IDLE_TICKS}"
+            spent <= allowed,
+            "the settled prompt spent at least {spent:?} of CPU in {watched:?}, allowed {allowed:?}"
         );
     }
 
@@ -828,8 +844,76 @@ fn working_face(picture: &str) -> Option<char> {
     })
 }
 
+/// What a process has spent of the CPU, as Linux keeps two counts of it.
+///
+/// Each thread's `schedstat` says how long it has run, in nanoseconds, so what a
+/// one-second window costs is read exactly rather than as how many ten-millisecond
+/// ticks fell inside it. A thread that ends takes that count with it, though, so
+/// work moved into short-lived threads would drop out of the sum. The process's
+/// user and system ticks in `stat` keep what ended threads ran; each of the two is
+/// rounded down on its own, so a window they count `n` ticks across ran for more
+/// than `n - 2` ticks. A window is charged whichever reading is larger.
+struct Spent {
+    /// Nanoseconds each thread alive at the reading has run, by thread id.
+    threads: BTreeMap<u32, u64>,
+    /// User and system clock ticks for the whole process, ended threads included.
+    ticks: u64,
+}
+
+impl Spent {
+    /// Both counts for `pid`, now.
+    fn by(pid: u32) -> Self {
+        let mut threads = BTreeMap::new();
+        for task in fs::read_dir(format!("/proc/{pid}/task"))
+            .expect("Linux lists the threads of the watched process")
+        {
+            let task = task.expect("a thread of the watched process is listed");
+            let thread = task
+                .file_name()
+                .to_str()
+                .and_then(|name| name.parse::<u32>().ok())
+                .expect("a thread is listed by its id");
+            // A thread that ended between the listing and this read leaves its
+            // time only in the process's ticks, which still hold it.
+            let Ok(schedstat) = fs::read_to_string(task.path().join("schedstat")) else {
+                continue;
+            };
+            let ran = schedstat
+                .split_whitespace()
+                .next()
+                .and_then(|field| field.parse::<u64>().ok())
+                .expect("schedstat starts with the nanoseconds a thread has run");
+            threads.insert(thread, ran);
+        }
+        assert!(
+            threads.values().any(|ran| *ran > 0),
+            "Linux reports no run time for any thread of {pid}; this kernel keeps no schedstat"
+        );
+
+        Self {
+            threads,
+            ticks: ticks(pid),
+        }
+    }
+
+    /// At least how much CPU the process spent between `earlier` and this reading.
+    fn since(&self, earlier: &Self) -> Duration {
+        let ran: u64 = self
+            .threads
+            .iter()
+            .map(|(thread, ran)| {
+                ran.saturating_sub(earlier.threads.get(thread).copied().unwrap_or(0))
+            })
+            .sum();
+        let tick = 1_000_000_000 / rustix::param::clock_ticks_per_second();
+        let whole = self.ticks.saturating_sub(earlier.ticks).saturating_sub(2);
+
+        Duration::from_nanos(ran.max(tick.saturating_mul(whole)))
+    }
+}
+
 /// User and system scheduler ticks consumed by `pid` according to Linux.
-fn cpu_ticks(pid: u32) -> u64 {
+fn ticks(pid: u32) -> u64 {
     let stat = fs::read_to_string(format!("/proc/{pid}/stat"))
         .expect("Linux reports CPU accounting for the watched process");
     let (_, fields) = stat
