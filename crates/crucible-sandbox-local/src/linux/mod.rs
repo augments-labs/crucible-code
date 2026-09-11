@@ -82,7 +82,28 @@ pub(super) fn prepare(
         }
     })?;
     drop(registry);
-    let transaction = transaction::Lease::acquire(&request)?;
+    // Writers in one test process run one at a time, as those tests assume. Taken
+    // here, after the registry is let go and before anything a test times.
+    #[cfg(test)]
+    let serial = if request
+        .policy()
+        .filesystem()
+        .iter()
+        .any(|rule| rule.access() == SandboxFilesystemAccess::ReadWrite)
+        || request
+            .manifest()
+            .entries()
+            .iter()
+            .any(|entry| entry.access() == Some(SandboxFilesystemAccess::ReadWrite))
+    {
+        Some(transaction::TestSerialLease::acquire().map_err(|_| {
+            SandboxError::BackendUnavailable {
+                reason: "sandbox test writer coordination is unavailable".into(),
+            }
+        })?)
+    } else {
+        None
+    };
 
     let maximum = request
         .policy()
@@ -106,7 +127,8 @@ pub(super) fn prepare(
         materialization: None,
         materialized: false,
         transferred: false,
-        transaction,
+        #[cfg(test)]
+        _serial: serial,
     }))
 }
 
@@ -120,7 +142,8 @@ struct LinuxSession {
     materialization: Option<materialize::Materialization>,
     materialized: bool,
     transferred: bool,
-    transaction: Option<transaction::Lease>,
+    #[cfg(test)]
+    _serial: Option<transaction::TestSerialLease>,
 }
 
 impl SandboxSession for LinuxSession {
@@ -194,7 +217,6 @@ impl SandboxSession for LinuxSession {
             &self.request,
             &self.view,
             self.materialization.as_ref(),
-            self.transaction.take(),
         ) {
             Ok(projection) => projection,
             Err(problem) => {
@@ -667,7 +689,6 @@ impl Drop for LinuxSession {
                 .materialization
                 .as_mut()
                 .map_or(Ok(()), materialize::Materialization::cleanup);
-            self.transaction.take();
             self.reservation.take();
             if cleanup.is_ok() {
                 self.materialization.take();

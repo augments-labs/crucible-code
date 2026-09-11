@@ -805,25 +805,156 @@ fn background_release_without_an_application_owner_is_refused_before_go() {
 }
 
 #[test]
-fn writable_transactions_are_globally_serialized_across_disjoint_roots() {
+fn a_writer_left_running_does_not_keep_another_from_writing() {
     let service = LocalSandbox::new();
     if skipped_without_enforcement(&service) {
         return;
     }
-    let first = Sample::new("sandbox-global-writer-first");
-    let second = Sample::new("sandbox-global-writer-second");
-    let held = service
-        .prepare(request(&first, SandboxManifest::empty()))
-        .expect("first writable transaction");
+    let running = Sample::new("sandbox-writer-left-running");
+    let beside = Sample::new("sandbox-writer-beside-it");
+    let mut first = service
+        .prepare(request(&running, SandboxManifest::empty()))
+        .expect("first writer");
+    first.materialize().expect("first writer materialized");
+    let mut held = first
+        .start(command("sleep 30"))
+        .expect("first writer running");
 
-    assert!(matches!(
-        service.prepare(request(&second, SandboxManifest::empty())),
-        Err(crucible_sandbox::SandboxError::Concurrency)
-    ));
-    drop(held);
-    service
-        .prepare(request(&second, SandboxManifest::empty()))
-        .expect("writer admitted after lease release");
+    let mut second = service
+        .prepare(request(&beside, SandboxManifest::empty()))
+        .expect("a second writer is prepared while the first runs");
+    second.materialize().expect("second writer materialized");
+    let (status, _, _) = finish(
+        second
+            .start(command("printf 'beside\\n' > beside.txt"))
+            .expect("second writer started"),
+    );
+
+    assert!(status.success(), "{status}");
+    assert_eq!(
+        std::fs::read_to_string(beside.root().join("beside.txt")).expect("published file"),
+        "beside\n"
+    );
+    assert!(
+        held.try_wait().expect("first writer").is_none(),
+        "the first writer ended before the second published"
+    );
+    held.stop().expect("first writer cleanup");
+}
+
+#[test]
+fn a_writer_that_ends_while_another_publishes_waits_its_turn() {
+    let service = LocalSandbox::new();
+    if skipped_without_enforcement(&service) {
+        return;
+    }
+    let sample = Sample::new("sandbox-writer-waits-its-turn");
+    let _serial = super::transaction::TestSerialLease::acquire().expect("test writer coordination");
+    let mut earlier = service
+        .prepare(request(&sample, SandboxManifest::empty()))
+        .expect("an earlier writer");
+    earlier.materialize().expect("earlier writer materialized");
+    let (status, _, _) = finish(
+        earlier
+            .start(command("true"))
+            .expect("earlier writer started"),
+    );
+    assert!(status.success(), "{status}");
+    let state = super::transaction::state_directory(&request(&sample, SandboxManifest::empty()))
+        .expect("transaction state");
+    let publishing = std::fs::File::open(state.join("writable.lock")).expect("the writable lock");
+    rustix::fs::flock(
+        &publishing,
+        rustix::fs::FlockOperation::NonBlockingLockExclusive,
+    )
+    .expect("another publication holds the lock");
+
+    let mut session = service
+        .prepare(request(&sample, SandboxManifest::empty()))
+        .expect("a writer is prepared while another publishes");
+    session.materialize().expect("materialized workspace");
+    let mut process = session
+        .start(command("printf 'after\\n' > after.txt"))
+        .expect("started command");
+    let held_until = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < held_until {
+        assert!(
+            process.try_wait().expect("wait").is_none(),
+            "a writer published while another held the lock"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert!(!sample.root().join("after.txt").exists());
+
+    drop(publishing);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let status = loop {
+        if let Some(status) = process.try_wait().expect("wait") {
+            break status;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the writer never published once the lock was free"
+        );
+        thread::sleep(Duration::from_millis(10));
+    };
+    process.stop().expect("cleanup");
+    assert!(status.success(), "{status}");
+    assert_eq!(
+        std::fs::read_to_string(sample.root().join("after.txt")).expect("published file"),
+        "after\n"
+    );
+}
+
+#[test]
+fn of_two_writers_into_one_root_the_one_that_ends_later_publishes_nothing() {
+    let service = LocalSandbox::new();
+    if skipped_without_enforcement(&service) {
+        return;
+    }
+    let sample = Sample::new("sandbox-writers-into-one-root");
+    let mut slower = service
+        .prepare(request(&sample, SandboxManifest::empty()))
+        .expect("a slower writer");
+    slower.materialize().expect("slower writer materialized");
+    let mut late = slower
+        .start(command("read go; printf 'late\\n' > late.txt").spoken_to())
+        .expect("slower writer started");
+    let mut faster = service
+        .prepare(request(&sample, SandboxManifest::empty()))
+        .expect("a faster writer into the same root");
+    faster.materialize().expect("faster writer materialized");
+    let (status, _, _) = finish(
+        faster
+            .start(command("printf 'early\\n' > early.txt"))
+            .expect("faster writer started"),
+    );
+    assert!(status.success(), "{status}");
+
+    let mut input = late.take_stdin().expect("the slower writer's input");
+    std::io::Write::write_all(&mut input, b"go\n").expect("the slower writer is let go");
+    drop(input);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match late.try_wait() {
+            Err(_) => break,
+            Ok(None) => {}
+            Ok(Some(status)) => {
+                panic!("a writer published over a root that changed under it: {status}")
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the slower writer did not terminate"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    let _ = late.stop();
+    assert_eq!(
+        std::fs::read_to_string(sample.root().join("early.txt")).expect("earlier publication"),
+        "early\n"
+    );
+    assert!(!sample.root().join("late.txt").exists());
 }
 
 #[test]

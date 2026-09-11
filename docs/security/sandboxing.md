@@ -406,7 +406,10 @@ remains a disposal failure and blocks another preparation, including when a
 later server failed during partial preparation. Missing pipes and failed
 handshake or catalogue exchanges also require explicit cleanup. An optional
 server can be skipped only when its cleanup is confirmed; otherwise preparation
-stops and later disposal retains the failure.
+stops and later disposal retains the failure. A confined server's writes stay
+private while it runs. They are published when it exits on its own after
+crucible closes its input, at a restart or at the end of the run, and
+discarded when it has to be stopped instead.
 
 Inspection retains backend ID/version/provenance, capability claims, separate
 hashed requested and effective policies and redacted plans, manifest,
@@ -532,9 +535,9 @@ Publication is decided by how the command ended:
   build still leaves the files it wrote, as it would have without confinement.
 - Termination by a signal, a deadline, <kbd>Esc</kbd>, an output ceiling or a
   refusal discards the projection. Nothing partial reaches the workspace.
-- A root that changed underneath the command, by anything outside the sandbox,
-  is not published. The delta is discarded rather than merged, and the result
-  says so.
+- A root that changed underneath the command, whether another command published
+  into it or something outside the sandbox wrote to it, is not published. The
+  delta is discarded rather than merged, and the result says so.
 
 Publication itself is transactional. The changed paths are staged in this
 user's private sandbox state directory under `/var/tmp`, which no other user can
@@ -544,9 +547,17 @@ a sparse file cannot make publication read through the whole of it. A
 failure between those steps rolls the root back to its pinned baseline. Where a
 rollback cannot itself be proved, the staged content is retained as quarantine
 evidence and the cleanup outcome reports it, rather than deleting what cannot be
-accounted for. Writable transactions are serialized under a host-owned registry
-lock, so two commands never publish into the same root at once, and the next
-preparation recovers any transaction an earlier process abandoned.
+accounted for. The next preparation recovers any transaction an earlier process
+abandoned.
+
+Commands that can write run side by side, including a command left running in
+the background and a confined MCP server, and none of them holds up another
+while it runs. Publication is what has to happen alone. A host-owned lock, one
+for each user, is held from the check against the baseline until the result is
+verified, so two commands never publish at once, and a command that ends while
+another is publishing waits for that publication to finish before its own
+begins. Of two commands that wrote into the same root, whichever publishes
+second finds the root changed and publishes nothing.
 
 A detached command follows the same rules when it ends later. Its start result
 is accepted only after it is durably stored, and its terminal publication is

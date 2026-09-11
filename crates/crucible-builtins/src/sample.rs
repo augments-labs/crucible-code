@@ -52,38 +52,21 @@ pub(crate) fn finalize_call_result(context: &ToolContext<'_>, output: &ToolOutpu
 /// here reddens the test that pins it.
 pub(crate) const REQUIRE_ENFORCING_SANDBOX: &str = "CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX";
 
-/// Whether a test that needs the enforcing backend may go on, as a guard the
-/// test holds until it ends, or `None` when it has to stop here.
+/// Whether a test that needs the enforcing backend may go on.
 ///
 /// On a developer machine without a usable Bubblewrap the test is skipped, which
 /// is the honest answer for a boundary nobody can exercise there. Where the job
 /// has declared that the backend must exist, an unavailable backend is a failure
 /// naming the reason, so a suite that measured nothing cannot report green.
-///
-/// A confined command that may write holds the host's writable-transaction lock
-/// from the moment it is prepared until it is stopped, even while it runs on in
-/// the background, and a launch that finds the lock held gives up with the
-/// concurrency ceiling once a short retry runs out. The backend serializes its own
-/// tests behind `cfg(test)`, which does not reach a crate that depends on it. So a
-/// test here holds the guard until every command it started has ended, and no
-/// other test that asks for the guard launches in the meantime.
-pub(crate) fn enforcing(
-    service: &crucible_sandbox_local::LocalSandbox,
-) -> Option<std::sync::MutexGuard<'static, ()>> {
-    static ENFORCING: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    // A test that panicked while holding the guard has already failed on its own.
-    let guard = ENFORCING
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+pub(crate) fn enforcing(service: &crucible_sandbox_local::LocalSandbox) -> bool {
     match crucible_sandbox::SandboxService::probe(service) {
-        Ok(_) => Some(guard),
+        Ok(_) => true,
         Err(problem) => {
             assert!(
                 std::env::var_os(REQUIRE_ENFORCING_SANDBOX).is_none(),
                 "the enforcing sandbox backend is required by this job but unavailable: {problem}"
             );
-            None
+            false
         }
     }
 }

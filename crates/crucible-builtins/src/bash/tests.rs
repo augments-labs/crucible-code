@@ -176,9 +176,9 @@ fn the_default_linux_backend_cannot_read_an_undeclared_sibling() {
     let sample = Sample::new("bash-sibling-confined");
     let outside = sample.outside("credential", "not-for-the-command\n");
     let service = crucible_sandbox_local::LocalSandbox::new();
-    let Some(_enforcing) = enforcing(&service) else {
+    if !enforcing(&service) {
         return;
-    };
+    }
     let tool = Bash::new(sample.workspace(), std::sync::Arc::new(service));
     let args = format!(r#"{{"command":"cat {outside}"}}"#);
 
@@ -808,9 +808,9 @@ fn the_name_a_job_requires_a_backend_by_is_the_one_spelled_outside_this_crate() 
 #[test]
 fn linux_ctrl_b_uses_owned_durable_detachment_before_go() {
     let service = crucible_sandbox_local::LocalSandbox::new();
-    let Some(_enforcing) = enforcing(&service) else {
+    if !enforcing(&service) {
         return;
-    };
+    }
     let sample = Sample::new("bash-linux-detachable");
     let left = Background::new();
     let tool = Bash::new(sample.workspace(), std::sync::Arc::new(service)).leaving(left.clone());
@@ -824,6 +824,36 @@ fn linux_ctrl_b_uses_owned_durable_detachment_before_go() {
     assert_eq!(left.running().len(), 1);
     left.stop(1).expect("background cleanup");
     assert!(left.running().is_empty());
+}
+
+#[test]
+fn a_writer_left_running_does_not_keep_a_command_from_writing() {
+    // A dev server or a watcher is left running because it has no end of its
+    // own. Nothing else that writes may wait on it, or nothing else writes.
+    let service = crucible_sandbox_local::LocalSandbox::new();
+    if !enforcing(&service) {
+        return;
+    }
+    let sample = Sample::new("bash-writer-beside-a-running-one");
+    let left = Background::new();
+    let tool = Bash::new(sample.workspace(), std::sync::Arc::new(service)).leaving(left.clone());
+
+    let started = finalized(&tool, r#"{"command":"sleep 30","background":true}"#)
+        .expect("the background writer started");
+    assert!(
+        started.text().contains("left running as #1"),
+        "{}",
+        started.text()
+    );
+
+    let wrote = finalized(&tool, r#"{"command":"printf 'beside\\n' > beside.txt"}"#)
+        .expect("a command that writes runs beside the one left running");
+    assert!(!wrote.is_failed(), "{}", wrote.text());
+    assert_eq!(
+        std::fs::read_to_string(sample.root().join("beside.txt")).expect("published file"),
+        "beside\n"
+    );
+    left.stop(1).expect("background cleanup");
 }
 
 #[test]

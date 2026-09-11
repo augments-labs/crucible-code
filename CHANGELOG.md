@@ -53,6 +53,13 @@ change in any release with no deprecation period.
   answer arrives on its own, and repeating it is the polling the background note
   already asks against. Such a foreground command is now refused with the
   argument that does work, `"background": true`, named in the refusal.
+- **A command left running no longer stops every other command from writing.**
+  Under the Linux boundary a command that could write held a host-wide lock for
+  as long as it ran. A dev server left in the background, or a confined MCP
+  server for a whole run, made every other command that could write fail with
+  "sandbox concurrency ceiling is reached". The lock is now held only while a
+  command publishes its writes, and a command that ends during another's
+  publication waits for it to finish.
 
 ## [0.40.1] - 2026-09-09
 

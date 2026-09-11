@@ -117,10 +117,20 @@ struct Root {
 /// One durable command lifecycle plus any host-owned writable copies.
 /// None of their host pathnames reaches the workload.
 pub(super) struct Projection {
+    /// This user's transaction state directory, where the publication lock lives.
+    state: PathBuf,
     stage: Stage,
     roots: Vec<Root>,
     published: bool,
     transaction: transaction::Transaction,
+}
+
+/// Leave for one projection to publish now.
+///
+/// Holds this user's publication lock for as long as it lives, where the
+/// projection has a root to publish into.
+struct Admission {
+    _lease: Option<transaction::Lease>,
 }
 
 impl Projection {
@@ -132,7 +142,6 @@ impl Projection {
         request: &SandboxRequest,
         view: &View,
         materialization: Option<&Materialization>,
-        lease: Option<transaction::Lease>,
     ) -> Result<Self, SandboxError> {
         let registry = transaction::RegistryLease::acquire(request)?;
         transaction::RegistryLease::reconcile(&registry).map_err(|source| {
@@ -172,17 +181,6 @@ impl Projection {
                 ));
             }
         }
-        if specifications.is_empty() {
-            if lease.is_some() {
-                return Err(refused(
-                    "writable transaction admission has no projected authority",
-                ));
-            }
-        } else if lease.is_none() {
-            return Err(refused(
-                "writable projection has no global transaction admission",
-            ));
-        }
         specifications.sort_by(|left, right| {
             left.0
                 .components()
@@ -192,12 +190,12 @@ impl Projection {
                 .then_with(|| left.2.cmp(&right.2))
         });
 
+        let state_directory = transaction::state_directory(request)?;
         let root = staging_root(request)?;
         create_private_directory(&root)
             .map_err(|source| failed("could not create writable projection", source))?;
         let stage = Stage::new(root);
         let mut transaction = transaction::Transaction::start(
-            lease,
             stage.root(),
             request.id(),
             match request.invocation_mode() {
@@ -263,6 +261,7 @@ impl Projection {
             .append(transaction::Record::Prepared)
             .map_err(|source| failed("could not durably prepare writable transaction", source))?;
         Ok(Self {
+            state: state_directory,
             stage,
             roots,
             published: false,
@@ -359,8 +358,25 @@ impl Projection {
         })
     }
 
+    /// Leave to publish now, or `None` while another publication holds the lock.
+    ///
+    /// A projection with no writable root has nothing to publish into, and is
+    /// let in without the lock.
+    fn admission(&self) -> io::Result<Option<Admission>> {
+        if self.roots.is_empty() {
+            return Ok(Some(Admission { _lease: None }));
+        }
+        Ok(
+            transaction::Lease::try_acquire_in(&self.state)?.map(|lease| Admission {
+                _lease: Some(lease),
+            }),
+        )
+    }
+
+    /// Publishes the command's writes, which only a caller let in can ask for.
     fn publish(
         &mut self,
+        _admission: &Admission,
         broker_baselines: &[Snapshot],
         finals: &[Snapshot],
     ) -> Result<(), publish::Failure> {
@@ -846,6 +862,17 @@ impl SandboxProcess for ProjectedProcess {
         let Some(_broker_status) = self.process.try_wait()? else {
             return Ok(None);
         };
+        // Let in before the terminal report is read, not after it: a command
+        // that ends while another is publishing is still running on this look,
+        // and is asked again on the next rather than waited for here, where the
+        // caller may be the thread that draws.
+        let admission = match self.projection.as_ref() {
+            Some(projection) if !self.terminal => match projection.admission()? {
+                Some(admission) => Some(admission),
+                None => return Ok(None),
+            },
+            _ => None,
+        };
         let terminal = self
             .receiver
             .as_mut()
@@ -892,11 +919,14 @@ impl SandboxProcess for ProjectedProcess {
                 && self.projection.is_some()
             {
                 self.lifecycle(SandboxLifecycle::PublicationStarted)?;
+                let admitted = admission
+                    .as_ref()
+                    .ok_or_else(|| io::Error::other("sandbox publication was not let in"))?;
                 let publication = self
                     .projection
                     .as_mut()
                     .ok_or_else(|| io::Error::other("sandbox projection disappeared"))?
-                    .publish(&terminal.baselines, &terminal.roots);
+                    .publish(admitted, &terminal.baselines, &terminal.roots);
                 match publication {
                     Ok(()) => self.lifecycle(SandboxLifecycle::Published)?,
                     Err(problem) => {

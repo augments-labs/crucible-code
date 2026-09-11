@@ -308,7 +308,10 @@ Under the Linux boundary, what a command writes inside a writable root stays
 private to it until it ends. An ordinary exit, whether zero or nonzero, publishes
 those writes to the workspace; a command that is stopped, times out or is killed
 by a signal leaves the workspace as it found it. A background command's writes
-therefore land when it finishes, not while it runs. The rules are described in
+therefore land when it finishes, not while it runs, and it holds nothing up
+meanwhile: other commands that can write run and publish beside it. Of two
+commands that wrote into the same root, whichever publishes second publishes
+nothing, and its result says so. The rules are described in
 [Writable roots and publication](../security/sandboxing.md#writable-roots-and-publication).
 
 ## Why it is always asked about
