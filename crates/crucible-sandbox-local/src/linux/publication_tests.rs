@@ -453,7 +453,11 @@ fn a_writer_prepared_while_another_publishes_takes_its_baseline_after_that_publi
         };
         locked.send(()).expect("the test is told the lock is held");
         // A publication in progress: the root changes while the lock is held.
+        // It moves the root's generation first, as a publication does, because
+        // that is what a command being prepared across one has to notice.
         thread::sleep(Duration::from_millis(500));
+        super::generations::advance(&state, &[super::generations::key(&root)])
+            .expect("a publication moves the root's generation");
         std::fs::write(root.join("published.txt"), "published\n").expect("a publication's write");
         drop(lease);
     });
