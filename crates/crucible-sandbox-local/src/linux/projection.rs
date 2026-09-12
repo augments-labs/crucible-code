@@ -118,6 +118,10 @@ impl Eq for Entry {}
 
 struct Root {
     authority: OwnedFd,
+    /// Where the root is on this machine, which is what a publication into it
+    /// is remembered under. The destination below is only the name the sandbox
+    /// gives it, and two names for one root would be remembered apart.
+    host: PathBuf,
     destination: PathBuf,
     source: Option<File>,
     directory: bool,
@@ -264,7 +268,7 @@ impl Projection {
             .map_err(|source| failed("could not create projected roots", source))?;
 
         let mut roots = Vec::with_capacity(specifications.len());
-        for (index, (_host, authority, destination, directory, exclusions)) in
+        for (index, (host, authority, destination, directory, exclusions)) in
             specifications.into_iter().enumerate()
         {
             let pinned = descriptor_path(authority.as_raw_fd());
@@ -298,7 +302,7 @@ impl Projection {
             // the two describe the same moment.
             let generation = super::generations::current(
                 &state_directory,
-                &[super::generations::key(&destination)],
+                std::slice::from_ref(&super::generations::key(&host)),
             )
             .map_err(|source| failed("writable root generations are unavailable", source))?
             .into_iter()
@@ -306,6 +310,7 @@ impl Projection {
             .flatten();
             roots.push(Root {
                 authority,
+                host,
                 destination,
                 source,
                 directory,

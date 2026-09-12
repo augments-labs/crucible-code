@@ -581,8 +581,18 @@ limit, has nothing to publish and does not wait. Waiting commands are not served
 in order, and each keeps its place among the commands allowed to run at once
 until its own publication finishes. Every wait for the lock has a ceiling: a
 command being prepared is refused if the lock does not come free within a
-minute, and a command that has ended is stopped after a minute of waiting, or
-after five seconds when the run itself is ending. The holder may be another
+minute, a command whose own deadline has passed is stopped after a minute, and
+five seconds is the bound everywhere somebody is waiting — a cancelled turn, a
+command left running whose report is overdue, a confined server being restarted
+or disposed of at a turn's end, and the run itself ending.
+
+A command that ran while another published into one of its roots publishes
+nothing, whatever the root looks like afterwards: this user's state directory
+remembers how many publications have touched each root, and a command compares
+that count with the one it recorded when it took its baseline. A crucible from
+before this release takes the same lock, so the two still publish one at a time,
+but it does not keep that count — against such a peer the comparison has nothing
+to see, and only the check against the root's own content remains. The holder may be another
 crucible of this user, including one from before this release, which keeps the
 lock for as long as its commands run; a wait with no end would hold up the turn,
 the cancel and the exit instead.

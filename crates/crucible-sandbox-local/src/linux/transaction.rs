@@ -1104,9 +1104,13 @@ impl Lease {
     /// not advance on their own and an age-based cleaner of the temporary
     /// directory may remove it. The next process to ask for it then creates a
     /// fresh one and takes that, while this lease still holds the old: two
-    /// publications, each having passed its own baseline check. Asked again
-    /// before anything is written, so a replaced lock refuses the publication
-    /// rather than racing it.
+    /// publications, each having passed its own baseline check.
+    ///
+    /// Asked again before anything is written, which narrows that window to the
+    /// publication itself rather than closing it: a lock removed after this
+    /// answers is still a lock somebody else can take. Taking the lock also
+    /// touches it, so a cleaner reads it as in use, and the two together leave
+    /// little for the window to hold.
     #[expect(
         clippy::used_underscore_binding,
         reason = "the lease holds these only to keep the lock; confirming reads them"

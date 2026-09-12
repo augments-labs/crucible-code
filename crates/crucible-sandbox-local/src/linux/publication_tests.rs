@@ -689,6 +689,136 @@ fn a_writer_publishes_nothing_of_a_root_another_publication_touched_while_it_ran
     assert!(!sample.root().join("mine.txt").exists());
 }
 
+/// What this user's state directory remembers, as bytes and as a moment.
+fn generations_as_they_stand(
+    state: &std::path::Path,
+) -> (Option<Vec<u8>>, Option<std::time::SystemTime>) {
+    let file = state.join("publications");
+    (
+        std::fs::read(&file).ok(),
+        std::fs::metadata(&file)
+            .ok()
+            .and_then(|at| at.modified().ok()),
+    )
+}
+
+#[test]
+fn a_command_with_nothing_to_publish_leaves_the_generations_alone() {
+    // A command with no writable root is let in without the lock, on purpose:
+    // it has nothing to publish into. Anything it writes to the file it writes
+    // with nothing held, and a copy taken before somebody else's publication
+    // moved the counter would put that publication's witness back.
+    let service = LocalSandbox::new();
+    if skipped_without_enforcement(&service) {
+        return;
+    }
+    let sample = Sample::new("sandbox-reader-leaves-the-generations");
+    sample.write("seen.txt", "seen\n");
+    let _serial = super::transaction::TestSerialLease::acquire().expect("test writer coordination");
+    let base = SandboxPolicy::standard(&sample.workspace()).expect("base policy");
+    let policy = SandboxPolicy::new(
+        true,
+        base.filesystem().iter().map(|rule| {
+            if rule.access() == SandboxFilesystemAccess::ReadWrite {
+                SandboxFilesystemRule::new(
+                    rule.path(),
+                    SandboxFilesystemAccess::ReadOnly,
+                    rule.provenance(),
+                )
+                .expect("the same root, read-only")
+            } else {
+                rule.clone()
+            }
+        }),
+        sample.root().clone(),
+        SandboxNetworkPolicy::Closed,
+        SandboxResourceLimits::default(),
+    )
+    .expect("a policy that writes nothing");
+    let reader = SandboxRequest::new(
+        SandboxId::new(),
+        Ancestry::new(),
+        ToolId::new("bash"),
+        policy,
+        SandboxManifest::empty(),
+    );
+    let state = super::transaction::state_directory(&reader).expect("transaction state");
+    // Something to erase: a publication's witness, already recorded.
+    let held = held_publication(&sample);
+    super::generations::advance(
+        &state,
+        std::slice::from_ref(&super::generations::key(sample.root())),
+    )
+    .expect("a publication moves the root's generation");
+    drop(held);
+    let before = generations_as_they_stand(&state);
+
+    let mut session = service.prepare(reader).expect("a reader");
+    session.materialize().expect("materialized workspace");
+    let (status, _, _) = finish(
+        session
+            .start(command("cat seen.txt"))
+            .expect("started command"),
+    );
+
+    assert!(status.success(), "{status}");
+    assert_eq!(
+        before,
+        generations_as_they_stand(&state),
+        "a command with nothing to publish rewrote the generations, holding nothing"
+    );
+}
+
+#[test]
+fn a_root_is_remembered_by_where_it_is_rather_than_by_what_it_is_called() {
+    // A mount's destination is the sandbox's name for a root, not the root. Two
+    // names for one root give it two counts, and a command that ran across the
+    // other name's publication reads its own as unmoved and is let through.
+    //
+    // The workspace root is writable here too, because a writable mount needs a
+    // writable authority above it — but it is remembered under its own path,
+    // which is not the one this looks for. What this looks for can only have
+    // come from the mount.
+    let service = LocalSandbox::new();
+    if skipped_without_enforcement(&service) {
+        return;
+    }
+    let sample = Sample::new("sandbox-root-under-another-name");
+    let mounted = sample.root().join("data");
+    std::fs::create_dir(&mounted).expect("a directory to mount");
+    let _serial = super::transaction::TestSerialLease::acquire().expect("test writer coordination");
+    let manifest = SandboxManifest::new([crucible_sandbox::SandboxManifestEntry::mount(
+        mounted.clone(),
+        "data",
+        SandboxFilesystemAccess::ReadWrite,
+        crucible_sandbox::SandboxFilesystemProvenance::Manifest,
+    )
+    .expect("a writable mount")])
+    .expect("a manifest of one mount");
+    let writer = request(&sample, manifest);
+    let state = super::transaction::state_directory(&writer).expect("transaction state");
+    let mut session = service.prepare(writer).expect("a writer through a mount");
+    session.materialize().expect("materialized workspace");
+    let (status, _, errors) = finish(
+        session
+            .start(command(
+                "printf 'mine\n' > /crucible/manifest/data/mine.txt",
+            ))
+            .expect("started command"),
+    );
+
+    assert!(status.success(), "{}", String::from_utf8_lossy(&errors));
+    let standing = super::generations::current(
+        &state,
+        std::slice::from_ref(&super::generations::key(&mounted)),
+    )
+    .expect("the generations");
+    assert!(
+        standing.first().copied().flatten().is_some(),
+        "the root was remembered by the name the sandbox gave it, not by where it is"
+    );
+}
+
 #[test]
 fn a_writer_publishes_over_a_root_whose_publications_all_happened_before_it() {
     // The generation says when, not whether. A root this user has published into

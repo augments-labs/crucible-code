@@ -475,9 +475,11 @@ fn a_command_whose_publication_never_finishes_is_stopped_once_its_patience_has_p
 
 #[test]
 fn a_kept_command_that_cannot_publish_is_reported_once_its_patience_has_passed() {
-    // Nothing else ends it: the panel's stop leaves anything that has ended to
-    // be reported, and only the registry's drop ever looked again. Held for the
-    // rest of the run, it keeps one of the slots and says nothing.
+    // Before the ceiling this test is named for, nothing else ended it: the
+    // panel's stop leaves anything that has ended to be reported, and only the
+    // registry's drop ever looked again, so it would keep one of the slots for
+    // the rest of the run and say nothing. The assertions below are what
+    // happens now.
     let left = Background::new();
     let observed = Arc::new(Observed::default());
     drop(keep(&left, &observed, false));

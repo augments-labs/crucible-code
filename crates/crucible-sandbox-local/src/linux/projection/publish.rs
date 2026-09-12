@@ -260,9 +260,15 @@ pub(super) fn apply(
         .iter()
         .zip(&left_alone)
         .filter(|(_, alone)| !**alone)
-        .map(|(root, _)| super::super::generations::key(&root.destination))
+        .map(|(root, _)| super::super::generations::key(&root.host))
         .collect();
-    if let Err(problem) = super::super::generations::advance(seen.state, &writing) {
+    // Only when there is a root to write into, which is exactly when the lease
+    // is held: a projection with none is let in without the lock, and a
+    // read-modify-write from there could put back a copy taken before somebody
+    // else's publication moved the count.
+    if !writing.is_empty()
+        && let Err(problem) = super::super::generations::advance(seen.state, &writing)
+    {
         return abort_without_staging(transaction, problem);
     }
 
@@ -426,7 +432,7 @@ fn validate_before_publication(
         // found it says nothing about that. The generation does.
         let standing = super::super::generations::current(
             seen.state,
-            &[super::super::generations::key(&root.destination)],
+            std::slice::from_ref(&super::super::generations::key(&root.host)),
         )?;
         if standing.first().copied().flatten() != root.generation {
             return Err(io::Error::other(

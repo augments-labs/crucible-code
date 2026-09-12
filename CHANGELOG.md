@@ -59,8 +59,9 @@ change in any release with no deprecation period.
   server for a whole run, made every other command that could write fail with
   "sandbox concurrency ceiling is reached". The lock is now held only while a
   command publishes or takes its baselines; a command that has ended waits its
-  turn, for a bounded while, rather than being stopped, and one that wrote into a
-  root another command published into meanwhile publishes nothing and says so. A session still running
+  turn, for a bounded while, rather than being stopped, and one that wrote into
+  a root another command published into meanwhile publishes nothing and says
+  so. A session still running
   an earlier crucible holds the lock the old way until it ends.
 
 ## [0.40.1] - 2026-09-09
