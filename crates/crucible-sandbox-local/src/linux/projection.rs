@@ -431,7 +431,12 @@ impl Projection {
         let lease = transaction::Lease::try_acquire_in(&self.state).map_err(|source| {
             io::Error::new(
                 source.kind(),
-                format!("the writable publication lock is unavailable: {source}"),
+                // The kind, not the message: this one carries the state
+                // directory's own path, and the model reads what comes back.
+                format!(
+                    "the writable publication lock is unavailable: {}",
+                    source.kind()
+                ),
             )
         })?;
         Ok(lease.map(|lease| Admission {

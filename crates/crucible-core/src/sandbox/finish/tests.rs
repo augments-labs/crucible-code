@@ -34,6 +34,8 @@ struct Ending {
     failed: AtomicBool,
     /// How many times it was asked to stop.
     stops: AtomicUsize,
+    /// Stopping it does not confirm that its scope ended.
+    unstoppable: AtomicBool,
 }
 
 struct Process {
@@ -69,6 +71,9 @@ impl SandboxProcess for Process {
 
     fn stop(&mut self) -> io::Result<()> {
         self.ending.stops.fetch_add(1, Ordering::Relaxed);
+        if self.ending.unstoppable.load(Ordering::Relaxed) {
+            return Err(io::Error::other("scope termination could not be confirmed"));
+        }
         Ok(())
     }
 
@@ -210,4 +215,29 @@ fn a_process_whose_publication_never_finishes_says_so_once_its_patience_has_pass
     // reported as a clean stop tells the caller nothing was lost.
     assert!(finish.starts_with("Unpublished"), "{finish}");
     assert_eq!(ending.stops.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn a_stop_that_fails_after_the_ceiling_says_both_things() {
+    // Two facts, and a caller told only the second retires the program as
+    // though it might still be running: its publication did not finish in time,
+    // and the stop that followed could not be confirmed either.
+    let ending = Arc::new(Ending {
+        ended: AtomicBool::new(true),
+        unstoppable: AtomicBool::new(true),
+        ..Ending::default()
+    });
+    let mut process = process(&ending);
+    let (told, hears) = std::sync::mpsc::channel();
+    let waiting = thread::spawn(move || {
+        let finish = Finish::after(&mut process, Duration::ZERO);
+        told.send(format!("{finish:?}")).expect("the test hears it");
+    });
+
+    let finish = hears.recv_timeout(Duration::from_secs(20));
+
+    let finish = finish.expect("the wait for a publication that never ends has a ceiling");
+    waiting.join().expect("the waiting thread");
+    assert!(finish.starts_with("Unreaped"), "{finish}");
+    assert!(finish.contains("publication"), "{finish}");
 }

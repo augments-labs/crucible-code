@@ -61,7 +61,9 @@ pub enum Finish {
     ///
     /// The sandbox could not confirm scope termination and leader exit: one of
     /// the two endings, with an ending that went wrong, that are somebody's
-    /// problem afterwards.
+    /// problem afterwards. It does not say the program is still running — a
+    /// program stopped at its publication ceiling reaches this too, and then
+    /// says both what it lost and what could not be confirmed.
     Unreaped(io::Error),
 }
 
@@ -105,6 +107,15 @@ impl Finish {
                 "its publication did not finish in time",
             )),
             Ok(()) => Self::Stopped,
+            // Both facts: a caller told only that cleanup is unconfirmed reads
+            // it as a process that may still be running, and retires it for
+            // that, where what happened is that it ended and lost its writes.
+            Err(source) if unpublished => Self::Unreaped(io::Error::new(
+                source.kind(),
+                format!(
+                    "its publication did not finish in time, and stopping it could not be confirmed: {source}"
+                ),
+            )),
             Err(source) => Self::Unreaped(source),
         }
     }

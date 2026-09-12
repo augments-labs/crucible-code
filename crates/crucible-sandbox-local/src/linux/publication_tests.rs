@@ -794,6 +794,10 @@ fn a_writer_publishes_nothing_when_the_generations_cannot_be_read() {
         .map(|problem| problem.to_string())
         .unwrap_or_default();
 
+    // Taken away before anything asserts: the state directory is this user's,
+    // shared by every test in this process, and a file none of them can read
+    // would fail all of them.
+    std::fs::remove_file(state.join("publications")).expect("the unreadable file is taken away");
     assert!(
         refused.contains("generations"),
         "a file that could not be read was taken for an empty one: {refused}"

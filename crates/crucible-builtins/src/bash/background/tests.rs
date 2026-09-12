@@ -578,7 +578,10 @@ fn a_cancelled_turn_stops_a_command_whose_publication_never_finishes() {
 
     let said = said.expect("a cancel waits for a publication only so long");
     waiting.join().expect("the waiting thread");
-    assert!(said.contains("cancelled"), "{said}");
+    // It had ended, and the stop discarded what it wrote. Answered as a
+    // cancellation, the runner tells the model the call was not run at all —
+    // which is false of a command that finished and lost its files.
+    assert!(said.contains("nothing it wrote was published"), "{said}");
     assert!(observed.stops.load(Ordering::Relaxed) > 0, "{said}");
 }
 

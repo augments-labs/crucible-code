@@ -165,7 +165,18 @@ pub(super) fn collect(
             if !(ended && since.elapsed() < ceiling) {
                 if cancel.requested() {
                     let _ = running.stop()?;
-                    return Err(ToolError::Cancelled(NAME.into()));
+                    // A cancelled call is answered to the model as one that was
+                    // not run. True of a command still running; false of one
+                    // that finished and had its writes discarded by the stop
+                    // above, which is told instead what it lost.
+                    return Err(if ended {
+                        tool_unpublished(io::Error::new(
+                            io::ErrorKind::TimedOut,
+                            "the turn was cancelled before its publication finished",
+                        ))
+                    } else {
+                        ToolError::Cancelled(NAME.into())
+                    });
                 }
                 let status = running.stop()?;
                 // Stopping it discarded whatever it had not published, which is
