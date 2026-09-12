@@ -1005,6 +1005,54 @@ fn a_writer_publishes_nothing_when_a_publication_touched_its_root_as_it_ran() {
 }
 
 #[test]
+fn a_refusal_the_model_reads_names_a_kind_and_not_a_path() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    // The collector has room here, so the discard that follows succeeds and what
+    // comes back is the refusal itself rather than the cleanup's own failure.
+    // That refusal reaches the model, and where this user's state directory is
+    // belongs in the audit instead.
+    let service = LocalSandbox::new();
+    if skipped_without_enforcement(&service) {
+        return;
+    }
+    let sample = Sample::new("sandbox-refusal-names-a-kind");
+    let _serial = super::transaction::TestSerialLease::acquire().expect("test writer coordination");
+    let writer = request(&sample, SandboxManifest::empty());
+    let state = super::transaction::state_directory(&writer).expect("transaction state");
+    let mut session = service.prepare(writer).expect("a writer");
+    session.materialize().expect("materialized workspace");
+    let mut process = session
+        .start(command("read go; printf 'after\n' > after.txt").spoken_to())
+        .expect("started command");
+    let_go(process.as_mut());
+    once_ended(process.as_mut(), Duration::from_secs(5));
+    let lock = state.join("writable.lock");
+    let restore = std::fs::metadata(&lock).expect("the lock").permissions();
+    std::fs::set_permissions(&lock, std::fs::Permissions::from_mode(0o000))
+        .expect("an unopenable lock");
+
+    let refused = process
+        .try_wait()
+        .expect_err("an admission nobody can ask for is an ending that went wrong");
+
+    std::fs::set_permissions(&lock, restore).expect("the lock is restored");
+    let said = refused.to_string();
+    assert!(
+        said.contains("the writable publication lock is unavailable"),
+        "{said}"
+    );
+    assert!(
+        !said.contains("/var/tmp"),
+        "it names this user's state directory: {said}"
+    );
+    assert!(
+        !said.contains("os error"),
+        "it carries the error beneath it, whose text can name a path: {said}"
+    );
+}
+
+#[test]
 fn a_publication_that_cannot_ask_for_admission_says_the_same_thing_twice() {
     use std::os::unix::fs::PermissionsExt as _;
 
