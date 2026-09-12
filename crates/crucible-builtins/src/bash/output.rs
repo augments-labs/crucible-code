@@ -30,7 +30,7 @@ use crucible_tools::{ToolError, ToolOutput, Watch, Wrote};
 
 use super::background::{Background, Taking};
 
-use super::{NAME, TICK, io as tool_io};
+use super::{NAME, TICK, io as tool_io, unpublished as tool_unpublished};
 use crate::bound::OUTPUT;
 
 /// One stream's fixed prefix and rolling suffix budgets.
@@ -130,10 +130,22 @@ pub(super) fn collect(
             }));
         }
 
-        match running.taking()?.try_wait() {
+        let looked = running.taking()?.try_wait();
+        match looked {
             Ok(Some(status)) => break Some(status),
             Ok(None) => {}
-            Err(source) => return Err(tool_io("could not wait for the command", source)),
+            // From a command that has ended, an error is how its ending went
+            // wrong — most often a root it wrote into changed while it ran. Said
+            // as a failure to wait, it reads as crucible losing track of a
+            // command that in fact finished and lost its files.
+            Err(source) => {
+                let ended = running.taking()?.ended();
+                return Err(if ended {
+                    tool_unpublished(source)
+                } else {
+                    tool_io("could not wait for the command", source)
+                });
+            }
         }
 
         // Asked before the deadline and before the cancel, because it is the one

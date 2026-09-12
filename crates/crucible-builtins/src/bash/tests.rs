@@ -827,6 +827,43 @@ fn linux_ctrl_b_uses_owned_durable_detachment_before_go() {
 }
 
 #[test]
+fn a_command_whose_writes_were_refused_tells_the_model_why() {
+    // Reachable only since writers stopped holding the lock for their whole
+    // lives: a command that runs across another's publication into the same
+    // root publishes nothing, and the model is told by the call it made.
+    let service = crucible_sandbox_local::LocalSandbox::new();
+    if !enforcing(&service) {
+        return;
+    }
+    let sample = Sample::new("bash-refused-foreground-writer");
+    sample.write("shared.txt", "baseline\n");
+    let tool = Bash::new(sample.workspace(), std::sync::Arc::new(service));
+
+    let said = std::thread::scope(|scope| {
+        let slow = scope.spawn(|| {
+            finalized(
+                &tool,
+                r#"{"command":"sleep 1; printf 'mine\\n' > mine.txt"}"#,
+            )
+        });
+        std::thread::sleep(Duration::from_millis(300));
+        finalized(&tool, r#"{"command":"printf 'theirs\\n' > shared.txt"}"#)
+            .expect("the other writer publishes while the first one runs");
+        match slow.join().expect("the slow writer") {
+            Ok(output) => output.text().to_owned(),
+            Err(problem) => problem.to_string(),
+        }
+    });
+
+    assert!(said.contains("nothing it wrote was published"), "{said}");
+    assert!(
+        said.contains("writable root"),
+        "the reason travels too: {said}"
+    );
+    assert!(!sample.root().join("mine.txt").exists(), "{said}");
+}
+
+#[test]
 fn a_writer_left_running_does_not_keep_a_command_from_writing() {
     // A dev server or a watcher is left running because it has no end of its
     // own. Nothing else that writes may wait on it, or nothing else writes.

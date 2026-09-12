@@ -753,6 +753,17 @@ fn io(problem: &'static str, source: std::io::Error) -> ToolError {
     }
 }
 
+/// An ending that went wrong, in the words the note about a background command
+/// uses, so the model reads one fact however the command was run.
+fn unpublished(source: std::io::Error) -> ToolError {
+    let detail = source.to_string();
+    ToolError::Io {
+        tool: NAME.into(),
+        problem: format!("nothing it wrote was published: {detail}").into(),
+        source,
+    }
+}
+
 /// A sandbox failure, kept typed until the tool boundary and redacted by its
 /// module-owned display implementation.
 fn sandbox_io(problem: &'static str, source: crucible_sandbox::SandboxError) -> ToolError {
