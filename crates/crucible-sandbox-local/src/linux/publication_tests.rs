@@ -701,11 +701,32 @@ fn a_writer_publishes_nothing_of_a_root_another_publication_touched_while_it_ran
     assert!(!sample.root().join("mine.txt").exists());
 }
 
+/// A file in this user's shared state directory, removed however a test ends.
+struct TakenAway(std::path::PathBuf);
+
+impl Drop for TakenAway {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// A mode in this user's shared state directory, put back however a test ends.
+///
+/// Every command of this user reads that directory; one left as a test made it
+/// would refuse them all.
+struct ModeRestored(std::path::PathBuf, std::fs::Permissions);
+
+impl Drop for ModeRestored {
+    fn drop(&mut self) {
+        let _ = std::fs::set_permissions(&self.0, self.1.clone());
+    }
+}
+
 /// What this user's state directory remembers, as bytes and as a moment.
 fn generations_as_they_stand(
     state: &std::path::Path,
 ) -> (Option<Vec<u8>>, Option<std::time::SystemTime>) {
-    let file = state.join("publications");
+    let file = state.join(super::generations::FILE);
     (
         std::fs::read(&file).ok(),
         std::fs::metadata(&file)
@@ -795,8 +816,11 @@ fn a_writer_publishes_nothing_when_the_generations_cannot_be_read() {
     let writer = request(&sample, SandboxManifest::empty());
     let state = super::transaction::state_directory(&writer).expect("transaction state");
     std::fs::create_dir_all(&state).expect("the state directory");
-    std::fs::write(state.join("publications"), "this is not a generation\n")
-        .expect("a file nothing can read");
+    // Taken away however this test ends, including through a panic: the state
+    // directory is this user's, shared by every test in this process, and a file
+    // none of them can read would fail all of them.
+    let poisoned = TakenAway(state.join(super::generations::FILE));
+    std::fs::write(&poisoned.0, "this is not a generation\n").expect("a file nothing can read");
     let mut session = service.prepare(writer).expect("a writer");
     session.materialize().expect("materialized workspace");
 
@@ -806,10 +830,7 @@ fn a_writer_publishes_nothing_when_the_generations_cannot_be_read() {
         .map(|problem| problem.to_string())
         .unwrap_or_default();
 
-    // Taken away before anything asserts: the state directory is this user's,
-    // shared by every test in this process, and a file none of them can read
-    // would fail all of them.
-    std::fs::remove_file(state.join("publications")).expect("the unreadable file is taken away");
+    drop(poisoned);
     assert!(
         refused.contains("generations"),
         "a file that could not be read was taken for an empty one: {refused}"
@@ -865,6 +886,65 @@ fn a_root_is_remembered_by_where_it_is_rather_than_by_what_it_is_called() {
         standing.first().copied().flatten().is_some(),
         "the root was remembered by the name the sandbox gave it, not by where it is"
     );
+}
+
+#[test]
+fn a_writer_through_a_mount_publishes_nothing_when_a_publication_touched_what_it_mounts() {
+    // The other half of remembering a root by where it is. The count this
+    // command compares is the one kept for the host directory, which is the only
+    // name a publication into that directory knows it by. Were the count looked
+    // up under the mount's destination instead — on either side, so long as both
+    // agree — the command and the publication would read different names, this
+    // one would find its own unmoved, and what it wrote over that publication
+    // would be published.
+    let service = LocalSandbox::new();
+    if skipped_without_enforcement(&service) {
+        return;
+    }
+    let sample = Sample::new("sandbox-mounted-root-touched");
+    let mounted = sample.root().join("data");
+    std::fs::create_dir(&mounted).expect("a directory to mount");
+    let _serial = super::transaction::TestSerialLease::acquire().expect("test writer coordination");
+    let manifest = SandboxManifest::new([crucible_sandbox::SandboxManifestEntry::mount(
+        mounted.clone(),
+        "data",
+        SandboxFilesystemAccess::ReadWrite,
+        crucible_sandbox::SandboxFilesystemProvenance::Manifest,
+    )
+    .expect("a writable mount")])
+    .expect("a manifest of one mount");
+    let writer = request(&sample, manifest);
+    let state = super::transaction::state_directory(&writer).expect("transaction state");
+    let mut session = service.prepare(writer).expect("a writer through a mount");
+    session.materialize().expect("materialized workspace");
+    let mut process = session
+        .start(command("read go; printf 'mine\n' > /crucible/manifest/data/mine.txt").spoken_to())
+        .expect("started command");
+
+    let held = held_publication(&sample);
+    super::generations::advance(&state, &[super::generations::key(&mounted)])
+        .expect("a publication touches the directory the mount reaches");
+    drop(held);
+    let_go(process.as_mut());
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let refused = loop {
+        match process.try_wait() {
+            Err(problem) => break problem,
+            Ok(None) => {}
+            Ok(Some(status)) => {
+                panic!("a writer through a mount published across another publication: {status}")
+            }
+        }
+        assert!(Instant::now() < deadline, "the command did not end");
+        thread::sleep(Duration::from_millis(10));
+    };
+
+    assert!(
+        refused.to_string().contains("touched a writable root"),
+        "{refused}"
+    );
+    assert!(!mounted.join("mine.txt").exists());
 }
 
 #[test]
@@ -1027,16 +1107,25 @@ fn a_refusal_the_model_reads_names_a_kind_and_not_a_path() {
         .expect("started command");
     let_go(process.as_mut());
     once_ended(process.as_mut(), Duration::from_secs(5));
-    let lock = state.join("writable.lock");
-    let restore = std::fs::metadata(&lock).expect("the lock").permissions();
-    std::fs::set_permissions(&lock, std::fs::Permissions::from_mode(0o000))
-        .expect("an unopenable lock");
+    // The directory rather than the lock inside it. Failing to open a lock is a
+    // bare errno, whose rendering names no path at all, so a refusal that
+    // withheld its source and one that rendered it would read the same here and
+    // the assertion below could not fail. A state directory that is not this
+    // user's own private one is refused by a message that names it.
+    let restore = ModeRestored(
+        state.clone(),
+        std::fs::metadata(&state)
+            .expect("the state directory")
+            .permissions(),
+    );
+    std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o750))
+        .expect("a state directory that is not this user's own");
 
     let refused = process
         .try_wait()
         .expect_err("an admission nobody can ask for is an ending that went wrong");
 
-    std::fs::set_permissions(&lock, restore).expect("the lock is restored");
+    drop(restore);
     let said = refused.to_string();
     assert!(
         said.contains("the writable publication lock is unavailable"),
@@ -1045,10 +1134,6 @@ fn a_refusal_the_model_reads_names_a_kind_and_not_a_path() {
     assert!(
         !said.contains("/var/tmp"),
         "it names this user's state directory: {said}"
-    );
-    assert!(
-        !said.contains("os error"),
-        "it carries the error beneath it, whose text can name a path: {said}"
     );
 }
 
@@ -1094,15 +1179,13 @@ fn a_publication_that_cannot_ask_for_admission_says_the_same_thing_twice() {
         Err(first.to_string()),
         "an ending that went wrong answered differently when asked again"
     );
-    // What comes back is read by the model. The refusal names the kind of
-    // failure and nothing else: the rendering of the error underneath it is
-    // where this user's state directory would appear, and that belongs in the
-    // audit rather than in a tool result.
+    // What comes back is read by the model, and the rendering of the error
+    // underneath is where a path would appear. The source here is a bare errno,
+    // so what this can hold is that the source is not rendered at all; that the
+    // refusal withholds a source whose own text names a path is held where such
+    // a source is what fails, in
+    // `a_refusal_the_model_reads_names_a_kind_and_not_a_path`.
     let said = first.to_string();
-    assert!(
-        !said.contains("/var/tmp"),
-        "the refusal carries this user's state directory: {said}"
-    );
     assert!(
         !said.contains("os error"),
         "the refusal carries the error underneath it, whose text can name a path: {said}"

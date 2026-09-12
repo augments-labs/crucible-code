@@ -592,10 +592,10 @@ remembers how many publications have touched each root, and a command compares
 that count with the one it recorded when it took its baseline. A crucible from
 before this release takes the same lock, so the two still publish one at a time,
 but it does not keep that count — against such a peer the comparison has nothing
-to see, and only the check against the root's own content remains. The holder may be another
-crucible of this user, including one from before this release, which keeps the
-lock for as long as its commands run; a wait with no end would hold up the turn,
-the cancel and the exit instead.
+to see, and only the check against the root's own content remains. The holder
+may be another crucible of this user, including one from before this release,
+which keeps the lock for as long as its commands run; a wait with no end would
+hold up the turn, the cancel and the exit instead.
 
 A detached command follows the same rules when it ends later. Its start result
 is accepted only after it is durably stored, and its terminal publication is
