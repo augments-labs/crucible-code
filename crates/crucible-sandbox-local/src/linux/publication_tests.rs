@@ -948,6 +948,69 @@ fn a_writer_through_a_mount_publishes_nothing_when_a_publication_touched_what_it
 }
 
 #[test]
+fn a_writer_through_a_mount_publishes_over_one_whose_publications_all_happened_before_it() {
+    // The admitting half, and the only case that tells the two ends apart. A
+    // root bound into the sandbox keeps its own path as its destination, so
+    // looking either end up under the destination reaches the same count and
+    // nothing shows; a mount is named something else. Look the count a command
+    // records up under the mount's name and it finds none, while the count a
+    // publication moves is the host's — so the second command through any mount
+    // that has ever been published into would be refused for a publication that
+    // happened before it existed.
+    let service = LocalSandbox::new();
+    if skipped_without_enforcement(&service) {
+        return;
+    }
+    let sample = Sample::new("sandbox-mounted-root-with-a-history");
+    let mounted = sample.root().join("data");
+    std::fs::create_dir(&mounted).expect("a directory to mount");
+    let _serial = super::transaction::TestSerialLease::acquire().expect("test writer coordination");
+    let mount = |name: &str| {
+        SandboxManifest::new([crucible_sandbox::SandboxManifestEntry::mount(
+            mounted.clone(),
+            name,
+            SandboxFilesystemAccess::ReadWrite,
+            crucible_sandbox::SandboxFilesystemProvenance::Manifest,
+        )
+        .expect("a writable mount")])
+        .expect("a manifest of one mount")
+    };
+
+    let mut earlier = service
+        .prepare(request(&sample, mount("data")))
+        .expect("an earlier writer through the mount");
+    earlier
+        .materialize()
+        .expect("the earlier writer materialized");
+    let (status, _, errors) = finish(
+        earlier
+            .start(command(
+                "printf 'first\n' > /crucible/manifest/data/first.txt",
+            ))
+            .expect("the earlier writer started"),
+    );
+    assert!(status.success(), "{}", String::from_utf8_lossy(&errors));
+
+    let mut session = service
+        .prepare(request(&sample, mount("data")))
+        .expect("a writer after it");
+    session.materialize().expect("materialized workspace");
+    let (status, _, errors) = finish(
+        session
+            .start(command(
+                "printf 'second\n' > /crucible/manifest/data/second.txt",
+            ))
+            .expect("started command"),
+    );
+
+    assert!(status.success(), "{}", String::from_utf8_lossy(&errors));
+    assert_eq!(
+        std::fs::read_to_string(mounted.join("second.txt")).expect("published file"),
+        "second\n"
+    );
+}
+
+#[test]
 fn a_writer_publishes_over_a_root_whose_publications_all_happened_before_it() {
     // The generation says when, not whether. A root this user has published into
     // before is ordinary; what matters is that nothing moved between the
