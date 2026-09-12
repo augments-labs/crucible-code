@@ -826,6 +826,11 @@ fn linux_ctrl_b_uses_owned_durable_detachment_before_go() {
     assert!(left.running().is_empty());
 }
 
+// The refusal this asserts on is the Linux backend's: a publication that touched
+// a writable root while a command ran is what refuses that command. No other
+// backend projects writable roots transactionally, so elsewhere there is no
+// publication to run across, the command simply succeeds, and this could not fail.
+#[cfg(target_os = "linux")]
 #[test]
 fn a_command_whose_writes_were_refused_tells_the_model_why() {
     // Reachable only since writers stopped holding the lock for their whole
@@ -863,6 +868,10 @@ fn a_command_whose_writes_were_refused_tells_the_model_why() {
     assert!(!sample.root().join("mine.txt").exists(), "{said}");
 }
 
+// Linux for the same reason, and this one would have passed anywhere: what it
+// watches is a lock only that backend takes, so without it there is nothing to be
+// kept from writing by, and a green result here would say nothing about the rule.
+#[cfg(target_os = "linux")]
 #[test]
 fn a_writer_left_running_does_not_keep_a_command_from_writing() {
     // A dev server or a watcher is left running because it has no end of its
