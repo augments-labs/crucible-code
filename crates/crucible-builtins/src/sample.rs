@@ -52,21 +52,37 @@ pub(crate) fn finalize_call_result(context: &ToolContext<'_>, output: &ToolOutpu
 /// here reddens the test that pins it.
 pub(crate) const REQUIRE_ENFORCING_SANDBOX: &str = "CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX";
 
-/// Whether a test that needs the enforcing backend may go on.
+/// Whether a test that needs the enforcing backend may go on, as a guard the
+/// caller holds for as long as its commands run.
 ///
 /// On a developer machine without a usable Bubblewrap the test is skipped, which
 /// is the honest answer for a boundary nobody can exercise there. Where the job
 /// has declared that the backend must exist, an unavailable backend is a failure
 /// naming the reason, so a suite that measured nothing cannot report green.
-pub(crate) fn enforcing(service: &crucible_sandbox_local::LocalSandbox) -> bool {
+///
+/// Confined commands of this user publish one at a time, and two tests launching
+/// at once contend for that turn: one waits, and a test that measures which of
+/// two writers is refused measures the machine's load instead. The backend
+/// serializes its own tests behind `cfg(test)`, which does not reach a crate that
+/// depends on it. So a test here holds the guard until every command it started
+/// has ended, and no other test that asks for the guard launches meanwhile.
+pub(crate) fn enforcing(
+    service: &crucible_sandbox_local::LocalSandbox,
+) -> Option<std::sync::MutexGuard<'static, ()>> {
+    static ENFORCING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    // A test that panicked while holding the guard has already failed on its own.
+    let guard = ENFORCING
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     match crucible_sandbox::SandboxService::probe(service) {
-        Ok(_) => true,
+        Ok(_) => Some(guard),
         Err(problem) => {
             assert!(
                 std::env::var_os(REQUIRE_ENFORCING_SANDBOX).is_none(),
                 "the enforcing sandbox backend is required by this job but unavailable: {problem}"
             );
-            false
+            None
         }
     }
 }

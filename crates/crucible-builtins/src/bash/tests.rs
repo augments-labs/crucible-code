@@ -176,9 +176,9 @@ fn the_default_linux_backend_cannot_read_an_undeclared_sibling() {
     let sample = Sample::new("bash-sibling-confined");
     let outside = sample.outside("credential", "not-for-the-command\n");
     let service = crucible_sandbox_local::LocalSandbox::new();
-    if !enforcing(&service) {
+    let Some(_enforcing) = enforcing(&service) else {
         return;
-    }
+    };
     let tool = Bash::new(sample.workspace(), std::sync::Arc::new(service));
     let args = format!(r#"{{"command":"cat {outside}"}}"#);
 
@@ -808,9 +808,9 @@ fn the_name_a_job_requires_a_backend_by_is_the_one_spelled_outside_this_crate() 
 #[test]
 fn linux_ctrl_b_uses_owned_durable_detachment_before_go() {
     let service = crucible_sandbox_local::LocalSandbox::new();
-    if !enforcing(&service) {
+    let Some(_enforcing) = enforcing(&service) else {
         return;
-    }
+    };
     let sample = Sample::new("bash-linux-detachable");
     let left = Background::new();
     let tool = Bash::new(sample.workspace(), std::sync::Arc::new(service)).leaving(left.clone());
@@ -837,9 +837,9 @@ fn a_command_whose_writes_were_refused_tells_the_model_why() {
     // lives: a command that runs across another's publication into the same
     // root publishes nothing, and the model is told by the call it made.
     let service = crucible_sandbox_local::LocalSandbox::new();
-    if !enforcing(&service) {
+    let Some(_enforcing) = enforcing(&service) else {
         return;
-    }
+    };
     let sample = Sample::new("bash-refused-foreground-writer");
     sample.write("shared.txt", "baseline\n");
     let tool = Bash::new(sample.workspace(), std::sync::Arc::new(service));
@@ -848,7 +848,7 @@ fn a_command_whose_writes_were_refused_tells_the_model_why() {
         let slow = scope.spawn(|| {
             finalized(
                 &tool,
-                r#"{"command":"sleep 1; printf 'mine\\n' > mine.txt"}"#,
+                r#"{"command":"sleep 5; printf 'mine\\n' > mine.txt"}"#,
             )
         });
         std::thread::sleep(Duration::from_millis(300));
@@ -877,9 +877,9 @@ fn a_writer_left_running_does_not_keep_a_command_from_writing() {
     // A dev server or a watcher is left running because it has no end of its
     // own. Nothing else that writes may wait on it, or nothing else writes.
     let service = crucible_sandbox_local::LocalSandbox::new();
-    if !enforcing(&service) {
+    let Some(_enforcing) = enforcing(&service) else {
         return;
-    }
+    };
     let sample = Sample::new("bash-writer-beside-a-running-one");
     let left = Background::new();
     let tool = Bash::new(sample.workspace(), std::sync::Arc::new(service)).leaving(left.clone());
