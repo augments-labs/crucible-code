@@ -770,6 +770,38 @@ fn a_command_with_nothing_to_publish_leaves_the_generations_alone() {
 }
 
 #[test]
+fn a_writer_publishes_nothing_when_the_generations_cannot_be_read() {
+    // A line this cannot read is not an absence. Read as one, it says no
+    // publication has touched the root, which is the one answer that lets a
+    // command through.
+    let service = LocalSandbox::new();
+    if skipped_without_enforcement(&service) {
+        return;
+    }
+    let sample = Sample::new("sandbox-generations-unreadable");
+    let _serial = super::transaction::TestSerialLease::acquire().expect("test writer coordination");
+    let writer = request(&sample, SandboxManifest::empty());
+    let state = super::transaction::state_directory(&writer).expect("transaction state");
+    std::fs::create_dir_all(&state).expect("the state directory");
+    std::fs::write(state.join("publications"), "this is not a generation\n")
+        .expect("a file nothing can read");
+    let mut session = service.prepare(writer).expect("a writer");
+    session.materialize().expect("materialized workspace");
+
+    let refused = session
+        .start(command("printf 'mine\\n' > mine.txt"))
+        .err()
+        .map(|problem| problem.to_string())
+        .unwrap_or_default();
+
+    assert!(
+        refused.contains("generations"),
+        "a file that could not be read was taken for an empty one: {refused}"
+    );
+    assert!(!sample.root().join("mine.txt").exists());
+}
+
+#[test]
 fn a_root_is_remembered_by_where_it_is_rather_than_by_what_it_is_called() {
     // A mount's destination is the sandbox's name for a root, not the root. Two
     // names for one root give it two counts, and a command that ran across the
