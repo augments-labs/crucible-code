@@ -1046,11 +1046,18 @@ fn a_publication_that_cannot_ask_for_admission_says_the_same_thing_twice() {
         Err(first.to_string()),
         "an ending that went wrong answered differently when asked again"
     );
-    // What comes back is read by the model, and where this user's state
-    // directory is belongs in the audit rather than in a tool result.
+    // What comes back is read by the model. The refusal names the kind of
+    // failure and nothing else: the rendering of the error underneath it is
+    // where this user's state directory would appear, and that belongs in the
+    // audit rather than in a tool result.
+    let said = first.to_string();
     assert!(
-        !first.to_string().contains("/var/tmp"),
-        "the refusal carries this user's state directory: {first}"
+        !said.contains("/var/tmp"),
+        "the refusal carries this user's state directory: {said}"
+    );
+    assert!(
+        !said.contains("os error"),
+        "the refusal carries the error underneath it, whose text can name a path: {said}"
     );
     assert!(!sample.root().join("after.txt").exists());
 }
