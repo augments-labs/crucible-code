@@ -1046,6 +1046,12 @@ fn a_publication_that_cannot_ask_for_admission_says_the_same_thing_twice() {
         Err(first.to_string()),
         "an ending that went wrong answered differently when asked again"
     );
+    // What comes back is read by the model, and where this user's state
+    // directory is belongs in the audit rather than in a tool result.
+    assert!(
+        !first.to_string().contains("/var/tmp"),
+        "the refusal carries this user's state directory: {first}"
+    );
     assert!(!sample.root().join("after.txt").exists());
 }
 
@@ -1072,15 +1078,15 @@ fn a_publication_whose_start_cannot_be_recorded_discards_what_the_command_wrote(
     fill_audit(&audit, crucible_sandbox::MAX_SANDBOX_AUDIT_FACTS);
 
     let deadline = Instant::now() + Duration::from_secs(5);
-    let refused = loop {
+    loop {
         match process.try_wait() {
-            Err(problem) => break problem,
+            Err(_) => break,
             Ok(None) => {}
             Ok(Some(status)) => panic!("a publication nobody could record went ahead: {status}"),
         }
         assert!(Instant::now() < deadline, "the command did not end");
         thread::sleep(Duration::from_millis(10));
-    };
+    }
     let again = process.try_wait();
 
     // Both looks answer the collector's one fixed sentence, so their agreeing
