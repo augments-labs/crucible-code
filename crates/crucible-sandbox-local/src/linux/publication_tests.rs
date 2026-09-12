@@ -640,6 +640,18 @@ fn a_writer_publishes_nothing_of_a_root_another_publication_touched_while_it_ran
     }
     let sample = Sample::new("sandbox-root-touched-while-it-ran");
     sample.write("shared.txt", "baseline\n");
+    // The root has a history before this command starts, so what refuses it is
+    // the count moving again rather than an entry appearing where there was
+    // none.
+    let state = super::transaction::state_directory(&request(&sample, SandboxManifest::empty()))
+        .expect("transaction state");
+    let held = held_publication(&sample);
+    super::generations::advance(
+        &state,
+        std::slice::from_ref(&super::generations::key(sample.root())),
+    )
+    .expect("a publication before this command");
+    drop(held);
     let mut session = service
         .prepare(request(&sample, SandboxManifest::empty()))
         .expect("a writer");
@@ -1071,10 +1083,13 @@ fn a_publication_whose_start_cannot_be_recorded_discards_what_the_command_wrote(
     };
     let again = process.try_wait();
 
-    assert_eq!(
-        again.as_ref().map_err(ToString::to_string),
-        Err(refused.to_string()),
-        "an ending that went wrong answered differently when asked again"
+    // Both looks answer the collector's one fixed sentence, so their agreeing
+    // says nothing about which error was settled. That rule is held by
+    // `a_publication_that_cannot_ask_for_admission_says_the_same_thing_twice`,
+    // where the two differ. What this holds is the discard.
+    assert!(
+        again.is_err(),
+        "a publication nobody could record went ahead"
     );
     assert!(!sample.root().join("after.txt").exists());
     drop(process);
