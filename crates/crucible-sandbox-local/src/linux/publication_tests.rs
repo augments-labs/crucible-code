@@ -686,6 +686,95 @@ fn a_writer_publishes_nothing_of_a_root_another_publication_touched_while_it_ran
 }
 
 #[test]
+fn a_writer_publishes_over_a_root_whose_publications_all_happened_before_it() {
+    // The generation says when, not whether. A root this user has published into
+    // before is ordinary; what matters is that nothing moved between the
+    // baseline and the publication.
+    let service = LocalSandbox::new();
+    if skipped_without_enforcement(&service) {
+        return;
+    }
+    let sample = Sample::new("sandbox-root-with-a-history");
+    let _serial = super::transaction::TestSerialLease::acquire().expect("test writer coordination");
+    let mut earlier = service
+        .prepare(request(&sample, SandboxManifest::empty()))
+        .expect("an earlier writer");
+    earlier
+        .materialize()
+        .expect("the earlier writer materialized");
+    let (status, _, _) = finish(
+        earlier
+            .start(command("printf 'first\n' > first.txt"))
+            .expect("the earlier writer started"),
+    );
+    assert!(status.success(), "{status}");
+
+    let mut session = service
+        .prepare(request(&sample, SandboxManifest::empty()))
+        .expect("a writer after it");
+    session.materialize().expect("materialized workspace");
+    let (status, _, _) = finish(
+        session
+            .start(command("printf 'second\n' > second.txt"))
+            .expect("started command"),
+    );
+
+    assert!(status.success(), "{status}");
+    assert_eq!(
+        std::fs::read_to_string(sample.root().join("second.txt")).expect("published file"),
+        "second\n"
+    );
+}
+
+#[test]
+fn a_writer_publishes_nothing_when_a_publication_touched_a_root_it_knew_before() {
+    // The same as the fresh-root case, but where the root already carried a
+    // generation: what refuses this command is that the generation moved, not
+    // merely that one appeared.
+    let service = LocalSandbox::new();
+    if skipped_without_enforcement(&service) {
+        return;
+    }
+    let sample = Sample::new("sandbox-root-generation-moved-again");
+    let _serial = super::transaction::TestSerialLease::acquire().expect("test writer coordination");
+    let state = super::transaction::state_directory(&request(&sample, SandboxManifest::empty()))
+        .expect("transaction state");
+    let key = super::generations::key(sample.root());
+    let held = held_publication(&sample);
+    super::generations::advance(&state, &[key.clone()]).expect("the root has a history");
+    drop(held);
+
+    let mut session = service
+        .prepare(request(&sample, SandboxManifest::empty()))
+        .expect("a writer");
+    session.materialize().expect("materialized workspace");
+    let mut process = session
+        .start(command("read go; printf 'mine\n' > mine.txt").spoken_to())
+        .expect("started command");
+    let held = held_publication(&sample);
+    super::generations::advance(&state, &[key]).expect("another publication touches it");
+    drop(held);
+    let_go(process.as_mut());
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let refused = loop {
+        match process.try_wait() {
+            Err(problem) => break problem,
+            Ok(None) => {}
+            Ok(Some(status)) => panic!("a writer published across another publication: {status}"),
+        }
+        assert!(Instant::now() < deadline, "the command did not end");
+        thread::sleep(Duration::from_millis(10));
+    };
+
+    assert!(
+        refused.to_string().contains("touched a writable root"),
+        "{refused}"
+    );
+    assert!(!sample.root().join("mine.txt").exists());
+}
+
+#[test]
 fn a_writer_publishes_nothing_when_a_publication_touched_its_root_as_it_ran() {
     // The witness the baseline check lacks. A publication into this root moved
     // its generation while the command ran, so what the command was scanned as
