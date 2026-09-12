@@ -106,11 +106,9 @@ pub(super) fn collect(
     let mut err = Pipe::drain(running.taking()?.take_stderr(), "stderr")?;
 
     let deadline = started + *allowed;
-    let mut expired = false;
+    let mut expiry = Expiry::No;
     // When a command that has ended began waiting for its turn to publish.
     let mut publishing: Option<Instant> = None;
-    // Whether the wait for that turn ran out, so what it wrote was discarded.
-    let mut discarded = false;
 
     // A child is not one of this program's threads: nothing in it will notice
     // the flag, so the only way to stop it is to kill it.
@@ -170,10 +168,13 @@ pub(super) fn collect(
                     return Err(ToolError::Cancelled(NAME.into()));
                 }
                 let status = running.stop()?;
-                expired = true;
                 // Stopping it discarded whatever it had not published, which is
                 // the part of "ran too long" that is not true of it.
-                discarded = ended;
+                expiry = if ended {
+                    Expiry::Unpublished
+                } else {
+                    Expiry::RanTooLong
+                };
                 break status;
             }
         }
@@ -200,7 +201,9 @@ pub(super) fn collect(
     };
 
     let violation = running.taking()?.violation();
-    expired |= violation == Some(SandboxViolation::CommandTime);
+    if expiry == Expiry::No && violation == Some(SandboxViolation::CommandTime) {
+        expiry = Expiry::RanTooLong;
+    }
 
     // A shell can exit successfully while a descendant of it continues, and the
     // process group or job survives its leader. Ended here on every path that
@@ -208,7 +211,7 @@ pub(super) fn collect(
     // go of above is owned by the registry that took it, and that is what ends it
     // instead. Nothing reaches the end of a command's life without somebody
     // holding it.
-    if !expired {
+    if expiry == Expiry::No {
         running.finish_after_exit()?;
     }
 
@@ -224,8 +227,7 @@ pub(super) fn collect(
             original: captured.original,
             omitted: captured.omitted,
             arriving: !ended,
-            expired,
-            unpublished: discarded,
+            expiry,
             output_limited: violation == Some(SandboxViolation::Output),
         }
         .report(),
@@ -445,10 +447,20 @@ struct Finished {
     /// Whether the readers were still short of the end of a pipe when the wait
     /// for them ran out, which makes `out` a prefix of the output.
     arriving: bool,
-    expired: bool,
-    /// Whether it had ended and its writes were discarded by the stop.
-    unpublished: bool,
+    /// Whether it was stopped for running too long, and what that stop cost.
+    expiry: Expiry,
     output_limited: bool,
+}
+
+/// Whether a command was stopped for running too long, and what it cost.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Expiry {
+    /// It answered on its own.
+    No,
+    /// It was still running when its time ran out.
+    RanTooLong,
+    /// It had ended, and the stop discarded what it had not published.
+    Unpublished,
 }
 
 impl Finished {
@@ -469,14 +481,14 @@ impl Finished {
         // cause that is not why this stopped. So the timeout takes the marker
         // and carries the other fact inside it, because a prefix still has to
         // say that it is one.
-        if self.expired {
+        if self.expiry != Expiry::No {
             let held = if self.arriving {
                 ", and something it left running still holds the output open"
             } else {
                 ""
             };
 
-            let lost = if self.unpublished {
+            let lost = if self.expiry == Expiry::Unpublished {
                 ", and nothing it wrote was published"
             } else {
                 ""

@@ -1,6 +1,6 @@
 //! What is kept of a command's output, and what is said about the rest.
 
-use super::{CAPTURE_HEAD, FRESH, Finished, Kept, OUTPUT, cut};
+use super::{CAPTURE_HEAD, Expiry, FRESH, Finished, Kept, OUTPUT, cut};
 
 #[test]
 fn a_command_stopped_for_running_too_long_says_so_once() {
@@ -19,8 +19,7 @@ fn a_command_stopped_for_running_too_long_says_so_once() {
         original: "half a build".len(),
         omitted: 0,
         arriving: true,
-        expired: true,
-        unpublished: false,
+        expiry: Expiry::RanTooLong,
         output_limited: false,
     }
     .report();
@@ -48,8 +47,7 @@ fn a_command_stopped_for_output_says_which_ceiling_it_crossed() {
         original: 100,
         omitted: 86,
         arriving: false,
-        expired: false,
-        unpublished: false,
+        expiry: Expiry::No,
         output_limited: true,
     }
     .report();

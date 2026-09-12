@@ -745,7 +745,8 @@ fn a_writer_publishes_nothing_when_a_publication_touched_a_root_it_knew_before()
         .expect("transaction state");
     let key = super::generations::key(sample.root());
     let held = held_publication(&sample);
-    super::generations::advance(&state, &[key.clone()]).expect("the root has a history");
+    super::generations::advance(&state, std::slice::from_ref(&key))
+        .expect("the root has a history");
     drop(held);
 
     let mut session = service
@@ -756,7 +757,8 @@ fn a_writer_publishes_nothing_when_a_publication_touched_a_root_it_knew_before()
         .start(command("read go; printf 'mine\n' > mine.txt").spoken_to())
         .expect("started command");
     let held = held_publication(&sample);
-    super::generations::advance(&state, &[key]).expect("another publication touches it");
+    super::generations::advance(&state, std::slice::from_ref(&key))
+        .expect("another publication touches it");
     drop(held);
     let_go(process.as_mut());
 
@@ -851,7 +853,7 @@ fn a_publication_that_cannot_ask_for_admission_says_the_same_thing_twice() {
         .expect("transaction state");
     let lock = state.join("writable.lock");
     let restore = std::fs::metadata(&lock).expect("the lock").permissions();
-    std::fs::set_permissions(&lock, std::fs::Permissions::from_mode(0))
+    std::fs::set_permissions(&lock, std::fs::Permissions::from_mode(0o000))
         .expect("an unopenable lock");
     fill_audit(&audit, crucible_sandbox::MAX_SANDBOX_AUDIT_FACTS);
 

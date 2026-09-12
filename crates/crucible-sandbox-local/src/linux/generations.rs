@@ -37,10 +37,17 @@ const MOST: usize = 1024;
 
 /// What a root is remembered under.
 pub(super) fn key(destination: &Path) -> String {
+    use std::fmt::Write as _;
     use std::os::unix::ffi::OsStrExt as _;
 
     let digest: [u8; 32] = Sha256::digest(destination.as_os_str().as_bytes()).into();
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+    let mut key = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        // Writing to a string cannot fail, and a key that lost a byte would
+        // read as another root's.
+        let _ = write!(key, "{byte:02x}");
+    }
+    key
 }
 
 fn path(state: &Path) -> PathBuf {

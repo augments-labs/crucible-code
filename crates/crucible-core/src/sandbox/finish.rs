@@ -76,8 +76,7 @@ impl Finish {
         // Whether the wait ended at the publication ceiling rather than because
         // the process would not go. What it wrote is discarded either way, but
         // only one of the two is worth telling the caller about.
-        let mut unpublished = false;
-        loop {
+        let unpublished = loop {
             match process.try_wait() {
                 Ok(Some(status)) => return Self::Exited(status),
                 // From a process that has ended, an error is how its ending went
@@ -95,12 +94,9 @@ impl Finish {
                 None if process.ended() && began.elapsed() < grace.saturating_add(PUBLICATION) => {
                     thread::sleep(WATCH);
                 }
-                None => {
-                    unpublished = process.ended();
-                    break;
-                }
+                None => break process.ended(),
             }
-        }
+        };
         match process.stop() {
             // It had ended, and the stop below discarded what it wrote. Reported
             // as a clean stop, that reads as though nothing was lost.

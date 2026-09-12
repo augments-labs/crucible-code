@@ -568,7 +568,7 @@
       },
       "case": "linux::projection::authority::tests::descriptor_descent_refuses_an_intermediate_symlink",
       "source": "crates/crucible-sandbox-local/src/linux/projection/authority.rs",
-      "body_sha256": "d291af0f749e7b081c070854b43b68c3fc281c81cc15a87d33c0bfb15b5d9163",
+      "body_sha256": "a4a43e974dcf4808d5f27ba13339ee06c2c698d261d8e087831eacc474a49299",
       "platforms": [
         "linux"
       ]
