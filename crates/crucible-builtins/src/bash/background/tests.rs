@@ -282,6 +282,13 @@ fn abandoned_receipt_keeps_failed_cleanup_visible_and_retryable() {
 }
 
 /// Marks `observed` as having completed its ending once `after` has passed.
+///
+/// `after` sits in a band: longer than whatever deadline the test wants to watch
+/// pass first, and well short of the publication ceiling the code under test
+/// allows — 300ms in test builds, 100ms for a cancel. A sleep only ever
+/// overshoots, so the lower end holds by construction and only the ceiling can be
+/// lost. Timing an ending to land *at* that ceiling is what made one of these fail
+/// on one loaded runner while passing on three others, so leave the slack in.
 fn completes(observed: &Arc<Observed>, after: Duration) -> thread::JoinHandle<()> {
     let later = Arc::clone(observed);
     thread::spawn(move || {
@@ -299,7 +306,7 @@ fn a_command_that_ended_in_time_is_not_stopped_while_its_ending_completes() {
     let observed = Arc::new(Observed::default());
     observed.ended.store(true, Ordering::Relaxed);
     observed.cleanup_allowed.store(true, Ordering::Relaxed);
-    let completing = completes(&observed, Duration::from_millis(300));
+    let completing = completes(&observed, Duration::from_millis(100));
 
     let answered = output::collect(
         Box::new(process(&observed)),
@@ -423,7 +430,7 @@ fn letting_the_registry_go_waits_for_a_command_that_has_ended() {
     drop(keep(&left, &observed, false));
     observed.ended.store(true, Ordering::Relaxed);
     observed.cleanup_allowed.store(true, Ordering::Relaxed);
-    let completing = completes(&observed, Duration::from_millis(200));
+    let completing = completes(&observed, Duration::from_millis(100));
 
     drop(left);
     completing.join().expect("the ending completed");
