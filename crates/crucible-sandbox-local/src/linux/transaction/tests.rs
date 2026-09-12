@@ -187,13 +187,17 @@ fn proved_pre_release_cleanup_can_refuse_but_unproved_cleanup_quarantines() {
 }
 
 #[test]
-fn writable_lease_is_exclusive_and_released_with_its_descriptor() {
+fn publication_lease_is_exclusive_and_released_with_its_descriptor() {
     let sample = crate::sample::Sample::new("sandbox-transaction-lock");
     let state = sample.root().join("state");
-    let first = Lease::acquire_at(&state).expect("first lease");
-    assert!(Lease::acquire_at(&state).is_err());
+    let first = Lease::try_acquire_in(&state)
+        .expect("lock state")
+        .expect("first lease");
+    assert!(Lease::try_acquire_in(&state).expect("lock state").is_none());
     drop(first);
-    Lease::acquire_at(&state).expect("lease after descriptor close");
+    Lease::try_acquire_in(&state)
+        .expect("lock state")
+        .expect("lease after descriptor close");
 }
 
 #[test]
@@ -217,16 +221,13 @@ fn durable_background_frames_bind_the_result_key_and_acceptance_receipt() {
     use std::os::unix::fs::DirBuilderExt as _;
 
     let sample = crate::sample::Sample::new("sandbox-background-transaction-journal");
-    let state_root = sample.root().join("state");
     let projection_root = sample.root().join("stage");
     let mut builder = fs::DirBuilder::new();
     builder.mode(0o700);
     builder.create(&projection_root).expect("stage directory");
-    let lease = Lease::acquire_at(&state_root).expect("transaction lease");
     let key = CallResultKey::from_digest([0x3c; 32]);
     let receipt = [0x5a; 32];
     let mut transaction = Transaction::start(
-        Some(lease),
         &projection_root,
         SandboxId::new(),
         InvocationMode::Background,
@@ -362,7 +363,7 @@ fn terminal_stale_transactions_are_cleaned_idempotently() {
     let sample = crate::sample::Sample::new("sandbox-terminal-recovery");
     let base = sample.root().join("recovery");
     create_private_test_directory(&base);
-    let stage = stale_journal(&sample, &base, true);
+    let stage = stale_journal(&base, true);
 
     reconcile_stale_transactions(&base).expect("terminal cleanup");
     assert!(!stage.exists());
@@ -374,7 +375,7 @@ fn live_nonterminal_transactions_are_skipped_and_retain_their_evidence() {
     let sample = crate::sample::Sample::new("sandbox-nonterminal-recovery");
     let base = sample.root().join("recovery");
     create_private_test_directory(&base);
-    let stage = stale_journal(&sample, &base, false);
+    let stage = stale_journal(&base, false);
 
     reconcile_stale_transactions(&base).expect("live transaction is not stale");
     assert!(stage.join("transaction.wal").exists());
@@ -388,9 +389,7 @@ fn live_transaction_wal_is_never_repaired_while_its_owner_may_append() {
     let sandbox = SandboxId::new();
     let stage = base.join(format!("crucible-projection-{sandbox}"));
     create_private_test_directory(&stage);
-    let lease = Lease::acquire_at(&sample.root().join("state")).expect("transaction lease");
     let mut transaction = Transaction::start_owned(
-        Some(lease),
         &stage,
         sandbox,
         Invocation::new(InvocationMode::Foreground, None).expect("foreground identity"),
@@ -443,14 +442,9 @@ fn read_only_lifecycles_have_a_durable_transaction_without_a_writer_lease() {
     let mut builder = fs::DirBuilder::new();
     builder.mode(0o700);
     builder.create(&stage).expect("stage directory");
-    let mut transaction = Transaction::start(
-        None,
-        &stage,
-        SandboxId::new(),
-        InvocationMode::Foreground,
-        None,
-    )
-    .expect("read-only lifecycle journal");
+    let mut transaction =
+        Transaction::start(&stage, SandboxId::new(), InvocationMode::Foreground, None)
+            .expect("read-only lifecycle journal");
     for record in [
         Record::Prepared,
         Record::RefusalObserved,
@@ -471,7 +465,7 @@ fn dead_pre_release_owners_are_refused_and_cleaned() {
     let sample = crate::sample::Sample::new("sandbox-dead-pre-release-recovery");
     let base = sample.root().join("recovery");
     create_private_test_directory(&base);
-    let stage = stale_journal_with(&sample, &base, dead_owner(), &[Record::Prepared]);
+    let stage = stale_journal_with(&base, dead_owner(), &[Record::Prepared]);
 
     reconcile_stale_transactions(&base).expect("pre-release recovery");
     assert!(!stage.exists());
@@ -483,7 +477,6 @@ fn dead_post_release_owners_roll_back_when_no_apply_was_authorized() {
     let base = sample.root().join("recovery");
     create_private_test_directory(&base);
     let stage = stale_journal_with(
-        &sample,
         &base,
         dead_owner(),
         &[
@@ -503,7 +496,6 @@ fn dead_background_owner_between_go_and_acceptance_rolls_back() {
     let base = sample.root().join("recovery");
     create_private_test_directory(&base);
     let stage = stale_journal_with_invocation(
-        &sample,
         &base,
         dead_owner(),
         Invocation::new(
@@ -529,7 +521,6 @@ fn dead_owners_discard_durable_staging_in_reverse_before_rollback() {
     let base = sample.root().join("recovery");
     create_private_test_directory(&base);
     let stage = stale_journal_with(
-        &sample,
         &base,
         dead_owner(),
         &[
@@ -564,7 +555,6 @@ fn dead_owners_with_an_ambiguous_apply_are_quarantined() {
     let base = sample.root().join("recovery");
     create_private_test_directory(&base);
     let stage = stale_journal_with(
-        &sample,
         &base,
         dead_owner(),
         &[
@@ -597,14 +587,11 @@ fn journal_with(records: &[Record]) -> (crate::sample::Sample, PathBuf) {
     use std::os::unix::fs::DirBuilderExt as _;
 
     let sample = crate::sample::Sample::new("sandbox-transaction-journal");
-    let state_root = sample.root().join("state");
     let projection_root = sample.root().join("stage");
     let mut builder = fs::DirBuilder::new();
     builder.mode(0o700);
     builder.create(&projection_root).expect("stage directory");
-    let lease = Lease::acquire_at(&state_root).expect("transaction lease");
     let mut transaction = Transaction::start(
-        Some(lease),
         &projection_root,
         SandboxId::new(),
         InvocationMode::Foreground,
@@ -619,7 +606,7 @@ fn journal_with(records: &[Record]) -> (crate::sample::Sample, PathBuf) {
     (sample, journal)
 }
 
-fn stale_journal(sample: &crate::sample::Sample, base: &Path, terminal: bool) -> PathBuf {
+fn stale_journal(base: &Path, terminal: bool) -> PathBuf {
     let mut records = vec![Record::Prepared];
     if terminal {
         records.extend([
@@ -630,21 +617,14 @@ fn stale_journal(sample: &crate::sample::Sample, base: &Path, terminal: bool) ->
         ]);
     }
     stale_journal_with(
-        sample,
         base,
         OwnerIdentity::current().expect("current owner"),
         &records,
     )
 }
 
-fn stale_journal_with(
-    sample: &crate::sample::Sample,
-    base: &Path,
-    owner: OwnerIdentity,
-    records: &[Record],
-) -> PathBuf {
+fn stale_journal_with(base: &Path, owner: OwnerIdentity, records: &[Record]) -> PathBuf {
     stale_journal_with_invocation(
-        sample,
         base,
         owner,
         Invocation::new(InvocationMode::Foreground, None).expect("foreground identity"),
@@ -653,7 +633,6 @@ fn stale_journal_with(
 }
 
 fn stale_journal_with_invocation(
-    sample: &crate::sample::Sample,
     base: &Path,
     owner: OwnerIdentity,
     invocation: Invocation,
@@ -662,9 +641,8 @@ fn stale_journal_with_invocation(
     let sandbox = SandboxId::new();
     let stage = base.join(format!("crucible-projection-{sandbox}"));
     create_private_test_directory(&stage);
-    let lease = Lease::acquire_at(&sample.root().join("state")).expect("transaction lease");
-    let mut transaction = Transaction::start_owned(Some(lease), &stage, sandbox, invocation, owner)
-        .expect("transaction journal");
+    let mut transaction =
+        Transaction::start_owned(&stage, sandbox, invocation, owner).expect("transaction journal");
     for record in records {
         transaction.append(*record).expect("transaction record");
     }
@@ -693,7 +671,7 @@ fn a_stale_journal_lock_lent_to_a_departing_child_is_recovered_not_skipped() {
     let sample = crate::sample::Sample::new("sandbox-lent-journal-lock");
     let base = sample.root().join("recovery");
     create_private_test_directory(&base);
-    let stage = stale_journal_with(&sample, &base, dead_owner(), &[Record::Prepared]);
+    let stage = stale_journal_with(&base, dead_owner(), &[Record::Prepared]);
     let journal = File::options()
         .read(true)
         .write(true)
@@ -718,15 +696,80 @@ fn a_stale_journal_lock_lent_to_a_departing_child_is_recovered_not_skipped() {
 }
 
 #[test]
-fn a_writable_lease_lent_to_a_departing_child_does_not_refuse_the_next_writer() {
+fn a_publication_lease_whose_lock_was_replaced_is_no_longer_the_lock() {
+    // An age-based cleaner of the temporary directory can remove a lock file
+    // that is never written, and the next process to ask creates a fresh one.
+    // Two publications would then hold what each believes is the only lock.
+    let sample = crate::sample::Sample::new("sandbox-replaced-writable-lock");
+    let state = sample.root().join("state");
+    let held = Lease::try_acquire_in(&state)
+        .expect("lock state")
+        .expect("a lease");
+    held.confirm().expect("the lock it was taken on");
+
+    std::fs::remove_file(state.join("writable.lock")).expect("the lock is removed");
+    let replacement = Lease::try_acquire_in(&state)
+        .expect("lock state")
+        .expect("a lease on the lock that replaced it");
+
+    assert!(
+        held.confirm().is_err(),
+        "a replaced lock still read as the lock the lease was taken on"
+    );
+    drop(replacement);
+}
+
+#[test]
+fn taking_the_publication_lock_keeps_its_file_from_ageing() {
+    use std::fs::FileTimes;
+    use std::time::{Duration, SystemTime};
+
+    let sample = crate::sample::Sample::new("sandbox-ageing-writable-lock");
+    let state = sample.root().join("state");
+    drop(
+        Lease::try_acquire_in(&state)
+            .expect("lock state")
+            .expect("a lease that creates the lock"),
+    );
+    let lock = state.join("writable.lock");
+    let long_ago = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+    std::fs::File::options()
+        .write(true)
+        .open(&lock)
+        .expect("the lock")
+        .set_times(FileTimes::new().set_modified(long_ago))
+        .expect("an old lock");
+
+    drop(
+        Lease::try_acquire_in(&state)
+            .expect("lock state")
+            .expect("a lease that takes the lock again"),
+    );
+
+    let modified = std::fs::metadata(&lock)
+        .expect("the lock")
+        .modified()
+        .expect("its modification time");
+    assert!(
+        modified > long_ago,
+        "a lock nothing ever writes reads as old enough to remove"
+    );
+}
+
+#[test]
+fn a_publication_lease_lent_to_a_departing_child_is_free_once_the_child_is_gone() {
     let sample = crate::sample::Sample::new("sandbox-lent-writable-lease");
     let state = sample.root().join("state");
-    let first = Lease::acquire_at(&state).expect("first lease");
+    let first = Lease::try_acquire_in(&state)
+        .expect("lock state")
+        .expect("first lease");
     let mut child = lend_to_departing_child(first.lock());
     drop(first);
 
-    Lease::acquire_at(&state).expect("lease once only a departing child holds the old one");
     child.wait().expect("departing child");
+    Lease::try_acquire_in(&state)
+        .expect("lock state")
+        .expect("lease once the departing child is gone");
 }
 
 /// Hands a copy of `held` to a child that keeps it open briefly, as a forked

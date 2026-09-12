@@ -568,7 +568,7 @@
       },
       "case": "linux::projection::authority::tests::descriptor_descent_refuses_an_intermediate_symlink",
       "source": "crates/crucible-sandbox-local/src/linux/projection/authority.rs",
-      "body_sha256": "d291af0f749e7b081c070854b43b68c3fc281c81cc15a87d33c0bfb15b5d9163",
+      "body_sha256": "b477058d7602c225add42553c49c87c7cb355b9f31ff4c91030c8e2a06e05728",
       "platforms": [
         "linux"
       ]
@@ -600,7 +600,7 @@
       },
       "case": "linux_curl_uses_the_private_proxy_and_a_denied_target_is_never_dialed",
       "source": "crates/crucible-sandbox-local/tests/linux_network.rs",
-      "body_sha256": "367ee3922f9376bb1dd500f475580ad3af622982a6efb3678491e4ee83e1160e",
+      "body_sha256": "fa1f75bb78535d4e32366497e9f7e8b8811732bf7faffe1e49837fd6374b8532",
       "platforms": [
         "linux"
       ]

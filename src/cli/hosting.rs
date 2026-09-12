@@ -244,6 +244,10 @@ impl StartFailure {
     fn after(chosen: &Chosen, problem: &dyn std::fmt::Display, hosted: Hosted) -> Self {
         match hosted.stop(chosen.grace).finish {
             Finish::Exited(_) | Finish::Stopped => Self::refused(chosen, problem),
+            Finish::Unpublished(unpublished) => Self::refused(
+                chosen,
+                &format!("{problem}; nothing it wrote was published: {unpublished}"),
+            ),
             Finish::Unreaped(cleanup) => Self::Unreaped(ToolsetError::Source {
                 id: chosen.name.clone(),
                 problem: format!("{problem}; unconfirmed cleanup: {cleanup}").into(),
@@ -520,6 +524,12 @@ impl Server {
     fn reaped(&self, live: &mut Conversation, hosted: Hosted) -> Result<(), ToolsetError> {
         match hosted.stop(self.chosen.grace).finish {
             Finish::Exited(_) | Finish::Stopped => Ok(()),
+            // Its scope ended and was reaped, so nothing keeps it from being
+            // started again. What was lost is what it wrote, and that is said.
+            Finish::Unpublished(problem) => Err(ToolsetError::Source {
+                id: self.name.clone(),
+                problem: format!("nothing it wrote was published: {problem}").into(),
+            }),
             Finish::Unreaped(problem) => {
                 *live = Conversation::Unreaped;
                 Err(ToolsetError::Source {

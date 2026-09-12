@@ -110,6 +110,19 @@ fn wait_for_marker(
     bytes
 }
 
+/// Every lifecycle `audit` recorded, in order.
+pub(super) fn lifecycles(audit: &crucible_sandbox::SandboxAudit) -> Vec<SandboxLifecycle> {
+    audit
+        .records()
+        .expect("audit records")
+        .iter()
+        .filter_map(|record| match record.fact().kind() {
+            SandboxFactKind::Lifecycle(lifecycle) => Some(*lifecycle),
+            _ => None,
+        })
+        .collect()
+}
+
 #[test]
 fn inline_manifest_files_are_committed_before_the_command_starts() {
     let service = LocalSandbox::new();
@@ -490,7 +503,14 @@ fn unsupported_terminal_metadata_refuses_the_complete_private_delta() {
         );
         thread::sleep(Duration::from_millis(10));
     }
-    let _ = process.stop();
+    process
+        .stop()
+        .expect("a refused writer's cleanup is confirmed");
+    assert!(
+        !lifecycles(&audit).contains(&SandboxLifecycle::Quarantined),
+        "{:?}",
+        lifecycles(&audit)
+    );
 
     assert!(!sample.root().join("ordinary.txt").exists());
     assert!(!sample.root().join("special.txt").exists());
@@ -545,7 +565,9 @@ fn an_external_baseline_conflict_publishes_none_of_the_private_delta() {
         );
         thread::sleep(Duration::from_millis(10));
     }
-    let _ = process.stop();
+    process
+        .stop()
+        .expect("a refused writer's cleanup is confirmed");
     assert_eq!(
         std::fs::read_to_string(sample.root().join("shared.txt")).expect("external content"),
         "external\n"
@@ -802,28 +824,6 @@ fn background_release_without_an_application_owner_is_refused_before_go() {
                 )
             })
     );
-}
-
-#[test]
-fn writable_transactions_are_globally_serialized_across_disjoint_roots() {
-    let service = LocalSandbox::new();
-    if skipped_without_enforcement(&service) {
-        return;
-    }
-    let first = Sample::new("sandbox-global-writer-first");
-    let second = Sample::new("sandbox-global-writer-second");
-    let held = service
-        .prepare(request(&first, SandboxManifest::empty()))
-        .expect("first writable transaction");
-
-    assert!(matches!(
-        service.prepare(request(&second, SandboxManifest::empty())),
-        Err(crucible_sandbox::SandboxError::Concurrency)
-    ));
-    drop(held);
-    service
-        .prepare(request(&second, SandboxManifest::empty()))
-        .expect("writer admitted after lease release");
 }
 
 #[test]

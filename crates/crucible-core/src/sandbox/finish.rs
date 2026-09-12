@@ -6,11 +6,19 @@
 //! grace to act on that, because a process killed while it was still tidying up
 //! left whatever it was tidying half done; and only then is it stopped.
 //!
-//! Three endings rather than a success and a failure. Going quietly and being
+//! Four endings rather than a success and a failure. Going quietly and being
 //! stopped are both ordinary — one program exits on a closed pipe and another
-//! waits to be told twice — and neither is anybody's problem afterwards. Not
-//! being able to stop it is the third, and it is somebody's problem: the
-//! sandbox could not confirm scope termination and leader exit.
+//! waits to be told twice — and neither is anybody's problem afterwards. The
+//! other two are somebody's problem: an ending that went wrong, so that nothing
+//! the program wrote was published, and not being able to stop it at all, where
+//! the sandbox could not confirm scope termination and leader exit.
+//!
+//! A program that has ended is not stopped for the wait that follows. What it
+//! wrote can wait its turn behind another command's publication for longer than
+//! any grace, and stopping it then would discard what it did exactly as asked.
+//! That wait has an end, because what it waits for can be held by a crucible
+//! outside this process: past it the program is stopped, and the ending says
+//! that nothing it wrote was published rather than reading as a clean stop.
 
 use std::io;
 use std::process::ExitStatus;
@@ -22,19 +30,40 @@ use crucible_sandbox::SandboxProcess;
 /// How long the wait for a process to finish sleeps between looks.
 const WATCH: Duration = Duration::from_millis(5);
 
+/// How long a process that has ended is given, past its grace, to finish
+/// publishing what it wrote.
+///
+/// Bounded because what it waits for can be held by another crucible of this
+/// user, and a wait with no end would keep this run from finishing. Seconds
+/// rather than minutes, because every caller of this is a disposal or a
+/// restart, and a turn cannot end until each of its servers has. Shorter under
+/// test, where nothing holds a publication up.
+#[cfg(not(test))]
+const PUBLICATION: Duration = Duration::from_secs(5);
+#[cfg(test)]
+const PUBLICATION: Duration = Duration::from_millis(300);
+
 /// How a confined process finished.
 #[derive(Debug)]
 pub enum Finish {
-    /// It ended on its own, within the grace it was given.
+    /// It ended on its own within the grace it was given, and its ending
+    /// completed.
     Exited(ExitStatus),
 
     /// It did not, so its owned scope was stopped and its leader was reaped.
     Stopped,
 
+    /// It ended, but its ending could not be completed, so nothing it wrote was
+    /// published: most often because a root it wrote into changed while it ran.
+    Unpublished(io::Error),
+
     /// It did not, and stopping it failed.
     ///
-    /// The sandbox could not confirm scope termination and leader exit,
-    /// which is the one ending that is somebody's problem afterwards.
+    /// The sandbox could not confirm scope termination and leader exit: one of
+    /// the two endings, with an ending that went wrong, that are somebody's
+    /// problem afterwards. It does not say the program is still running — a
+    /// program stopped at its publication ceiling reaches this too, and then
+    /// says both what it lost and what could not be confirmed.
     Unreaped(io::Error),
 }
 
@@ -46,21 +75,51 @@ impl Finish {
     #[must_use]
     pub fn after(process: &mut dyn SandboxProcess, grace: Duration) -> Self {
         let began = Instant::now();
-        loop {
-            // An error here is not an ending, it is not knowing, and the remedy
-            // for not knowing is the same as for a process that will not go:
-            // stop it.
-            if let Ok(Some(status)) = process.try_wait() {
-                return Self::Exited(status);
+        // Whether the wait ended at the publication ceiling rather than because
+        // the process would not go. What it wrote is discarded either way, but
+        // only one of the two is worth telling the caller about.
+        let unpublished = loop {
+            match process.try_wait() {
+                Ok(Some(status)) => return Self::Exited(status),
+                // From a process that has ended, an error is how its ending went
+                // wrong.
+                Err(problem) if process.ended() => return Self::Unpublished(problem),
+                // From one still running it is not knowing, and the remedy for not
+                // knowing is the same as for a process that will not go: stop it.
+                Ok(None) | Err(_) => {}
             }
-            let Some(left) = grace.checked_sub(began.elapsed()) else {
-                break;
-            };
-            thread::sleep(left.min(WATCH));
-        }
+            match grace.checked_sub(began.elapsed()) {
+                Some(left) => thread::sleep(left.min(WATCH)),
+                // Past the grace, one that has ended is waiting its turn to
+                // publish, not refusing to go — for as long as that wait can be
+                // worth making.
+                None if process.ended() && began.elapsed() < grace.saturating_add(PUBLICATION) => {
+                    thread::sleep(WATCH);
+                }
+                None => break process.ended(),
+            }
+        };
         match process.stop() {
+            // It had ended, and the stop below discarded what it wrote. Reported
+            // as a clean stop, that reads as though nothing was lost.
+            Ok(()) if unpublished => Self::Unpublished(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "its publication did not finish in time",
+            )),
             Ok(()) => Self::Stopped,
+            // Both facts: a caller told only that cleanup is unconfirmed reads
+            // it as a process that may still be running, and retires it for
+            // that, where what happened is that it ended and lost its writes.
+            Err(source) if unpublished => Self::Unreaped(io::Error::new(
+                source.kind(),
+                format!(
+                    "its publication did not finish in time, and stopping it could not be confirmed: {source}"
+                ),
+            )),
             Err(source) => Self::Unreaped(source),
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

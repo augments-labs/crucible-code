@@ -169,6 +169,9 @@ struct Watched {
     audit: Mutex<Option<(SandboxId, crucible_core::SandboxAudit)>>,
     /// A backend that cannot confirm the process scope ended.
     cleanup_refused: AtomicBool,
+    /// A process whose ending, once it came, went wrong: what it wrote was
+    /// refused.
+    ending_refused: AtomicBool,
     stop_attempts: AtomicUsize,
     missing_input: bool,
     missing_output: bool,
@@ -313,8 +316,19 @@ impl SandboxProcess for Fake {
         if !self.watched.closed.load(Ordering::Relaxed) {
             return Ok(None);
         }
+        if self.watched.ending_refused.load(Ordering::Relaxed) {
+            return Err(io::Error::other(
+                "writable root changed after the command started",
+            ));
+        }
         self.end();
         Ok(Some(exited()))
+    }
+
+    fn ended(&mut self) -> bool {
+        // A process whose status cannot be read has not been seen to end.
+        !self.watched.cleanup_refused.load(Ordering::Relaxed)
+            && self.watched.closed.load(Ordering::Relaxed)
     }
 
     fn stop(&mut self) -> io::Result<()> {
@@ -410,6 +424,9 @@ enum Answers {
     Says(Vec<Value>),
     /// It talks normally but its process scope cannot be confirmed stopped.
     Unreapable(Vec<Value>),
+    /// It talks normally, goes when its input closes, and what it wrote is
+    /// refused.
+    Refused(Vec<Value>),
     /// Construction lacks a pipe and stopping the process also fails.
     MissingInput,
     MissingOutput,
@@ -475,13 +492,14 @@ impl SandboxService for Pretend {
             .pop_front();
         let missing_input = matches!(script, Some(Answers::MissingInput));
         let missing_output = matches!(script, Some(Answers::MissingOutput));
+        let ending_refused = matches!(script, Some(Answers::Refused(_)));
         let (frames, slow, cleanup_refused) = match script {
             None | Some(Answers::Refuses) => {
                 return Err(SandboxError::Lifecycle(io::Error::other(
                     "this machine has no such program",
                 )));
             }
-            Some(Answers::Says(frames)) => (frames, None, false),
+            Some(Answers::Says(frames) | Answers::Refused(frames)) => (frames, None, false),
             Some(Answers::Unreapable(frames)) => (frames, None, true),
             Some(Answers::MissingInput | Answers::MissingOutput) => (Vec::new(), None, true),
             Some(Answers::Slowly(frames, nth, held)) => (frames, Some((nth, held)), false),
@@ -489,6 +507,7 @@ impl SandboxService for Pretend {
 
         let watched = Arc::new(Watched {
             cleanup_refused: AtomicBool::new(cleanup_refused),
+            ending_refused: AtomicBool::new(ending_refused),
             missing_input,
             missing_output,
             ..Watched::default()

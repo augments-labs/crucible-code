@@ -5,7 +5,10 @@
 //! grandchildren holding its pipes, a long one fills a pipe buffer and blocks
 //! until somebody reads it, and either one turns a naive wait into a hang. So
 //! the pipes are drained on threads from the moment the command starts, and
-//! every wait in this module is bounded.
+//! every wait in this module is bounded. One is bounded by something other than
+//! the deadline: a command that has ended and waits its turn to publish what it
+//! wrote waits for the publication ahead of it, because stopping it then would
+//! discard what it did in time.
 //!
 //! A command can also outlive the *call* — that is [`super::background`], and it
 //! is the one path out of here that does not end what it was waiting on. What
@@ -27,7 +30,7 @@ use crucible_tools::{ToolError, ToolOutput, Watch, Wrote};
 
 use super::background::{Background, Taking};
 
-use super::{NAME, TICK, io as tool_io};
+use super::{NAME, TICK, io as tool_io, unpublished as tool_unpublished};
 use crate::bound::OUTPUT;
 
 /// One stream's fixed prefix and rolling suffix budgets.
@@ -52,6 +55,27 @@ pub(super) const CAPTURE_TEXT: usize = OUTPUT - 256;
 /// One pipe read, so a command printing at a readable rate never loses a byte
 /// of what is shown.
 const FRESH: usize = 8 * 1024;
+
+/// How long a command that has ended is given to finish publishing what it
+/// wrote, once its deadline has passed or its turn was cancelled.
+///
+/// Bounded because what it waits for can be held by another crucible of this
+/// user, and a wait with no end would leave the call unanswerable. Shorter under
+/// test, where nothing holds a publication up.
+#[cfg(not(test))]
+const PUBLICATION: Duration = Duration::from_mins(1);
+#[cfg(test)]
+const PUBLICATION: Duration = Duration::from_millis(300);
+
+/// How long a cancelled command that has ended is given for the same thing.
+///
+/// Shorter than the deadline's, because the deadline's patience is a machine's
+/// and a cancel's is a person's: somebody pressed a key and is waiting for the
+/// turn to end.
+#[cfg(not(test))]
+const CANCELLATION: Duration = Duration::from_secs(5);
+#[cfg(test)]
+const CANCELLATION: Duration = Duration::from_millis(100);
 
 /// How long the readers get to reach the end of their pipes once the command
 /// itself is over. Reading what is already buffered takes no time at all, so
@@ -82,7 +106,9 @@ pub(super) fn collect(
     let mut err = Pipe::drain(running.taking()?.take_stderr(), "stderr")?;
 
     let deadline = started + *allowed;
-    let mut expired = false;
+    let mut expiry = Expiry::No;
+    // When a command that has ended began waiting for its turn to publish.
+    let mut publishing: Option<Instant> = None;
 
     // A child is not one of this program's threads: nothing in it will notice
     // the flag, so the only way to stop it is to kill it.
@@ -102,24 +128,66 @@ pub(super) fn collect(
             }));
         }
 
-        match running.taking()?.try_wait() {
+        let looked = running.taking()?.try_wait();
+        match looked {
             Ok(Some(status)) => break Some(status),
             Ok(None) => {}
-            Err(source) => return Err(tool_io("could not wait for the command", source)),
+            // From a command that has ended, an error is how its ending went
+            // wrong — most often a root it wrote into changed while it ran. Said
+            // as a failure to wait, it reads as crucible losing track of a
+            // command that in fact finished and lost its files.
+            Err(source) => {
+                let ended = running.taking()?.ended();
+                return Err(if ended {
+                    tool_unpublished(source)
+                } else {
+                    tool_io("could not wait for the command", source)
+                });
+            }
         }
 
         // Asked before the deadline and before the cancel, because it is the one
         // of the three that keeps the command: a press and a timeout landing in
         // the same tick should leave the command running rather than kill it.
-        if cancel.requested() {
-            let _ = running.stop()?;
-            return Err(ToolError::Cancelled(NAME.into()));
-        }
-
-        if Instant::now() >= deadline {
-            let status = running.stop()?;
-            expired = true;
-            break status;
+        // Neither the cancel nor the deadline ends a command that has already
+        // ended, until its own ceiling passes. One whose writes wait their turn
+        // behind another command's publication is not running any more, and
+        // stopping it would discard what it wrote after it finished — so it is
+        // waited for, and told apart from a command that really did run too long.
+        if cancel.requested() || Instant::now() >= deadline {
+            let ended = running.taking()?.ended();
+            let since = *publishing.get_or_insert_with(Instant::now);
+            let ceiling = if cancel.requested() {
+                CANCELLATION
+            } else {
+                PUBLICATION
+            };
+            if !(ended && since.elapsed() < ceiling) {
+                if cancel.requested() {
+                    let _ = running.stop()?;
+                    // A cancelled call is answered to the model as one that was
+                    // not run. True of a command still running; false of one
+                    // that finished and had its writes discarded by the stop
+                    // above, which is told instead what it lost.
+                    return Err(if ended {
+                        tool_unpublished(io::Error::new(
+                            io::ErrorKind::TimedOut,
+                            "the turn was cancelled before its publication finished",
+                        ))
+                    } else {
+                        ToolError::Cancelled(NAME.into())
+                    });
+                }
+                let status = running.stop()?;
+                // Stopping it discarded whatever it had not published, which is
+                // the part of "ran too long" that is not true of it.
+                expiry = if ended {
+                    Expiry::Unpublished
+                } else {
+                    Expiry::RanTooLong
+                };
+                break status;
+            }
         }
 
         // Handed over here rather than from the reader threads, and that is the
@@ -144,7 +212,9 @@ pub(super) fn collect(
     };
 
     let violation = running.taking()?.violation();
-    expired |= violation == Some(SandboxViolation::CommandTime);
+    if expiry == Expiry::No && violation == Some(SandboxViolation::CommandTime) {
+        expiry = Expiry::RanTooLong;
+    }
 
     // A shell can exit successfully while a descendant of it continues, and the
     // process group or job survives its leader. Ended here on every path that
@@ -152,7 +222,7 @@ pub(super) fn collect(
     // go of above is owned by the registry that took it, and that is what ends it
     // instead. Nothing reaches the end of a command's life without somebody
     // holding it.
-    if !expired {
+    if expiry == Expiry::No {
         running.finish_after_exit()?;
     }
 
@@ -168,7 +238,7 @@ pub(super) fn collect(
             original: captured.original,
             omitted: captured.omitted,
             arriving: !ended,
-            expired,
+            expiry,
             output_limited: violation == Some(SandboxViolation::Output),
         }
         .report(),
@@ -388,8 +458,20 @@ struct Finished {
     /// Whether the readers were still short of the end of a pipe when the wait
     /// for them ran out, which makes `out` a prefix of the output.
     arriving: bool,
-    expired: bool,
+    /// Whether it was stopped for running too long, and what that stop cost.
+    expiry: Expiry,
     output_limited: bool,
+}
+
+/// Whether a command was stopped for running too long, and what it cost.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Expiry {
+    /// It answered on its own.
+    No,
+    /// It was still running when its time ran out.
+    RanTooLong,
+    /// It had ended, and the stop discarded what it had not published.
+    Unpublished,
 }
 
 impl Finished {
@@ -410,15 +492,21 @@ impl Finished {
         // cause that is not why this stopped. So the timeout takes the marker
         // and carries the other fact inside it, because a prefix still has to
         // say that it is one.
-        if self.expired {
+        if self.expiry != Expiry::No {
             let held = if self.arriving {
                 ", and something it left running still holds the output open"
             } else {
                 ""
             };
 
+            let lost = if self.expiry == Expiry::Unpublished {
+                ", and nothing it wrote was published"
+            } else {
+                ""
+            };
+
             return ToolOutput::failed(format!(
-                "{body}\n\n[stopped: the command ran too long{held}]"
+                "{body}\n\n[stopped: the command ran too long{held}{lost}]"
             ))
             .with_capture_elision(self.original, self.omitted);
         }

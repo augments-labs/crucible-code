@@ -53,20 +53,19 @@ pub(crate) fn finalize_call_result(context: &ToolContext<'_>, output: &ToolOutpu
 pub(crate) const REQUIRE_ENFORCING_SANDBOX: &str = "CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX";
 
 /// Whether a test that needs the enforcing backend may go on, as a guard the
-/// test holds until it ends, or `None` when it has to stop here.
+/// caller holds for as long as its commands run.
 ///
 /// On a developer machine without a usable Bubblewrap the test is skipped, which
 /// is the honest answer for a boundary nobody can exercise there. Where the job
 /// has declared that the backend must exist, an unavailable backend is a failure
 /// naming the reason, so a suite that measured nothing cannot report green.
 ///
-/// A confined command that may write holds the host's writable-transaction lock
-/// from the moment it is prepared until it is stopped, even while it runs on in
-/// the background, and a launch that finds the lock held gives up with the
-/// concurrency ceiling once a short retry runs out. The backend serializes its own
-/// tests behind `cfg(test)`, which does not reach a crate that depends on it. So a
-/// test here holds the guard until every command it started has ended, and no
-/// other test that asks for the guard launches in the meantime.
+/// Confined commands of this user publish one at a time, and two tests launching
+/// at once contend for that turn: one waits, and a test that measures which of
+/// two writers is refused measures the machine's load instead. The backend
+/// serializes its own tests behind `cfg(test)`, which does not reach a crate that
+/// depends on it. So a test here holds the guard until every command it started
+/// has ended, and no other test that asks for the guard launches meanwhile.
 pub(crate) fn enforcing(
     service: &crucible_sandbox_local::LocalSandbox,
 ) -> Option<std::sync::MutexGuard<'static, ()>> {

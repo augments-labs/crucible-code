@@ -435,3 +435,107 @@ fn restricted_requests_inspect_requested_and_effective_policy_separately() {
         inspection.policy_digest()
     );
 }
+
+/// A process that answers only what a backend must, so that the trait's own
+/// `ended` is what is read.
+struct Counted {
+    exited: bool,
+    inspection: SandboxInspection,
+}
+
+impl SandboxProcess for Counted {
+    fn take_stdin(&mut self) -> Option<Box<dyn io::Write + Send>> {
+        None
+    }
+
+    fn take_stdout(&mut self) -> Option<Box<dyn SandboxOutput>> {
+        None
+    }
+
+    fn take_stderr(&mut self) -> Option<Box<dyn SandboxOutput>> {
+        None
+    }
+
+    fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        Ok(self.exited.then(ended_status))
+    }
+
+    fn stop(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+
+    fn inspection(&self) -> &SandboxInspection {
+        &self.inspection
+    }
+
+    fn usage(&self) -> SandboxUsage {
+        SandboxUsage::default()
+    }
+
+    fn violation(&self) -> Option<SandboxViolation> {
+        None
+    }
+}
+
+fn ended_status() -> ExitStatus {
+    #[cfg(unix)]
+    use std::os::unix::process::ExitStatusExt as _;
+    #[cfg(windows)]
+    use std::os::windows::process::ExitStatusExt as _;
+
+    ExitStatus::from_raw(0)
+}
+
+#[test]
+fn the_default_ending_follows_the_status_the_backend_reports() {
+    // Every backend that publishes nothing takes this default, and what reads
+    // it — a deadline, a grace, the registry on its way out — treats a command
+    // that reads as ended as one to wait for rather than to stop.
+    let unconfined = SandboxPolicy::new(
+        false,
+        [SandboxFilesystemRule::new(
+            "/workspace",
+            SandboxFilesystemAccess::ReadWrite,
+            SandboxFilesystemProvenance::Workspace,
+        )
+        .expect("rule")],
+        "/workspace",
+        SandboxNetworkPolicy::Closed,
+        SandboxResourceLimits::default(),
+    )
+    .expect("policy");
+    let request = SandboxRequest::new(
+        SandboxId::new(),
+        Ancestry::new(),
+        ToolId::new("call"),
+        unconfined,
+        SandboxManifest::empty(),
+    );
+    let identity = SandboxBackendIdentity::new(
+        SandboxBackendId::new("test").expect("a backend name"),
+        "1",
+        SandboxBackendProvenance::Compatibility,
+        None,
+    )
+    .expect("a backend identity");
+    let inspection = SandboxInspection::unconfined_for_request(
+        identity,
+        SandboxCapabilities::none(),
+        &request,
+        "a test, which confines nothing",
+    )
+    .expect("an inspection of a request a test built");
+    let mut process = Counted {
+        exited: false,
+        inspection,
+    };
+
+    assert!(!process.ended(), "a command still running read as ended");
+
+    process.exited = true;
+
+    assert!(
+        process.ended(),
+        "a command that exited did not read as ended"
+    );
+}

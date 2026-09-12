@@ -826,6 +826,82 @@ fn linux_ctrl_b_uses_owned_durable_detachment_before_go() {
     assert!(left.running().is_empty());
 }
 
+// The refusal this asserts on is the Linux backend's: a publication that touched
+// a writable root while a command ran is what refuses that command. No other
+// backend projects writable roots transactionally, so elsewhere there is no
+// publication to run across, the command simply succeeds, and this could not fail.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_command_whose_writes_were_refused_tells_the_model_why() {
+    // Reachable only since writers stopped holding the lock for their whole
+    // lives: a command that runs across another's publication into the same
+    // root publishes nothing, and the model is told by the call it made.
+    let service = crucible_sandbox_local::LocalSandbox::new();
+    let Some(_enforcing) = enforcing(&service) else {
+        return;
+    };
+    let sample = Sample::new("bash-refused-foreground-writer");
+    sample.write("shared.txt", "baseline\n");
+    let tool = Bash::new(sample.workspace(), std::sync::Arc::new(service));
+
+    let said = std::thread::scope(|scope| {
+        let slow = scope.spawn(|| {
+            finalized(
+                &tool,
+                r#"{"command":"sleep 5; printf 'mine\\n' > mine.txt"}"#,
+            )
+        });
+        std::thread::sleep(Duration::from_millis(300));
+        finalized(&tool, r#"{"command":"printf 'theirs\\n' > shared.txt"}"#)
+            .expect("the other writer publishes while the first one runs");
+        match slow.join().expect("the slow writer") {
+            Ok(output) => output.text().to_owned(),
+            Err(problem) => problem.to_string(),
+        }
+    });
+
+    assert!(said.contains("nothing it wrote was published"), "{said}");
+    assert!(
+        said.contains("writable root"),
+        "the reason travels too: {said}"
+    );
+    assert!(!sample.root().join("mine.txt").exists(), "{said}");
+}
+
+// Linux for the same reason, and this one would have passed anywhere: what it
+// watches is a lock only that backend takes, so without it there is nothing to be
+// kept from writing by, and a green result here would say nothing about the rule.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_writer_left_running_does_not_keep_a_command_from_writing() {
+    // A dev server or a watcher is left running because it has no end of its
+    // own. Nothing else that writes may wait on it, or nothing else writes.
+    let service = crucible_sandbox_local::LocalSandbox::new();
+    let Some(_enforcing) = enforcing(&service) else {
+        return;
+    };
+    let sample = Sample::new("bash-writer-beside-a-running-one");
+    let left = Background::new();
+    let tool = Bash::new(sample.workspace(), std::sync::Arc::new(service)).leaving(left.clone());
+
+    let started = finalized(&tool, r#"{"command":"sleep 30","background":true}"#)
+        .expect("the background writer started");
+    assert!(
+        started.text().contains("left running as #1"),
+        "{}",
+        started.text()
+    );
+
+    let wrote = finalized(&tool, r#"{"command":"printf 'beside\\n' > beside.txt"}"#)
+        .expect("a command that writes runs beside the one left running");
+    assert!(!wrote.is_failed(), "{}", wrote.text());
+    assert_eq!(
+        std::fs::read_to_string(sample.root().join("beside.txt")).expect("published file"),
+        "beside\n"
+    );
+    left.stop(1).expect("background cleanup");
+}
+
 #[test]
 fn one_press_lets_go_of_one_command_rather_than_every_command_after_it() {
     // The request is spent when it is read. Without that, a press meant for a

@@ -307,8 +307,19 @@ late usage and cleanup facts keep the call attribution that started it.
 Under the Linux boundary, what a command writes inside a writable root stays
 private to it until it ends. An ordinary exit, whether zero or nonzero, publishes
 those writes to the workspace; a command that is stopped, times out or is killed
-by a signal leaves the workspace as it found it. A background command's writes
-therefore land when it finishes, not while it runs. The rules are described in
+by a signal while it runs leaves the workspace as it found it. A background
+command's writes therefore land when it finishes, not while it runs, and it holds
+nothing up meanwhile: other commands that can write run and publish beside it.
+A command that has ended can wait for another command's publication before its
+own; neither its timeout nor <kbd>Esc</kbd> stops it then, and stopping it from
+the panel leaves it to be reported. Each of those waits has a ceiling, because
+what it waits for can be held by another crucible of this user. The timeout's is
+a minute, after which the command is stopped, reported as having run too long,
+and told to have published nothing; <kbd>Esc</kbd>'s is seconds, after which it
+is stopped and what it lost is said in the same words. A command that wrote
+into a root another command published into after it started publishes nothing,
+and its result says so, or, for a background command, the note about its ending.
+The rules are described in
 [Writable roots and publication](../security/sandboxing.md#writable-roots-and-publication).
 
 ## Why it is always asked about

@@ -281,6 +281,7 @@ mod tests {
         let authority = File::open(sample.root()).expect("root authority").into();
         let root = Root {
             authority,
+            host: sample.root().clone(),
             destination: sample.root().clone(),
             source: None,
             directory: true,
@@ -288,6 +289,7 @@ mod tests {
             baseline: Snapshot {
                 entries: BTreeMap::new(),
             },
+            generation: None,
         };
 
         let problem = create_directory(&root, Path::new("swapped/escaped"))

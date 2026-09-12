@@ -14,6 +14,15 @@ use crate::linux::transaction::{Record, Transaction};
 
 type ContentKey = (u64, [u8; 32], Vec<(u64, u64)>);
 
+/// What the command saw of each root: its first view, when it started, and its
+/// last, when it ended.
+pub(super) struct Seen<'a> {
+    pub(super) first: &'a [Snapshot],
+    pub(super) last: &'a [Snapshot],
+    /// This user's transaction state directory, where the generations live.
+    pub(super) state: &'a Path,
+}
+
 pub(super) struct Failure {
     source: io::Error,
     quarantined: bool,
@@ -227,16 +236,39 @@ fn merge_entry(host: &Entry, broker: &Entry, final_entry: &Entry) -> Entry {
 pub(super) fn apply(
     roots: &[Root],
     stage: &Path,
+    seen: &Seen<'_>,
     finals: &[Snapshot],
     transaction: &mut Transaction,
 ) -> Result<(), Failure> {
-    if roots.len() != finals.len() {
+    if roots.len() != finals.len()
+        || roots.len() != seen.first.len()
+        || roots.len() != seen.last.len()
+    {
         return abort_without_staging(
             transaction,
             invalid("terminal scan root count does not match the immutable projection plan"),
         );
     }
-    if let Err(problem) = validate_before_publication(roots, finals) {
+    let left_alone = match validate_before_publication(roots, seen, finals) {
+        Ok(left_alone) => left_alone,
+        Err(problem) => return abort_without_staging(transaction, problem),
+    };
+    // Moved before anything is written, and only for the roots this publication
+    // will write into: a root it leaves alone is not one another command has to
+    // be refused over.
+    let writing: Vec<String> = roots
+        .iter()
+        .zip(&left_alone)
+        .filter(|(_, alone)| !**alone)
+        .map(|(root, _)| super::super::generations::key(&root.host))
+        .collect();
+    // Only when there is a root to write into, which is exactly when the lease
+    // is held: a projection with none is let in without the lock, and a
+    // read-modify-write from there could put back a copy taken before somebody
+    // else's publication moved the count.
+    if !writing.is_empty()
+        && let Err(problem) = super::super::generations::advance(seen.state, &writing)
+    {
         return abort_without_staging(transaction, problem);
     }
 
@@ -245,25 +277,32 @@ pub(super) fn apply(
         return abort_without_staging(transaction, problem);
     }
     let mut prepared = Vec::with_capacity(roots.len());
-    for (index, (root, final_snapshot)) in roots.iter().zip(finals).enumerate() {
+    for (index, ((root, final_snapshot), alone)) in
+        roots.iter().zip(finals).zip(&left_alone).enumerate()
+    {
         let record_index = u32::try_from(index)
             .map_err(|_| Failure::quarantined(invalid("publication root index overflow")))?;
         if let Err(problem) = transaction.append(Record::StageIntent(record_index)) {
             return Err(Failure::quarantined(problem));
         }
-        let prepared_root =
-            match Prepared::new(root, final_snapshot, &publication.join(index.to_string())) {
-                Ok(prepared) => prepared,
-                Err(problem) => {
-                    return abort_staged(
-                        transaction,
-                        stage,
-                        &publication,
-                        index.saturating_add(1),
-                        problem,
-                    );
-                }
-            };
+        let directory = publication.join(index.to_string());
+        let staged = if *alone {
+            Prepared::nothing(&directory)
+        } else {
+            Prepared::new(root, final_snapshot, &directory)
+        };
+        let prepared_root = match staged {
+            Ok(prepared) => prepared,
+            Err(problem) => {
+                return abort_staged(
+                    transaction,
+                    stage,
+                    &publication,
+                    index.saturating_add(1),
+                    problem,
+                );
+            }
+        };
         if let Err(problem) = transaction.append(Record::Staged(record_index)) {
             return abort_staged(
                 transaction,
@@ -287,10 +326,14 @@ pub(super) fn apply(
 
     let mut applied = Vec::new();
     let mut apply_index = 0_u32;
-    for (root_index, ((root, final_snapshot), prepared_root)) in
-        roots.iter().zip(finals).zip(&prepared).enumerate()
+    for (root_index, (((root, final_snapshot), prepared_root), alone)) in roots
+        .iter()
+        .zip(finals)
+        .zip(&prepared)
+        .zip(&left_alone)
+        .enumerate()
     {
-        if &root.baseline == final_snapshot {
+        if *alone {
             continue;
         }
         if let Err(problem) = transaction.append(Record::ApplyIntent(apply_index)) {
@@ -360,17 +403,69 @@ pub(super) fn apply(
     Ok(())
 }
 
-fn validate_before_publication(roots: &[Root], finals: &[Snapshot]) -> io::Result<()> {
-    for (root, final_snapshot) in roots.iter().zip(finals) {
+/// Checks every root the command changed against its baseline, and says which
+/// roots it left as it found them.
+///
+/// A root it left alone takes nothing from this publication: nothing is written
+/// into it, and whatever changed it meanwhile is kept rather than refused.
+fn validate_before_publication(
+    roots: &[Root],
+    seen: &Seen<'_>,
+    finals: &[Snapshot],
+) -> io::Result<Vec<bool>> {
+    let mut left_alone = Vec::with_capacity(roots.len());
+    for (((root, first), last), final_snapshot) in
+        roots.iter().zip(seen.first).zip(seen.last).zip(finals)
+    {
         validate_root_shape(root, final_snapshot)?;
-        if snapshot_filtered(&root.publication_path(), &root.exclusions)? != root.baseline {
+        if &root.baseline == final_snapshot {
+            left_alone.push(true);
+            continue;
+        }
+        let current = snapshot_filtered(&root.publication_path(), &root.exclusions)?;
+        if left_as_found(first, last, &current) {
+            left_alone.push(true);
+            continue;
+        }
+        // What the command is scanned as holding includes anything published
+        // into this root beneath it, and a root put back the way this command
+        // found it says nothing about that. The generation does.
+        let standing = super::super::generations::current(
+            seen.state,
+            std::slice::from_ref(&super::super::generations::key(&root.host)),
+        )?;
+        if standing.first().copied().flatten() != root.generation {
+            return Err(io::Error::other(
+                "a publication touched a writable root while the command ran, so what it wrote was not published",
+            ));
+        }
+        if current != root.baseline {
             return Err(io::Error::other(format!(
-                "writable root changed outside the sandbox before publication; terminal delta category: {}",
+                "writable root changed after the command started, by another command's publication or a write from outside the sandbox; terminal delta category: {}",
                 difference(&root.baseline, final_snapshot)
             )));
         }
+        left_alone.push(false);
     }
-    Ok(())
+    Ok(left_alone)
+}
+
+/// Whether the command left a root as it found it, in its own view of that root.
+///
+/// Its view of a directory root is an overlay that shows the root beneath its
+/// writes, so a publication into the root while it ran shows there as well. A
+/// path its last view holds as its first view did, or as the root holds it now,
+/// is one it did not change: the difference came from the root.
+fn left_as_found(first: &Snapshot, last: &Snapshot, current: &Snapshot) -> bool {
+    first
+        .entries
+        .keys()
+        .chain(last.entries.keys())
+        .chain(current.entries.keys())
+        .all(|path| {
+            let seen = last.entries.get(path);
+            seen == first.entries.get(path) || seen == current.entries.get(path)
+        })
 }
 
 fn abort_without_staging(transaction: &mut Transaction, problem: io::Error) -> Result<(), Failure> {
@@ -547,6 +642,14 @@ struct Prepared {
 }
 
 impl Prepared {
+    /// Staging for a root this publication writes nothing into.
+    fn nothing(directory: &Path) -> io::Result<Self> {
+        create_private_directory(directory)?;
+        Ok(Self {
+            contents: ContentStore::new(directory.to_path_buf()),
+        })
+    }
+
     fn new(root: &Root, desired: &Snapshot, directory: &Path) -> io::Result<Self> {
         create_private_directory(directory)?;
         let changed = changed_paths(&root.baseline, desired);

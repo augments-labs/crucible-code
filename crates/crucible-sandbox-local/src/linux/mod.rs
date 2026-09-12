@@ -3,6 +3,7 @@
 mod broker;
 mod command;
 mod fd;
+mod generations;
 mod materialize;
 mod network;
 mod probe;
@@ -13,6 +14,8 @@ mod transaction;
 mod escape_tests;
 #[cfg(test)]
 mod guardrail_tests;
+#[cfg(test)]
+mod publication_tests;
 #[cfg(test)]
 mod resource_tests;
 #[cfg(test)]
@@ -82,7 +85,29 @@ pub(super) fn prepare(
         }
     })?;
     drop(registry);
-    let transaction = transaction::Lease::acquire(&request)?;
+    // Writers in one test process run one at a time, as those tests assume. Taken
+    // here, after the registry is let go and before anything a test times, and
+    // carried with the command until its process is let go.
+    #[cfg(test)]
+    let serial = if request
+        .policy()
+        .filesystem()
+        .iter()
+        .any(|rule| rule.access() == SandboxFilesystemAccess::ReadWrite)
+        || request
+            .manifest()
+            .entries()
+            .iter()
+            .any(|entry| entry.access() == Some(SandboxFilesystemAccess::ReadWrite))
+    {
+        Some(transaction::TestSerialLease::acquire().map_err(|_| {
+            SandboxError::BackendUnavailable {
+                reason: "sandbox test writer coordination is unavailable".into(),
+            }
+        })?)
+    } else {
+        None
+    };
 
     let maximum = request
         .policy()
@@ -106,7 +131,8 @@ pub(super) fn prepare(
         materialization: None,
         materialized: false,
         transferred: false,
-        transaction,
+        #[cfg(test)]
+        serial,
     }))
 }
 
@@ -120,7 +146,8 @@ struct LinuxSession {
     materialization: Option<materialize::Materialization>,
     materialized: bool,
     transferred: bool,
-    transaction: Option<transaction::Lease>,
+    #[cfg(test)]
+    serial: Option<transaction::TestSerialLease>,
 }
 
 impl SandboxSession for LinuxSession {
@@ -194,7 +221,6 @@ impl SandboxSession for LinuxSession {
             &self.request,
             &self.view,
             self.materialization.as_ref(),
-            self.transaction.take(),
         ) {
             Ok(projection) => projection,
             Err(problem) => {
@@ -221,6 +247,8 @@ impl SandboxSession for LinuxSession {
             call_result_key: self.request.call_result_key(),
             owner_transferred: false,
             released: false,
+            #[cfg(test)]
+            serial: self.serial.take(),
         };
         self.transferred = true;
         launch.network = match self.request.policy().network() {
@@ -365,6 +393,8 @@ struct LinuxLaunch {
     call_result_key: Option<crucible_storage::CallResultKey>,
     owner_transferred: bool,
     released: bool,
+    #[cfg(test)]
+    serial: Option<transaction::TestSerialLease>,
 }
 
 impl SandboxLaunch for LinuxLaunch {
@@ -487,6 +517,8 @@ impl SandboxLaunch for LinuxLaunch {
                 sandbox: self.sandbox,
                 invocation: self.invocation,
                 call_result_key: self.call_result_key,
+                #[cfg(test)]
+                serial: self.serial.take(),
             },
         );
         wrapped.map_err(SandboxError::Lifecycle)
@@ -667,7 +699,6 @@ impl Drop for LinuxSession {
                 .materialization
                 .as_mut()
                 .map_or(Ok(()), materialize::Materialization::cleanup);
-            self.transaction.take();
             self.reservation.take();
             if cleanup.is_ok() {
                 self.materialization.take();
