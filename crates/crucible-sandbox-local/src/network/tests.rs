@@ -109,10 +109,32 @@ fn an_idle_client_does_not_keep_a_cancelled_mediator_or_listener_alive() {
     stream.write_all(b"CONNECT ").unwrap();
     let started = Instant::now();
     drop(proxy);
-    assert!(started.elapsed() < Duration::from_secs(2));
+
+    // Disposal waits on neither the idle client's read nor the mediator's own
+    // minute. The bound is well inside both rather than one a loaded machine can
+    // lose for reasons that have nothing to do with disposal.
+    let took = started.elapsed();
+    assert!(took < Duration::from_secs(10), "disposal waited {took:?}");
     let mut reply = [0; 1];
     assert!(stream.read(&mut reply).map_or(true, |count| count == 0));
-    assert!(TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_err());
+
+    // Connecting to the address proves nothing about the listener: this is an
+    // ephemeral port, the kernel may hand it to the next binder, and a stranger
+    // accepting looks exactly like the mediator staying alive. Binding it is the
+    // claim that holds, because the mediator's own listener would refuse it.
+    // Losing the race to a stranger shows as `AddrInUse`, which is why this waits
+    // rather than failing on the first look.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match TcpListener::bind(address) {
+            Ok(_) => break,
+            Err(problem) => assert!(
+                Instant::now() < deadline,
+                "the mediator's port never came free: {problem}"
+            ),
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 
 #[cfg(unix)]
