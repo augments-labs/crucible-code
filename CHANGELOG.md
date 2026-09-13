@@ -8,6 +8,8 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.41.0] - 2026-09-13
+
 ### Added
 
 - **A model can ask a command it left running what it has printed.** The output
@@ -19,6 +21,22 @@ change in any release with no deprecation period.
 
 ### Changed
 
+- **The shared domain values have crates of their own.** `crucible-types`,
+  `crucible-registry`, `crucible-credentials` and `crucible-storage` now hold the
+  shared values, the bounded registries, the credential contract and the history,
+  checkpoint and cache contracts, and `crucible-core` re-exports every moved name
+  from the path it had. Durable storage and provider projections hold
+  `RecordedToolOutput`, reached from a live `ToolOutput` only through
+  `ToolOutput::into_recorded()`.
+- **Path proofs and attachment ingress have crates of their own.** Path
+  containment, descriptor descent and their proofs are `crucible-workspace`, and
+  the bounded attachment ingress is `crucible-attachments`, through which every
+  attachment is now opened.
+- **The controls a turn is steered and stopped by have a crate of their own, and
+  Tokio is a dependency.** `crucible-runtime` holds those controls, re-exported
+  from `crucible-core` so no consumer changes, beside a bounded task group whose
+  shutdown returns within two graces whether or not its tasks cooperate. The
+  application does not run on Tokio yet.
 - **The tool contracts and the built-in tools have crates of their own.**
   `crucible-tools` now holds what a tool is, the roster a request is admitted
   against and the permission engine that issues `Approved`; the implementations
@@ -40,6 +58,10 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **The history indicator counts back from the newest prompt.** Walking back
+  through history showed `history 1/100` on the most recent of eighty retained
+  prompts, as though the oldest had been loaded. It now reads `history 80/100`
+  there and counts down towards `history 1/100`.
 - **A command that ended while nobody waited hands over what it printed.** The
   note telling the model a backgrounded command was over carried an exit status
   and a line count and nothing else, so the question the command was answering
@@ -3809,7 +3831,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.40.1...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.41.0...HEAD
+[0.41.0]: https://github.com/augments-labs/crucible-code/compare/v0.40.1...v0.41.0
 [0.40.1]: https://github.com/augments-labs/crucible-code/compare/v0.40.0...v0.40.1
 [0.40.0]: https://github.com/augments-labs/crucible-code/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/augments-labs/crucible-code/compare/v0.38.0...v0.39.0
