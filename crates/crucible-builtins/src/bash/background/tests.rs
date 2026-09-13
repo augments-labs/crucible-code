@@ -547,8 +547,16 @@ fn a_cancel_waits_less_for_a_publication_than_a_deadline_does() {
 
     waiting.join().expect("the waiting thread");
     assert!(said.contains("cancelled"), "{said}");
+    // Held to the two ceilings themselves rather than a figure between them. A wait
+    // only ever overshoots, so a cancel that took the deadline's patience is at
+    // least that long every time, and one that took none is shorter than its own.
+    // A midpoint left a correct cancel half the room, and a loaded runner used it.
     assert!(
-        took < Duration::from_millis(200),
+        took >= output::CANCELLATION,
+        "a cancel gave up before its own patience: {took:?}"
+    );
+    assert!(
+        took < output::PUBLICATION,
         "a cancel waited the deadline's ceiling: {took:?}"
     );
 }

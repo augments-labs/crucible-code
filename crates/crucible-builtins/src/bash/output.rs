@@ -65,7 +65,7 @@ const FRESH: usize = 8 * 1024;
 #[cfg(not(test))]
 const PUBLICATION: Duration = Duration::from_mins(1);
 #[cfg(test)]
-const PUBLICATION: Duration = Duration::from_millis(300);
+pub(super) const PUBLICATION: Duration = Duration::from_millis(300);
 
 /// How long a cancelled command that has ended is given for the same thing.
 ///
@@ -75,7 +75,7 @@ const PUBLICATION: Duration = Duration::from_millis(300);
 #[cfg(not(test))]
 const CANCELLATION: Duration = Duration::from_secs(5);
 #[cfg(test)]
-const CANCELLATION: Duration = Duration::from_millis(100);
+pub(super) const CANCELLATION: Duration = Duration::from_millis(100);
 
 /// How long the readers get to reach the end of their pipes once the command
 /// itself is over. Reading what is already buffered takes no time at all, so
