@@ -758,10 +758,11 @@ mod tests {
 
     #[test]
     fn a_get_lifetime_includes_a_body_that_started_but_never_finished() {
+        let lifetime = Duration::from_millis(100);
         let (url, server) = slow_get();
         let since = Instant::now();
         let mut response = Https::isolated()
-            .get(&url, &[], Duration::from_millis(100))
+            .get(&url, &[], lifetime)
             .expect("the response head arrived");
         let mut body = String::new();
 
@@ -772,9 +773,24 @@ mod tests {
         let elapsed = since.elapsed();
         server.join().unwrap();
 
-        assert!(elapsed < Duration::from_millis(300), "waited {elapsed:?}");
+        // What ended the read is the lifetime, and what shows it is the answer
+        // rather than the clock: a read that ran to completion returns the whole
+        // eight bytes and no error at all, so a cut-off "half" carrying a timeout
+        // could not have come from one. The bound this replaces had to sit between
+        // the lifetime and the server's own 400ms wait, which left no room for a
+        // busy machine and failed there for a reason the test is not named for.
+        assert!(
+            elapsed >= lifetime,
+            "the read gave up before the lifetime: {elapsed:?}"
+        );
         assert_eq!(body, "half");
         assert!(problem.to_string().contains("timeout"), "{problem}");
+        // Only a hang guard, fifty times the lifetime: a read that never returns
+        // would otherwise be killed by the harness with nothing to read.
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "the read hung: {elapsed:?}"
+        );
     }
 
     #[test]
