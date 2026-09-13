@@ -445,13 +445,14 @@ insta.workspace = true
 # terminal and render into a bounded kernel pipe, and the one test that runs
 # crucible the way a person does drives it through a pty the same way. `std`
 # can spawn the process and read the descriptors but cannot open the pty pair,
-# put its far side in raw mode, set its window size or bound a pipe. `rustix`
+# put its far side in raw mode, set its window size, bound a pipe or say how
+# long the clock tick is that `/proc` counts a process's CPU time in. `rustix`
 # and its version are already in the runtime graph, so this turns features on
 # rather than adding a crate; only the safe system-call wrappers the probes and
 # that test name become reachable, and no pty or pipe code is reached by
 # crucible itself.
 [target.'cfg(target_os = "linux")'.dependencies]
-rustix = { workspace = true, features = ["pipe", "pty", "termios"] }
+rustix = { workspace = true, features = ["param", "pipe", "pty", "termios"] }
 
 [lints]
 workspace = true

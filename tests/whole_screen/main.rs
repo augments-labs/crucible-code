@@ -178,7 +178,7 @@ fn under(picture: &str, command: &str) -> String {
 fn a_settled_prompt_writes_nothing_and_stays_off_cpu() {
     // The ordinary between-turns state, not a turn whose working mark is meant
     // to move. `open` has already seen the final ready row and a full quiet
-    // window, so every byte and scheduler tick after that belongs to idle.
+    // window, so every byte and every nanosecond of CPU after that belongs to idle.
     let mut window = Watched::open("idle-prompt", 80, 24);
 
     window.stays_idle();
