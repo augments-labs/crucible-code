@@ -788,7 +788,11 @@ fn change_header_survives_resume() {
 
     window.types_until("/clear\r", "ask mode on");
     window.types_until("/resume\r", "a session, or a branch");
-    window.types_until("\r", "Rewrote it whole");
+    // The picker's preview carries the answer and the change counts as well, so
+    // neither says the session has been picked up. The note counting what the
+    // block left out stays with the block, and only the resumed transcript
+    // draws it.
+    window.types_until("\r", UNSHOWN);
     let again = window.picture();
 
     assert!(live.contains(CHANGED), "the live header: {live}");
