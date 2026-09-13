@@ -50,12 +50,20 @@ const STOPPED: &str = "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\
 /// The keep-alive the same API sends, which draws nothing.
 const PINGED: &str = "event: ping\ndata: {\"type\":\"ping\"}\n\n";
 
+/// How long between two keep-alives.
+///
+/// Not [`BETWEEN`]. At that pace a held turn is two hundred keep-alives a
+/// second, and reading them was most of what crucible spent while a case watched
+/// its working mark turn, so the case measured the stream rather than the turn.
+/// A quarter of a second still keeps bytes moving on the connection.
+const PINGING: Duration = Duration::from_millis(250);
+
 /// How many keep-alives hold a turn open once its answer has arrived whole.
 ///
-/// Enough at [`BETWEEN`] to outlast the steps a case takes after that, and no
+/// Enough at [`PINGING`] to outlast the steps a case takes after that, and no
 /// more: the thread stops the moment crucible is gone, because the write it is
 /// on fails and `answer` returns.
-const HOLDING: usize = 2_000;
+const HOLDING: usize = 40;
 
 /// What a case with one call in it names that call.
 const ONE: &str = "toolu_1";
@@ -244,7 +252,7 @@ fn answer(mut connection: TcpStream, body: &[String]) {
             return;
         }
         let _ = connection.flush();
-        thread::sleep(BETWEEN);
+        thread::sleep(if event == PINGED { PINGING } else { BETWEEN });
     }
 }
 
