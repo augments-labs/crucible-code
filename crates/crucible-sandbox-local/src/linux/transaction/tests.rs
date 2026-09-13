@@ -365,9 +365,52 @@ fn terminal_stale_transactions_are_cleaned_idempotently() {
     create_private_test_directory(&base);
     let stage = stale_journal(&base, true);
 
-    reconcile_stale_transactions(&base).expect("terminal cleanup");
+    // A journal held by somebody else means its owner is finishing that stage,
+    // which is a state of the machine rather than of this rule. Waiting it out
+    // keeps the assertions below about recovery.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let settled = loop {
+        let settled = reconcile_stale_transactions(&base).expect("terminal cleanup");
+        if settled.busy == 0 {
+            break settled;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the journal stayed held by something else"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+
+    assert_eq!(settled.removed, 1);
     assert!(!stage.exists());
-    reconcile_stale_transactions(&base).expect("idempotent terminal cleanup");
+    let again = reconcile_stale_transactions(&base).expect("idempotent terminal cleanup");
+    assert_eq!(
+        again,
+        Reconciled::default(),
+        "a second pass found work to do"
+    );
+}
+
+#[test]
+fn a_stage_whose_journal_is_held_is_left_alone_and_said_to_be_busy() {
+    let sample = crate::sample::Sample::new("sandbox-busy-recovery");
+    let base = sample.root().join("recovery");
+    create_private_test_directory(&base);
+    let stage = stale_journal(&sample, &base, true);
+    // How a stage looks while its own owner is finishing it: the journal open and
+    // locked, everything else already gone. Removing it here would race that
+    // owner, so the pass leaves it — and must not call that nothing to do.
+    let held = File::open(stage.join("transaction.wal")).expect("the journal");
+    rustix::fs::flock(&held, FlockOperation::LockExclusive).expect("hold the journal");
+
+    let settled = reconcile_stale_transactions(&base).expect("cleanup with a held journal");
+
+    assert_eq!(settled.busy, 1, "a held journal read as nothing to do");
+    assert_eq!(settled.removed, 0);
+    assert!(
+        stage.exists(),
+        "a stage its owner is still finishing was taken from it"
+    );
 }
 
 #[test]

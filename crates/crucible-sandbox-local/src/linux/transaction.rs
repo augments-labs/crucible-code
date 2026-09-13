@@ -1339,7 +1339,7 @@ pub(super) fn reconcile_host_transactions() -> io::Result<()> {
     let Ok(state) = state_base() else {
         return Ok(());
     };
-    reconcile_stale_transactions(&state)
+    reconcile_stale_transactions(&state).map(|_| ())
 }
 
 /// The stage directory name of one transaction.
@@ -1384,11 +1384,34 @@ pub(super) fn clear_stage_before_journal(root: &Path) -> io::Result<()> {
     Ok(())
 }
 
-fn reconcile_stale_transactions(base: &Path) -> io::Result<()> {
+/// What one stale stage settled to.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Settled {
+    /// Removed by this pass, so the directory that held it needs a sync.
+    Removed,
+    /// Left where it is: nothing to remove, or an owner still running it.
+    Left,
+    /// Left where it is because its journal is held. That is how a stage looks
+    /// while its own owner finishes it, so it is not a failure — but it is not
+    /// "nothing to do" either, and a caller waiting for the stage to go needs to
+    /// tell the two apart.
+    Busy,
+}
+
+/// What one pass of stale-transaction recovery settled.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+struct Reconciled {
+    removed: usize,
+    busy: usize,
+}
+
+fn reconcile_stale_transactions(base: &Path) -> io::Result<Reconciled> {
     let mut candidates = Vec::new();
     let entries = match fs::read_dir(base) {
         Ok(entries) => entries,
-        Err(problem) if problem.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(problem) if problem.kind() == io::ErrorKind::NotFound => {
+            return Ok(Reconciled::default());
+        }
         Err(problem) => return Err(problem),
     };
     for entry in entries {
@@ -1416,16 +1439,21 @@ fn reconcile_stale_transactions(base: &Path) -> io::Result<()> {
         }
     }
     candidates.sort();
-    let mut removed = false;
+    let mut settled = Reconciled::default();
     for candidate in candidates {
-        removed |= reconcile_candidate(&candidate).map_err(|source| {
+        let outcome = reconcile_candidate(&candidate).map_err(|source| {
             io::Error::new(source.kind(), format!("{}: {source}", candidate.display()))
         })?;
+        match outcome {
+            Settled::Removed => settled.removed += 1,
+            Settled::Busy => settled.busy += 1,
+            Settled::Left => {}
+        }
     }
-    if removed {
+    if settled.removed > 0 {
         File::open(base)?.sync_all()?;
     }
-    Ok(())
+    Ok(settled)
 }
 
 /// Settles one stale stage and reports whether it was removed.
@@ -1433,7 +1461,7 @@ fn reconcile_stale_transactions(base: &Path) -> io::Result<()> {
 /// A stage whose owner is alive, or whose journal another process holds, is
 /// left alone; a terminal or dead one is completed and removed; an ambiguous
 /// one is quarantined and reported as an error that names the stage.
-fn reconcile_candidate(candidate: &Path) -> io::Result<bool> {
+fn reconcile_candidate(candidate: &Path) -> io::Result<Settled> {
     {
         let name = candidate
             .file_name()
@@ -1448,7 +1476,7 @@ fn reconcile_candidate(candidate: &Path) -> io::Result<bool> {
             })?;
         let named = match fs::symlink_metadata(candidate) {
             Ok(named) => named,
-            Err(problem) if problem.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(problem) if problem.kind() == io::ErrorKind::NotFound => return Ok(Settled::Left),
             Err(problem) => return Err(problem),
         };
         if !named.is_dir()
@@ -1464,7 +1492,7 @@ fn reconcile_candidate(candidate: &Path) -> io::Result<bool> {
             Mode::empty(),
         ) {
             Ok(descriptor) => descriptor,
-            Err(rustix::io::Errno::NOENT) => return Ok(false),
+            Err(rustix::io::Errno::NOENT) => return Ok(Settled::Left),
             Err(problem) => return Err(problem.into()),
         };
         let directory = File::from(descriptor);
@@ -1473,7 +1501,7 @@ fn reconcile_candidate(candidate: &Path) -> io::Result<bool> {
             return Err(invalid("stale sandbox transaction identity changed"));
         }
         let mut recovered = match recover_wal_at(&directory)? {
-            RecoveryProbe::Busy => return Ok(false),
+            RecoveryProbe::Busy => return Ok(Settled::Busy),
             RecoveryProbe::Missing => {
                 return remove_uninitialized(candidate, directory, &named, None);
             }
@@ -1486,7 +1514,7 @@ fn reconcile_candidate(candidate: &Path) -> io::Result<bool> {
             return Err(invalid("stale sandbox journal names another transaction"));
         }
         if !recovered.machine.is_terminal() && !recovered.frame.owner.owner_is_dead()? {
-            return Ok(false);
+            return Ok(Settled::Left);
         }
         if !recovered.machine.is_terminal() {
             recover_stale_transaction(candidate, &mut recovered)?;
@@ -1510,12 +1538,12 @@ fn remove_uninitialized(
     directory: File,
     named: &fs::Metadata,
     journal: Option<File>,
-) -> io::Result<bool> {
+) -> io::Result<Settled> {
     let entries = match fs::read_dir(candidate) {
         // At most the empty journal is ours; a second entry already proves
         // this directory cannot be removed as an uninitialized transaction.
         Ok(entries) => entries.take(2).collect::<Result<Vec<_>, _>>()?,
-        Err(problem) if problem.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(problem) if problem.kind() == io::ErrorKind::NotFound => return Ok(Settled::Left),
         Err(problem) => return Err(problem),
     };
     let expected = match &journal {
@@ -1543,10 +1571,10 @@ fn remove_uninitialized(
     remove_candidate(candidate, named)
 }
 
-fn remove_candidate(candidate: &Path, named: &fs::Metadata) -> io::Result<bool> {
+fn remove_candidate(candidate: &Path, named: &fs::Metadata) -> io::Result<Settled> {
     let current = match fs::symlink_metadata(candidate) {
         Ok(current) => current,
-        Err(problem) if problem.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(problem) if problem.kind() == io::ErrorKind::NotFound => return Ok(Settled::Left),
         Err(problem) => return Err(problem),
     };
     if current.dev() != named.dev() || current.ino() != named.ino() || !current.is_dir() {
@@ -1554,13 +1582,13 @@ fn remove_candidate(candidate: &Path, named: &fs::Metadata) -> io::Result<bool> 
     }
     match fs::remove_dir_all(candidate) {
         Ok(()) => {}
-        Err(problem) if problem.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(problem) if problem.kind() == io::ErrorKind::NotFound => return Ok(Settled::Left),
         Err(problem) => return Err(problem),
     }
     if candidate.exists() {
         return Err(invalid("stale sandbox transaction cleanup is incomplete"));
     }
-    Ok(true)
+    Ok(Settled::Removed)
 }
 
 fn recover_stale_transaction(candidate: &Path, recovered: &mut Recovered) -> io::Result<()> {
