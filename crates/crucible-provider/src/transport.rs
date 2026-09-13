@@ -13,7 +13,9 @@ pub(crate) mod http;
 use std::fmt;
 use std::io::Read;
 
-use crucible_core::{Cancel, Outgoing, ProviderError};
+use crucible_credentials::Outgoing;
+use crucible_models::ProviderError;
+use crucible_runtime::Cancel;
 
 /// Why a request did not produce a response.
 ///

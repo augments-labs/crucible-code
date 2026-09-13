@@ -5,7 +5,8 @@
 //! returned identities to reject reuse; charge each owned key before insertion.
 
 use super::protocol;
-use crucible_core::{CONTINUATION_BYTES, CONTINUATION_PARTS, ProviderError, TOOL_CALL_ID_BYTES};
+use crucible_models::ProviderError;
+use crucible_types::{CONTINUATION_BYTES, CONTINUATION_PARTS, TOOL_CALL_ID_BYTES};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 

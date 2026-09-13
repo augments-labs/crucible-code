@@ -6,7 +6,8 @@
 //! including a server-side fallback's final transformation counts.
 
 use super::continuation::problem;
-use crucible_core::{Delta, InputTokenUsage, ProviderError, ProviderNumericDetail, ProviderUsage};
+use crucible_models::{Delta, ProviderError};
+use crucible_types::{InputTokenUsage, ProviderNumericDetail, ProviderUsage};
 use serde_json::Value;
 
 pub(super) fn refusal(error: ProviderError) -> ProviderError {

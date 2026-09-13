@@ -23,13 +23,14 @@ authors.workspace = true
 # with their types. The exact-pinned crate is named by every crate that
 # identifies something by what it says.
 
-# The nine crates below are the extraction this crate is being emptied into.
+# The ten crates below are the extraction this crate is being emptied into.
 # Core consumes them so its remaining callers keep compiling against one name
 # while ownership moves; every one of these edges is retired when core is
 # removed.
 [dependencies]
 crucible-attachments.workspace = true
 crucible-credentials.workspace = true
+crucible-models.workspace = true
 crucible-registry.workspace = true
 crucible-runtime.workspace = true
 crucible-sandbox.workspace = true
@@ -40,7 +41,6 @@ crucible-workspace.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
-uuid.workspace = true
 
 [lints]
 workspace = true

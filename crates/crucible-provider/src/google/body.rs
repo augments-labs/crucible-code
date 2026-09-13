@@ -12,7 +12,8 @@ mod media_tests;
 mod result_tests;
 
 use crate::json::{Json, described};
-use crucible_core::{ContinuationScope, ProviderError, Request};
+use crucible_models::{ProviderError, Request};
+use crucible_types::ContinuationScope;
 
 pub(super) fn serialize(
     request: &Request<'_>,
@@ -20,7 +21,7 @@ pub(super) fn serialize(
 ) -> Result<String, ProviderError> {
     if matches!(
         request.effort,
-        Some(crucible_core::Effort::Xhigh | crucible_core::Effort::Max)
+        Some(crucible_models::Effort::Xhigh | crucible_models::Effort::Max)
     ) {
         return Err(super::protocol(
             "Google thinking level must be low, medium or high",
@@ -64,7 +65,8 @@ pub(super) fn serialize(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crucible_core::{Effort, Message, RequestPurpose, ToolSchema, Transcript};
+    use crucible_models::{Effort, RequestPurpose};
+    use crucible_types::{Message, ToolSchema, Transcript};
     use serde_json::{Value, json};
 
     #[test]
@@ -122,7 +124,8 @@ mod tests {
     }
 
     fn text_attachment(bytes: &[u8]) -> Result<String, ProviderError> {
-        use crucible_core::{Attached, Content, Modality};
+        use crucible_models::{Attached, Content};
+        use crucible_types::Modality;
         let mut transcript = Transcript::new();
         transcript.push(Message::said("read this")).unwrap();
         serialize(
@@ -168,7 +171,8 @@ mod tests {
 
     #[test]
     fn google_attachments_use_interactions_media_parts_and_recap_omits_bytes() {
-        use crucible_core::{Attached, Content, Modality};
+        use crucible_models::{Attached, Content};
+        use crucible_types::Modality;
         let mut transcript = Transcript::new();
         transcript.push(Message::said("inspect these")).unwrap();
         let attached = [
@@ -244,7 +248,7 @@ mod tests {
 
     #[test]
     fn signed_history_is_replayed_exactly_across_google_model_switch_and_compaction() {
-        use crucible_core::{
+        use crucible_types::{
             Continuation, ContinuationData, ContinuationPart, RecordedToolOutput, StopReason,
             ToolArgs, ToolCall, ToolId, ToolResult,
         };

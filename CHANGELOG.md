@@ -8,6 +8,16 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Changed
+
+- **Model contracts have a crate of their own.** `crucible-models` now holds
+  `Provider`, the model record and the neutral prompt-cache capabilities,
+  projection, selection and pricing; the usage, cost and cache facts a session
+  keeps are `crucible-types`, and the resource store contract is
+  `crucible-storage` with its file in `crucible-session`. `crucible-core`
+  re-exports every moved name, and `PromptCachePlanned::from_request` is now
+  `PromptCacheRequest::planned`.
+
 ## [0.41.0] - 2026-09-13
 
 ### Added

@@ -20,13 +20,16 @@ mod diagnostics;
 mod stream;
 mod wire;
 
-use crucible_core::{
-    Cancel, Credential, CredentialScopeId, DeltaStream, Modalities, Modality, Outgoing, PriceRate,
-    PricingCurrency, PricingDate, PricingError, PricingUnit, PromptCacheBoundary,
-    PromptCacheCapabilities, PromptCacheContent, PromptCacheMechanismCapability,
-    PromptCachePricing, PromptCacheProvenance, PromptCacheRates, PromptCacheRetentionClass,
-    PromptCacheRoute, PromptCacheUsageReporting, Provider, ProviderError, Request,
-    StatefulTransportCapability, UsageRate,
+use crucible_credentials::{Credential, Outgoing};
+use crucible_models::{
+    DeltaStream, PriceRate, PromptCacheBoundary, PromptCacheCapabilities, PromptCacheContent,
+    PromptCacheMechanismCapability, PromptCachePricing, PromptCacheProvenance, PromptCacheRates,
+    PromptCacheRoute, Provider, ProviderError, Request, StatefulTransportCapability, UsageRate,
+};
+use crucible_runtime::Cancel;
+use crucible_types::{
+    CredentialScopeId, Modalities, Modality, PricingCurrency, PricingDate, PricingError,
+    PricingUnit, PromptCacheRetentionClass, PromptCacheUsageReporting,
 };
 
 use crate::anthropic::stream::Stream;
@@ -318,7 +321,7 @@ impl Provider for Anthropic {
         }
     }
 
-    fn prompt_cache_encoding(&self, request: &Request<'_>) -> crucible_core::PromptCacheEncoding {
+    fn prompt_cache_encoding(&self, request: &Request<'_>) -> crucible_types::PromptCacheEncoding {
         body::prompt_cache_encoding(request)
     }
 
@@ -336,7 +339,7 @@ impl Provider for Anthropic {
         let outgoing = self.headers(request.model)?;
         let redactions = outgoing.redactions();
         let scope =
-            crucible_core::ContinuationScope::new(self.credential_scope, self.endpoint.as_str());
+            crucible_types::ContinuationScope::new(self.credential_scope, self.endpoint.as_str());
         let body = body::serialize(&request, (request.model == FABLE_51).then_some(scope))?;
 
         let response = self
@@ -364,10 +367,9 @@ impl Provider for Anthropic {
 
 #[cfg(test)]
 mod tests {
-    use crucible_core::{
-        ApiKey, Delta, Header, HeaderKey, Message, PriceRate, PricingDate,
-        PromptCacheRetentionClass, StopReason, Transcript, UsageRate,
-    };
+    use crucible_credentials::{ApiKey, Header, HeaderKey};
+    use crucible_models::{Delta, PriceRate, UsageRate};
+    use crucible_types::{Message, PricingDate, PromptCacheRetentionClass, StopReason, Transcript};
 
     use super::stream::tests::{ANSWER, deltas};
     use super::*;
@@ -393,7 +395,7 @@ mod tests {
 
     #[test]
     fn fable_51_requests_use_adaptive_prefix_binding_for_every_effort_and_omission() {
-        use crucible_core::{Effort, RequestPurpose};
+        use crucible_models::{Effort, RequestPurpose};
         use serde_json::{Value, json};
         let (provider, replay) = provider(200, ANSWER);
         let mut transcript = Transcript::new();
@@ -512,14 +514,14 @@ mod tests {
 
         assert_eq!(
             reviewed.support(),
-            crucible_core::PromptCacheSupport::Supported
+            crucible_types::PromptCacheSupport::Supported
         );
         assert_eq!(
             reviewed
                 .mechanisms()
                 .first()
-                .map(crucible_core::PromptCacheMechanismCapability::mechanism),
-            Some(crucible_core::PromptCacheMechanism::AutomaticPrefix)
+                .map(crucible_models::PromptCacheMechanismCapability::mechanism),
+            Some(crucible_types::PromptCacheMechanism::AutomaticPrefix)
         );
 
         let custom = Anthropic::at(
@@ -532,7 +534,7 @@ mod tests {
         );
         assert_eq!(
             custom.prompt_cache_capabilities("claude-fable-5").support(),
-            crucible_core::PromptCacheSupport::Unknown
+            crucible_types::PromptCacheSupport::Unknown
         );
     }
 
@@ -564,7 +566,7 @@ mod tests {
             .expect("valid fixture transcript");
 
         Request {
-            purpose: crucible_core::RequestPurpose::Turn,
+            purpose: crucible_models::RequestPurpose::Turn,
             model: "claude-test",
             transcript: Box::leak(Box::new(transcript)),
             tools: &[],

@@ -31,13 +31,13 @@ use crucible_core::{
     Ancestry, Aside, Ask, Attachment, Cancel, Compacting, Content, ContextSection, Delta,
     DeltaStream, Effort, Event, JournalStore, Looking, Message, Modalities, Mode, Permission,
     PermissionsSection, Post, PromptCacheAttempt, PromptCacheEncoding, PromptCacheFact,
-    PromptCacheOutcome, PromptCachePlanned, PromptCachePreparationError,
-    PromptCacheRequestDisposition, PromptCacheRequestFact, PromptCacheResourceError,
-    PromptCacheResourceRecord, PromptCacheRetentionClass, PromptCacheScopeDigest,
-    PromptCacheUsageFact, PromptCacheUsageReporting, Provider, ProviderError, ProviderUsage,
-    Reporter, Request, Room, RunItem, SandboxAuditRegistry, SessionStore, Spend, Steer, StopReason,
-    Summary, ToolCall, ToolEntry, ToolError, ToolGeneration, ToolSchema, ToolSnapshot, Toolset,
-    ToolsetContext, Transcript, TurnError, TurnId, UsageCost,
+    PromptCacheOutcome, PromptCachePreparationError, PromptCacheRequestDisposition,
+    PromptCacheRequestFact, PromptCacheResourceError, PromptCacheResourceRecord,
+    PromptCacheRetentionClass, PromptCacheScopeDigest, PromptCacheUsageFact,
+    PromptCacheUsageReporting, Provider, ProviderError, ProviderUsage, Reporter, Request, Room,
+    RunItem, SandboxAuditRegistry, SessionStore, Spend, Steer, StopReason, Summary, ToolCall,
+    ToolEntry, ToolError, ToolGeneration, ToolSchema, ToolSnapshot, Toolset, ToolsetContext,
+    Transcript, TurnError, TurnId, UsageCost,
 };
 
 use crucible_session::{Pruned, Session};
@@ -1395,7 +1395,7 @@ impl Runner {
             });
             self.report_prompt_cache(
                 listening.run,
-                PromptCacheFact::Planned(Box::new(PromptCachePlanned::from_request(&cache))),
+                PromptCacheFact::Planned(Box::new(cache.planned())),
             );
             let mut encoding = self.provider.prompt_cache_encoding(&Request {
                 prompt_cache: Some(&cache),
@@ -1422,7 +1422,7 @@ impl Runner {
                     .ok_or(PromptCachePreparationError::Encoding(reason))?;
                 self.report_prompt_cache(
                     listening.run,
-                    PromptCacheFact::Planned(Box::new(PromptCachePlanned::from_request(&cache))),
+                    PromptCacheFact::Planned(Box::new(cache.planned())),
                 );
                 encoding = self.provider.prompt_cache_encoding(&Request {
                     prompt_cache: Some(&cache),

@@ -22,10 +22,9 @@
 use std::io::{self, Read};
 use std::time::{Duration, Instant};
 
-use crucible_core::{
-    Cancel, Credential, Fetch, Host, Outgoing, Page, Redactions, Search, SearchResponse,
-    SearchResult, SourceError,
-};
+use crucible_core::{Fetch, Host, Page, Search, SearchResponse, SearchResult, SourceError};
+use crucible_credentials::{Credential, Outgoing, Redactions};
+use crucible_runtime::Cancel;
 use serde_json::Value;
 
 use crate::endpoint::Endpoint;

@@ -7,9 +7,9 @@
 
 use super::super::{PROTOCOL, protocol};
 use crate::json::{Array, Object};
-use crucible_core::{
-    Attached, Content, ContinuationPart, ContinuationScope, Message, Modality,
-    ProviderContinuation, ProviderError, Request, RequestPurpose, ToolCall,
+use crucible_models::{Attached, Content, ProviderError, Request, RequestPurpose};
+use crucible_types::{
+    ContinuationPart, ContinuationScope, Message, Modality, ProviderContinuation, ToolCall,
 };
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;

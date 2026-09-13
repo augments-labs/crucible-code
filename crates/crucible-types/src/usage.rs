@@ -5,7 +5,7 @@
 //! that decision once at the wire boundary and hand the runner this shape.
 //! Missing fields remain `None`; absence is never rewritten as zero.
 
-use super::{PromptCacheOutcome, PromptCacheUsageReporting};
+use crate::cache::{PromptCacheOutcome, PromptCacheUsageReporting};
 
 /// Maximum provider-labelled numeric details retained for one usage report.
 pub const MAX_PROVIDER_USAGE_DETAILS: usize = 16;
@@ -323,6 +323,108 @@ impl ProviderUsage {
         )?;
         merged.storage_token_hours = newer.storage_token_hours.or(self.storage_token_hours);
         Ok(merged)
+    }
+}
+
+/// What a response has cost, counted in the tokens the model produced.
+///
+/// Output only. What a request carries is settled before it is sent and is the
+/// same however long the answer takes, so it says nothing about the answer
+/// somebody is currently waiting on — and one number that goes up while you
+/// watch it is worth more than two that need adding.
+///
+/// A provider says this about the response it is in the middle of, as often as
+/// it likes, each reading replacing the last. What a whole turn spent is the
+/// sum over its responses, which is the runner's to add because the turn is
+/// the runner's: a provider is asked several times and is told nothing about
+/// the turn around those requests.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Spend(u64);
+
+impl Spend {
+    /// Nothing spent yet.
+    pub const NONE: Self = Self(0);
+
+    /// A reading of `tokens` produced.
+    #[must_use]
+    pub const fn new(tokens: u64) -> Self {
+        Self(tokens)
+    }
+
+    /// How many tokens that is.
+    #[must_use]
+    pub const fn tokens(self) -> u64 {
+        self.0
+    }
+
+    /// This and `other` together.
+    ///
+    /// Saturating, because a count that wrapped would read as a turn that spent
+    /// nothing at the moment it spent the most.
+    #[must_use]
+    pub const fn and(self, other: Self) -> Self {
+        Self(self.0.saturating_add(other.0))
+    }
+}
+
+/// What one response reported about itself, kept for a session picked up later.
+///
+/// A log holds messages, and messages alone say what a session *is* without
+/// saying what any of it cost — so a session continued has always had to
+/// estimate its own load until the first response of the new run reported one.
+/// This is the fact that closes that gap: the four numbers a provider's report
+/// and the request behind it come to, together, and covering exactly the
+/// transcript that stood when it was written.
+///
+/// It is a fact about a request rather than about a session. Nothing here says
+/// which model produced it or which transcript it covered — what makes it
+/// usable again is the position it was written at, and that belongs to whoever
+/// keeps it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Calibration {
+    /// What that request carried.
+    pub carried: Carried,
+    /// What the response to it produced.
+    pub spent: Spend,
+    /// The request's content in bytes, which is what `carried` was counted
+    /// over. The two together are this model's own bytes per token on this
+    /// session's own text.
+    pub sent: u64,
+    /// The fixed part of those bytes: system instructions and tool schemas.
+    pub overhead: u64,
+}
+
+/// What one request carried to the model, counted in tokens.
+///
+/// The other half of what a usage reading holds, and the half [`Spend`] is not:
+/// that one counts what the model produced, and this counts what it was sent.
+/// Both arrive in the same object from every provider crucible speaks, and only
+/// one of them was ever read.
+///
+/// It is a **level rather than a total**, which is the whole of how it differs
+/// from [`Spend`] and why it has no `and`. crucible holds no conversation state
+/// at a vendor and sends the transcript whole on every request, so each reading
+/// is what *that* request carried and the next one supersedes it. Adding two
+/// together would count the same transcript twice and say a session was fuller
+/// than it is — which, since this is what compaction is decided on, is the one
+/// error here that spends somebody's context for them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Carried(u64);
+
+impl Carried {
+    /// Nothing reported yet.
+    pub const NONE: Self = Self(0);
+
+    /// A reading of `tokens` carried.
+    #[must_use]
+    pub const fn new(tokens: u64) -> Self {
+        Self(tokens)
+    }
+
+    /// How many tokens that is.
+    #[must_use]
+    pub const fn tokens(self) -> u64 {
+        self.0
     }
 }
 

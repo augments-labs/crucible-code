@@ -9,10 +9,8 @@
 use super::replay::compatible;
 use crate::json::Array;
 use crate::openai::continuation::problem;
-use crucible_core::{
-    ContinuationPart, ContinuationScope, Effort, Message, ProviderContinuation, ProviderError,
-    Request, RequestPurpose,
-};
+use crucible_models::{Effort, ProviderError, Request, RequestPurpose};
+use crucible_types::{ContinuationPart, ContinuationScope, Message, ProviderContinuation};
 use serde_json::Value;
 
 pub(super) fn recorded(state: &ProviderContinuation) -> Result<Option<Effort>, ProviderError> {

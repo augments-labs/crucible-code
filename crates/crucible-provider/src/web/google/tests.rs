@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::{Google, transport::Replay};
-use crucible_core::{ApiKey, Header, HeaderKey};
+use crucible_credentials::{ApiKey, Header, HeaderKey};
 use serde_json::{Value, json};
 use std::fmt::Write as _;
 use std::sync::Arc;

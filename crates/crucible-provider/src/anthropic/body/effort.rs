@@ -7,10 +7,8 @@
 use super::replay::compatible;
 use crate::anthropic::continuation::problem;
 use crate::json::Array;
-use crucible_core::{
-    ContinuationPart, ContinuationScope, Effort, Message, ProviderContinuation, ProviderError,
-    Request,
-};
+use crucible_models::{Effort, ProviderError, Request};
+use crucible_types::{ContinuationPart, ContinuationScope, Message, ProviderContinuation};
 use serde_json::Value;
 
 pub(super) fn recorded(state: &ProviderContinuation) -> Result<Option<Effort>, ProviderError> {

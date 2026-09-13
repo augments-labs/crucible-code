@@ -11,9 +11,9 @@
 //! Every event says its own `type`, so that is what is read rather than the SSE
 //! event name beside it. One name, one place it is spelled.
 
-use crucible_core::{
-    Delta, InputTokenUsage, ProviderError, ProviderNumericDetail, ProviderUsage, StopReason,
-    ToolId, UsageError,
+use crucible_models::{Delta, ProviderError};
+use crucible_types::{
+    InputTokenUsage, ProviderNumericDetail, ProviderUsage, StopReason, ToolId, UsageError,
 };
 use serde_json::Value;
 
@@ -38,8 +38,8 @@ pub(super) struct Responses {
 
 impl Responses {
     pub(super) fn for_request(
-        request: &crucible_core::Request<'_>,
-        scope: crucible_core::ContinuationScope,
+        request: &crucible_models::Request<'_>,
+        scope: crucible_types::ContinuationScope,
     ) -> Result<Self, ProviderError> {
         Ok(Self {
             astra: if request.model == super::ASTRA {

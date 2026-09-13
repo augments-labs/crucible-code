@@ -12,10 +12,11 @@
 //! knows which commands exist — and saying it in two places is how the two come
 //! to disagree.
 
-use crucible_core::{
-    Cancel, CredentialScopeId, DeltaStream, Modalities, Modality, PromptCacheCapabilities,
-    PromptCacheRoute, Provider, ProviderError, Request,
+use crucible_models::{
+    DeltaStream, PromptCacheCapabilities, PromptCacheRoute, Provider, ProviderError, Request,
 };
+use crucible_runtime::Cancel;
+use crucible_types::{CredentialScopeId, Modalities, Modality};
 
 /// What this provider is called, in the session log and in the status line.
 ///
@@ -55,12 +56,12 @@ impl Provider for Unavailable {
     fn prompt_cache_capabilities(&self, _model: &str) -> PromptCacheCapabilities {
         PromptCacheCapabilities::unsupported(
             "unavailable-v1",
-            crucible_core::PromptCacheProvenance::new(
+            crucible_models::PromptCacheProvenance::new(
                 "https://github.com/augments-labs/crucible-code",
                 "2026-08-31",
                 "unavailable-v1",
             ),
-            crucible_core::StatefulTransportCapability::Unsupported,
+            crucible_models::StatefulTransportCapability::Unsupported,
         )
     }
 
@@ -76,8 +77,8 @@ impl Provider for Unavailable {
         }
     }
 
-    fn prompt_cache_encoding(&self, _request: &Request<'_>) -> crucible_core::PromptCacheEncoding {
-        crucible_core::PromptCacheEncoding::NoControlIntended
+    fn prompt_cache_encoding(&self, _request: &Request<'_>) -> crucible_types::PromptCacheEncoding {
+        crucible_types::PromptCacheEncoding::NoControlIntended
     }
 
     fn stream(
@@ -91,7 +92,7 @@ impl Provider for Unavailable {
 
 #[cfg(test)]
 mod tests {
-    use crucible_core::{Message, Transcript};
+    use crucible_types::{Message, Transcript};
 
     use super::*;
 
@@ -102,7 +103,7 @@ mod tests {
             .expect("valid fixture transcript");
 
         Request {
-            purpose: crucible_core::RequestPurpose::Turn,
+            purpose: crucible_models::RequestPurpose::Turn,
             model: "",
             transcript: Box::leak(Box::new(transcript)),
             tools: &[],

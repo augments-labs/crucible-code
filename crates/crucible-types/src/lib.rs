@@ -13,6 +13,7 @@
 //! read a session back should not have to compile them.
 
 pub mod ask;
+pub mod cache;
 pub mod call;
 pub mod context;
 pub mod continuation;
@@ -22,8 +23,26 @@ pub mod modality;
 pub mod output;
 pub mod run;
 pub mod transcript;
+pub mod usage;
 
 pub use ask::{Answer, Answered, Question};
+pub use cache::{
+    CostAmount, MAX_PROMPT_CACHE_HANDLE_BYTES, MAX_PROMPT_CACHE_NAMESPACE_BYTES,
+    MAX_PROMPT_CACHE_RESOURCE_WORD_BYTES, MAX_PROMPT_CACHE_RESOURCES,
+    MAX_PROMPT_CACHE_RETENTION_SECONDS, PricingCurrency, PricingDate, PricingError, PricingUnit,
+    PromptCacheCapabilityWordError, PromptCacheEligibility, PromptCacheEncoding, PromptCacheFact,
+    PromptCacheFingerprint, PromptCacheIneligibleReason, PromptCacheIsolation,
+    PromptCacheMechanism, PromptCacheMechanisms, PromptCacheMode, PromptCacheNamespace,
+    PromptCacheOutcome, PromptCachePersistentMode, PromptCachePlanned, PromptCachePolicy,
+    PromptCachePolicyConflict, PromptCachePolicyDigest, PromptCachePolicyError,
+    PromptCachePolicySource, PromptCachePolicySources, PromptCachePolicyVersion,
+    PromptCacheRequestDisposition, PromptCacheRequestFact, PromptCacheResourceBinding,
+    PromptCacheResourceError, PromptCacheResourceFact, PromptCacheResourceHandle,
+    PromptCacheResourceId, PromptCacheResourceOperation, PromptCacheResourceOwner,
+    PromptCacheResourceRecord, PromptCacheResourceState, PromptCacheResourceWordError,
+    PromptCacheRetention, PromptCacheRetentionClass, PromptCacheScopeDigest, PromptCacheSelected,
+    PromptCacheSupport, PromptCacheUsageFact, PromptCacheUsageReporting, UsageCost,
+};
 pub use call::{
     TOOL_ARGUMENT_BYTES, TOOL_CALL_ID_BYTES, TOOL_NAME_BYTES, ToolArgs, ToolCall, ToolSchema,
 };
@@ -44,3 +63,7 @@ pub use output::{
 };
 pub use run::{Ancestry, AncestryError};
 pub use transcript::{Attachment, Message, StopReason, ToolResult, Transcript};
+pub use usage::{
+    Calibration, Carried, InputTokenUsage, MAX_PROVIDER_USAGE_DETAIL_LABEL_BYTES,
+    MAX_PROVIDER_USAGE_DETAILS, ProviderNumericDetail, ProviderUsage, Spend, UsageError,
+};

@@ -46,9 +46,11 @@
 //! }
 //! ```
 
+pub mod cache;
 pub mod interruption;
 pub mod journal;
 
+pub use cache::PromptCacheResourceStore;
 pub use interruption::{
     ActionId, ActionResolution, ApprovalDecision, CheckpointId, IdempotencyKey, InterruptionError,
     InvocationId, InvocationRecord, InvocationState, JournalEntryId, MAX_CHECKPOINT_INVOCATIONS,

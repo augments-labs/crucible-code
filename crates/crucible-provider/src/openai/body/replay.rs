@@ -8,9 +8,10 @@ use crate::json::{Array, Object};
 use crate::openai::continuation::{
     PROTOCOL, field, header as validate_header, identity, problem, validate,
 };
-use crucible_core::{
-    ContinuationPart, ContinuationScope, Message, ProviderContinuation, ProviderError, Request,
-    RequestPurpose, TOOL_CALL_ID_BYTES, TOOL_NAME_BYTES, ToolCall,
+use crucible_models::{ProviderError, Request, RequestPurpose};
+use crucible_types::{
+    ContinuationPart, ContinuationScope, Message, ProviderContinuation, TOOL_CALL_ID_BYTES,
+    TOOL_NAME_BYTES, ToolCall,
 };
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
