@@ -52,7 +52,7 @@ pub const MOST: usize = 4;
 #[cfg(not(test))]
 const PUBLICATION: Duration = Duration::from_secs(5);
 #[cfg(test)]
-const PUBLICATION: Duration = Duration::from_millis(300);
+const PUBLICATION: Duration = Duration::from_millis(1500);
 
 /// How much of what one ended command printed travels in the note about it.
 ///

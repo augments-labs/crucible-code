@@ -285,7 +285,7 @@ fn abandoned_receipt_keeps_failed_cleanup_visible_and_retryable() {
 ///
 /// `after` sits in a band: longer than whatever deadline the test wants to watch
 /// pass first, and well short of the publication ceiling the code under test
-/// allows — 300ms in test builds, 100ms for a cancel. A sleep only ever
+/// allows — `PUBLICATION` in test builds, and `CANCELLATION` for a cancel. A sleep only ever
 /// overshoots, so the lower end holds by construction and only the ceiling can be
 /// lost. Timing an ending to land *at* that ceiling is what made one of these fail
 /// on one loaded runner while passing on three others, so leave the slack in.
