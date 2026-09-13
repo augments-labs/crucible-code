@@ -21,6 +21,7 @@ use crucible_core::{
     PromptCacheRequestDisposition, PromptCacheSupport, ProviderContinuation, RecordedToolOutput,
     RunItem, SessionId, Spend, StopReason, ToolCall, ToolEffect, ToolId, ToolOutcome, ToolResult,
 };
+use crucible_types::ResultProvenance;
 use serde_json::{Value, json};
 
 /// What wrote the file.
@@ -1144,6 +1145,18 @@ pub(crate) fn answered(result: &ToolResult) -> Value {
         );
     }
 
+    // Who answered it, where a vendor did. A result read back as unrecorded is
+    // written the way the older build wrote it — with nothing — because that is
+    // what it is: this reader's attribution, not something the log knew.
+    if let ResultProvenance::Answered { vendor, restricted } = result.output.provenance() {
+        let mut by = serde_json::Map::new();
+        by.insert("vendor".to_owned(), json!(vendor));
+        if let Some(notice) = restricted {
+            by.insert("elsewhere".to_owned(), json!(notice));
+        }
+        object.insert("answered_by".to_owned(), Value::Object(by));
+    }
+
     // A call that left the file as it was is a call with no header to draw, and
     // writing a count of nothing would say there was one.
     if let Some(changed) = result.output.changed().filter(|counts| !counts.is_empty()) {
@@ -1190,10 +1203,25 @@ pub(crate) fn result(value: &Value) -> Option<ToolResult> {
         None => output,
     };
 
+    let output = match value.get("answered_by") {
+        Some(by) => output.answered_by(answered_by(by)?),
+        None => output,
+    };
+
     Some(ToolResult {
         id: ToolId::new(value.get("id")?.as_str()?),
         output,
     })
+}
+
+/// Who answered a result, bounded as the live value is.
+fn answered_by(value: &Value) -> Option<ResultProvenance> {
+    let vendor = value.get("vendor")?.as_str()?;
+    let restricted = match value.get("elsewhere") {
+        Some(notice) => Some(notice.as_str()?),
+        None => None,
+    };
+    ResultProvenance::answered(vendor, restricted).ok()
 }
 
 #[cfg(test)]

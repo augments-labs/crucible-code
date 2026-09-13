@@ -18,6 +18,15 @@ change in any release with no deprecation period.
   re-exports every moved name, and `PromptCachePlanned::from_request` is now
   `PromptCacheRequest::planned`.
 
+### Fixed
+
+- **Only Google's own search results are held back from other providers, and
+  they stay held back however the session gets there.** Leaving Google cleared
+  every search result in the session, including ones another provider's search
+  had answered, while a session resumed in a run using another provider sent
+  Google's results on. Each search result now records which provider answered
+  it, so both cases follow Google's terms and nothing else is cleared.
+
 ## [0.41.0] - 2026-09-13
 
 ### Added

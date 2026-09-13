@@ -5,6 +5,8 @@
 //! that the change reaches the wire, and that it reaches the *next* request
 //! rather than the one already sent.
 
+use crucible_types::{RecordedToolOutput, ResultProvenance, ToolCall};
+
 use super::*;
 
 #[test]
@@ -70,7 +72,12 @@ fn switching_away_from_a_vendor_that_restricts_its_results_takes_them_out_of_the
 
     let mut scripted = Scripted::new(
         first,
-        tools([Fixed::new("web_search").answering("restricted search results canary")]),
+        tools([Fixed::new("web_search")
+            .answering("restricted search results canary")
+            .answered_by(
+                ResultProvenance::answered("restricting", Some(RESTRICTED))
+                    .expect("a bounded term"),
+            )]),
         Verdict::Allow,
     );
 
@@ -97,6 +104,101 @@ fn switching_away_from_a_vendor_that_restricts_its_results_takes_them_out_of_the
         result.output.text(),
         RESTRICTED,
         "the result stands without the sentence saying why it is empty"
+    );
+}
+
+#[test]
+fn leaving_a_vendor_that_restricts_its_results_keeps_the_ones_another_vendor_answered() {
+    // A session that searched under one vendor and then moved to one that
+    // restricts its own results holds results the restricting vendor never
+    // produced. Its term covers what it produced; taking the others away as
+    // well empties the conversation of answers nobody restricted.
+    let first = Script::new(vec![
+        calling("call_search", "web_search", r#"{"query":"rust"}"#),
+        saying("an answer from a vendor that restricts nothing"),
+    ])
+    .with_name("unrestricting");
+
+    let mut scripted = Scripted::new(
+        first,
+        tools([Fixed::new("web_search")
+            .answering("search results the first vendor answered")
+            .answered_by(
+                ResultProvenance::answered("unrestricting", None).expect("a bounded vendor"),
+            )]),
+        Verdict::Allow,
+    );
+    scripted
+        .turn("search for rust")
+        .expect("the turn to finish");
+
+    scripted.runner.serve(Box::new(
+        Script::new(vec![saying("an answer from the vendor that restricts")])
+            .with_name("restricting")
+            .restricting(RESTRICTED),
+    ));
+    scripted.turn("and now").expect("the turn to finish");
+
+    scripted.runner.serve(Box::new(
+        Script::new(vec![saying("from elsewhere")]).with_name("elsewhere"),
+    ));
+    scripted.turn("summarize").expect("the turn to finish");
+
+    assert_eq!(
+        only_result(&scripted).output.text(),
+        "search results the first vendor answered",
+        "leaving a vendor took away a result that vendor never produced"
+    );
+}
+
+#[test]
+fn a_search_result_an_older_build_recorded_is_taken_away_when_leaving_a_vendor_that_restricts() {
+    // A log written before results said who answered them cannot say whether a
+    // search came from the vendor being left. The build that wrote it took every
+    // search result away in that case, and a session continued here keeps that
+    // promise rather than sending them on.
+    let first = Script::new(vec![saying("an answer from the vendor that restricts")])
+        .with_name("restricting")
+        .restricting(RESTRICTED);
+
+    let mut transcript = Transcript::new();
+    transcript
+        .push(Message::said("search for rust"))
+        .expect("a prompt");
+    transcript
+        .push(Message::Agent {
+            continuation: None,
+            text: "".into(),
+            calls: vec![ToolCall {
+                id: ToolId::new("call_search"),
+                name: "web_search".into(),
+                args: ToolArgs::new(r#"{"query":"rust"}"#),
+            }],
+            stop: Some(StopReason::WantsTools),
+        })
+        .expect("a call");
+    transcript
+        .push(Message::ToolResults(vec![ToolResult {
+            id: ToolId::new("call_search"),
+            output: RecordedToolOutput::ok("search results from an older log")
+                .answered_by(ResultProvenance::Unrecorded),
+        }]))
+        .expect("its result");
+
+    let scripted = Scripted::new(first, tools([Fixed::new("web_search")]), Verdict::Allow);
+    let mut scripted = Scripted {
+        runner: scripted.runner.resuming(transcript),
+        ..scripted
+    };
+
+    scripted.runner.serve(Box::new(
+        Script::new(vec![saying("from elsewhere")]).with_name("elsewhere"),
+    ));
+
+    assert_eq!(
+        only_result(&scripted).output.text(),
+        RESTRICTED,
+        "a search result nobody could attribute went on to another vendor"
     );
 }
 

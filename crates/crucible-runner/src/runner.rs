@@ -359,8 +359,20 @@ impl Runner {
     pub fn resuming(mut self, transcript: Transcript) -> Self {
         self.turn = Self::counting(&transcript);
         self.transcript = transcript;
+        self.admit_restricted();
         self.recount();
         self
+    }
+
+    /// Takes out of a transcript just read back what this run's vendor may not
+    /// be sent.
+    ///
+    /// Nobody is being left: the run may have started on another vendor than the
+    /// one the results came from, and no switch is ever observed to say so. What
+    /// the results record about who answered them is the whole of the decision.
+    fn admit_restricted(&mut self) {
+        let clearing = self.untransferable(self.provider.as_ref(), None);
+        self.clear_untransferable(&clearing);
     }
 
     /// Measures a transcript this runner did not build a message at a time.
@@ -415,6 +427,7 @@ impl Runner {
         // Before the recount rather than after it: what the session picked up
         // remembers about its own load is part of what is being recounted.
         let left = std::mem::replace(&mut self.session, session);
+        self.admit_restricted();
         self.recount();
 
         left
@@ -740,76 +753,77 @@ impl Runner {
     /// Reachable between turns, where [`Runner::ask`] is and for the same
     /// reason: a turn owns the runner while it runs.
     pub fn serve(&mut self, provider: Box<dyn Provider>) {
-        // Asked of the vendor being left, and before it is replaced: a
-        // restriction on where results may go belongs to whoever produced
-        // them, and by the next line there is nobody left to ask. Staying with
-        // the same vendor moves nothing anywhere, so nothing is cleared.
-        let restriction = self
-            .provider
-            .restricts_results()
-            .filter(|_| self.provider.name() != provider.name());
+        // Decided before the swap and against both vendors: a result recorded
+        // before results said who answered them is judged by what the vendor
+        // being left restricts, and by the next line there is nobody left to
+        // ask. Staying with the same vendor moves nothing anywhere.
+        let clearing = self.untransferable(provider.as_ref(), Some(self.provider.as_ref()));
 
         self.provider = provider;
-        if let Some(notice) = restriction {
-            self.restrict_results(notice);
-        }
+        self.clear_untransferable(&clearing);
         // Cached-token and tokenizer semantics belong to the provider that
         // reported them. Keep the transcript, but not that provider's exact
         // reading of it.
         self.load.reestimated();
     }
 
-    /// Takes the results a vendor restricts out of what the next one is sent,
+    /// The results the next request may not carry to `recipient`, each with the
+    /// sentence to leave in its place.
+    ///
+    /// What may go where is decided by the result's own provenance, through
+    /// `crucible_models::transfer`, never from a vendor's or a tool's name here.
+    fn untransferable(
+        &self,
+        recipient: &dyn Provider,
+        leaving: Option<&dyn Provider>,
+    ) -> Vec<(crucible_core::ToolId, Box<str>)> {
+        let mut clearing = Vec::new();
+        for message in self.transcript.messages() {
+            if let crucible_core::Message::ToolResults(results) = message {
+                for result in results {
+                    if let crucible_models::Transfer::Clear(notice) =
+                        crucible_models::transfer(result.output.provenance(), recipient, leaving)
+                    {
+                        clearing.push((result.id.clone(), notice.into()));
+                    }
+                }
+            }
+        }
+        clearing
+    }
+
+    /// Takes the results a vendor restricts out of what is sent from here on,
     /// and records that it happened.
     ///
     /// The results stay in the log holding what they held — the log is the
     /// record of the session, and a user reading their own history is not the
     /// third party the term is about. What the line buys is the session coming
     /// back the same way: without it the transcript loses them and the log does
-    /// not, so the next resume reads them back and sends them on, undoing the
-    /// switch with nothing to notice it.
+    /// not, so the next resume reads them back and sends them on.
     ///
-    /// Which results, today, is every search result in the transcript rather
-    /// than only the ones this vendor answered — a transcript records what was
-    /// called, not who answered it. That is wider than the term requires and it
-    /// is the behaviour being preserved rather than introduced; narrowing it
-    /// needs per-result provenance the session has never recorded.
-    fn restrict_results(&mut self, notice: &str) {
-        let mut searched = Vec::new();
-        for message in self.transcript.messages() {
-            if let crucible_core::Message::Agent { calls, .. } = message {
-                for call in calls {
-                    if &*call.name == "web_search" {
-                        searched.push(call.id.clone());
-                    }
-                }
+    /// One line per sentence, since a line carries one. Clearing takes the
+    /// provenance with the content, so a result is never cleared twice.
+    fn clear_untransferable(&mut self, clearing: &[(crucible_core::ToolId, Box<str>)]) {
+        let mut notices: Vec<&str> = Vec::new();
+        for (_, notice) in clearing {
+            if !notices.contains(&&**notice) {
+                notices.push(notice);
             }
         }
 
-        // Down to the ones still holding what they answered with. A session
-        // moved twice would otherwise clear a notice with itself, report the
-        // notice's own length as freed, and write a second line saying results
-        // were taken away that had already gone.
-        let mut clearing = Vec::new();
-        for message in self.transcript.messages() {
-            if let crucible_core::Message::ToolResults(results) = message {
-                for result in results {
-                    if searched.contains(&result.id) && result.output.text() != notice {
-                        clearing.push(result.id.clone());
-                    }
-                }
-            }
-        }
+        for notice in notices {
+            let results: Vec<crucible_core::ToolId> = clearing
+                .iter()
+                .filter(|(_, left)| **left == *notice)
+                .map(|(id, _)| id.clone())
+                .collect();
 
-        if clearing.is_empty() {
-            return;
+            // The transcript first and the line after it, the way a pruning is
+            // written and for the same reason: a crash between the two must not
+            // leave a log claiming a clearing that the transcript never made.
+            let freed = self.transcript.clear_tool_outputs(&results, notice);
+            self.session.restricted(freed, &results, notice);
         }
-
-        // The transcript first and the line after it, the way a pruning is
-        // written and for the same reason: a crash between the two must not
-        // leave a log claiming a clearing that the transcript never made.
-        let freed = self.transcript.clear_tool_outputs(&clearing, notice);
-        self.session.restricted(freed, &clearing, notice);
     }
 
     /// How hard this session is asking the model to think.

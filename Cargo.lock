@@ -509,7 +509,9 @@ version = "0.41.0"
 dependencies = [
  "crucible-attachments",
  "crucible-core",
+ "crucible-models",
  "crucible-session",
+ "crucible-types",
  "sha2",
 ]
 

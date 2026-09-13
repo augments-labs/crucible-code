@@ -172,6 +172,12 @@ impl Search for GoogleWeb {
         NAME
     }
 
+    /// Google's grounding terms keep what this search answers to Google's own
+    /// models, in the same sentence the Google provider states for them.
+    fn restricts(&self) -> Option<&'static str> {
+        Some(crate::google::RESTRICTED)
+    }
+
     fn reaches(&self) -> Host {
         host_of(self.endpoint.as_str())
     }

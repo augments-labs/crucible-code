@@ -19,6 +19,8 @@ use crucible_core::{
     Transcript, Workspace,
 };
 
+use crucible_types::ResultProvenance;
+
 use super::{SUFFIX, SessionError, results, wire};
 
 /// A persisted record cannot legitimately exceed the maximum retained item
@@ -412,6 +414,7 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
                 }
             }
         }
+        let message = attributed(&transcript, message);
         transcript
             .push(message)
             .map_err(|error| trouble(io::Error::new(io::ErrorKind::InvalidData, error)))?;
@@ -507,7 +510,51 @@ fn recovered_results(
             "a durable call result does not match its source message",
         ));
     }
-    Ok(Message::ToolResults(recovered))
+    Ok(attributed(transcript, Message::ToolResults(recovered)))
+}
+
+/// The one tool whose results an older build wrote without saying who answered
+/// them, although a vendor's own service had.
+///
+/// Named here, in the reader of the lines that build wrote, because it is what
+/// those lines mean: until results recorded their provenance, a search was
+/// answered by whichever vendor served the session, and nothing else was.
+const SEARCHED: &str = "web_search";
+
+/// Marks the search results a log holds without saying who answered them.
+///
+/// Such a result comes back unrecorded rather than as a result nobody answered,
+/// so the rule the build that wrote it applied to every search result goes on
+/// applying: it is taken away when the session leaves a vendor that restricts
+/// its results. A result this build wrote always says, so only an older line is
+/// ever marked. Applied after the durable results are matched against the line,
+/// which compares them as they were recorded.
+fn attributed(transcript: &Transcript, message: Message) -> Message {
+    let Message::ToolResults(results) = message else {
+        return message;
+    };
+    let Some(Message::Agent { calls, .. }) = transcript.messages().last() else {
+        return Message::ToolResults(results);
+    };
+
+    Message::ToolResults(
+        results
+            .into_iter()
+            .map(|result| {
+                let searched = calls
+                    .iter()
+                    .any(|call| call.id == result.id && &*call.name == SEARCHED);
+                if searched && *result.output.provenance() == ResultProvenance::Unstated {
+                    ToolResult {
+                        output: result.output.answered_by(ResultProvenance::Unrecorded),
+                        ..result
+                    }
+                } else {
+                    result
+                }
+            })
+            .collect(),
+    )
 }
 
 /// What a log read back comes to.

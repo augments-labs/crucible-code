@@ -473,3 +473,35 @@ fn google_search_prior_cancellation_never_posts() {
     assert!(matches!(error, SourceError::Cancelled("google")));
     assert!(replay.sent().url.is_empty());
 }
+
+#[test]
+fn google_search_keeps_its_results_to_google_models_in_the_words_its_provider_uses() {
+    // The grounding source and the provider are two faces of one vendor's term:
+    // a result the source answered carries the restriction, and a session that
+    // leaves the provider without such a record falls back on the provider's
+    // own statement. Two sentences for one term would make which one a reader
+    // is shown depend on how the session got here.
+    let (web, _) = source(&[]);
+    let provider = Google::at(
+        Google::VENDOR,
+        Box::new(HeaderKey::new(
+            ApiKey::new("provider-key-canary"),
+            Header::bare("x-goog-api-key"),
+        )),
+        Box::new(Arc::new(Replay::new(200, answer(&[])))),
+    );
+
+    assert_eq!(
+        Search::name(&web),
+        crucible_models::Provider::name(&provider)
+    );
+    let restricts = Search::restricts(&web);
+    assert!(
+        restricts.is_some(),
+        "Google grounding answered a search with nothing keeping it to Google models"
+    );
+    assert_eq!(
+        restricts,
+        crucible_models::Provider::restricts_results(&provider)
+    );
+}

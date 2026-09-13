@@ -651,6 +651,7 @@ pub(crate) struct Fixed {
     diff: Option<Diff>,
     writes: Vec<Box<str>>,
     backgroundable: bool,
+    provenance: crucible_types::ResultProvenance,
 }
 
 impl Fixed {
@@ -667,7 +668,14 @@ impl Fixed {
             diff: None,
             writes: Vec::new(),
             backgroundable: false,
+            provenance: crucible_types::ResultProvenance::Unstated,
         }
+    }
+
+    /// Says a vendor's service answered it, the way a search source says so.
+    pub(crate) fn answered_by(mut self, provenance: crucible_types::ResultProvenance) -> Self {
+        self.provenance = provenance;
+        self
     }
 
     /// What it prints, one piece at a time, before it answers.
@@ -761,7 +769,8 @@ impl Tool for Fixed {
             None => Ok(match &self.diff {
                 Some(diff) => ToolOutput::ok(self.answer.clone()).showing(diff.clone()),
                 None => ToolOutput::ok(self.answer.clone()),
-            }),
+            }
+            .answered_by(self.provenance.clone())),
         }
     }
 }

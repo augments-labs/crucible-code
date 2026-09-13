@@ -14,6 +14,16 @@ mod shape_tests;
 pub(crate) mod wire;
 
 const NAME: &str = "google";
+
+/// The sentence Google's grounding terms leave in place of what its search
+/// answered, anywhere but Google's models.
+///
+/// One constant for the provider and its search source: a result the source
+/// answered carries it, and a session leaving the provider with results nothing
+/// attributed falls back on the provider's word. Two sentences for one term
+/// would make what a reader is shown depend on which path cleared the result.
+pub(crate) const RESTRICTED: &str =
+    "[cleared — Google search results are restricted to Google models]";
 const PROTOCOL: &str = "google-interactions-v1";
 const VENDOR_URL: &str = "https://generativelanguage.googleapis.com/v1beta/interactions?alt=sse";
 const VENDOR: crate::Endpoint = crate::Endpoint::fixed(VENDOR_URL);
@@ -72,7 +82,7 @@ impl Provider for Google {
     /// rather than in the runner because the term is this vendor's, and a
     /// runner that knew which vendors restrict what would be deciding it.
     fn restricts_results(&self) -> Option<&'static str> {
-        Some("[cleared — Google search results are restricted to Google models]")
+        Some(RESTRICTED)
     }
     fn spells(&self) -> crucible_types::Modalities {
         crucible_types::Modality::EVERY.into_iter().fold(

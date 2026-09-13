@@ -49,10 +49,15 @@ API key and checked Interactions endpoint as the session (`store: false`).
 Grounded answers are displayed with associated Search Suggestions and inline source
 citations in the terminal without redirect rewriting. In accordance with Google's
 [grounding usage terms](https://ai.google.dev/gemini-api/terms#grounding-with-google-search),
-switching to another provider clears grounded search outputs from the context sent
-to the new model, while retaining them in the local session log for user history review.
-The clearing is recorded in the log, so a session resumed later comes back cleared
-rather than reading the outputs off the disk and sending them on.
+grounded search outputs are never sent to another provider's model: switching to one
+clears them from the context it is sent, and so does resuming the session, or picking
+it up with `/resume`, in a run that is using another provider. They stay in the local
+session log for user history review. Each result records which provider's search
+answered it, so only Google's are cleared, and the clearing is recorded in the log, so
+a session resumed later comes back cleared rather than reading the outputs off the
+disk and sending them on. Search results in a session written by an older Crucible
+say nothing about who answered them, and are cleared whenever a session leaves Google,
+as that version did.
 Incomplete, cancelled or malformed responses yield a clean bounded failure.
 
 Moonshot's two services belong to the Kimi Code platform, which is where

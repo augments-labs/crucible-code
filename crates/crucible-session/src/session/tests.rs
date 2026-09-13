@@ -12,6 +12,7 @@ use crucible_core::{
     RecordedToolOutput, RunItem, SessionId, Spend, StopReason, ToolArgs, ToolCall, ToolId,
     ToolResult, Transcript,
 };
+use crucible_types::ResultProvenance;
 use serde_json::Value;
 
 use super::claim::{Claimed, claim};
@@ -970,6 +971,73 @@ fn a_restricted_result_is_cleared_again_when_the_session_is_continued() {
         only_result(&transcript).output.text(),
         "[cleared — restricted]",
         "the continued session did not put back what the run left in its place"
+    );
+}
+
+#[test]
+fn a_result_keeps_who_answered_it_across_the_log() {
+    // What a result's vendor restricts has to come back with the result, or a
+    // session picked up by a run serving another vendor has nothing to decide
+    // with.
+    let sample = Sample::new("session-answered-by");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
+    let provenance = ResultProvenance::answered("google", Some("[cleared — restricted]"))
+        .expect("a bounded term");
+
+    session.append(&calling("a", "web_search", r#"{"query":"rust"}"#));
+    session.append(&answered(
+        "a",
+        RecordedToolOutput::ok("grounded results canary").answered_by(provenance.clone()),
+    ));
+    drop(session);
+
+    let (_, transcript) =
+        Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
+
+    assert_eq!(only_result(&transcript).output.provenance(), &provenance);
+}
+
+#[test]
+fn a_search_result_an_older_build_wrote_comes_back_unrecorded() {
+    // An older build wrote search results without saying who answered them. The
+    // result a search call left is read back as unrecorded, which is what lets
+    // the rule that build applied to every search result keep applying; a result
+    // any other call left says nothing, as it did.
+    let sample = Sample::new("session-unrecorded-search");
+    let id = "0198abcd-0000-7000-8000-000000000002";
+    sample.plant(
+        id,
+        &[
+            sample.header(13, id),
+            wire::line(&calling("a", "web_search", r#"{"query":"rust"}"#)),
+            wire::line(&answered(
+                "a",
+                RecordedToolOutput::ok("older search results"),
+            )),
+            wire::line(&calling("b", "read", r#"{"path":"main.rs"}"#)),
+            wire::line(&answered("b", RecordedToolOutput::ok("fn main() {}"))),
+        ],
+    );
+
+    let (_, transcript) =
+        Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
+
+    let results: Vec<_> = transcript
+        .messages()
+        .iter()
+        .filter_map(|message| match message {
+            Message::ToolResults(results) => results.first(),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(results.len(), 2, "both results came back");
+    assert_eq!(
+        results.first().map(|result| result.output.provenance()),
+        Some(&ResultProvenance::Unrecorded)
+    );
+    assert_eq!(
+        results.get(1).map(|result| result.output.provenance()),
+        Some(&ResultProvenance::Unstated)
     );
 }
 

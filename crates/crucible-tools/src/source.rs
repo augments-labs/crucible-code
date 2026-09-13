@@ -169,6 +169,18 @@ pub trait Search: Send + Sync {
     /// is why this takes no argument and a fetch's does.
     fn reaches(&self) -> Host;
 
+    /// The sentence to leave in place of what this source answered, anywhere
+    /// but the models of the vendor that answered it.
+    ///
+    /// `None` — the default — is the answer for a source whose vendor places no
+    /// term on where its results go, and for an unknown or custom one: a source
+    /// nobody has reviewed has published no such term. A source that restricts
+    /// is naming its vendor's term, so the vendor is this source's
+    /// [`Search::name`] and a result carries both.
+    fn restricts(&self) -> Option<&'static str> {
+        None
+    }
+
     /// Answers `query`.
     ///
     /// # Errors

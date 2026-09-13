@@ -351,6 +351,29 @@ doors() {
     grep -rEoh --include='*.rs' "$1" "${@:2}" | wc -l
 }
 
+section "who may be sent a restricted result is decided once"
+# A vendor's term keeping what it answered to its own models travels on the
+# result, and `crucible_models::transfer` is where it is read. A caller that
+# asked a provider what it restricts would be deciding the question again from a
+# vendor's name, which is the branch the runner no longer has; tests may ask.
+decider="crates/crucible-models/src/transfer.rs"
+asks='(\.|::)restricts_results\('
+# Comment lines are not callers: a documentation example may show the method.
+askers=$(grep -rnE --include='*.rs' "$asks" crates src tests |
+    grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' |
+    cut -d: -f1 | sort -u |
+    grep -vE '(^|/)tests(/|\.rs$)|_tests\.rs$' || true)
+if [[ "$askers" != "$decider" ]]; then
+    while IFS= read -r file; do
+        [[ -z "$file" || "$file" == "$decider" ]] && continue
+        printf '    FAIL %s asks a provider what it restricts; only %s decides that\n' "$file" "$decider"
+    done <<<"$askers"
+    if ! grep -Fxq "$decider" <<<"$askers"; then
+        printf '    FAIL %s no longer asks what a provider restricts; this check measured nothing\n' "$decider"
+    fi
+    failed=1
+fi
+
 section "the replay seam"
 replay="crates/crucible-session/src/session/wire.rs"
 opens='(\.|RecordedToolOutput::)replayed\('
@@ -556,7 +579,9 @@ provider runtime
 provider types
 runner attachments
 runner core
+runner models
 runner session
+runner types
 session core
 session privacy
 session storage

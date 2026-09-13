@@ -58,7 +58,8 @@ pub use ids::{
 };
 pub use modality::{Modalities, Modality, ModalityError};
 pub use output::{
-    Changed, RecordedToolOutput, TOOL_RESULT_BYTES, TOOL_RESULT_MIN_BYTES, ToolOutcome,
+    Changed, RESULT_NOTICE_BYTES, RESULT_VENDOR_BYTES, RecordedToolOutput, ResultProvenance,
+    ResultProvenanceError, TOOL_RESULT_BYTES, TOOL_RESULT_MIN_BYTES, ToolOutcome,
     ToolOutputRetention,
 };
 pub use run::{Ancestry, AncestryError};

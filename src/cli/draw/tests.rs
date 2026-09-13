@@ -1019,7 +1019,7 @@ fn transcript(turn: Vec<Beat>) -> String {
 
     for beat in turn {
         match beat {
-            Beat::Draw(drawing) => event(&mut renderer, drawing, &here(), style, &mut kept),
+            Beat::Draw(drawing) => event(&mut renderer, *drawing, &here(), style, &mut kept),
             Beat::Answered(said) => returned(&mut renderer, said, style),
         }
         .expect("the turn to draw");
@@ -1031,19 +1031,27 @@ fn transcript(turn: Vec<Beat>) -> String {
 /// One step of a turn, as the loop above `draw` performs it.
 enum Beat {
     /// An event, drawn where it arrived.
-    Draw(Event),
+    ///
+    /// Boxed because an event can carry a whole tool result and the other beat
+    /// carries a word, which is the difference `large_enum_variant` measures.
+    Draw(Box<Event>),
     /// A tool answered, so the line that was live commits.
     Answered(&'static str),
 }
 
+/// A beat drawing `event`.
+fn beat(event: Event) -> Beat {
+    Beat::Draw(Box::new(event))
+}
+
 fn delta(text: &str) -> Beat {
-    Beat::Draw(Event::Delta { text: text.into() })
+    beat(Event::Delta { text: text.into() })
 }
 
 fn answered(said: &'static str, text: &str) -> [Beat; 2] {
     [
         Beat::Answered(said),
-        Beat::Draw(Event::ToolFinished {
+        beat(Event::ToolFinished {
             call: ToolId::new("a"),
             output: ToolOutput::ok(text),
             receipt: None,
@@ -1058,7 +1066,7 @@ fn a_turn_is_a_column_of_blocks_with_one_blank_row_between_them() {
     // what separates two blocks is a row of nothing. A result hangs directly
     // under the call it answers, because the two are one block.
     let mut turn = vec![
-        Beat::Draw(Event::TurnStarted {
+        beat(Event::TurnStarted {
             turn: TurnId::FIRST,
         }),
         delta("Looking at both.\n"),
@@ -1066,7 +1074,7 @@ fn a_turn_is_a_column_of_blocks_with_one_blank_row_between_them() {
     turn.extend(answered("Read(src/main.rs)", "128 lines"));
     turn.extend(answered("Read(src/lib.rs)", "60 lines"));
     turn.push(delta("Neither imports the other.\n"));
-    turn.push(Beat::Draw(Event::TurnFinished {
+    turn.push(beat(Event::TurnFinished {
         turn: TurnId::FIRST,
         stop: StopReason::Yielded,
     }));
@@ -1095,7 +1103,7 @@ fn an_answer_arriving_in_pieces_is_one_block() {
         delta("Two plus "),
         delta("two is "),
         delta("four."),
-        Beat::Draw(Event::TurnFinished {
+        beat(Event::TurnFinished {
             turn: TurnId::FIRST,
             stop: StopReason::Yielded,
         }),
