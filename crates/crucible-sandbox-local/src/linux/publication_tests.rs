@@ -768,38 +768,68 @@ fn a_command_with_nothing_to_publish_leaves_the_generations_alone() {
         SandboxResourceLimits::default(),
     )
     .expect("a policy that writes nothing");
-    let reader = SandboxRequest::new(
-        SandboxId::new(),
-        Ancestry::new(),
-        ToolId::new("bash"),
-        policy,
-        SandboxManifest::empty(),
-    );
-    let state = super::transaction::state_directory(&reader).expect("transaction state");
+    let reader = || {
+        SandboxRequest::new(
+            SandboxId::new(),
+            Ancestry::new(),
+            ToolId::new("bash"),
+            policy.clone(),
+            SandboxManifest::empty(),
+        )
+    };
+    let state = super::transaction::state_directory(&reader()).expect("transaction state");
     // Something to erase: a publication's witness, already recorded.
+    let witness = super::generations::key(sample.root());
     let held = held_publication(&sample);
-    super::generations::advance(
-        &state,
-        std::slice::from_ref(&super::generations::key(sample.root())),
-    )
-    .expect("a publication moves the root's generation");
+    super::generations::advance(&state, std::slice::from_ref(&witness))
+        .expect("a publication moves the root's generation");
     drop(held);
-    let before = generations_as_they_stand(&state);
+    let standing = |state: &std::path::Path| {
+        super::generations::current(state, std::slice::from_ref(&witness))
+            .expect("the generations")
+            .first()
+            .copied()
+            .flatten()
+    };
+    let recorded = standing(&state);
 
-    let mut session = service.prepare(reader).expect("a reader");
-    session.materialize().expect("materialized workspace");
-    let (status, _, _) = finish(
-        session
-            .start(command("cat seen.txt"))
-            .expect("started command"),
-    );
+    // Other tests in this binary publish into this user's state without the lease
+    // held here, so the file can change under this command for reasons that are
+    // nobody's fault. Every publication moves at least one root's count, and that
+    // is what tells a neighbour apart from the mistake this is about: rewriting the
+    // file while holding nothing leaves the same bytes at a new moment. An
+    // observation a neighbour landed in is taken again rather than read either way.
+    let attempts = 5;
+    for attempt in 1..=attempts {
+        let before = generations_as_they_stand(&state);
+        let mut session = service.prepare(reader()).expect("a reader");
+        session.materialize().expect("materialized workspace");
+        let (status, _, _) = finish(
+            session
+                .start(command("cat seen.txt"))
+                .expect("started command"),
+        );
+        let after = generations_as_they_stand(&state);
 
-    assert!(status.success(), "{status}");
-    assert_eq!(
-        before,
-        generations_as_they_stand(&state),
-        "a command with nothing to publish rewrote the generations, holding nothing"
-    );
+        assert!(status.success(), "{status}");
+        // Whatever a neighbour did meanwhile, a witness is never put back.
+        let now = standing(&state);
+        assert!(
+            now >= recorded,
+            "a publication's witness was put back: {recorded:?} became {now:?}"
+        );
+        if before.0 == after.0 {
+            assert_eq!(
+                before.1, after.1,
+                "a command with nothing to publish rewrote the generations, holding nothing"
+            );
+            return;
+        }
+        assert!(
+            attempt < attempts,
+            "a neighbour published during every one of {attempts} observations"
+        );
+    }
 }
 
 #[test]
