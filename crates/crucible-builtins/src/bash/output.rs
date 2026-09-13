@@ -64,8 +64,11 @@ const FRESH: usize = 8 * 1024;
 /// test, where nothing holds a publication up.
 #[cfg(not(test))]
 const PUBLICATION: Duration = Duration::from_mins(1);
+// Test builds keep both ceilings several times above the scheduling delay a loaded CI
+// runner adds to a sleep, which has been seen past 140ms: a test timed against a
+// ceiling measures the runner otherwise, not the rule.
 #[cfg(test)]
-const PUBLICATION: Duration = Duration::from_millis(300);
+pub(super) const PUBLICATION: Duration = Duration::from_millis(1500);
 
 /// How long a cancelled command that has ended is given for the same thing.
 ///
@@ -75,7 +78,7 @@ const PUBLICATION: Duration = Duration::from_millis(300);
 #[cfg(not(test))]
 const CANCELLATION: Duration = Duration::from_secs(5);
 #[cfg(test)]
-const CANCELLATION: Duration = Duration::from_millis(100);
+pub(super) const CANCELLATION: Duration = Duration::from_millis(500);
 
 /// How long the readers get to reach the end of their pipes once the command
 /// itself is over. Reading what is already buffered takes no time at all, so

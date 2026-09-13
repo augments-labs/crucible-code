@@ -40,8 +40,10 @@ const WATCH: Duration = Duration::from_millis(5);
 /// test, where nothing holds a publication up.
 #[cfg(not(test))]
 const PUBLICATION: Duration = Duration::from_secs(5);
+// Several times above the scheduling delay a loaded CI runner adds to a sleep, which
+// has been seen past 140ms, so a test timed against it measures the rule.
 #[cfg(test)]
-const PUBLICATION: Duration = Duration::from_millis(300);
+const PUBLICATION: Duration = Duration::from_millis(1500);
 
 /// How a confined process finished.
 #[derive(Debug)]
