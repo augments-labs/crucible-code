@@ -396,7 +396,7 @@ fn a_stage_whose_journal_is_held_is_left_alone_and_said_to_be_busy() {
     let sample = crate::sample::Sample::new("sandbox-busy-recovery");
     let base = sample.root().join("recovery");
     create_private_test_directory(&base);
-    let stage = stale_journal(&sample, &base, true);
+    let stage = stale_journal(&base, true);
     // How a stage looks while its own owner is finishing it: the journal open and
     // locked, everything else already gone. Removing it here would race that
     // owner, so the pass leaves it — and must not call that nothing to do.
