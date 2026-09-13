@@ -97,6 +97,10 @@ impl SandboxProcess for Fallible<dyn SandboxProcess> {
         self.inner.try_wait()
     }
 
+    fn ended(&mut self) -> bool {
+        self.inner.ended()
+    }
+
     fn stop(&mut self) -> io::Result<()> {
         if self.denied.swap(false, Ordering::Relaxed) {
             Err(io::Error::other(PRIVATE_ERROR))

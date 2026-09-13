@@ -55,7 +55,7 @@ fn startup_unconfirmed_cleanup_retains_linux_projection_and_audits_failed() -> i
     let rescue = Stage::new(root.clone());
     let view = command::prepare(&request).map_err(io::Error::other)?;
     let projection =
-        projection::Projection::prepare(&request, &view, None, None).map_err(io::Error::other)?;
+        projection::Projection::prepare(&request, &view, None).map_err(io::Error::other)?;
     // This test deliberately closes the WAL while retaining a quarantined
     // stage. Keep other test admissions outside that interval. Tuple fields
     // drop in order, so even a panic removes our fixture before unlocking.
@@ -78,6 +78,7 @@ fn startup_unconfirmed_cleanup_retains_linux_projection_and_audits_failed() -> i
         call_result_key: None,
         owner_transferred: false,
         released: false,
+        serial: None,
     };
     let problem = super::super::process::spawn(
         std::process::Command::new(sample.root().join("absent-program")),
@@ -144,7 +145,7 @@ fn pretransfer_network_cleanup_failure_is_quarantined_and_never_complete() -> io
     let rescue = Stage::new(root.clone());
     let view = command::prepare(&request).map_err(io::Error::other)?;
     let projection =
-        projection::Projection::prepare(&request, &view, None, None).map_err(io::Error::other)?;
+        projection::Projection::prepare(&request, &view, None).map_err(io::Error::other)?;
     // Retained WAL evidence must not be reconciled by parallel admissions
     // between dropping the launch owner and checking/removing this fixture.
     let _fixture = (
@@ -180,6 +181,7 @@ fn pretransfer_network_cleanup_failure_is_quarantined_and_never_complete() -> io
         call_result_key: None,
         owner_transferred: false,
         released: false,
+        serial: None,
     };
     launch.startup_failed(&problem);
     drop(launch);
@@ -254,7 +256,7 @@ fn pretransfer_materialization_cleanup_failure_retains_projection_evidence() -> 
     let materialization = materialize::commit(&request)
         .map_err(io::Error::other)?
         .ok_or_else(|| io::Error::other("fixture manifest was not materialized"))?;
-    let projection = projection::Projection::prepare(&request, &view, Some(&materialization), None)
+    let projection = projection::Projection::prepare(&request, &view, Some(&materialization))
         .map_err(io::Error::other)?;
     let _fixture = (
         projection_rescue,
@@ -286,6 +288,7 @@ fn pretransfer_materialization_cleanup_failure_retains_projection_evidence() -> 
         call_result_key: None,
         owner_transferred: false,
         released: false,
+        serial: None,
     };
     launch.startup_failed(&problem);
     drop(launch);

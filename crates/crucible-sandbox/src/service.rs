@@ -1370,10 +1370,33 @@ pub trait SandboxProcess: Send {
 
     /// Non-blocking process status.
     ///
+    /// `None` while the command runs. On a backend that publishes what a command
+    /// wrote, also `None` while a command that has ended waits its turn behind
+    /// another command's publication; [`Self::ended`] tells the two apart.
+    ///
     /// # Errors
     ///
-    /// The backend process could not be inspected or reaped.
+    /// The backend process could not be inspected or reaped, or, once the
+    /// command has ended, its ending went wrong: what it wrote was refused, for
+    /// one. Such an error is given again on every later call.
     fn try_wait(&mut self) -> io::Result<Option<ExitStatus>>;
+
+    /// Whether the command has ended, whatever becomes of what it wrote.
+    ///
+    /// [`Self::try_wait`] goes on answering `None` for a command that has ended
+    /// while what it wrote waits for another command's publication, because its
+    /// ending is complete only once its own publication is. This is how a caller
+    /// holding a deadline or a grace tells that wait from a command still
+    /// running: stopping a command discards what it wrote, so one that finished
+    /// in time is waited for rather than stopped. An error from `try_wait` once
+    /// this has answered `true` is how that ending went wrong, not a status that
+    /// could not be read.
+    ///
+    /// A status that cannot be read reads as not ended, so a caller stops the
+    /// command as it would have without asking.
+    fn ended(&mut self) -> bool {
+        matches!(self.try_wait(), Ok(Some(_)))
+    }
 
     /// Stops the complete owned process scope and reaps the command leader.
     /// Idempotent.
@@ -1381,7 +1404,8 @@ pub trait SandboxProcess: Send {
     /// Success confirms that no workload in the owned scope remains active.
     /// Operating-system cleanup of descendant process objects may finish later.
     /// A backend publishing private effects must also establish that those
-    /// effects cannot change before publication.
+    /// effects cannot change before publication. A command stopped before its
+    /// ending is complete publishes nothing.
     ///
     /// # Errors
     ///

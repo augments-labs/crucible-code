@@ -262,9 +262,11 @@ pub(crate) fn event<T: Terminal>(
 /// said nothing about itself is named by its command, because that is what
 /// there is and nothing may be invented in its place.
 ///
-/// And the status as a number in every case. The mark already says whether it
-/// went well; the number is the part a reader takes to whatever was waiting on
-/// it, and this is the only line that will mention this command again.
+/// And the status as a number wherever there is one. The mark already says
+/// whether it went well; the number is the part a reader takes to whatever was
+/// waiting on it, and this is the only line that will mention this command again.
+/// An ending whose writes were not published says that in its place, because it
+/// is the one thing about that command a reader must not miss.
 ///
 /// # Errors
 ///
@@ -275,10 +277,11 @@ pub(crate) fn gone<T: Terminal>(
     style: Style,
 ) -> Result<(), TerminalError> {
     let glyphs = style.glyphs();
-    let (mark, how) = match ended.code {
-        Some(0) => (glyphs.done(), "exit status 0".to_owned()),
-        Some(code) => (glyphs.failed(), format!("exit status {code}")),
-        None => (glyphs.failed(), "killed".to_owned()),
+    let (mark, how) = match (&ended.unpublished, ended.code) {
+        (Some(_), _) => (glyphs.failed(), "nothing it wrote was published".to_owned()),
+        (None, Some(0)) => (glyphs.done(), "exit status 0".to_owned()),
+        (None, Some(code)) => (glyphs.failed(), format!("exit status {code}")),
+        (None, None) => (glyphs.failed(), "killed".to_owned()),
     };
 
     let tail = format!(

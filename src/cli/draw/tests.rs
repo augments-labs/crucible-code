@@ -1459,12 +1459,41 @@ fn ending(called: &str, said: &str, code: Option<i32>, columns: usize) -> String
             code,
             lines: 120,
             printed: Box::from(""),
+            unpublished: None,
         },
         Style::plain(),
     )
     .expect("the ending to draw");
 
     renderer.terminal().picture().said().join("\n")
+}
+
+#[test]
+fn a_command_whose_writes_were_not_published_says_so_on_its_row() {
+    // The reader's half of the news. A command that finished while something
+    // else changed the root it wrote into ends with what it wrote discarded,
+    // and a row that only gave its status would read as a command that worked.
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+
+    gone(
+        &mut renderer,
+        &crucible_builtins::Ended {
+            tool: "bash",
+            number: 1,
+            called: "npm run codegen".into(),
+            said: "".into(),
+            code: None,
+            lines: 2,
+            printed: Box::from(""),
+            unpublished: Some("writable root changed after the command started".into()),
+        },
+        Style::plain(),
+    )
+    .expect("the ending to draw");
+    let said = renderer.terminal().picture().said().join("\n");
+
+    assert!(said.contains("nothing it wrote was published"), "{said}");
+    assert!(!said.contains("killed"), "{said}");
 }
 
 /// The same, for a call that said nothing about itself and exited cleanly.

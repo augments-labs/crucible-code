@@ -1,12 +1,14 @@
-//! Durable writable-transaction admission and the closed command lifecycle grammar.
+//! The host's publication lock, durable transaction journals and the closed command
+//! lifecycle grammar.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read as _, Seek as _, SeekFrom, Write as _};
 use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
-use crucible_sandbox::{SandboxError, SandboxFilesystemAccess, SandboxRequest};
+use crucible_sandbox::{SandboxError, SandboxRequest};
 use crucible_storage::CallResultKey;
 use crucible_types::SandboxId;
 use rustix::fs::{FlockOperation, Mode, OFlags};
@@ -46,8 +48,8 @@ const WRITABLE_LOCK: &str = "writable.lock";
 /// execs, and a lock stays held while any copy of its descriptor is open. So a
 /// lock the parent has already released can look held for the length of an
 /// unrelated spawn. That phantom holder is never a live owner: a journal whose
-/// recorded owner is dead, and a writable lease whose previous writer has let
-/// go, are retried across this budget before they are reported busy.
+/// recorded owner is dead is retried across this budget before it is reported
+/// busy. The publication lock is not, because whoever wants it looks again.
 const TRANSIENT_LOCK_RETRIES: u32 = 40;
 const TRANSIENT_LOCK_PAUSE: std::time::Duration = std::time::Duration::from_millis(5);
 const REGISTRY_LOCK: &str = "registry.lock";
@@ -131,10 +133,11 @@ pub(super) struct Machine {
     records: Vec<Record>,
 }
 
-/// One append-only, fsynced transaction record plus the descriptor-held global
-/// lease that gives it exclusive writable authority.
+/// One append-only, fsynced transaction record.
+///
+/// It holds no lock over the roots it describes: the publication lock is taken
+/// only while a command publishes, and is held by whoever is publishing.
 pub(super) struct Transaction {
-    _lease: Option<Lease>,
     journal: File,
     machine: Machine,
     frame: FrameState,
@@ -158,14 +161,12 @@ struct OwnerIdentity {
 
 impl Transaction {
     pub(super) fn start(
-        lease: Option<Lease>,
         directory: &Path,
         sandbox: SandboxId,
         mode: InvocationMode,
         call_result_key: Option<CallResultKey>,
     ) -> io::Result<Self> {
         Self::start_owned(
-            lease,
             directory,
             sandbox,
             Invocation::new(mode, call_result_key)?,
@@ -174,7 +175,6 @@ impl Transaction {
     }
 
     fn start_owned(
-        lease: Option<Lease>,
         directory: &Path,
         sandbox: SandboxId,
         invocation: Invocation,
@@ -196,7 +196,6 @@ impl Transaction {
             .try_into()
             .map_err(|_| invalid("sandbox transaction identity is not canonical"))?;
         let mut transaction = Self {
-            _lease: lease,
             journal,
             machine: Machine::new(),
             frame: FrameState {
@@ -1066,12 +1065,24 @@ impl RegistryLease {
     }
 }
 
-/// The descriptor-held global writable-transaction lock.
+/// How long a preparation waits between looks at the publication lock.
+const LOCK_POLL: Duration = Duration::from_millis(20);
+
+/// This user's host-wide publication lock, held while one command publishes.
+///
+/// A command's writes reach its roots only through publication, which checks
+/// every root against the command's baseline before it changes anything and
+/// verifies the result afterwards. Two publications at once could both pass
+/// that check and then write over each other, so only one holds this at a time.
+/// The command itself runs without it: a command left running with no end of its
+/// own, or a server kept for a whole run, would otherwise keep every other
+/// command from writing for as long as it lived.
+///
+/// A command being prepared holds it while it takes its baselines, so that no
+/// baseline is half of another command's publication.
 pub(super) struct Lease {
     _state: File,
     _lock: File,
-    #[cfg(test)]
-    test_serial: Option<TestSerialLease>,
 }
 
 #[cfg(test)]
@@ -1087,61 +1098,86 @@ impl Lease {
 }
 
 impl Lease {
-    pub(super) fn acquire(request: &SandboxRequest) -> Result<Option<Self>, SandboxError> {
-        let writable = request
-            .policy()
-            .filesystem()
-            .iter()
-            .any(|rule| rule.access() == SandboxFilesystemAccess::ReadWrite)
-            || request
-                .manifest()
-                .entries()
-                .iter()
-                .any(|entry| entry.access() == Some(SandboxFilesystemAccess::ReadWrite));
-        if !writable {
-            return Ok(None);
+    /// Whether the name this lease was taken on still means this lease.
+    ///
+    /// The lock file is created empty and never written, so its timestamps do
+    /// not advance on their own and an age-based cleaner of the temporary
+    /// directory may remove it. The next process to ask for it then creates a
+    /// fresh one and takes that, while this lease still holds the old: two
+    /// publications, each having passed its own baseline check.
+    ///
+    /// Asked again before anything is written, which narrows that window to the
+    /// publication itself rather than closing it: a lock removed after this
+    /// answers is still a lock somebody else can take. Taking the lock also
+    /// touches it, so a cleaner reads it as in use, and the two together leave
+    /// little for the window to hold.
+    #[expect(
+        clippy::used_underscore_binding,
+        reason = "the lease holds these only to keep the lock; confirming reads them"
+    )]
+    pub(super) fn confirm(&self) -> io::Result<()> {
+        let named = rustix::fs::statat(
+            &self._state,
+            WRITABLE_LOCK,
+            rustix::fs::AtFlags::SYMLINK_NOFOLLOW,
+        )?;
+        let held = self._lock.metadata()?;
+        if named.st_dev != held.dev() || named.st_ino != held.ino() {
+            return Err(invalid("sandbox transaction lock identity changed"));
         }
-        #[cfg(test)]
-        let test_serial =
-            TestSerialLease::acquire().map_err(|_| SandboxError::BackendUnavailable {
-                reason: "sandbox test writer coordination is unavailable".into(),
-            })?;
-        let state = state_directory(request)?;
-        let lease = Self::acquire_at(&state).map_err(|source| {
-            if source.raw_os_error() == Some(rustix::io::Errno::WOULDBLOCK.raw_os_error()) {
-                SandboxError::Concurrency
-            } else {
-                SandboxError::BackendUnavailable {
-                    reason: "writable transaction state or global lock is unavailable".into(),
-                }
-            }
-        })?;
-        #[cfg(test)]
-        let lease = {
-            let mut lease = lease;
-            lease.test_serial = Some(test_serial);
-            lease
-        };
-        Ok(Some(lease))
+        Ok(())
     }
 
-    fn acquire_at(path: &Path) -> io::Result<Self> {
-        create_state_directory(path)?;
-        let state = open_state_directory(path)?;
-        let lock = open_lock(&state, WRITABLE_LOCK)?;
+    /// Takes the lock in `state` without waiting, or `None` while it is held.
+    ///
+    /// Not waited for here, because the one asking polls: a process that has
+    /// ended is asked again on the next look, and nothing that asks from the
+    /// thread that draws is kept waiting on somebody else's publication. A copy
+    /// of the descriptor that a forked child has not yet let go of looks held
+    /// the same way, and is gone by a later look.
+    pub(super) fn try_acquire_in(state: &Path) -> io::Result<Option<Self>> {
+        create_state_directory(state)?;
+        let directory = open_state_directory(state)?;
+        let lock = open_lock(&directory, WRITABLE_LOCK)?;
         match rustix::fs::flock(&lock, FlockOperation::NonBlockingLockExclusive) {
             Ok(()) => {}
-            Err(rustix::io::Errno::WOULDBLOCK) if lock_after_transient_holder(&lock)? => {}
+            Err(rustix::io::Errno::WOULDBLOCK) => return Ok(None),
             Err(problem) => return Err(problem.into()),
         }
-        validate_state(path, &state)?;
-        validate_lock(path, WRITABLE_LOCK, &lock)?;
-        Ok(Self {
-            _state: state,
+        validate_state(state, &directory)?;
+        validate_lock(state, WRITABLE_LOCK, &lock)?;
+        // Touched whenever it is taken, so a cleaner of the temporary
+        // directory reads the lock as in use rather than as forgotten: it is
+        // created empty and never written, so nothing else advances it.
+        let _ =
+            lock.set_times(std::fs::FileTimes::new().set_modified(std::time::SystemTime::now()));
+        Ok(Some(Self {
+            _state: directory,
             _lock: lock,
-            #[cfg(test)]
-            test_serial: None,
-        })
+        }))
+    }
+
+    /// Takes the lock in `state` within `patience`, or `None` where a
+    /// publication holds it for longer than that.
+    ///
+    /// Waited for, unlike [`Self::try_acquire_in`], because the one asking is a
+    /// preparation about to take its baselines, and a baseline taken halfway
+    /// through a publication would be half of one. Bounded, because the holder
+    /// need not be a command of this process: another crucible of this user —
+    /// including one from before this lock was narrowed, which keeps it for a
+    /// whole run — would otherwise hold up every command that writes, with
+    /// nothing to end the wait.
+    pub(super) fn acquire_in(state: &Path, patience: Duration) -> io::Result<Option<Self>> {
+        let deadline = Instant::now() + patience;
+        loop {
+            if let Some(lease) = Self::try_acquire_in(state)? {
+                return Ok(Some(lease));
+            }
+            if Instant::now() >= deadline {
+                return Ok(None);
+            }
+            std::thread::sleep(LOCK_POLL);
+        }
     }
 }
 

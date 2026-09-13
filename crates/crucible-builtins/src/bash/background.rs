@@ -28,6 +28,7 @@
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use super::output::Pipe;
@@ -41,6 +42,17 @@ use crucible_tools::{CallResultAcceptance, CallResultReceipt};
 /// bounded output for as long as it runs, and a fifth call is answered with a
 /// refusal naming the four in the way — which the model can act on.
 pub const MOST: usize = 4;
+
+/// How long a command that has ended is given, on the way out, to finish
+/// publishing what it wrote.
+///
+/// Shorter than the wait a call makes, because somebody is waiting for this
+/// process to be gone, and what the wait is for may be held by another crucible
+/// of this user.
+#[cfg(not(test))]
+const PUBLICATION: Duration = Duration::from_secs(5);
+#[cfg(test)]
+const PUBLICATION: Duration = Duration::from_millis(300);
 
 /// How much of what one ended command printed travels in the note about it.
 ///
@@ -69,6 +81,9 @@ struct Left {
     /// When the process was first seen to have gone, for the grace its readers
     /// get to reach the end of its pipes. `None` until it has.
     exited: Option<Instant>,
+    /// When it was first seen to have ended with its publication unfinished.
+    /// `None` until it has, and the ceiling its wait gets is counted from it.
+    publishing: Option<Instant>,
     /// Runner finalization has not yet bound the durable result receipt.
     accepting: bool,
 }
@@ -114,7 +129,8 @@ pub struct Ended {
     pub called: Box<str>,
     /// What the call said it was for, empty where it said nothing.
     pub said: Box<str>,
-    /// What it exited with, or `None` where a signal ended it.
+    /// What it exited with, or `None` where a signal ended it or its ending
+    /// went wrong.
     pub code: Option<i32>,
     /// How many lines it printed in total.
     pub lines: usize,
@@ -126,6 +142,9 @@ pub struct Ended {
     /// only move left — which is the polling the note exists to make
     /// unnecessary.
     pub printed: Box<str>,
+    /// Why nothing it wrote was published, where its ending could not be
+    /// completed: most often a root it wrote into changed while it ran.
+    pub unpublished: Option<Box<str>>,
 }
 
 /// Everything left running, behind the one lock that owns it.
@@ -164,7 +183,20 @@ impl Drop for Held {
         // Attempt every group on the way out. The process owner retains any
         // backend quarantine required when cleanup cannot be confirmed. Unwind
         // reaches these owners; an abort would skip their destructors entirely.
+        //
+        // One that has ended is waiting its turn to publish what it wrote, and is
+        // let finish that first, because ending it would discard it. What it waits
+        // for is another command's publication, which ends — but the wait is
+        // bounded, because that publication may belong to another crucible of
+        // this user and crucible itself is on its way out.
         for left in &mut self.left {
+            let waited = Instant::now();
+            while left.process.ended()
+                && matches!(left.process.try_wait(), Ok(None))
+                && waited.elapsed() < PUBLICATION
+            {
+                thread::sleep(super::TICK);
+            }
             let _ = super::output::end(left.process.as_mut());
         }
     }
@@ -292,6 +324,7 @@ impl Background {
             err: taking.err,
             since: taking.since,
             exited: None,
+            publishing: None,
             accepting,
         });
 
@@ -356,7 +389,8 @@ impl Background {
     ///
     /// Silent about a number nothing answers to: the panel is drawn from a list
     /// that may be a frame old, and a key pressed against a command that has just
-    /// exited has got what it asked for.
+    /// exited has got what it asked for. So has one pressed against a command that
+    /// has ended and waits its turn to publish: [`Self::reap`] reports it.
     ///
     /// # Errors
     ///
@@ -371,6 +405,11 @@ impl Background {
         if let Some(at) = standing.left.iter().position(|left| left.number == number)
             && let Some(left) = standing.left.get_mut(at)
         {
+            // One that has ended is waiting its turn to publish what it wrote, and
+            // `reap` is about to report it. Stopping it would discard what it wrote.
+            if left.process.ended() {
+                return Ok(());
+            }
             super::output::end(left.process.as_mut())?;
             standing.left.remove(at);
         }
@@ -415,45 +454,72 @@ impl Background {
                 still.push(left);
                 continue;
             }
-            match left.process.try_wait() {
-                Ok(Some(status)) => {
-                    // Exited, but what it printed last may still be in flight:
-                    // the readers own their own threads, and the bytes a
-                    // command wrote as it died land after the status does. The
-                    // ending is worth nothing to the model without them, so it
-                    // is held back — never by blocking, because this runs on the
-                    // beat the thread that draws keeps.
-                    let gone = *left.exited.get_or_insert_with(Instant::now);
-                    if !left.drained() && gone.elapsed() < super::output::DRAIN {
+            let (code, unpublished) = match left.process.try_wait() {
+                Ok(Some(status)) => (status.code(), None),
+                // From a command that has ended, an error is how its ending went
+                // wrong: what it wrote was refused, most often. It is reported like
+                // any other ending, with why, rather than kept as though it still
+                // ran.
+                Err(problem) if left.process.ended() => (
+                    None,
+                    Some(super::output::excerpt(&problem.to_string(), SHARE)),
+                ),
+                // It has ended, and its writes are waiting their turn to
+                // publish. Kept rather than stopped, because stopping it
+                // discards them — but not for the whole run: what it waits for
+                // can be held by another crucible of this user, and a command
+                // nothing ever reports holds one of the few slots there are.
+                Ok(None) if left.process.ended() => {
+                    let since = *left.publishing.get_or_insert_with(Instant::now);
+                    if since.elapsed() < PUBLICATION {
                         still.push(left);
                         continue;
                     }
-
-                    // The shell has gone; its descendants have not necessarily,
-                    // and this is the one path where nothing else will end them.
-                    if super::output::end(left.process.as_mut()).is_err() {
-                        still.push(left);
-                        continue;
-                    }
-                    let (lines, _) = left.counted();
-                    let printed = super::output::excerpt(&left.text(), SHARE);
-
-                    ended.push(Ended {
-                        tool: super::NAME,
-                        number: left.number,
-                        called: left.called.clone(),
-                        said: left.said.clone(),
-                        code: status.code(),
-                        lines,
-                        printed: printed.into(),
-                    });
+                    (
+                        None,
+                        Some("its publication did not finish in time".to_owned()),
+                    )
                 }
-                // Still running, or a wait that could not be made. A command
-                // whose status cannot be read is kept rather than reported: it is
-                // still holding resources, and `stop` and this module's drop are
-                // both still able to end it.
-                Ok(None) | Err(_) => still.push(left),
+                // Still running, or a wait that could not be made. A command whose
+                // status cannot be read is kept rather than reported: it is still
+                // holding resources, and `stop` and this module's drop are both
+                // still able to end it.
+                Ok(None) | Err(_) => {
+                    still.push(left);
+                    continue;
+                }
+            };
+
+            // Ended, but what it printed last may still be in flight: the readers
+            // own their own threads, and the bytes a command wrote as it died land
+            // after the status does. The ending is worth nothing to the model
+            // without them, so it is held back — never by blocking, because this
+            // runs on the beat the thread that draws keeps.
+            let gone = *left.exited.get_or_insert_with(Instant::now);
+            if !left.drained() && gone.elapsed() < super::output::DRAIN {
+                still.push(left);
+                continue;
             }
+
+            // The shell has gone; its descendants have not necessarily, and this
+            // is the one path where nothing else will end them.
+            if super::output::end(left.process.as_mut()).is_err() {
+                still.push(left);
+                continue;
+            }
+            let (lines, _) = left.counted();
+            let printed = super::output::excerpt(&left.text(), SHARE);
+
+            ended.push(Ended {
+                tool: super::NAME,
+                number: left.number,
+                called: left.called.clone(),
+                said: left.said.clone(),
+                code,
+                lines,
+                printed: printed.into(),
+                unpublished: unpublished.map(Into::into),
+            });
         }
 
         standing.left = still;

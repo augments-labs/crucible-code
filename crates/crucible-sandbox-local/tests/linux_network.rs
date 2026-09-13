@@ -29,10 +29,6 @@ use crucible_sandbox_local::LocalSandbox;
 use crucible_types::{Ancestry, SandboxId, ToolId};
 use crucible_workspace::Workspace;
 
-// The native writable projection currently admits one transaction per user.
-// Keep independent canaries serialized without changing that product contract.
-static NATIVE: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Self {
@@ -140,9 +136,6 @@ fn finish(mut process: Box<dyn SandboxProcess>) -> (std::process::ExitStatus, Ve
 
 #[test]
 fn linux_curl_uses_the_private_proxy_and_a_denied_target_is_never_dialed() {
-    let _serial = NATIVE
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let fixture = Fixture::new();
     let listener = TcpListener::bind("127.0.0.1:0").expect("origin");
     listener.set_nonblocking(true).expect("nonblocking");
@@ -290,9 +283,6 @@ fn linux_network_workload() {
 
 #[test]
 fn linux_local_binding_is_explicit_and_never_opens_direct_host_egress() {
-    let _serial = NATIVE
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let fixture = Fixture::new();
     let host = TcpListener::bind("127.0.0.1:0").expect("host canary");
     host.set_nonblocking(true).expect("host nonblocking");
@@ -315,9 +305,6 @@ fn linux_local_binding_is_explicit_and_never_opens_direct_host_egress() {
 
 #[test]
 fn linux_projects_only_the_explicit_unix_socket_from_a_writable_workspace() {
-    let _serial = NATIVE
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let fixture = Fixture::new();
     let outside = Fixture::new();
     let path = fixture.0.join("granted.sock");

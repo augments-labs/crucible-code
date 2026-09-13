@@ -406,7 +406,15 @@ remains a disposal failure and blocks another preparation, including when a
 later server failed during partial preparation. Missing pipes and failed
 handshake or catalogue exchanges also require explicit cleanup. An optional
 server can be skipped only when its cleanup is confirmed; otherwise preparation
-stops and later disposal retains the failure.
+stops and later disposal retains the failure. A confined server's writes stay
+private while it runs. They are published when it exits on its own after
+crucible closes its input, at a restart or at the end of the run, and
+discarded when it has to be stopped instead. A server that has exited is not
+stopped while its writes wait for another command's publication. Where they
+cannot be published, because a root it wrote into changed while it ran, the
+restart or the disposal fails with that reason. No replacement is started behind
+that call, because what it wrote is in a state only a fresh start should settle;
+the next turn starts the server as usual.
 
 Inspection retains backend ID/version/provenance, capability claims, separate
 hashed requested and effective policies and redacted plans, manifest,
@@ -526,15 +534,27 @@ device nodes themselves, is mounted `nosuid` and `nodev`. The tests assert the
 behaviour rather than the flag, because the flag is the one thing here that
 cannot be set.
 
+Because the projection is an overlay over the root itself, a publication into
+that root while the command runs changes what the command sees beneath its own
+writes. The command's own publication is then refused, as described below, so
+such a change can confuse a running command but cannot reach the root through
+it.
+
 Publication is decided by how the command ended:
 
 - An ordinary exit, zero or nonzero, publishes the changed paths. A failing
   build still leaves the files it wrote, as it would have without confinement.
 - Termination by a signal, a deadline, <kbd>Esc</kbd>, an output ceiling or a
-  refusal discards the projection. Nothing partial reaches the workspace.
-- A root that changed underneath the command, by anything outside the sandbox,
-  is not published. The delta is discarded rather than merged, and the result
-  says so.
+  refusal discards the projection. Nothing partial reaches the workspace. A
+  command that has already ended is not stopped by a deadline or <kbd>Esc</kbd>
+  while its writes wait their turn to publish, until the ceiling below passes.
+- A command that wrote into a root which changed after it started, whether
+  another command published into it or something outside the sandbox wrote to
+  it, publishes nothing. The delta is discarded rather than merged, and the
+  result says so: the call's own result for a command that was waited for, the
+  note about its ending for a command left running, and the restart or disposal
+  for a confined MCP server. A root the command left unchanged is not checked,
+  so a command that wrote nothing into a changed root is not refused for it.
 
 Publication itself is transactional. The changed paths are staged in this
 user's private sandbox state directory under `/var/tmp`, which no other user can
@@ -544,9 +564,38 @@ a sparse file cannot make publication read through the whole of it. A
 failure between those steps rolls the root back to its pinned baseline. Where a
 rollback cannot itself be proved, the staged content is retained as quarantine
 evidence and the cleanup outcome reports it, rather than deleting what cannot be
-accounted for. Writable transactions are serialized under a host-owned registry
-lock, so two commands never publish into the same root at once, and the next
+accounted for. That evidence records the root as its own transaction last saw
+it, and another command may have published into the root since, so compare it
+with the root's current content before restoring anything from it. The next
 preparation recovers any transaction an earlier process abandoned.
+
+Commands that can write run side by side, including a command left running in
+the background and a confined MCP server, and none of them holds up another
+while it runs. Publication is what has to happen alone. A host-owned lock, one
+for each user, is held while a command's publication is checked against its
+baseline, applied and verified, and while a starting command takes its
+baselines, so no two publications overlap and no baseline is taken halfway
+through one. A command that ends cleanly while another is publishing waits for
+that publication to finish before its own begins; one killed, or stopped by a
+limit, has nothing to publish and does not wait. Waiting commands are not served
+in order, and each keeps its place among the commands allowed to run at once
+until its own publication finishes. Every wait for the lock has a ceiling: a
+command being prepared is refused if the lock does not come free within a
+minute, a command whose own deadline has passed is stopped after a minute, and
+five seconds is the bound everywhere somebody is waiting — a cancelled turn, a
+command left running whose report is overdue, a confined server being restarted
+or disposed of at a turn's end, and the run itself ending.
+
+A command that ran while another published into one of its roots publishes
+nothing, whatever the root looks like afterwards: this user's state directory
+remembers how many publications have touched each root, and a command compares
+that count with the one it recorded when it took its baseline. A crucible from
+before this release takes the same lock, so the two still publish one at a time,
+but it does not keep that count — against such a peer the comparison has nothing
+to see, and only the check against the root's own content remains. The holder
+may be another crucible of this user, including one from before this release,
+which keeps the lock for as long as its commands run; a wait with no end would
+hold up the turn, the cancel and the exit instead.
 
 A detached command follows the same rules when it ends later. Its start result
 is accepted only after it is durably stored, and its terminal publication is

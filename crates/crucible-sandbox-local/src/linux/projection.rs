@@ -33,6 +33,17 @@ use super::transaction;
 const MAX_PROJECTED_ENTRIES: usize = 262_144;
 const MAX_PROJECTED_DEPTH: usize = 64;
 
+/// How long a command being prepared waits for a publication to finish before
+/// it is refused instead.
+///
+/// Refused rather than waited out, because the lock may be held by another
+/// crucible of this user, and a caller can act on a refusal. Shorter under test,
+/// where the holder is a fixture rather than a command.
+#[cfg(not(test))]
+const PUBLICATION_PATIENCE: std::time::Duration = std::time::Duration::from_mins(1);
+#[cfg(test)]
+const PUBLICATION_PATIENCE: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// One complete semantic view used for source-stability checks.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Snapshot {
@@ -107,20 +118,50 @@ impl Eq for Entry {}
 
 struct Root {
     authority: OwnedFd,
+    /// Where the root is on this machine, which is what a publication into it
+    /// is remembered under. The destination below is only the name the sandbox
+    /// gives it, and two names for one root would be remembered apart.
+    host: PathBuf,
     destination: PathBuf,
     source: Option<File>,
     directory: bool,
     exclusions: Vec<PathBuf>,
     baseline: Snapshot,
+    /// What this user's publications had done to this root when the baseline was
+    /// taken. `None` where nothing remembered it, which counts as moved.
+    generation: Option<u64>,
 }
 
 /// One durable command lifecycle plus any host-owned writable copies.
 /// None of their host pathnames reaches the workload.
 pub(super) struct Projection {
+    /// This user's transaction state directory, where the publication lock lives.
+    state: PathBuf,
     stage: Stage,
     roots: Vec<Root>,
     published: bool,
     transaction: transaction::Transaction,
+}
+
+/// Leave for one projection to publish now.
+///
+/// Holds this user's publication lock for as long as it lives, where the
+/// projection has a root to publish into.
+struct Admission {
+    _lease: Option<transaction::Lease>,
+}
+
+impl Admission {
+    /// Whether the lock this admission was let in on is still that lock.
+    #[expect(
+        clippy::used_underscore_binding,
+        reason = "the admission holds the lease only to keep the lock; confirming reads it"
+    )]
+    fn confirm(&self) -> io::Result<()> {
+        self._lease
+            .as_ref()
+            .map_or(Ok(()), transaction::Lease::confirm)
+    }
 }
 
 impl Projection {
@@ -132,7 +173,6 @@ impl Projection {
         request: &SandboxRequest,
         view: &View,
         materialization: Option<&Materialization>,
-        lease: Option<transaction::Lease>,
     ) -> Result<Self, SandboxError> {
         let registry = transaction::RegistryLease::acquire(request)?;
         transaction::RegistryLease::reconcile(&registry).map_err(|source| {
@@ -172,17 +212,6 @@ impl Projection {
                 ));
             }
         }
-        if specifications.is_empty() {
-            if lease.is_some() {
-                return Err(refused(
-                    "writable transaction admission has no projected authority",
-                ));
-            }
-        } else if lease.is_none() {
-            return Err(refused(
-                "writable projection has no global transaction admission",
-            ));
-        }
         specifications.sort_by(|left, right| {
             left.0
                 .components()
@@ -192,12 +221,12 @@ impl Projection {
                 .then_with(|| left.2.cmp(&right.2))
         });
 
+        let state_directory = transaction::state_directory(request)?;
         let root = staging_root(request)?;
         create_private_directory(&root)
             .map_err(|source| failed("could not create writable projection", source))?;
         let stage = Stage::new(root);
         let mut transaction = transaction::Transaction::start(
-            lease,
             stage.root(),
             request.id(),
             match request.invocation_mode() {
@@ -215,12 +244,31 @@ impl Projection {
         )
         .map_err(|source| failed("could not initialize writable transaction journal", source))?;
         drop(registry);
+        // A baseline taken while another command publishes could be half of that
+        // publication, so the baselines wait for it to finish. A projection with
+        // no writable root has no baseline to take, and does not ask.
+        let _publication = if specifications.is_empty() {
+            None
+        } else {
+            match transaction::Lease::acquire_in(&state_directory, PUBLICATION_PATIENCE) {
+                Ok(Some(lease)) => Some(lease),
+                // The refusal this path gave before the lock was narrowed. A
+                // caller can act on it; a wait with no end only holds the turn.
+                Ok(None) => return Err(SandboxError::Concurrency),
+                Err(source) => {
+                    return Err(failed(
+                        "the writable publication lock is unavailable",
+                        source,
+                    ));
+                }
+            }
+        };
         let roots_directory = stage.root().join("roots");
         create_private_directory(&roots_directory)
             .map_err(|source| failed("could not create projected roots", source))?;
 
         let mut roots = Vec::with_capacity(specifications.len());
-        for (index, (_host, authority, destination, directory, exclusions)) in
+        for (index, (host, authority, destination, directory, exclusions)) in
             specifications.into_iter().enumerate()
         {
             let pinned = descriptor_path(authority.as_raw_fd());
@@ -250,19 +298,32 @@ impl Projection {
                     "writable root changed while its private projection was prepared",
                 ));
             }
+            // Read while the publication lock is held, with the baseline, so
+            // the two describe the same moment.
+            let generation = super::generations::current(
+                &state_directory,
+                std::slice::from_ref(&super::generations::key(&host)),
+            )
+            .map_err(|source| failed("writable root generations are unavailable", source))?
+            .into_iter()
+            .next()
+            .flatten();
             roots.push(Root {
                 authority,
+                host,
                 destination,
                 source,
                 directory,
                 exclusions,
                 baseline: before,
+                generation,
             });
         }
         transaction
             .append(transaction::Record::Prepared)
             .map_err(|source| failed("could not durably prepare writable transaction", source))?;
         Ok(Self {
+            state: state_directory,
             stage,
             roots,
             published: false,
@@ -359,8 +420,47 @@ impl Projection {
         })
     }
 
+    /// Leave to publish now, or `None` while another publication holds the lock.
+    ///
+    /// A projection with no writable root has nothing to publish into, and is
+    /// let in without the lock.
+    fn admission(&self) -> io::Result<Option<Admission>> {
+        if self.roots.is_empty() {
+            return Ok(Some(Admission { _lease: None }));
+        }
+        let lease = transaction::Lease::try_acquire_in(&self.state).map_err(|source| {
+            io::Error::new(
+                source.kind(),
+                // The kind, not the message: this one carries the state
+                // directory's own path, and the model reads what comes back.
+                format!(
+                    "the writable publication lock is unavailable: {}",
+                    source.kind()
+                ),
+            )
+        })?;
+        Ok(lease.map(|lease| Admission {
+            _lease: Some(lease),
+        }))
+    }
+
+    /// Rolls the transaction back for a publication that will not happen.
+    fn abort_publication(&mut self, problem: io::Error) -> publish::Failure {
+        match self.transaction.finish_abort(false) {
+            Ok(()) => publish::Failure::rolled_back(problem),
+            Err(journal) => {
+                self.retain_evidence();
+                publish::Failure::quarantined(io::Error::other(format!(
+                    "publication was refused and rollback could not be journaled: {problem}; {journal}"
+                )))
+            }
+        }
+    }
+
+    /// Publishes the command's writes, which only a caller let in can ask for.
     fn publish(
         &mut self,
+        admission: &Admission,
         broker_baselines: &[Snapshot],
         finals: &[Snapshot],
     ) -> Result<(), publish::Failure> {
@@ -381,9 +481,20 @@ impl Projection {
                 };
             }
         };
+        // Asked again before anything is written: a lock file removed and
+        // remade under this lease would leave two publications each holding
+        // what it believes is the only one.
+        if let Err(problem) = admission.confirm() {
+            return Err(self.abort_publication(problem));
+        }
         let publication = publish::apply(
             &self.roots,
             self.stage.root(),
+            &publish::Seen {
+                first: broker_baselines,
+                last: finals,
+                state: &self.state,
+            },
             &canonical,
             &mut self.transaction,
         );
@@ -713,6 +824,9 @@ pub(super) struct ProcessPlan {
     pub(super) sandbox: SandboxId,
     pub(super) invocation: SandboxInvocationMode,
     pub(super) call_result_key: Option<CallResultKey>,
+    /// Writers in one test process run one at a time, for as long as each runs.
+    #[cfg(test)]
+    pub(super) serial: Option<transaction::TestSerialLease>,
 }
 
 pub(super) fn wrap(
@@ -726,6 +840,8 @@ pub(super) fn wrap(
         sandbox,
         invocation,
         call_result_key,
+        #[cfg(test)]
+        serial,
     } = plan;
     let stage = projection
         .as_ref()
@@ -754,6 +870,9 @@ pub(super) fn wrap(
         receiver: Some(receiver),
         status: None,
         terminal: false,
+        reported: None,
+        failure: None,
+        unrecorded: None,
         audit,
         sandbox,
         control: Some(control),
@@ -762,6 +881,8 @@ pub(super) fn wrap(
         acceptance_pending: false,
         inspection,
         cleanup: crucible_sandbox::SandboxCleanup::Pending,
+        #[cfg(test)]
+        _serial: serial,
     }))
 }
 
@@ -802,6 +923,18 @@ struct ProjectedProcess {
     receiver: Option<protocol::Receiver>,
     status: Option<ExitStatus>,
     terminal: bool,
+    /// The broker's terminal report, from when it is read until what the command
+    /// wrote is published or discarded.
+    ///
+    /// Kept because it can be read only once, and a clean ending that has to wait
+    /// its turn to publish is asked about again on the next look.
+    reported: Option<protocol::Terminal>,
+    /// How the ending went wrong, where it did, answered again on every later
+    /// look.
+    failure: Option<(io::ErrorKind, Box<str>)>,
+    /// A fact about a publication that went ahead, which the audit could not
+    /// take. Reported with the cleanup rather than as the ending.
+    unrecorded: Option<io::Error>,
     audit: SandboxAudit,
     sandbox: SandboxId,
     control: Option<std::os::unix::net::UnixStream>,
@@ -810,6 +943,8 @@ struct ProjectedProcess {
     acceptance_pending: bool,
     inspection: SandboxInspection,
     cleanup: crucible_sandbox::SandboxCleanup,
+    #[cfg(test)]
+    _serial: Option<transaction::TestSerialLease>,
 }
 
 impl ProjectedProcess {
@@ -823,6 +958,150 @@ impl ProjectedProcess {
         self.audit
             .record(self.sandbox, SandboxFactKind::Cleanup(cleanup))
             .map_err(io::Error::other)
+    }
+
+    /// Settles an ending that went wrong, so every later look gives the same answer.
+    fn failed(&mut self, problem: io::Error) -> io::Error {
+        self.terminal = true;
+        self.reported = None;
+        self.failure = Some((problem.kind(), problem.to_string().into()));
+        problem
+    }
+
+    /// Discards what the command wrote, and records how that went.
+    fn discard(&mut self) -> io::Result<()> {
+        let Some(projection) = self.projection.as_mut() else {
+            return Ok(());
+        };
+        if let Err(problem) = projection.abort(true) {
+            projection.retain_evidence();
+            self.projection.take();
+            self.lifecycle(SandboxLifecycle::Quarantined)?;
+            return Err(problem);
+        }
+        self.lifecycle(SandboxLifecycle::RolledBack)
+    }
+
+    /// Reads the broker's terminal report once it has exited, and journals the scan.
+    fn report(&mut self) -> io::Result<()> {
+        let Some(terminal) = self.receiver.as_mut().map(protocol::Receiver::finish) else {
+            return Err(self.failed(io::Error::other(
+                "sandbox terminal scan receiver is unavailable",
+            )));
+        };
+        self.receiver.take();
+        self.control.take();
+        let terminal = match terminal {
+            Ok(terminal) => terminal,
+            Err(problem) => {
+                let problem = self.failed(problem);
+                if let Some(projection) = self.projection.as_mut() {
+                    let lifecycle = if projection.abort(true).is_ok() {
+                        SandboxLifecycle::RolledBack
+                    } else {
+                        projection.retain_evidence();
+                        SandboxLifecycle::Quarantined
+                    };
+                    if let Err(cleanup) = self.lifecycle(lifecycle) {
+                        return Err(self.failed(cleanup));
+                    }
+                }
+                return Err(problem);
+            }
+        };
+        if let Some(projection) = self.projection.as_mut()
+            && let Err(problem) = projection.record_terminal_scan()
+        {
+            let _ = projection.abort(true);
+            projection.retain_evidence();
+            let problem = self.failed(problem);
+            if let Err(cleanup) = self.lifecycle(SandboxLifecycle::Quarantined) {
+                return Err(self.failed(cleanup));
+            }
+            return Err(problem);
+        }
+        self.reported = Some(terminal);
+        Ok(())
+    }
+
+    /// Publishes or discards what the command wrote, once its report is read.
+    ///
+    /// Only a clean ending publishes, so only a clean ending asks for the lock: a
+    /// command killed, or stopped by a limit, is discarded without waiting for
+    /// another command's publication.
+    fn conclude(&mut self) -> io::Result<Option<ExitStatus>> {
+        let Some(reported) = self.reported.take() else {
+            return Err(self.failed(io::Error::other("sandbox terminal report is unavailable")));
+        };
+        let status = reported.status;
+        if self.projection.is_none() {
+            if !reported.roots.is_empty() {
+                return Err(self.failed(io::Error::other(
+                    "sandbox broker reported roots outside the immutable projection plan",
+                )));
+            }
+        } else if status.signal().is_none() && self.process.violation().is_none() {
+            let admitted = self
+                .projection
+                .as_ref()
+                .map_or(Ok(None), Projection::admission);
+            let admission = match admitted {
+                Ok(Some(admission)) => admission,
+                // Another command is publishing. This one is asked about again on
+                // the next look rather than waited for here, where the caller may
+                // be the thread that draws.
+                Ok(None) => {
+                    self.reported = Some(reported);
+                    return Ok(None);
+                }
+                Err(problem) => {
+                    let problem = self.failed(problem);
+                    // The cleanup's own failure becomes the answer, so that the
+                    // look that returns it and every later look agree.
+                    if let Err(cleanup) = self.discard() {
+                        return Err(self.failed(cleanup));
+                    }
+                    return Err(problem);
+                }
+            };
+            if let Err(problem) = self.lifecycle(SandboxLifecycle::PublicationStarted) {
+                let problem = self.failed(problem);
+                if let Err(cleanup) = self.discard() {
+                    return Err(self.failed(cleanup));
+                }
+                return Err(problem);
+            }
+            let publication = self.projection.as_mut().map_or(Ok(()), |projection| {
+                projection.publish(&admission, &reported.baselines, &reported.roots)
+            });
+            if let Err(problem) = publication {
+                let lifecycle = if problem.requires_quarantine() {
+                    SandboxLifecycle::Quarantined
+                } else {
+                    SandboxLifecycle::RolledBack
+                };
+                let problem = self.failed(problem.into_io());
+                if let Err(cleanup) = self.lifecycle(lifecycle) {
+                    return Err(self.failed(cleanup));
+                }
+                return Err(problem);
+            }
+            self.terminal = true;
+            self.status = Some(status);
+            // The publication is done. A fact that cannot be recorded is a
+            // cleanup failure, not an ending that went wrong: reported as one, it
+            // would tell the model to write everything again over the files that
+            // are already there.
+            if let Err(problem) = self.lifecycle(SandboxLifecycle::Published) {
+                self.unrecorded = Some(problem);
+            }
+            return Ok(Some(status));
+        } else if let Err(problem) = self.discard() {
+            return Err(self.failed(problem));
+        }
+        self.terminal = true;
+        self.status = Some(status);
+        Ok(Some(status))
     }
 }
 
@@ -843,92 +1122,30 @@ impl SandboxProcess for ProjectedProcess {
         if let Some(status) = self.status {
             return Ok(Some(status));
         }
-        let Some(_broker_status) = self.process.try_wait()? else {
-            return Ok(None);
-        };
-        let terminal = self
-            .receiver
-            .as_mut()
-            .ok_or_else(|| io::Error::other("sandbox terminal scan receiver is unavailable"))?
-            .finish();
-        let terminal = match terminal {
-            Ok(terminal) => terminal,
-            Err(problem) => {
-                let discarded = self.projection.is_some() && !self.terminal;
-                self.receiver.take();
-                self.control.take();
-                self.terminal = true;
-                if discarded {
-                    let lifecycle = if let Some(projection) = self.projection.as_mut()
-                        && projection.abort(true).is_ok()
-                    {
-                        SandboxLifecycle::RolledBack
-                    } else {
-                        if let Some(projection) = self.projection.as_mut() {
-                            projection.retain_evidence();
-                        }
-                        SandboxLifecycle::Quarantined
-                    };
-                    self.lifecycle(lifecycle)?;
-                }
-                return Err(problem);
-            }
-        };
-        self.receiver.take();
-        self.control.take();
-        let status = terminal.status;
-        if !self.terminal {
-            if let Some(projection) = self.projection.as_mut()
-                && let Err(problem) = projection.record_terminal_scan()
-            {
-                let _ = projection.abort(true);
-                projection.retain_evidence();
-                self.lifecycle(SandboxLifecycle::Quarantined)?;
-                self.terminal = true;
-                return Err(problem);
-            }
-            if status.signal().is_none()
-                && self.process.violation().is_none()
-                && self.projection.is_some()
-            {
-                self.lifecycle(SandboxLifecycle::PublicationStarted)?;
-                let publication = self
-                    .projection
-                    .as_mut()
-                    .ok_or_else(|| io::Error::other("sandbox projection disappeared"))?
-                    .publish(&terminal.baselines, &terminal.roots);
-                match publication {
-                    Ok(()) => self.lifecycle(SandboxLifecycle::Published)?,
-                    Err(problem) => {
-                        let lifecycle = if problem.requires_quarantine() {
-                            SandboxLifecycle::Quarantined
-                        } else {
-                            SandboxLifecycle::RolledBack
-                        };
-                        self.lifecycle(lifecycle)?;
-                        return Err(problem.into_io());
-                    }
-                }
-            } else if self.projection.is_some() {
-                if let Some(projection) = self.projection.as_mut()
-                    && let Err(problem) = projection.abort(true)
-                {
-                    projection.retain_evidence();
-                    self.lifecycle(SandboxLifecycle::Quarantined)?;
-                    self.terminal = true;
-                    self.projection.take();
-                    return Err(problem);
-                }
-                self.lifecycle(SandboxLifecycle::RolledBack)?;
-            } else if self.projection.is_none() && !terminal.roots.is_empty() {
-                return Err(io::Error::other(
-                    "sandbox broker reported roots outside the immutable projection plan",
-                ));
-            }
-            self.terminal = true;
+        if let Some((kind, problem)) = &self.failure {
+            return Err(io::Error::new(*kind, problem.to_string()));
         }
-        self.status = Some(status);
-        Ok(Some(status))
+        if self.terminal {
+            // Stopped before its report was read, so how the leader ended is how
+            // the command ended. A zero here says the leader exited, not that
+            // what the command wrote was published: stopping discards whatever
+            // had not been published yet.
+            return self.process.try_wait();
+        }
+        if self.reported.is_none() {
+            if self.process.try_wait()?.is_none() {
+                return Ok(None);
+            }
+            self.report()?;
+        }
+        self.conclude()
+    }
+
+    fn ended(&mut self) -> bool {
+        self.status.is_some()
+            || self.terminal
+            || self.reported.is_some()
+            || matches!(self.process.try_wait(), Ok(Some(_)))
     }
 
     fn stop(&mut self) -> io::Result<()> {
@@ -941,10 +1158,18 @@ impl SandboxProcess for ProjectedProcess {
         }
         let needs_terminal = self.status.is_none() && !self.terminal;
         let cancellation = self.control.as_mut().map_or(Ok(()), |control| {
-            control
+            match control
                 .write_all(&CANCEL_FRAME)
                 .and_then(|()| control.flush())
+            {
+                // A broker that has exited took its end of the socket with it and
+                // has nothing left to cancel. That its scope has ended is what the
+                // stop below confirms.
+                Err(problem) if problem.kind() == io::ErrorKind::BrokenPipe => Ok(()),
+                sent => sent,
+            }
         });
+        self.reported = None;
         let process_cleanup = self.process.stop();
         let scope_reaped =
             self.process.inspection().cleanup() == crucible_sandbox::SandboxCleanup::Complete;
@@ -979,10 +1204,12 @@ impl SandboxProcess for ProjectedProcess {
         } else {
             crucible_sandbox::SandboxCleanup::Failed
         };
+        let unrecorded = self.unrecorded.take().map_or(Ok(()), Err);
         let mut result = cancellation
             .and(process_cleanup)
             .and(terminal_cleanup)
-            .and(projection_cleanup);
+            .and(projection_cleanup)
+            .and(unrecorded);
         self.inspection = self.inspection.clone().cleaned(cleanup);
         self.cleanup = cleanup;
         let audited = self.audit_cleanup(cleanup);
