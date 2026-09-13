@@ -1,6 +1,6 @@
 # Tools
 
-Eleven tools, advertised in the order a model tends to reach for them. Seven are
+Twelve tools, advertised in the order a model tends to reach for them. Eight are
 always in the list. The rest are **held back**: they exist and they work, and the
 agent does not see them until it looks them up with `tool_search`. A schema the
 agent can see is one it pays for on every request of every turn, and most
@@ -14,6 +14,7 @@ sessions never write a plan or ask a question about the world.
 | `edit` | Replaces text in a file | yes |
 | `write` | Creates or overwrites a file | yes |
 | `bash` | Runs a command | yes |
+| `bash_output` | Says what a command left running has printed | no |
 | `todo_write` | Writes down the plan | no |
 | `ask_user` | Puts a question to you | no |
 | `web_search` | Searches the web | yes |
@@ -52,10 +53,12 @@ session and deliberately.
 reach, so what bounds it is the question you are asked, which names the command
 rather than a directory.
 
-`todo_write` names no path, because it reaches no file. What it changes is a
-value inside crucible, which is the whole of why nobody is asked about it —
-there is no target for a rule to be written about. [Writing down the
-plan](planning.md) is the rest of it.
+`bash_output` and `todo_write` name no path, because they reach no file. What
+each one touches is a value inside crucible — the output crucible is already
+holding for a command it started, and the plan above the prompt — which is the
+whole of why nobody is asked about either: there is no target for a rule to be
+written about. [Writing down the plan](planning.md) and [Running a
+command](commands.md) are the rest of them.
 
 Two files are outside the file tools' reach in every mode: `config.json` and
 `config.local.json` directly inside any directory named `.crucible`. [The files

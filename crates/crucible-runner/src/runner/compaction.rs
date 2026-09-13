@@ -29,8 +29,8 @@ use crucible_core::{
     Compacted, Compacting, CompactionRecord, ContextSection, Delta, Message, PermissionsSection,
     PromptCacheAttempt, PromptCacheEncoding, PromptCacheFact, PromptCacheOutcome,
     PromptCachePlanned, PromptCachePreparationError, PromptCacheRequestDisposition,
-    PromptCacheRequestFact, PromptCacheUsageFact, ProviderError, Request, Room, RunItem, Spend,
-    StopReason, TOOL_RESULT_BYTES, ToolId, ToolOutput, TurnError, UsageCost,
+    PromptCacheRequestFact, PromptCacheUsageFact, ProviderError, RecordedToolOutput, Request, Room,
+    RunItem, Spend, StopReason, TOOL_RESULT_BYTES, ToolId, TurnError, UsageCost,
 };
 use std::fmt::Write as _;
 
@@ -840,7 +840,7 @@ impl Runner {
                     continue;
                 }
 
-                if bytes >= ToolOutput::MIN_PRUNE_BYTES as u64 {
+                if bytes >= RecordedToolOutput::MIN_PRUNE_BYTES as u64 {
                     clearing.push(result.id.clone());
                     savings = savings.saturating_add(bytes);
                 }

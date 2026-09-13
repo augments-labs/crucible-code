@@ -3,8 +3,8 @@
 use super::*;
 use crate::transport::Replay;
 use crucible_core::{
-    ApiKey, Continuation, Delta, Header, HeaderKey, Message, RequestPurpose, ToolArgs, ToolCall,
-    ToolId, ToolOutput, ToolResult, Transcript,
+    ApiKey, Continuation, Delta, Header, HeaderKey, Message, RecordedToolOutput, RequestPurpose,
+    ToolArgs, ToolCall, ToolId, ToolResult, Transcript,
 };
 use serde_json::{Value, json};
 use std::fmt::Write as _;
@@ -116,7 +116,7 @@ fn answer_with(provider: &Anthropic, request: Request<'_>) -> Message {
 fn answered() -> Message {
     Message::ToolResults(vec![ToolResult {
         id: ToolId::new("call-1"),
-        output: ToolOutput::ok("contents"),
+        output: RecordedToolOutput::ok("contents"),
     }])
 }
 

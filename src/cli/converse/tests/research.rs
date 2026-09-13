@@ -52,10 +52,10 @@ impl Fetch for Web {
 fn researching(failed: bool) -> String {
     let mut tools = Tools::new();
     tools
-        .add_builtin(crucible_tools::WebSearch::new(Arc::new(Web)))
+        .add_builtin(crucible_builtins::WebSearch::new(Arc::new(Web)))
         .unwrap();
     tools
-        .add_builtin(crucible_tools::WebFetch::new(Arc::new(Web)))
+        .add_builtin(crucible_builtins::WebFetch::new(Arc::new(Web)))
         .unwrap();
     let mut batch = Vec::new();
     for (at, name) in ["web_search", "web_search", "web_fetch", "web_fetch"]

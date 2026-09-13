@@ -4,12 +4,13 @@
 //! the process's own — so what is tested is the function of a key, which is where
 //! the decision actually lives.
 
+use crucible_builtins::{Background, Bash};
 use crucible_core::{
     Ancestry, Ask, CallResultKey, CallResultReceipt, CallResultStoreError, Cancel, DescribeTool,
     InvocationId, JournalStore, Mode, Permission, Remember, Rules, RunItem, Sensitivity, Settled,
     Tool, ToolArgs, ToolCall, ToolContext, ToolId, ToolResult, Unwatched, Verdict,
 };
-use crucible_tools::{Background, Bash, LocalSandbox};
+use crucible_sandbox_local::LocalSandbox;
 use sha2::{Digest, Sha256};
 
 use crate::cli::sample::Sample;
@@ -42,8 +43,8 @@ fn running_with(
     // namespace availability. Selecting the compatibility backend explicitly
     // keeps that boundary visible instead of depending on the host running the
     // test to permit nested user namespaces.
-    let tool = Bash::new(here.workspace())
-        .sandboxing(sandbox, false)
+    let tool = Bash::new(here.workspace(), sandbox)
+        .sandboxing(false)
         .leaving(left.clone());
     let mut engine = Permission::with(Mode::FullAccess, Rules::default());
 
@@ -61,8 +62,8 @@ fn running_with(
         };
 
         let context = ToolContext::new(Ancestry::new(), call.id.clone(), &cancel, None, &Unwatched)
-            .with_call_result_store(InvocationId::new(), &JOURNAL);
-        let mut output = tool.run(approved, &context).expect("the command started");
+            .with_invocation(InvocationId::new());
+        let output = tool.run(approved, &context).expect("the command started");
         assert!(
             !output.is_failed(),
             "a command this test needs running was refused: {}",
@@ -75,10 +76,9 @@ fn running_with(
             .take_call_result()
             .expect("the pending result slot")
             .expect("a detached command leaves a result to accept");
-        output.forget_diff();
         let result = ToolResult {
             id: call.id.clone(),
-            output,
+            output: output.into_recorded(),
         };
         let receipt = JOURNAL
             .put_call_result(pending.key(), &result)

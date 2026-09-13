@@ -1,0 +1,39 @@
+[package]
+name = "crucible-workspace"
+description = "The directories crucible reaches, and the proof a path is one of them."
+publish.workspace = true
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# This crate answers about the filesystem and nothing else, so it names no
+# workspace crate at all: a path proof that had to agree with a domain value
+# would be a second thing for containment to depend on.
+#
+# `thiserror` writes the `Display` and `source` impls for `PathError`, which
+# every fallible function here returns, and is derive-only: nothing of the crate
+# survives into the binary.
+[dependencies]
+thiserror.workspace = true
+
+# The descriptor walk that opens a path containment already settled, which is
+# what makes that answer hold against something else writing into the tree
+# between the two. On Unix `crossterm` is already compiling this crate, so what
+# arrives here is a feature rather than a crate.
+[target.'cfg(unix)'.dependencies]
+rustix.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+# Windows has no `openat`, so a name can be redirected through an ancestor
+# between containment and open. `GetFinalPathNameByHandleW` validates the handle
+# that actually opened before a byte is read; std exposes the handle but not
+# that query, and the same boundary commits new files under a held parent
+# rather than by name. The exact-pinned crate and FileSystem feature are already
+# in the workspace for privacy.
+windows-sys.workspace = true
+
+[lints]
+workspace = true

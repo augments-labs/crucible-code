@@ -32,7 +32,7 @@ mod store;
 
 pub use error::AuthError;
 pub use oauth::{
-    KimiCredential, KimiOAuth, LoginAttempt, LoginMethod, LoginUpdate, OAuthError,
+    KimiCredential, KimiOAuth, LoginAttempt, LoginMethod, LoginSlot, LoginUpdate, OAuthError,
     OpenAiCredential, OpenAiOAuth, SubscriptionLogin,
 };
 pub use store::{Store, StoredCredentials};

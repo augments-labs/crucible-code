@@ -564,8 +564,8 @@ mod tests {
     }
 
     use crucible_core::{
-        Attached, Change, Changed, Content, Diff, Effort, Fragment, Line, Modality, ToolArgs,
-        ToolCall, ToolId, ToolOutput, Transcript,
+        Attached, Change, Changed, Content, Diff, Effort, Fragment, Line, Modality,
+        RecordedToolOutput, ToolArgs, ToolCall, ToolId, ToolOutput, Transcript,
     };
 
     use super::*;
@@ -1012,7 +1012,7 @@ mod tests {
         transcript
             .push(Message::ToolResults(vec![ToolResult {
                 id: ToolId::new("call_1"),
-                output: ToolOutput::ok("fn main() {}"),
+                output: RecordedToolOutput::ok("fn main() {}"),
             }]))
             .expect("valid fixture transcript");
 
@@ -1036,7 +1036,7 @@ mod tests {
         transcript
             .push(Message::ToolResults(vec![ToolResult {
                 id: ToolId::new("call_1"),
-                output: ToolOutput::failed("no such file"),
+                output: RecordedToolOutput::failed("no such file"),
             }]))
             .expect("valid fixture transcript");
 
@@ -1201,7 +1201,7 @@ mod tests {
     }
 
     /// One call, answered with the words and files a tool came back with.
-    fn one(output: ToolOutput) -> Vec<ToolResult> {
+    fn one(output: RecordedToolOutput) -> Vec<ToolResult> {
         vec![ToolResult {
             id: ToolId::new("call_1"),
             output,
@@ -1317,14 +1317,16 @@ mod tests {
     #[test]
     fn the_request_body_is_the_same_whatever_the_reader_was_shown() {
         let text = "fn main() {}";
-        let plain = serialize(&answering(one(ToolOutput::ok(text)), Vec::new()));
+        let plain = serialize(&answering(one(RecordedToolOutput::ok(text)), Vec::new()));
         let shown = serialize(&answering(
-            one(ToolOutput::ok(text).showing(Diff::new([Line::new(1, Change::Added, text)]))),
+            one(ToolOutput::ok(text)
+                .showing(Diff::new([Line::new(1, Change::Added, text)]))
+                .into_recorded()),
             Vec::new(),
         ));
 
         let counted = serialize(&answering(
-            one(ToolOutput::ok(text).counting(Changed::new(2, 1))),
+            one(RecordedToolOutput::ok(text).counting(Changed::new(2, 1))),
             Vec::new(),
         ));
 

@@ -7,8 +7,8 @@
 /// A completed signed exchange whose recap must carry only descriptive text.
 pub(crate) fn recap_history() -> crucible_core::Transcript {
     use crucible_core::{
-        Continuation, ContinuationData, ContinuationPart, ContinuationScope, Message, StopReason,
-        ToolArgs, ToolCall, ToolId, ToolOutput, ToolResult, Transcript,
+        Continuation, ContinuationData, ContinuationPart, ContinuationScope, Message,
+        RecordedToolOutput, StopReason, ToolArgs, ToolCall, ToolId, ToolResult, Transcript,
     };
     let mut state = Continuation::new(
         "fixture-v1",
@@ -55,7 +55,7 @@ pub(crate) fn recap_history() -> crucible_core::Transcript {
     transcript
         .push(Message::ToolResults(vec![ToolResult {
             id: ToolId::new("call-1"),
-            output: ToolOutput::ok("old result"),
+            output: RecordedToolOutput::ok("old result"),
         }]))
         .unwrap();
     transcript.push(Message::said("summarize")).unwrap();
@@ -70,8 +70,8 @@ use crucible_core::{
     PromptCacheResourceHandle, PromptCacheResourceId, PromptCacheResourceReference,
     PromptCacheRetention, PromptCacheRetentionClass, PromptCacheScopeDigest, PromptCacheSelected,
     PromptCacheSelection, PromptCacheUsageReporting, ProviderAttemptId, ProviderNumericDetail,
-    ProviderUsage, Remember, Request, Sensitivity, Settled, StatefulTransportCapability, ToolArgs,
-    ToolCall, ToolId, ToolOutput, Verdict,
+    ProviderUsage, RecordedToolOutput, Remember, Request, Sensitivity, Settled,
+    StatefulTransportCapability, ToolArgs, ToolCall, ToolId, ToolOutput, Verdict,
 };
 
 const CACHE_CONTENT: &[PromptCacheContent] = &[
@@ -212,17 +212,17 @@ impl Ask for Allows {
 }
 
 /// What a tool answered with, and the files it was permitted to show.
-pub(crate) fn found(text: &str, attachments: Vec<Attachment>) -> ToolOutput {
+pub(crate) fn found(text: &str, attachments: Vec<Attachment>) -> RecordedToolOutput {
     showing(ToolOutput::ok(text), attachments)
 }
 
 /// The same, for a call that failed with something to show anyway.
-pub(crate) fn failed(text: &str, attachments: Vec<Attachment>) -> ToolOutput {
+pub(crate) fn failed(text: &str, attachments: Vec<Attachment>) -> RecordedToolOutput {
     showing(ToolOutput::failed(text), attachments)
 }
 
 /// The verdict, issued, and the files it admits.
-fn showing(output: ToolOutput, attachments: Vec<Attachment>) -> ToolOutput {
+fn showing(output: ToolOutput, attachments: Vec<Attachment>) -> RecordedToolOutput {
     let call = ToolCall {
         id: ToolId::new("call_1"),
         name: "bash".into(),
@@ -242,7 +242,9 @@ fn showing(output: ToolOutput, attachments: Vec<Attachment>) -> ToolOutput {
     let Settled::Approved(approved) = settled else {
         panic!("the fake said yes")
     };
-    output.with_attachments(&approved, attachments)
+    output
+        .with_attachments(&approved, attachments)
+        .into_recorded()
 }
 
 /// One file a tool found, as the transcript records it.

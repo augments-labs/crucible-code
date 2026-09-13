@@ -1,9 +1,9 @@
 //! The broker binary refuses to run outside its launch protocol.
 //!
 //! This is also what makes `cargo test` build the binary itself, not only its
-//! unit-test harness: the confinement tests in `crucible-tools` look for the
-//! broker beside their own executable, and a workspace without an integration
-//! test here would never produce it.
+//! unit-test harness: the confinement tests in `crucible-sandbox-local` look
+//! for the broker beside their own executable, and a workspace without an
+//! integration test here would never produce it.
 
 use std::process::Command;
 

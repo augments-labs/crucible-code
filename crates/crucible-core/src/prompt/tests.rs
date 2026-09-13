@@ -10,7 +10,7 @@ use super::{
 };
 use crate::{
     Ask, ContextSection, ContextSnapshot, Effort, Permission, Remember, Seen, Sensitivity, Settled,
-    Target, ToolArgs, ToolCall, ToolId, ToolSnapshot, Verdict,
+    Target, ToolArgs, ToolCall, ToolId, ToolSnapshot, Verdict, Workspace, capture,
 };
 
 /// A skill named and described, at a path under the workspace.
@@ -83,8 +83,7 @@ fn every_shipped_section_has_non_null_state_and_a_full_first_render() {
 
         let before = ContextSnapshot::new();
         let mut current = ContextSnapshot::new();
-        current
-            .capture(section)
+        capture(&mut current, section)
             .unwrap_or_else(|problem| panic!("{}: {problem}", section.id()));
         let patch = current
             .patch_from(&before)
@@ -114,7 +113,7 @@ fn an_unchanged_shipped_section_renders_nothing_after_its_first_fragment() {
     let root = PathBuf::from("/src/thing");
     let section = WorkspaceSection::new(&root);
     let mut snapshot = ContextSnapshot::new();
-    snapshot.capture(&section).unwrap();
+    capture(&mut snapshot, &section).unwrap();
     let prior = snapshot.get(WorkspaceSection::ID).unwrap();
 
     assert!(section.render(Seen::Known(prior)).is_none());
@@ -138,6 +137,7 @@ fn the_permissions_section_bounds_scopes_and_states_exactly_what_it_omits() {
         }
     }
 
+    let workspace = Workspace::open(env!("CARGO_MANIFEST_DIR")).expect("the crate's own directory");
     let mut permission = Permission::new();
     let mut answer = Remembering;
     for number in 0..APPROVALS + 3 {
@@ -148,7 +148,7 @@ fn the_permissions_section_bounds_scopes_and_states_exactly_what_it_omits() {
         };
         let relative = format!("scope-{number:03}-{}", "x".repeat(APPROVAL_SCOPE + 20));
         let sensitivity = Sensitivity::MutatesFile {
-            target: Target::at(&format!("/work/{relative}"), Some(&relative)),
+            target: Target::intended(&workspace, &relative),
         };
 
         assert!(matches!(

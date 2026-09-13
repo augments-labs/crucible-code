@@ -343,27 +343,52 @@ if ! python3 scripts/python/screen-baseline.py; then
 fi
 
 # Both spellings, and the tests with the source. A call written
-# `ToolOutput::replayed(output, ..)` is the same call as `output.replayed(..)`,
-# and a pin that only knew the dot form would be a pin anyone could walk past
-# without meaning to. Occurrences rather than lines, because two calls on one
-# line are two calls.
+# `RecordedToolOutput::replayed(output, ..)` is the same call as
+# `output.replayed(..)`, and a pin that only knew the dot form would be a pin
+# anyone could walk past without meaning to. Occurrences rather than lines,
+# because two calls on one line are two calls.
 doors() {
     grep -rEoh --include='*.rs' "$1" "${@:2}" | wc -l
 }
 
 section "the replay seam"
 replay="crates/crucible-session/src/session/wire.rs"
-opens='(\.|ToolOutput::)replayed\('
+opens='(\.|RecordedToolOutput::)replayed\('
 elsewhere=$(grep -rlE --include='*.rs' "$opens" crates src tests | grep -Fxv "$replay" || true)
 if [[ -n "$elsewhere" ]]; then
     while IFS= read -r file; do
-        printf '    FAIL %s calls ToolOutput::replayed; only %s may\n' "$file" "$replay"
+        printf '    FAIL %s calls RecordedToolOutput::replayed; only %s may\n' "$file" "$replay"
     done <<<"$elsewhere"
     failed=1
 fi
 here=$(doors "$opens" "$replay")
 if ((here != 1)); then
-    printf '    FAIL %s calls ToolOutput::replayed %d times; the replay is one call\n' "$replay" "$here"
+    printf '    FAIL %s calls RecordedToolOutput::replayed %d times; the replay is one call\n' "$replay" "$here"
+    failed=1
+fi
+
+# The door the extraction opened. `RecordedToolOutput` lives in a crate that
+# cannot name `Approved`, so the constructor that mints one with attachments
+# cannot ask for the permission proof the live `with_attachments` requires. What
+# stands in for the type is this: one caller, inside the conversion the live
+# value walks out through, so an attachment still reaches a request only from a
+# value the permission engine bound. Unlike the seam above there is no dot form
+# to pin -- `recorded` takes no `self` -- and the bare name belongs to other
+# types, so only qualified spellings are pinned: the type's own name, and
+# `Self`, which is how a second door would be opened from inside the file that
+# defines it, beside the builders already living there.
+mints="crates/crucible-tools/src/tool.rs"
+attaches='(RecordedToolOutput|Self)::recorded\('
+elsewhere=$(grep -rlE --include='*.rs' "$attaches" crates src tests | grep -Fxv "$mints" || true)
+if [[ -n "$elsewhere" ]]; then
+    while IFS= read -r file; do
+        printf '    FAIL %s calls RecordedToolOutput::recorded; only %s may\n' "$file" "$mints"
+    done <<<"$elsewhere"
+    failed=1
+fi
+here=$(doors "$attaches" "$mints")
+if ((here != 1)); then
+    printf '    FAIL %s calls RecordedToolOutput::recorded %d times; the recording is one call\n' "$mints" "$here"
     failed=1
 fi
 
@@ -392,70 +417,105 @@ if ((here != 1)); then
     failed=1
 fi
 
+section "the path that is described, not opened"
+# `Workspace::intended` hands back a plain path instead of a proof, and it
+# resolves through the nearest *existing* ancestor — the one shape that must
+# never be opened by name. The permission engine needs exactly that, because it
+# describes a call rather than making one. Splitting the workspace out of core
+# turned the call `pub`, and Cargo cannot say "public to one caller", so the pin
+# says it here. The owning crate defines and tests it, as the pins above leave
+# their owners.
+asker="crates/crucible-tools/src/permissions/sensitivity.rs"
+owner="crates/crucible-workspace/src/resolve.rs"
+tests="crates/crucible-workspace/src/tests.rs"
+asks='(\.|Workspace::|Self::)intended\('
+elsewhere=$(grep -rlE --include='*.rs' "$asks" crates src tests |
+    grep -Fxv "$asker" |
+    grep -Fxv "$owner" |
+    grep -Fxv "$tests" || true)
+if [[ -n "$elsewhere" ]]; then
+    while IFS= read -r file; do
+        printf '    FAIL %s calls Workspace::intended; only %s may\n' "$file" "$asker"
+    done <<<"$elsewhere"
+    failed=1
+fi
+here=$(doors "$asks" "$asker")
+if ((here != 1)); then
+    printf '    FAIL %s calls Workspace::intended %d times; the question is asked once\n' "$asker" "$here"
+    failed=1
+fi
+
+section "the file opened by walking, not by name"
+# `Opened::named` opens a path the way the operating system resolves it, which
+# is right for one the person at the keyboard typed in full and wrong for one a
+# model reached: the workspace settled containment at an earlier instant, and
+# only the descriptor walk behind `Opened::reached` proves the tree still agrees
+# at the open.
+owner="crates/crucible-attachments/src/lib.rs"
+typed=(
+    "crates/crucible-runner/src/runner/attachments.rs"
+    "src/cli/converse/attaching.rs"
+)
+by_name='Opened::named\('
+elsewhere=$(grep -rlE --include='*.rs' "$by_name" crates src tests |
+    grep -Fxv "$owner" |
+    grep -Fxv "${typed[0]}" |
+    grep -Fxv "${typed[1]}" || true)
+if [[ -n "$elsewhere" ]]; then
+    while IFS= read -r file; do
+        printf '    FAIL %s opens an attachment by name; a reached path takes the walk\n' "$file"
+    done <<<"$elsewhere"
+    failed=1
+fi
+# The counter-assertion the negative check cannot make: `attaching.rs` is
+# allowed to open by name, so nothing above would notice its workspace arm
+# turning into a second one. Each of these reaches for the walk exactly once.
+by_walk='Opened::reached\('
+for reader in crates/crucible-builtins/src/read.rs src/cli/converse/attaching.rs; do
+    here=$(doors "$by_walk" "$reader")
+    if ((here != 1)); then
+        printf '    FAIL %s opens a workspace path through the walk %d times; it is opened once\n' "$reader" "$here"
+        failed=1
+    fi
+done
+
 member_manifests=(crates/*/Cargo.toml)
 manifests=(Cargo.toml "${member_manifests[@]}")
 
 section "crate layering"
-crate_edges() {
-    awk '
-        FNR == 1 {
-            crate = FILENAME
-            sub(/^crates\//, "", crate)
-            sub(/\/Cargo.toml$/, "", crate)
-            if (FILENAME == "Cargo.toml") crate = "crucible-code"
-            # Process substitution names files `/dev/fd/N`; `N` is the fixture
-            # crate name, which keeps the expected output independent of Bash.
-            if (FILENAME ~ /^\/dev\/fd\//) {
-                sub(/^.*\//, "", crate)
-                crate = "fixture-" crate
-            }
-            # Both ends of an edge are written the short way, so the allowed
-            # list reads as the layering rather than package names.
-            sub(/^crucible-/, "", crate)
-            table = 0
-        }
-        /^[[:space:]]*\[/ {
-            header = $0
-            sub(/^[[:space:]]*\[+[[:space:]]*/, "", header)
-            sub(/[[:space:]]*\]+.*$/, "", header)
-            # Workspace dependencies agree versions; they do not take edges.
-            table = (header ~ /(^|\.)(dependencies|dev-dependencies|build-dependencies)$/ &&
-                     header !~ /^workspace\./)
-            next
-        }
-        # Dotted keys and inline tables both end the name at dot, space or `=`.
-        table && /^[[:space:]]*crucible-[a-z0-9-]+[[:space:].=]/ {
-            dependency = $0
-            sub(/^[[:space:]]*/, "", dependency)
-            sub(/[[:space:].=].*$/, "", dependency)
-            sub(/^crucible-/, "", dependency)
-            print crate " " dependency
-        }
-    ' "$@"
-}
-
-# Pin both Cargo spellings the parser promises to understand. Accepting the
-# workspace's current dotted keys alone would let an inline-table refactor
-# silently empty part of the graph.
-layer_fixture=$(crate_edges \
-    <(printf '[dependencies]\ncrucible-core.workspace = true\n') \
-    <(printf '[dev-dependencies]\ncrucible-session = { workspace = true, features = ["proof"] }\n'))
-if [[ $(printf '%s\n' "$layer_fixture" | sed 's/^fixture-[0-9][0-9]* //') != $'core\nsession' ]]; then
-    printf '    FAIL the crate-layer parser did not read dotted and inline dependency spellings\n'
+# Cargo is asked which crates each crate takes. A reader of the manifests here
+# sees only the spellings it was written for, and an edge spelled another way
+# would pass unseen. Every manifest is handed over as well, and the reader refuses
+# unless they are exactly the workspace's packages, because a crate Cargo does
+# not count as a member is one whose edges it never describes. It also refuses a
+# workspace that patches, replaces or overrides a dependency, or includes
+# configuration that could, because Cargo names where such a dependency comes from
+# only when resolving.
+if ! python3 scripts/python/crate-edges.py --self-test; then
+    printf '    FAIL the crate-edge reader failed its self-test\n'
     failed=1
 fi
-
-if ((${#manifests[@]} < 2)); then
-    printf '    FAIL no manifest under crates/; the dependency graph measured nothing\n'
+# Both ends of an edge are written the short way, so the allowed list reads as
+# the layering rather than package names.
+if ! edges=$(python3 scripts/python/crate-edges.py Cargo.toml "${manifests[@]}" | sed -E 's/(^| )crucible-/\1/g'); then
+    printf '    FAIL the crate-edge reader gave no answer for Cargo.toml\n'
     failed=1
-fi
-edges=$(crate_edges "${manifests[@]}")
-if [[ -z "$edges" ]]; then
+elif [[ -z "$edges" ]]; then
     printf '    FAIL no internal dependency edges found; this check measured nothing\n'
     failed=1
 fi
 
-allowed='code auth
+# `core` names the nine crates its old names now come from. Those edges are
+# the compatibility facade and go away with the crate that holds them.
+#
+# Edges past the facade are listed here as they are taken. `attachments` is
+# named directly because the two types a file's bytes are read through are
+# withheld from the facade; the sandbox crates are named directly because a
+# backend and the contract it answers are what this split gave their own names;
+# `tools` and `builtins` name their owners directly because neither may reach
+# back into core.
+allowed='code attachments
+code auth
 code config
 code core
 code extension
@@ -464,22 +524,56 @@ code privacy
 code provider
 code runner
 code session
-code tools
+code builtins
 code sandbox-broker
+code sandbox-local
 code tui
+attachments types
+attachments workspace
 auth core
 auth privacy
 config core
+core attachments
+core credentials
+core registry
+core runtime
+core sandbox
+core storage
+core tools
+core types
+core workspace
+credentials types
 extension core
 mcp core
 provider core
+runner attachments
 runner core
 runner session
 session core
 session privacy
-tools core
-tools privacy
-tools sandbox-broker'
+sandbox storage
+sandbox types
+sandbox workspace
+sandbox-local privacy
+sandbox-local sandbox
+sandbox-local sandbox-broker
+sandbox-local storage
+sandbox-local types
+sandbox-local workspace
+storage types
+tools registry
+tools runtime
+tools sandbox
+tools storage
+tools types
+tools workspace
+builtins attachments
+builtins runtime
+builtins sandbox
+builtins sandbox-local
+builtins tools
+builtins types
+builtins workspace'
 while IFS= read -r edge; do
     [[ -z "$edge" ]] && continue
     if ! grep -Fxq "$edge" <<<"$allowed"; then
@@ -487,12 +581,40 @@ while IFS= read -r edge; do
         failed=1
     fi
 done <<<"$edges"
-for crate in core privacy sandbox-broker tui; do
+# Tighter than the allowed-edge list above for these crates, and for
+# crucible-runtime tighter than the architecture's maximum: giving one of them
+# a workspace dependency is a decision to take here rather than a line to add.
+for crate in privacy registry runtime sandbox-broker tui types workspace; do
     if grep -qE "^$crate " <<<"$edges"; then
         printf '    FAIL crucible-%s must not depend on another workspace crate\n' "$crate"
         failed=1
     fi
 done
+
+# `builtins sandbox-local` above is a test-support edge, and a test-support edge
+# never justifies a shipped one. A tool names the sandbox service contract;
+# naming one machine's answer to it in a table that ships is how that
+# distinction would quietly disappear. Every such table counts, not only
+# `[dependencies]`: a build script that pulls a backend in ships it too. Cargo
+# answers which tables those are, so this section runs `cargo`, and it asks
+# manifests whose answer is known as well as the one that matters. Only 3 is a
+# clean answer, because 1 is also what a crashed reader exits with.
+if ! python3 scripts/python/shipped-edge.py --self-test; then
+    printf '    FAIL the shipped-edge check failed its self-test\n'
+    failed=1
+fi
+python3 scripts/python/shipped-edge.py crates/crucible-builtins/Cargo.toml crucible-sandbox-local
+case $? in
+    0)
+        printf '    FAIL crucible-builtins must reach crucible-sandbox-local only as a dev-dependency\n'
+        failed=1
+        ;;
+    3) ;;
+    *)
+        printf '    FAIL the shipped-edge check gave no answer for crates/crucible-builtins/Cargo.toml\n'
+        failed=1
+        ;;
+esac
 
 section "workspace inheritance"
 if ((${#member_manifests[@]} == 0)); then

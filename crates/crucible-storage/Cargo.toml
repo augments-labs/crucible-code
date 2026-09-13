@@ -1,0 +1,26 @@
+[package]
+name = "crucible-storage"
+description = "History, checkpoint and cache storage contracts, receipts and their validation."
+publish.workspace = true
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# `serde_json` is how a bounded opaque extension payload is proved to be
+# exactly one JSON value before it is retained. `sha2` derives the
+# domain-separated call-result keys and receipts a store writes exactly once.
+# `thiserror` writes the module-owned error enums. `uuid` supplies the v7
+# identities durable records are named by, whose ordering is what lets a resume
+# read a checkpoint back in the order it was written.
+[dependencies]
+crucible-types.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

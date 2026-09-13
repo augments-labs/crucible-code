@@ -85,7 +85,8 @@ fn unicode() -> Glyphs {
 /// it: how much of a wide one a result may take is the style's answer, and the
 /// row takes its own marks off whatever that leaves.
 fn hung(output: &ToolOutput, window: usize, style: Style) -> String {
-    finished(output, beyond(output), window, style, false)
+    let shown = Shown::live(output.clone());
+    finished(&shown, beyond(&shown), window, style, false)
         .iter()
         .map(Row::text)
         .collect::<Vec<_>>()
@@ -94,7 +95,8 @@ fn hung(output: &ToolOutput, window: usize, style: Style) -> String {
 
 /// The one row a result short enough for one takes.
 fn one(output: &ToolOutput, window: usize, style: Style) -> Row {
-    let rows = finished(output, beyond(output), window, style, false);
+    let shown = Shown::live(output.clone());
+    let rows = finished(&shown, beyond(&shown), window, style, false);
     assert_eq!(rows.len(), 1, "{rows:?}");
     rows.into_iter().next().unwrap_or_default()
 }
@@ -508,7 +510,8 @@ fn a_window_too_narrow_for_the_offer_still_says_the_result_was_cut() {
     // cut: the key still works, and a row that dropped the slot with it would
     // say the whole result is there.
     let output = ToolOutput::ok("one\ntwo\nthree");
-    let rows = finished(&output, beyond(&output), 24, Style::plain(), false);
+    let shown = Shown::live(output.clone());
+    let rows = finished(&shown, beyond(&shown), 24, Style::plain(), false);
     let text = hung(&output, 24, Style::plain());
 
     assert!(!text.contains("ctrl+o"), "{text:?}");
@@ -624,7 +627,7 @@ fn a_call_line_stays_inside_the_window_mark_and_all() {
 
 #[test]
 fn a_result_row_stays_inside_the_window_whatever_the_window() {
-    let output = ToolOutput::ok(format!("{}\nmore", "y".repeat(300)));
+    let output = Shown::live(ToolOutput::ok(format!("{}\nmore", "y".repeat(300))));
 
     for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
         for window in [1, 2, 4, 8, 12, 40, WIDE] {
@@ -1249,7 +1252,7 @@ fn a_change_is_laid_out_again_when_the_window_widens() {
         &mut renderer,
         &mut Kept::default(),
         &ToolId::new("a"),
-        output,
+        Shown::live(output),
         style,
     )
     .expect("the change to draw");
@@ -1448,19 +1451,49 @@ fn ending(called: &str, said: &str, code: Option<i32>, columns: usize) -> String
 
     gone(
         &mut renderer,
-        &crucible_tools::Ended {
+        &crucible_builtins::Ended {
             tool: "bash",
             number: 1,
             called: called.into(),
             said: said.into(),
             code,
             lines: 120,
+            printed: Box::from(""),
+            unpublished: None,
         },
         Style::plain(),
     )
     .expect("the ending to draw");
 
     renderer.terminal().picture().said().join("\n")
+}
+
+#[test]
+fn a_command_whose_writes_were_not_published_says_so_on_its_row() {
+    // The reader's half of the news. A command that finished while something
+    // else changed the root it wrote into ends with what it wrote discarded,
+    // and a row that only gave its status would read as a command that worked.
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+
+    gone(
+        &mut renderer,
+        &crucible_builtins::Ended {
+            tool: "bash",
+            number: 1,
+            called: "npm run codegen".into(),
+            said: "".into(),
+            code: None,
+            lines: 2,
+            printed: Box::from(""),
+            unpublished: Some("writable root changed after the command started".into()),
+        },
+        Style::plain(),
+    )
+    .expect("the ending to draw");
+    let said = renderer.terminal().picture().said().join("\n");
+
+    assert!(said.contains("nothing it wrote was published"), "{said}");
+    assert!(!said.contains("killed"), "{said}");
 }
 
 /// The same, for a call that said nothing about itself and exited cleanly.

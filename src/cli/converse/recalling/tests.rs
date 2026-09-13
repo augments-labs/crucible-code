@@ -87,25 +87,23 @@ fn back_through_nothing_moves_nothing() {
 }
 
 #[test]
-fn the_place_counts_the_presses_back_against_a_window_that_does_not_move() {
-    // Which is the number the top border says. It rises with the key, so what
-    // it reports is how far back the reader has come; the second is the window
-    // it is counted against, and three prompts held is still `1/100` because
-    // what a reader is told is how far they may go and not how much they have
-    // typed.
+fn the_place_counts_down_from_the_newest_retained_prompt() {
+    // Which is the number the top border says. It starts at the newest prompt's
+    // chronological index within the window and counts down as the walk reaches
+    // further back towards the oldest (1/100).
     let mut recalling = over(&["first", "second", "third"]);
     let mut editor = typed("");
 
     assert_eq!(recalling.place(), Recalled::default());
 
     recalling.back(&mut editor);
-    assert_eq!(recalling.place(), Recalled::new(1, PROMPTS));
+    assert_eq!(recalling.place(), Recalled::new(3, PROMPTS));
 
     recalling.back(&mut editor);
     assert_eq!(recalling.place(), Recalled::new(2, PROMPTS));
 
     recalling.back(&mut editor);
-    assert_eq!(recalling.place(), Recalled::new(3, PROMPTS));
+    assert_eq!(recalling.place(), Recalled::new(1, PROMPTS));
 }
 
 #[test]
@@ -139,7 +137,7 @@ fn a_walk_that_ended_starts_again_from_the_newest() {
 
     assert!(recalling.back(&mut editor));
     assert_eq!(editor.text(), "second");
-    assert_eq!(recalling.place(), Recalled::new(1, PROMPTS));
+    assert_eq!(recalling.place(), Recalled::new(2, PROMPTS));
 }
 
 #[test]
@@ -151,7 +149,7 @@ fn a_line_that_was_sent_is_the_next_walk_s_newest() {
 
     assert!(recalling.back(&mut editor));
     assert_eq!(editor.text(), "second");
-    assert_eq!(recalling.place(), Recalled::new(1, PROMPTS));
+    assert_eq!(recalling.place(), Recalled::new(2, PROMPTS));
 }
 
 #[test]
@@ -191,7 +189,7 @@ fn what_is_kept_in_memory_is_bounded_by_what_a_walk_may_reach() {
 
     let mut editor = typed("");
     recalling.back(&mut editor);
-    assert_eq!(recalling.place(), Recalled::new(1, PROMPTS));
+    assert_eq!(recalling.place(), Recalled::new(PROMPTS, PROMPTS));
 }
 
 #[test]
@@ -238,7 +236,7 @@ fn a_key_that_only_moved_the_cursor_leaves_the_walk_standing() {
     editor.press(crucible_tui::Key::Home);
     recalling.standing(&editor);
 
-    assert_eq!(recalling.place(), Recalled::new(1, PROMPTS));
+    assert_eq!(recalling.place(), Recalled::new(2, PROMPTS));
 }
 
 #[test]

@@ -1,8 +1,9 @@
 //! Function results resolve the immediately preceding native call group once.
 
 use crucible_core::{
-    Continuation, ContinuationData, ContinuationPart, ContinuationScope, Message, Request,
-    RequestPurpose, StopReason, ToolArgs, ToolCall, ToolId, ToolOutput, ToolResult, Transcript,
+    Continuation, ContinuationData, ContinuationPart, ContinuationScope, Message,
+    RecordedToolOutput, Request, RequestPurpose, StopReason, ToolArgs, ToolCall, ToolId,
+    ToolResult, Transcript,
 };
 use serde_json::Value;
 
@@ -46,7 +47,7 @@ fn results(ids: &[&str]) -> Message {
         ids.iter()
             .map(|id| ToolResult {
                 id: ToolId::new(*id),
-                output: ToolOutput::ok("private-result-canary"),
+                output: RecordedToolOutput::ok("private-result-canary"),
             })
             .collect(),
     )

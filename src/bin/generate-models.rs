@@ -271,8 +271,8 @@ fn accepts(entry: &Value) -> Result<Modalities, String> {
 /// A set as the expression that rebuilds it.
 ///
 /// The variant is written from `Debug`, which is the variant's own name, so a
-/// modality renamed in core renames itself here rather than in a second list
-/// that would quietly keep spelling the old one.
+/// renamed modality renames itself here rather than in a second list that would
+/// quietly keep spelling the old one.
 fn spelled(accepts: Modalities) -> String {
     let mut out = String::from("Modalities::empty()");
     for one in accepts.iter() {

@@ -6,13 +6,12 @@
 //! whether the file can be sent at all, and every answer of no is a sentence
 //! the user reads while they can still act on it.
 
-use std::fs::{self, File};
+use std::fs;
 use std::io::{Cursor, Write as _};
 use std::path::{Path, PathBuf};
 
-use crucible_core::{
-    Attachment, CEILING, Modalities, Provider, SessionId, Workspace, kind, written,
-};
+use crucible_attachments::{AttachmentError, CEILING, Opened, kind};
+use crucible_core::{Attachment, Modalities, Provider, SessionId, Workspace, written};
 use crucible_runner::Runner;
 use crucible_tui::{Renderer, Row, Terminal, TerminalError, fold};
 use sha2::{Digest as _, Sha256};
@@ -293,7 +292,7 @@ fn decide(workspace: &Workspace, asking: Asking<'_>, word: &str, imported: Optio
     // across the three answers below: one lookup settles what this is, and
     // nothing between the answer and the read can turn the file into another
     // one or into a pipe that never returns.
-    let Some(mut file) = source.opened() else {
+    let Some(file) = source.opened() else {
         return Named::Nothing;
     };
 
@@ -323,9 +322,9 @@ fn decide(workspace: &Workspace, asking: Asking<'_>, word: &str, imported: Optio
 
     // The size is settled from that descriptor before a byte is allocated,
     // which is what the ceiling is for.
-    let bytes = match crucible_core::carried(&mut file) {
-        Ok(bytes) => bytes,
-        Err(crucible_core::AttachmentError::TooLarge) => {
+    let taken = match file.taken() {
+        Ok(taken) => taken,
+        Err(AttachmentError::TooLarge) => {
             return Named::Refused(format!(
                 "{word} is larger than the {} MB one attachment may be, so it is not attached. A \
                  smaller copy of it would be.",
@@ -333,10 +332,10 @@ fn decide(workspace: &Workspace, asking: Asking<'_>, word: &str, imported: Optio
             ));
         }
         Err(
-            crucible_core::AttachmentError::NotFile | crucible_core::AttachmentError::Unread(_),
+            AttachmentError::NotFile | AttachmentError::Unread(_) | AttachmentError::Unreached(_),
         ) => return Named::Nothing,
     };
-    if !(kind.confirms)(&bytes) {
+    if !taken.is(kind) {
         return Named::Refused(format!(
             "{word} is not attached: it is named .{0} and its bytes are not a {0}. Rename it to \
              what it is.",
@@ -344,7 +343,8 @@ fn decide(workspace: &Workspace, asking: Asking<'_>, word: &str, imported: Optio
         ));
     }
 
-    let hash = <[u8; 32]>::from(Sha256::digest(&bytes));
+    let hash = taken.hash();
+    let bytes = taken.into_bytes();
     let path = match source {
         Source::Workspace(path) => path.as_path().to_owned(),
         Source::External(_) => {
@@ -384,11 +384,11 @@ impl Source {
     /// A workspace path goes through the descriptor walk, which answers
     /// containment as well; one the user typed in full has no containment
     /// question and is opened as an attachment. Both refuse anything that is
-    /// not a regular file without waiting on it.
-    fn opened(&self) -> Option<File> {
+    /// not a regular file.
+    fn opened(&self) -> Option<Opened> {
         match self {
-            Self::Workspace(path) => path.open_regular().ok(),
-            Self::External(path) => crucible_core::opened(path).ok(),
+            Self::Workspace(path) => Opened::reached(path).ok(),
+            Self::External(path) => Opened::named(path).ok(),
         }
     }
 }
@@ -415,9 +415,8 @@ fn import(
                 .map_err(crucible_privacy::PrivacyError::into_io)?;
         }
         Err(problem) if problem.kind() == std::io::ErrorKind::AlreadyExists => {
-            let carried = crucible_core::opened(&destination)
-                .and_then(|mut file| crucible_core::carried(&mut file));
-            if !carried.is_ok_and(|existing| existing == bytes) {
+            let taken = Opened::named(&destination).and_then(Opened::taken);
+            if !taken.is_ok_and(|existing| existing.bytes() == bytes) {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::AlreadyExists,
                     "the content-addressed destination holds different bytes",

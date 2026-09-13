@@ -182,6 +182,18 @@ impl LoginAttempt {
     }
 }
 
+impl Default for LoginSlot {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl fmt::Debug for LoginSlot {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        out.debug_struct("LoginSlot").finish_non_exhaustive()
+    }
+}
+
 impl Drop for LoginAttempt {
     fn drop(&mut self) {
         self.cancel.request();
@@ -199,6 +211,66 @@ impl fmt::Debug for LoginAttempt {
 /// A provider may expose several methods through one implementation: OpenAI,
 /// for example, owns both browser PKCE and device authorization. Adding that
 /// method does not add a branch to the TUI, store, or provider wire adapter.
+///
+/// The set is open outside this crate too. What an implementation needs is a
+/// [`LoginSlot`] to run its method on, [`LoginUpdate`] to say what it is doing,
+/// and [`Store`] to write the result down; all three are public, and none of
+/// them hands over a token:
+///
+/// ```
+/// use std::fmt;
+///
+/// use crucible_auth::{
+///     LoginAttempt, LoginMethod, LoginSlot, LoginUpdate, OAuthError, Store, StoredCredentials,
+///     SubscriptionLogin,
+/// };
+/// use crucible_core::{Credential, Header, HeaderKey};
+///
+/// #[derive(Debug)]
+/// struct Ledger(LoginSlot);
+///
+/// impl SubscriptionLogin for Ledger {
+///     fn provider(&self) -> &'static str {
+///         "ledger"
+///     }
+///
+///     fn start(&self, method: LoginMethod, store: Store) -> Result<LoginAttempt, OAuthError> {
+///         if method != LoginMethod::new("paste") {
+///             return Err(OAuthError::Method);
+///         }
+///         self.0.start_with_input("ledger-login", move |cancel, updates, typed| {
+///             let _ = updates.send(Ok(LoginUpdate::Authorize {
+///                 browser_uri: "https://example.invalid/authorize".into(),
+///                 shown_uri: "example.invalid/authorize".into(),
+///                 user_code: None,
+///                 manual: true,
+///             }));
+///             let Ok(pasted) = typed.recv() else { return };
+///             if cancel.requested() {
+///                 return;
+///             }
+///             let _ = match store.keep("ledger", &pasted) {
+///                 Ok(()) => updates.send(Ok(LoginUpdate::Complete)),
+///                 Err(_) => updates.send(Err(OAuthError::WorkerStopped)),
+///             };
+///         })
+///     }
+///
+///     fn credential(&self, stored: &StoredCredentials) -> Option<Box<dyn Credential>> {
+///         let key = stored.get("ledger")?;
+///         Some(Box::new(HeaderKey::new(key, Header::bearer())))
+///     }
+/// }
+/// ```
+///
+/// What stays behind is the renewable token state. `Tokens` is not exported, so
+/// an implementation outside this crate persists through [`Store`] and reads
+/// back through [`StoredCredentials`] rather than holding access and refresh
+/// values of its own.
+///
+/// ```compile_fail,E0432
+/// use crucible_auth::Tokens;
+/// ```
 pub trait SubscriptionLogin: Send + Sync + fmt::Debug {
     /// The provider name used by configuration and the auth store.
     fn provider(&self) -> &'static str;
@@ -349,14 +421,35 @@ impl fmt::Debug for Tokens {
 }
 
 /// One bounded worker slot shared by every method of one implementation.
-pub(crate) struct LoginSlot(Mutex<Option<thread::JoinHandle<()>>>);
+///
+/// A [`LoginAttempt`] is what [`SubscriptionLogin::start`] has to return, and
+/// this is the only thing that makes one. It is public because the trait is:
+/// an implementation living outside this crate can hold a slot, run its method
+/// on the thread the slot owns, and report the same bounded updates every other
+/// method reports. Nothing about a token crosses here — the worker is handed a
+/// [`Cancel`], a sender of [`LoginUpdate`] and, for a method with a manual
+/// fallback, the pasted values a user typed. Where the secret goes afterwards
+/// is [`Store`]'s answer, not this type's.
+///
+/// One slot runs one login at a time. A second start while the first worker is
+/// still stopping is [`OAuthError::Busy`] rather than a second thread, so an
+/// implementation cannot leave two browser callbacks listening at once.
+pub struct LoginSlot(Mutex<Option<thread::JoinHandle<()>>>);
 
 impl LoginSlot {
-    pub(crate) const fn new() -> Self {
+    /// An implementation's empty slot, held for the life of the implementation.
+    #[must_use]
+    pub const fn new() -> Self {
         Self(Mutex::new(None))
     }
 
-    pub(crate) fn start(
+    /// Runs one method that needs nothing typed back at it.
+    ///
+    /// # Errors
+    ///
+    /// [`OAuthError::Busy`] when an earlier attempt has not stopped yet, and
+    /// [`OAuthError::Worker`] when the thread cannot be created.
+    pub fn start(
         &self,
         name: &str,
         run: impl FnOnce(Cancel, mpsc::SyncSender<Result<LoginUpdate, OAuthError>>) + Send + 'static,
@@ -364,7 +457,17 @@ impl LoginSlot {
         self.start_with_input(name, move |cancel, updates, _| run(cancel, updates))
     }
 
-    pub(crate) fn start_with_input(
+    /// Runs one method that can also be finished by hand.
+    ///
+    /// The receiver hands over what [`LoginAttempt::submit`] accepted, already
+    /// trimmed and bounded, for a method that announced itself with
+    /// `manual: true`.
+    ///
+    /// # Errors
+    ///
+    /// [`OAuthError::Busy`] when an earlier attempt has not stopped yet, and
+    /// [`OAuthError::Worker`] when the thread cannot be created.
+    pub fn start_with_input(
         &self,
         name: &str,
         run: impl FnOnce(

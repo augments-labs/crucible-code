@@ -452,7 +452,7 @@ fn a_startup_with_nothing_to_authenticate_with_leaves_no_session_behind() {
         effort: None,
         resuming: Resuming::No,
         mode: Mode::Ask,
-        leaving: &crucible_tools::Background::new(),
+        leaving: &crucible_builtins::Background::new(),
         settings: &Settings::default(),
         sessions: &logs,
         workspace: &workspace,
@@ -491,7 +491,7 @@ fn a_session_with_nothing_chosen_starts_and_asks_for_no_model() {
         effort: None,
         resuming: Resuming::No,
         mode: Mode::Ask,
-        leaving: &crucible_tools::Background::new(),
+        leaving: &crucible_builtins::Background::new(),
         settings: &Settings::default(),
         sessions: &logs,
         workspace: &workspace,
@@ -528,7 +528,7 @@ fn specified(model: &str, effort: Option<Effort>, settings: &Settings, told: &st
         effort,
         resuming: Resuming::No,
         mode: Mode::Ask,
-        leaving: &crucible_tools::Background::new(),
+        leaving: &crucible_builtins::Background::new(),
         settings,
         sessions: &logs,
         workspace: &workspace,
@@ -667,7 +667,7 @@ fn reaching_for(named: &str, model: Option<&'static str>) -> Reaching {
             effort: None,
             resuming: Resuming::No,
             mode: Mode::Ask,
-            leaving: &crucible_tools::Background::new(),
+            leaving: &crucible_builtins::Background::new(),
             settings: &Settings::default(),
             sessions: &logs,
             workspace: &workspace,
@@ -801,7 +801,7 @@ fn offered(terminal: bool) -> crucible_runner::Tools {
             effort: None,
             resuming: Resuming::No,
             mode: Mode::Ask,
-            leaving: &crucible_tools::Background::new(),
+            leaving: &crucible_builtins::Background::new(),
             settings: &Settings::default(),
             sessions: &logs,
             workspace: &workspace,
@@ -874,9 +874,28 @@ fn the_tools_a_session_already_had_are_unchanged_in_name_and_order() {
             "edit",
             "write",
             "bash",
+            "bash_output",
             "ask_user",
             "tool_search"
         ]
+    );
+}
+
+#[test]
+fn a_session_carries_a_tool_for_reading_a_command_it_left_running() {
+    // Advertised rather than deferred, for the reason `ask_user` is: the moment
+    // a model needs this is the moment a command it left running has said
+    // nothing yet, and the note it is told about it in is the same result it is
+    // being asked not to poll. A tool it has to look up first is one it will
+    // not look up then.
+    let tools = offered(true);
+
+    assert!(
+        tools
+            .advertised()
+            .iter()
+            .any(|schema| schema.name == "bash_output"),
+        "the tool was registered without being offered"
     );
 }
 
@@ -942,7 +961,7 @@ fn a_session_is_assembled_with_stable_instructions_and_workspace_context() {
         effort: None,
         resuming: Resuming::No,
         mode: Mode::Ask,
-        leaving: &crucible_tools::Background::new(),
+        leaving: &crucible_builtins::Background::new(),
         settings: &configured,
         sessions: &logs,
         workspace: &workspace,
@@ -1075,7 +1094,7 @@ fn naming_a_server_nobody_wrote_down_fails_before_a_session_file_exists() {
         effort: None,
         resuming: Resuming::No,
         mode: Mode::Ask,
-        leaving: &crucible_tools::Background::new(),
+        leaving: &crucible_builtins::Background::new(),
         settings: &Settings::default(),
         sessions: &logs,
         workspace: &workspace,
@@ -1110,7 +1129,7 @@ fn a_run_that_named_a_server_reaches_the_runner_as_a_live_toolset() {
     let (logs, workspace) = (sample.logs(), sample.workspace());
     let directory = sample.root().join("bin");
     std::fs::create_dir_all(&directory).expect("a temporary directory");
-    let at = directory.join(crucible_tools::program::spelled("docs-mcp"));
+    let at = directory.join(crucible_builtins::program::spelled("docs-mcp"));
     std::fs::write(&at, "").expect("a temporary directory");
     let path = directory.display().to_string();
     let settings = sample.user(&wrote("docs-mcp"));
@@ -1124,7 +1143,7 @@ fn a_run_that_named_a_server_reaches_the_runner_as_a_live_toolset() {
             effort: None,
             resuming: Resuming::No,
             mode: Mode::Ask,
-            leaving: &crucible_tools::Background::new(),
+            leaving: &crucible_builtins::Background::new(),
             settings: &settings,
             sessions: &logs,
             workspace: &workspace,

@@ -332,8 +332,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "crucible-attachments"
+version = "0.41.0"
+dependencies = [
+ "crucible-types",
+ "crucible-workspace",
+ "rustix",
+ "sha2",
+ "thiserror",
+]
+
+[[package]]
 name = "crucible-auth"
-version = "0.40.1"
+version = "0.41.0"
 dependencies = [
  "base64 0.23.1",
  "crucible-core",
@@ -346,12 +357,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "crucible-builtins"
+version = "0.41.0"
+dependencies = [
+ "crucible-attachments",
+ "crucible-runtime",
+ "crucible-sandbox",
+ "crucible-sandbox-local",
+ "crucible-tools",
+ "crucible-types",
+ "crucible-workspace",
+ "globset",
+ "grep-regex",
+ "grep-searcher",
+ "ignore",
+ "serde_json",
+ "sha2",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "crucible-code"
-version = "0.40.1"
+version = "0.41.0"
 dependencies = [
  "arboard",
  "clap",
+ "crucible-attachments",
  "crucible-auth",
+ "crucible-builtins",
  "crucible-config",
  "crucible-core",
  "crucible-extension",
@@ -360,8 +393,8 @@ dependencies = [
  "crucible-provider",
  "crucible-runner",
  "crucible-sandbox-broker",
+ "crucible-sandbox-local",
  "crucible-session",
- "crucible-tools",
  "crucible-tui",
  "image",
  "insta",
@@ -373,7 +406,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-config"
-version = "0.40.1"
+version = "0.41.0"
 dependencies = [
  "crucible-core",
  "serde_json",
@@ -382,20 +415,35 @@ dependencies = [
 
 [[package]]
 name = "crucible-core"
-version = "0.40.1"
+version = "0.41.0"
 dependencies = [
- "globset",
- "rustix",
+ "crucible-attachments",
+ "crucible-credentials",
+ "crucible-registry",
+ "crucible-runtime",
+ "crucible-sandbox",
+ "crucible-storage",
+ "crucible-tools",
+ "crucible-types",
+ "crucible-workspace",
  "serde_json",
  "sha2",
  "thiserror",
  "uuid",
- "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "crucible-credentials"
+version = "0.41.0"
+dependencies = [
+ "crucible-types",
+ "sha2",
+ "thiserror",
 ]
 
 [[package]]
 name = "crucible-extension"
-version = "0.40.1"
+version = "0.41.0"
 dependencies = [
  "crucible-core",
  "serde_json",
@@ -404,7 +452,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-mcp"
-version = "0.40.1"
+version = "0.41.0"
 dependencies = [
  "crucible-core",
  "serde_json",
@@ -413,7 +461,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-privacy"
-version = "0.40.1"
+version = "0.41.0"
 dependencies = [
  "rustix",
  "thiserror",
@@ -422,7 +470,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-provider"
-version = "0.40.1"
+version = "0.41.0"
 dependencies = [
  "base64 0.23.1",
  "crucible-core",
@@ -432,17 +480,45 @@ dependencies = [
 ]
 
 [[package]]
-name = "crucible-runner"
-version = "0.40.1"
+name = "crucible-registry"
+version = "0.41.0"
 dependencies = [
+ "thiserror",
+ "uuid",
+]
+
+[[package]]
+name = "crucible-runner"
+version = "0.41.0"
+dependencies = [
+ "crucible-attachments",
  "crucible-core",
  "crucible-session",
  "sha2",
 ]
 
 [[package]]
+name = "crucible-runtime"
+version = "0.41.0"
+dependencies = [
+ "tokio",
+]
+
+[[package]]
+name = "crucible-sandbox"
+version = "0.41.0"
+dependencies = [
+ "crucible-storage",
+ "crucible-types",
+ "crucible-workspace",
+ "globset",
+ "sha2",
+ "thiserror",
+]
+
+[[package]]
 name = "crucible-sandbox-broker"
-version = "0.40.1"
+version = "0.41.0"
 dependencies = [
  "libc",
  "rustix",
@@ -452,8 +528,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "crucible-sandbox-local"
+version = "0.41.0"
+dependencies = [
+ "base64 0.23.1",
+ "crucible-privacy",
+ "crucible-sandbox",
+ "crucible-sandbox-broker",
+ "crucible-storage",
+ "crucible-types",
+ "crucible-workspace",
+ "getrandom 0.4.3",
+ "http",
+ "httparse",
+ "rustix",
+ "sha2",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "crucible-session"
-version = "0.40.1"
+version = "0.41.0"
 dependencies = [
  "crucible-core",
  "crucible-privacy",
@@ -464,29 +559,34 @@ dependencies = [
 ]
 
 [[package]]
-name = "crucible-tools"
-version = "0.40.1"
+name = "crucible-storage"
+version = "0.41.0"
 dependencies = [
- "base64 0.23.1",
- "crucible-core",
- "crucible-privacy",
- "crucible-sandbox-broker",
- "getrandom 0.4.3",
- "globset",
- "grep-regex",
- "grep-searcher",
- "http",
- "httparse",
- "ignore",
- "rustix",
+ "crucible-types",
  "serde_json",
  "sha2",
- "windows-sys 0.61.2",
+ "thiserror",
+ "uuid",
+]
+
+[[package]]
+name = "crucible-tools"
+version = "0.41.0"
+dependencies = [
+ "crucible-registry",
+ "crucible-runtime",
+ "crucible-sandbox",
+ "crucible-storage",
+ "crucible-types",
+ "crucible-workspace",
+ "globset",
+ "thiserror",
+ "uuid",
 ]
 
 [[package]]
 name = "crucible-tui"
-version = "0.40.1"
+version = "0.41.0"
 dependencies = [
  "base64 0.23.1",
  "crossterm",
@@ -496,6 +596,25 @@ dependencies = [
  "thiserror",
  "two-face",
  "unicode-width",
+]
+
+[[package]]
+name = "crucible-types"
+version = "0.41.0"
+dependencies = [
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "uuid",
+]
+
+[[package]]
+name = "crucible-workspace"
+version = "0.41.0"
+dependencies = [
+ "rustix",
+ "thiserror",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1622,6 +1741,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokio"
+version = "1.53.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "202caea871b69668250d242070849eb495be178ed697a3e98aebce5bc81a0bed"
+dependencies = [
+ "pin-project-lite",
+ "tokio-macros",
+]
+
+[[package]]
+name = "tokio-macros"
+version = "2.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "78773a2a397f451582ce068015985c33193cf6dea8b74d2a639fe457b2f07b0e"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.3",
+]
+
+[[package]]
 name = "tree_magic_mini"
 version = "3.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1669,9 +1809,9 @@ checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 
 [[package]]
 name = "ureq"
-version = "3.4.0"
+version = "3.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "972d7902c8735f2695410b8aed7df6ed12a47394aa1c8d7af49f0497b731a94d"
+checksum = "af5546be8f5378d5414f83733f5c9a2526f4645829edbc1c41790aeef1b38e8b"
 dependencies = [
  "base64 0.23.1",
  "log",
@@ -1685,9 +1825,9 @@ dependencies = [
 
 [[package]]
 name = "ureq-proto"
-version = "0.6.1"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da5f78b09e6941e1a0f2e30e695e4b120377b54d5e0aec11b594bb57b3971613"
+checksum = "fabc3e92916c89c95b20eef7b06b00b066bc217ef9ea3a4ac9bf1a7e35261e10"
 dependencies = [
  "base64 0.23.1",
  "http",

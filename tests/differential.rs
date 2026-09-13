@@ -39,6 +39,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 
+use crucible_builtins::{
+    AskUser, Bash, Edit, Glob, Grep, Held, Ledger, Plan, Read, TodoWrite, ToolSearch, WebFetch,
+    WebSearch, Write,
+};
 use crucible_config::{Extensions, HOME, Home, Settings};
 use crucible_core::{
     Ancestry, Calibration, Carried, ContextSnapshot, Fragment, RunId, RunItem, Spend,
@@ -49,16 +53,12 @@ use crucible_core::{
     Page, PromptCacheFingerprint, PromptCacheIdentity, PromptCacheKey, PromptCacheMechanism,
     PromptCacheMechanisms, PromptCachePlan, PromptCachePolicy, PromptCacheProjection,
     PromptCacheRequest, PromptCacheRetention, PromptCacheScopeDigest, PromptCacheSelected,
-    PromptCacheSelection, Provider, ProviderAttemptId, Question, Request, RequestPurpose,
-    SearchResponse, SourceError, StopReason, ToolArgs, ToolCall, ToolId, ToolOutput,
+    PromptCacheSelection, Provider, ProviderAttemptId, Question, RecordedToolOutput, Request,
+    RequestPurpose, SearchResponse, SourceError, StopReason, ToolArgs, ToolCall, ToolId,
     ToolProvenance, ToolResult, ToolSchema, Transcript, Workspace,
 };
 use crucible_provider::{Anthropic, Google, Moonshot, OpenAi, Response, Transport, TransportError};
 use crucible_session::Session;
-use crucible_tools::{
-    AskUser, Bash, Edit, Glob, Grep, Held, Ledger, Plan, Read, TodoWrite, ToolSearch, WebFetch,
-    WebSearch, Write,
-};
 
 /// The frozen answer for `name`, as a path.
 fn frozen(name: &str) -> PathBuf {
@@ -362,7 +362,10 @@ fn every_built_in_tool_advertises_what_it_did() {
 
     let tools: [Box<dyn DescribeTool>; 11] = [
         Box::new(AskUser::new(Arc::new(Silent))),
-        Box::new(Bash::new(workspace.clone())),
+        Box::new(Bash::new(
+            workspace.clone(),
+            Arc::new(crucible_sandbox_local::LocalSandbox::new()),
+        )),
         Box::new(Edit::new(workspace.clone())),
         Box::new(Glob::new(workspace.clone())),
         Box::new(Grep::new(workspace.clone())),
@@ -844,7 +847,7 @@ fn spoken() -> Transcript {
     transcript
         .push(Message::ToolResults(vec![ToolResult {
             id: ToolId::new("probe-call-1"),
-            output: ToolOutput::ok("crates/crucible-config/src/document.rs:41"),
+            output: RecordedToolOutput::ok("crates/crucible-config/src/document.rs:41"),
         }]))
         .expect("the tool's result");
     transcript

@@ -9,12 +9,13 @@
 //! decides how to draw one.
 
 use crate::ContextError;
-use crate::ids::{RunId, ToolId, TurnId};
 use crate::provider::{ProviderError, Spend};
-use crate::run::Ancestry;
-use crate::tool::{Looking, Summary, ToolCall, ToolError, ToolOutput, Wrote};
-use crate::toolset::{ToolReceipt, ToolsetError};
-use crate::transcript::{Attachment, StopReason};
+use crucible_types::Ancestry;
+use crucible_types::ToolCall;
+use crucible_types::{RunId, ToolId, TurnId};
+
+use crucible_tools::{Looking, Summary, ToolError, ToolOutput, ToolReceipt, ToolsetError, Wrote};
+use crucible_types::{Attachment, StopReason};
 
 /// Why a turn ended badly.
 ///

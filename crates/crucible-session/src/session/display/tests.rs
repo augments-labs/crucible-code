@@ -4,8 +4,8 @@ use super::*;
 use crate::Session;
 use crate::sample::Sample;
 use crucible_core::{
-    Ancestry, InvocationRecord, RunItem, StopReason, ToolArgs, ToolCall, ToolEffect, ToolOutcome,
-    ToolOutput, ToolResult,
+    Ancestry, Changed, InvocationRecord, RecordedToolOutput, RunItem, StopReason, ToolArgs,
+    ToolCall, ToolEffect, ToolOutcome, ToolOutput, ToolResult,
 };
 
 fn conversation(session: &Session) -> (ToolCall, Diff) {
@@ -29,15 +29,20 @@ fn conversation(session: &Session) -> (ToolCall, Diff) {
 
 fn finished(session: &Session, call: ToolCall, diff: Diff) {
     let output = ToolOutput::ok("edited").showing(diff);
+    let preview = output.diff().cloned();
+    let recorded = output.into_recorded();
     let mut invocation =
         InvocationRecord::new(call.clone(), Ancestry::new(), ToolEffect::ReadOnly, None);
     invocation
-        .finish(ToolOutcome::Succeeded, output.clone())
+        .finish(ToolOutcome::Succeeded, recorded.clone())
         .unwrap();
-    session.append_journal(&RunItem::Invocation(invocation));
+    session.append_journal(&RunItem::Invocation {
+        record: invocation,
+        preview,
+    });
     session.append(&Message::ToolResults(vec![ToolResult {
         id: call.id,
-        output,
+        output: recorded,
     }]));
 }
 
@@ -70,12 +75,19 @@ fn full_history_and_private_preview_survive_without_changing_model_context() {
     assert_eq!(display.len(), 5);
     assert!(matches!(
         display.first().unwrap(),
-        DisplayItem::Message(Message::User { .. })
+        DisplayItem::Message {
+            message: Message::User { .. },
+            ..
+        }
     ));
-    let DisplayItem::Message(Message::ToolResults(results)) = display.get(2).unwrap() else {
+    let DisplayItem::Message {
+        message: Message::ToolResults(results),
+        previews,
+    } = display.get(2).unwrap()
+    else {
         panic!("missing result")
     };
-    assert_eq!(results.first().unwrap().output.diff(), Some(&diff));
+    assert_eq!(previews.get(&results.first().unwrap().id), Some(&diff));
     assert!(
         matches!(display.get(3).unwrap(), DisplayItem::Compacted(details) if *details == notice)
     );
@@ -97,7 +109,13 @@ fn ordinary_model_replay_does_not_restore_display_diff() {
     let Message::ToolResults(results) = model.messages().get(2).unwrap() else {
         panic!("missing result")
     };
-    assert!(results.first().unwrap().output.diff().is_none());
+    // What crosses into the model's copy is the header its row can be drawn
+    // from again; the lines themselves stay in the display journal.
+    let output = &results.first().unwrap().output;
+    // Not that the lines are absent -- the model's copy has nowhere to put
+    // them, which is the type's job and not this test's -- but that the header
+    // they were counted into arrived.
+    assert_eq!(output.changed(), Some(Changed::new(80, 0)));
 }
 
 #[test]
@@ -143,14 +161,18 @@ fn old_logs_restore_original_messages_and_truthful_compaction_without_previews()
     let (call, _) = conversation(&session);
     session.append(&Message::ToolResults(vec![ToolResult {
         id: call.id,
-        output: ToolOutput::ok("old output"),
+        output: RecordedToolOutput::ok("old output"),
     }]));
     session.compacted(3, "old recap");
     let display = items(&session);
-    let DisplayItem::Message(Message::ToolResults(results)) = display.get(2).unwrap() else {
+    let DisplayItem::Message {
+        message: Message::ToolResults(_),
+        previews,
+    } = display.get(2).unwrap()
+    else {
         panic!("missing result")
     };
-    assert!(results.first().unwrap().output.diff().is_none());
+    assert!(previews.is_empty());
     assert!(matches!(
         *display.get(3).unwrap(),
         DisplayItem::LegacyCompacted { replaced: 3 }
@@ -237,27 +259,33 @@ fn a_full_live_batch_of_maximum_unicode_previews_remains_replayable() {
     let mut results = Vec::new();
     for call in calls {
         let output = ToolOutput::ok("edited").showing(diff.clone());
+        let preview = output.diff().cloned();
+        let recorded = output.into_recorded();
         let mut record =
             InvocationRecord::new(call.clone(), Ancestry::new(), ToolEffect::ReadOnly, None);
         record
-            .finish(ToolOutcome::Succeeded, output.clone())
+            .finish(ToolOutcome::Succeeded, recorded.clone())
             .unwrap();
-        session.append_journal(&RunItem::Invocation(record));
+        session.append_journal(&RunItem::Invocation { record, preview });
         results.push(ToolResult {
             id: call.id,
-            output,
+            output: recorded,
         });
     }
     session.append(&Message::ToolResults(results));
     let display = items(&session);
-    let DisplayItem::Message(Message::ToolResults(results)) = display.last().unwrap() else {
+    let DisplayItem::Message {
+        message: Message::ToolResults(results),
+        previews,
+    } = display.last().unwrap()
+    else {
         panic!("missing batch")
     };
     assert_eq!(results.len(), 128);
     assert!(
         results
             .iter()
-            .all(|result| result.output.diff() == Some(&diff))
+            .all(|result| previews.get(&result.id) == Some(&diff))
     );
 }
 

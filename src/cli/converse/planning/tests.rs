@@ -34,7 +34,7 @@ fn says(rows: &[Row], said: &str) -> bool {
 
 #[test]
 fn a_plan_the_tool_wrote_is_read_on_the_next_look_and_not_again() {
-    let plan = crucible_tools::Plan::new();
+    let plan = crucible_builtins::Plan::new();
     let mut planning = Planning::new(plan.clone());
 
     assert!(!planning.moved());
@@ -50,7 +50,7 @@ fn a_plan_the_tool_wrote_is_read_on_the_next_look_and_not_again() {
 
 #[test]
 fn a_session_picked_up_opens_with_the_plan_it_stopped_at() {
-    let plan = crucible_tools::Plan::new();
+    let plan = crucible_builtins::Plan::new();
     plan.replay(&wrote(&[("Build the gate script", "doing")]));
 
     // Made after the write, the way the wiring makes it: the transcript is
@@ -65,7 +65,7 @@ fn a_session_picked_up_opens_with_the_plan_it_stopped_at() {
 
 #[test]
 fn a_plan_nobody_has_written_draws_nothing_at_all() {
-    let planning = Planning::new(crucible_tools::Plan::new());
+    let planning = Planning::new(crucible_builtins::Plan::new());
 
     // Not a rule, a blank and a heading over an empty list: an agent that has
     // not started is drawn as a prompt with nothing above it.
@@ -74,7 +74,7 @@ fn a_plan_nobody_has_written_draws_nothing_at_all() {
 
 #[test]
 fn emptying_the_plan_is_a_move_like_any_other() {
-    let plan = crucible_tools::Plan::new();
+    let plan = crucible_builtins::Plan::new();
     plan.replay(&wrote(&[("Build the gate script", "doing")]));
 
     let mut planning = Planning::new(plan.clone());
@@ -89,7 +89,7 @@ fn emptying_the_plan_is_a_move_like_any_other() {
 
 #[test]
 fn the_key_opens_the_whole_plan_and_bounds_it_again() {
-    let plan = crucible_tools::Plan::new();
+    let plan = crucible_builtins::Plan::new();
     plan.replay(&several(9));
 
     let mut planning = Planning::new(plan);
@@ -107,7 +107,7 @@ fn the_key_opens_the_whole_plan_and_bounds_it_again() {
 
 #[test]
 fn the_key_pressed_against_a_session_with_no_plan_costs_no_frame() {
-    let mut planning = Planning::new(crucible_tools::Plan::new());
+    let mut planning = Planning::new(crucible_builtins::Plan::new());
 
     // What the answer is for. The loop above redraws on it, and a key that
     // toggled a setting nobody can see would lay the box out again for a screen
@@ -119,7 +119,7 @@ fn the_key_pressed_against_a_session_with_no_plan_costs_no_frame() {
 
 #[test]
 fn every_state_the_tool_writes_has_a_word_the_panel_draws() {
-    let plan = crucible_tools::Plan::new();
+    let plan = crucible_builtins::Plan::new();
     plan.replay(&wrote(&[
         ("Design the architecture", "open"),
         ("Run the validation spikes", "doing"),

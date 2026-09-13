@@ -94,7 +94,8 @@ as an ordinary result. The answer names the number it is running as:
 VITE v5.4.2  ready in 412 ms
 ➜  Local:   http://localhost:5173/
 
-[left running as #1; completion is reported automatically; do not poll or wait]
+[left running as #1; ask bash_output what it has printed so far, and its output
+is handed over when it ends; do not poll or wait for it]
 ```
 
 A command you pressed the key on says who let go of it, because the model asked
@@ -102,8 +103,9 @@ for that one to be waited for and is getting it back early:
 
 ```
 [left running as #2; the developer pressed ctrl+b to leave it running rather
-than keep waiting; carry on with what does not depend on it; completion is
-reported automatically; do not poll or wait]
+than keep waiting; carry on with what does not depend on it; ask bash_output
+what it has printed so far, and its output is handed over when it ends; do not
+poll or wait for it]
 ```
 
 Without that it reads as its own call coming back, and a model that wanted the
@@ -112,6 +114,13 @@ command waited for will reasonably ask for it again.
 `timeout` and `background` together are refused rather than one of them ignored: a
 command left running has no deadline, so a call that sent both asked for two
 different things.
+
+A command that begins by sleeping to reach a later one — `sleep 15 && gh pr checks
+622` — is refused too. That is a wait written as a command, and waiting is what
+leaving one running is for; the refusal names that move rather than only closing
+this one off, because the same line sent with `background: true` costs the turn
+nothing and comes back with what it printed. A `sleep` with nothing after it is a
+pause rather than a poll and still runs.
 
 **At most four run at once.** A fifth call is refused, naming the four in the way,
 and the command it started is ended rather than left where nobody can see it.
@@ -155,6 +164,28 @@ slot remain held until cleanup succeeds; a failed cleanup is not reported as a
 completed background command. A command whose original result was abandoned
 also remains reachable here if its cleanup failed.
 
+## Asking one what it has printed
+
+That view is the reader's. `bash_output` is the model's: it answers with what a
+command left running has printed so far. It takes the number the call that left
+it running was answered with, and nothing else:
+
+```json
+{"number": 1}
+```
+
+It exists so that "how is that going?" has an answer that is not another
+command. What a command prints when it ends is handed over on its own, but a dev
+server, a watcher or a `--follow` does not end, and without this the only way to
+ask about one is to run something that asks the same question a second time.
+
+It reaches no file and starts no process, so it never asks you anything. Its
+answer is bounded like every other, and a command that is running but has
+printed nothing says so rather than answering with nothing. A number nothing
+answers to comes back naming what is running, because the ordinary way to be
+wrong about one is to be a moment late: a command that has ended has left the
+list, and what it printed is already on its way.
+
 ## When one ends on its own
 
 It says so, because the count going quietly down would leave you — and the model —
@@ -171,6 +202,13 @@ command ends, the turn that started it has usually scrolled away, so this is the
 one chance to say which of the four it was in words you were shown at the time.
 The command gives up columns before the ending does: how it ended and how much
 it printed is the part nobody can go back and ask for.
+
+The model is told what the command printed, not only that it ended. A note
+carrying an exit status and a line count leaves the question the command was
+answering still open, and the only move left is to run something else that asks
+it again — which is the polling the note exists to make unnecessary. Each ending
+carries a quarter of a result's ceiling, so four commands ending into one note
+cost what one result does, and output cut to fit says so where it was cut.
 
 The model is told the moment there is somewhere to put it. A turn that is
 running takes the ending between one step and the next, so a plan built around a
@@ -269,8 +307,19 @@ late usage and cleanup facts keep the call attribution that started it.
 Under the Linux boundary, what a command writes inside a writable root stays
 private to it until it ends. An ordinary exit, whether zero or nonzero, publishes
 those writes to the workspace; a command that is stopped, times out or is killed
-by a signal leaves the workspace as it found it. A background command's writes
-therefore land when it finishes, not while it runs. The rules are described in
+by a signal while it runs leaves the workspace as it found it. A background
+command's writes therefore land when it finishes, not while it runs, and it holds
+nothing up meanwhile: other commands that can write run and publish beside it.
+A command that has ended can wait for another command's publication before its
+own; neither its timeout nor <kbd>Esc</kbd> stops it then, and stopping it from
+the panel leaves it to be reported. Each of those waits has a ceiling, because
+what it waits for can be held by another crucible of this user. The timeout's is
+a minute, after which the command is stopped, reported as having run too long,
+and told to have published nothing; <kbd>Esc</kbd>'s is seconds, after which it
+is stopped and what it lost is said in the same words. A command that wrote
+into a root another command published into after it started publishes nothing,
+and its result says so, or, for a background command, the note about its ending.
+The rules are described in
 [Writable roots and publication](../security/sandboxing.md#writable-roots-and-publication).
 
 ## Why it is always asked about

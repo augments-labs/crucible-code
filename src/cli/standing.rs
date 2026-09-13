@@ -9,9 +9,9 @@
 
 use std::fmt::Write as _;
 
+use crucible_builtins::Ended;
 use crucible_config::Settings;
 use crucible_core::SystemPrompt;
-use crucible_tools::Ended;
 
 use crate::cli::draw::spelled;
 
@@ -50,26 +50,53 @@ pub(crate) fn said(ended: &[Ended]) -> Option<String> {
 
     let mut said = String::from(
         "crucible, not the developer: commands you left running have ended. They are \
-         gone; nothing is waiting on them, and starting one again is a new call:",
+         gone and nothing is waiting on them; what each of them printed is below, so \
+         there is nothing left to run to find out how one went:",
     );
 
     for one in ended {
-        let how = match one.code {
-            Some(0) => "finished".to_owned(),
-            Some(code) => format!("failed with exit status {code}"),
-            None => "was killed".to_owned(),
+        let how = match (&one.unpublished, one.code) {
+            (Some(_), _) => "ended".to_owned(),
+            (None, Some(0)) => "finished".to_owned(),
+            (None, Some(code)) => format!("failed with exit status {code}"),
+            (None, None) => "was killed".to_owned(),
         };
+        // In the same sentence, because a model told only that a command ended
+        // would go on as though the files it wrote were there.
+        let unpublished = one.unpublished.as_ref().map_or_else(String::new, |why| {
+            // One line of it: the note is a list, and a reason carrying its own
+            // line break would read as the next command's line.
+            let why = why.split_whitespace().collect::<Vec<_>>().join(" ");
+            format!(", but nothing it wrote was published: {why}")
+        });
 
         let _ = write!(
             said,
-            "\n- #{} {} — {how} after printing {} lines.",
+            "\n- #{} {} — {how} after printing {} lines{unpublished}.",
             one.number,
             spelled(one.tool, &one.called),
             one.lines
         );
+
+        // Indented under the line it belongs to, because several commands can
+        // end into one note and unindented output would read as the note's own
+        // words — or as the next command's.
+        if !one.printed.trim().is_empty() {
+            let _ = write!(said, " What it printed:\n\n{}", indented(&one.printed));
+        }
     }
 
     Some(said)
+}
+
+/// Every line of `printed` moved in by four spaces.
+fn indented(printed: &str) -> String {
+    printed
+        .trim_end()
+        .lines()
+        .map(|line| format!("    {line}"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[cfg(test)]

@@ -10,7 +10,7 @@ use super::*;
 /// No plan at all, which is what a session has until the agent writes one
 /// and is what every test here but the last two is about.
 fn nothing() -> Planning {
-    Planning::new(crucible_tools::Plan::new())
+    Planning::new(crucible_builtins::Plan::new())
 }
 
 #[test]
@@ -34,7 +34,7 @@ fn planned(count: usize) -> Planning {
         .collect::<Vec<_>>()
         .join(",");
 
-    let plan = crucible_tools::Plan::new();
+    let plan = crucible_builtins::Plan::new();
     plan.replay(&ToolArgs::new(format!(r#"{{"tasks":[{said}]}}"#)));
 
     Planning::new(plan)

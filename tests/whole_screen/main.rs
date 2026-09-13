@@ -178,7 +178,7 @@ fn under(picture: &str, command: &str) -> String {
 fn a_settled_prompt_writes_nothing_and_stays_off_cpu() {
     // The ordinary between-turns state, not a turn whose working mark is meant
     // to move. `open` has already seen the final ready row and a full quiet
-    // window, so every byte and scheduler tick after that belongs to idle.
+    // window, so every byte and every nanosecond of CPU after that belongs to idle.
     let mut window = Watched::open("idle-prompt", 80, 24);
 
     window.stays_idle();
@@ -788,7 +788,11 @@ fn change_header_survives_resume() {
 
     window.types_until("/clear\r", "ask mode on");
     window.types_until("/resume\r", "a session, or a branch");
-    window.types_until("\r", "Rewrote it whole");
+    // The picker's preview carries the answer and the change counts as well, so
+    // neither says the session has been picked up. The note counting what the
+    // block left out stays with the block, and only the resumed transcript
+    // draws it.
+    window.types_until("\r", UNSHOWN);
     let again = window.picture();
 
     assert!(live.contains(CHANGED), "the live header: {live}");

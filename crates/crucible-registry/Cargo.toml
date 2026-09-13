@@ -1,0 +1,20 @@
+[package]
+name = "crucible-registry"
+description = "Bounded source-aware registries and their published snapshots."
+publish.workspace = true
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# `thiserror` for the module-owned error enums. `uuid` labels one published
+# generation so a stale handle can be named in a diagnostic; the label is
+# evidence, never a second way to resolve a handle.
+[dependencies]
+thiserror.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

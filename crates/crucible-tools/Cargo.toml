@@ -1,6 +1,6 @@
 [package]
 name = "crucible-tools"
-description = "Filesystem, search and process tools the agent can call."
+description = "What a tool is, what may run one, and the proof that it may."
 publish.workspace = true
 version.workspace = true
 edition.workspace = true
@@ -10,46 +10,18 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
-crucible-core.workspace = true
-crucible-sandbox-broker.workspace = true
+crucible-registry.workspace = true
+crucible-runtime.workspace = true
+crucible-sandbox.workspace = true
+crucible-storage.workspace = true
+crucible-types.workspace = true
+crucible-workspace.workspace = true
+# A permission rule is a glob, and the `glob` tool matches with this crate too:
+# a second matcher would let `src/**` mean one thing in a rule and another in a
+# search, and the two would disagree exactly where it costs most.
 globset.workspace = true
-grep-regex.workspace = true
-grep-searcher.workspace = true
-ignore.workspace = true
-httparse.workspace = true
-http.workspace = true
-# Ephemeral per-command proxy credentials use the existing random source and
-# standard Basic-auth encoder; they never enter persistence or diagnostics.
-getrandom.workspace = true
-base64.workspace = true
-serde_json.workspace = true
-
-# SHA-256 of a picture handed back, which is the record of what was attached: a
-# request reads the file again when it goes out, and a file changed since is a
-# line saying so rather than different bytes under the same answer. Already in
-# the tree — the runner compares the same digest at the other end.
-sha2.workspace = true
-
-# `kill` on a process group, which is how a command's whole pipeline is stopped
-# rather than the shell at the head of it. `std` signals the one child it
-# spawned; the negated group id reaches the rest, and there is no call in `std`
-# that takes one. Unix targets only, and already in the tree under
-# `crucible-core`, so this turns a feature on rather than adding a crate.
-# Confined to `bash/platform/unix.rs`.
-[target.'cfg(unix)'.dependencies]
-rustix = { workspace = true, features = ["process"] }
-
-[target.'cfg(windows)'.dependencies]
-# Windows sandbox scratch directories need the same protected owner-only DACL
-# as other private local state before the dedicated account is granted access.
-crucible-privacy.workspace = true
-
-# Windows refuses std::fs::rename over an existing file, has no safe job-object
-# API for containing descendants, cannot discover the suspended primary thread
-# that must be resumed after job attachment, and cannot poll anonymous pipes
-# through std. Those bindings stay inside the atomic and process boundaries;
-# all features and the exact version are pinned once at the workspace root.
-windows-sys.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
 
 [lints]
 workspace = true

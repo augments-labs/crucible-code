@@ -4,9 +4,9 @@ use std::fs;
 
 use crucible_core::{
     Ancestry, CheckpointId, CheckpointStore, ExecutionCheckpoint, InvocationRecord, Message,
-    PendingAction, PendingApproval, PendingExternalTool, RecoveryAction, ResumeDigest, ResumeScope,
-    RunHistory, RunItem, StopReason, TOOL_ARGUMENT_BYTES, ToolArgs, ToolCall, ToolEffect, ToolId,
-    ToolOutcome, ToolOutput, ToolResult,
+    PendingAction, PendingApproval, PendingExternalTool, RecordedToolOutput, RecoveryAction,
+    ResumeDigest, ResumeScope, RunHistory, RunItem, StopReason, TOOL_ARGUMENT_BYTES, ToolArgs,
+    ToolCall, ToolEffect, ToolId, ToolOutcome, ToolResult,
 };
 #[cfg(unix)]
 use crucible_core::{
@@ -114,7 +114,10 @@ fn pending_actions_and_finished_invocations_round_trip_in_their_own_versioned_fi
         InvocationRecord::new(call("finished"), ancestry, ToolEffect::NonIdempotent, None);
     invocation.start().unwrap();
     invocation
-        .finish(ToolOutcome::Succeeded, ToolOutput::ok("result-canary"))
+        .finish(
+            ToolOutcome::Succeeded,
+            RecordedToolOutput::ok("result-canary"),
+        )
         .unwrap();
     checkpoint.add_invocation(invocation).unwrap();
 
@@ -297,7 +300,7 @@ fn every_pending_outcome_survives_stop_and_resume_with_one_provider_result() {
     resumed.pending_mut().cancel(cancelled_action).unwrap();
     resumed
         .pending_mut()
-        .resolve_external(external_action, ToolOutput::ok("external result"))
+        .resolve_external(external_action, RecordedToolOutput::ok("external result"))
         .unwrap();
     store.save(&resumed).unwrap();
 
@@ -309,13 +312,16 @@ fn every_pending_outcome_survives_stop_and_resume_with_one_provider_result() {
     assert_eq!(invocation.id(), approved_invocation);
     invocation.start().unwrap();
     invocation
-        .finish(ToolOutcome::Succeeded, ToolOutput::ok("approved result"))
+        .finish(
+            ToolOutcome::Succeeded,
+            RecordedToolOutput::ok("approved result"),
+        )
         .unwrap();
     resumed.add_invocation(invocation).unwrap();
 
     let mut results = vec![ToolResult {
         id: ToolId::new("approved"),
-        output: ToolOutput::ok("approved result"),
+        output: RecordedToolOutput::ok("approved result"),
     }];
     for action in [rejected_action, cancelled_action, external_action] {
         results.push(
@@ -404,7 +410,10 @@ fn all_three_crash_windows_round_trip_to_their_explicit_recovery_policy() {
     );
     completed.start().unwrap();
     completed
-        .finish(ToolOutcome::Succeeded, ToolOutput::ok("durable result"))
+        .finish(
+            ToolOutcome::Succeeded,
+            RecordedToolOutput::ok("durable result"),
+        )
         .unwrap();
 
     checkpoint.add_invocation(prepared).unwrap();

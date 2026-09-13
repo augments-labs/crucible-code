@@ -16,7 +16,7 @@
 
 use std::fmt;
 
-use crate::registry::SourceKind;
+use crucible_registry::SourceKind;
 
 /// The most bytes an extension identifier may retain.
 ///

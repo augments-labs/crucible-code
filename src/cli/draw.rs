@@ -52,11 +52,12 @@ use std::borrow::Cow;
 use std::fmt;
 use std::path::Path;
 
+use crucible_builtins::Ended;
 use crucible_core::{
     Attachment, Change, Changed, Compacted, Compacting, Diff, Event, Modality, Question,
-    Sensitivity, StopReason, Summary, ToolCall, ToolId, ToolOutput, Workspace, written,
+    RecordedToolOutput, Sensitivity, StopReason, Summary, ToolCall, ToolId, ToolOutput, Workspace,
+    written,
 };
-use crucible_tools::Ended;
 use crucible_tui::{
     Glyphs, Renderer, Row, Slot, Terminal, TerminalError, clip, columns, cut, fold,
 };
@@ -200,7 +201,9 @@ pub(crate) fn event<T: Terminal>(
         Event::Aged { files } => without(renderer, &files, AGAIN, workspace, style),
         Event::Unread { files } => without(renderer, &files, UNREAD, workspace, style),
 
-        Event::ToolFinished { call, output, .. } => came_back(renderer, kept, &call, output, style),
+        Event::ToolFinished { call, output, .. } => {
+            came_back(renderer, kept, &call, Shown::live(output), style)
+        }
 
         // The tail is settled either way; an answer that stopped early is
         // finished text as much as one that ran out of things to say.
@@ -259,9 +262,11 @@ pub(crate) fn event<T: Terminal>(
 /// said nothing about itself is named by its command, because that is what
 /// there is and nothing may be invented in its place.
 ///
-/// And the status as a number in every case. The mark already says whether it
-/// went well; the number is the part a reader takes to whatever was waiting on
-/// it, and this is the only line that will mention this command again.
+/// And the status as a number wherever there is one. The mark already says
+/// whether it went well; the number is the part a reader takes to whatever was
+/// waiting on it, and this is the only line that will mention this command again.
+/// An ending whose writes were not published says that in its place, because it
+/// is the one thing about that command a reader must not miss.
 ///
 /// # Errors
 ///
@@ -272,10 +277,11 @@ pub(crate) fn gone<T: Terminal>(
     style: Style,
 ) -> Result<(), TerminalError> {
     let glyphs = style.glyphs();
-    let (mark, how) = match ended.code {
-        Some(0) => (glyphs.done(), "exit status 0".to_owned()),
-        Some(code) => (glyphs.failed(), format!("exit status {code}")),
-        None => (glyphs.failed(), "killed".to_owned()),
+    let (mark, how) = match (&ended.unpublished, ended.code) {
+        (Some(_), _) => (glyphs.failed(), "nothing it wrote was published".to_owned()),
+        (None, Some(0)) => (glyphs.done(), "exit status 0".to_owned()),
+        (None, Some(code)) => (glyphs.failed(), format!("exit status {code}")),
+        (None, None) => (glyphs.failed(), "killed".to_owned()),
     };
 
     let tail = format!(
@@ -934,19 +940,13 @@ pub(crate) fn pascal(name: &str) -> String {
 /// in its answer to the model. Both are true of the same call, and only one is
 /// about the file: how many replacements `edit` made is a fact about the
 /// instruction it was sent, and the reader is looking at what is in the file.
-fn finished(
-    output: &ToolOutput,
-    beyond: usize,
-    window: usize,
-    style: Style,
-    details: bool,
-) -> Vec<Row> {
+fn finished(output: &Shown, beyond: usize, window: usize, style: Style, details: bool) -> Vec<Row> {
     let glyphs = style.glyphs();
     let mut lead = Row::new().then(Slot::Plain, " ".repeat(columns(glyphs.called()) + 1));
     lead.push_structural(Slot::Quiet, glyphs.hangs());
     lead.push(Slot::Quiet, " ");
 
-    if output.is_failed() {
+    if output.output.is_failed() {
         lead.push(Slot::Plain, format!("{} ", glyphs.failed()));
     }
 
@@ -964,7 +964,7 @@ fn finished(
         counted(
             &mut lead,
             counts,
-            output.diff().map_or(0, Diff::dropped),
+            output.diff.as_ref().map_or(0, Diff::dropped),
             room,
         );
         if details {
@@ -1153,7 +1153,7 @@ fn offer(beyond: usize, glyphs: Glyphs) -> (String, &'static str, &'static str) 
 /// and a result that read one way live and another way on the way back in is two
 /// results as far as a reader is concerned.
 pub(crate) fn finished_rows(
-    output: &ToolOutput,
+    output: &Shown,
     window: usize,
     style: Style,
     details: bool,
@@ -1161,7 +1161,7 @@ pub(crate) fn finished_rows(
     let glyphs = style.glyphs();
     let mut rows = finished(output, beyond(output), window, style, details);
 
-    if let Some(diff) = output.diff().filter(|diff| !diff.is_empty()) {
+    if let Some(diff) = output.diff.as_ref().filter(|diff| !diff.is_empty()) {
         rows.extend(block(diff, window, glyphs));
     }
 
@@ -1183,7 +1183,7 @@ pub(crate) fn came_back<T: Terminal>(
     renderer: &mut Renderer<T>,
     kept: &mut Kept,
     call: &ToolId,
-    output: ToolOutput,
+    output: Shown,
     style: Style,
 ) -> Result<(), TerminalError> {
     let details = kept
@@ -1192,7 +1192,7 @@ pub(crate) fn came_back<T: Terminal>(
     let rows = if changed(&output).is_some() && renderer.is_terminal() {
         let retained = output.clone();
         let rows = finished_rows(&retained, renderer.columns(), style, details);
-        let bytes = retained.diff().map_or(0, Diff::retained);
+        let bytes = retained.diff.as_ref().map_or(0, Diff::retained);
         renderer.responsive(
             bytes,
             Box::new(move |columns| finished_rows(&retained, columns, style, details)),
@@ -1229,6 +1229,52 @@ pub(crate) fn came_back<T: Terminal>(
     Ok(())
 }
 
+/// One finished result on its way to the screen, and the lines only the reader
+/// is shown.
+///
+/// The record is what the model was sent and what the log keeps; a [`Diff`] is
+/// neither, and it travels beside the record rather than inside it. A turn
+/// takes one off the live result as the call comes back; a replay takes one
+/// from the display journal that kept it. Neither direction turns a record
+/// back into a live result, so nothing drawn here carries authority to run
+/// anything.
+#[derive(Clone)]
+pub(crate) struct Shown {
+    output: RecordedToolOutput,
+    diff: Option<Diff>,
+}
+
+impl Shown {
+    /// A result the turn has just watched come back.
+    pub(crate) fn live(output: ToolOutput) -> Self {
+        Self {
+            diff: output.diff().cloned(),
+            output: output.into_recorded(),
+        }
+    }
+
+    /// A result read back from a session, with the preview its log kept.
+    pub(crate) fn replayed(output: RecordedToolOutput, diff: Option<Diff>) -> Self {
+        Self { output, diff }
+    }
+
+    /// The same result, saying what a pruning has since cleared.
+    pub(crate) fn saying(mut self, text: impl Into<Box<str>>) -> Self {
+        self.output = self.output.saying(text);
+        self
+    }
+
+    /// What both the model and the reader were told.
+    pub(crate) fn text(&self) -> &str {
+        self.output.text()
+    }
+
+    /// What both were told, taken out of the record for what holds it.
+    pub(crate) fn into_text(self) -> Box<str> {
+        self.output.into_text()
+    }
+}
+
 /// How many lines of a result its row has no room to say.
 ///
 /// Zero for a call that changed a file. That result is drawn as the change
@@ -1238,7 +1284,7 @@ pub(crate) fn came_back<T: Terminal>(
 ///
 /// Restored previews follow the same rule. Legacy logs with counts alone also
 /// offer no expansion: the result text repeats the sentence in the header.
-fn beyond(output: &ToolOutput) -> usize {
+fn beyond(output: &Shown) -> usize {
     if changed(output).is_some() {
         return 0;
     }
@@ -1254,11 +1300,12 @@ fn beyond(output: &ToolOutput) -> usize {
 ///
 /// A change of nothing is no change: a call that left the file as it was has a
 /// header to draw only if `Added 0 lines` is worth a row, and it is not.
-fn changed(output: &ToolOutput) -> Option<Changed> {
+fn changed(output: &Shown) -> Option<Changed> {
     output
-        .diff()
+        .diff
+        .as_ref()
         .map(|diff| Changed::new(diff.added(), diff.removed()))
-        .or_else(|| output.changed())
+        .or_else(|| output.output.changed())
         .filter(|counts| !counts.is_empty())
 }
 

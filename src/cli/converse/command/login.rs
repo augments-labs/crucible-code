@@ -714,9 +714,9 @@ mod tests {
     use std::cell::Cell;
 
     use crucible_auth::Store;
+    use crucible_builtins::{Ledger, Plan};
     use crucible_core::{AgentId, Cancel, Revealed};
     use crucible_runner::{AgentSpec, Model, Tools};
-    use crucible_tools::{Ledger, Plan};
     use crucible_tui::Recording;
 
     use crate::cli::fake::Script;
@@ -739,7 +739,7 @@ mod tests {
             revealed: Revealed::new(),
             plan: Plan::new(),
             putting: crate::cli::seen::Putting::new(),
-            leaving: crucible_tools::Background::new(),
+            leaving: crucible_builtins::Background::new(),
             provider: Cell::new(Some("anthropic")),
             pending_model: Cell::new(None),
             pending_mode: Cell::new(None),

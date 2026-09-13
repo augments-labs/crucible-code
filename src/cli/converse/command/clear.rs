@@ -127,9 +127,9 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use crucible_auth::Store;
+    use crucible_builtins::{Ledger, Plan};
     use crucible_core::{AgentId, Cancel, Message, Revealed, StopReason, ToolArgs, Transcript};
     use crucible_runner::{AgentSpec, Model, Runner, Session, Tools, recent};
-    use crucible_tools::{Ledger, Plan};
     use crucible_tui::{Recording, Renderer};
 
     use crate::cli::Fatal;
@@ -146,7 +146,7 @@ mod tests {
     /// `/resume`'s tests lend their runs.
     fn lent<'a>(input: &'a mut dyn std::io::BufRead, opening: &'a Standing) -> Held<'a> {
         Held::new(
-            crucible_tools::Plan::new(),
+            crucible_builtins::Plan::new(),
             crucible_tui::Sending::default(),
             Answers { input, keys: false },
             opening,
@@ -183,7 +183,7 @@ mod tests {
             revealed: Revealed::new(),
             plan: plan.clone(),
             putting: crate::cli::seen::Putting::new(),
-            leaving: crucible_tools::Background::new(),
+            leaving: crucible_builtins::Background::new(),
             provider: std::cell::Cell::new(Some("anthropic")),
             pending_model: std::cell::Cell::new(None),
             pending_mode: std::cell::Cell::new(None),

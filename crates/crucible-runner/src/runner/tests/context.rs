@@ -135,7 +135,7 @@ fn a_compaction_that_removes_context_forces_a_full_render_on_the_next_pass() {
         .context_snapshot()
         .expect("the typed state survived compaction");
     assert!(matches!(
-        recorded.seen(&section, scripted.runner.transcript()),
+        crucible_core::seen(recorded, &section, scripted.runner.transcript()),
         Seen::Stale
     ));
 

@@ -8,6 +8,84 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.41.0] - 2026-09-13
+
+### Added
+
+- **A model can ask a command it left running what it has printed.** The output
+  of a background command was already held for the panel behind
+  <kbd>Ctrl</kbd>+<kbd>O</kbd>, and only the reader could see it; a model with a
+  dev server or a watcher running had no way to ask how it was going except to
+  run something that asked again. `bash_output` takes the number the call was
+  answered with and answers with what that command has printed so far.
+
+### Changed
+
+- **The shared domain values have crates of their own.** `crucible-types`,
+  `crucible-registry`, `crucible-credentials` and `crucible-storage` now hold the
+  shared values, the bounded registries, the credential contract and the history,
+  checkpoint and cache contracts, and `crucible-core` re-exports every moved name
+  from the path it had. Durable storage and provider projections hold
+  `RecordedToolOutput`, reached from a live `ToolOutput` only through
+  `ToolOutput::into_recorded()`.
+- **Path proofs and attachment ingress have crates of their own.** Path
+  containment, descriptor descent and their proofs are `crucible-workspace`, and
+  the bounded attachment ingress is `crucible-attachments`, through which every
+  attachment is now opened.
+- **The controls a turn is steered and stopped by have a crate of their own, and
+  Tokio is a dependency.** `crucible-runtime` holds those controls, re-exported
+  from `crucible-core` so no consumer changes, beside a bounded task group whose
+  shutdown returns within two graces whether or not its tasks cooperate. The
+  application does not run on Tokio yet.
+- **The tool contracts and the built-in tools have crates of their own.**
+  `crucible-tools` now holds what a tool is, the roster a request is admitted
+  against and the permission engine that issues `Approved`; the implementations
+  that crate used to hold are `crucible-builtins`. An adapter outside this tree
+  implements `Tool` against `crucible-tools` without compiling the built-in tools,
+  and `ToolContext::with_call_result_store` is now `with_invocation`, because the
+  context never read the store it was handed.
+- **The confinement contracts and this machine's backend have crates of their
+  own.** `crucible_tools::LocalSandbox` and `crucible_tools::conformance` moved
+  to `crucible-sandbox-local`, and the backend-neutral contracts they answer to
+  `crucible-sandbox`. An adapter outside this tree implements those contracts
+  against `crucible-sandbox`, and reaches the conformance suite through a
+  backend crate rather than through a crate of built-in tools.
+- **A command tool is handed the confinement it will run under.** `Bash::new`
+  took only a workspace and filled in this machine's own backend, so the tool
+  crate named one machine's answer where it should name only the contract, and a
+  caller that had already resolved a backend could not say so at construction.
+  It now takes the sandbox service alongside the workspace.
+
+### Fixed
+
+- **The history indicator counts back from the newest prompt.** Walking back
+  through history showed `history 1/100` on the most recent of eighty retained
+  prompts, as though the oldest had been loaded. It now reads `history 80/100`
+  there and counts down towards `history 1/100`.
+- **A command that ended while nobody waited hands over what it printed.** The
+  note telling the model a backgrounded command was over carried an exit status
+  and a line count and nothing else, so the question the command was answering
+  stayed open and the only move left was to run something else that asked it
+  again — exactly the polling the note asks it not to do. Each ending now
+  carries the command's output, bounded to a quarter of a result's ceiling so
+  four endings in one note cost what one result does.
+- **A command that begins by sleeping to reach a later one is refused.** The
+  shape a model reaches for when it will not wait — `sleep 15 && gh pr checks
+  622` — occupied the agent for the whole sleep and then asked a question whose
+  answer arrives on its own, and repeating it is the polling the background note
+  already asks against. Such a foreground command is now refused with the
+  argument that does work, `"background": true`, named in the refusal.
+- **A command left running no longer stops every other command from writing.**
+  Under the Linux boundary a command that could write held a host-wide lock for
+  as long as it ran, so a dev server left in the background, or a confined MCP
+  server for a whole run, made every other command that could write fail with
+  "sandbox concurrency ceiling is reached". The lock is now held only while a
+  command publishes or takes its baselines; a command that has ended waits its
+  turn, for a bounded while, rather than being stopped, and one that wrote into
+  a root another command published into meanwhile publishes nothing and says
+  so. A session still running an earlier crucible holds the lock the old way
+  until it ends.
+
 ## [0.40.1] - 2026-09-09
 
 ### Fixed
@@ -3753,7 +3831,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.40.1...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.41.0...HEAD
+[0.41.0]: https://github.com/augments-labs/crucible-code/compare/v0.40.1...v0.41.0
 [0.40.1]: https://github.com/augments-labs/crucible-code/compare/v0.40.0...v0.40.1
 [0.40.0]: https://github.com/augments-labs/crucible-code/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/augments-labs/crucible-code/compare/v0.38.0...v0.39.0

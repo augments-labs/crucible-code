@@ -1,6 +1,6 @@
 //! Provider implementations — one per LLM wire protocol.
 //!
-//! Depends on `crucible-core` alone. It must never reach `crucible-tools`,
+//! Depends on `crucible-core` alone. It must never reach `crucible-builtins`,
 //! `crucible-runner` or `crucible-tui`: a provider translates a turn into
 //! requests and responses back into deltas, and knows nothing about what the
 //! agent does with either.

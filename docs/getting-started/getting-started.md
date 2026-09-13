@@ -232,9 +232,10 @@ not a space, so a path is one word.
 
 <kbd>↑</kbd> and <kbd>↓</kbd> on an empty line walk back through the prompts you
 have already sent from this directory, newest first, up to a hundred of them.
-The top border of the box says where you are — `history 1/100` on the first
-press back, counting up as you go, and always out of a hundred whether you have
-sent that many or three — and Enter sends whatever is in the box.
+The top border of the box says where you are — showing the prompt's chronological
+position within this window, such as `history 80/100` on the first press back when
+eighty prompts are retained, counting down toward `history 1/100` for the oldest —
+and Enter sends whatever is in the box.
 Edit the line instead, by so much as a <kbd>Backspace</kbd>, and the walk ends
 where you edited it: the count goes, and the line is yours again.
 
@@ -1055,8 +1056,8 @@ stays in the box, and the next prompt carries on the same session.
 
 ## What it can do
 
-Eleven tools, advertised in the order a model tends to reach for them. Seven
-are always in the list. The rest are **held back**: they exist and they work, and the
+Twelve tools, advertised in the order a model tends to reach for them. Eight are
+always in the list. The rest are **held back**: they exist and they work, and the
 agent does not see them until it looks them up with `tool_search`. A schema the
 agent can see is one it pays for on every request of every turn, and most
 sessions never write a plan or ask a question about the world.
@@ -1069,6 +1070,7 @@ sessions never write a plan or ask a question about the world.
 | `edit` | Replaces text in a file | yes |
 | `write` | Creates or overwrites a file | yes |
 | `bash` | Runs a command | yes |
+| `bash_output` | Says what a command left running has printed | no |
 | `todo_write` | Writes down the plan | no |
 | `ask_user` | Puts a question to you | no |
 | `web_search` | Searches the web | yes |

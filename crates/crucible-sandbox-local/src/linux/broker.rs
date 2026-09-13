@@ -1,0 +1,375 @@
+//! Descriptor-pinned broker discovery and authenticated wait-status channel.
+
+use std::fs::File;
+use std::io::{self, Read as _, Write as _};
+use std::os::fd::{AsRawFd, RawFd};
+use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+use std::os::unix::net::UnixStream;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+use crucible_sandbox::SandboxError;
+use crucible_sandbox_broker::{
+    CANCEL_FRAME, GO_FRAME, READY_FRAME, REFUSED_DESCRIPTOR_CLOSURE, REFUSED_FRAME, REFUSED_SCAN,
+};
+
+use super::super::process::Canceller;
+
+const MAX_BROKER_BYTES: u64 = 16 * 1024 * 1024;
+
+/// Whether a broker image, or a directory above it, can be rewritten only by
+/// root or by the user running Crucible.
+///
+/// Unlike a system package the image may belong to the user, since a path
+/// under their home is the normal case. Group write is refused even for the
+/// user's own group: nothing here can prove that group is private to them, and
+/// a shared group would let any member rewrite namespace PID 1 in place.
+fn trusted_owner(uid: u32, mode: u32) -> bool {
+    (uid == 0 || uid == rustix::process::getuid().as_raw()) && mode & 0o022 == 0
+}
+
+/// One opened broker image whose descriptor is mounted into the namespace.
+pub(super) struct Broker {
+    path: PathBuf,
+    image: File,
+}
+
+impl Broker {
+    pub(super) fn find(excluded: &[&Path]) -> Result<Self, SandboxError> {
+        let executable = std::env::current_exe()
+            .map_err(|_| unavailable("could not locate the Crucible executable"))?;
+        let mut candidates = Vec::new();
+        if let Some(parent) = executable.parent() {
+            candidates.push(parent.join("crucible-sandbox-broker"));
+            if let Some(build_root) = parent.parent() {
+                candidates.push(build_root.join("crucible-sandbox-broker"));
+            }
+        }
+        candidates.sort();
+        candidates.dedup();
+        Self::first_trusted(candidates, excluded)
+    }
+
+    fn first_trusted(candidates: Vec<PathBuf>, excluded: &[&Path]) -> Result<Self, SandboxError> {
+        let mut refused = Vec::with_capacity(candidates.len());
+        for candidate in candidates {
+            match Self::pin(&candidate, excluded) {
+                Ok(broker) => return Ok(broker),
+                Err(reason) => refused.push((candidate, reason)),
+            }
+        }
+        Err(none_trusted(&refused))
+    }
+
+    /// Bind one candidate by descriptor, or say what disqualified it.
+    ///
+    /// The broker is namespace PID 1: it applies the resource limits, ends the
+    /// process tree and drives the scan that decides what is published back.
+    /// Like Bubblewrap it may only come from a path no other unprivileged user
+    /// can rewrite. Each refusal carries its own sentence because the two
+    /// candidates fail for different reasons, and a caller who is told only
+    /// that no broker was found cannot tell a missing build from a checkout
+    /// whose directory mode lets a group member replace the image.
+    fn pin(candidate: &Path, excluded: &[&Path]) -> Result<Self, &'static str> {
+        let Ok(path) = candidate.canonicalize() else {
+            return Err("no file stands at that path");
+        };
+        if excluded.iter().any(|root| path.starts_with(root)) {
+            return Err("it lies inside the tree this sandbox is confining");
+        }
+        let Ok(metadata) = path.metadata() else {
+            return Err("its metadata could not be read");
+        };
+        if !metadata.is_file() {
+            return Err("it is not a regular file");
+        }
+        if metadata.len() == 0 {
+            return Err("it is empty");
+        }
+        if metadata.len() > MAX_BROKER_BYTES {
+            return Err("it is larger than a broker image may be");
+        }
+        if !trusted_owner(metadata.uid(), metadata.permissions().mode()) {
+            return Err("another user can rewrite the image itself");
+        }
+        if !super::probe::trusted_parent_chain_owned_by(&path, |uid, _, mode| {
+            trusted_owner(uid, mode)
+        }) {
+            return Err("a directory above it is writable by a group or by everyone");
+        }
+        let Ok(image) = File::open(&path) else {
+            return Err("it could not be opened");
+        };
+        let Ok(opened) = image.metadata() else {
+            return Err("the opened image's metadata could not be read");
+        };
+        if opened.len() != metadata.len()
+            || opened.ino() != metadata.ino()
+            || opened.dev() != metadata.dev()
+            || !trusted_owner(opened.uid(), opened.permissions().mode())
+        {
+            return Err("it changed between being checked and being opened");
+        }
+        Ok(Self { path, image })
+    }
+
+    /// A broker that is never executed, for tests that read the plan.
+    ///
+    /// `build` binds the image by descriptor and never names it, so any open
+    /// file stands in — which lets a plan be asserted on a machine that has no
+    /// installed broker to pin.
+    #[cfg(test)]
+    pub(super) const fn unexecuted(path: PathBuf, image: File) -> Self {
+        Self { path, image }
+    }
+
+    pub(super) fn descriptor(&self) -> RawFd {
+        self.image.as_raw_fd()
+    }
+}
+
+impl std::fmt::Debug for Broker {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Broker")
+            .field("path", &self.path)
+            .finish_non_exhaustive()
+    }
+}
+
+/// One private socket pair; only the broker side crosses the namespace.
+pub(super) struct StatusChannel {
+    reader: UnixStream,
+    writer: Option<UnixStream>,
+}
+
+impl StatusChannel {
+    pub(super) fn pair() -> io::Result<Self> {
+        let (reader, writer) = UnixStream::pair()?;
+        Ok(Self {
+            reader,
+            writer: Some(writer),
+        })
+    }
+
+    pub(super) fn descriptor(&self) -> io::Result<RawFd> {
+        self.writer
+            .as_ref()
+            .map(AsRawFd::as_raw_fd)
+            .ok_or_else(|| io::Error::other("broker status writer is already closed"))
+    }
+
+    pub(super) fn close_writer(&mut self) {
+        self.writer.take();
+    }
+
+    pub(super) fn attest_ready(&mut self) -> io::Result<()> {
+        let mut ready = [0_u8; READY_FRAME.len()];
+        self.reader.read_exact(&mut ready)?;
+        if ready == REFUSED_FRAME {
+            let mut reason = [0_u8; 1];
+            self.reader.read_exact(&mut reason)?;
+            return Err(io::Error::other(match reason.first().copied() {
+                Some(REFUSED_SCAN) => {
+                    "sandbox broker refused the bounded pre-release semantic scan"
+                }
+                Some(REFUSED_DESCRIPTOR_CLOSURE) => {
+                    "sandbox broker could not close undeclared descriptors before release"
+                }
+                _ => "sandbox broker returned an unknown pre-release refusal",
+            }));
+        }
+        if ready != READY_FRAME {
+            return Err(io::Error::other(
+                "sandbox broker did not attest readiness before release",
+            ));
+        }
+        Ok(())
+    }
+
+    /// A stop the supervisor hands the broker before it kills the launcher.
+    ///
+    /// Killing Bubblewrap alone does not end the PID namespace: the broker,
+    /// started in its own session, outlives it together with the workload. The
+    /// cancellation frame makes the broker kill the workload and write its wait
+    /// status, and the wait keeps the launcher alive until that report has
+    /// left, or until the budget ends and the kill proceeds regardless.
+    ///
+    /// An explicit stop writes the same frame on its own clone of this socket.
+    /// The two writers share no lock: a stream socket delivers each eight-byte
+    /// frame whole, and the broker acts on the first frame it reads, so a
+    /// second one changes nothing.
+    pub(super) fn canceller(&self) -> io::Result<Canceller> {
+        let channel = self.reader.try_clone()?;
+        Ok(Box::new(move |leader| {
+            (&channel).write_all(&CANCEL_FRAME)?;
+            (&channel).flush()?;
+            await_launcher_exit(leader)
+        }))
+    }
+
+    pub(super) fn send_go(&mut self) -> io::Result<()> {
+        self.reader.write_all(&GO_FRAME)?;
+        self.reader.flush()
+    }
+
+    pub(super) fn into_stream(self) -> UnixStream {
+        self.reader
+    }
+}
+
+fn unavailable(reason: &'static str) -> SandboxError {
+    SandboxError::BackendUnavailable {
+        reason: reason.into(),
+    }
+}
+
+/// Name every candidate and why it was refused.
+///
+/// Both paths are searched before this is reached, so reporting only the last
+/// one would hide the reason that applies to the reader's own layout.
+fn none_trusted(refused: &[(PathBuf, &'static str)]) -> SandboxError {
+    let mut reason =
+        String::from("no trusted crucible-sandbox-broker executable was found; refused:");
+    if refused.is_empty() {
+        reason.push_str(" no path was searched");
+    }
+    for (path, why) in refused {
+        reason.push_str("\n  ");
+        reason.push_str(&path.display().to_string());
+        reason.push_str(" — ");
+        reason.push_str(why);
+    }
+    SandboxError::BackendUnavailable {
+        reason: reason.into(),
+    }
+}
+
+/// How long a cancelled broker may take to end its workload and exit.
+///
+/// The supervisor holds the process lifecycle lock meanwhile, so this also
+/// bounds how long a wait on the process can stall before the launcher's exit
+/// is known. Reading the broker's report, which includes its scan of the
+/// projection, is bounded separately by the protocol's own ceilings.
+const CANCEL_GRACE: Duration = Duration::from_secs(5);
+/// How often the cancelling supervisor looks for the launcher's exit.
+const CANCEL_POLL: Duration = Duration::from_millis(5);
+
+/// Waits, within the cancellation budget, for the launcher to exit.
+///
+/// The exit is observed without reaping so the process owner still collects
+/// the status. A launcher that outlives the budget is reported as timed out
+/// and left to the kill.
+fn await_launcher_exit(leader: u32) -> io::Result<()> {
+    use rustix::process::{WaitId, WaitIdOptions};
+
+    let raw = i32::try_from(leader)
+        .map_err(|_| io::Error::other("launcher process id does not fit this platform"))?;
+    let pid = rustix::process::Pid::from_raw(raw)
+        .ok_or_else(|| io::Error::other("launcher process id cannot be observed"))?;
+    let options = WaitIdOptions::NOHANG | WaitIdOptions::EXITED | WaitIdOptions::NOWAIT;
+    let expired = Instant::now() + CANCEL_GRACE;
+    while rustix::process::waitid(WaitId::Pid(pid), options)?.is_none() {
+        if Instant::now() >= expired {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "sandbox broker did not report within the cancellation budget",
+            ));
+        }
+        std::thread::sleep(CANCEL_POLL);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_broker_image_is_trusted_only_where_no_other_user_can_rewrite_it() {
+        let me = rustix::process::getuid().as_raw();
+        assert!(trusted_owner(0, 0o755));
+        assert!(trusted_owner(me, 0o755));
+        assert!(trusted_owner(me, 0o700));
+        assert!(
+            !trusted_owner(me, 0o775),
+            "the user's own group cannot be proven private"
+        );
+        assert!(
+            !trusted_owner(0, 0o775),
+            "root's file, but any group member"
+        );
+        assert!(!trusted_owner(me, 0o777));
+        assert!(
+            !trusted_owner(0, 0o1777),
+            "a sticky world-writable directory"
+        );
+        assert!(!trusted_owner(me.wrapping_add(1), 0o755));
+    }
+
+    #[test]
+    fn a_broker_image_under_a_world_writable_directory_is_refused() {
+        let sample = crate::sample::Sample::new("sandbox-broker-untrusted-parent");
+        let image = sample.root().join("crucible-sandbox-broker");
+        std::fs::write(&image, b"#!/bin/sh\nexit 0\n").expect("broker fixture");
+        std::fs::set_permissions(&image, std::fs::Permissions::from_mode(0o755))
+            .expect("fixture mode");
+        std::fs::set_permissions(sample.root(), std::fs::Permissions::from_mode(0o777))
+            .expect("world-writable parent");
+        let refused = Broker::first_trusted(vec![image.clone()], &[]);
+        let Err(SandboxError::BackendUnavailable { reason }) = refused else {
+            panic!("a broker anyone can replace was accepted");
+        };
+        assert!(
+            reason.contains("a directory above it is writable by a group or by everyone"),
+            "the refusal did not say which check turned the image down: {reason}"
+        );
+        assert!(
+            reason.contains(&image.display().to_string()),
+            "the refusal did not name the path it turned down: {reason}"
+        );
+    }
+
+    #[test]
+    fn a_broker_under_a_group_writable_directory_says_so_rather_than_only_that_none_was_found() {
+        // A checkout created under `umask 002` has group-writable directories,
+        // and every candidate then sits under one. Before the reason was
+        // carried out, the caller was told only that no broker was available,
+        // which reads as a missing build rather than a directory mode.
+        let sample = crate::sample::Sample::new("sandbox-broker-group-writable-parent");
+        let image = sample.root().join("crucible-sandbox-broker");
+        std::fs::write(&image, b"#!/bin/sh\nexit 0\n").expect("broker fixture");
+        std::fs::set_permissions(&image, std::fs::Permissions::from_mode(0o755))
+            .expect("fixture mode");
+        std::fs::set_permissions(sample.root(), std::fs::Permissions::from_mode(0o775))
+            .expect("group-writable parent");
+        let Err(SandboxError::BackendUnavailable { reason }) =
+            Broker::first_trusted(vec![image], &[])
+        else {
+            panic!("a broker any group member can replace was accepted");
+        };
+        assert!(
+            reason.contains("a directory above it is writable by a group or by everyone"),
+            "a group-writable parent was not named as the reason: {reason}"
+        );
+    }
+
+    #[test]
+    fn a_broker_that_was_never_built_says_the_path_is_empty_rather_than_untrusted() {
+        let sample = crate::sample::Sample::new("sandbox-broker-absent");
+        let absent = sample.root().join("crucible-sandbox-broker");
+        let Err(SandboxError::BackendUnavailable { reason }) =
+            Broker::first_trusted(vec![absent.clone()], &[])
+        else {
+            panic!("a broker that does not exist was accepted");
+        };
+        assert!(
+            reason.contains("no file stands at that path"),
+            "an absent broker was not told apart from an untrusted one: {reason}"
+        );
+        assert!(
+            reason.contains(&absent.display().to_string()),
+            "the refusal did not name the path it looked at: {reason}"
+        );
+    }
+}

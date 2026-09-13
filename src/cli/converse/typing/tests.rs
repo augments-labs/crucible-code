@@ -109,7 +109,7 @@ fn the_top_border_says_where_the_arrow_reached_and_says_nothing_once_the_line_is
         .find(|row| row.text().contains("history"))
         .map(crucible_tui::Row::text)
         .unwrap_or_default();
-    assert!(border.contains("history 1/100"), "{:?}", boxed.rows);
+    assert!(border.contains("history 3/100"), "{:?}", boxed.rows);
 
     // The key the reader reaches for when the line is nearly what they wanted.
     editor.press(Key::Backspace);
@@ -188,7 +188,7 @@ fn leaving(mode: Mode) -> Says {
 /// one — and what every test in this file is drawn with but the last two, since
 /// none of the others is about the panel.
 fn nothing() -> Planning {
-    Planning::new(crucible_tools::Plan::new())
+    Planning::new(crucible_builtins::Plan::new())
 }
 
 /// A plan of `count` open tasks, each named after where it is in the list.
@@ -202,7 +202,7 @@ fn planned(count: usize) -> Planning {
         .collect::<Vec<_>>()
         .join(",");
 
-    let plan = crucible_tools::Plan::new();
+    let plan = crucible_builtins::Plan::new();
     plan.replay(&ToolArgs::new(format!(r#"{{"tasks":[{said}]}}"#)));
 
     Planning::new(plan)
@@ -257,7 +257,7 @@ fn a_run_with_nothing_to_type_into_says_so_rather_than_reading_keys() {
             recalling: &mut unwalked(),
             images: &mut Vec::new(),
             clipboard: &mut None,
-            left: &crucible_tools::Background::new(),
+            left: &crucible_builtins::Background::new(),
             aside: &Aside::new(),
             keys: false,
         },
@@ -1349,6 +1349,8 @@ fn ended(number: usize, code: Option<i32>) -> Ended {
         said: "".into(),
         code,
         lines: 42,
+        printed: Box::from(""),
+        unpublished: None,
     }
 }
 

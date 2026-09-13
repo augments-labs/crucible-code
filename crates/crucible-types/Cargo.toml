@@ -1,0 +1,39 @@
+[package]
+name = "crucible-types"
+description = "Shared, validated data values every crucible crate exchanges."
+publish.workspace = true
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# This crate is the root of the graph, so a dependency here is one every other
+# crate inherits. Four earn it.
+#
+# `thiserror` writes the `Display` and `source` impls for the module-owned error
+# enums the repository requires on every fallible function, and is derive-only:
+# nothing of the crate survives into the binary.
+#
+# `uuid` supplies the v7 identities sessions, runs and turns are named by. The
+# ordering those identities carry is what lets a resume read a log back in the
+# order it was written, and a hand-rolled generator would be a second source of
+# that ordering.
+#
+# `sha2` supplies the domain-separated one-way digests persisted facts are keyed
+# by — a continuation scope must survive restart without its credential entering
+# the record that names it.
+#
+# `serde_json` owns the one shape a context fragment is exchanged as. The values
+# are already parsed when they arrive here, so this is the type they are held in
+# rather than a parser this crate runs: writing a second representation of it
+# would be a second thing for a fragment to disagree with itself about.
+[dependencies]
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

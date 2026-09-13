@@ -8,7 +8,7 @@
 use crucible_core::{
     Ancestry, SandboxEnablement, SandboxId, SandboxManifest, SandboxRequest, SandboxService, ToolId,
 };
-use crucible_tools::LocalSandbox;
+use crucible_sandbox_local::LocalSandbox;
 use crucible_tui::{Key, Offered, Pressed, Renderer, SandboxPanel, SandboxTab, Terminal};
 
 use crate::cli::converse::region::{self, Ended, Moved};

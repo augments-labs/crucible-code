@@ -1,8 +1,9 @@
 //! What the prompt knows about a permission mode beyond the mode itself.
 //!
-//! The mode is core's, and so is every word it is spelled with: `allowEdits` is
-//! what you type and `allow edits on` is what you read, and both live beside the
-//! enum so that a mode added later cannot be given one and not the other.
+//! The mode belongs to `crucible-tools`, and so does every word it is spelled
+//! with: `allowEdits` is what you type and `allow edits on` is what you read,
+//! and both live beside the enum so that a mode added later cannot be given
+//! one and not the other.
 //!
 //! What lives here is what only a terminal needs. The colour a mode is drawn in
 //! is a fact about this renderer rather than about permission, and the way back

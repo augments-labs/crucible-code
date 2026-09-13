@@ -15,8 +15,19 @@ use super::{replay, wire};
 /// One visible fact in a session's original chronological history.
 #[derive(Debug)]
 pub enum DisplayItem {
-    /// Original conversation content, with private previews for display only.
-    Message(Message),
+    /// Original conversation content, and the previews kept for the reader.
+    Message {
+        /// What the participants said, exactly as the record holds it.
+        message: Message,
+        /// Bounded change previews the log kept for this batch's results.
+        ///
+        /// Beside the record rather than inside it, because a preview is the
+        /// one thing here the model was never sent: a result carrying it would
+        /// say different things to the two readers of the same call. Empty for
+        /// every message that is not a tool-result batch, and for a batch
+        /// whose log kept no preview.
+        previews: HashMap<ToolId, Diff>,
+    },
     /// A completed compaction with the exact live measurements.
     Compacted(Compacted),
     /// A legacy compaction or pruning whose live measurements were not saved.
@@ -40,7 +51,7 @@ pub struct DisplayHistory {
     calls: Vec<ToolId>,
     notices: VecDeque<DisplayItem>,
     ready: bool,
-    queued: Option<Message>,
+    queued: Option<(Message, HashMap<ToolId, Diff>)>,
     ended: bool,
 }
 
@@ -78,8 +89,8 @@ impl DisplayHistory {
             }
             self.ready = false;
         }
-        if let Some(message) = self.queued.take() {
-            return Ok(Some(DisplayItem::Message(message)));
+        if let Some((message, previews)) = self.queued.take() {
+            return Ok(Some(DisplayItem::Message { message, previews }));
         }
         if self.ended {
             return Ok(None);
@@ -176,12 +187,13 @@ impl DisplayHistory {
                 self.ready = true;
                 return Ok(self.notices.pop_front());
             }
-            let Some(mut message) = wire::message(text) else {
+            let Some(message) = wire::message(text) else {
                 // Format requirements, context patches and usage calibrations
                 // were validated by model replay and are not visible records.
                 continue;
             };
-            match &mut message {
+            let mut shown = HashMap::new();
+            match &message {
                 Message::Context(_) => continue,
                 Message::Agent { calls, .. } => {
                     self.previews.clear();
@@ -191,7 +203,7 @@ impl DisplayHistory {
                 Message::ToolResults(results) => {
                     for result in results {
                         if let Some(diff) = self.previews.remove(&result.id) {
-                            result.output = result.output.clone().showing(diff);
+                            shown.insert(result.id.clone(), diff);
                         }
                     }
                     self.previews.clear();
@@ -201,11 +213,14 @@ impl DisplayHistory {
                 Message::User { .. } => {}
             }
             if let Some(notice) = self.notices.pop_front() {
-                self.queued = Some(message);
+                self.queued = Some((message, shown));
                 self.ready = true;
                 return Ok(Some(notice));
             }
-            return Ok(Some(DisplayItem::Message(message)));
+            return Ok(Some(DisplayItem::Message {
+                message,
+                previews: shown,
+            }));
         }
     }
 

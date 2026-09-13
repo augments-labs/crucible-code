@@ -27,12 +27,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
+use crucible_builtins::Grep;
 use crucible_core::{
     Ancestry, Approved, Ask, Cancel, DescribeTool, Disposition, Mode, Permission, Remember,
     RuleError, Rules, Sensitivity, Settled, Tool, ToolArgs, ToolCall, ToolContext, ToolId,
     Unwatched, Verdict, Workspace,
 };
-use crucible_tools::Grep;
 
 /// How far over `rg` the tool may be.
 const LIMIT: f64 = 1.25;

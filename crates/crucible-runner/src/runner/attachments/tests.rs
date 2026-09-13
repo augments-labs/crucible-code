@@ -60,7 +60,9 @@ fn permitted(workspace: &Workspace) -> Approved {
 fn found(text: &str, attachments: Vec<Attachment>, approved: &Approved) -> Message {
     Message::ToolResults(vec![ToolResult {
         id: ToolId::new("call-1"),
-        output: ToolOutput::ok(text).with_attachments(approved, attachments),
+        output: ToolOutput::ok(text)
+            .with_attachments(approved, attachments)
+            .into_recorded(),
     }])
 }
 

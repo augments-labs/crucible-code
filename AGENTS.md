@@ -9,8 +9,19 @@ Repository skills live in [`.agents/skills/`](.agents/skills/).
 | Directory | Purpose |
 | --- | --- |
 | `src/` | CLI and application wiring |
+| `crates/crucible-types/` | Shared validated values every crate exchanges |
+| `crates/crucible-registry/` | Bounded, source-aware registries |
+| `crates/crucible-credentials/` | Credential contracts and outgoing redaction |
+| `crates/crucible-storage/` | History, checkpoint and cache contracts |
+| `crates/crucible-workspace/` | The directories crucible reaches, and path proofs |
+| `crates/crucible-attachments/` | What may be attached, and the one read it comes through |
+| `crates/crucible-runtime/` | The controls a turn is steered and stopped by, and how work is owned |
+| `crates/crucible-sandbox/` | What a confined process may observe or change |
+| `crates/crucible-sandbox-local/` | The confinement this machine can enforce, and the processes it runs |
+| `crates/crucible-tools/` | What a tool is, what may run one, and the proof that it may |
 | `crates/crucible-core/` | Domain types and extension traits |
 | `crates/crucible-auth/` | Credentials and account authorization |
+| `crates/crucible-builtins/` | Built-in tools |
 | `crates/crucible-config/` | Configuration and settings |
 | `crates/crucible-extension/` | External program integration |
 | `crates/crucible-mcp/` | Model Context Protocol client |
@@ -19,14 +30,15 @@ Repository skills live in [`.agents/skills/`](.agents/skills/).
 | `crates/crucible-runner/` | Agent turn execution |
 | `crates/crucible-sandbox-broker/` | Isolated child execution and status |
 | `crates/crucible-session/` | Session storage and replay |
-| `crates/crucible-tools/` | Built-in tools |
 | `crates/crucible-tui/` | Terminal rendering and interaction |
 | `schema/` | Generated configuration schema |
 | `scripts/` | Checks, benchmarks and release helpers, under `sh/` and `python/` |
 | `docs/` | User documentation |
 
 Workspace manifests declare crate dependencies; `scripts/sh/repo-checks.sh`
-enforces their allowed directions.
+enforces their allowed directions. `crucible-core` re-exports the names it no
+longer defines, so a consumer keeps one import path while ownership moves out of
+it; new code names the owning crate.
 
 ## Changing Crucible
 
@@ -96,11 +108,10 @@ the required behavior justifies it; keep the declaration and checks below.
 
 ## Writing the change
 
-Work lands on `dev`; `main` holds what shipped. Branch from `dev` and open the
-pull request against `dev` — one opened against `main` is retargeted before
-review, because merging it would put an unreleased change into the branch a tag
-is cut from. Only a release branch and a hotfix target `main`, both owned by
-[`RELEASING.md`](RELEASING.md).
+Work lands on `dev`; `main` holds what shipped. A pull request targets `dev` —
+one targeting `main` is retargeted before review, because merging it would put
+an unreleased change into the branch a tag is cut from. Only a release branch
+and a hotfix target `main`, both owned by [`RELEASING.md`](RELEASING.md).
 
 Keep repository prose focused on shipped behavior and why the reader cares:
 
@@ -108,47 +119,44 @@ Keep repository prose focused on shipped behavior and why the reader cares:
 - Changelog: a bold lead and at most three sentences for someone deciding
   whether to upgrade. Release notes reuse that entry.
 - Pull request: follow the template, answering every section with one short
-  paragraph and naming the test that failed before a behavior change. Keep one
-  reason per PR; implementation and proof that cannot compile apart remain one
-  change.
+  paragraph and naming the test that failed before a behavior change.
 
 Update affected user docs, the first-run README surface, contributor setup and
 changelog in the same change. Put long reasoning beside the code or in a focused
 design document, not a commit narrative. Do not put internal planning identifiers
 or harness paths into shipped comments, docs, schemas or manifests.
 
-## Opening a pull request
+## What a pull request must satisfy
 
 Read the whole of
 [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md) before
-you fill any of it in. A section left blank, answered with the prompt text, or
+filling any of it in. A section left blank, answered with the prompt text, or
 answered with a summary of the diff instead of the thing it asked for is worse
 than no pull request: it spends a reviewer's attention and returns nothing, and
 it is the person whose name is on it who pays for that.
 
-Before opening one:
+- **One reason.** Unrelated changes travelling together get split, and a batch
+  opened by pointing an agent at a list is closed on sight. Implementation and
+  proof that cannot compile apart remain one change.
+- **A named failure.** A panic, an assertion, a wrong screen, a measurement.
+  "It could break" and "a review tool flagged it" are not problems, and a change
+  with no observed failure behind it has nothing for Proof to hold.
+- **Prior art accounted for.** Open **and** closed pull requests and issues for
+  the same problem or area are searched first. If it has been tried, say what is
+  different here; if it is a duplicate, say so rather than opening another.
+- **Provenance disclosed.** What produced the change: hand or agent, and for an
+  agent the exact model id, the harness and its version, and every plugin
+  loaded. This is weighed, not policed — a claim reasoned out of documentation
+  is read differently from one a real session produced — and hiding it is what
+  closes a pull request.
+- **A person answering for it.** The complete diff reaches the person whose name
+  is on it. The human-review box is theirs: ticked, with them named in the
+  table, once they have said they read the diff or authorized the pull request;
+  left empty otherwise, naming who is being asked. A tick nobody gave is a false
+  statement about a person.
 
-- Search open **and** closed pull requests and issues for the same problem or
-  area. If it has been tried, say what is different here; if it is a duplicate,
-  stop and say so rather than opening another.
-- Be able to name the failure. A panic, an assertion, a wrong screen, a
-  measurement. "It could break" and "a review tool flagged it" are not
-  problems, and a change with no observed failure behind it has nothing for
-  Proof to hold.
-- Say what produced the change: hand or agent, and for an agent the exact model
-  id, the harness and its version, and every plugin loaded. This is weighed, not
-  policed — a claim reasoned out of documentation is read differently from one a
-  real session produced — and hiding it is what closes a pull request.
-- Show the complete diff to the person you are working with, and let them
-  answer for it.
-
-The human-review box is theirs, not yours. Tick it, and name them in the table,
-once they have said they read the diff or authorized the pull request; leave it
-empty otherwise and say who is being asked. A tick nobody gave is a false
-statement about a person.
-
-One reason per pull request. Unrelated changes travelling together get split,
-and a batch opened by pointing an agent at a list is closed on sight.
+How a branch is finished, reviewed and published is owned by the skills in
+[`.agents/skills/`](.agents/skills/); this file states what the result has to be.
 
 ## Repository checks
 
