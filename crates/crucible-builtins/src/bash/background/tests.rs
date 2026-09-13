@@ -285,7 +285,7 @@ fn abandoned_receipt_keeps_failed_cleanup_visible_and_retryable() {
 ///
 /// `after` sits in a band: longer than whatever deadline the test wants to watch
 /// pass first, and well short of the publication ceiling the code under test
-/// allows — 300ms in test builds, 100ms for a cancel. A sleep only ever
+/// allows — `PUBLICATION` in test builds, and `CANCELLATION` for a cancel. A sleep only ever
 /// overshoots, so the lower end holds by construction and only the ceiling can be
 /// lost. Timing an ending to land *at* that ceiling is what made one of these fail
 /// on one loaded runner while passing on three others, so leave the slack in.
@@ -547,8 +547,16 @@ fn a_cancel_waits_less_for_a_publication_than_a_deadline_does() {
 
     waiting.join().expect("the waiting thread");
     assert!(said.contains("cancelled"), "{said}");
+    // Held to the two ceilings themselves rather than a figure between them. A wait
+    // only ever overshoots, so a cancel that took the deadline's patience is at
+    // least that long every time, and one that took none is shorter than its own.
+    // A midpoint left a correct cancel half the room, and a loaded runner used it.
     assert!(
-        took < Duration::from_millis(200),
+        took >= output::CANCELLATION,
+        "a cancel gave up before its own patience: {took:?}"
+    );
+    assert!(
+        took < output::PUBLICATION,
         "a cancel waited the deadline's ceiling: {took:?}"
     );
 }
