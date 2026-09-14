@@ -15,8 +15,9 @@ change in any release with no deprecation period.
   projection, selection and pricing; the usage, cost and cache facts a session
   keeps are `crucible-types`, and the resource store contract is
   `crucible-storage` with its file in `crucible-session`. `crucible-core`
-  re-exports every moved name, and `PromptCachePlanned::from_request` is now
-  `PromptCacheRequest::planned`.
+  re-exports every moved name; `PromptCachePlanned::from_request` is now
+  `PromptCacheRequest::planned`, and `PromptCachePolicy::narrowed` is
+  `crucible_models::narrow_policy`.
 
 ### Fixed
 

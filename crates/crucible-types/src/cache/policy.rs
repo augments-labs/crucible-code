@@ -1,4 +1,7 @@
-//! Prompt-cache authority, defaults, and narrowing.
+//! Prompt-cache authority and its defaults.
+//!
+//! Holding one configuration layer's policy under another is decided in
+//! `crucible-models`; what that decision compares is here.
 
 use std::fmt;
 use std::str::FromStr;
@@ -603,14 +606,9 @@ impl PromptCachePolicy {
     }
 
     /// The same policy, recording a contradiction found while narrowing it.
-    ///
-    /// Adds a conflict and never clears one: a policy that inherited a
-    /// contradiction keeps it however it is narrowed afterwards.
     #[must_use]
     pub const fn with_conflict(mut self, conflict: PromptCachePolicyConflict) -> Self {
-        if self.conflict.is_none() {
-            self.conflict = Some(conflict);
-        }
+        self.conflict = Some(conflict);
         self
     }
 
