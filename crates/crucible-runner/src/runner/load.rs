@@ -412,6 +412,36 @@ impl Load {
         self.appended = self.appended.saturating_add(bytes);
     }
 
+    /// Messages already counted, rewritten in place.
+    ///
+    /// A result taken out leaves a sentence of another length where it was,
+    /// and the byte total has to follow: the next report calibrates this model's
+    /// rate against that total, and bytes no request carries would make text
+    /// read cheaper than it is — the direction that notices a full window too
+    /// late. The difference is settled against the stretch nothing has reported
+    /// on yet, which is where a result just recorded is. Bytes a report already
+    /// covered come off the same total at the same rate, and where there are
+    /// more of them than that stretch holds, the estimate stays high rather
+    /// than going below nothing.
+    pub(super) fn rewritten(&mut self, before: u64, after: u64) {
+        let change = before.abs_diff(after);
+        if after < before {
+            self.bytes = self.bytes.saturating_sub(change);
+            self.appended = self.appended.saturating_sub(change);
+        } else {
+            self.bytes = self.bytes.saturating_add(change);
+            self.appended = self.appended.saturating_add(change);
+        }
+    }
+
+    /// What these messages weigh, counted the way a message joins the load.
+    pub(super) fn weight(messages: &[Message]) -> u64 {
+        messages
+            .iter()
+            .map(Self::bytes)
+            .fold(0, u64::saturating_add)
+    }
+
     fn bytes(message: &Message) -> u64 {
         (match message {
             Message::Context(fragment) => fragment.text().len(),

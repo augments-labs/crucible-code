@@ -198,6 +198,89 @@ fn a_search_a_restricting_vendor_answers_after_the_session_left_it_is_not_sent_o
 }
 
 #[test]
+fn a_result_cleared_as_it_is_recorded_leaves_only_its_sentence_in_the_load() {
+    // The load counts the transcript's bytes, and the next report calibrates
+    // this model's rate against that count. A cleared result still counted
+    // there makes every request look bigger than the one that went out, so text
+    // reads cheaper than it is from then on — the direction that notices a full
+    // window too late.
+    let cleared = searching_after_leaving(
+        Fixed::new("web_search")
+            .answering(&"grounded after the switch ".repeat(400))
+            .answered_by(
+                ResultProvenance::answered("restricting", Some(RESTRICTED))
+                    .expect("a bounded term"),
+            ),
+    );
+    let never_held = searching_after_leaving(Fixed::new("web_search").answering(RESTRICTED));
+
+    assert_eq!(only_result(&cleared).output.text(), RESTRICTED);
+    assert_eq!(
+        cleared.runner.load.tokens(),
+        never_held.runner.load.tokens(),
+        "the load still counted a result the transcript no longer holds"
+    );
+}
+
+/// A session that searches through the vendor it has just left.
+fn searching_after_leaving(search: Fixed) -> Scripted {
+    let first = Script::new(vec![saying("from the vendor that restricts")])
+        .with_name("restricting")
+        .restricting(RESTRICTED);
+    let mut scripted = Scripted::new(first, tools([search]), Verdict::Allow);
+    scripted.turn("hello").expect("the turn to finish");
+
+    scripted.runner.serve(Box::new(
+        Script::new(vec![
+            calling("call_search", "web_search", r#"{"query":"rust"}"#),
+            saying("an answer from elsewhere"),
+        ])
+        .with_name("elsewhere"),
+    ));
+    scripted.turn("search now").expect("the turn to finish");
+    scripted
+}
+
+#[test]
+fn a_result_cleared_at_a_switch_leaves_only_its_sentence_in_the_load() {
+    // The same count at the other moment a result is taken out: a switch keeps
+    // the transcript's bytes as the estimate the next vendor starts from.
+    let cleared = leaving_after_searching(
+        Fixed::new("web_search")
+            .answering(&"grounded before the switch ".repeat(400))
+            .answered_by(
+                ResultProvenance::answered("restricting", Some(RESTRICTED))
+                    .expect("a bounded term"),
+            ),
+    );
+    let never_held = leaving_after_searching(Fixed::new("web_search").answering(RESTRICTED));
+
+    assert_eq!(only_result(&cleared).output.text(), RESTRICTED);
+    assert_eq!(
+        cleared.runner.load.tokens(),
+        never_held.runner.load.tokens(),
+        "the load still counted a result the transcript no longer holds"
+    );
+}
+
+/// A session that searched through a vendor that restricts, and then left it.
+fn leaving_after_searching(search: Fixed) -> Scripted {
+    let first = Script::new(vec![
+        calling("call_search", "web_search", r#"{"query":"rust"}"#),
+        saying("searched"),
+    ])
+    .with_name("restricting")
+    .restricting(RESTRICTED);
+    let mut scripted = Scripted::new(first, tools([search]), Verdict::Allow);
+    scripted.turn("search").expect("the turn to finish");
+
+    scripted
+        .runner
+        .serve(Box::new(Script::new(Vec::new()).with_name("elsewhere")));
+    scripted
+}
+
+#[test]
 fn a_search_result_an_older_build_recorded_is_taken_away_when_leaving_a_vendor_that_restricts() {
     // A log written before results said who answered them cannot say whether a
     // search came from the vendor being left. The build that wrote it took every

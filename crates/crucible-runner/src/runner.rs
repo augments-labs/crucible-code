@@ -813,6 +813,13 @@ impl Runner {
     /// One line per sentence, since a line carries one. Clearing takes the
     /// provenance with the content, so a result is never cleared twice.
     fn clear_untransferable(&mut self, clearing: &[(crucible_core::ToolId, Box<str>)]) {
+        if clearing.is_empty() {
+            return;
+        }
+        // Weighed whole on both sides, because a clearing reaches every result
+        // with a named id wherever it stands; and only here, so a pass that
+        // clears nothing walks nothing.
+        let before = load::Load::weight(self.transcript.messages());
         let mut notices: Vec<&str> = Vec::new();
         for (_, notice) in clearing {
             if !notices.contains(&&**notice) {
@@ -833,6 +840,8 @@ impl Runner {
             let freed = self.transcript.clear_tool_outputs(&results, notice);
             self.session.restricted(freed, &results, notice);
         }
+        self.load
+            .rewritten(before, load::Load::weight(self.transcript.messages()));
     }
 
     /// How hard this session is asking the model to think.
