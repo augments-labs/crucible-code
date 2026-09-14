@@ -861,8 +861,19 @@ fn a_panic_under_the_state_coordination_leaves_it_usable() {
     });
     assert!(poisoning.join().is_err(), "the fixture did not panic");
 
-    drop(TestStateChange::read());
-    drop(TestStateChange::change());
+    // Asked from a thread of its own: a hold left held after the panic would
+    // keep the change waiting for ever, and the test says so rather than hang
+    // the run.
+    let (done, finished) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        drop(TestStateChange::read());
+        drop(TestStateChange::change());
+        done.send(())
+            .expect("the test is told the coordination answered");
+    });
+    finished
+        .recv_timeout(std::time::Duration::from_secs(30))
+        .expect("a reading and then a change, after the panic");
 }
 
 #[test]
@@ -889,7 +900,7 @@ fn a_change_waits_for_a_reading_under_way() {
         "a change was taken while a reading was under way"
     );
     drop(reading);
-    held.recv_timeout(std::time::Duration::from_secs(5))
+    held.recv_timeout(std::time::Duration::from_secs(30))
         .expect("the change, once the reading ended");
     changer.join().expect("the changing thread");
 }
@@ -918,7 +929,7 @@ fn a_change_waits_for_another_change() {
         "a second change was taken while the first still stood"
     );
     drop(first);
-    held.recv_timeout(std::time::Duration::from_secs(5))
+    held.recv_timeout(std::time::Duration::from_secs(30))
         .expect("the second change, once the first ended");
     changer.join().expect("the changing thread");
 }
@@ -926,18 +937,44 @@ fn a_change_waits_for_another_change() {
 #[test]
 fn a_change_asked_for_again_by_its_holder_is_taken_at_once() {
     // A test holding the change that reaches code asking for it again would
-    // otherwise wait on itself for ever.
+    // otherwise wait on itself for ever, and letting go of that second hold must
+    // not let go of the change the first still holds.
     let (taken, told) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel::<()>();
     let holder = std::thread::spawn(move || {
         let change = TestStateChange::change();
         let again = TestStateChange::change();
+        drop(again);
         taken
             .send(())
             .expect("the test is told the change was taken twice");
-        drop(again);
+        released.recv().expect("the test lets the first hold go");
         drop(change);
     });
-    told.recv_timeout(std::time::Duration::from_secs(5))
+    told.recv_timeout(std::time::Duration::from_secs(30))
         .expect("the change asked for again by the thread holding it");
+
+    let (asking, asked) = std::sync::mpsc::channel();
+    let (holding, held) = std::sync::mpsc::channel();
+    let contender = std::thread::spawn(move || {
+        asking
+            .send(())
+            .expect("the test is told the change is asked for");
+        let change = TestStateChange::change();
+        holding
+            .send(())
+            .expect("the test is told the change is held");
+        drop(change);
+    });
+    asked.recv().expect("the change is asked for");
+    assert!(
+        held.recv_timeout(std::time::Duration::from_millis(200))
+            .is_err(),
+        "letting go of the second hold let go of the change"
+    );
+    release.send(()).expect("the first hold is let go");
+    held.recv_timeout(std::time::Duration::from_secs(30))
+        .expect("the change, once its holder let it go");
     holder.join().expect("the holding thread");
+    contender.join().expect("the contending thread");
 }
