@@ -1048,6 +1048,8 @@ impl RegistryLease {
     }
 
     fn acquire_at(path: &Path) -> io::Result<Self> {
+        #[cfg(test)]
+        let _reading = TestStateChange::read()?;
         create_state_directory(path)?;
         let state = open_state_directory(path)?;
         let lock = open_lock(&state, REGISTRY_LOCK)?;
@@ -1136,6 +1138,8 @@ impl Lease {
     /// of the descriptor that a forked child has not yet let go of looks held
     /// the same way, and is gone by a later look.
     pub(super) fn try_acquire_in(state: &Path) -> io::Result<Option<Self>> {
+        #[cfg(test)]
+        let _reading = TestStateChange::read()?;
         create_state_directory(state)?;
         let directory = open_state_directory(state)?;
         let lock = open_lock(&directory, WRITABLE_LOCK)?;
@@ -1227,6 +1231,82 @@ impl Drop for TestSerialLease {
         if let Ok(mut owner) = owner.lock() {
             *owner = None;
             available.notify_all();
+        }
+    }
+}
+
+/// Under test, what keeps a lease from reading this user's state directory while
+/// another test of the process holds it changed to watch a refusal.
+///
+/// Taking the registry or the publication lock takes a reading for as long as
+/// the taking lasts; the test takes the change for as long as the directory or a
+/// lock in it stands changed, once the readings under way have finished. The
+/// thread holding the change reads through it, which is how its own refusal is
+/// watched.
+#[cfg(test)]
+pub(super) struct TestStateChange {
+    reading: bool,
+}
+
+/// Who holds this user's state directory changed, and how many readings are
+/// under way.
+#[cfg(test)]
+#[derive(Default)]
+struct StateUse {
+    changer: Option<std::thread::ThreadId>,
+    readers: usize,
+}
+
+#[cfg(test)]
+static TEST_STATE_USE: std::sync::LazyLock<(std::sync::Mutex<StateUse>, std::sync::Condvar)> =
+    std::sync::LazyLock::new(Default::default);
+
+#[cfg(test)]
+impl TestStateChange {
+    /// A reading, waiting out a change another thread holds.
+    pub(super) fn read() -> io::Result<Self> {
+        let current = std::thread::current().id();
+        let (state, settled) = &*TEST_STATE_USE;
+        let mut state = state
+            .lock()
+            .map_err(|_| invalid("sandbox test state coordination was poisoned"))?;
+        while state.changer.is_some_and(|changer| changer != current) {
+            state = settled
+                .wait(state)
+                .map_err(|_| invalid("sandbox test state coordination was poisoned"))?;
+        }
+        state.readers += 1;
+        Ok(Self { reading: true })
+    }
+
+    /// The change, once no other change is held and no reading is under way.
+    pub(super) fn change() -> io::Result<Self> {
+        let current = std::thread::current().id();
+        let (state, settled) = &*TEST_STATE_USE;
+        let mut state = state
+            .lock()
+            .map_err(|_| invalid("sandbox test state coordination was poisoned"))?;
+        while state.changer.is_some() || state.readers > 0 {
+            state = settled
+                .wait(state)
+                .map_err(|_| invalid("sandbox test state coordination was poisoned"))?;
+        }
+        state.changer = Some(current);
+        Ok(Self { reading: false })
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestStateChange {
+    fn drop(&mut self) {
+        let (state, settled) = &*TEST_STATE_USE;
+        if let Ok(mut state) = state.lock() {
+            if self.reading {
+                state.readers = state.readers.saturating_sub(1);
+            } else {
+                state.changer = None;
+            }
+            settled.notify_all();
         }
     }
 }
