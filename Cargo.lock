@@ -333,7 +333,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-attachments"
-version = "0.41.0"
+version = "0.41.1"
 dependencies = [
  "crucible-types",
  "crucible-workspace",
@@ -344,7 +344,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-auth"
-version = "0.41.0"
+version = "0.41.1"
 dependencies = [
  "base64 0.23.1",
  "crucible-core",
@@ -358,7 +358,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-builtins"
-version = "0.41.0"
+version = "0.41.1"
 dependencies = [
  "crucible-attachments",
  "crucible-runtime",
@@ -378,7 +378,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-code"
-version = "0.41.0"
+version = "0.41.1"
 dependencies = [
  "arboard",
  "clap",
@@ -406,7 +406,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-config"
-version = "0.41.0"
+version = "0.41.1"
 dependencies = [
  "crucible-core",
  "serde_json",
@@ -415,7 +415,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-core"
-version = "0.41.0"
+version = "0.41.1"
 dependencies = [
  "crucible-attachments",
  "crucible-credentials",
@@ -434,7 +434,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-credentials"
-version = "0.41.0"
+version = "0.41.1"
 dependencies = [
  "crucible-types",
  "sha2",
@@ -443,7 +443,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-extension"
-version = "0.41.0"
+version = "0.41.1"
 dependencies = [
  "crucible-core",
  "serde_json",
@@ -452,7 +452,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-mcp"
-version = "0.41.0"
+version = "0.41.1"
 dependencies = [
  "crucible-core",
  "serde_json",
@@ -461,7 +461,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-privacy"
-version = "0.41.0"
+version = "0.41.1"
 dependencies = [
  "rustix",
  "thiserror",
@@ -470,7 +470,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-provider"
-version = "0.41.0"
+version = "0.41.1"
 dependencies = [
  "base64 0.23.1",
  "crucible-core",
@@ -481,7 +481,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-registry"
-version = "0.41.0"
+version = "0.41.1"
 dependencies = [
  "thiserror",
  "uuid",
@@ -489,7 +489,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-runner"
-version = "0.41.0"
+version = "0.41.1"
 dependencies = [
  "crucible-attachments",
  "crucible-core",
@@ -499,14 +499,14 @@ dependencies = [
 
 [[package]]
 name = "crucible-runtime"
-version = "0.41.0"
+version = "0.41.1"
 dependencies = [
  "tokio",
 ]
 
 [[package]]
 name = "crucible-sandbox"
-version = "0.41.0"
+version = "0.41.1"
 dependencies = [
  "crucible-storage",
  "crucible-types",
@@ -518,7 +518,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-sandbox-broker"
-version = "0.41.0"
+version = "0.41.1"
 dependencies = [
  "libc",
  "rustix",
@@ -529,7 +529,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-sandbox-local"
-version = "0.41.0"
+version = "0.41.1"
 dependencies = [
  "base64 0.23.1",
  "crucible-privacy",
@@ -548,7 +548,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-session"
-version = "0.41.0"
+version = "0.41.1"
 dependencies = [
  "crucible-core",
  "crucible-privacy",
@@ -560,7 +560,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-storage"
-version = "0.41.0"
+version = "0.41.1"
 dependencies = [
  "crucible-types",
  "serde_json",
@@ -571,7 +571,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-tools"
-version = "0.41.0"
+version = "0.41.1"
 dependencies = [
  "crucible-registry",
  "crucible-runtime",
@@ -586,7 +586,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-tui"
-version = "0.41.0"
+version = "0.41.1"
 dependencies = [
  "base64 0.23.1",
  "crossterm",
@@ -600,7 +600,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-types"
-version = "0.41.0"
+version = "0.41.1"
 dependencies = [
  "serde_json",
  "sha2",
@@ -610,7 +610,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-workspace"
-version = "0.41.0"
+version = "0.41.1"
 dependencies = [
  "rustix",
  "thiserror",
@@ -1406,9 +1406,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.43"
+version = "0.23.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0283386ce02abc0151e1761d08802dfe86c173b0b494af5cbc086574e453da06"
+checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
 dependencies = [
  "log",
  "once_cell",
@@ -1430,9 +1430,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.13"
+version = "0.103.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61c429a8649f110dddef65e2a5ad240f747e85f7758a6bccc7e5777bd33f756e"
+checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
 dependencies = [
  "ring",
  "rustls-pki-types",
