@@ -415,23 +415,24 @@ impl Load {
     /// Messages already counted, rewritten in place.
     ///
     /// A result taken out leaves a sentence of another length where it was,
-    /// and the byte total has to follow: the next report calibrates this model's
+    /// and the byte total follows it: the next report calibrates this model's
     /// rate against that total, and bytes no request carries would make text
     /// read cheaper than it is — the direction that notices a full window too
-    /// late. The difference is settled against the stretch nothing has reported
-    /// on yet, which is where a result just recorded is. Bytes a report already
-    /// covered come off the same total at the same rate, and where there are
-    /// more of them than that stretch holds, the estimate stays high rather
-    /// than going below nothing.
+    /// late. The estimate is left as it stands, by the rule `estimated` keeps
+    /// for a decrease a report already measured: it stays high until the next
+    /// report, a switch that reestimates from this total, or a recount. A
+    /// message nothing has measured yet is [`Self::amended`] as well.
     pub(super) fn rewritten(&mut self, before: u64, after: u64) {
-        let change = before.abs_diff(after);
-        if after < before {
-            self.bytes = self.bytes.saturating_sub(change);
-            self.appended = self.appended.saturating_sub(change);
-        } else {
-            self.bytes = self.bytes.saturating_add(change);
-            self.appended = self.appended.saturating_add(change);
-        }
+        self.bytes = moved(self.bytes, before, after);
+    }
+
+    /// The message just recorded, changed before any report covered it.
+    ///
+    /// Nothing has measured it, so the stretch estimated beside the last report
+    /// holds all of it and moves by exactly what it gained or lost. Its bytes in
+    /// the total are [`Self::rewritten`]'s to move.
+    pub(super) fn amended(&mut self, before: u64, after: u64) {
+        self.appended = moved(self.appended, before, after);
     }
 
     /// What these messages weigh, counted the way a message joins the load.
@@ -636,6 +637,18 @@ impl Load {
             bytes,
             ..Self::default()
         };
+    }
+}
+
+/// A count after something it holds went from `before` bytes to `after`.
+///
+/// Held at zero rather than wrapping, which can only leave an estimate high.
+fn moved(count: u64, before: u64, after: u64) -> u64 {
+    let change = before.abs_diff(after);
+    if after < before {
+        count.saturating_sub(change)
+    } else {
+        count.saturating_add(change)
     }
 }
 

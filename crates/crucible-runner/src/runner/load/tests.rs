@@ -638,3 +638,38 @@ fn the_load_does_not_charge_for_what_only_the_reader_saw() {
     assert_eq!(plain.tokens(), shown.tokens());
     assert_eq!(plain.tokens(), counted.tokens());
 }
+
+#[test]
+fn a_rewrite_of_what_a_report_measured_leaves_the_estimate_high_until_it_is_rebuilt() {
+    // The rule `estimated` keeps for any decrease a report measured: the bytes
+    // leave the total the next report calibrates against, and the count itself
+    // is not lowered by a byte estimate of them.
+    let mut load = Load::default();
+    load.recorded(&results(3_000));
+    load.responding(0);
+    load.carried(Carried::new(1_000));
+    load.recorded(&Message::said("x".repeat(300)));
+    let measured = load.tokens();
+
+    load.rewritten(
+        Load::weight(&[results(3_000)]),
+        Load::weight(&[results(30)]),
+    );
+
+    assert_eq!(
+        load.tokens(),
+        measured,
+        "a decrease the report measured came off its count"
+    );
+
+    load.reestimated();
+    let mut rebuilt = Load::default();
+    rebuilt.recorded(&results(30));
+    rebuilt.recorded(&Message::said("x".repeat(300)));
+    rebuilt.reestimated();
+    assert_eq!(
+        load.tokens(),
+        rebuilt.tokens(),
+        "the total kept bytes the transcript no longer holds"
+    );
+}

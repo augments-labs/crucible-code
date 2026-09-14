@@ -210,12 +210,13 @@ fn a_result_cleared_as_it_is_recorded_leaves_only_its_sentence_in_the_load() {
     let cleared = searching_after_leaving(
         Fixed::new("web_search")
             .answering(&"grounded after the switch ".repeat(400))
-            .answered_by(
-                ResultProvenance::answered("restricting", Some(RESTRICTED))
-                    .expect("a bounded term"),
-            ),
+            .answered_by(left_behind()),
+        saying("an answer from elsewhere"),
     );
-    let never_held = searching_after_leaving(Fixed::new("web_search").answering(RESTRICTED));
+    let never_held = searching_after_leaving(
+        Fixed::new("web_search").answering(RESTRICTED),
+        saying("an answer from elsewhere"),
+    );
 
     assert_eq!(only_result(&cleared).output.text(), RESTRICTED);
     assert_eq!(
@@ -225,8 +226,67 @@ fn a_result_cleared_as_it_is_recorded_leaves_only_its_sentence_in_the_load() {
     );
 }
 
-/// A session that searches through the vendor it has just left.
-fn searching_after_leaving(search: Fixed) -> Scripted {
+#[test]
+fn a_result_shorter_than_its_sentence_is_counted_at_the_sentence_once_cleared() {
+    // A search that found nothing answers in a line, and the sentence left in
+    // its place can be longer: the load grows by the difference.
+    let short = "none";
+    assert!(short.len() < RESTRICTED.len(), "the point of this");
+    let cleared = searching_after_leaving(
+        Fixed::new("web_search")
+            .answering(short)
+            .answered_by(left_behind()),
+        saying("an answer from elsewhere"),
+    );
+    let never_held = searching_after_leaving(
+        Fixed::new("web_search").answering(RESTRICTED),
+        saying("an answer from elsewhere"),
+    );
+
+    assert_eq!(only_result(&cleared).output.text(), RESTRICTED);
+    assert_eq!(
+        cleared.runner.load.tokens(),
+        never_held.runner.load.tokens(),
+        "the load did not count the sentence left in a shorter result's place"
+    );
+}
+
+#[test]
+fn a_result_cleared_as_it_is_recorded_is_not_in_the_bytes_the_next_report_calibrates() {
+    // Where the count matters most: the answer after the search reports what
+    // its request carried, and the rate taken from that is the count over the
+    // bytes the load believed the request held.
+    let reported = || {
+        vec![
+            Delta::Carried(Carried::new(40_000)),
+            Delta::Text("an answer from elsewhere".into()),
+            Delta::Spent(Spend::new(100)),
+            Delta::Stopped(StopReason::Yielded),
+        ]
+    };
+    let cleared = searching_after_leaving(
+        Fixed::new("web_search")
+            .answering(&"grounded after the switch ".repeat(400))
+            .answered_by(left_behind()),
+        reported(),
+    );
+    let never_held =
+        searching_after_leaving(Fixed::new("web_search").answering(RESTRICTED), reported());
+
+    assert_eq!(
+        cleared.runner.load.bytes_to_tokens(100_000),
+        never_held.runner.load.bytes_to_tokens(100_000),
+        "the rate the report calibrated counted a result its request no longer held"
+    );
+}
+
+/// Who answered a search through the vendor a session left, and what it keeps.
+fn left_behind() -> ResultProvenance {
+    ResultProvenance::answered("restricting", Some(RESTRICTED)).expect("a bounded term")
+}
+
+/// A session that searches through the vendor it has just left, then answers.
+fn searching_after_leaving(search: Fixed, answer: Vec<Delta>) -> Scripted {
     let first = Script::new(vec![saying("from the vendor that restricts")])
         .with_name("restricting")
         .restricting(RESTRICTED);
@@ -236,7 +296,7 @@ fn searching_after_leaving(search: Fixed) -> Scripted {
     scripted.runner.serve(Box::new(
         Script::new(vec![
             calling("call_search", "web_search", r#"{"query":"rust"}"#),
-            saying("an answer from elsewhere"),
+            answer,
         ])
         .with_name("elsewhere"),
     ));
@@ -251,10 +311,7 @@ fn a_result_cleared_at_a_switch_leaves_only_its_sentence_in_the_load() {
     let cleared = leaving_after_searching(
         Fixed::new("web_search")
             .answering(&"grounded before the switch ".repeat(400))
-            .answered_by(
-                ResultProvenance::answered("restricting", Some(RESTRICTED))
-                    .expect("a bounded term"),
-            ),
+            .answered_by(left_behind()),
     );
     let never_held = leaving_after_searching(Fixed::new("web_search").answering(RESTRICTED));
 

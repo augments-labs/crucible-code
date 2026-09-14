@@ -380,7 +380,17 @@ impl Runner {
     fn admit_recorded(&mut self) {
         let recorded = self.transcript.messages().len().saturating_sub(1);
         let clearing = self.untransferable(recorded, self.provider.as_ref(), None);
+        if clearing.is_empty() {
+            return;
+        }
+        let weight = |transcript: &Transcript| {
+            load::Load::weight(transcript.messages().get(recorded..).unwrap_or_default())
+        };
+        let before = weight(&self.transcript);
         self.clear_untransferable(&clearing);
+        // Nothing has reported on the message just recorded, so the estimate
+        // beside the last report moves with it, not only the total.
+        self.load.amended(before, weight(&self.transcript));
     }
 
     /// Measures a transcript this runner did not build a message at a time.
