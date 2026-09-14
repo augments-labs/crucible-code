@@ -1008,9 +1008,9 @@ mod tests {
 
     #[test]
     fn a_result_whose_provenance_does_not_read_is_unreadable() {
-        // Refused whole, as a result line in the session log is: a result read
-        // back without the restriction it was written with would be sent to a
-        // vendor its own vendor keeps it from.
+        // Refused whole, as any part of a finished invocation that does not read
+        // is: a result read back without the restriction it was written with
+        // would be sent to a vendor its own vendor keeps it from.
         let written = encode_output(&RecordedToolOutput::ok("grounded").answered_by(
             ResultProvenance::answered("google", Some("[cleared]")).expect("a bounded term"),
         ));

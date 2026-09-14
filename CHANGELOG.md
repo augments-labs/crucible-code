@@ -28,6 +28,11 @@ change in any release with no deprecation period.
   results to the new provider. Each search result now records who answered it, so
   those cases follow Google's terms; results in sessions written before this
   release keep the old rule.
+- **Leaving Google no longer leaves the context estimate counting the results it
+  cleared.** The cleared search results kept their full length in the byte count
+  the next provider report calibrates against, so text was estimated as cheaper
+  than it is for the rest of the session and compaction could start later than
+  it should.
 
 ## [0.41.0] - 2026-09-13
 

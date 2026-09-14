@@ -605,7 +605,8 @@ impl PromptCachePolicy {
         self
     }
 
-    /// The same policy, recording a contradiction found while narrowing it.
+    /// The same policy, recording a contradiction found while narrowing it in
+    /// place of any it already held.
     #[must_use]
     pub const fn with_conflict(mut self, conflict: PromptCachePolicyConflict) -> Self {
         self.conflict = Some(conflict);
