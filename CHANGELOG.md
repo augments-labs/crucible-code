@@ -31,8 +31,8 @@ change in any release with no deprecation period.
 - **Leaving Google no longer leaves the context estimate counting the results it
   cleared.** The cleared search results kept their full length in the byte count
   the next provider report calibrates against, so text was estimated as cheaper
-  than it is for the rest of the session and compaction could start later than
-  it should.
+  than it is until the session was next compacted or resumed, and compaction
+  could start later than it should.
 
 ## [0.41.0] - 2026-09-13
 

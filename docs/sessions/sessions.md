@@ -236,8 +236,9 @@ them.
 How much of the window is left comes back with it. A log records what each
 request carried, so a session picked up says so straight away rather than
 waiting for its next answer to measure it — unless it is picked up under
-different instructions or a different set of tools, where the reading is about
-a request this run would not send and the row waits, as it always did.
+different instructions or a different set of tools, or picking it up took out
+results the provider now in use may not be sent, where the reading is about a
+request this run would not send and the row waits, as it always did.
 
 The visible conversation comes from the original log, independently of the
 compacted context sent to the model. Earlier prompts, answers and tool results
