@@ -189,11 +189,14 @@ fn a_search_a_restricting_vendor_answers_after_the_session_left_it_is_not_sent_o
     );
     let requests = sent.lock().expect("the requests the vendor was sent");
     assert_eq!(requests.len(), 2, "the search, then the answer after it");
+    let after = requests.last().expect("the request after the search");
     assert!(
-        requests
-            .last()
-            .is_some_and(|request| !request.carried("grounded after the switch canary")),
+        !after.carried_result("grounded after the switch canary"),
         "the request after the search carried what the restricting vendor answered"
+    );
+    assert!(
+        after.carried_result(RESTRICTED),
+        "the request after the search did not carry the sentence left in the result's place"
     );
 }
 

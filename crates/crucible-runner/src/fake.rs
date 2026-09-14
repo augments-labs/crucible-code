@@ -32,6 +32,7 @@ pub(crate) struct SentRequest {
     pub(crate) transcript_len: usize,
     pub(crate) context: Vec<Fragment>,
     agent_text: Vec<u64>,
+    result_text: Vec<u64>,
     pub(crate) tools: Vec<SentToolSchema>,
     pub(crate) max_tokens: u32,
     pub(crate) effort: Option<Effort>,
@@ -58,6 +59,11 @@ impl SentRequest {
     pub(crate) fn carried(&self, text: &str) -> bool {
         self.agent_text.contains(&fingerprint(text))
     }
+
+    /// Whether the request carried a tool result with exactly this text.
+    pub(crate) fn carried_result(&self, text: &str) -> bool {
+        self.result_text.contains(&fingerprint(text))
+    }
 }
 
 fn fingerprint(text: &str) -> u64 {
@@ -66,7 +72,6 @@ fn fingerprint(text: &str) -> u64 {
     hash.finish()
 }
 
-/// A provider that answers from a script, one round per request.
 /// Whether a request handed to a script reaches a model, or is answered by a
 /// stand-in that sends nothing anywhere.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,6 +80,7 @@ enum Reach {
     Nothing,
 }
 
+/// A provider that answers from a script, one round per request.
 pub(crate) struct Script {
     name: Option<&'static str>,
     restricts: Option<&'static str>,
@@ -468,6 +474,17 @@ impl Provider for Script {
                     Message::Agent { text, .. } => Some(fingerprint(text)),
                     Message::Context(_) | Message::User { .. } | Message::ToolResults(_) => None,
                 })
+                .collect(),
+            result_text: request
+                .transcript
+                .messages()
+                .iter()
+                .filter_map(|message| match message {
+                    Message::ToolResults(results) => Some(results.iter()),
+                    Message::Context(_) | Message::User { .. } | Message::Agent { .. } => None,
+                })
+                .flatten()
+                .map(|result| fingerprint(result.output.text()))
                 .collect(),
             tools: request
                 .tools

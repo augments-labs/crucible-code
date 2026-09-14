@@ -1226,6 +1226,17 @@ fn answered_by(value: &Value) -> Option<ResultProvenance> {
 
 #[cfg(test)]
 mod tests {
+    use crucible_core::ContextPatch;
+    use crucible_core::{
+        Ancestry, Approved, Ask, Attachment, Change, Diff, InputTokenUsage, InvocationRecord, Line,
+        Modality, Permission, PromptCacheFingerprint, PromptCachePlanned, PromptCachePolicy,
+        PromptCachePolicyVersion, PromptCacheScopeDigest, PromptCacheUsageFact, ProviderAttemptId,
+        ProviderUsage, Remember, Sensitivity, Settled, Target, ToolArgs, ToolOutput, UsageCost,
+        Verdict,
+    };
+
+    use super::*;
+
     #[test]
     fn a_result_whose_provenance_does_not_read_is_not_a_result() {
         // Refused whole, as a malformed `change` or `attached` is: a result read
@@ -1255,17 +1266,6 @@ mod tests {
         });
         assert!(super::result(&written).is_some());
     }
-
-    use crucible_core::ContextPatch;
-    use crucible_core::{
-        Ancestry, Approved, Ask, Attachment, Change, Diff, InputTokenUsage, InvocationRecord, Line,
-        Modality, Permission, PromptCacheFingerprint, PromptCachePlanned, PromptCachePolicy,
-        PromptCachePolicyVersion, PromptCacheScopeDigest, PromptCacheUsageFact, ProviderAttemptId,
-        ProviderUsage, Remember, Sensitivity, Settled, Target, ToolArgs, ToolOutput, UsageCost,
-        Verdict,
-    };
-
-    use super::*;
 
     /// Nobody to ask. A read is settled without a question in every mode, so a
     /// test that reaches this has stopped testing what it meant to.

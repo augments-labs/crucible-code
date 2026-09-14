@@ -138,6 +138,14 @@ mod tests {
         assert_eq!(Unavailable::new("nothing is set up").name(), "none");
     }
 
+    #[test]
+    fn a_turn_that_went_nowhere_reached_no_model() {
+        // What lets a vendor's restricted results stay in a session picked up
+        // where nothing is set up: nothing here is sent anywhere, so there is
+        // nobody to keep them from.
+        assert!(!Unavailable::new("nothing is set up").reaches_a_model());
+    }
+
     /// A provider that speaks no protocol still spells text: what it refuses is
     /// the turn, not the modality, and an empty answer here would have the
     /// binary telling somebody their model cannot read a picture when the real

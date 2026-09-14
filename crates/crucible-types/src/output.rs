@@ -664,46 +664,46 @@ pub enum ToolOutcome {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn a_provenance_names_its_vendor_within_the_bounds_and_no_further() {
         assert_eq!(
-            super::ResultProvenance::answered("", None),
-            Err(super::ResultProvenanceError::Unnamed)
+            ResultProvenance::answered("", None),
+            Err(ResultProvenanceError::Unnamed)
         );
 
-        let vendor = "v".repeat(super::RESULT_VENDOR_BYTES);
-        assert!(super::ResultProvenance::answered(&vendor, None).is_ok());
+        let vendor = "v".repeat(RESULT_VENDOR_BYTES);
+        assert!(ResultProvenance::answered(&vendor, None).is_ok());
         assert_eq!(
-            super::ResultProvenance::answered(&format!("{vendor}v"), None),
-            Err(super::ResultProvenanceError::TooLong {
+            ResultProvenance::answered(&format!("{vendor}v"), None),
+            Err(ResultProvenanceError::TooLong {
                 field: "vendor",
-                maximum: super::RESULT_VENDOR_BYTES,
-                actual: super::RESULT_VENDOR_BYTES + 1,
+                maximum: RESULT_VENDOR_BYTES,
+                actual: RESULT_VENDOR_BYTES + 1,
             })
         );
 
-        let notice = "n".repeat(super::RESULT_NOTICE_BYTES);
-        assert!(super::ResultProvenance::answered("google", Some(&notice)).is_ok());
+        let notice = "n".repeat(RESULT_NOTICE_BYTES);
+        assert!(ResultProvenance::answered("google", Some(&notice)).is_ok());
         assert_eq!(
-            super::ResultProvenance::answered("google", Some(&format!("{notice}n"))),
-            Err(super::ResultProvenanceError::TooLong {
+            ResultProvenance::answered("google", Some(&format!("{notice}n"))),
+            Err(ResultProvenanceError::TooLong {
                 field: "restriction notice",
-                maximum: super::RESULT_NOTICE_BYTES,
-                actual: super::RESULT_NOTICE_BYTES + 1,
+                maximum: RESULT_NOTICE_BYTES,
+                actual: RESULT_NOTICE_BYTES + 1,
             })
         );
     }
 
     #[test]
     fn clearing_a_result_takes_what_restricted_it_with_the_content() {
-        let mut output = super::RecordedToolOutput::ok("grounded canary").answered_by(
-            super::ResultProvenance::answered("google", Some("[cleared]")).expect("a bounded term"),
+        let mut output = RecordedToolOutput::ok("grounded canary").answered_by(
+            ResultProvenance::answered("google", Some("[cleared]")).expect("a bounded term"),
         );
         output.clear("[cleared]");
-        assert_eq!(output.provenance(), &super::ResultProvenance::Unstated);
+        assert_eq!(output.provenance(), &ResultProvenance::Unstated);
     }
-
-    use super::*;
 
     #[test]
     fn a_result_is_bounded_by_its_encoded_size_and_names_what_was_omitted() {

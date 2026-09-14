@@ -1005,4 +1005,37 @@ mod tests {
             Err(CheckpointError::Unreadable)
         ));
     }
+
+    #[test]
+    fn a_result_whose_provenance_does_not_read_is_unreadable() {
+        // Refused whole, as a result line in the session log is: a result read
+        // back without the restriction it was written with would be sent to a
+        // vendor its own vendor keeps it from.
+        let written = encode_output(&RecordedToolOutput::ok("grounded").answered_by(
+            ResultProvenance::answered("google", Some("[cleared]")).expect("a bounded term"),
+        ));
+        assert!(
+            decode_output(&written).is_ok(),
+            "the provenance as it was written did not read"
+        );
+
+        for answered_by in [
+            json!({ "elsewhere": "[cleared]" }),
+            json!({ "vendor": "google" }),
+            json!({ "vendor": 7, "elsewhere": null }),
+            json!({ "vendor": "google", "elsewhere": 7 }),
+            json!({ "vendor": "v".repeat(crucible_types::RESULT_VENDOR_BYTES + 1), "elsewhere": null }),
+            json!({ "vendor": "google", "elsewhere": "n".repeat(crucible_types::RESULT_NOTICE_BYTES + 1) }),
+        ] {
+            let mut damaged = written.clone();
+            damaged
+                .as_object_mut()
+                .expect("an encoded output")
+                .insert("answered_by".to_owned(), answered_by.clone());
+            assert!(
+                matches!(decode_output(&damaged), Err(CheckpointError::Unreadable)),
+                "{answered_by} was read as who answered the result"
+            );
+        }
+    }
 }
