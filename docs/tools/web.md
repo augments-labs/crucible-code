@@ -54,16 +54,16 @@ answered is kept out of the context sent to any other provider's model: when the
 session switches to one, when it is resumed or picked up with `/resume` in a run that
 is using one, and when a search is answered through Google after the session has
 already moved on, since the search keeps the provider the run started with. Only
-Google's results are cleared, a run with no provider set up clears nothing, and the
+Google's results are cleared, none is cleared while no provider is set up, and the
 outputs stay in the local session log for user history review. Each clearing is
 recorded in the log, so a session resumed later comes back cleared rather than reading
-the outputs off the disk and sending them on.
+the outputs off the disk and sending them on. Incomplete, cancelled or malformed
+responses yield a clean bounded failure.
 
-Search results in a session written before Crucible 0.42.0 say nothing about who
-answered them. They keep the rule that version applied: every search result is
-cleared when the session switches away from Google, and none is cleared when such a
-session is resumed or picked up under another provider.
-Incomplete, cancelled or malformed responses yield a clean bounded failure.
+Search results in a session written by an older Crucible say nothing about who
+answered them. They keep the rule those builds applied: every search result is cleared
+when the session switches away from Google, to another provider or to none, and none
+is cleared when such a session is resumed or picked up under another provider.
 
 Moonshot's two services belong to the Kimi Code platform, which is where
 crucible sends this provider unless you have set `providers.moonshot.baseUrl`
