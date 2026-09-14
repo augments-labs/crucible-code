@@ -376,7 +376,7 @@ impl Runner {
     /// the results record about who answered them is the whole of the decision.
     fn admit_restricted(&mut self) -> bool {
         let clearing = self.untransferable(0, self.provider.as_ref(), None);
-        self.clear_untransferable(&clearing);
+        self.clear_untransferable(&clearing, self.transcript.messages().len());
         !clearing.is_empty()
     }
 
@@ -385,17 +385,9 @@ impl Runner {
     fn admit_recorded(&mut self) {
         let recorded = self.transcript.messages().len().saturating_sub(1);
         let clearing = self.untransferable(recorded, self.provider.as_ref(), None);
-        if clearing.is_empty() {
-            return;
-        }
-        let weight = |transcript: &Transcript| {
-            load::Load::weight(transcript.messages().get(recorded..).unwrap_or_default())
-        };
-        let before = weight(&self.transcript);
-        self.clear_untransferable(&clearing);
-        // Nothing has reported on the message just recorded, so the estimate
-        // beside the last report moves with it, not only the total.
-        self.load.amended(before, weight(&self.transcript));
+        // Nothing has reported on the message just recorded, so what its
+        // clearing changes joins the estimate as well as the total.
+        self.clear_untransferable(&clearing, recorded);
     }
 
     /// Measures a transcript this runner did not build a message at a time.
@@ -790,7 +782,7 @@ impl Runner {
         let clearing = self.untransferable(0, provider.as_ref(), Some(self.provider.as_ref()));
 
         self.provider = provider;
-        self.clear_untransferable(&clearing);
+        self.clear_untransferable(&clearing, self.transcript.messages().len());
         // Cached-token and tokenizer semantics belong to the provider that
         // reported them. Keep the transcript, but not that provider's exact
         // reading of it.
@@ -834,14 +826,22 @@ impl Runner {
     ///
     /// One line per sentence, since a line carries one. Clearing takes the
     /// provenance with the content, so a result is never cleared twice.
-    fn clear_untransferable(&mut self, clearing: &[(crucible_core::ToolId, Box<str>)]) {
+    ///
+    /// The messages no report has measured begin at `unmeasured`: what a
+    /// clearing changes there joins the estimate, while of the rest only what
+    /// grew does.
+    fn clear_untransferable(
+        &mut self,
+        clearing: &[(crucible_core::ToolId, Box<str>)],
+        unmeasured: usize,
+    ) {
         if clearing.is_empty() {
             return;
         }
-        // Weighed whole on both sides, because a clearing reaches every result
-        // with a named id wherever it stands; and only here, so a pass that
-        // clears nothing walks nothing.
-        let before = load::Load::weight(self.transcript.messages());
+        // Weighed a message at a time on both sides, because a clearing reaches
+        // every result with a named id wherever it stands; and only here, so a
+        // pass that clears nothing walks nothing.
+        let before = load::Load::weights(self.transcript.messages());
         let mut notices: Vec<&str> = Vec::new();
         for (_, notice) in clearing {
             if !notices.contains(&&**notice) {
@@ -863,7 +863,7 @@ impl Runner {
             self.session.restricted(freed, &results, notice);
         }
         self.load
-            .rewritten(before, load::Load::weight(self.transcript.messages()));
+            .rewritten(&before, self.transcript.messages(), unmeasured);
     }
 
     /// How hard this session is asking the model to think.

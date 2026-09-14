@@ -652,8 +652,9 @@ fn a_rewrite_of_what_a_report_measured_leaves_the_estimate_high_until_it_is_rebu
     let measured = load.tokens();
 
     load.rewritten(
-        Load::weight(&[results(3_000)]),
-        Load::weight(&[results(30)]),
+        &Load::weights(&[results(3_000), Message::said("x".repeat(300))]),
+        &[results(30), Message::said("x".repeat(300))],
+        1,
     );
 
     assert_eq!(
@@ -671,5 +672,25 @@ fn a_rewrite_of_what_a_report_measured_leaves_the_estimate_high_until_it_is_rebu
         load.tokens(),
         rebuilt.tokens(),
         "the total kept bytes the transcript no longer holds"
+    );
+}
+
+#[test]
+fn a_rewrite_that_grows_what_a_report_measured_is_counted_at_once() {
+    // A result shorter than the sentence left in its place makes the request
+    // bigger than the one the report measured, and a count that waited for the
+    // next report to see that would be low until it came.
+    let mut load = Load::default();
+    load.recorded(&results(3_000));
+    load.responding(0);
+    load.carried(Carried::new(1_000));
+    let measured = load.tokens();
+
+    load.rewritten(&Load::weights(&[results(3_000)]), &[results(3_390)], 1);
+
+    assert_eq!(
+        load.tokens(),
+        measured + load.bytes_to_tokens(390),
+        "the growth of a result a report measured was not counted"
     );
 }

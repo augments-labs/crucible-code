@@ -412,35 +412,31 @@ impl Load {
         self.appended = self.appended.saturating_add(bytes);
     }
 
-    /// Messages already counted, rewritten in place.
-    ///
-    /// A result taken out leaves a sentence of another length where it was,
-    /// and the byte total follows it: the next report calibrates this model's
-    /// rate against that total, and bytes no request carries would make text
-    /// read cheaper than it is — the direction that notices a full window too
-    /// late. The estimate is left as it stands, by the rule `estimated` keeps
-    /// for a decrease a report already measured: it stays high until the next
-    /// report, a switch that reestimates from this total, or a recount. A
-    /// message nothing has measured yet is [`Self::amended`] as well.
-    pub(super) fn rewritten(&mut self, before: u64, after: u64) {
-        self.bytes = moved(self.bytes, before, after);
+    /// What each of these messages weighs, counted the way a message joins the
+    /// load.
+    pub(super) fn weights(messages: &[Message]) -> Vec<u64> {
+        messages.iter().map(Self::bytes).collect()
     }
 
-    /// The message just recorded, changed before any report covered it.
+    /// Messages already counted, rewritten in place: `before` weighs each as it
+    /// stood, and the messages no report has measured begin at `unmeasured`.
     ///
-    /// Nothing has measured it, so the stretch estimated beside the last report
-    /// holds all of it and moves by exactly what it gained or lost. Its bytes in
-    /// the total are [`Self::rewritten`]'s to move.
-    pub(super) fn amended(&mut self, before: u64, after: u64) {
-        self.appended = moved(self.appended, before, after);
-    }
-
-    /// What these messages weigh, counted the way a message joins the load.
-    pub(super) fn weight(messages: &[Message]) -> u64 {
-        messages
-            .iter()
-            .map(Self::bytes)
-            .fold(0, u64::saturating_add)
+    /// A result taken out leaves a sentence of another length where it was.
+    /// The byte total follows every message, because the next report calibrates
+    /// this model's rate against it, and bytes no request carries would make
+    /// text read cheaper than it is — the direction that notices a full window
+    /// too late. The estimate follows every message nothing has measured, and of
+    /// the rest only what grew: a decrease a report already measured stays in
+    /// its count, by the rule `estimated` keeps, until the next report, a switch
+    /// that reestimates from the total, or a recount.
+    pub(super) fn rewritten(&mut self, before: &[u64], messages: &[Message], unmeasured: usize) {
+        for (index, (was, message)) in before.iter().zip(messages).enumerate() {
+            let now = Self::bytes(message);
+            self.bytes = moved(self.bytes, *was, now);
+            if index >= unmeasured || now > *was {
+                self.appended = moved(self.appended, *was, now);
+            }
+        }
     }
 
     fn bytes(message: &Message) -> u64 {
