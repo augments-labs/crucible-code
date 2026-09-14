@@ -585,6 +585,13 @@ mod tests {
         format!("http://{address}/v1/messages")
     }
 
+    /// How much sooner than `Instant` a socket timeout may expire.
+    ///
+    /// A read timeout is armed on the system timer, which Windows ticks every
+    /// 15.625ms by default, while `Instant` reads a high-resolution counter, so
+    /// the timeout can end up to one tick before that counter says it should.
+    const TIMER_TICK: Duration = Duration::from_millis(16);
+
     /// Starts a GET response, then withholds its end past the request lifetime.
     fn slow_get() -> (String, thread::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -779,8 +786,11 @@ mod tests {
         // could not have come from one. The bound this replaces had to sit between
         // the lifetime and the server's own 400ms wait, which left no room for a
         // busy machine and failed there for a reason the test is not named for.
+        // The lower bound allows one timer tick: a socket timeout can end that
+        // much before this clock says the lifetime passed, and a lifetime cut
+        // short by more still fails here.
         assert!(
-            elapsed >= lifetime,
+            elapsed + TIMER_TICK >= lifetime,
             "the read gave up before the lifetime: {elapsed:?}"
         );
         assert_eq!(body, "half");
