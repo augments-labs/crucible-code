@@ -21,6 +21,7 @@ use crucible_core::{
     PromptCacheRequestDisposition, PromptCacheSupport, ProviderContinuation, RecordedToolOutput,
     RunItem, SessionId, Spend, StopReason, ToolCall, ToolEffect, ToolId, ToolOutcome, ToolResult,
 };
+use crucible_types::ResultProvenance;
 use serde_json::{Value, json};
 
 /// What wrote the file.
@@ -1144,6 +1145,18 @@ pub(crate) fn answered(result: &ToolResult) -> Value {
         );
     }
 
+    // Who answered it, where a vendor did. A result read back as unrecorded is
+    // written the way the older build wrote it — with nothing — because that is
+    // what it is: this reader's attribution, not something the log knew.
+    if let ResultProvenance::Answered(answered) = result.output.provenance() {
+        let mut by = serde_json::Map::new();
+        by.insert("vendor".to_owned(), json!(answered.vendor()));
+        if let Some(notice) = answered.restricted() {
+            by.insert("elsewhere".to_owned(), json!(notice));
+        }
+        object.insert("answered_by".to_owned(), Value::Object(by));
+    }
+
     // A call that left the file as it was is a call with no header to draw, and
     // writing a count of nothing would say there was one.
     if let Some(changed) = result.output.changed().filter(|counts| !counts.is_empty()) {
@@ -1190,10 +1203,25 @@ pub(crate) fn result(value: &Value) -> Option<ToolResult> {
         None => output,
     };
 
+    let output = match value.get("answered_by") {
+        Some(by) => output.answered_by(answered_by(by)?),
+        None => output,
+    };
+
     Some(ToolResult {
         id: ToolId::new(value.get("id")?.as_str()?),
         output,
     })
+}
+
+/// Who answered a result, bounded as the live value is.
+fn answered_by(value: &Value) -> Option<ResultProvenance> {
+    let vendor = value.get("vendor")?.as_str()?;
+    let restricted = match value.get("elsewhere") {
+        Some(notice) => Some(notice.as_str()?),
+        None => None,
+    };
+    ResultProvenance::answered(vendor, restricted).ok()
 }
 
 #[cfg(test)]
@@ -1208,6 +1236,36 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn a_result_whose_provenance_does_not_read_is_not_a_result() {
+        // Refused whole, as a malformed `change` or `attached` is: a result read
+        // back without the restriction it was written with would be sent to a
+        // vendor its own vendor keeps it from.
+        let unnamed = serde_json::json!({
+            "id": "call-1",
+            "failed": false,
+            "text": "grounded",
+            "answered_by": { "elsewhere": "[cleared]" },
+        });
+        assert!(super::result(&unnamed).is_none());
+
+        let oversized = serde_json::json!({
+            "id": "call-1",
+            "failed": false,
+            "text": "grounded",
+            "answered_by": { "vendor": "v".repeat(crucible_types::RESULT_VENDOR_BYTES + 1) },
+        });
+        assert!(super::result(&oversized).is_none());
+
+        let written = serde_json::json!({
+            "id": "call-1",
+            "failed": false,
+            "text": "grounded",
+            "answered_by": { "vendor": "google", "elsewhere": "[cleared]" },
+        });
+        assert!(super::result(&written).is_some());
+    }
 
     /// Nobody to ask. A read is settled without a question in every mode, so a
     /// test that reaches this has stopped testing what it meant to.

@@ -28,9 +28,9 @@
 use crucible_core::{
     Compacted, Compacting, CompactionRecord, ContextSection, Delta, Message, PermissionsSection,
     PromptCacheAttempt, PromptCacheEncoding, PromptCacheFact, PromptCacheOutcome,
-    PromptCachePlanned, PromptCachePreparationError, PromptCacheRequestDisposition,
-    PromptCacheRequestFact, PromptCacheUsageFact, ProviderError, RecordedToolOutput, Request, Room,
-    RunItem, Spend, StopReason, TOOL_RESULT_BYTES, ToolId, TurnError, UsageCost,
+    PromptCachePreparationError, PromptCacheRequestDisposition, PromptCacheRequestFact,
+    PromptCacheUsageFact, ProviderError, RecordedToolOutput, Request, Room, RunItem, Spend,
+    StopReason, TOOL_RESULT_BYTES, ToolId, TurnError, UsageCost,
 };
 use std::fmt::Write as _;
 
@@ -566,7 +566,7 @@ impl Runner {
             usage: None,
             cost: UsageCost::UNKNOWN,
         });
-        let planned = PromptCachePlanned::from_request(&cache);
+        let planned = cache.planned();
         self.report_prompt_cache(run, PromptCacheFact::Planned(Box::new(planned)));
         if let Some(resource) = prepared.resource.as_ref() {
             self.report_prompt_cache(
@@ -602,7 +602,7 @@ impl Runner {
                 return Err(PromptCachePreparationError::Encoding(reason).into());
             };
             cache = fallback;
-            let planned = PromptCachePlanned::from_request(&cache);
+            let planned = cache.planned();
             self.report_prompt_cache(run, PromptCacheFact::Planned(Box::new(planned)));
             encoding = self.provider.prompt_cache_encoding(&Request {
                 prompt_cache: Some(&cache),

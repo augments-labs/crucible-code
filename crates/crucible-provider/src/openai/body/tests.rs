@@ -3,9 +3,11 @@
 //! Separate from the builder next door only because the builder reached the
 //! per-file cap.
 
-use crucible_core::{
-    Attached, Change, Changed, Content, Diff, Effort, Fragment, Line, Modality, RecordedToolOutput,
-    ToolArgs, ToolId, ToolOutput, Transcript,
+use crucible_core::ToolOutput;
+use crucible_models::{Attached, Content, Effort};
+use crucible_types::{
+    Change, Changed, Diff, Fragment, Line, Modality, RecordedToolOutput, ToolArgs, ToolId,
+    Transcript,
 };
 use serde_json::json;
 
@@ -22,7 +24,7 @@ const NOTHING: Value = Value::Null;
 #[test]
 fn recap_is_fresh_visible_text_without_executable_history() {
     let mut request = request(crate::fake::recap_history());
-    request.purpose = crucible_core::RequestPurpose::Recap;
+    request.purpose = crucible_models::RequestPurpose::Recap;
     let body = build(&request);
     assert!(
         body.get("input")
@@ -50,7 +52,7 @@ fn recap_is_fresh_visible_text_without_executable_history() {
 
 fn request(transcript: Transcript) -> Request<'static> {
     Request {
-        purpose: crucible_core::RequestPurpose::Turn,
+        purpose: crucible_models::RequestPurpose::Turn,
         model: "gpt-test",
         transcript: Box::leak(Box::new(transcript)),
         tools: &[],
@@ -205,7 +207,7 @@ fn recap_uses_the_responses_breakpoint_field() {
     transcript.push(Message::said("summarize")).unwrap();
     let mut request = request(transcript);
     request.model = "gpt-5.6-sol";
-    request.purpose = crucible_core::RequestPurpose::Recap;
+    request.purpose = crucible_models::RequestPurpose::Recap;
     let request = cached(
         request,
         PromptCacheMechanism::ExplicitBreakpoints,
@@ -256,7 +258,7 @@ fn explicit_caching_marks_one_legal_text_boundary_and_disables_implicit_writes()
     );
     assert_eq!(
         prompt_cache_encoding(&explicit, Serving::Api),
-        crucible_core::PromptCacheEncoding::BreakpointsEncoded(1)
+        crucible_types::PromptCacheEncoding::BreakpointsEncoded(1)
     );
 }
 

@@ -2,9 +2,9 @@
 
 use super::*;
 use crate::transport::Replay;
-use crucible_core::{
-    ApiKey, Delta, Effort, Header, HeaderKey, Message, RequestPurpose, StopReason, Transcript,
-};
+use crucible_credentials::{ApiKey, Header, HeaderKey};
+use crucible_models::{Delta, Effort, RequestPurpose};
+use crucible_types::{Message, StopReason, Transcript};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -168,9 +168,8 @@ fn google_posts_the_exact_key_only_sse_route_and_all_valid_efforts() {
 
 #[test]
 fn google_cache_and_prices_use_exact_model_date_and_long_context_tiers() {
-    use crucible_core::{
-        PriceRate, PricingDate, PromptCacheMechanism, PromptCacheRetentionClass, UsageRate,
-    };
+    use crucible_models::{PriceRate, UsageRate};
+    use crucible_types::{PricingDate, PromptCacheMechanism, PromptCacheRetentionClass};
     let (mut provider, _) = provider(200, ANSWER);
     let retention = PromptCacheRetentionClass::ProviderDefault;
     let now = PricingDate::new(2026, 9, 6);

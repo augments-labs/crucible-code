@@ -11,7 +11,9 @@
 //! known is a caller free to fall back to a configured figure, to a provider's
 //! conservative default, or to letting the vendor answer.
 
-use crate::{Effort, Modalities};
+use crucible_types::Modalities;
+
+use crate::Effort;
 
 /// The most bytes a model name or its shown spelling may retain.
 ///

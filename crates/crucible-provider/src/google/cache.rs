@@ -5,12 +5,14 @@
 //! allowances and charges are unknown, and custom recipients have no prices.
 
 use super::{PROTOCOL, VENDOR_URL};
-use crucible_core::{
-    PriceRate, PricingCurrency, PricingDate, PricingUnit, PromptCacheCapabilities,
-    PromptCacheContent, PromptCacheEncoding, PromptCacheIneligibleReason, PromptCacheMechanism,
-    PromptCacheMechanismCapability, PromptCachePricing, PromptCacheProvenance, PromptCacheRates,
-    PromptCacheRetentionClass, PromptCacheUsageReporting, Request, StatefulTransportCapability,
-    UsageRate,
+use crucible_models::{
+    PriceRate, PromptCacheCapabilities, PromptCacheContent, PromptCacheMechanismCapability,
+    PromptCachePricing, PromptCacheProvenance, PromptCacheRates, Request,
+    StatefulTransportCapability, UsageRate,
+};
+use crucible_types::{
+    PricingCurrency, PricingDate, PricingUnit, PromptCacheEncoding, PromptCacheIneligibleReason,
+    PromptCacheMechanism, PromptCacheRetentionClass, PromptCacheUsageReporting,
 };
 
 const REVIEWED: PricingDate = PricingDate::new(2026, 9, 6);

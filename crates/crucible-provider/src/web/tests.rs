@@ -2,7 +2,8 @@
 
 use std::sync::Arc;
 
-use crucible_core::{ApiKey, Fetch, Header, HeaderKey, Host, Search};
+use crucible_core::{Fetch, Host, Search};
+use crucible_credentials::{ApiKey, Header, HeaderKey};
 use serde_json::json;
 
 use super::*;

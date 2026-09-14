@@ -17,7 +17,8 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, TryLockError};
 use std::thread;
 use std::time::Duration;
 
-use crucible_core::{Cancel, Outgoing};
+use crucible_credentials::Outgoing;
+use crucible_runtime::Cancel;
 
 use super::{Response, Transport, TransportError};
 

@@ -2,11 +2,12 @@
 
 use std::fmt;
 
-use crate::{
-    Attached, Content, ContinuationPart, Message, Modality, ProviderContinuation, Request,
-    StopReason, ToolResult,
+use crucible_types::{
+    ContinuationPart, Message, Modality, ProviderContinuation, StopReason, ToolResult,
 };
 use serde_json::{Map, Value};
+
+use crate::{Attached, Content, Request};
 
 use super::{PromptCacheBoundary, PromptCacheContent};
 
@@ -494,10 +495,8 @@ const fn modality(modality: Modality) -> u8 {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        Attached, Attachment, Content, Message, Modality, Request, StopReason, ToolSchema,
-        Transcript,
-    };
+    use crate::{Attached, Content, Request};
+    use crucible_types::{Attachment, Message, Modality, StopReason, ToolSchema, Transcript};
 
     use super::*;
 
@@ -588,7 +587,7 @@ mod tests {
 
     #[test]
     fn private_continuation_changes_the_cache_identity_not_the_token_estimate() {
-        use crate::{Continuation, ContinuationData, ContinuationPart, ContinuationScope};
+        use crucible_types::{Continuation, ContinuationData, ContinuationPart, ContinuationScope};
         let project = |payload: &str| {
             let mut transcript = Transcript::new();
             let mut pending = Continuation::new(
@@ -630,9 +629,8 @@ mod tests {
 
     #[test]
     fn recap_cache_identity_omits_private_payload_and_differs_from_native_turns() {
-        use crate::{
-            Continuation, ContinuationData, ContinuationPart, ContinuationScope, RequestPurpose,
-        };
+        use crate::RequestPurpose;
+        use crucible_types::{Continuation, ContinuationData, ContinuationPart, ContinuationScope};
         let mut transcript = Transcript::new();
         let mut state = Continuation::new(
             "fixture-v1",

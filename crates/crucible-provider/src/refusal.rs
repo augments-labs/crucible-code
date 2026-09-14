@@ -20,12 +20,14 @@
 //! answered — and would need a bound of its own so the second refusal could not
 //! ask for a third.
 //!
-//! [`authorize`]: crucible_core::Credential::authorize
+//! [`authorize`]: crucible_credentials::Credential::authorize
 
 use std::io::{self, Read};
 use std::time::{Duration, Instant};
 
-use crucible_core::{Cancel, ProviderError, Redactions};
+use crucible_credentials::Redactions;
+use crucible_models::ProviderError;
+use crucible_runtime::Cancel;
 
 /// What is said where a failure names no reason at all.
 ///

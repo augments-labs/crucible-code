@@ -16,11 +16,10 @@
 mod effort;
 mod replay;
 
-use crucible_core::{
-    Attached, Content, ContinuationScope, Message, Modality, PromptCacheBoundary,
-    PromptCacheEncoding, PromptCacheIneligibleReason, PromptCacheMechanism,
-    PromptCacheRetentionClass, ProviderError, Request, StopReason, ToolCall, ToolResult,
-    ToolSchema,
+use crucible_models::{Attached, Content, PromptCacheBoundary, ProviderError, Request};
+use crucible_types::{
+    ContinuationScope, Message, Modality, PromptCacheEncoding, PromptCacheIneligibleReason,
+    PromptCacheMechanism, PromptCacheRetentionClass, StopReason, ToolCall, ToolResult, ToolSchema,
 };
 #[cfg(test)]
 use serde_json::Value;
@@ -208,7 +207,7 @@ fn served(request: &Request<'_>, serving: Serving) -> Value {
 fn write_input(items: &mut Array<'_>, request: &Request<'_>, explicit_message: Option<usize>) {
     let mut history = crate::history::LegacyHistory::default();
     for (nth, message) in request.transcript.messages().iter().enumerate() {
-        if history.neutral(message) || request.purpose == crucible_core::RequestPurpose::Recap {
+        if history.neutral(message) || request.purpose == crucible_models::RequestPurpose::Recap {
             items.object(|item| {
                 item.text("role", "user");
                 if explicit_message == Some(nth) {

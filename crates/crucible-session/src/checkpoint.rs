@@ -4,6 +4,7 @@
 //! journal state. It is one bounded snapshot of unfinished execution, replaced
 //! whole after each resolution/state transition and deleted when finished.
 
+use crucible_types::ResultProvenance;
 use std::fs::{self, File};
 use std::io::{self, Read as _, Write as _};
 use std::path::{Path, PathBuf};
@@ -624,7 +625,7 @@ fn decode_call(value: &Value) -> Result<ToolCall, CheckpointError> {
 }
 
 fn encode_output(output: &RecordedToolOutput) -> Value {
-    json!({
+    let mut encoded = json!({
         "text": output.text(),
         "failed": output.is_failed(),
         "changed": output.changed().map(|change| json!({
@@ -637,7 +638,18 @@ fn encode_output(output: &RecordedToolOutput) -> Value {
             "media_type": attachment.media_type.as_ref(),
             "hash": hex(&attachment.hash),
         })).collect::<Vec<_>>(),
-    })
+    });
+    // Written only where a vendor answered, as on a session log's result line,
+    // so a checkpoint without one reads the same to a build that predates it.
+    if let ResultProvenance::Answered(answered) = output.provenance()
+        && let Some(fields) = encoded.as_object_mut()
+    {
+        fields.insert(
+            "answered_by".to_owned(),
+            json!({ "vendor": answered.vendor(), "elsewhere": answered.restricted() }),
+        );
+    }
+    encoded
 }
 
 fn decode_output(value: &Value) -> Result<RecordedToolOutput, CheckpointError> {
@@ -669,6 +681,12 @@ fn decode_output(value: &Value) -> Result<RecordedToolOutput, CheckpointError> {
             })
         })
         .collect::<Result<Vec<_>, CheckpointError>>()?;
+    if let Some(answered) = value.get("answered_by").filter(|by| !by.is_null()) {
+        let restricted = nullable_text(answered, "elsewhere")?;
+        let provenance = ResultProvenance::answered(text(answered, "vendor")?, restricted)
+            .map_err(|_| CheckpointError::Unreadable)?;
+        output = output.answered_by(provenance);
+    }
     Ok(crate::session::restored_output(output, attachments))
 }
 
@@ -986,5 +1004,38 @@ mod tests {
             decode_sandbox(&encoded),
             Err(CheckpointError::Unreadable)
         ));
+    }
+
+    #[test]
+    fn a_result_whose_provenance_does_not_read_is_unreadable() {
+        // Refused whole, as any part of a finished invocation that does not read
+        // is: a result read back without the restriction it was written with
+        // would be sent to a vendor its own vendor keeps it from.
+        let written = encode_output(&RecordedToolOutput::ok("grounded").answered_by(
+            ResultProvenance::answered("google", Some("[cleared]")).expect("a bounded term"),
+        ));
+        assert!(
+            decode_output(&written).is_ok(),
+            "the provenance as it was written did not read"
+        );
+
+        for answered_by in [
+            json!({ "elsewhere": "[cleared]" }),
+            json!({ "vendor": "google" }),
+            json!({ "vendor": 7, "elsewhere": null }),
+            json!({ "vendor": "google", "elsewhere": 7 }),
+            json!({ "vendor": "v".repeat(crucible_types::RESULT_VENDOR_BYTES + 1), "elsewhere": null }),
+            json!({ "vendor": "google", "elsewhere": "n".repeat(crucible_types::RESULT_NOTICE_BYTES + 1) }),
+        ] {
+            let mut damaged = written.clone();
+            damaged
+                .as_object_mut()
+                .expect("an encoded output")
+                .insert("answered_by".to_owned(), answered_by.clone());
+            assert!(
+                matches!(decode_output(&damaged), Err(CheckpointError::Unreadable)),
+                "{answered_by} was read as who answered the result"
+            );
+        }
     }
 }

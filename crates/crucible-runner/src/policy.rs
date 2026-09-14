@@ -296,7 +296,7 @@ impl RunPolicy {
                     .maximum_concurrency
                     .min(wanted.tools.maximum_concurrency),
             },
-            prompt_cache: self.prompt_cache.narrowed(wanted.prompt_cache),
+            prompt_cache: crucible_models::narrow_policy(self.prompt_cache, wanted.prompt_cache),
         }
     }
 }

@@ -115,6 +115,129 @@ impl ToolOutputRetention {
     }
 }
 
+/// The most bytes a vendor's name may retain on a result.
+pub const RESULT_VENDOR_BYTES: usize = 64;
+
+/// The most bytes the sentence left in a restricted result's place may retain.
+pub const RESULT_NOTICE_BYTES: usize = 512;
+
+/// Who answered a result, where that decides who else may be sent it.
+///
+/// Most results were produced on this machine and say nothing here. A result a
+/// vendor's own service answered — a search grounded by that vendor's model —
+/// names the vendor, and where that vendor's terms keep what it produced with its
+/// own models, the sentence to leave in its place anywhere else. The restriction
+/// belongs to the result rather than to whichever provider happens to be serving,
+/// which is what lets it survive a session being picked up by another vendor.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum ResultProvenance {
+    /// Nothing about this result says a vendor answered it.
+    #[default]
+    Unstated,
+    /// A vendor's service answered it.
+    Answered(AnsweredBy),
+    /// A search result read back from a log written before results said who
+    /// answered them.
+    ///
+    /// Such a result was answered by whichever vendor served the session at the
+    /// time, and nothing recorded which. It is treated the way that build treated
+    /// every search result: taken away when the session leaves a vendor that
+    /// restricts its results.
+    Unrecorded,
+}
+
+/// What a result without a provenance of its own answers with.
+static UNSTATED: ResultProvenance = ResultProvenance::Unstated;
+
+/// Which vendor answered a result, and what its terms keep.
+///
+/// Built only by [`ResultProvenance::answered`], which bounds both strings. The
+/// fields are private because every reader downstream — the transcript a
+/// cleared result's sentence is written into, the session log — trusts those
+/// bounds, and a value built around the constructor would carry an unbounded
+/// sentence past all of them:
+///
+/// ```compile_fail,E0451
+/// use crucible_types::{AnsweredBy, ResultProvenance};
+///
+/// let forged = ResultProvenance::Answered(AnsweredBy {
+///     vendor: "".into(),
+///     restricted: None,
+/// });
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnsweredBy {
+    vendor: Box<str>,
+    restricted: Option<Box<str>>,
+}
+
+impl AnsweredBy {
+    /// The vendor, spelled as its provider names itself.
+    #[must_use]
+    pub fn vendor(&self) -> &str {
+        &self.vendor
+    }
+
+    /// What stands in the result's place anywhere but that vendor's models,
+    /// where its terms keep it there.
+    #[must_use]
+    pub fn restricted(&self) -> Option<&str> {
+        self.restricted.as_deref()
+    }
+}
+
+/// A provenance that would not fit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum ResultProvenanceError {
+    /// The vendor name was empty.
+    #[error("a result's vendor must be named")]
+    Unnamed,
+    /// A retained string crossed its boundary.
+    #[error("a result's {field} is {actual} bytes; the maximum is {maximum}")]
+    TooLong {
+        /// Which field.
+        field: &'static str,
+        /// Its boundary.
+        maximum: usize,
+        /// What was supplied.
+        actual: usize,
+    },
+}
+
+impl ResultProvenance {
+    /// A result `vendor`'s service answered, kept to its models where
+    /// `restricted` names the sentence to leave elsewhere.
+    ///
+    /// # Errors
+    ///
+    /// [`ResultProvenanceError`] where the vendor is unnamed or either string is over
+    /// its boundary.
+    pub fn answered(vendor: &str, restricted: Option<&str>) -> Result<Self, ResultProvenanceError> {
+        if vendor.is_empty() {
+            return Err(ResultProvenanceError::Unnamed);
+        }
+        bounded("vendor", vendor, RESULT_VENDOR_BYTES)?;
+        if let Some(notice) = restricted {
+            bounded("restriction notice", notice, RESULT_NOTICE_BYTES)?;
+        }
+        Ok(Self::Answered(AnsweredBy {
+            vendor: vendor.into(),
+            restricted: restricted.map(Into::into),
+        }))
+    }
+}
+
+fn bounded(field: &'static str, value: &str, maximum: usize) -> Result<(), ResultProvenanceError> {
+    if value.len() > maximum {
+        return Err(ResultProvenanceError::TooLong {
+            field,
+            maximum,
+            actual: value.len(),
+        });
+    }
+    Ok(())
+}
+
 /// What a tool produced, as the transcript, the journal and a checkpoint keep
 /// it.
 ///
@@ -138,6 +261,9 @@ pub struct RecordedToolOutput {
     capture: Option<CaptureElision>,
     changed: Option<Changed>,
     attachments: Box<[Attachment]>,
+    // Boxed and absent unless a vendor answered: every result in a session
+    // carries this field, and almost none of them has anything to put in it.
+    provenance: Option<Box<ResultProvenance>>,
 }
 
 impl fmt::Debug for RecordedToolOutput {
@@ -148,6 +274,7 @@ impl fmt::Debug for RecordedToolOutput {
             .field("capture", &self.capture)
             .field("changed", &self.changed)
             .field("attachments", &self.attachments)
+            .field("provenance", self.provenance())
             .finish()
     }
 }
@@ -171,6 +298,7 @@ impl RecordedToolOutput {
             capture: None,
             changed: None,
             attachments: Box::new([]),
+            provenance: None,
         }
     }
 
@@ -184,6 +312,7 @@ impl RecordedToolOutput {
             capture: None,
             changed: None,
             attachments: Box::new([]),
+            provenance: None,
         }
     }
 
@@ -208,6 +337,7 @@ impl RecordedToolOutput {
             capture,
             changed,
             attachments: attachments.into(),
+            provenance: None,
         }
     }
 
@@ -243,6 +373,26 @@ impl RecordedToolOutput {
     pub fn replayed(mut self, attachments: impl Into<Box<[Attachment]>>) -> Self {
         self.attachments = attachments.into();
         self
+    }
+
+    /// The same result, saying who answered it.
+    ///
+    /// Carried over from the live value on its way to being recorded, and read
+    /// back off a log that recorded it. A provenance confers nothing: the most
+    /// it can do is take a result out of what another vendor is sent.
+    #[must_use]
+    pub fn answered_by(mut self, provenance: ResultProvenance) -> Self {
+        self.provenance = match provenance {
+            ResultProvenance::Unstated => None,
+            stated => Some(Box::new(stated)),
+        };
+        self
+    }
+
+    /// Who answered this result, where anything says.
+    #[must_use]
+    pub fn provenance(&self) -> &ResultProvenance {
+        self.provenance.as_deref().unwrap_or(&UNSTATED)
     }
 
     /// The same result, saying again what it said before something replaced
@@ -350,6 +500,9 @@ impl RecordedToolOutput {
 
         self.text = format!("[cleared to make room — {freed} bytes]").into();
         self.capture = None;
+        // Nothing a vendor answered is left to restrict, and a provenance kept
+        // on the placeholder would clear this program's own sentence later.
+        self.provenance = None;
 
         // The files go with the words. They cost the transcript almost
         // nothing — an attachment is a path — but a request reads every one it
@@ -364,6 +517,10 @@ impl RecordedToolOutput {
         let freed = self.text.len();
         self.text = notice.into();
         self.capture = None;
+        // The sentence is this program's, not the vendor's, so what restricted
+        // the result goes with it — which is also what keeps a session moved
+        // twice from clearing the sentence with itself.
+        self.provenance = None;
         self.attachments = Box::new([]);
         freed
     }
@@ -508,6 +665,45 @@ pub enum ToolOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_provenance_names_its_vendor_within_the_bounds_and_no_further() {
+        assert_eq!(
+            ResultProvenance::answered("", None),
+            Err(ResultProvenanceError::Unnamed)
+        );
+
+        let vendor = "v".repeat(RESULT_VENDOR_BYTES);
+        assert!(ResultProvenance::answered(&vendor, None).is_ok());
+        assert_eq!(
+            ResultProvenance::answered(&format!("{vendor}v"), None),
+            Err(ResultProvenanceError::TooLong {
+                field: "vendor",
+                maximum: RESULT_VENDOR_BYTES,
+                actual: RESULT_VENDOR_BYTES + 1,
+            })
+        );
+
+        let notice = "n".repeat(RESULT_NOTICE_BYTES);
+        assert!(ResultProvenance::answered("google", Some(&notice)).is_ok());
+        assert_eq!(
+            ResultProvenance::answered("google", Some(&format!("{notice}n"))),
+            Err(ResultProvenanceError::TooLong {
+                field: "restriction notice",
+                maximum: RESULT_NOTICE_BYTES,
+                actual: RESULT_NOTICE_BYTES + 1,
+            })
+        );
+    }
+
+    #[test]
+    fn clearing_a_result_takes_what_restricted_it_with_the_content() {
+        let mut output = RecordedToolOutput::ok("grounded canary").answered_by(
+            ResultProvenance::answered("google", Some("[cleared]")).expect("a bounded term"),
+        );
+        output.clear("[cleared]");
+        assert_eq!(output.provenance(), &ResultProvenance::Unstated);
+    }
 
     #[test]
     fn a_result_is_bounded_by_its_encoded_size_and_names_what_was_omitted() {

@@ -409,6 +409,7 @@ name = "crucible-config"
 version = "0.41.0"
 dependencies = [
  "crucible-core",
+ "crucible-models",
  "serde_json",
  "thiserror",
 ]
@@ -419,6 +420,7 @@ version = "0.41.0"
 dependencies = [
  "crucible-attachments",
  "crucible-credentials",
+ "crucible-models",
  "crucible-registry",
  "crucible-runtime",
  "crucible-sandbox",
@@ -429,7 +431,6 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror",
- "uuid",
 ]
 
 [[package]]
@@ -460,6 +461,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "crucible-models"
+version = "0.41.0"
+dependencies = [
+ "crucible-credentials",
+ "crucible-runtime",
+ "crucible-types",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "crucible-privacy"
 version = "0.41.0"
 dependencies = [
@@ -474,6 +486,10 @@ version = "0.41.0"
 dependencies = [
  "base64 0.23.1",
  "crucible-core",
+ "crucible-credentials",
+ "crucible-models",
+ "crucible-runtime",
+ "crucible-types",
  "serde_json",
  "thiserror",
  "ureq",
@@ -493,7 +509,9 @@ version = "0.41.0"
 dependencies = [
  "crucible-attachments",
  "crucible-core",
+ "crucible-models",
  "crucible-session",
+ "crucible-types",
  "sha2",
 ]
 
@@ -552,6 +570,8 @@ version = "0.41.0"
 dependencies = [
  "crucible-core",
  "crucible-privacy",
+ "crucible-storage",
+ "crucible-types",
  "serde_json",
  "sha2",
  "thiserror",

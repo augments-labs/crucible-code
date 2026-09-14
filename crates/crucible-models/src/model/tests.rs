@@ -1,7 +1,8 @@
 //! What a model record refuses to be built from.
 
 use super::{MODEL_NAME_BYTES, ModelCapabilities, ModelError, ModelLimits};
-use crate::{Effort, Modalities, Modality};
+use crate::Effort;
+use crucible_types::{Modalities, Modality};
 
 /// The modalities every model these tests describe reads.
 fn reads() -> Modalities {

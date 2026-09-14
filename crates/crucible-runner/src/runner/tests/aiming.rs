@@ -5,6 +5,8 @@
 //! that the change reaches the wire, and that it reaches the *next* request
 //! rather than the one already sent.
 
+use crucible_types::{RecordedToolOutput, ResultProvenance, ToolCall};
+
 use super::*;
 
 #[test]
@@ -70,7 +72,12 @@ fn switching_away_from_a_vendor_that_restricts_its_results_takes_them_out_of_the
 
     let mut scripted = Scripted::new(
         first,
-        tools([Fixed::new("web_search").answering("restricted search results canary")]),
+        tools([Fixed::new("web_search")
+            .answering("restricted search results canary")
+            .answered_by(
+                ResultProvenance::answered("restricting", Some(RESTRICTED))
+                    .expect("a bounded term"),
+            )]),
         Verdict::Allow,
     );
 
@@ -101,6 +108,437 @@ fn switching_away_from_a_vendor_that_restricts_its_results_takes_them_out_of_the
 }
 
 #[test]
+fn leaving_a_vendor_that_restricts_its_results_keeps_the_ones_another_vendor_answered() {
+    // A session that searched under one vendor and then moved to one that
+    // restricts its own results holds results the restricting vendor never
+    // produced. Its term covers what it produced; taking the others away as
+    // well empties the conversation of answers nobody restricted.
+    let first = Script::new(vec![
+        calling("call_search", "web_search", r#"{"query":"rust"}"#),
+        saying("an answer from a vendor that restricts nothing"),
+    ])
+    .with_name("unrestricting");
+
+    let mut scripted = Scripted::new(
+        first,
+        tools([Fixed::new("web_search")
+            .answering("search results the first vendor answered")
+            .answered_by(
+                ResultProvenance::answered("unrestricting", None).expect("a bounded vendor"),
+            )]),
+        Verdict::Allow,
+    );
+    scripted
+        .turn("search for rust")
+        .expect("the turn to finish");
+
+    scripted.runner.serve(Box::new(
+        Script::new(vec![saying("an answer from the vendor that restricts")])
+            .with_name("restricting")
+            .restricting(RESTRICTED),
+    ));
+    scripted.turn("and now").expect("the turn to finish");
+
+    scripted.runner.serve(Box::new(
+        Script::new(vec![saying("from elsewhere")]).with_name("elsewhere"),
+    ));
+    scripted.turn("summarize").expect("the turn to finish");
+
+    assert_eq!(
+        only_result(&scripted).output.text(),
+        "search results the first vendor answered",
+        "leaving a vendor took away a result that vendor never produced"
+    );
+}
+
+#[test]
+fn a_search_a_restricting_vendor_answers_after_the_session_left_it_is_not_sent_on() {
+    // The search source is chosen when the run starts, so a session that moved
+    // away from the vendor whose search it uses still searches through that
+    // vendor. What such a search answers has to be kept from the provider the
+    // session now talks to from the moment it is recorded, not from the next
+    // switch: the next request of the same turn is already on its way there.
+    let first = Script::new(vec![saying("from the vendor that restricts")])
+        .with_name("restricting")
+        .restricting(RESTRICTED);
+    let mut scripted = Scripted::new(
+        first,
+        tools([Fixed::new("web_search")
+            .answering("grounded after the switch canary")
+            .answered_by(
+                ResultProvenance::answered("restricting", Some(RESTRICTED))
+                    .expect("a bounded term"),
+            )]),
+        Verdict::Allow,
+    );
+    scripted.turn("hello").expect("the turn to finish");
+
+    let elsewhere = Script::new(vec![
+        calling("call_search", "web_search", r#"{"query":"rust"}"#),
+        saying("an answer from elsewhere"),
+    ])
+    .with_name("elsewhere");
+    let sent = elsewhere.sent();
+    scripted.runner.serve(Box::new(elsewhere));
+    scripted.turn("search now").expect("the turn to finish");
+
+    assert_eq!(
+        only_result(&scripted).output.text(),
+        RESTRICTED,
+        "a result the restricting vendor answered stayed in the transcript the next request was built from"
+    );
+    let requests = sent.lock().expect("the requests the vendor was sent");
+    assert_eq!(requests.len(), 2, "the search, then the answer after it");
+    let after = requests.last().expect("the request after the search");
+    assert!(
+        !after.carried_result("grounded after the switch canary"),
+        "the request after the search carried what the restricting vendor answered"
+    );
+    assert!(
+        after.carried_result(RESTRICTED),
+        "the request after the search did not carry the sentence left in the result's place"
+    );
+}
+
+#[test]
+fn a_result_cleared_as_it_is_recorded_leaves_only_its_sentence_in_the_load() {
+    // The load counts the transcript's bytes, and the next report calibrates
+    // this model's rate against that count. A cleared result still counted
+    // there makes every request look bigger than the one that went out, so text
+    // reads cheaper than it is from then on — the direction that notices a full
+    // window too late.
+    let cleared = searching_after_leaving(
+        Fixed::new("web_search")
+            .answering(&"grounded after the switch ".repeat(400))
+            .answered_by(left_behind()),
+        saying("an answer from elsewhere"),
+    );
+    let never_held = searching_after_leaving(
+        Fixed::new("web_search").answering(RESTRICTED),
+        saying("an answer from elsewhere"),
+    );
+
+    assert_eq!(only_result(&cleared).output.text(), RESTRICTED);
+    assert_eq!(
+        cleared.runner.load.tokens(),
+        never_held.runner.load.tokens(),
+        "the load still counted a result the transcript no longer holds"
+    );
+}
+
+#[test]
+fn a_result_shorter_than_its_sentence_is_counted_at_the_sentence_once_cleared() {
+    // A search that found nothing answers in a line, and the sentence left in
+    // its place can be longer: the load grows by the difference.
+    let short = "none";
+    assert!(short.len() < RESTRICTED.len(), "the point of this");
+    let cleared = searching_after_leaving(
+        Fixed::new("web_search")
+            .answering(short)
+            .answered_by(left_behind()),
+        saying("an answer from elsewhere"),
+    );
+    let never_held = searching_after_leaving(
+        Fixed::new("web_search").answering(RESTRICTED),
+        saying("an answer from elsewhere"),
+    );
+
+    assert_eq!(only_result(&cleared).output.text(), RESTRICTED);
+    assert_eq!(
+        cleared.runner.load.tokens(),
+        never_held.runner.load.tokens(),
+        "the load did not count the sentence left in a shorter result's place"
+    );
+}
+
+#[test]
+fn a_result_cleared_as_it_is_recorded_is_not_in_the_bytes_the_next_report_calibrates() {
+    // Where the count matters most: the answer after the search reports what
+    // its request carried, and the rate taken from that is the count over the
+    // bytes the load believed the request held.
+    let reported = || {
+        vec![
+            Delta::Carried(Carried::new(40_000)),
+            Delta::Text("an answer from elsewhere".into()),
+            Delta::Spent(Spend::new(100)),
+            Delta::Stopped(StopReason::Yielded),
+        ]
+    };
+    let cleared = searching_after_leaving(
+        Fixed::new("web_search")
+            .answering(&"grounded after the switch ".repeat(400))
+            .answered_by(left_behind()),
+        reported(),
+    );
+    let never_held =
+        searching_after_leaving(Fixed::new("web_search").answering(RESTRICTED), reported());
+
+    assert_eq!(
+        cleared.runner.load.bytes_to_tokens(100_000),
+        never_held.runner.load.bytes_to_tokens(100_000),
+        "the rate the report calibrated counted a result its request no longer held"
+    );
+}
+
+/// Who answered a search through the vendor a session left, and what it keeps.
+fn left_behind() -> ResultProvenance {
+    ResultProvenance::answered("restricting", Some(RESTRICTED)).expect("a bounded term")
+}
+
+/// A session that searches through the vendor it has just left, then answers.
+fn searching_after_leaving(search: Fixed, answer: Vec<Delta>) -> Scripted {
+    let first = Script::new(vec![saying("from the vendor that restricts")])
+        .with_name("restricting")
+        .restricting(RESTRICTED);
+    let mut scripted = Scripted::new(first, tools([search]), Verdict::Allow);
+    scripted.turn("hello").expect("the turn to finish");
+
+    scripted.runner.serve(Box::new(
+        Script::new(vec![
+            calling("call_search", "web_search", r#"{"query":"rust"}"#),
+            answer,
+        ])
+        .with_name("elsewhere"),
+    ));
+    scripted.turn("search now").expect("the turn to finish");
+    scripted
+}
+
+#[test]
+fn a_reused_id_that_shrinks_a_measured_result_leaves_the_decrease_in_the_count() {
+    // A tool id is the provider's to choose, and a clearing reaches every
+    // result under the one it names: here a read the last report measured,
+    // taken out with the search that reused its id. What it freed stays in the
+    // count until a report measures the request without it, the rule the
+    // estimate keeps for every measured decrease.
+    let long = "read before the search ".repeat(200);
+    let cleared = searching_under_a_measured_id(
+        Fixed::new("read").answering(&long),
+        Fixed::new("web_search")
+            .answering("grounded after the switch canary")
+            .answered_by(left_behind()),
+    );
+    let kept = searching_under_a_measured_id(
+        Fixed::new("read").answering(&long),
+        Fixed::new("web_search").answering(RESTRICTED),
+    );
+
+    assert_eq!(
+        result_texts(&cleared),
+        [RESTRICTED, RESTRICTED],
+        "the reused id did not reach the result the report measured"
+    );
+    assert_eq!(
+        cleared.runner.load.tokens(),
+        kept.runner.load.tokens(),
+        "a decrease the report measured came off the count before a report measured it"
+    );
+}
+
+#[test]
+fn a_reused_id_that_grows_a_measured_result_is_counted_at_once() {
+    // The same reach, into a read that answered in fewer bytes than the
+    // sentence left in its place: the request is now bigger than the one the
+    // report measured, by as much as if the difference had just been appended.
+    let short = "none";
+    let cleared = searching_under_a_measured_id(
+        Fixed::new("read").answering(short),
+        Fixed::new("web_search")
+            .answering("grounded after the switch canary")
+            .answered_by(left_behind()),
+    );
+    let grown = format!("{RESTRICTED}{}", "x".repeat(RESTRICTED.len() - short.len()));
+    let appended = searching_under_a_measured_id(
+        Fixed::new("read").answering(short),
+        Fixed::new("web_search").answering(&grown),
+    );
+
+    assert_eq!(
+        result_texts(&cleared),
+        [RESTRICTED, RESTRICTED],
+        "the reused id did not reach the result the report measured"
+    );
+    assert_eq!(
+        cleared.runner.load.tokens(),
+        appended.runner.load.tokens(),
+        "the growth of a result the report measured was not counted"
+    );
+}
+
+/// A session whose search, through the vendor it has just left, reuses the id
+/// of a read the last report measured.
+fn searching_under_a_measured_id(read: Fixed, search: Fixed) -> Scripted {
+    let first = Script::new(vec![saying("from the vendor that restricts")])
+        .with_name("restricting")
+        .restricting(RESTRICTED);
+    let mut scripted = Scripted::new(first, tools([read, search]), Verdict::Allow);
+    scripted.turn("hello").expect("the turn to finish");
+
+    let mut reported = vec![Delta::Carried(Carried::new(1_000))];
+    reported.extend(calling("call_reused", "web_search", r#"{"query":"rust"}"#));
+    scripted.runner.serve(Box::new(
+        Script::new(vec![
+            calling("call_reused", "read", "{}"),
+            reported,
+            saying("an answer from elsewhere"),
+        ])
+        .with_name("elsewhere"),
+    ));
+    scripted.turn("search now").expect("the turn to finish");
+    scripted
+}
+
+/// What every tool result in a session's transcript holds, oldest first.
+fn result_texts(scripted: &Scripted) -> Vec<&str> {
+    scripted
+        .runner
+        .transcript()
+        .messages()
+        .iter()
+        .filter_map(|message| match message {
+            Message::ToolResults(results) => {
+                Some(results.iter().map(|result| result.output.text()))
+            }
+            _ => None,
+        })
+        .flatten()
+        .collect()
+}
+
+#[test]
+fn a_result_cleared_at_a_switch_leaves_only_its_sentence_in_the_load() {
+    // The same count at the other moment a result is taken out: a switch keeps
+    // the transcript's bytes as the estimate the next vendor starts from.
+    let cleared = leaving_after_searching(
+        Fixed::new("web_search")
+            .answering(&"grounded before the switch ".repeat(400))
+            .answered_by(left_behind()),
+    );
+    let never_held = leaving_after_searching(Fixed::new("web_search").answering(RESTRICTED));
+
+    assert_eq!(only_result(&cleared).output.text(), RESTRICTED);
+    assert_eq!(
+        cleared.runner.load.tokens(),
+        never_held.runner.load.tokens(),
+        "the load still counted a result the transcript no longer holds"
+    );
+}
+
+/// A session that searched through a vendor that restricts, and then left it.
+fn leaving_after_searching(search: Fixed) -> Scripted {
+    let first = Script::new(vec![
+        calling("call_search", "web_search", r#"{"query":"rust"}"#),
+        saying("searched"),
+    ])
+    .with_name("restricting")
+    .restricting(RESTRICTED);
+    let mut scripted = Scripted::new(first, tools([search]), Verdict::Allow);
+    scripted.turn("search").expect("the turn to finish");
+
+    scripted
+        .runner
+        .serve(Box::new(Script::new(Vec::new()).with_name("elsewhere")));
+    scripted
+}
+
+#[test]
+fn a_search_result_an_older_build_recorded_is_taken_away_when_leaving_a_vendor_that_restricts() {
+    // A log written before results said who answered them cannot say whether a
+    // search came from the vendor being left. The build that wrote it took every
+    // search result away in that case, and a session continued here keeps that
+    // promise rather than sending them on.
+    let first = Script::new(vec![saying("an answer from the vendor that restricts")])
+        .with_name("restricting")
+        .restricting(RESTRICTED);
+
+    let mut transcript = Transcript::new();
+    transcript
+        .push(Message::said("search for rust"))
+        .expect("a prompt");
+    transcript
+        .push(Message::Agent {
+            continuation: None,
+            text: "".into(),
+            calls: vec![ToolCall {
+                id: ToolId::new("call_search"),
+                name: "web_search".into(),
+                args: ToolArgs::new(r#"{"query":"rust"}"#),
+            }],
+            stop: Some(StopReason::WantsTools),
+        })
+        .expect("a call");
+    transcript
+        .push(Message::ToolResults(vec![ToolResult {
+            id: ToolId::new("call_search"),
+            output: RecordedToolOutput::ok("search results from an older log")
+                .answered_by(ResultProvenance::Unrecorded),
+        }]))
+        .expect("its result");
+
+    let scripted = Scripted::new(first, tools([Fixed::new("web_search")]), Verdict::Allow);
+    let mut scripted = Scripted {
+        runner: scripted.runner.resuming(transcript),
+        ..scripted
+    };
+
+    scripted.runner.serve(Box::new(
+        Script::new(vec![saying("from elsewhere")]).with_name("elsewhere"),
+    ));
+
+    assert_eq!(
+        only_result(&scripted).output.text(),
+        RESTRICTED,
+        "a search result nobody could attribute went on to another vendor"
+    );
+}
+
+#[test]
+fn a_search_result_an_older_build_recorded_stays_when_leaving_a_vendor_that_restricts_nothing() {
+    // The other half of the older build's rule: it took search results away
+    // only when leaving a vendor that restricts them.
+    let first = Script::new(vec![saying("an answer")]).with_name("unrestricting");
+
+    let mut transcript = Transcript::new();
+    transcript
+        .push(Message::said("search for rust"))
+        .expect("a prompt");
+    transcript
+        .push(Message::Agent {
+            continuation: None,
+            text: "".into(),
+            calls: vec![ToolCall {
+                id: ToolId::new("call_search"),
+                name: "web_search".into(),
+                args: ToolArgs::new(r#"{"query":"rust"}"#),
+            }],
+            stop: Some(StopReason::WantsTools),
+        })
+        .expect("a call");
+    transcript
+        .push(Message::ToolResults(vec![ToolResult {
+            id: ToolId::new("call_search"),
+            output: RecordedToolOutput::ok("search results from an older log")
+                .answered_by(ResultProvenance::Unrecorded),
+        }]))
+        .expect("its result");
+
+    let scripted = Scripted::new(first, tools([Fixed::new("web_search")]), Verdict::Allow);
+    let mut scripted = Scripted {
+        runner: scripted.runner.resuming(transcript),
+        ..scripted
+    };
+    scripted.runner.serve(Box::new(
+        Script::new(vec![saying("from elsewhere")]).with_name("elsewhere"),
+    ));
+
+    assert_eq!(
+        only_result(&scripted).output.text(),
+        "search results from an older log",
+        "a vendor that restricts nothing took an older search result away"
+    );
+}
+
+#[test]
 fn a_vendor_that_restricts_nothing_leaves_the_results_where_they_are() {
     // The other half of the same rule, and the one that keeps it from being a
     // clearing on every swap: what may be sent on is the producing vendor's to
@@ -113,7 +551,11 @@ fn a_vendor_that_restricts_nothing_leaves_the_results_where_they_are() {
 
     let mut scripted = Scripted::new(
         first,
-        tools([Fixed::new("web_search").answering("ordinary search results canary")]),
+        tools([Fixed::new("web_search")
+            .answering("ordinary search results canary")
+            .answered_by(
+                ResultProvenance::answered("unrestricting", None).expect("a bounded vendor"),
+            )]),
         Verdict::Allow,
     );
 

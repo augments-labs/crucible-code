@@ -13,7 +13,9 @@ pub(super) type Stream = Response<Completions>;
 
 #[cfg(test)]
 pub(super) mod tests {
-    use crucible_core::{Cancel, Delta, DeltaStream, ProviderError, StopReason, ToolId};
+    use crucible_models::{Delta, DeltaStream, ProviderError};
+    use crucible_runtime::Cancel;
+    use crucible_types::{StopReason, ToolId};
 
     use super::*;
     use crate::fake::inclusive_usage;
@@ -41,7 +43,7 @@ pub(super) mod tests {
         Stream::new(
             Box::new(std::io::Cursor::new(body.to_owned().into_bytes())),
             cancel.clone(),
-            crucible_core::Redactions::default(),
+            crucible_credentials::Redactions::default(),
         )
     }
 

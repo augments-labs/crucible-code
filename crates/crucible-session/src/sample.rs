@@ -36,6 +36,11 @@ impl Sample {
         Self { base }
     }
 
+    /// The disposable user-home root handed to state stores.
+    pub(crate) fn home(&self) -> PathBuf {
+        self.base.join("home")
+    }
+
     /// Where session logs go.
     pub(crate) fn logs(&self) -> PathBuf {
         self.base.join("logs")

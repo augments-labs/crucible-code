@@ -112,7 +112,10 @@ failed, incomplete or cancelled stream cannot commit it. Format 13 adds a line
 saying that tool results were cleared because the vendor that produced them
 restricts where they may be sent, and the sentence left in their place; a
 session that never left such a vendor never carries one. Older Crucible builds
-cannot resume format 12 or 13 logs.
+cannot resume format 12 or 13 logs. A search result may also record which vendor's
+search answered it and, where that vendor restricts where it may be sent, the sentence
+to leave in its place. The field is optional within format 13, so builds that read
+format 13 without knowing it, such as 0.41.0, ignore it and still resume these logs.
 
 Continuation is bound to its producing protocol, model compatibility, credential
 and recipient. A changed key, endpoint or incompatible provider receives visible
@@ -233,8 +236,9 @@ them.
 How much of the window is left comes back with it. A log records what each
 request carried, so a session picked up says so straight away rather than
 waiting for its next answer to measure it — unless it is picked up under
-different instructions or a different set of tools, where the reading is about
-a request this run would not send and the row waits, as it always did.
+different instructions or a different set of tools, or picking it up took out
+results the provider now in use may not be sent, where the reading is about a
+request this run would not send and the row waits, as it always did.
 
 The visible conversation comes from the original log, independently of the
 compacted context sent to the model. Earlier prompts, answers and tool results

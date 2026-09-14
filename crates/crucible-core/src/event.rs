@@ -9,7 +9,7 @@
 //! decides how to draw one.
 
 use crate::ContextError;
-use crate::provider::{ProviderError, Spend};
+use crate::{ProviderError, Spend};
 use crucible_types::Ancestry;
 use crucible_types::ToolCall;
 use crucible_types::{RunId, ToolId, TurnId};

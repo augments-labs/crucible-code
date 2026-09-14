@@ -6,12 +6,13 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr as _;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crucible_core::{
+use crucible_storage::PromptCacheResourceStore;
+use crucible_types::{
     MAX_PROMPT_CACHE_RESOURCES, PromptCacheFingerprint, PromptCacheIsolation,
     PromptCachePolicyDigest, PromptCacheResourceBinding, PromptCacheResourceError,
     PromptCacheResourceHandle, PromptCacheResourceId, PromptCacheResourceOperation,
     PromptCacheResourceOwner, PromptCacheResourceRecord, PromptCacheResourceState,
-    PromptCacheResourceStore, PromptCacheScopeDigest,
+    PromptCacheScopeDigest,
 };
 use serde_json::{Map, Value, json};
 
@@ -28,15 +29,15 @@ const FORMAT: u64 = 1;
 
 /// Lazy file-backed resource metadata under Crucible's resolved user home.
 #[derive(Debug)]
-pub(crate) struct MetadataStore {
+pub struct FilePromptCacheResourceStore {
     directory: PathBuf,
     file: PathBuf,
 }
 
-impl MetadataStore {
+impl FilePromptCacheResourceStore {
     /// Names the store without touching the filesystem.
     #[must_use]
-    pub(crate) fn in_home(home: &Path) -> Self {
+    pub fn in_home(home: &Path) -> Self {
         let directory = home.join(DIRECTORY);
         let file = directory.join(FILE);
         Self { directory, file }
@@ -113,7 +114,7 @@ impl MetadataStore {
     }
 }
 
-impl PromptCacheResourceStore for MetadataStore {
+impl PromptCacheResourceStore for FilePromptCacheResourceStore {
     fn matching(
         &mut self,
         binding: &PromptCacheResourceBinding,
@@ -434,15 +435,16 @@ fn local(operation: &'static str, source: io::Error) -> PromptCacheResourceError
 mod tests {
     use std::fs;
 
-    use crucible_core::{
+    use crucible_storage::PromptCacheResourceStore;
+    use crucible_types::{
         PromptCacheFingerprint, PromptCacheIsolation, PromptCachePolicyDigest,
         PromptCacheResourceBinding, PromptCacheResourceHandle, PromptCacheResourceId,
         PromptCacheResourceOwner, PromptCacheResourceRecord, PromptCacheResourceState,
-        PromptCacheResourceStore, PromptCacheScopeDigest,
+        PromptCacheScopeDigest,
     };
 
-    use super::{MetadataStore, decode, encode};
-    use crate::cli::sample::Sample;
+    use super::{FilePromptCacheResourceStore, decode, encode};
+    use crate::sample::Sample;
 
     fn record() -> PromptCacheResourceRecord {
         let binding = PromptCacheResourceBinding::new(
@@ -470,7 +472,7 @@ mod tests {
     #[test]
     fn construction_is_lazy_and_an_authorized_write_is_private_and_round_trips() {
         let sample = Sample::new("prompt-cache-store");
-        let mut store = MetadataStore::in_home(&sample.home());
+        let mut store = FilePromptCacheResourceStore::in_home(&sample.home());
         let directory = sample.home().join("prompt-cache");
         assert!(!directory.exists());
 
@@ -504,7 +506,7 @@ mod tests {
     #[test]
     fn reopening_selects_the_newest_record_for_an_exact_binding() {
         let sample = Sample::new("prompt-cache-restart-selection");
-        let mut first_process = MetadataStore::in_home(&sample.home());
+        let mut first_process = FilePromptCacheResourceStore::in_home(&sample.home());
         let older = record();
         let mut newer = PromptCacheResourceRecord::creating(
             PromptCacheResourceId::new(),
@@ -520,7 +522,7 @@ mod tests {
         first_process.put(&newer).unwrap();
         drop(first_process);
 
-        let mut restarted = MetadataStore::in_home(&sample.home());
+        let mut restarted = FilePromptCacheResourceStore::in_home(&sample.home());
         let selected = restarted.matching(older.binding()).unwrap().unwrap();
 
         assert_eq!(selected.id(), newer.id());
@@ -530,7 +532,7 @@ mod tests {
     #[test]
     fn the_metadata_shape_has_no_place_for_prompt_credentials_or_provider_responses() {
         let sample = Sample::new("prompt-cache-private-shape");
-        let mut store = MetadataStore::in_home(&sample.home());
+        let mut store = FilePromptCacheResourceStore::in_home(&sample.home());
         store.put(&record()).unwrap();
 
         let text = fs::read_to_string(sample.home().join("prompt-cache").join("resources-v1.json"))

@@ -31,13 +31,13 @@ use crucible_core::{
     Ancestry, Aside, Ask, Attachment, Cancel, Compacting, Content, ContextSection, Delta,
     DeltaStream, Effort, Event, JournalStore, Looking, Message, Modalities, Mode, Permission,
     PermissionsSection, Post, PromptCacheAttempt, PromptCacheEncoding, PromptCacheFact,
-    PromptCacheOutcome, PromptCachePlanned, PromptCachePreparationError,
-    PromptCacheRequestDisposition, PromptCacheRequestFact, PromptCacheResourceError,
-    PromptCacheResourceRecord, PromptCacheRetentionClass, PromptCacheScopeDigest,
-    PromptCacheUsageFact, PromptCacheUsageReporting, Provider, ProviderError, ProviderUsage,
-    Reporter, Request, Room, RunItem, SandboxAuditRegistry, SessionStore, Spend, Steer, StopReason,
-    Summary, ToolCall, ToolEntry, ToolError, ToolGeneration, ToolSchema, ToolSnapshot, Toolset,
-    ToolsetContext, Transcript, TurnError, TurnId, UsageCost,
+    PromptCacheOutcome, PromptCachePreparationError, PromptCacheRequestDisposition,
+    PromptCacheRequestFact, PromptCacheResourceError, PromptCacheResourceRecord,
+    PromptCacheRetentionClass, PromptCacheScopeDigest, PromptCacheUsageFact,
+    PromptCacheUsageReporting, Provider, ProviderError, ProviderUsage, Reporter, Request, Room,
+    RunItem, SandboxAuditRegistry, SessionStore, Spend, Steer, StopReason, Summary, ToolCall,
+    ToolEntry, ToolError, ToolGeneration, ToolSchema, ToolSnapshot, Toolset, ToolsetContext,
+    Transcript, TurnError, TurnId, UsageCost,
 };
 
 use crucible_session::{Pruned, Session};
@@ -359,8 +359,40 @@ impl Runner {
     pub fn resuming(mut self, transcript: Transcript) -> Self {
         self.turn = Self::counting(&transcript);
         self.transcript = transcript;
-        self.recount();
+        let reading = self.admit_restricted();
+        self.recount(reading);
         self
+    }
+
+    /// Takes out of a transcript just read back what this run's vendor may not
+    /// be sent, and hands back the reading the log kept where it still covers
+    /// what is left.
+    ///
+    /// Nobody is being left: the run may have started on another vendor than the
+    /// one the results came from, and no switch is ever observed to say so. What
+    /// the results record about who answered them is the whole of the decision.
+    /// The reading is `None` once anything was taken out: it measured a request
+    /// that carried it, and replaying the clearing's line drops it for the same
+    /// reason.
+    fn admit_restricted(&mut self) -> Option<crucible_types::Calibration> {
+        let clearing = self.untransferable(0, self.provider.as_ref(), None);
+        // As though a report had measured every message: the recount each
+        // caller runs next rebuilds the load from the transcript either way.
+        self.clear_untransferable(&clearing, self.transcript.messages().len());
+        if clearing.is_empty() {
+            self.session.calibrated()
+        } else {
+            None
+        }
+    }
+
+    /// Takes out of the message just recorded what this run's vendor may not be
+    /// sent.
+    fn admit_recorded(&mut self) {
+        let recorded = self.transcript.messages().len().saturating_sub(1);
+        let clearing = self.untransferable(recorded, self.provider.as_ref(), None);
+        // No report has measured the message just recorded, which is the last.
+        self.clear_untransferable(&clearing, recorded);
     }
 
     /// Measures a transcript this runner did not build a message at a time.
@@ -374,8 +406,11 @@ impl Runner {
     /// say what they cost. Where the session picked up brought a reading back
     /// with it, that estimate is superseded by it and the session comes back
     /// knowing how much of the window it has left — which is the whole of why
-    /// a log records one.
-    fn recount(&mut self) {
+    /// a log records one. The reading is handed in rather than read here: one
+    /// taken before a clearing measured a request this run will never send, so
+    /// a caller that just took results out hands in none, as replaying the
+    /// clearing's line does.
+    fn recount(&mut self, reading: Option<crucible_types::Calibration>) {
         self.load.replaced();
         for message in self.transcript.messages() {
             self.load.recounted(message);
@@ -386,7 +421,7 @@ impl Runner {
         // After the fixed content of this run's request is known, and never
         // before: what the log remembers is taken only where it still covers
         // the request this run would send.
-        if let Some(calibration) = self.session.calibrated() {
+        if let Some(calibration) = reading {
             self.load.measured(calibration);
         }
         self.load.resumed();
@@ -415,7 +450,8 @@ impl Runner {
         // Before the recount rather than after it: what the session picked up
         // remembers about its own load is part of what is being recounted.
         let left = std::mem::replace(&mut self.session, session);
-        self.recount();
+        let reading = self.admit_restricted();
+        self.recount(reading);
 
         left
     }
@@ -740,76 +776,96 @@ impl Runner {
     /// Reachable between turns, where [`Runner::ask`] is and for the same
     /// reason: a turn owns the runner while it runs.
     pub fn serve(&mut self, provider: Box<dyn Provider>) {
-        // Asked of the vendor being left, and before it is replaced: a
-        // restriction on where results may go belongs to whoever produced
-        // them, and by the next line there is nobody left to ask. Staying with
-        // the same vendor moves nothing anywhere, so nothing is cleared.
-        let restriction = self
-            .provider
-            .restricts_results()
-            .filter(|_| self.provider.name() != provider.name());
+        // Decided before the swap and against both vendors: a result recorded
+        // before results said who answered them is judged by what the vendor
+        // being left restricts, and by the next line there is nobody left to
+        // ask. Staying with the same vendor moves nothing anywhere.
+        let clearing = self.untransferable(0, provider.as_ref(), Some(self.provider.as_ref()));
 
         self.provider = provider;
-        if let Some(notice) = restriction {
-            self.restrict_results(notice);
-        }
+        // As though a report had measured every message: the estimate is taken
+        // again from the byte total below, and that total follows every message.
+        self.clear_untransferable(&clearing, self.transcript.messages().len());
         // Cached-token and tokenizer semantics belong to the provider that
         // reported them. Keep the transcript, but not that provider's exact
         // reading of it.
         self.load.reestimated();
     }
 
-    /// Takes the results a vendor restricts out of what the next one is sent,
+    /// The results from message `from` on that the next request may not carry to
+    /// `recipient`, each with the sentence to leave in its place.
+    ///
+    /// What may go where is decided by the result's own provenance, through
+    /// `crucible_models::transfer`, never from a vendor's or a tool's name here.
+    fn untransferable(
+        &self,
+        from: usize,
+        recipient: &dyn Provider,
+        leaving: Option<&dyn Provider>,
+    ) -> Vec<(crucible_core::ToolId, Box<str>)> {
+        let mut clearing = Vec::new();
+        for message in self.transcript.messages().iter().skip(from) {
+            if let crucible_core::Message::ToolResults(results) = message {
+                for result in results {
+                    if let crucible_models::Transfer::Clear(notice) =
+                        crucible_models::transfer(result.output.provenance(), recipient, leaving)
+                    {
+                        clearing.push((result.id.clone(), notice.into()));
+                    }
+                }
+            }
+        }
+        clearing
+    }
+
+    /// Takes the results a vendor restricts out of what is sent from here on,
     /// and records that it happened.
     ///
     /// The results stay in the log holding what they held — the log is the
     /// record of the session, and a user reading their own history is not the
     /// third party the term is about. What the line buys is the session coming
     /// back the same way: without it the transcript loses them and the log does
-    /// not, so the next resume reads them back and sends them on, undoing the
-    /// switch with nothing to notice it.
+    /// not, so the next resume reads them back and sends them on.
     ///
-    /// Which results, today, is every search result in the transcript rather
-    /// than only the ones this vendor answered — a transcript records what was
-    /// called, not who answered it. That is wider than the term requires and it
-    /// is the behaviour being preserved rather than introduced; narrowing it
-    /// needs per-result provenance the session has never recorded.
-    fn restrict_results(&mut self, notice: &str) {
-        let mut searched = Vec::new();
-        for message in self.transcript.messages() {
-            if let crucible_core::Message::Agent { calls, .. } = message {
-                for call in calls {
-                    if &*call.name == "web_search" {
-                        searched.push(call.id.clone());
-                    }
-                }
-            }
-        }
-
-        // Down to the ones still holding what they answered with. A session
-        // moved twice would otherwise clear a notice with itself, report the
-        // notice's own length as freed, and write a second line saying results
-        // were taken away that had already gone.
-        let mut clearing = Vec::new();
-        for message in self.transcript.messages() {
-            if let crucible_core::Message::ToolResults(results) = message {
-                for result in results {
-                    if searched.contains(&result.id) && result.output.text() != notice {
-                        clearing.push(result.id.clone());
-                    }
-                }
-            }
-        }
-
+    /// One line per sentence, since a line carries one. Clearing takes the
+    /// provenance with the content, so a result is never cleared twice.
+    ///
+    /// No report has measured any message from `unmeasured` on; what the
+    /// clearing then does to the load is [`load::Load::rewritten`]'s to say.
+    fn clear_untransferable(
+        &mut self,
+        clearing: &[(crucible_core::ToolId, Box<str>)],
+        unmeasured: usize,
+    ) {
         if clearing.is_empty() {
             return;
         }
+        // Weighed a message at a time on both sides, because a clearing reaches
+        // every result with a named id wherever it stands; and only here, so a
+        // pass that clears nothing walks nothing.
+        let before = load::Load::weights(self.transcript.messages());
+        let mut notices: Vec<&str> = Vec::new();
+        for (_, notice) in clearing {
+            if !notices.contains(&&**notice) {
+                notices.push(notice);
+            }
+        }
 
-        // The transcript first and the line after it, the way a pruning is
-        // written and for the same reason: a crash between the two must not
-        // leave a log claiming a clearing that the transcript never made.
-        let freed = self.transcript.clear_tool_outputs(&clearing, notice);
-        self.session.restricted(freed, &clearing, notice);
+        for notice in notices {
+            let results: Vec<crucible_core::ToolId> = clearing
+                .iter()
+                .filter(|(_, left)| **left == *notice)
+                .map(|(id, _)| id.clone())
+                .collect();
+
+            // The transcript first and the line after it, the way a pruning is
+            // written and for the same reason: a crash between the two must not
+            // leave a log claiming a clearing that the transcript never made.
+            let freed = self.transcript.clear_tool_outputs(&results, notice);
+            self.session.restricted(freed, &results, notice);
+        }
+        self.load
+            .rewritten(&before, self.transcript.messages(), unmeasured);
     }
 
     /// How hard this session is asking the model to think.
@@ -884,6 +940,12 @@ impl Runner {
         }
         if settles_call_results {
             JournalStore::settle_call_results(&self.session);
+            // After the results line, so the log reads what was answered and
+            // then what was taken out of it. The search source was chosen when
+            // the run started, so a session that moved away from its vendor
+            // still searches through that vendor, and the next request of this
+            // turn is built from what was just recorded.
+            self.admit_recorded();
         }
         Ok(())
     }
@@ -1395,7 +1457,7 @@ impl Runner {
             });
             self.report_prompt_cache(
                 listening.run,
-                PromptCacheFact::Planned(Box::new(PromptCachePlanned::from_request(&cache))),
+                PromptCacheFact::Planned(Box::new(cache.planned())),
             );
             let mut encoding = self.provider.prompt_cache_encoding(&Request {
                 prompt_cache: Some(&cache),
@@ -1422,7 +1484,7 @@ impl Runner {
                     .ok_or(PromptCachePreparationError::Encoding(reason))?;
                 self.report_prompt_cache(
                     listening.run,
-                    PromptCacheFact::Planned(Box::new(PromptCachePlanned::from_request(&cache))),
+                    PromptCacheFact::Planned(Box::new(cache.planned())),
                 );
                 encoding = self.provider.prompt_cache_encoding(&Request {
                     prompt_cache: Some(&cache),

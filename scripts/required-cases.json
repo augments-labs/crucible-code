@@ -958,6 +958,24 @@
         "macos",
         "windows"
       ]
+    },
+    {
+      "id": "CASE-AUTHORITY-PROVENANCE-UNFORGED",
+      "family": "authority",
+      "obligation": "Code outside the crate cannot build a vendor's provenance for a result except through the bounded constructor, so no restriction sentence or vendor name past its bound reaches a transcript or a log.",
+      "package": "crucible-types",
+      "target": {
+        "kind": "doc",
+        "name": "crucible_types"
+      },
+      "case": "output::AnsweredBy",
+      "source": "crates/crucible-types/src/output.rs",
+      "body_sha256": "eb66239b42daaf8c832a5cd2b7ffd450bb4f3cd36f72108250c473f7da407f8d",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
     }
   ]
 }

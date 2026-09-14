@@ -19,8 +19,8 @@ use crucible_storage::{
 };
 use crucible_types::output::{CaptureElision, limit_encoded};
 use crucible_types::{
-    Ancestry, Attachment, Changed, Diff, RecordedToolOutput, RunId, ToolArgs, ToolId,
-    ToolOutputRetention,
+    Ancestry, Attachment, Changed, Diff, RecordedToolOutput, ResultProvenance, RunId, ToolArgs,
+    ToolId, ToolOutputRetention,
 };
 
 use crate::permissions::{Approved, Sensitivity};
@@ -599,6 +599,8 @@ pub struct ToolOutput {
     diff: Option<Diff>,
     changed: Option<Changed>,
     attachments: Box<[Attachment]>,
+    // Boxed and absent unless a vendor answered, as on the recorded value.
+    provenance: Option<Box<ResultProvenance>>,
 }
 
 impl fmt::Debug for ToolOutput {
@@ -610,6 +612,7 @@ impl fmt::Debug for ToolOutput {
             .field("diff", &self.diff)
             .field("changed", &self.changed)
             .field("attachments", &self.attachments)
+            .field("provenance", self.provenance())
             .finish()
     }
 }
@@ -625,6 +628,7 @@ impl ToolOutput {
             diff: None,
             changed: None,
             attachments: Box::new([]),
+            provenance: None,
         }
     }
 
@@ -639,6 +643,7 @@ impl ToolOutput {
             diff: None,
             changed: None,
             attachments: Box::new([]),
+            provenance: None,
         }
     }
 
@@ -689,6 +694,28 @@ impl ToolOutput {
     ) -> Self {
         self.attachments = attachments.into();
         self
+    }
+
+    /// The same result, saying who answered it.
+    ///
+    /// For a tool whose answer came from a vendor's own service rather than
+    /// from this machine. It confers nothing: the most it can do is take the
+    /// result out of what another vendor is sent.
+    #[must_use]
+    pub fn answered_by(mut self, provenance: ResultProvenance) -> Self {
+        self.provenance = match provenance {
+            ResultProvenance::Unstated => None,
+            stated => Some(Box::new(stated)),
+        };
+        self
+    }
+
+    /// Who answered this result, where anything says.
+    #[must_use]
+    pub fn provenance(&self) -> &ResultProvenance {
+        self.provenance
+            .as_deref()
+            .unwrap_or(const { &ResultProvenance::Unstated })
     }
 
     /// The files this result asks the model to look at.
@@ -800,6 +827,10 @@ impl ToolOutput {
             self.capture,
             self.changed,
             self.attachments,
+        )
+        .answered_by(
+            self.provenance
+                .map_or(ResultProvenance::Unstated, |stated| *stated),
         )
     }
 }
