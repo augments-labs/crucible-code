@@ -305,6 +305,90 @@ fn searching_after_leaving(search: Fixed, answer: Vec<Delta>) -> Scripted {
 }
 
 #[test]
+fn a_reused_id_that_shrinks_a_measured_result_keeps_its_count_until_a_report() {
+    // A tool id is the provider's to choose, and a clearing reaches every
+    // result under the one it names: here a read the last report measured,
+    // taken out with the search that reused its id. What it freed stays in the
+    // count until a report measures the request without it, the rule the
+    // estimate keeps for every measured decrease.
+    let long = "read before the search ".repeat(200);
+    let cleared = searching_under_a_measured_id(
+        Fixed::new("read").answering(&long),
+        Fixed::new("web_search")
+            .answering("grounded after the switch canary")
+            .answered_by(left_behind()),
+    );
+    let kept = searching_under_a_measured_id(
+        Fixed::new("read").answering(&long),
+        Fixed::new("web_search").answering(RESTRICTED),
+    );
+
+    assert_eq!(
+        only_result(&cleared).output.text(),
+        RESTRICTED,
+        "the reused id did not reach the result the report measured"
+    );
+    assert_eq!(
+        cleared.runner.load.tokens(),
+        kept.runner.load.tokens(),
+        "a decrease the report measured came off the count before a report measured it"
+    );
+}
+
+#[test]
+fn a_reused_id_that_grows_a_measured_result_is_counted_at_once() {
+    // The same reach, into a read that answered in fewer bytes than the
+    // sentence left in its place: the request is now bigger than the one the
+    // report measured, by as much as if the difference had just been appended.
+    let short = "none";
+    let cleared = searching_under_a_measured_id(
+        Fixed::new("read").answering(short),
+        Fixed::new("web_search")
+            .answering("grounded after the switch canary")
+            .answered_by(left_behind()),
+    );
+    let grown = format!("{RESTRICTED}{}", "x".repeat(RESTRICTED.len() - short.len()));
+    let appended = searching_under_a_measured_id(
+        Fixed::new("read").answering(short),
+        Fixed::new("web_search").answering(&grown),
+    );
+
+    assert_eq!(
+        only_result(&cleared).output.text(),
+        RESTRICTED,
+        "the reused id did not reach the result the report measured"
+    );
+    assert_eq!(
+        cleared.runner.load.tokens(),
+        appended.runner.load.tokens(),
+        "the growth of a result the report measured was not counted"
+    );
+}
+
+/// A session whose search, through the vendor it has just left, reuses the id
+/// of a read the last report measured.
+fn searching_under_a_measured_id(read: Fixed, search: Fixed) -> Scripted {
+    let first = Script::new(vec![saying("from the vendor that restricts")])
+        .with_name("restricting")
+        .restricting(RESTRICTED);
+    let mut scripted = Scripted::new(first, tools([read, search]), Verdict::Allow);
+    scripted.turn("hello").expect("the turn to finish");
+
+    let mut reported = vec![Delta::Carried(Carried::new(1_000))];
+    reported.extend(calling("call_reused", "web_search", r#"{"query":"rust"}"#));
+    scripted.runner.serve(Box::new(
+        Script::new(vec![
+            calling("call_reused", "read", "{}"),
+            reported,
+            saying("an answer from elsewhere"),
+        ])
+        .with_name("elsewhere"),
+    ));
+    scripted.turn("search now").expect("the turn to finish");
+    scripted
+}
+
+#[test]
 fn a_result_cleared_at_a_switch_leaves_only_its_sentence_in_the_load() {
     // The same count at the other moment a result is taken out: a switch keeps
     // the transcript's bytes as the estimate the next vendor starts from.
