@@ -305,7 +305,7 @@ fn searching_after_leaving(search: Fixed, answer: Vec<Delta>) -> Scripted {
 }
 
 #[test]
-fn a_reused_id_that_shrinks_a_measured_result_keeps_its_count_until_a_report() {
+fn a_reused_id_that_shrinks_a_measured_result_leaves_the_decrease_in_the_count() {
     // A tool id is the provider's to choose, and a clearing reaches every
     // result under the one it names: here a read the last report measured,
     // taken out with the search that reused its id. What it freed stays in the
@@ -324,8 +324,8 @@ fn a_reused_id_that_shrinks_a_measured_result_keeps_its_count_until_a_report() {
     );
 
     assert_eq!(
-        only_result(&cleared).output.text(),
-        RESTRICTED,
+        result_texts(&cleared),
+        [RESTRICTED, RESTRICTED],
         "the reused id did not reach the result the report measured"
     );
     assert_eq!(
@@ -354,8 +354,8 @@ fn a_reused_id_that_grows_a_measured_result_is_counted_at_once() {
     );
 
     assert_eq!(
-        only_result(&cleared).output.text(),
-        RESTRICTED,
+        result_texts(&cleared),
+        [RESTRICTED, RESTRICTED],
         "the reused id did not reach the result the report measured"
     );
     assert_eq!(
@@ -386,6 +386,23 @@ fn searching_under_a_measured_id(read: Fixed, search: Fixed) -> Scripted {
     ));
     scripted.turn("search now").expect("the turn to finish");
     scripted
+}
+
+/// What every tool result in a session's transcript holds, oldest first.
+fn result_texts(scripted: &Scripted) -> Vec<&str> {
+    scripted
+        .runner
+        .transcript()
+        .messages()
+        .iter()
+        .filter_map(|message| match message {
+            Message::ToolResults(results) => {
+                Some(results.iter().map(|result| result.output.text()))
+            }
+            _ => None,
+        })
+        .flatten()
+        .collect()
 }
 
 #[test]

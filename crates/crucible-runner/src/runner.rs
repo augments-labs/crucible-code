@@ -391,8 +391,7 @@ impl Runner {
     fn admit_recorded(&mut self) {
         let recorded = self.transcript.messages().len().saturating_sub(1);
         let clearing = self.untransferable(recorded, self.provider.as_ref(), None);
-        // Nothing has reported on the message just recorded, so what its
-        // clearing changes joins the estimate as well as the total.
+        // No report has measured the message just recorded, which is the last.
         self.clear_untransferable(&clearing, recorded);
     }
 
