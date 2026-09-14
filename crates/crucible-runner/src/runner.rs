@@ -359,20 +359,25 @@ impl Runner {
     pub fn resuming(mut self, transcript: Transcript) -> Self {
         self.turn = Self::counting(&transcript);
         self.transcript = transcript;
-        self.admit_restricted();
-        self.recount();
+        let reading = if self.admit_restricted() {
+            None
+        } else {
+            self.session.calibrated()
+        };
+        self.recount(reading);
         self
     }
 
     /// Takes out of a transcript just read back what this run's vendor may not
-    /// be sent.
+    /// be sent, and says whether it took anything.
     ///
     /// Nobody is being left: the run may have started on another vendor than the
     /// one the results came from, and no switch is ever observed to say so. What
     /// the results record about who answered them is the whole of the decision.
-    fn admit_restricted(&mut self) {
+    fn admit_restricted(&mut self) -> bool {
         let clearing = self.untransferable(0, self.provider.as_ref(), None);
         self.clear_untransferable(&clearing);
+        !clearing.is_empty()
     }
 
     /// Takes out of the message just recorded what this run's vendor may not be
@@ -404,8 +409,11 @@ impl Runner {
     /// say what they cost. Where the session picked up brought a reading back
     /// with it, that estimate is superseded by it and the session comes back
     /// knowing how much of the window it has left — which is the whole of why
-    /// a log records one.
-    fn recount(&mut self) {
+    /// a log records one. The reading is handed in rather than read here: one
+    /// taken before a clearing measured a request this run will never send, so
+    /// a caller that just took results out hands in none, as replaying the
+    /// clearing's line does.
+    fn recount(&mut self, reading: Option<crucible_core::Calibration>) {
         self.load.replaced();
         for message in self.transcript.messages() {
             self.load.recounted(message);
@@ -416,7 +424,7 @@ impl Runner {
         // After the fixed content of this run's request is known, and never
         // before: what the log remembers is taken only where it still covers
         // the request this run would send.
-        if let Some(calibration) = self.session.calibrated() {
+        if let Some(calibration) = reading {
             self.load.measured(calibration);
         }
         self.load.resumed();
@@ -445,8 +453,12 @@ impl Runner {
         // Before the recount rather than after it: what the session picked up
         // remembers about its own load is part of what is being recounted.
         let left = std::mem::replace(&mut self.session, session);
-        self.admit_restricted();
-        self.recount();
+        let reading = if self.admit_restricted() {
+            None
+        } else {
+            self.session.calibrated()
+        };
+        self.recount(reading);
 
         left
     }
