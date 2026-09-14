@@ -849,3 +849,95 @@ fn clearing_a_stage_before_its_journal_leaves_only_the_journal() {
     clear_stage_before_journal(&sample.root().join("absent"))
         .expect("an absent stage is already clear");
 }
+
+#[test]
+fn a_panic_under_the_state_coordination_leaves_it_usable() {
+    // A test that panics while the coordination's lock is held would otherwise
+    // leave every later lease refused, which reads exactly as the refusal the
+    // coordination exists to stop.
+    let poisoning = std::thread::spawn(|| {
+        let _held = TEST_STATE_USE.0.lock();
+        panic!("a test panicking under the state coordination's lock");
+    });
+    assert!(poisoning.join().is_err(), "the fixture did not panic");
+
+    drop(TestStateChange::read());
+    drop(TestStateChange::change());
+}
+
+#[test]
+fn a_change_waits_for_a_reading_under_way() {
+    // A lease part-way through reading this user's state directory would be
+    // refused by a change made now, for a change that is not its own.
+    let reading = TestStateChange::read();
+    let (asking, asked) = std::sync::mpsc::channel();
+    let (holding, held) = std::sync::mpsc::channel();
+    let changer = std::thread::spawn(move || {
+        asking
+            .send(())
+            .expect("the test is told the change is asked for");
+        let change = TestStateChange::change();
+        holding
+            .send(())
+            .expect("the test is told the change is held");
+        drop(change);
+    });
+    asked.recv().expect("the change is asked for");
+    assert!(
+        held.recv_timeout(std::time::Duration::from_millis(200))
+            .is_err(),
+        "a change was taken while a reading was under way"
+    );
+    drop(reading);
+    held.recv_timeout(std::time::Duration::from_secs(5))
+        .expect("the change, once the reading ended");
+    changer.join().expect("the changing thread");
+}
+
+#[test]
+fn a_change_waits_for_another_change() {
+    // Two tests changing this user's state directory at once would each put back
+    // what the other changed while the other still relied on it.
+    let first = TestStateChange::change();
+    let (asking, asked) = std::sync::mpsc::channel();
+    let (holding, held) = std::sync::mpsc::channel();
+    let changer = std::thread::spawn(move || {
+        asking
+            .send(())
+            .expect("the test is told the second change is asked for");
+        let second = TestStateChange::change();
+        holding
+            .send(())
+            .expect("the test is told the second change is held");
+        drop(second);
+    });
+    asked.recv().expect("the second change is asked for");
+    assert!(
+        held.recv_timeout(std::time::Duration::from_millis(200))
+            .is_err(),
+        "a second change was taken while the first still stood"
+    );
+    drop(first);
+    held.recv_timeout(std::time::Duration::from_secs(5))
+        .expect("the second change, once the first ended");
+    changer.join().expect("the changing thread");
+}
+
+#[test]
+fn a_change_asked_for_again_by_its_holder_is_taken_at_once() {
+    // A test holding the change that reaches code asking for it again would
+    // otherwise wait on itself for ever.
+    let (taken, told) = std::sync::mpsc::channel();
+    let holder = std::thread::spawn(move || {
+        let change = TestStateChange::change();
+        let again = TestStateChange::change();
+        taken
+            .send(())
+            .expect("the test is told the change was taken twice");
+        drop(again);
+        drop(change);
+    });
+    told.recv_timeout(std::time::Duration::from_secs(5))
+        .expect("the change asked for again by the thread holding it");
+    holder.join().expect("the holding thread");
+}

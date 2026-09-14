@@ -639,6 +639,9 @@ fn a_writer_publishes_nothing_of_a_root_another_publication_touched_while_it_ran
         return;
     }
     let sample = Sample::new("sandbox-root-touched-while-it-ran");
+    // Taken before the generations are touched directly: the test that makes
+    // that file unreadable holds the same lease while it stands.
+    let _serial = super::transaction::TestSerialLease::acquire().expect("test writer coordination");
     sample.write("shared.txt", "baseline\n");
     // The root has a history before this command starts, so what refuses it is
     // the count moving again rather than an entry appearing where there was
@@ -1205,7 +1208,7 @@ fn a_refusal_the_model_reads_names_a_kind_and_not_a_path() {
     // withheld its source and one that rendered it would read the same here and
     // the assertion below could not fail. A state directory that is not this
     // user's own private one is refused by a message that names it.
-    let changing = super::transaction::TestStateChange::change().expect("test state coordination");
+    let changing = super::transaction::TestStateChange::change();
     let restore = ModeRestored(
         state.clone(),
         std::fs::metadata(&state)
@@ -1259,7 +1262,7 @@ fn a_publication_that_cannot_ask_for_admission_says_the_same_thing_twice() {
         .expect("transaction state");
     let lock = state.join("writable.lock");
     let restore = std::fs::metadata(&lock).expect("the lock").permissions();
-    let changing = super::transaction::TestStateChange::change().expect("test state coordination");
+    let changing = super::transaction::TestStateChange::change();
     std::fs::set_permissions(&lock, std::fs::Permissions::from_mode(0o000))
         .expect("an unopenable lock");
     fill_audit(&audit, crucible_sandbox::MAX_SANDBOX_AUDIT_FACTS);
@@ -1295,11 +1298,11 @@ fn a_preparation_waits_out_a_test_that_changed_this_users_state_directory() {
     use std::os::unix::fs::PermissionsExt as _;
 
     // Tests of one process run side by side, and a test that watches a refusal
-    // changes this user's shared state directory while it does. Every
-    // preparation asks for the registry by reading that directory, so one asked
-    // from another thread while the change stood was refused for a change that
-    // was not its own: two unrelated tests of this crate failed that way now and
-    // then.
+    // changes this user's shared state directory while it does. Taking the
+    // registry, as every preparation does, and taking the publication lock both
+    // read that directory, so a lease asked for from another thread while the
+    // change stood was refused for a change that was not its own: two unrelated
+    // tests of this crate failed that way now and then.
     let service = LocalSandbox::new();
     if skipped_without_enforcement(&service) {
         return;
@@ -1336,7 +1339,10 @@ fn a_preparation_waits_out_a_test_that_changed_this_users_state_directory() {
 
     let serial = super::transaction::TestSerialLease::acquire().expect("test writer coordination");
     let state = super::transaction::state_directory(&writer).expect("transaction state");
-    let changing = super::transaction::TestStateChange::change().expect("test state coordination");
+    // Taken once so the directory exists, with the mode a lease gives it, on a
+    // host where nothing has asked for it yet.
+    drop(super::transaction::RegistryLease::acquire(&writer).expect("this user's state directory"));
+    let changing = super::transaction::TestStateChange::change();
     let restore = ModeRestored(
         state.clone(),
         std::fs::metadata(&state)
