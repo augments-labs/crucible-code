@@ -418,18 +418,30 @@ impl Load {
         messages.iter().map(Self::bytes).collect()
     }
 
-    /// Messages already counted, rewritten in place: `before` weighs each as it
-    /// stood, and the messages no report has measured begin at `unmeasured`.
+    /// Messages already counted, rewritten in place: `before` weighs each of
+    /// `messages` as it stood, and no report has measured any message from
+    /// `unmeasured` on.
     ///
     /// A result taken out leaves a sentence of another length where it was.
     /// The byte total follows every message, because the next report calibrates
     /// this model's rate against it, and bytes no request carries would make
     /// text read cheaper than it is — the direction that notices a full window
-    /// too late. The estimate follows every message nothing has measured, and of
+    /// too late. The estimate follows every message from `unmeasured` on, and of
     /// the rest only what grew: a decrease a report already measured stays in
     /// its count, by the rule `estimated` keeps, until the next report, a switch
-    /// that reestimates from the total, or a recount.
+    /// that reestimates from the total, or a recount. The same rule is why
+    /// `unmeasured` may come after the first message nothing measured and never
+    /// before it: after only keeps a decrease in the estimate, before takes a
+    /// measured decrease off it.
+    ///
+    /// Rewriting in place moves no message, so `before` holds one weight a
+    /// message; any other number would pair weights with the wrong messages.
     pub(super) fn rewritten(&mut self, before: &[u64], messages: &[Message], unmeasured: usize) {
+        debug_assert_eq!(
+            before.len(),
+            messages.len(),
+            "a rewrite in place is handed one weight a message"
+        );
         for (index, (was, message)) in before.iter().zip(messages).enumerate() {
             let now = Self::bytes(message);
             self.bytes = moved(self.bytes, *was, now);

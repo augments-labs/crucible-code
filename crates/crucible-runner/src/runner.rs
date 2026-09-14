@@ -376,6 +376,8 @@ impl Runner {
     /// reason.
     fn admit_restricted(&mut self) -> Option<crucible_types::Calibration> {
         let clearing = self.untransferable(0, self.provider.as_ref(), None);
+        // As though a report had measured every message: the recount each
+        // caller runs next rebuilds the load from the transcript either way.
         self.clear_untransferable(&clearing, self.transcript.messages().len());
         if clearing.is_empty() {
             self.session.calibrated()
@@ -782,6 +784,8 @@ impl Runner {
         let clearing = self.untransferable(0, provider.as_ref(), Some(self.provider.as_ref()));
 
         self.provider = provider;
+        // As though a report had measured every message: the estimate is taken
+        // again from the byte total below, and that total follows every message.
         self.clear_untransferable(&clearing, self.transcript.messages().len());
         // Cached-token and tokenizer semantics belong to the provider that
         // reported them. Keep the transcript, but not that provider's exact
@@ -827,9 +831,8 @@ impl Runner {
     /// One line per sentence, since a line carries one. Clearing takes the
     /// provenance with the content, so a result is never cleared twice.
     ///
-    /// The messages no report has measured begin at `unmeasured`: what a
-    /// clearing changes there joins the estimate, while of the rest only what
-    /// grew does.
+    /// No report has measured any message from `unmeasured` on; what the
+    /// clearing then does to the load is [`load::Load::rewritten`]'s to say.
     fn clear_untransferable(
         &mut self,
         clearing: &[(crucible_core::ToolId, Box<str>)],

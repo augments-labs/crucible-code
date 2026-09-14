@@ -694,3 +694,18 @@ fn a_rewrite_that_grows_what_a_report_measured_is_counted_at_once() {
         "the growth of a result a report measured was not counted"
     );
 }
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "one weight a message")]
+fn a_rewrite_handed_weights_for_other_messages_is_refused() {
+    // Weights for another number of messages would pair each with the wrong
+    // message and move the load by whatever the mismatch happened to be.
+    let mut load = Load::default();
+    load.recorded(&results(3_000));
+    load.rewritten(
+        &Load::weights(&[results(3_000)]),
+        &[results(30), results(30)],
+        0,
+    );
+}
