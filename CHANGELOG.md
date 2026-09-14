@@ -34,6 +34,16 @@ change in any release with no deprecation period.
   than it is until the session was next compacted or resumed, and compaction
   could start later than it should.
 
+## [0.41.1] - 2026-09-14
+
+### Security
+
+- **A TLS 1.3 handshake that breaks the protocol's encryption rules is refused.**
+  crucible now uses rustls 0.23.45, which rejects a handshake message a server
+  sends in plaintext where it must be encrypted (RUSTSEC-2026-0285). The handshake
+  stayed authenticated, so no connection could be altered or taken over, but
+  earlier versions accepted a server that broke the rule.
+
 ## [0.41.0] - 2026-09-13
 
 ### Added
@@ -3857,7 +3867,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.41.0...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.41.1...HEAD
+[0.41.1]: https://github.com/augments-labs/crucible-code/compare/v0.41.0...v0.41.1
 [0.41.0]: https://github.com/augments-labs/crucible-code/compare/v0.40.1...v0.41.0
 [0.40.1]: https://github.com/augments-labs/crucible-code/compare/v0.40.0...v0.40.1
 [0.40.0]: https://github.com/augments-labs/crucible-code/compare/v0.39.0...v0.40.0
