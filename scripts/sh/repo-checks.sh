@@ -377,22 +377,24 @@ fi
 # Keeping a restricted result where it is, for a recipient that reaches no model,
 # is safe only because that recipient sends nothing anywhere. A provider that said
 # so and still reached a model would be handed what its vendor may not see, so the
-# one shipped stand-in is the only provider that says it; the trait's default and
-# the providers tests drive are the other places it is written.
+# one shipped stand-in is the only provider that says it. Counted by definition
+# rather than by file: the trait's default, the transfer tests' provider and the
+# runner's fake each write it once beside the stand-in, and a second definition in
+# any of those files is as much a new provider saying it as one anywhere else.
 stand_in="crates/crucible-provider/src/unavailable.rs"
-reachers=$(grep -rlE --include='*.rs' 'fn reaches_a_model\(' crates src tests |
-    grep -vxF -e crates/crucible-models/src/provider.rs \
-        -e crates/crucible-models/src/transfer.rs \
-        -e crates/crucible-runner/src/fake.rs |
-    grep -vE '(^|/)tests(/|\.rs$)|_tests\.rs$' || true)
-if [[ "$reachers" != "$stand_in" ]]; then
-    while IFS= read -r file; do
-        [[ -z "$file" || "$file" == "$stand_in" ]] && continue
-        printf '    FAIL %s says whether a provider reaches a model; only %s may\n' "$file" "$stand_in"
-    done <<<"$reachers"
-    if ! grep -Fxq "$stand_in" <<<"$reachers"; then
-        printf '    FAIL %s no longer says it reaches no model; this check measured nothing\n' "$stand_in"
-    fi
+expected=$(printf '%s:1\n' \
+    crates/crucible-models/src/provider.rs \
+    crates/crucible-models/src/transfer.rs \
+    crates/crucible-runner/src/fake.rs \
+    "$stand_in" | sort)
+written=$(grep -rcE --include='*.rs' 'fn reaches_a_model\(' crates src tests |
+    grep -vE ':0$' |
+    grep -vE '(^|/)tests(/|\.rs:)|_tests\.rs:' | sort || true)
+if [[ "$written" != "$expected" ]]; then
+    printf '    FAIL only %s may say a provider reaches no model; reaches_a_model is written, by file and count:\n' "$stand_in"
+    sed 's/^/        /' <<<"$written"
+    printf '    and is expected once in each of:\n'
+    sed 's/^/        /' <<<"$expected"
     failed=1
 fi
 
