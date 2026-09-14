@@ -2,6 +2,7 @@
 
 use std::fs;
 
+use crucible_core::InvocationState;
 use crucible_core::{
     Ancestry, CheckpointId, CheckpointStore, ExecutionCheckpoint, InvocationRecord, Message,
     PendingAction, PendingApproval, PendingExternalTool, RecordedToolOutput, RecoveryAction,
@@ -16,6 +17,7 @@ use crucible_core::{
     SandboxInspection, SandboxManifest, SandboxNetworkPolicy, SandboxPolicy, SandboxResourceLimits,
 };
 use crucible_session::{CHECKPOINT_FORMAT, CheckpointError, FileCheckpointStore};
+use crucible_types::ResultProvenance;
 
 fn directory(name: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!(
@@ -167,6 +169,49 @@ fn pending_actions_and_finished_invocations_round_trip_in_their_own_versioned_fi
             0o600
         );
     }
+
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn a_finished_invocation_keeps_who_answered_its_result() {
+    // A result recovered from a checkpoint is sent on like any other, so what
+    // its vendor restricts has to come back with it rather than as a result
+    // nothing restricts.
+    let directory = directory("provenance");
+    let mut store = FileCheckpointStore::in_directory(&directory);
+    let id = CheckpointId::new();
+    let ancestry = Ancestry::new().child();
+    let mut checkpoint =
+        ExecutionCheckpoint::new(id, ancestry, scope(), None, 1_000, 9_000).unwrap();
+    let provenance = ResultProvenance::answered("google", Some("[cleared — restricted]"))
+        .expect("a bounded term");
+
+    let mut invocation =
+        InvocationRecord::new(call("searched"), ancestry, ToolEffect::ReadOnly, None);
+    invocation.start().unwrap();
+    invocation
+        .finish(
+            ToolOutcome::Succeeded,
+            RecordedToolOutput::ok("grounded canary").answered_by(provenance.clone()),
+        )
+        .unwrap();
+    checkpoint.add_invocation(invocation).unwrap();
+
+    store.save(&checkpoint).expect("checkpoint is durable");
+    let loaded = store
+        .load(id)
+        .expect("checkpoint reads")
+        .expect("it exists");
+
+    let Some(InvocationState::Finished { output, .. }) = loaded
+        .invocations()
+        .first()
+        .map(|invocation| invocation.state().clone())
+    else {
+        panic!("the invocation came back unfinished");
+    };
+    assert_eq!(output.provenance(), &provenance);
 
     fs::remove_dir_all(directory).unwrap();
 }

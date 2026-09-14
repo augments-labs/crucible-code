@@ -67,9 +67,19 @@ fn fingerprint(text: &str) -> u64 {
 }
 
 /// A provider that answers from a script, one round per request.
+/// Whether a request handed to a script reaches a model, or is answered by a
+/// stand-in that sends nothing anywhere.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Reach {
+    Model,
+    Nothing,
+}
+
 pub(crate) struct Script {
     name: Option<&'static str>,
     restricts: Option<&'static str>,
+    /// Whether a request handed to this script reaches a model.
+    reach: Reach,
     credential_scope: CredentialScopeId,
     rounds: Mutex<VecDeque<Vec<Delta>>>,
     sent: Sent,
@@ -130,6 +140,7 @@ impl Script {
             cache: CacheFixture::default(),
             resource_delete: ResourceDelete::Deleted,
             restricts: None,
+            reach: Reach::Model,
         }
     }
 
@@ -145,6 +156,14 @@ impl Script {
     #[cfg(test)]
     pub(crate) const fn restricting(mut self, notice: &'static str) -> Self {
         self.restricts = Some(notice);
+        self
+    }
+
+    /// Makes this script the stand-in served while nothing is set up: a request
+    /// handed to it reaches no model.
+    #[cfg(test)]
+    pub(crate) const fn reaching_nothing(mut self) -> Self {
+        self.reach = Reach::Nothing;
         self
     }
 
@@ -286,6 +305,10 @@ impl Provider for Script {
 
     fn restricts_results(&self) -> Option<&'static str> {
         self.restricts
+    }
+
+    fn reaches_a_model(&self) -> bool {
+        self.reach == Reach::Model
     }
 
     /// A stand-in spells what every real provider here spells today.

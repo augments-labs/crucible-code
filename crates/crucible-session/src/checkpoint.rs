@@ -4,6 +4,7 @@
 //! journal state. It is one bounded snapshot of unfinished execution, replaced
 //! whole after each resolution/state transition and deleted when finished.
 
+use crucible_types::ResultProvenance;
 use std::fs::{self, File};
 use std::io::{self, Read as _, Write as _};
 use std::path::{Path, PathBuf};
@@ -624,7 +625,7 @@ fn decode_call(value: &Value) -> Result<ToolCall, CheckpointError> {
 }
 
 fn encode_output(output: &RecordedToolOutput) -> Value {
-    json!({
+    let mut encoded = json!({
         "text": output.text(),
         "failed": output.is_failed(),
         "changed": output.changed().map(|change| json!({
@@ -637,7 +638,18 @@ fn encode_output(output: &RecordedToolOutput) -> Value {
             "media_type": attachment.media_type.as_ref(),
             "hash": hex(&attachment.hash),
         })).collect::<Vec<_>>(),
-    })
+    });
+    // Written only where a vendor answered, as on a session log's result line,
+    // so a checkpoint without one reads the same to a build that predates it.
+    if let ResultProvenance::Answered(answered) = output.provenance()
+        && let Some(fields) = encoded.as_object_mut()
+    {
+        fields.insert(
+            "answered_by".to_owned(),
+            json!({ "vendor": answered.vendor(), "elsewhere": answered.restricted() }),
+        );
+    }
+    encoded
 }
 
 fn decode_output(value: &Value) -> Result<RecordedToolOutput, CheckpointError> {
@@ -669,6 +681,12 @@ fn decode_output(value: &Value) -> Result<RecordedToolOutput, CheckpointError> {
             })
         })
         .collect::<Result<Vec<_>, CheckpointError>>()?;
+    if let Some(answered) = value.get("answered_by").filter(|by| !by.is_null()) {
+        let restricted = nullable_text(answered, "elsewhere")?;
+        let provenance = ResultProvenance::answered(text(answered, "vendor")?, restricted)
+            .map_err(|_| CheckpointError::Unreadable)?;
+        output = output.answered_by(provenance);
+    }
     Ok(crate::session::restored_output(output, attachments))
 }
 

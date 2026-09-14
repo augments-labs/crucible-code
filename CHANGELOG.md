@@ -20,12 +20,13 @@ change in any release with no deprecation period.
 
 ### Fixed
 
-- **Only Google's own search results are held back from other providers, and
-  they stay held back however the session gets there.** Leaving Google cleared
-  every search result in the session, including ones another provider's search
-  had answered, while a session resumed in a run using another provider sent
-  Google's results on. Each search result now records which provider answered
-  it, so both cases follow Google's terms and nothing else is cleared.
+- **Only Google's own search results are held back from other providers, and a
+  switch is no longer the only moment they are.** Leaving Google cleared every
+  search result, including ones another provider had answered, while a resumed
+  session, or a search answered through Google after moving on, sent Google's
+  results to the new provider. Each search result now records who answered it, so
+  those cases follow Google's terms; results in sessions written before this
+  release keep the old rule.
 
 ## [0.41.0] - 2026-09-13
 

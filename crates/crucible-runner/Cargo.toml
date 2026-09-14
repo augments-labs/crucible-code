@@ -22,8 +22,9 @@ crucible-core.workspace = true
 # vendor restricts what it produced; the runner applies that decision and never
 # makes it from a vendor's or a tool's name.
 crucible-models.workspace = true
-# The log a turn is recorded to. Re-exported, so the wiring names one crate
-# for the loop and the session alike.
+# The log a turn is recorded to, re-exported for the wiring that drives turns.
+# Composition names the session crate itself for what the runner never
+# touches, such as the file persistent prompt-cache resources are kept in.
 crucible-session.workspace = true
 # Who answered a recorded result, which is what the transfer decision reads.
 crucible-types.workspace = true

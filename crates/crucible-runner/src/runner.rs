@@ -371,7 +371,15 @@ impl Runner {
     /// one the results came from, and no switch is ever observed to say so. What
     /// the results record about who answered them is the whole of the decision.
     fn admit_restricted(&mut self) {
-        let clearing = self.untransferable(self.provider.as_ref(), None);
+        let clearing = self.untransferable(0, self.provider.as_ref(), None);
+        self.clear_untransferable(&clearing);
+    }
+
+    /// Takes out of the message just recorded what this run's vendor may not be
+    /// sent.
+    fn admit_recorded(&mut self) {
+        let recorded = self.transcript.messages().len().saturating_sub(1);
+        let clearing = self.untransferable(recorded, self.provider.as_ref(), None);
         self.clear_untransferable(&clearing);
     }
 
@@ -757,7 +765,7 @@ impl Runner {
         // before results said who answered them is judged by what the vendor
         // being left restricts, and by the next line there is nobody left to
         // ask. Staying with the same vendor moves nothing anywhere.
-        let clearing = self.untransferable(provider.as_ref(), Some(self.provider.as_ref()));
+        let clearing = self.untransferable(0, provider.as_ref(), Some(self.provider.as_ref()));
 
         self.provider = provider;
         self.clear_untransferable(&clearing);
@@ -767,18 +775,19 @@ impl Runner {
         self.load.reestimated();
     }
 
-    /// The results the next request may not carry to `recipient`, each with the
-    /// sentence to leave in its place.
+    /// The results from message `from` on that the next request may not carry to
+    /// `recipient`, each with the sentence to leave in its place.
     ///
     /// What may go where is decided by the result's own provenance, through
     /// `crucible_models::transfer`, never from a vendor's or a tool's name here.
     fn untransferable(
         &self,
+        from: usize,
         recipient: &dyn Provider,
         leaving: Option<&dyn Provider>,
     ) -> Vec<(crucible_core::ToolId, Box<str>)> {
         let mut clearing = Vec::new();
-        for message in self.transcript.messages() {
+        for message in self.transcript.messages().iter().skip(from) {
             if let crucible_core::Message::ToolResults(results) = message {
                 for result in results {
                     if let crucible_models::Transfer::Clear(notice) =
@@ -898,6 +907,12 @@ impl Runner {
         }
         if settles_call_results {
             JournalStore::settle_call_results(&self.session);
+            // After the results line, so the log reads what was answered and
+            // then what was taken out of it. The search source was chosen when
+            // the run started, so a session that moved away from its vendor
+            // still searches through that vendor, and the next request of this
+            // turn is built from what was just recorded.
+            self.admit_recorded();
         }
         Ok(())
     }

@@ -11,14 +11,13 @@ authors.workspace = true
 
 # The contract a provider adapter is written against, and nothing an adapter
 # implements. `serde_json` writes the canonical projection a cache fingerprint is
-# taken over and `sha2` takes it, so two requests with the same stable prefix
-# are recognised as the same prefix wherever they were built.
+# taken over, so two requests with the same stable prefix are recognised as the
+# same prefix wherever they were built.
 [dependencies]
 crucible-credentials.workspace = true
 crucible-runtime.workspace = true
 crucible-types.workspace = true
 serde_json.workspace = true
-sha2.workspace = true
 thiserror.workspace = true
 
 [lints]

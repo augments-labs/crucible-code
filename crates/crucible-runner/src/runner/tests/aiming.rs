@@ -152,6 +152,52 @@ fn leaving_a_vendor_that_restricts_its_results_keeps_the_ones_another_vendor_ans
 }
 
 #[test]
+fn a_search_a_restricting_vendor_answers_after_the_session_left_it_is_not_sent_on() {
+    // The search source is chosen when the run starts, so a session that moved
+    // away from the vendor whose search it uses still searches through that
+    // vendor. What such a search answers has to be kept from the provider the
+    // session now talks to from the moment it is recorded, not from the next
+    // switch: the next request of the same turn is already on its way there.
+    let first = Script::new(vec![saying("from the vendor that restricts")])
+        .with_name("restricting")
+        .restricting(RESTRICTED);
+    let mut scripted = Scripted::new(
+        first,
+        tools([Fixed::new("web_search")
+            .answering("grounded after the switch canary")
+            .answered_by(
+                ResultProvenance::answered("restricting", Some(RESTRICTED))
+                    .expect("a bounded term"),
+            )]),
+        Verdict::Allow,
+    );
+    scripted.turn("hello").expect("the turn to finish");
+
+    let elsewhere = Script::new(vec![
+        calling("call_search", "web_search", r#"{"query":"rust"}"#),
+        saying("an answer from elsewhere"),
+    ])
+    .with_name("elsewhere");
+    let sent = elsewhere.sent();
+    scripted.runner.serve(Box::new(elsewhere));
+    scripted.turn("search now").expect("the turn to finish");
+
+    assert_eq!(
+        only_result(&scripted).output.text(),
+        RESTRICTED,
+        "a result the restricting vendor answered stayed in the transcript the next request was built from"
+    );
+    let requests = sent.lock().expect("the requests the vendor was sent");
+    assert_eq!(requests.len(), 2, "the search, then the answer after it");
+    assert!(
+        requests
+            .last()
+            .is_some_and(|request| !request.carried("grounded after the switch canary")),
+        "the request after the search carried what the restricting vendor answered"
+    );
+}
+
+#[test]
 fn a_search_result_an_older_build_recorded_is_taken_away_when_leaving_a_vendor_that_restricts() {
     // A log written before results said who answered them cannot say whether a
     // search came from the vendor being left. The build that wrote it took every
@@ -203,6 +249,52 @@ fn a_search_result_an_older_build_recorded_is_taken_away_when_leaving_a_vendor_t
 }
 
 #[test]
+fn a_search_result_an_older_build_recorded_stays_when_leaving_a_vendor_that_restricts_nothing() {
+    // The other half of the older build's rule: it took search results away
+    // only when leaving a vendor that restricts them.
+    let first = Script::new(vec![saying("an answer")]).with_name("unrestricting");
+
+    let mut transcript = Transcript::new();
+    transcript
+        .push(Message::said("search for rust"))
+        .expect("a prompt");
+    transcript
+        .push(Message::Agent {
+            continuation: None,
+            text: "".into(),
+            calls: vec![ToolCall {
+                id: ToolId::new("call_search"),
+                name: "web_search".into(),
+                args: ToolArgs::new(r#"{"query":"rust"}"#),
+            }],
+            stop: Some(StopReason::WantsTools),
+        })
+        .expect("a call");
+    transcript
+        .push(Message::ToolResults(vec![ToolResult {
+            id: ToolId::new("call_search"),
+            output: RecordedToolOutput::ok("search results from an older log")
+                .answered_by(ResultProvenance::Unrecorded),
+        }]))
+        .expect("its result");
+
+    let scripted = Scripted::new(first, tools([Fixed::new("web_search")]), Verdict::Allow);
+    let mut scripted = Scripted {
+        runner: scripted.runner.resuming(transcript),
+        ..scripted
+    };
+    scripted.runner.serve(Box::new(
+        Script::new(vec![saying("from elsewhere")]).with_name("elsewhere"),
+    ));
+
+    assert_eq!(
+        only_result(&scripted).output.text(),
+        "search results from an older log",
+        "a vendor that restricts nothing took an older search result away"
+    );
+}
+
+#[test]
 fn a_vendor_that_restricts_nothing_leaves_the_results_where_they_are() {
     // The other half of the same rule, and the one that keeps it from being a
     // clearing on every swap: what may be sent on is the producing vendor's to
@@ -215,7 +307,11 @@ fn a_vendor_that_restricts_nothing_leaves_the_results_where_they_are() {
 
     let mut scripted = Scripted::new(
         first,
-        tools([Fixed::new("web_search").answering("ordinary search results canary")]),
+        tools([Fixed::new("web_search")
+            .answering("ordinary search results canary")
+            .answered_by(
+                ResultProvenance::answered("unrestricting", None).expect("a bounded vendor"),
+            )]),
         Verdict::Allow,
     );
 

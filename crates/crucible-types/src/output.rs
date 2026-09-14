@@ -135,13 +135,7 @@ pub enum ResultProvenance {
     #[default]
     Unstated,
     /// A vendor's service answered it.
-    Answered {
-        /// The vendor, spelled as its provider names itself.
-        vendor: Box<str>,
-        /// What stands in its place anywhere but that vendor's models, where its
-        /// terms keep it there.
-        restricted: Option<Box<str>>,
-    },
+    Answered(AnsweredBy),
     /// A search result read back from a log written before results said who
     /// answered them.
     ///
@@ -154,6 +148,43 @@ pub enum ResultProvenance {
 
 /// What a result without a provenance of its own answers with.
 static UNSTATED: ResultProvenance = ResultProvenance::Unstated;
+
+/// Which vendor answered a result, and what its terms keep.
+///
+/// Built only by [`ResultProvenance::answered`], which bounds both strings. The
+/// fields are private because every reader downstream — the transcript a
+/// cleared result's sentence is written into, the session log — trusts those
+/// bounds, and a value built around the constructor would carry an unbounded
+/// sentence past all of them:
+///
+/// ```compile_fail,E0451
+/// use crucible_types::{AnsweredBy, ResultProvenance};
+///
+/// let forged = ResultProvenance::Answered(AnsweredBy {
+///     vendor: "".into(),
+///     restricted: None,
+/// });
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnsweredBy {
+    vendor: Box<str>,
+    restricted: Option<Box<str>>,
+}
+
+impl AnsweredBy {
+    /// The vendor, spelled as its provider names itself.
+    #[must_use]
+    pub fn vendor(&self) -> &str {
+        &self.vendor
+    }
+
+    /// What stands in the result's place anywhere but that vendor's models,
+    /// where its terms keep it there.
+    #[must_use]
+    pub fn restricted(&self) -> Option<&str> {
+        self.restricted.as_deref()
+    }
+}
 
 /// A provenance that would not fit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -189,10 +220,10 @@ impl ResultProvenance {
         if let Some(notice) = restricted {
             bounded("restriction notice", notice, RESULT_NOTICE_BYTES)?;
         }
-        Ok(Self::Answered {
+        Ok(Self::Answered(AnsweredBy {
             vendor: vendor.into(),
             restricted: restricted.map(Into::into),
-        })
+        }))
     }
 }
 
@@ -633,6 +664,45 @@ pub enum ToolOutcome {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_provenance_names_its_vendor_within_the_bounds_and_no_further() {
+        assert_eq!(
+            super::ResultProvenance::answered("", None),
+            Err(super::ResultProvenanceError::Unnamed)
+        );
+
+        let vendor = "v".repeat(super::RESULT_VENDOR_BYTES);
+        assert!(super::ResultProvenance::answered(&vendor, None).is_ok());
+        assert_eq!(
+            super::ResultProvenance::answered(&format!("{vendor}v"), None),
+            Err(super::ResultProvenanceError::TooLong {
+                field: "vendor",
+                maximum: super::RESULT_VENDOR_BYTES,
+                actual: super::RESULT_VENDOR_BYTES + 1,
+            })
+        );
+
+        let notice = "n".repeat(super::RESULT_NOTICE_BYTES);
+        assert!(super::ResultProvenance::answered("google", Some(&notice)).is_ok());
+        assert_eq!(
+            super::ResultProvenance::answered("google", Some(&format!("{notice}n"))),
+            Err(super::ResultProvenanceError::TooLong {
+                field: "restriction notice",
+                maximum: super::RESULT_NOTICE_BYTES,
+                actual: super::RESULT_NOTICE_BYTES + 1,
+            })
+        );
+    }
+
+    #[test]
+    fn clearing_a_result_takes_what_restricted_it_with_the_content() {
+        let mut output = super::RecordedToolOutput::ok("grounded canary").answered_by(
+            super::ResultProvenance::answered("google", Some("[cleared]")).expect("a bounded term"),
+        );
+        output.clear("[cleared]");
+        assert_eq!(output.provenance(), &super::ResultProvenance::Unstated);
+    }
+
     use super::*;
 
     #[test]

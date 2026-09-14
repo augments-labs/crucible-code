@@ -47,6 +47,12 @@ impl Provider for Unavailable {
         NAME
     }
 
+    /// Nothing is sent anywhere through this provider; every turn is refused
+    /// here.
+    fn reaches_a_model(&self) -> bool {
+        false
+    }
+
     fn spells(&self) -> Modalities {
         // No protocol at all, so nothing beyond the text of a turn it will
         // refuse anyway.

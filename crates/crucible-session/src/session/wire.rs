@@ -1148,10 +1148,10 @@ pub(crate) fn answered(result: &ToolResult) -> Value {
     // Who answered it, where a vendor did. A result read back as unrecorded is
     // written the way the older build wrote it — with nothing — because that is
     // what it is: this reader's attribution, not something the log knew.
-    if let ResultProvenance::Answered { vendor, restricted } = result.output.provenance() {
+    if let ResultProvenance::Answered(answered) = result.output.provenance() {
         let mut by = serde_json::Map::new();
-        by.insert("vendor".to_owned(), json!(vendor));
-        if let Some(notice) = restricted {
+        by.insert("vendor".to_owned(), json!(answered.vendor()));
+        if let Some(notice) = answered.restricted() {
             by.insert("elsewhere".to_owned(), json!(notice));
         }
         object.insert("answered_by".to_owned(), Value::Object(by));
@@ -1226,6 +1226,36 @@ fn answered_by(value: &Value) -> Option<ResultProvenance> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_result_whose_provenance_does_not_read_is_not_a_result() {
+        // Refused whole, as a malformed `change` or `attached` is: a result read
+        // back without the restriction it was written with would be sent to a
+        // vendor its own vendor keeps it from.
+        let unnamed = serde_json::json!({
+            "id": "call-1",
+            "failed": false,
+            "text": "grounded",
+            "answered_by": { "elsewhere": "[cleared]" },
+        });
+        assert!(super::result(&unnamed).is_none());
+
+        let oversized = serde_json::json!({
+            "id": "call-1",
+            "failed": false,
+            "text": "grounded",
+            "answered_by": { "vendor": "v".repeat(crucible_types::RESULT_VENDOR_BYTES + 1) },
+        });
+        assert!(super::result(&oversized).is_none());
+
+        let written = serde_json::json!({
+            "id": "call-1",
+            "failed": false,
+            "text": "grounded",
+            "answered_by": { "vendor": "google", "elsewhere": "[cleared]" },
+        });
+        assert!(super::result(&written).is_some());
+    }
+
     use crucible_core::ContextPatch;
     use crucible_core::{
         Ancestry, Approved, Ask, Attachment, Change, Diff, InputTokenUsage, InvocationRecord, Line,

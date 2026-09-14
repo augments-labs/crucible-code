@@ -8,6 +8,7 @@
 
 mod attempt;
 mod capability;
+mod policy;
 mod pricing;
 mod projection;
 mod resource;
@@ -20,6 +21,7 @@ pub use capability::{
     MAX_PROMPT_CACHE_MECHANISMS, PromptCacheBoundary, PromptCacheCapabilities, PromptCacheContent,
     PromptCacheMechanismCapability, PromptCacheProvenance, StatefulTransportCapability,
 };
+pub use policy::narrow_policy;
 pub use pricing::{
     PriceRate, PricingQuery, PromptCachePricing, PromptCacheRates, UsageRate, select_pricing,
 };

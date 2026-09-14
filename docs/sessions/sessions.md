@@ -112,10 +112,10 @@ failed, incomplete or cancelled stream cannot commit it. Format 13 adds a line
 saying that tool results were cleared because the vendor that produced them
 restricts where they may be sent, and the sentence left in their place; a
 session that never left such a vendor never carries one. Older Crucible builds
-cannot resume format 12 or 13 logs. A search result also records which vendor's
-search answered it and, where that vendor restricts where it may be sent, the
-sentence to leave in its place. The field is optional and older builds ignore it,
-so they still resume these logs.
+cannot resume format 12 or 13 logs. Since 0.42.0 a search result also records which
+vendor's search answered it and, where that vendor restricts where it may be sent, the
+sentence to leave in its place. The field is optional within format 13, so builds that
+read format 13, such as 0.41.0, ignore it and still resume these logs.
 
 Continuation is bound to its producing protocol, model compatibility, credential
 and recipient. A changed key, endpoint or incompatible provider receives visible

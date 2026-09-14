@@ -86,7 +86,7 @@ pub use cache::{
     PromptCacheRates, PromptCacheRequest, PromptCacheResourceCreate, PromptCacheResourceCreated,
     PromptCacheResourceDeadline, PromptCacheResourceLifecycle, PromptCacheResourceReference,
     PromptCacheResourceRemote, PromptCacheRoute, PromptCacheSelection, StatefulTransportCapability,
-    UsageRate, select_pricing,
+    UsageRate, narrow_policy, select_pricing,
 };
 pub use model::{MODEL_NAME_BYTES, ModelCapabilities, ModelError, ModelLimits};
 pub use provider::{

@@ -565,7 +565,11 @@ pub trait Provider: Send + Sync {
 
     /// The sentence to leave in place of this vendor's tool results when the
     /// session moves to a different vendor, where its terms forbid sending them
-    /// on.
+    /// on and the results do not say who answered them.
+    ///
+    /// A result that records its provenance carries its vendor's sentence with
+    /// it and is decided from that; this is the fallback for results read back
+    /// from a log written before results recorded one.
     ///
     /// `None` — the default — is the answer for a vendor that does not restrict
     /// what it produced, and it is the honest answer for an unknown or custom
@@ -580,6 +584,17 @@ pub trait Provider: Send + Sync {
     /// go is not the destination's to say.
     fn restricts_results(&self) -> Option<&'static str> {
         None
+    }
+
+    /// Whether a request handed to this provider reaches a model at all.
+    ///
+    /// `true` — the default — for every adapter that speaks to a vendor. `false`
+    /// only for a stand-in that answers every turn itself, such as the provider
+    /// served while nothing is set up: a result is sent nowhere through it, so
+    /// nothing has to be kept from it, and clearing a result for its sake would
+    /// take it from the vendor the session goes back to.
+    fn reaches_a_model(&self) -> bool {
+        true
     }
 
     /// Exact effective prompt-cache capabilities for this model and route.

@@ -13,7 +13,7 @@ use crucible_types::{
     PromptCacheResourceRecord,
 };
 
-/// Private bounded metadata store, implemented above core using a resolved user-home path.
+/// Private bounded metadata store, implemented by a file store under a resolved user home.
 pub trait PromptCacheResourceStore: Send + fmt::Debug {
     /// Finds the newest exact binding, including non-ready records for reconciliation.
     ///

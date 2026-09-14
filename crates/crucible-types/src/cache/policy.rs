@@ -144,7 +144,12 @@ impl PromptCachePersistentMode {
         }
     }
 
-    const fn authority(self) -> u8 {
+    /// How much this mode lets a request do with persistent resources, for
+    /// ranking two modes against each other: forbidding, reusing, then creating.
+    /// Creating and requiring rank together, since requiring adds an obligation
+    /// rather than an authority.
+    #[must_use]
+    pub const fn authority(self) -> u8 {
         match self {
             Self::Forbid => 0,
             Self::Reuse => 1,
@@ -229,7 +234,9 @@ impl PromptCacheRetention {
         self.maximum_seconds
     }
 
-    fn narrowed(self, wanted: Self) -> Self {
+    /// The stricter of two retentions: the shorter class and the smaller bound.
+    #[must_use]
+    pub fn narrowed(self, wanted: Self) -> Self {
         let class = if retention_rank(self.class) <= retention_rank(wanted.class) {
             self.class
         } else {
@@ -595,66 +602,24 @@ impl PromptCachePolicy {
         self
     }
 
-    /// Holds a descendant policy under every axis of this policy.
+    /// The same policy, recording a contradiction found while narrowing it.
+    ///
+    /// Adds a conflict and never clears one: a policy that inherited a
+    /// contradiction keeps it however it is narrowed afterwards.
     #[must_use]
-    pub fn narrowed(self, wanted: Self) -> Self {
-        let (mode, mode_source, mode_conflict) = narrow_mode(self, wanted);
-        let (isolation, isolation_source) = if self.isolation <= wanted.isolation {
-            (self.isolation, self.sources.isolation)
-        } else {
-            (wanted.isolation, wanted.sources.isolation)
-        };
-        let retention = self.retention.narrowed(wanted.retention);
-        let retention_source = if retention == self.retention {
-            self.sources.retention
-        } else {
-            wanted.sources.retention
-        };
-        let persistent_resources =
-            narrow_persistent(self.persistent_resources, wanted.persistent_resources);
-        let persistent_source = if persistent_resources == self.persistent_resources {
-            self.sources.persistent_resources
-        } else {
-            wanted.sources.persistent_resources
-        };
-        let allowed_mechanisms = self
-            .allowed_mechanisms
-            .intersection(wanted.allowed_mechanisms);
-        let mechanism_source = if allowed_mechanisms == self.allowed_mechanisms {
-            self.sources.mechanisms
-        } else {
-            wanted.sources.mechanisms
-        };
-        let conflict = mode_conflict
-            .or(self.conflict)
-            .or(wanted.conflict)
-            .or_else(|| {
-                (mode == PromptCacheMode::Require && allowed_mechanisms.is_empty())
-                    .then_some(PromptCachePolicyConflict::RequiredWithoutMechanism)
-            });
-
-        Self {
-            mode,
-            allowed_mechanisms,
-            isolation,
-            retention,
-            persistent_resources,
-            namespace: self.namespace.or(wanted.namespace),
-            sources: PromptCachePolicySources {
-                mode: mode_source,
-                mechanisms: mechanism_source,
-                isolation: isolation_source,
-                retention: retention_source,
-                persistent_resources: persistent_source,
-                namespace: if self.namespace.is_some() {
-                    self.sources.namespace
-                } else {
-                    wanted.sources.namespace
-                },
-            },
-            version: PromptCachePolicyVersion::CURRENT,
-            conflict,
+    pub const fn with_conflict(mut self, conflict: PromptCachePolicyConflict) -> Self {
+        if self.conflict.is_none() {
+            self.conflict = Some(conflict);
         }
+        self
+    }
+
+    /// The same policy with no namespace, saying which layer decided that.
+    #[must_use]
+    pub const fn without_namespace_from(mut self, source: PromptCachePolicySource) -> Self {
+        self.namespace = None;
+        self.sources.namespace = source;
+        self
     }
 
     /// Validates contradictions within one constructed policy.
@@ -727,44 +692,6 @@ impl PromptCachePolicy {
     }
 }
 
-fn narrow_mode(
-    held: PromptCachePolicy,
-    wanted: PromptCachePolicy,
-) -> (
-    PromptCacheMode,
-    PromptCachePolicySource,
-    Option<PromptCachePolicyConflict>,
-) {
-    use PromptCacheMode::{ObserveOnly, Prefer, Prohibit, Require};
-    match (held.mode, wanted.mode) {
-        (Require, Prohibit | ObserveOnly) => (
-            Require,
-            held.sources.mode,
-            Some(PromptCachePolicyConflict::RequiredAndProhibited),
-        ),
-        (Require, _) => (Require, held.sources.mode, None),
-        (Prohibit, _) => (Prohibit, held.sources.mode, None),
-        (ObserveOnly, _) => (ObserveOnly, held.sources.mode, None),
-        (Prefer, ObserveOnly | Prohibit) => (wanted.mode, wanted.sources.mode, None),
-        (Prefer, Prefer | Require) => (Prefer, held.sources.mode, None),
-    }
-}
-
-const fn narrow_persistent(
-    held: PromptCachePersistentMode,
-    wanted: PromptCachePersistentMode,
-) -> PromptCachePersistentMode {
-    if held.authority() < wanted.authority() {
-        held
-    } else if wanted.authority() < held.authority() {
-        wanted
-    } else {
-        // Equal create authority does not let a descendant turn Create into
-        // Require or weaken an inherited Require into Create.
-        held
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::str::FromStr as _;
@@ -785,76 +712,6 @@ mod tests {
         assert_eq!(policy.allowed_mechanisms(), PromptCacheMechanisms::ALL);
         assert_eq!(policy.namespace(), None);
         assert_eq!(policy.conflict(), None);
-    }
-
-    #[test]
-    fn a_descendant_can_only_narrow_each_authority_axis() {
-        let held = PromptCachePolicy::default()
-            .with_mode(PromptCacheMode::Prefer)
-            .with_isolation(PromptCacheIsolation::Workspace)
-            .with_retention(PromptCacheRetention::extended(3_600).unwrap())
-            .with_persistent_resources(PromptCachePersistentMode::Create)
-            .allowing(PromptCacheMechanisms::ALL);
-        let wanted = PromptCachePolicy::default()
-            .with_mode(PromptCacheMode::ObserveOnly)
-            .with_isolation(PromptCacheIsolation::Run)
-            .with_retention(PromptCacheRetention::ephemeral(300).unwrap())
-            .with_persistent_resources(PromptCachePersistentMode::Reuse)
-            .allowing(PromptCacheMechanisms::one(
-                PromptCacheMechanism::ExplicitBreakpoints,
-            ));
-
-        let effective = held.narrowed(wanted);
-
-        assert_eq!(effective.mode(), PromptCacheMode::ObserveOnly);
-        assert_eq!(effective.isolation(), PromptCacheIsolation::Run);
-        assert_eq!(
-            effective.retention(),
-            PromptCacheRetention::ephemeral(300).unwrap()
-        );
-        assert_eq!(
-            effective.persistent_resources(),
-            PromptCachePersistentMode::Reuse
-        );
-        assert_eq!(
-            effective.allowed_mechanisms(),
-            PromptCacheMechanisms::one(PromptCacheMechanism::ExplicitBreakpoints)
-        );
-    }
-
-    #[test]
-    fn a_descendant_cannot_turn_caching_on_or_widen_sharing() {
-        let held = PromptCachePolicy::default()
-            .with_mode(PromptCacheMode::ObserveOnly)
-            .with_isolation(PromptCacheIsolation::Run)
-            .with_persistent_resources(PromptCachePersistentMode::Forbid);
-        let wanted = PromptCachePolicy::default()
-            .with_mode(PromptCacheMode::Require)
-            .with_isolation(PromptCacheIsolation::User)
-            .with_persistent_resources(PromptCachePersistentMode::Require);
-
-        let effective = held.narrowed(wanted);
-
-        assert_eq!(effective.mode(), PromptCacheMode::ObserveOnly);
-        assert_eq!(effective.isolation(), PromptCacheIsolation::Run);
-        assert_eq!(
-            effective.persistent_resources(),
-            PromptCachePersistentMode::Forbid
-        );
-    }
-
-    #[test]
-    fn narrowing_an_inherited_requirement_to_prohibit_is_an_explicit_conflict() {
-        let held = PromptCachePolicy::default().with_mode(PromptCacheMode::Require);
-        let wanted = PromptCachePolicy::default().with_mode(PromptCacheMode::Prohibit);
-
-        let effective = held.narrowed(wanted);
-
-        assert_eq!(effective.mode(), PromptCacheMode::Require);
-        assert_eq!(
-            effective.conflict(),
-            Some(PromptCachePolicyConflict::RequiredAndProhibited)
-        );
     }
 
     #[test]

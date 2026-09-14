@@ -556,6 +556,7 @@ attachments workspace
 auth core
 auth privacy
 config core
+config models
 core attachments
 core credentials
 core models

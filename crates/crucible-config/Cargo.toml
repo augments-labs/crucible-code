@@ -13,6 +13,8 @@ authors.workspace = true
 # `Verdict` and the newtypes a resolved setting turns into, so the wiring above
 # receives domain types rather than strings it has to interpret again.
 crucible-core.workspace = true
+# How one layer's prompt-cache policy is held under the layer it inherits.
+crucible-models.workspace = true
 # The document is JSON. Read without `derive`, the same way every other boundary
 # in this workspace reads one: the shape is walked against `shape::DOCUMENT`, so
 # a mirror struct per block would be a second declaration of the same keys and

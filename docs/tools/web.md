@@ -49,15 +49,20 @@ API key and checked Interactions endpoint as the session (`store: false`).
 Grounded answers are displayed with associated Search Suggestions and inline source
 citations in the terminal without redirect rewriting. In accordance with Google's
 [grounding usage terms](https://ai.google.dev/gemini-api/terms#grounding-with-google-search),
-grounded search outputs are never sent to another provider's model: switching to one
-clears them from the context it is sent, and so does resuming the session, or picking
-it up with `/resume`, in a run that is using another provider. They stay in the local
-session log for user history review. Each result records which provider's search
-answered it, so only Google's are cleared, and the clearing is recorded in the log, so
-a session resumed later comes back cleared rather than reading the outputs off the
-disk and sending them on. Search results in a session written by an older Crucible
-say nothing about who answered them, and are cleared whenever a session leaves Google,
-as that version did.
+each search result records which provider's search answered it, and a result Google
+answered is kept out of the context sent to any other provider's model: when the
+session switches to one, when it is resumed or picked up with `/resume` in a run that
+is using one, and when a search is answered through Google after the session has
+already moved on, since the search keeps the provider the run started with. Only
+Google's results are cleared, a run with no provider set up clears nothing, and the
+outputs stay in the local session log for user history review. Each clearing is
+recorded in the log, so a session resumed later comes back cleared rather than reading
+the outputs off the disk and sending them on.
+
+Search results in a session written before Crucible 0.42.0 say nothing about who
+answered them. They keep the rule that version applied: every search result is
+cleared when the session switches away from Google, and none is cleared when such a
+session is resumed or picked up under another provider.
 Incomplete, cancelled or malformed responses yield a clean bounded failure.
 
 Moonshot's two services belong to the Kimi Code platform, which is where

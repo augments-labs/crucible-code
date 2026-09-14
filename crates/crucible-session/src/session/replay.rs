@@ -526,9 +526,12 @@ const SEARCHED: &str = "web_search";
 /// Such a result comes back unrecorded rather than as a result nobody answered,
 /// so the rule the build that wrote it applied to every search result goes on
 /// applying: it is taken away when the session leaves a vendor that restricts
-/// its results. A result this build wrote always says, so only an older line is
-/// ever marked. Applied after the durable results are matched against the line,
-/// which compares them as they were recorded.
+/// its results. A search result this build records says who answered it
+/// whenever the source was asked; one the runner answered itself — a refusal,
+/// a failure, a cancellation — says nothing and is marked too, which costs only
+/// this program's own sentence on a later switch. Applied after the durable
+/// results are matched against the line, which compares them as they were
+/// recorded.
 fn attributed(transcript: &Transcript, message: Message) -> Message {
     let Message::ToolResults(results) = message else {
         return message;

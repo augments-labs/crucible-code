@@ -87,6 +87,35 @@ impl Search for Kept {
     }
 }
 
+/// A source whose terms are longer than a result can carry, and which says
+/// whether it was asked anything anyway.
+struct Oversized {
+    notice: &'static str,
+    asked: std::sync::atomic::AtomicBool,
+}
+
+impl Search for Oversized {
+    fn name(&self) -> &'static str {
+        "oversized"
+    }
+
+    fn reaches(&self) -> Host {
+        Host::Named {
+            sent: "https://search.example/".into(),
+            host: "search.example".into(),
+        }
+    }
+
+    fn restricts(&self) -> Option<&'static str> {
+        Some(self.notice)
+    }
+
+    fn search(&self, _query: &str, _cancel: &Cancel) -> Result<SearchResponse, SourceError> {
+        self.asked.store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok(SearchResponse::results(Vec::new()))
+    }
+}
+
 /// A source that cannot answer. `true` cancels; `false` refuses.
 struct Breaks(bool);
 
@@ -486,5 +515,33 @@ fn a_search_result_says_which_vendor_answered_it_and_what_its_terms_keep() {
     assert_eq!(
         output.into_recorded().provenance(),
         &ResultProvenance::answered("fake", None).expect("a bounded vendor")
+    );
+}
+
+#[test]
+fn a_source_whose_terms_do_not_fit_a_result_is_never_asked() {
+    // Its answer would leave here saying less than the vendor's terms require,
+    // so the call fails before anything reaches the source.
+    let notice: &'static str = Box::leak(
+        "n".repeat(crucible_types::RESULT_NOTICE_BYTES + 1)
+            .into_boxed_str(),
+    );
+    let source = Arc::new(Oversized {
+        notice,
+        asked: std::sync::atomic::AtomicBool::new(false),
+    });
+    let tool = WebSearch::new(Arc::clone(&source) as Arc<dyn Search>);
+    let output = tool
+        .run(
+            sample::allowed(&tool, r#"{"query":"rust"}"#),
+            &crate::sample::context(),
+        )
+        .expect("a refusal is an answer, not an error");
+
+    assert!(output.is_failed(), "{}", output.text());
+    assert!(output.text().contains("do not fit"), "{}", output.text());
+    assert!(
+        !source.asked.load(std::sync::atomic::Ordering::SeqCst),
+        "the source was asked although its terms could not be carried"
     );
 }

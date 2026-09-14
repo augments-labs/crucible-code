@@ -495,3 +495,61 @@ fn a_run_started_on_another_vendor_resumes_a_session_without_what_its_vendor_res
         "a run started on another vendor resumed a result that vendor may not be sent"
     );
 }
+
+#[test]
+fn a_session_picked_up_where_nothing_is_set_up_keeps_what_its_vendor_answered() {
+    // A run with no usable credential serves a stand-in that sends nothing, so
+    // nothing has to be kept from it — and clearing for its sake would take the
+    // results away from the vendor the session goes back to once one is set up.
+    let sample = Sample::new("runner-picked-up-with-nothing-set-up");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
+    let id = named(&session);
+    let path = session.path().to_owned();
+
+    let restricting = Script::new(vec![
+        calling("call_search", "web_search", r#"{"query":"rust"}"#),
+        saying("an answer from the vendor that restricts its results"),
+    ])
+    .with_name("google")
+    .restricting(RESTRICTED);
+    let mut recorded = Scripted::recording(
+        restricting,
+        tools([Fixed::new("web_search")
+            .answering("grounded search results canary")
+            .answered_by(
+                ResultProvenance::answered("google", Some(RESTRICTED)).expect("a bounded term"),
+            )]),
+        Verdict::Allow,
+        session,
+    );
+    recorded.turn("search for rust").expect("a search turn");
+    drop(
+        recorded
+            .runner
+            .pick_up(Session::nowhere(), Transcript::new()),
+    );
+
+    let mut unset = Scripted::new(
+        Script::new(vec![]).with_name("none").reaching_nothing(),
+        tools([]),
+        Verdict::Allow,
+    );
+    drop(picking(&mut unset, &sample, &id));
+    unset.runner.serve(Box::new(
+        Script::new(vec![])
+            .with_name("google")
+            .restricting(RESTRICTED),
+    ));
+
+    assert_eq!(
+        only_result(&unset).output.text(),
+        "grounded search results canary",
+        "a stand-in that sends nothing took the results away from the vendor that answered them"
+    );
+    drop(unset.runner.pick_up(Session::nowhere(), Transcript::new()));
+    let written = std::fs::read_to_string(&path).expect("the log the runs wrote");
+    assert!(
+        !written.contains("\"restricted\""),
+        "a clearing was written for a provider nothing is sent to:\n{written}"
+    );
+}
