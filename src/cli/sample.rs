@@ -72,7 +72,10 @@ impl Sample {
         self.base.join("home/config.json")
     }
 
-    /// The disposable user-home root handed to state stores.
+    /// The disposable user-home root, a directory outside the workspace.
+    ///
+    /// Only a Unix test still asks for it, so elsewhere it is not compiled.
+    #[cfg(unix)]
     pub(super) fn home(&self) -> PathBuf {
         self.base.join("home")
     }
