@@ -8,6 +8,15 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A confined command on Linux receives what the network proxy sent before it
+  closed.** When the proxy answered and closed the connection while the command
+  was still sending, for example refusing a request before reading its whole
+  body, the sandbox's relay could drop that answer, so the command saw its
+  connection end without it. The relay now delivers everything the proxy wrote
+  before it closed.
+
 ## [0.41.1] - 2026-09-14
 
 ### Security
