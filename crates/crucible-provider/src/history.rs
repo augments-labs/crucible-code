@@ -4,7 +4,7 @@
 //! an executable call/result protocol. Borrowed pieces go straight into the
 //! destination JSON string; no second transcript or private payload is built.
 
-use crucible_core::{Message, StopReason};
+use crucible_types::{Message, StopReason};
 
 /// Older wire readers have no native continuation decoder. Preserve their
 /// existing unsigned history, but describe a foreign native answer and all of

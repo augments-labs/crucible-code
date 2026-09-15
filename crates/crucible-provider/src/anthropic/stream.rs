@@ -13,7 +13,9 @@ pub(super) type Stream = Response<Messages>;
 
 #[cfg(test)]
 pub(super) mod tests {
-    use crucible_core::{Cancel, Delta, DeltaStream, ProviderError, StopReason, ToolId};
+    use crucible_models::{Delta, DeltaStream, ProviderError};
+    use crucible_runtime::Cancel;
+    use crucible_types::{StopReason, ToolId};
 
     use super::*;
     use crate::fake::output_usage;
@@ -39,7 +41,7 @@ pub(super) mod tests {
         Stream::new(
             Box::new(std::io::Cursor::new(body.to_owned().into_bytes())),
             cancel.clone(),
-            crucible_core::Redactions::default(),
+            crucible_credentials::Redactions::default(),
         )
     }
 
@@ -191,7 +193,7 @@ pub(super) mod tests {
         let mut stream = Stream::new(
             Box::new(silent),
             cancel,
-            crucible_core::Redactions::default(),
+            crucible_credentials::Redactions::default(),
         );
 
         assert_eq!(stream.next().unwrap().unwrap(), Delta::Text("Hel".into()));
@@ -213,7 +215,7 @@ pub(super) mod tests {
         let mut stream = Stream::new(
             Box::new(Paused::dawdling(ANSWER, 5)),
             Cancel::new(),
-            crucible_core::Redactions::default(),
+            crucible_credentials::Redactions::default(),
         );
 
         assert_eq!(

@@ -1,9 +1,9 @@
 //! Function results resolve the immediately preceding native call group once.
 
-use crucible_core::{
+use crucible_models::{Request, RequestPurpose};
+use crucible_types::{
     Continuation, ContinuationData, ContinuationPart, ContinuationScope, Message,
-    RecordedToolOutput, Request, RequestPurpose, StopReason, ToolArgs, ToolCall, ToolId,
-    ToolResult, Transcript,
+    RecordedToolOutput, StopReason, ToolArgs, ToolCall, ToolId, ToolResult, Transcript,
 };
 use serde_json::Value;
 
@@ -57,7 +57,7 @@ fn serialize(
     messages: Vec<Message>,
     purpose: RequestPurpose,
     recipient: ContinuationScope,
-) -> Result<String, crucible_core::ProviderError> {
+) -> Result<String, crucible_models::ProviderError> {
     let mut transcript = Transcript::new();
     for message in messages {
         transcript.push(message).unwrap();

@@ -2,10 +2,10 @@
 
 use super::serialize;
 use crate::fake::{failed, found, picture};
-use crucible_core::{
-    Attached, Content, Continuation, ContinuationData, ContinuationPart, ContinuationScope,
-    Message, Modality, Request, RequestPurpose, StopReason, ToolArgs, ToolCall, ToolId, ToolResult,
-    Transcript,
+use crucible_models::{Attached, Content, Request, RequestPurpose};
+use crucible_types::{
+    Continuation, ContinuationData, ContinuationPart, ContinuationScope, Message, Modality,
+    StopReason, ToolArgs, ToolCall, ToolId, ToolResult, Transcript,
 };
 use serde_json::{Value, json};
 
@@ -38,7 +38,7 @@ fn history() -> Transcript {
             continuation: Some(state.finish("", 2, Some(StopReason::WantsTools)).unwrap()),
         })
         .unwrap();
-    let file = |modality| crucible_core::Attachment {
+    let file = |modality| crucible_types::Attachment {
         modality,
         ..picture()
     };

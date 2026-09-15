@@ -638,3 +638,74 @@ fn the_load_does_not_charge_for_what_only_the_reader_saw() {
     assert_eq!(plain.tokens(), shown.tokens());
     assert_eq!(plain.tokens(), counted.tokens());
 }
+
+#[test]
+fn a_rewrite_of_what_a_report_measured_leaves_the_estimate_high_until_it_is_rebuilt() {
+    // The rule `estimated` keeps for any decrease a report measured: the bytes
+    // leave the total the next report calibrates against, and the count itself
+    // is not lowered by a byte estimate of them.
+    let mut load = Load::default();
+    load.recorded(&results(3_000));
+    load.responding(0);
+    load.carried(Carried::new(1_000));
+    load.recorded(&Message::said("x".repeat(300)));
+    let measured = load.tokens();
+
+    load.rewritten(
+        &Load::weights(&[results(3_000), Message::said("x".repeat(300))]),
+        &[results(30), Message::said("x".repeat(300))],
+        1,
+    );
+
+    assert_eq!(
+        load.tokens(),
+        measured,
+        "a decrease the report measured came off its count"
+    );
+
+    load.reestimated();
+    let mut rebuilt = Load::default();
+    rebuilt.recorded(&results(30));
+    rebuilt.recorded(&Message::said("x".repeat(300)));
+    rebuilt.reestimated();
+    assert_eq!(
+        load.tokens(),
+        rebuilt.tokens(),
+        "the total kept bytes the transcript no longer holds"
+    );
+}
+
+#[test]
+fn a_rewrite_that_grows_what_a_report_measured_is_counted_at_once() {
+    // A result shorter than the sentence left in its place makes the request
+    // bigger than the one the report measured, and a count that waited for the
+    // next report to see that would be low until it came.
+    let mut load = Load::default();
+    load.recorded(&results(3_000));
+    load.responding(0);
+    load.carried(Carried::new(1_000));
+    let measured = load.tokens();
+
+    load.rewritten(&Load::weights(&[results(3_000)]), &[results(3_390)], 1);
+
+    assert_eq!(
+        load.tokens(),
+        measured + load.bytes_to_tokens(390),
+        "the growth of a result a report measured was not counted"
+    );
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "one weight a message")]
+fn a_rewrite_handed_weights_for_other_messages_is_refused() {
+    // Weights for another number of messages would pair each with the wrong
+    // message and move the load by whatever the mismatch happened to be.
+    let mut load = Load::default();
+    load.recorded(&results(3_000));
+    load.rewritten(
+        &Load::weights(&[results(3_000)]),
+        &[results(30), results(30)],
+        0,
+    );
+}

@@ -9,6 +9,8 @@
 
 use std::str::FromStr as _;
 
+use crucible_types::ResultProvenance;
+
 use super::*;
 
 /// A session recorded and closed, holding one turn, and the name it has.
@@ -278,7 +280,11 @@ fn a_result_cleared_for_another_vendor_stays_cleared_when_the_session_comes_back
 
     let mut scripted = Scripted::recording(
         restricting,
-        tools([Fixed::new("web_search").answering("grounded search results canary")]),
+        tools([Fixed::new("web_search")
+            .answering("grounded search results canary")
+            .answered_by(
+                ResultProvenance::answered("google", Some(RESTRICTED)).expect("a bounded term"),
+            )]),
         Verdict::Allow,
         session,
     );
@@ -333,7 +339,11 @@ fn a_session_moved_twice_says_once_that_its_results_were_taken_away() {
 
     let mut scripted = Scripted::recording(
         restricting,
-        tools([Fixed::new("web_search").answering("grounded search results canary")]),
+        tools([Fixed::new("web_search")
+            .answering("grounded search results canary")
+            .answered_by(
+                ResultProvenance::answered("google", Some(RESTRICTED)).expect("a bounded term"),
+            )]),
         Verdict::Allow,
         session,
     );
@@ -367,5 +377,272 @@ fn a_session_moved_twice_says_once_that_its_results_were_taken_away() {
             .count(),
         1,
         "the log says more than once that the same results were taken away:\n{written}"
+    );
+}
+
+#[test]
+fn a_session_picked_up_by_a_run_serving_another_vendor_leaves_out_what_its_vendor_restricted() {
+    // No switch is ever observed here: the run that recorded the results served
+    // the vendor that restricts them, and the run that picks the session up was
+    // started on another. What the log holds is all that can say the results may
+    // not go where this run sends its requests.
+    let sample = Sample::new("runner-picked-by-another-vendor");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
+    let id = named(&session);
+    let path = session.path().to_owned();
+
+    let restricting = Script::new(vec![
+        calling("call_search", "web_search", r#"{"query":"rust"}"#),
+        saying("an answer from the vendor that restricts its results"),
+    ])
+    .with_name("google")
+    .restricting(RESTRICTED);
+    let mut recorded = Scripted::recording(
+        restricting,
+        tools([Fixed::new("web_search")
+            .answering("grounded search results canary")
+            .answered_by(
+                ResultProvenance::answered("google", Some(RESTRICTED)).expect("a bounded term"),
+            )]),
+        Verdict::Allow,
+        session,
+    );
+    recorded.turn("search for rust").expect("a search turn");
+    drop(
+        recorded
+            .runner
+            .pick_up(Session::nowhere(), Transcript::new()),
+    );
+
+    let mut elsewhere = Scripted::new(
+        Script::new(vec![saying("an answer from elsewhere")]).with_name("anthropic"),
+        tools([]),
+        Verdict::Allow,
+    );
+    drop(picking(&mut elsewhere, &sample, &id));
+
+    let result = only_result(&elsewhere);
+    assert_eq!(
+        result.output.text(),
+        RESTRICTED,
+        "a run serving another vendor picked up a result that vendor may not be sent: {}",
+        result.output.text()
+    );
+
+    drop(
+        elsewhere
+            .runner
+            .pick_up(Session::nowhere(), Transcript::new()),
+    );
+    let written = std::fs::read_to_string(&path).expect("the log the runs wrote");
+    assert_eq!(
+        written
+            .lines()
+            .filter(|line| line.contains("\"restricted\""))
+            .count(),
+        1,
+        "the clearing was not written down, so the next pick-up depends on who does it:\n{written}"
+    );
+}
+
+#[test]
+fn a_run_started_on_another_vendor_resumes_a_session_without_what_its_vendor_restricted() {
+    // The same question asked of `--resume`, which hands the transcript to a
+    // runner being built rather than to one already running.
+    let sample = Sample::new("runner-resumed-by-another-vendor");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
+    let id = named(&session);
+
+    let restricting = Script::new(vec![
+        calling("call_search", "web_search", r#"{"query":"rust"}"#),
+        saying("an answer from the vendor that restricts its results"),
+    ])
+    .with_name("google")
+    .restricting(RESTRICTED);
+    let mut recorded = Scripted::recording(
+        restricting,
+        tools([Fixed::new("web_search")
+            .answering("grounded search results canary")
+            .answered_by(
+                ResultProvenance::answered("google", Some(RESTRICTED)).expect("a bounded term"),
+            )]),
+        Verdict::Allow,
+        session,
+    );
+    recorded.turn("search for rust").expect("a search turn");
+    drop(
+        recorded
+            .runner
+            .pick_up(Session::nowhere(), Transcript::new()),
+    );
+
+    let (session, transcript) =
+        Session::reopen(&sample.logs(), &sample.workspace(), &id).expect("the session named");
+    let started = Scripted::recording(
+        Script::new(vec![saying("an answer from elsewhere")]).with_name("anthropic"),
+        tools([]),
+        Verdict::Allow,
+        session,
+    );
+    let resumed = Scripted {
+        runner: started.runner.resuming(transcript),
+        ..started
+    };
+
+    assert_eq!(
+        only_result(&resumed).output.text(),
+        RESTRICTED,
+        "a run started on another vendor resumed a result that vendor may not be sent"
+    );
+}
+
+/// A session whose last answer measured a request that carried a search result
+/// its vendor restricts, closed so its log is complete.
+fn measured_restricted_search(sample: &Sample) -> SessionId {
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
+    let id = named(&session);
+    let restricting = Script::new(vec![
+        calling("call_search", "web_search", r#"{"query":"rust"}"#),
+        vec![
+            Delta::Carried(Carried::new(40_000)),
+            Delta::Text("an answer from the vendor that restricts its results".into()),
+            Delta::Spent(Spend::new(10_000)),
+            Delta::Stopped(StopReason::Yielded),
+        ],
+    ])
+    .with_name("google")
+    .restricting(RESTRICTED);
+    let mut recorded = Scripted::recording(restricting, searching(), Verdict::Allow, session);
+    recorded
+        .turn("search for rust")
+        .expect("a measured search turn");
+    assert!(
+        recorded.runner.load.calibrated().is_some(),
+        "the answer left no reading to take back"
+    );
+    drop(
+        recorded
+            .runner
+            .pick_up(Session::nowhere(), Transcript::new()),
+    );
+    id
+}
+
+/// The search both runs advertise, so a reading one took covers the fixed
+/// content of the other's request.
+fn searching() -> Tools {
+    tools([Fixed::new("web_search")
+        .answering("grounded search results canary")
+        .answered_by(
+            ResultProvenance::answered("google", Some(RESTRICTED)).expect("a bounded term"),
+        )])
+}
+
+#[test]
+fn a_session_picked_up_without_what_its_vendor_restricted_does_not_trust_the_reading_taken_with_it()
+{
+    // The log's last reading measured a request that carried the results, and
+    // this run sends one without them. The reading describes a request nobody
+    // will send again, which is why replaying the clearing's line drops it too.
+    let sample = Sample::new("runner-picked-up-cleared-reading");
+    let id = measured_restricted_search(&sample);
+
+    let mut elsewhere = Scripted::new(
+        Script::new(vec![saying("an answer from elsewhere")]).with_name("anthropic"),
+        searching(),
+        Verdict::Allow,
+    );
+    drop(picking(&mut elsewhere, &sample, &id));
+
+    assert_eq!(only_result(&elsewhere).output.text(), RESTRICTED);
+    assert_eq!(
+        elsewhere.runner.load.calibrated(),
+        None,
+        "the reading taken with the restricted results in the request was trusted after they were taken out"
+    );
+}
+
+#[test]
+fn a_session_resumed_without_what_its_vendor_restricted_does_not_trust_the_reading_taken_with_it() {
+    // The same question asked of `--resume`.
+    let sample = Sample::new("runner-resumed-cleared-reading");
+    let id = measured_restricted_search(&sample);
+
+    let (session, transcript) =
+        Session::reopen(&sample.logs(), &sample.workspace(), &id).expect("the session named");
+    let started = Scripted::recording(
+        Script::new(vec![saying("an answer from elsewhere")]).with_name("anthropic"),
+        searching(),
+        Verdict::Allow,
+        session,
+    );
+    let resumed = Scripted {
+        runner: started.runner.resuming(transcript),
+        ..started
+    };
+
+    assert_eq!(only_result(&resumed).output.text(), RESTRICTED);
+    assert_eq!(
+        resumed.runner.load.calibrated(),
+        None,
+        "the reading taken with the restricted results in the request was trusted after they were taken out"
+    );
+}
+
+#[test]
+fn a_session_picked_up_where_nothing_is_set_up_keeps_what_its_vendor_answered() {
+    // A run with no usable credential serves a stand-in that sends nothing, so
+    // nothing has to be kept from it — and clearing for its sake would take the
+    // results away from the vendor the session goes back to once one is set up.
+    let sample = Sample::new("runner-picked-up-with-nothing-set-up");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
+    let id = named(&session);
+    let path = session.path().to_owned();
+
+    let restricting = Script::new(vec![
+        calling("call_search", "web_search", r#"{"query":"rust"}"#),
+        saying("an answer from the vendor that restricts its results"),
+    ])
+    .with_name("google")
+    .restricting(RESTRICTED);
+    let mut recorded = Scripted::recording(
+        restricting,
+        tools([Fixed::new("web_search")
+            .answering("grounded search results canary")
+            .answered_by(
+                ResultProvenance::answered("google", Some(RESTRICTED)).expect("a bounded term"),
+            )]),
+        Verdict::Allow,
+        session,
+    );
+    recorded.turn("search for rust").expect("a search turn");
+    drop(
+        recorded
+            .runner
+            .pick_up(Session::nowhere(), Transcript::new()),
+    );
+
+    let mut unset = Scripted::new(
+        Script::new(vec![]).with_name("none").reaching_nothing(),
+        tools([]),
+        Verdict::Allow,
+    );
+    drop(picking(&mut unset, &sample, &id));
+    unset.runner.serve(Box::new(
+        Script::new(vec![])
+            .with_name("google")
+            .restricting(RESTRICTED),
+    ));
+
+    assert_eq!(
+        only_result(&unset).output.text(),
+        "grounded search results canary",
+        "a stand-in that sends nothing took the results away from the vendor that answered them"
+    );
+    drop(unset.runner.pick_up(Session::nowhere(), Transcript::new()));
+    let written = std::fs::read_to_string(&path).expect("the log the runs wrote");
+    assert!(
+        !written.contains("\"restricted\""),
+        "a clearing was written for a provider nothing is sent to:\n{written}"
     );
 }

@@ -351,6 +351,53 @@ doors() {
     grep -rEoh --include='*.rs' "$1" "${@:2}" | wc -l
 }
 
+section "who may be sent a restricted result is decided once"
+# A vendor's term keeping what it answered to its own models travels on the
+# result, and `crucible_models::transfer` is where it is read. A caller that
+# asked a provider what it restricts would be deciding the question again from a
+# vendor's name, which is the branch the runner no longer has; tests may ask.
+decider="crates/crucible-models/src/transfer.rs"
+asks='(\.|::)restricts_results\('
+# Comment lines are not callers: a documentation example may show the method.
+askers=$(grep -rnE --include='*.rs' "$asks" crates src tests |
+    grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' |
+    cut -d: -f1 | sort -u |
+    grep -vE '(^|/)tests(/|\.rs$)|_tests\.rs$' || true)
+if [[ "$askers" != "$decider" ]]; then
+    while IFS= read -r file; do
+        [[ -z "$file" || "$file" == "$decider" ]] && continue
+        printf '    FAIL %s asks a provider what it restricts; only %s decides that\n' "$file" "$decider"
+    done <<<"$askers"
+    if ! grep -Fxq "$decider" <<<"$askers"; then
+        printf '    FAIL %s no longer asks what a provider restricts; this check measured nothing\n' "$decider"
+    fi
+    failed=1
+fi
+
+# Keeping a restricted result where it is, for a recipient that reaches no model,
+# is safe only because that recipient sends nothing anywhere. A provider that said
+# so and still reached a model would be handed what its vendor may not see, so the
+# one shipped stand-in is the only provider that says it. Counted by definition
+# rather than by file: the trait's default, the transfer tests' provider and the
+# runner's fake each write it once beside the stand-in, and a second definition in
+# any of those files is as much a new provider saying it as one anywhere else.
+stand_in="crates/crucible-provider/src/unavailable.rs"
+expected=$(printf '%s:1\n' \
+    crates/crucible-models/src/provider.rs \
+    crates/crucible-models/src/transfer.rs \
+    crates/crucible-runner/src/fake.rs \
+    "$stand_in" | sort)
+written=$(grep -rcE --include='*.rs' 'fn reaches_a_model\(' crates src tests |
+    grep -vE ':0$' |
+    grep -vE '(^|/)tests(/|\.rs:)|_tests\.rs:' | sort || true)
+if [[ "$written" != "$expected" ]]; then
+    printf '    FAIL only %s may say a provider reaches no model; reaches_a_model is written, by file and count:\n' "$stand_in"
+    sed 's/^/        /' <<<"$written"
+    printf '    and is expected once in each of:\n'
+    sed 's/^/        /' <<<"$expected"
+    failed=1
+fi
+
 section "the replay seam"
 replay="crates/crucible-session/src/session/wire.rs"
 opens='(\.|RecordedToolOutput::)replayed\('
@@ -505,7 +552,7 @@ elif [[ -z "$edges" ]]; then
     failed=1
 fi
 
-# `core` names the nine crates its old names now come from. Those edges are
+# `core` names the ten crates its old names now come from. Those edges are
 # the compatibility facade and go away with the crate that holds them.
 #
 # Edges past the facade are listed here as they are taken. `attachments` is
@@ -533,8 +580,10 @@ attachments workspace
 auth core
 auth privacy
 config core
+config models
 core attachments
 core credentials
+core models
 core registry
 core runtime
 core sandbox
@@ -543,14 +592,25 @@ core tools
 core types
 core workspace
 credentials types
+models credentials
+models runtime
+models types
 extension core
 mcp core
 provider core
+provider credentials
+provider models
+provider runtime
+provider types
 runner attachments
 runner core
+runner models
 runner session
+runner types
 session core
 session privacy
+session storage
+session types
 sandbox storage
 sandbox types
 sandbox workspace

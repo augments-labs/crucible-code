@@ -8,8 +8,31 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Changed
+
+- **Model contracts have a crate of their own.** `crucible-models` now holds
+  `Provider`, the model record and the neutral prompt-cache capabilities,
+  projection, selection and pricing; the usage, cost and cache facts a session
+  keeps are `crucible-types`, and the resource store contract is
+  `crucible-storage` with its file in `crucible-session`. `crucible-core`
+  re-exports every moved name; `PromptCachePlanned::from_request` is now
+  `PromptCacheRequest::planned`, and `PromptCachePolicy::narrowed` is
+  `crucible_models::narrow_policy`.
+
 ### Fixed
 
+- **Only Google's own search results are held back from other providers, and a
+  switch is no longer the only moment they are.** Leaving Google cleared every
+  search result, including ones another provider had answered, while a resumed
+  session, or a search answered through Google after moving on, sent Google's
+  results to the new provider. Each search result now records who answered it, so
+  those cases follow Google's terms; results in sessions written before this
+  release keep the old rule.
+- **Leaving Google no longer leaves the context estimate counting the results it
+  cleared.** The cleared search results kept their full length in the byte count
+  the next provider report calibrates against, so text was estimated as cheaper
+  than it is until the session was next compacted or resumed, and compaction
+  could start later than it should.
 - **A confined command on Linux receives what the network proxy sent before it
   closed.** When the proxy answered and closed the connection while the command
   was still sending, for example refusing a request before reading its whole

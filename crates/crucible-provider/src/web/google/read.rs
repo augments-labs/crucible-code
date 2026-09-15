@@ -7,7 +7,7 @@
 use std::io::{self, Read};
 use std::time::{Duration, Instant};
 
-use crucible_core::Cancel;
+use crucible_runtime::Cancel;
 
 pub(super) struct Limited {
     body: Box<dyn Read + Send>,

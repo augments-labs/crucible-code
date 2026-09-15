@@ -19,6 +19,7 @@ Repository skills live in [`.agents/skills/`](.agents/skills/).
 | `crates/crucible-sandbox/` | What a confined process may observe or change |
 | `crates/crucible-sandbox-local/` | The confinement this machine can enforce, and the processes it runs |
 | `crates/crucible-tools/` | What a tool is, what may run one, and the proof that it may |
+| `crates/crucible-models/` | What a model is asked and answers with, and what a cache attempt may do |
 | `crates/crucible-core/` | Domain types and extension traits |
 | `crates/crucible-auth/` | Credentials and account authorization |
 | `crates/crucible-builtins/` | Built-in tools |

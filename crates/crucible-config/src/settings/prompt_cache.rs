@@ -185,7 +185,7 @@ pub(crate) fn resolve(documents: &[Document]) -> Result<PromptCachePolicy, Confi
             continue;
         }
 
-        let narrowed = effective.narrowed(wanted);
+        let narrowed = crucible_models::narrow_policy(effective, wanted);
         reject_broader(layer, wanted, narrowed)?;
         effective = narrowed
             .validate()

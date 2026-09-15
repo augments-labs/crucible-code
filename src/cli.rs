@@ -24,7 +24,6 @@ mod gathering;
 mod hosting;
 mod kept;
 mod models;
-mod prompt_cache;
 mod release;
 mod remember;
 #[cfg(test)]
@@ -1337,7 +1336,9 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         stored: &keys,
         subscriptions: &subscriptions,
     })?
-    .with_prompt_cache_store(prompt_cache::MetadataStore::in_home(home.path()));
+    .with_prompt_cache_store(crucible_session::FilePromptCacheResourceStore::in_home(
+        home.path(),
+    ));
     let outcome = converse::converse(
         runner,
         &mut renderer,

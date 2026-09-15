@@ -45,13 +45,16 @@ mod model_tests;
 mod stream;
 mod wire;
 
-use crucible_core::{
-    Cancel, Credential, CredentialScopeId, DeltaStream, Modalities, Modality, Outgoing, PriceRate,
-    PricingCurrency, PricingDate, PricingError, PricingUnit, PromptCacheBoundary,
-    PromptCacheCapabilities, PromptCacheContent, PromptCacheMechanismCapability,
-    PromptCachePricing, PromptCacheProvenance, PromptCacheRates, PromptCacheRetentionClass,
-    PromptCacheRoute, PromptCacheUsageReporting, Provider, ProviderError, Request,
-    StatefulTransportCapability, UsageRate,
+use crucible_credentials::{Credential, Outgoing};
+use crucible_models::{
+    DeltaStream, PriceRate, PromptCacheBoundary, PromptCacheCapabilities, PromptCacheContent,
+    PromptCacheMechanismCapability, PromptCachePricing, PromptCacheProvenance, PromptCacheRates,
+    PromptCacheRoute, Provider, ProviderError, Request, StatefulTransportCapability, UsageRate,
+};
+use crucible_runtime::Cancel;
+use crucible_types::{
+    CredentialScopeId, Modalities, Modality, PricingCurrency, PricingDate, PricingError,
+    PricingUnit, PromptCacheRetentionClass, PromptCacheUsageReporting,
 };
 
 use crate::endpoint::Endpoint;
@@ -459,7 +462,7 @@ impl Provider for OpenAi {
         }
     }
 
-    fn prompt_cache_encoding(&self, request: &Request<'_>) -> crucible_core::PromptCacheEncoding {
+    fn prompt_cache_encoding(&self, request: &Request<'_>) -> crucible_types::PromptCacheEncoding {
         body::prompt_cache_encoding(request, Serving::of(&self.endpoint))
     }
 
@@ -477,7 +480,7 @@ impl Provider for OpenAi {
         let outgoing = self.headers()?;
         let redactions = outgoing.redactions();
         let scope =
-            crucible_core::ContinuationScope::new(self.credential_scope, self.endpoint.as_str());
+            crucible_types::ContinuationScope::new(self.credential_scope, self.endpoint.as_str());
         let body = body::serialize(
             &request,
             Serving::of(&self.endpoint),
@@ -509,9 +512,11 @@ impl Provider for OpenAi {
 
 #[cfg(test)]
 mod tests {
-    use crucible_core::{
-        ApiKey, Delta, Header, HeaderKey, Message, PriceRate, PricingDate,
-        PromptCacheRetentionClass, PromptCacheUsageReporting, StopReason, Transcript, UsageRate,
+    use crucible_credentials::{ApiKey, Header, HeaderKey};
+    use crucible_models::{Delta, PriceRate, UsageRate};
+    use crucible_types::{
+        Message, PricingDate, PromptCacheRetentionClass, PromptCacheUsageReporting, StopReason,
+        Transcript,
     };
 
     use super::stream::tests::{ANSWER, deltas};
@@ -649,11 +654,11 @@ mod tests {
         };
         assert_eq!(
             automatic.mechanism(),
-            crucible_core::PromptCacheMechanism::AutomaticPrefix
+            crucible_types::PromptCacheMechanism::AutomaticPrefix
         );
         assert_eq!(
             explicit.mechanism(),
-            crucible_core::PromptCacheMechanism::ExplicitBreakpoints
+            crucible_types::PromptCacheMechanism::ExplicitBreakpoints
         );
         assert_eq!(explicit.maximum_breakpoints(), 4);
         assert_eq!(older.mechanisms().len(), 1);
@@ -661,8 +666,8 @@ mod tests {
             subscription
                 .mechanisms()
                 .first()
-                .map(crucible_core::PromptCacheMechanismCapability::mechanism),
-            Some(crucible_core::PromptCacheMechanism::AutomaticPrefix)
+                .map(crucible_models::PromptCacheMechanismCapability::mechanism),
+            Some(crucible_types::PromptCacheMechanism::AutomaticPrefix)
         );
     }
 
@@ -676,7 +681,7 @@ mod tests {
 
         assert_eq!(
             custom.prompt_cache_capabilities("gpt-5.6-sol").support(),
-            crucible_core::PromptCacheSupport::Unknown
+            crucible_types::PromptCacheSupport::Unknown
         );
     }
 
@@ -752,7 +757,7 @@ mod tests {
             .expect("valid fixture transcript");
 
         Request {
-            purpose: crucible_core::RequestPurpose::Turn,
+            purpose: crucible_models::RequestPurpose::Turn,
             model: "gpt-test",
             transcript: Box::leak(Box::new(transcript)),
             tools: &[],

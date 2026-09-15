@@ -6,6 +6,7 @@
 //! and the platform boundary live here and nowhere else.
 
 mod checkpoint;
+mod prompt_cache;
 mod session;
 
 #[cfg(test)]
@@ -14,6 +15,7 @@ mod sample;
 pub use checkpoint::{
     CHECKPOINT_FORMAT, CheckpointError, FileCheckpointStore, MAX_CHECKPOINT_BYTES,
 };
+pub use prompt_cache::FilePromptCacheResourceStore;
 pub use session::{
     DisplayHistory, DisplayItem, Glimpse, PROMPTS, Pruned, Recorded, Session, SessionError,
     glimpse, prompts, recent, remember, retitle,

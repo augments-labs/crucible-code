@@ -5,8 +5,8 @@
 //! to be issued, by the engine that issues every other one.
 
 /// A completed signed exchange whose recap must carry only descriptive text.
-pub(crate) fn recap_history() -> crucible_core::Transcript {
-    use crucible_core::{
+pub(crate) fn recap_history() -> crucible_types::Transcript {
+    use crucible_types::{
         Continuation, ContinuationData, ContinuationPart, ContinuationScope, Message,
         RecordedToolOutput, StopReason, ToolArgs, ToolCall, ToolId, ToolResult, Transcript,
     };
@@ -63,15 +63,20 @@ pub(crate) fn recap_history() -> crucible_core::Transcript {
 }
 
 use crucible_core::{
-    Ask, Attachment, Command, Delta, InputTokenUsage, Modality, Permission, PromptCacheBoundary,
-    PromptCacheCapabilities, PromptCacheContent, PromptCacheFingerprint, PromptCacheIdentity,
-    PromptCacheKey, PromptCacheMechanism, PromptCacheMechanismCapability, PromptCachePlan,
-    PromptCachePolicy, PromptCacheProjection, PromptCacheProvenance, PromptCacheRequest,
-    PromptCacheResourceHandle, PromptCacheResourceId, PromptCacheResourceReference,
-    PromptCacheRetention, PromptCacheRetentionClass, PromptCacheScopeDigest, PromptCacheSelected,
-    PromptCacheSelection, PromptCacheUsageReporting, ProviderAttemptId, ProviderNumericDetail,
-    ProviderUsage, RecordedToolOutput, Remember, Request, Sensitivity, Settled,
-    StatefulTransportCapability, ToolArgs, ToolCall, ToolId, ToolOutput, Verdict,
+    Ask, Command, Permission, Remember, Sensitivity, Settled, ToolOutput, Verdict,
+};
+use crucible_models::{
+    Delta, PromptCacheBoundary, PromptCacheCapabilities, PromptCacheContent, PromptCacheIdentity,
+    PromptCacheKey, PromptCacheMechanismCapability, PromptCachePlan, PromptCacheProjection,
+    PromptCacheProvenance, PromptCacheRequest, PromptCacheResourceReference, PromptCacheSelection,
+    Request, StatefulTransportCapability,
+};
+use crucible_types::{
+    Attachment, InputTokenUsage, Modality, PromptCacheFingerprint, PromptCacheMechanism,
+    PromptCachePolicy, PromptCacheResourceHandle, PromptCacheResourceId, PromptCacheRetention,
+    PromptCacheRetentionClass, PromptCacheScopeDigest, PromptCacheSelected,
+    PromptCacheUsageReporting, ProviderAttemptId, ProviderNumericDetail, ProviderUsage,
+    RecordedToolOutput, ToolArgs, ToolCall, ToolId,
 };
 
 const CACHE_CONTENT: &[PromptCacheContent] = &[
@@ -165,7 +170,7 @@ fn cache_fixture(
         ),
     };
     if selected.is_none() {
-        policy = policy.with_mode(crucible_core::PromptCacheMode::ObserveOnly);
+        policy = policy.with_mode(crucible_types::PromptCacheMode::ObserveOnly);
     }
     let identity = PromptCacheIdentity::new(
         PromptCacheScopeDigest::new([0x33; 32]),
@@ -188,7 +193,7 @@ fn cache_fixture(
         selection: selected.map_or_else(
             || {
                 PromptCacheSelection::ineligible(
-                    crucible_core::PromptCacheIneligibleReason::ObserveOnly,
+                    crucible_types::PromptCacheIneligibleReason::ObserveOnly,
                 )
             },
             |mechanism| {
@@ -322,7 +327,9 @@ pub(crate) fn output_usage(output: u64) -> Delta {
 #[cfg(test)]
 mod cache_conformance {
     use super::*;
-    use crucible_core::{ApiKey, Header, HeaderKey, PromptCacheSupport, Provider, Transcript};
+    use crucible_credentials::{ApiKey, Header, HeaderKey};
+    use crucible_models::Provider;
+    use crucible_types::{PromptCacheSupport, Transcript};
 
     use crate::transport::Replay;
     use crate::{Anthropic, Moonshot, OpenAi};
@@ -475,7 +482,7 @@ mod cache_conformance {
 
         for (provider, model, expected) in providers {
             let request = Request {
-                purpose: crucible_core::RequestPurpose::Turn,
+                purpose: crucible_models::RequestPurpose::Turn,
                 model,
                 transcript: &transcript,
                 tools: &[],
@@ -499,7 +506,7 @@ mod cache_conformance {
             assert_eq!(
                 selection
                     .selected()
-                    .map(crucible_core::PromptCacheSelected::mechanism),
+                    .map(crucible_types::PromptCacheSelected::mechanism),
                 Some(expected),
                 "{} default cache mechanism",
                 provider.name(),

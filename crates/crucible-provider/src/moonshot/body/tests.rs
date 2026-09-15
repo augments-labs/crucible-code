@@ -1,7 +1,8 @@
-use crucible_core::{
-    Attached, Attachment, Change, Changed, Content, Diff, Effort, Fragment, Line, Modality,
-    PromptCacheMechanism, PromptCacheRetentionClass, RecordedToolOutput, ToolArgs, ToolCall,
-    ToolId, ToolOutput, Transcript,
+use crucible_core::ToolOutput;
+use crucible_models::{Attached, Content, Effort};
+use crucible_types::{
+    Attachment, Change, Changed, Diff, Fragment, Line, Modality, PromptCacheMechanism,
+    PromptCacheRetentionClass, RecordedToolOutput, ToolArgs, ToolCall, ToolId, Transcript,
 };
 
 use super::*;
@@ -13,7 +14,7 @@ const NOTHING: Value = Value::Null;
 #[test]
 fn recap_is_fresh_visible_text_without_executable_history() {
     let mut request = request(crate::fake::recap_history());
-    request.purpose = crucible_core::RequestPurpose::Recap;
+    request.purpose = crucible_models::RequestPurpose::Recap;
     let body = build(&request);
     assert!(
         body.get("messages")
@@ -41,7 +42,7 @@ fn recap_is_fresh_visible_text_without_executable_history() {
 
 fn request(transcript: Transcript) -> Request<'static> {
     Request {
-        purpose: crucible_core::RequestPurpose::Turn,
+        purpose: crucible_models::RequestPurpose::Turn,
         model: "kimi-test",
         transcript: Box::leak(Box::new(transcript)),
         tools: &[],

@@ -2,9 +2,10 @@
 
 use super::*;
 use crate::transport::Replay;
-use crucible_core::{
-    ApiKey, Continuation, Delta, Header, HeaderKey, Message, RecordedToolOutput, RequestPurpose,
-    ToolArgs, ToolCall, ToolId, ToolResult, Transcript,
+use crucible_credentials::{ApiKey, Header, HeaderKey};
+use crucible_models::{Delta, RequestPurpose};
+use crucible_types::{
+    Continuation, Message, RecordedToolOutput, ToolArgs, ToolCall, ToolId, ToolResult, Transcript,
 };
 use serde_json::{Value, json};
 use std::fmt::Write as _;
@@ -252,7 +253,7 @@ fn fable_51_compaction_removes_old_thinking_but_preserves_new_thinking() {
 
 #[test]
 fn fable_51_effort_changes_append_controls_without_rewriting_the_cached_prefix() {
-    use crucible_core::Effort;
+    use crucible_models::Effort;
     let (provider, replay) = provider(&response(&blocks()));
     let mut transcript = Transcript::new();
     transcript.push(Message::said("read a")).unwrap();
@@ -371,16 +372,16 @@ fn fable_51_dropped_thinking_reports_only_fixed_numeric_facts_and_replaces_fallb
         .unwrap()
         .merged(reports.get(1).unwrap())
         .unwrap();
-    assert_eq!(report.input, crucible_core::InputTokenUsage::UNKNOWN);
+    assert_eq!(report.input, crucible_types::InputTokenUsage::UNKNOWN);
     assert_eq!(report.output, None);
     assert_eq!(
         report.details(),
         &[
-            crucible_core::ProviderNumericDetail {
+            crucible_types::ProviderNumericDetail {
                 label: "thinking_dropped_prefix",
                 value: 0
             },
-            crucible_core::ProviderNumericDetail {
+            crucible_types::ProviderNumericDetail {
                 label: "thinking_dropped_model",
                 value: 1
             },
@@ -482,7 +483,7 @@ fn fable_51_cache_prices_and_capabilities_use_exact_reviewed_model_and_route() {
     let capabilities = provider.prompt_cache_capabilities(FABLE_51);
     assert_eq!(
         capabilities.support(),
-        crucible_core::PromptCacheSupport::Supported
+        crucible_types::PromptCacheSupport::Supported
     );
     assert!(
         capabilities
@@ -558,7 +559,7 @@ fn fable_51_cache_prices_and_capabilities_use_exact_reviewed_model_and_route() {
     );
     assert_eq!(
         custom.prompt_cache_capabilities(FABLE_51).support(),
-        crucible_core::PromptCacheSupport::Unknown
+        crucible_types::PromptCacheSupport::Unknown
     );
     assert!(
         custom
@@ -595,7 +596,7 @@ fn fable_51_explicit_cache_marker_falls_back_before_thinking_only_history() {
             pending = Some(state);
         }
     }
-    let stop = Some(crucible_core::StopReason::Yielded);
+    let stop = Some(crucible_types::StopReason::Yielded);
     let continuation = pending.unwrap().finish("", 0, stop).unwrap();
     transcript
         .push(Message::Agent {
@@ -609,13 +610,13 @@ fn fable_51_explicit_cache_marker_falls_back_before_thinking_only_history() {
     let transcript = Box::leak(Box::new(transcript));
     let request = crate::fake::cached(
         request(transcript),
-        crucible_core::PromptCacheMechanism::ExplicitBreakpoints,
+        crucible_types::PromptCacheMechanism::ExplicitBreakpoints,
         PromptCacheRetentionClass::ProviderDefault,
         false,
     );
     assert_eq!(
         provider.prompt_cache_encoding(&request),
-        crucible_core::PromptCacheEncoding::BreakpointsEncoded(1)
+        crucible_types::PromptCacheEncoding::BreakpointsEncoded(1)
     );
     provider.stream(request, &Cancel::new()).unwrap();
     let sent: Value = serde_json::from_str(&replay.sent().body).unwrap();
@@ -652,7 +653,7 @@ fn fable_51_empty_text_blocks_are_not_replayed_as_invalid_input_or_cache_targets
 fn fable_51_private_admission_depends_on_retained_bytes_not_network_fragment_count() {
     use super::continuation::Blocks;
     use crate::sse::SseEvent;
-    let scope = crucible_core::ContinuationScope::from_digest([0; 32]);
+    let scope = crucible_types::ContinuationScope::from_digest([0; 32]);
     let event = |name: &str, data: Value| SseEvent {
         name: name.into(),
         data: data.to_string(),
@@ -698,9 +699,9 @@ fn fable_51_private_admission_depends_on_retained_bytes_not_network_fragment_cou
         })
         .unwrap();
     let state = state
-        .finish("", 0, Some(crucible_core::StopReason::Yielded))
+        .finish("", 0, Some(crucible_types::StopReason::Yielded))
         .unwrap();
-    let crucible_core::ContinuationPart::Opaque(data) = state.parts().get(1).unwrap() else {
+    let crucible_types::ContinuationPart::Opaque(data) = state.parts().get(1).unwrap() else {
         panic!("thinking must remain private");
     };
     assert_eq!(

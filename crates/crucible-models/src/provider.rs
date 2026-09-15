@@ -10,11 +10,12 @@
 
 use std::fmt;
 
-use crate::Cancel;
 use crucible_credentials::{CredentialError, Redactions};
-use crucible_types::{Modalities, Modality};
-use crucible_types::{StopReason, Transcript};
-use crucible_types::{ToolId, ToolSchema};
+use crucible_runtime::Cancel;
+use crucible_types::{
+    Carried, Continuation, Modalities, Modality, PricingDate, PricingError, PromptCacheEncoding,
+    PromptCacheRetentionClass, ProviderUsage, Spend, StopReason, ToolId, ToolSchema, Transcript,
+};
 
 /// Why a provider could not produce a response.
 #[derive(Debug, thiserror::Error)]
@@ -435,108 +436,6 @@ impl std::str::FromStr for Effort {
     }
 }
 
-/// What a response has cost, counted in the tokens the model produced.
-///
-/// Output only. What a request carries is settled before it is sent and is the
-/// same however long the answer takes, so it says nothing about the answer
-/// somebody is currently waiting on — and one number that goes up while you
-/// watch it is worth more than two that need adding.
-///
-/// A provider says this about the response it is in the middle of, as often as
-/// it likes, each reading replacing the last. What a whole turn spent is the
-/// sum over its responses, which is the runner's to add because the turn is
-/// the runner's: a provider is asked several times and is told nothing about
-/// the turn around those requests.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Spend(u64);
-
-impl Spend {
-    /// Nothing spent yet.
-    pub const NONE: Self = Self(0);
-
-    /// A reading of `tokens` produced.
-    #[must_use]
-    pub const fn new(tokens: u64) -> Self {
-        Self(tokens)
-    }
-
-    /// How many tokens that is.
-    #[must_use]
-    pub const fn tokens(self) -> u64 {
-        self.0
-    }
-
-    /// This and `other` together.
-    ///
-    /// Saturating, because a count that wrapped would read as a turn that spent
-    /// nothing at the moment it spent the most.
-    #[must_use]
-    pub const fn and(self, other: Self) -> Self {
-        Self(self.0.saturating_add(other.0))
-    }
-}
-
-/// What one response reported about itself, kept for a session picked up later.
-///
-/// A log holds messages, and messages alone say what a session *is* without
-/// saying what any of it cost — so a session continued has always had to
-/// estimate its own load until the first response of the new run reported one.
-/// This is the fact that closes that gap: the four numbers a provider's report
-/// and the request behind it come to, together, and covering exactly the
-/// transcript that stood when it was written.
-///
-/// It is a fact about a request rather than about a session. Nothing here says
-/// which model produced it or which transcript it covered — what makes it
-/// usable again is the position it was written at, and that belongs to whoever
-/// keeps it.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Calibration {
-    /// What that request carried.
-    pub carried: Carried,
-    /// What the response to it produced.
-    pub spent: Spend,
-    /// The request's content in bytes, which is what `carried` was counted
-    /// over. The two together are this model's own bytes per token on this
-    /// session's own text.
-    pub sent: u64,
-    /// The fixed part of those bytes: system instructions and tool schemas.
-    pub overhead: u64,
-}
-
-/// What one request carried to the model, counted in tokens.
-///
-/// The other half of what a usage reading holds, and the half [`Spend`] is not:
-/// that one counts what the model produced, and this counts what it was sent.
-/// Both arrive in the same object from every provider crucible speaks, and only
-/// one of them was ever read.
-///
-/// It is a **level rather than a total**, which is the whole of how it differs
-/// from [`Spend`] and why it has no `and`. crucible holds no conversation state
-/// at a vendor and sends the transcript whole on every request, so each reading
-/// is what *that* request carried and the next one supersedes it. Adding two
-/// together would count the same transcript twice and say a session was fuller
-/// than it is — which, since this is what compaction is decided on, is the one
-/// error here that spends somebody's context for them.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Carried(u64);
-
-impl Carried {
-    /// Nothing reported yet.
-    pub const NONE: Self = Self(0);
-
-    /// A reading of `tokens` carried.
-    #[must_use]
-    pub const fn new(tokens: u64) -> Self {
-        Self(tokens)
-    }
-
-    /// How many tokens that is.
-    #[must_use]
-    pub const fn tokens(self) -> u64 {
-        self.0
-    }
-}
-
 /// One piece of streamed output.
 ///
 /// A tool call arrives across several: the name comes first, then the arguments
@@ -557,7 +456,7 @@ pub enum Delta {
     /// More of the current tool call's argument JSON.
     ToolArgs(Box<str>),
     /// Bounded ordered state, finalized by the runner only after a clean stop.
-    Continuation(crate::Continuation),
+    Continuation(Continuation),
     /// Private output arrived but is not yet a complete replayable unit.
     ///
     /// Contains no payload and never reaches the renderer. It prevents an
@@ -568,7 +467,7 @@ pub enum Delta {
     /// Shipped adapters use this variant. The legacy output/input level
     /// variants remain temporarily for compatibility with synthetic provider
     /// fixtures and are normalized by the runner at the same boundary.
-    Usage(crate::ProviderUsage),
+    Usage(ProviderUsage),
     /// What this response has cost so far, replacing whatever it last said.
     Spent(Spend),
     /// What the request this response answers carried, replacing whatever it
@@ -584,9 +483,10 @@ pub enum Delta {
 }
 
 /// By hand: a call's name and arguments are the model writing — a whole file,
-/// sometimes — and [`crate::ToolCall`] already redacts the assembled call, so
-/// the same content half-assembled redacts too. Prose is deliberately shown,
-/// for the reason [`crate::Event::Delta`]'s is: it is on its way to the screen.
+/// sometimes — and [`crucible_types::ToolCall`] already redacts the assembled
+/// call, so the same content half-assembled redacts too. Prose is deliberately
+/// shown, for the reason the runner's streamed-text event shows it: it is on
+/// its way to the screen.
 impl fmt::Debug for Delta {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -665,7 +565,11 @@ pub trait Provider: Send + Sync {
 
     /// The sentence to leave in place of this vendor's tool results when the
     /// session moves to a different vendor, where its terms forbid sending them
-    /// on.
+    /// on and the results do not say who answered them.
+    ///
+    /// A result that records its provenance carries its vendor's sentence with
+    /// it and is decided from that; this is the fallback for results read back
+    /// from a log written before results recorded one.
     ///
     /// `None` — the default — is the answer for a vendor that does not restrict
     /// what it produced, and it is the honest answer for an unknown or custom
@@ -680,6 +584,17 @@ pub trait Provider: Send + Sync {
     /// go is not the destination's to say.
     fn restricts_results(&self) -> Option<&'static str> {
         None
+    }
+
+    /// Whether a request handed to this provider reaches a model at all.
+    ///
+    /// `true` — the default — for every adapter that speaks to a vendor. `false`
+    /// only for a stand-in that answers every turn itself, such as the provider
+    /// served while nothing is set up: a result is sent nowhere through it, so
+    /// nothing has to be kept from it, and clearing a result for its sake would
+    /// take it from the vendor the session goes back to.
+    fn reaches_a_model(&self) -> bool {
+        true
     }
 
     /// Exact effective prompt-cache capabilities for this model and route.
@@ -708,9 +623,9 @@ pub trait Provider: Send + Sync {
         _model: &str,
         _revision: Option<&str>,
         _input_tokens: Option<u64>,
-        _retention: crate::PromptCacheRetentionClass,
-        _at: crate::PricingDate,
-    ) -> Result<Option<crate::PromptCachePricing>, crate::PricingError> {
+        _retention: PromptCacheRetentionClass,
+        _at: PricingDate,
+    ) -> Result<Option<crate::PromptCachePricing>, PricingError> {
         Ok(None)
     }
 
@@ -736,7 +651,7 @@ pub trait Provider: Send + Sync {
     /// eligibility claims: a selected provider-managed cache can correctly
     /// report `NoExtraControlEncoded`, while observe-only reports
     /// `NoControlIntended`.
-    fn prompt_cache_encoding(&self, request: &Request<'_>) -> crate::PromptCacheEncoding;
+    fn prompt_cache_encoding(&self, request: &Request<'_>) -> PromptCacheEncoding;
 
     /// Starts a request and returns its stream of deltas.
     ///
@@ -776,10 +691,10 @@ mod tests {
     #[test]
     fn a_delta_never_shows_what_a_tool_call_carries() {
         // A tool call's arguments hold whatever the model is writing — a whole
-        // file, sometimes — and [`crate::ToolCall`] already redacts them. The
-        // same content half-assembled is the same content. Prose is the
-        // neighbouring case and is deliberately not redacted, for the reason
-        // [`crate::Event::Delta`] gives: it is on its way to the screen.
+        // file, sometimes — and `ToolCall` already redacts them. The same
+        // content half-assembled is the same content. Prose is the neighbouring
+        // case and is deliberately not redacted, for the reason the runner's
+        // streamed-text event gives: it is on its way to the screen.
         let started = Delta::ToolStarted {
             id: ToolId::new("delta-id-canary"),
             name: "delta-name-canary".into(),
@@ -877,7 +792,7 @@ mod tests {
 
     #[test]
     fn redaction_preserves_error_kinds_and_useful_provider_text() {
-        let mut outgoing = crate::Outgoing::new();
+        let mut outgoing = crucible_credentials::Outgoing::new();
         outgoing.protect("credential-canary");
         let error = ProviderError::Upstream {
             provider: "openai",

@@ -5,7 +5,8 @@
 //! may be signed vendor metadata and are never interpreted as local authority.
 
 use super::protocol;
-use crucible_core::{ProviderError, TOOL_CALL_ID_BYTES};
+use crucible_models::ProviderError;
+use crucible_types::TOOL_CALL_ID_BYTES;
 use serde_json::{Map, Value};
 
 pub(super) fn native(fields: &Map<String, Value>) -> Result<(), ProviderError> {

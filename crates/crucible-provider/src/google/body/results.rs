@@ -10,7 +10,8 @@
 use super::input::attachment;
 use crate::google::protocol;
 use crate::json::Array;
-use crucible_core::{Attached, Content, Modality, ProviderError, ToolResult};
+use crucible_models::{Attached, Content, ProviderError};
+use crucible_types::{Modality, ToolResult};
 use std::collections::BTreeMap;
 
 pub(super) fn write(

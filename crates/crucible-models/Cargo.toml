@@ -1,0 +1,24 @@
+[package]
+name = "crucible-models"
+description = "What a model is asked and answers with: the provider contract, model records and neutral prompt-cache contracts."
+publish.workspace = true
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# The contract a provider adapter is written against, and nothing an adapter
+# implements. `serde_json` writes the canonical projection a cache fingerprint is
+# taken over, so two requests with the same stable prefix are recognised as the
+# same prefix wherever they were built.
+[dependencies]
+crucible-credentials.workspace = true
+crucible-runtime.workspace = true
+crucible-types.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
