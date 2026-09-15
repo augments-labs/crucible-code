@@ -31,6 +31,11 @@
 # Evidence fields are optional and do not change the first three fields. The
 # wrapper validates and stores them as numbers under `evidence` in the JSON.
 #
+# The limit a probe prints is the one it was held to. `CRUCIBLE_BENCH_RUNNER=shared`,
+# set by the workflows that run this on a CI runner, holds the first frame and first
+# input to the shared-runner limits written beside theirs; unset, every probe holds
+# the budget below.
+#
 # `println!` is denied workspace-wide, so that line goes out through
 # `writeln!(io::stdout(), ...)` — which also makes the probe handle the write
 # error rather than panicking inside a measurement.

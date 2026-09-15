@@ -452,7 +452,10 @@ jobs:
           rm -rf rg.tar.gz "$stem"
           rg --version | head -1
 
+      # The same shared-runner limits as performance.yml, for the same runner.
       - run: mkdir -p generated/json && scripts/sh/bench.sh > generated/json/budgets.json
+        env:
+          CRUCIBLE_BENCH_RUNNER: shared
 
       - name: Measurement environment
         run: |

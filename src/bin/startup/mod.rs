@@ -192,6 +192,12 @@ pub(crate) enum StartupError {
     #[error("startup PTY measurements require Linux")]
     Unsupported,
 
+    /// The runner a probe was told it is on is not one it knows.
+    #[error(
+        "CRUCIBLE_BENCH_RUNNER is {0:?}: leave it unset on this machine, or set it to `shared` on a CI runner"
+    )]
+    Runner(OsString),
+
     /// No readings at all, so there is no percentile to take.
     #[error("no readings")]
     Nothing,
@@ -295,6 +301,30 @@ pub(crate) fn best(
     }
 
     Ok(best)
+}
+
+/// The limit a probe is held to, on the runner it was started on.
+///
+/// `CRUCIBLE_BENCH_RUNNER` names the runner. Unset is a quiet machine, the run
+/// RELEASING.md decides a release on; `shared` is a CI runner, named by the
+/// workflows that measure there. Anything else is refused rather than read as
+/// either, because a misspelt runner that fell back to one of the limits would
+/// be a budget nobody chose.
+pub(crate) fn limit<T>(quiet: T, shared: T) -> Result<T, StartupError> {
+    chosen(
+        std::env::var_os("CRUCIBLE_BENCH_RUNNER").as_deref(),
+        quiet,
+        shared,
+    )
+}
+
+/// [`limit`], given the runner's name rather than reading it.
+fn chosen<T>(runner: Option<&std::ffi::OsStr>, quiet: T, shared: T) -> Result<T, StartupError> {
+    match runner {
+        None => Ok(quiet),
+        Some(named) if named == "shared" => Ok(shared),
+        Some(other) => Err(StartupError::Runner(other.to_os_string())),
+    }
 }
 
 /// Every reading one probe took, in the order it took them.
@@ -791,7 +821,10 @@ impl Drop for Scratch {
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
+    use std::ffi::OsStr;
     use std::time::Duration;
+
+    use super::chosen;
 
     use super::{AT_LIBERTY, PER_WINDOW, RUNS, Readings, Scratch, TITLE, USABLE, WINDOWS, best};
 
@@ -941,5 +974,32 @@ mod tests {
 
         assert_eq!(recent.len(), USABLE.len());
         assert!(recent.iter().all(|session| session.asked() == TITLE));
+    }
+
+    #[test]
+    fn an_unnamed_runner_is_held_to_the_quiet_machine_budget() {
+        // This machine, and the run RELEASING.md decides a tag on: nothing
+        // names a runner, so the budget is the one the probe states.
+        assert_eq!(chosen(None, 20, 150).expect("a limit"), 20);
+    }
+
+    #[test]
+    fn a_shared_runner_is_held_to_its_own_limit() {
+        // A CI runner, named by the workflow that runs the probe there.
+        assert_eq!(
+            chosen(Some(OsStr::new("shared")), 20, 150).expect("a limit"),
+            150
+        );
+    }
+
+    #[test]
+    fn a_runner_nobody_named_is_refused_rather_than_guessed_at() {
+        // A misspelt runner that quietly fell back to one of the limits would
+        // be a budget nobody chose.
+        let refused = chosen(Some(OsStr::new("sharde")), 20, 150).expect_err("a misspelt runner");
+        assert!(
+            refused.to_string().contains("CRUCIBLE_BENCH_RUNNER"),
+            "{refused}"
+        );
     }
 }
