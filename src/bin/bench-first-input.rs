@@ -25,17 +25,25 @@ use startup::{Measure, StartupError};
 /// The budget, in milliseconds.
 const LIMIT: f64 = 60.0;
 
+/// The limit on a shared CI runner, in milliseconds.
+///
+/// The same stalls as the first frame's, over a longer path: across 98 CI runs the
+/// typical reading stayed near 6 ms while stalled runs read 89.1 and 189.9 ms. 250 ms
+/// clears the worst of those by about a third and still stops a startup many times
+/// slower; a smaller slowdown is the quiet-machine run's to catch, under [`LIMIT`].
+const SHARED_RUNNER_LIMIT: f64 = 250.0;
+
 /// Written and flushed immediately before the first read.
 const READY: &str = "\u{203a} ";
 
 /// One uncommon key, absent from startup output and visible in the input box.
 const PROBE: &str = "\u{00a7}";
 
-fn report(elapsed: f64) -> Result<(), io::Error> {
+fn report(elapsed: f64, limit: f64) -> Result<(), io::Error> {
     // `println!` is denied workspace-wide, so the reading goes out through a
     // write whose failure is handled rather than panicked on inside a probe.
     let mut line = String::new();
-    let _ = write!(line, "{elapsed:.1} ms {LIMIT:.0}");
+    let _ = write!(line, "{elapsed:.1} ms {limit:.0}");
     line.push('\n');
 
     io::stdout().write_all(line.as_bytes())?;
@@ -60,7 +68,14 @@ fn detail(spread: &str) -> Result<(), io::Error> {
 }
 
 fn main() -> ExitCode {
-    let budget = Duration::from_secs_f64(LIMIT / 1000.0);
+    let limit = match startup::limit(LIMIT, SHARED_RUNNER_LIMIT) {
+        Ok(limit) => limit,
+        Err(problem) => {
+            let _ = explain(&problem);
+            return ExitCode::FAILURE;
+        }
+    };
+    let budget = Duration::from_secs_f64(limit / 1000.0);
 
     let readings = match startup::best(budget, || {
         startup::readings(Measure::Input {
@@ -83,11 +98,11 @@ fn main() -> ExitCode {
         }
     };
 
-    if report(elapsed).is_err() {
+    if report(elapsed, limit).is_err() {
         return ExitCode::FAILURE;
     }
 
-    if elapsed > LIMIT {
+    if elapsed > limit {
         let _ = detail(&readings.spread());
         return ExitCode::FAILURE;
     }

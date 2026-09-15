@@ -55,6 +55,11 @@ same way afterwards.
      every pull request. It is blocking, and it is the only reading taken
      before a change is merged rather than after. A shared runner is noisier
      than this machine, so its margin is smaller than the number suggests.
+     The first frame and first input are held there to 150 ms and 250 ms
+     rather than 20 and 60: a runner that stalls launches through a whole
+     measurement read 71.6 to 109.3 ms and 89.1 to 189.9 ms while its typical
+     launch stayed near 5 ms. Those limits still stop a startup that got many
+     times slower; a smaller slowdown is this run's to catch.
    - This run, here, on a quiet machine, is the authoritative one for the
      release. It is what decides whether the tag is cut.
    - The release workflow runs them again on a shared runner. Publication does
