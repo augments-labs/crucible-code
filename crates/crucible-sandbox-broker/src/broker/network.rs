@@ -181,7 +181,8 @@ fn relay(client: TcpStream, path: &Path, stop: &Arc<AtomicBool>) -> io::Result<(
             return Err(io::Error::other(RelayCoordinatorFailure));
         };
         let outbound_result = join_scoped(outbound);
-        if outbound_result.is_err() {
+        // A pump that panicked never stored `finished`; stop the other direction for it.
+        if outbound_result.as_ref().is_err_and(is_fatal_relay_error) {
             finished.store(true, Ordering::Release);
         }
         let inbound_result = join_scoped(inbound);
@@ -356,11 +357,9 @@ fn pump<D: Write + ShutdownWrite>(
                 let bytes = buffer
                     .get(..read)
                     .ok_or_else(|| io::Error::other("relay read exceeded buffer"))?;
-                if let Err(error) = write_all(destination, bytes, stop, finished, activity, started)
-                {
-                    finished.store(true, Ordering::Release);
-                    return Err(error);
-                }
+                // A destination that refuses bytes ends this direction only: the
+                // opposite one may still carry what that peer wrote before it stopped.
+                write_all(destination, bytes, stop, finished, activity, started)?;
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => thread::sleep(POLL),
             Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
@@ -485,6 +484,64 @@ mod tests {
         relay.stop().expect("stop");
         host.join().expect("host");
         let _ = std::fs::remove_file(root);
+    }
+
+    #[test]
+    fn relay_preserves_response_after_host_stops_reading() {
+        let root = std::env::temp_dir().join(format!(
+            "crucible-network-host-stops-reading-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&root);
+        let listener = UnixListener::bind(&root).expect("host listener");
+        let host = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .expect("host timeout");
+            let mut request = [0_u8; 7];
+            stream.read_exact(&mut request).expect("upload started");
+            // The guest is still uploading, so forwarding it now fails while
+            // the response keeps arriving in the opposite direction.
+            stream
+                .shutdown(std::net::Shutdown::Read)
+                .expect("stop reading");
+            for byte in b"a response, in parts" {
+                if stream.write_all(std::slice::from_ref(byte)).is_err() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+        });
+        let relay = NetworkRelay::start_at((std::net::Ipv4Addr::LOCALHOST, 0).into(), &root)
+            .expect("relay");
+        let mut guest = std::net::TcpStream::connect(relay.address()).expect("guest");
+        guest
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("guest timeout");
+        let sender_stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let sender_stop_flag = std::sync::Arc::clone(&sender_stop);
+        let mut sender = guest.try_clone().expect("sender clone");
+        sender
+            .set_write_timeout(Some(Duration::from_millis(50)))
+            .expect("sender timeout");
+        let sender = thread::spawn(move || {
+            while !sender_stop_flag.load(std::sync::atomic::Ordering::Acquire) {
+                if sender.write_all(b"request").is_err() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(1));
+            }
+        });
+        let mut response = [0_u8; 20];
+        let received = guest.read_exact(&mut response);
+        sender_stop.store(true, std::sync::atomic::Ordering::Release);
+        sender.join().expect("sender");
+        relay.stop().expect("stop");
+        host.join().expect("host");
+        let _ = std::fs::remove_file(root);
+        received.expect("response after the host stopped reading");
+        assert_eq!(&response, b"a response, in parts");
     }
 
     #[test]
