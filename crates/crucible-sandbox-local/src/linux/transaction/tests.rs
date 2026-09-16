@@ -195,9 +195,7 @@ fn publication_lease_is_exclusive_and_released_with_its_descriptor() {
         .expect("first lease");
     assert!(Lease::try_acquire_in(&state).expect("lock state").is_none());
     drop(first);
-    Lease::try_acquire_in(&state)
-        .expect("lock state")
-        .expect("lease after descriptor close");
+    lease_after_transient_holders(&state, "lease after descriptor close");
 }
 
 #[test]
@@ -727,7 +725,7 @@ fn a_stale_journal_lock_lent_to_a_departing_child_is_recovered_not_skipped() {
         lock_after_transient_holder(&journal).expect("journal lock"),
         "the stale journal lock outlived the transient-holder budget"
     );
-    let mut child = lend_to_departing_child(&journal);
+    let mut child = lend_to_departing_child(&journal, "0.05");
     drop(journal);
 
     reconcile_stale_transactions(&base).expect("pre-release recovery");
@@ -783,11 +781,10 @@ fn taking_the_publication_lock_keeps_its_file_from_ageing() {
         .set_times(FileTimes::new().set_modified(long_ago))
         .expect("an old lock");
 
-    drop(
-        Lease::try_acquire_in(&state)
-            .expect("lock state")
-            .expect("a lease that takes the lock again"),
-    );
+    drop(lease_after_transient_holders(
+        &state,
+        "a lease that takes the lock again",
+    ));
 
     let modified = std::fs::metadata(&lock)
         .expect("the lock")
@@ -806,22 +803,37 @@ fn a_publication_lease_lent_to_a_departing_child_is_free_once_the_child_is_gone(
     let first = Lease::try_acquire_in(&state)
         .expect("lock state")
         .expect("first lease");
-    let mut child = lend_to_departing_child(first.lock());
+    // Kept past the transient-holder budget, so the lease taken below is one
+    // the child's exit freed and not one a short wait would have found anyway.
+    let mut child = lend_to_departing_child(first.lock(), "0.5");
     drop(first);
+    assert!(
+        Lease::try_acquire_in(&state).expect("lock state").is_none(),
+        "the lease was free while a child still held its descriptor"
+    );
 
     child.wait().expect("departing child");
-    Lease::try_acquire_in(&state)
-        .expect("lock state")
-        .expect("lease once the departing child is gone");
+    lease_after_transient_holders(&state, "lease once the departing child is gone");
 }
 
-/// Hands a copy of `held` to a child that keeps it open briefly, as a forked
-/// child does between `fork` and `exec` while it still carries the parent's
-/// descriptor table.
-fn lend_to_departing_child(held: &File) -> std::process::Child {
+/// Takes the lock in `state` again once this test has let it go.
+///
+/// A child another test is spawning may still hold, between fork and exec, a
+/// copy of the descriptor this test just closed, so the lock is taken across
+/// the same transient-holder budget the recovery allows.
+fn lease_after_transient_holders(state: &Path, expected: &str) -> Lease {
+    Lease::acquire_in(state, TRANSIENT_LOCK_PAUSE * TRANSIENT_LOCK_RETRIES)
+        .expect("lock state")
+        .expect(expected)
+}
+
+/// Hands a copy of `held` to a child that keeps it open for `seconds`, as a
+/// forked child does between `fork` and `exec` while it still carries the
+/// parent's descriptor table.
+fn lend_to_departing_child(held: &File, seconds: &str) -> std::process::Child {
     let copy = held.try_clone().expect("descriptor copy");
     std::process::Command::new("sleep")
-        .arg("0.05")
+        .arg(seconds)
         .stdin(std::process::Stdio::from(copy))
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
