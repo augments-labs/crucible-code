@@ -15,6 +15,7 @@
 pub mod ask;
 pub mod cache;
 pub mod call;
+pub mod compaction;
 pub mod context;
 pub mod continuation;
 pub mod diff;
@@ -22,6 +23,7 @@ pub mod ids;
 pub mod modality;
 pub mod output;
 pub mod run;
+pub mod tone;
 pub mod transcript;
 pub mod usage;
 
@@ -46,6 +48,7 @@ pub use cache::{
 pub use call::{
     TOOL_ARGUMENT_BYTES, TOOL_CALL_ID_BYTES, TOOL_NAME_BYTES, ToolArgs, ToolCall, ToolSchema,
 };
+pub use compaction::{Compacted, Compacting, RECAP};
 pub use context::{ContextError, ContextPatch, ContextSnapshot, Fragment, Seen};
 pub use continuation::{
     CONTINUATION_BYTES, CONTINUATION_HISTORY_BYTES, CONTINUATION_PARTS, Continuation,
@@ -63,6 +66,7 @@ pub use output::{
     ToolOutputRetention,
 };
 pub use run::{Ancestry, AncestryError};
+pub use tone::{Tone, ToneError};
 pub use transcript::{Attachment, Message, StopReason, ToolResult, Transcript};
 pub use usage::{
     Calibration, Carried, InputTokenUsage, MAX_PROVIDER_USAGE_DETAIL_LABEL_BYTES,

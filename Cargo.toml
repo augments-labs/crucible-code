@@ -39,6 +39,7 @@ crucible-attachments = { path = "crates/crucible-attachments" }
 crucible-auth = { path = "crates/crucible-auth" }
 crucible-builtins = { path = "crates/crucible-builtins" }
 crucible-config = { path = "crates/crucible-config" }
+crucible-context = { path = "crates/crucible-context" }
 crucible-core = { path = "crates/crucible-core" }
 crucible-credentials = { path = "crates/crucible-credentials" }
 crucible-extension = { path = "crates/crucible-extension" }
@@ -388,6 +389,7 @@ crucible-attachments.workspace = true
 crucible-auth.workspace = true
 crucible-builtins.workspace = true
 crucible-config.workspace = true
+crucible-context.workspace = true
 crucible-core.workspace = true
 # The restart budget an ended program is started again under, and the question
 # of whether starting it again is safe at all. Taken here because composition is

@@ -92,7 +92,8 @@ fn audit_exit(fails: Option<&'static str>) {
                 effort: None,
             },
         ),
-        ContextInputs::new(&root).dated("2026-09-05"),
+        ContextInputs::new(&root)
+            .dated(std::time::UNIX_EPOCH + std::time::Duration::from_hours(496_824)),
         session,
     );
     let cancel = Cancel::new();

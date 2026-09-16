@@ -135,7 +135,7 @@ fn scripted(script: Script, offered: Tools) -> Runner {
                 effort: None,
             },
         ),
-        crucible_runner::ContextInputs::new(std::env::temp_dir()),
+        crucible_context::ContextInputs::new(std::env::temp_dir()),
         Session::nowhere(),
     )
 }
@@ -278,7 +278,7 @@ fn a_theme_taken_mid_session_is_what_the_rows_after_it_are_drawn_in() {
                 effort: None,
             },
         ),
-        crucible_runner::ContextInputs::new(std::env::temp_dir()),
+        crucible_context::ContextInputs::new(std::env::temp_dir()),
         Session::nowhere(),
     );
 
@@ -626,7 +626,7 @@ fn a_log_that_failed_with_the_last_line_still_queued_is_reported_before_the_prom
                 effort: None,
             },
         ),
-        crucible_runner::ContextInputs::new(std::env::temp_dir()),
+        crucible_context::ContextInputs::new(std::env::temp_dir()),
         session,
     );
 
@@ -667,7 +667,7 @@ fn a_terminal_that_fails_mid_turn_leaves_the_turn_recorded_all_the_same() {
                 effort: None,
             },
         ),
-        crucible_runner::ContextInputs::new(std::env::temp_dir()),
+        crucible_context::ContextInputs::new(std::env::temp_dir()),
         session,
     );
 
@@ -711,7 +711,7 @@ fn a_terminal_failure_cancels_a_provider_that_would_otherwise_stay_live() {
                 effort: None,
             },
         ),
-        crucible_runner::ContextInputs::new(std::env::temp_dir()),
+        crucible_context::ContextInputs::new(std::env::temp_dir()),
         Session::nowhere(),
     );
     let terms = plain();
@@ -1287,7 +1287,7 @@ fn a_prompt_that_cannot_be_answered_down_a_pipe_fails_rather_than_ending_quietly
                 effort: None,
             },
         ),
-        crucible_runner::ContextInputs::new(std::env::temp_dir()),
+        crucible_context::ContextInputs::new(std::env::temp_dir()),
         Session::nowhere(),
     );
 

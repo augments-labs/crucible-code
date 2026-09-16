@@ -9,15 +9,14 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use crucible_context::ContextInputs;
 use crucible_core::{
     AgentId, ApiKey, Approved, Aside, Ask, Cancel, DescribeTool, Effort, EventEnvelope, Header,
     HeaderKey, Host, Post, Provider, Remember, Sensitivity, SessionId, Steer, StopReason, Summary,
     Tool, ToolArgs, ToolCall, ToolContext, ToolError, ToolOutput, TurnError, Verdict, Workspace,
 };
 use crucible_provider::{Anthropic, Endpoint, Google, Https, OpenAi};
-use crucible_runner::{
-    AgentSpec, Compaction, ContextInputs, Model, RunPolicy, Runner, Session, Tools,
-};
+use crucible_runner::{AgentSpec, Compaction, Model, RunPolicy, Runner, Session, Tools};
 use serde_json::{Value, json};
 
 pub(crate) const MODELS: [&str; 6] = [

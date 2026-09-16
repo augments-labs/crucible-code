@@ -40,6 +40,7 @@ use crucible_core::{
     Transcript, TurnError, TurnId, UsageCost,
 };
 
+use crucible_context::ContextInputs;
 use crucible_session::{Pruned, Session};
 
 use crate::agent::AgentSpec;
@@ -59,7 +60,6 @@ mod passes;
 mod work;
 
 use answer::Answer;
-pub use assembly::ContextInputs;
 pub use cleanup::PromptCacheCleanup;
 use load::{Counting, Load};
 use passes::AgentLoop;

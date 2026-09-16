@@ -57,7 +57,11 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value, json};
 
-use crate::{ContextSection, Effort, Fragment, Permission, Seen, ToolSnapshot};
+use crucible_models::Effort;
+use crucible_tools::{Permission, ToolSnapshot};
+use crucible_types::{Fragment, Seen, Tone};
+
+use crate::ContextSection;
 
 #[cfg(test)]
 mod tests;
@@ -315,7 +319,7 @@ impl SystemPrompt {
             listed(&mut said, "## What is already settled", &self.constraints);
             listed(&mut said, "## Holding the task", &self.mission);
             listed(&mut said, "## Doing the work", &self.guidelines);
-            block(&mut said, self.tone.unwrap_or_default().text());
+            block(&mut said, spoken(self.tone.unwrap_or_default()));
 
             for example in &self.examples {
                 block(&mut said, example.trim());
@@ -553,7 +557,7 @@ impl ContextSection for WorkspaceSection<'_> {
 /// The permission facts in force for the next invocation decision.
 ///
 /// This borrows the engine so reporting cannot manufacture a parallel state.
-/// Its snapshot contains no grant and cannot be turned into [`crate::Approved`].
+/// Its snapshot contains no grant and cannot be turned into [`crucible_tools::Approved`].
 pub struct PermissionsSection<'a> {
     permission: &'a Permission,
 }
@@ -1142,57 +1146,18 @@ A general fact about programming is something the developer can look up and did 
     };
 }
 
-/// How much the answer explains itself.
+/// What the model is told about how to answer in `tone`.
 ///
-/// The reader's choice rather than the model's. All three describe the same
-/// work done to the same standard; what changes is how much of the reasoning
-/// comes back with it, which is a fact about who is reading and not about what
-/// was asked. A rung here does not buy a better answer, so these are not
-/// ordered and there is no ladder to climb.
-///
-/// A tone says how to answer and never what is answering. What crucible is, is
-/// [`SystemPrompt::role`]; what model is behind it, is [`Identity`]. A tone
-/// that opened by naming itself would be a third answer to a question already
-/// answered twice, and the reader's choice of register would quietly be a
-/// choice of who the model thinks it is.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum Tone {
-    /// The conclusion, and what it cost to reach it.
-    #[default]
-    Concise,
-    /// The conclusion, and why it is that one.
-    Explanatory,
-    /// The conclusion, and what to know before touching it again.
-    Learning,
-}
-
-impl Tone {
-    /// Every tone, in the order a picker offers them.
-    pub const TONES: [Self; 3] = [Self::Concise, Self::Explanatory, Self::Learning];
-
-    /// The tone as a document spells it.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Concise => "concise",
-            Self::Explanatory => "explanatory",
-            Self::Learning => "learning",
-        }
-    }
-
-    /// What the model is told about how to answer.
-    ///
-    /// Headed and numbered rather than written as paragraphs. What is here is
-    /// read by a model and not by somebody reading this file: a rule with a
-    /// number and a name on it can be followed one at a time and referred back
-    /// to, and the same rule set loose in a paragraph is a sentence to agree
-    /// with rather than a thing to do. The module documentation around it is
-    /// prose because its reader is a person.
-    #[must_use]
-    pub const fn text(self) -> &'static str {
-        match self {
-            Self::Concise => {
-                r"# Concise
+/// Headed and numbered rather than written as paragraphs. What is here is
+/// read by a model and not by somebody reading this file: a rule with a
+/// number and a name on it can be followed one at a time and referred back
+/// to, and the same rule set loose in a paragraph is a sentence to agree
+/// with rather than a thing to do. The module documentation around it is
+/// prose because its reader is a person.
+const fn spoken(tone: Tone) -> &'static str {
+    match tone {
+        Tone::Concise => {
+            r"# Concise
 
 The result, and what it cost to reach it.
 
@@ -1204,9 +1169,9 @@ The result, and what it cost to reach it.
 6. **Never buy brevity with correctness** — An error keeps the words the tool printed, failing output is quoted rather than characterised, a security consequence is spelled out, and a destructive action is confirmed in full.
 
 Where this meets another instruction about length or format, this is the one to follow."
-            }
-            Self::Explanatory => concat!(
-                r"# Explanatory
+        }
+        Tone::Explanatory => concat!(
+            r"# Explanatory
 
 The result, and why it is that one.
 
@@ -1216,10 +1181,10 @@ The work is done to the same standard as under any other tone. What changes is t
 2. **Spend the extra length on that and nothing else** — An explanation that has stopped being about the code in front of it has stopped earning the lines it is using.
 
 ",
-                insights!()
-            ),
-            Self::Learning => concat!(
-                r"# Learning
+            insights!()
+        ),
+        Tone::Learning => concat!(
+            r"# Learning
 
 The result, and what to know before touching it again.
 
@@ -1245,38 +1210,8 @@ Then stop. Say nothing after the request and start nothing else: what comes next
 Ask for the part that is worth deciding. A loop that has been written a hundred times is not a contribution, it is a chore handed over, and this tone stops being worth its cost the first time it takes more from the developer than it gives back.
 
 ",
-                insights!()
-            ),
-        }
-    }
-}
-
-/// The word given for a tone was not one.
-///
-/// Names what was written and then every tone there is, because this is reached
-/// with nothing on screen to look at: a key in a file somebody is reading with
-/// an editor open.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("no tone called {named}; crucible takes {}", Tone::TONES.map(Tone::as_str).join(", "))]
-pub struct ToneError {
-    /// What was asked for.
-    pub named: Box<str>,
-}
-
-impl std::str::FromStr for Tone {
-    type Err = ToneError;
-
-    /// Trimmed and lowercased first, for the same reason a rung is: a word this
-    /// short is typed in whatever case the person was already in.
-    fn from_str(text: &str) -> Result<Self, Self::Err> {
-        let named = text.trim().to_ascii_lowercase();
-
-        Self::TONES
-            .into_iter()
-            .find(|tone| tone.as_str() == named)
-            .ok_or(ToneError {
-                named: named.into(),
-            })
+            insights!()
+        ),
     }
 }
 

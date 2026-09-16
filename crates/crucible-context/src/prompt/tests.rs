@@ -4,14 +4,18 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
+use crucible_models::Effort;
+use crucible_tools::{
+    Ask, Permission, Remember, Sensitivity, Settled, Target, ToolSnapshot, Verdict,
+};
+use crucible_types::{ContextSnapshot, Seen, Tone, ToolArgs, ToolCall, ToolId};
+use crucible_workspace::Workspace;
+
 use super::{
     APPROVAL_SCOPE, APPROVALS, EnvironmentSection, Identity, ModelSection, PermissionsSection,
-    SAID, SKILLS, Skill, SkillsSection, SystemPrompt, Tone, ToolsSection, WorkspaceSection,
+    SAID, SKILLS, Skill, SkillsSection, SystemPrompt, ToolsSection, WorkspaceSection, spoken,
 };
-use crate::{
-    Ask, ContextSection, ContextSnapshot, Effort, Permission, Remember, Seen, Sensitivity, Settled,
-    Target, ToolArgs, ToolCall, ToolId, ToolSnapshot, Verdict, Workspace, capture,
-};
+use crate::{ContextSection, capture};
 
 /// A skill named and described, at a path under the workspace.
 fn skill(name: &str, description: &str) -> Skill {
@@ -308,7 +312,7 @@ fn no_tone_says_what_is_answering_because_two_things_above_it_already_do() {
     // read after both, and the register the reader picked would quietly be a
     // choice of who the model thinks it is.
     for tone in Tone::TONES {
-        let said = tone.text();
+        let said = spoken(tone);
 
         assert!(!said.contains("You are"), "{}: {said}", tone.as_str());
         assert!(!said.contains("CLI tool"), "{}: {said}", tone.as_str());
@@ -319,7 +323,7 @@ fn no_tone_says_what_is_answering_because_two_things_above_it_already_do() {
 fn each_tone_says_something_the_others_do_not() {
     // Three names for one paragraph would be a setting that looks applied and
     // changes nothing, which is worse than not offering the choice.
-    let said: Vec<&str> = Tone::TONES.iter().map(|tone| tone.text()).collect();
+    let said: Vec<&str> = Tone::TONES.iter().map(|tone| spoken(*tone)).collect();
 
     assert_eq!(said.len(), 3);
     for (at, one) in said.iter().enumerate() {

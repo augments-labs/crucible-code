@@ -187,7 +187,8 @@ impl Scripted {
                         effort: None,
                     },
                 ),
-                ContextInputs::new(std::env::temp_dir()).dated("2026-08-31"),
+                ContextInputs::new(std::env::temp_dir())
+                    .dated(std::time::UNIX_EPOCH + std::time::Duration::from_hours(496_704)),
                 session,
             ),
             sent,
@@ -584,7 +585,8 @@ impl Steering {
                         effort: None,
                     },
                 ),
-                ContextInputs::new(std::env::temp_dir()).dated("2026-08-31"),
+                ContextInputs::new(std::env::temp_dir())
+                    .dated(std::time::UNIX_EPOCH + std::time::Duration::from_hours(496_704)),
                 Session::nowhere(),
             ),
             sent,
