@@ -552,7 +552,7 @@ elif [[ -z "$edges" ]]; then
     failed=1
 fi
 
-# `core` names the ten crates its old names now come from. Those edges are
+# `core` names the eleven crates its old names now come from. Those edges are
 # the compatibility facade and go away with the crate that holds them.
 #
 # Edges past the facade are listed here as they are taken. `attachments` is
@@ -564,6 +564,7 @@ fi
 allowed='code attachments
 code auth
 code config
+code context
 code core
 code extension
 code mcp
@@ -581,7 +582,12 @@ auth core
 auth privacy
 config core
 config models
+context models
+context tools
+context types
+context workspace
 core attachments
+core context
 core credentials
 core models
 core registry
@@ -603,6 +609,7 @@ provider models
 provider runtime
 provider types
 runner attachments
+runner context
 runner core
 runner models
 runner session

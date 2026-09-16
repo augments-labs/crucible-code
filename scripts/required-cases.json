@@ -22,13 +22,13 @@
       "id": "CASE-TURN-TOOL-GENERATION",
       "family": "turn",
       "obligation": "The prompt names the tool generation it snapshotted, not whatever the roster holds now.",
-      "package": "crucible-core",
+      "package": "crucible-context",
       "target": {
         "kind": "lib",
-        "name": "crucible_core"
+        "name": "crucible_context"
       },
       "case": "prompt::tests::the_tools_section_reports_the_exact_generation_it_snapshotted",
-      "source": "crates/crucible-core/src/prompt/tests.rs",
+      "source": "crates/crucible-context/src/prompt/tests.rs",
       "body_sha256": "11480b81ac57894d2c05dc3818afb83e363ae9540e4ded2d5c669c8b08401209",
       "platforms": [
         "linux",

@@ -7,7 +7,7 @@
 //! either one alone can claim the model knows words compaction removed.
 //!
 //! The facts themselves — a [`Fragment`], a [`ContextSnapshot`] and the patch
-//! between two of them — are shared values and live below this crate. What is
+//! between two of them — are shared values and live in `crucible-types`. What is
 //! here is the part that reads a live section or a retained transcript, so a
 //! replay needs none of it.
 
@@ -114,9 +114,9 @@ pub fn seen<'a>(
 mod tests {
     use serde_json::{Value, json};
 
-    use crate::{Message, Transcript};
-
-    use crucible_types::{ContextError, ContextPatch, ContextSnapshot, Fragment, Seen};
+    use crucible_types::{
+        ContextError, ContextPatch, ContextSnapshot, Fragment, Message, Seen, Transcript,
+    };
 
     use super::{ContextSection, capture, seen};
 

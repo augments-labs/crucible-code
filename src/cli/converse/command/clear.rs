@@ -248,7 +248,7 @@ mod tests {
                     effort: None,
                 },
             ),
-            crucible_runner::ContextInputs::new(std::env::temp_dir()),
+            crucible_context::ContextInputs::new(std::env::temp_dir()),
             session,
         )
         .resuming(transcript)
@@ -459,7 +459,7 @@ mod tests {
                     effort: None,
                 },
             ),
-            crucible_runner::ContextInputs::new(std::env::temp_dir()),
+            crucible_context::ContextInputs::new(std::env::temp_dir()),
             session,
         );
 
