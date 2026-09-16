@@ -618,7 +618,7 @@ fn answering() -> (Runner, mpsc::Sender<EventEnvelope>) {
                     effort: None,
                 },
             ),
-            crucible_runner::ContextInputs::new(std::env::temp_dir()),
+            crucible_context::ContextInputs::new(std::env::temp_dir()),
             Session::nowhere(),
         ),
         events,
@@ -724,7 +724,7 @@ fn sending() -> Runner {
                 effort: None,
             },
         ),
-        crucible_runner::ContextInputs::new(std::env::temp_dir()),
+        crucible_context::ContextInputs::new(std::env::temp_dir()),
         Session::nowhere(),
     )
 }

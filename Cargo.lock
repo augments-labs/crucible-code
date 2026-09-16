@@ -386,6 +386,7 @@ dependencies = [
  "crucible-auth",
  "crucible-builtins",
  "crucible-config",
+ "crucible-context",
  "crucible-core",
  "crucible-extension",
  "crucible-mcp",
@@ -415,10 +416,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "crucible-context"
+version = "0.41.1"
+dependencies = [
+ "crucible-models",
+ "crucible-tools",
+ "crucible-types",
+ "crucible-workspace",
+ "serde_json",
+]
+
+[[package]]
 name = "crucible-core"
 version = "0.41.1"
 dependencies = [
  "crucible-attachments",
+ "crucible-context",
  "crucible-credentials",
  "crucible-models",
  "crucible-registry",
@@ -508,6 +521,7 @@ name = "crucible-runner"
 version = "0.41.1"
 dependencies = [
  "crucible-attachments",
+ "crucible-context",
  "crucible-core",
  "crucible-models",
  "crucible-session",

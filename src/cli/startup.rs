@@ -20,6 +20,7 @@ use crucible_builtins::{
     ToolSearch, WebFetch, WebSearch, Write,
 };
 use crucible_config::Settings;
+use crucible_context::ContextInputs;
 use crucible_core::{
     AgentId, ApiKey, Credential, DescribeTool, Effort, Fetch, Header, HeaderKey, Message,
     Modalities, Mode, ModelCapabilities, Provider, Revealed, Search, SessionId, Tool, ToolsetError,
@@ -29,9 +30,7 @@ use crucible_provider::{
     Anthropic, AnthropicWeb, Endpoint, Google, GoogleWeb, Https, Moonshot, MoonshotWeb, OpenAi,
     OpenAiWeb, Unavailable,
 };
-use crucible_runner::{
-    AgentSpec, Bounds, Compaction, ContextInputs, Model, RunPolicy, Runner, Session, Tools,
-};
+use crucible_runner::{AgentSpec, Bounds, Compaction, Model, RunPolicy, Runner, Session, Tools};
 use crucible_sandbox_local::LocalSandbox;
 
 use super::hosting::{Hosting, selecting};

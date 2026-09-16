@@ -17,6 +17,10 @@ authors.workspace = true
 # attachment reads the recorded file again, and doing that here would be a
 # second answer to what one request may carry.
 crucible-attachments.workspace = true
+# The words each pass is sent under. The runner decides when a pass is
+# assembled and records the result; which facts become which words is not its
+# decision.
+crucible-context.workspace = true
 crucible-core.workspace = true
 # The contract a provider answers to, including what may be sent where once a
 # vendor restricts what it produced; the runner applies that decision and never

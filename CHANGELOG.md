@@ -18,6 +18,13 @@ change in any release with no deprecation period.
   re-exports every moved name; `PromptCachePlanned::from_request` is now
   `PromptCacheRequest::planned`, and `PromptCachePolicy::narrowed` is
   `crucible_models::narrow_policy`.
+- **Context and prompt assembly have a crate of their own.** `crucible-context`
+  now holds context sections, the order a pass assembles them in, the system
+  prompt and what a compaction asks the model for; `Compacted`, `Compacting`,
+  `RECAP` and `Tone` are `crucible-types`. `crucible-core` re-exports every
+  moved name, but `Tone::text` is gone because the prompt owns that wording.
+  `ContextInputs` is imported from `crucible-context` rather than
+  `crucible-runner`, and `ContextInputs::dated` takes a `SystemTime`.
 
 ### Fixed
 

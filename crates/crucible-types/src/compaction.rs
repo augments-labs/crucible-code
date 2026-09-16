@@ -1,14 +1,15 @@
-//! What a compaction was and what it took.
+//! What a compaction was, and how its notes are marked.
 //!
-//! Two small values in core because [`crate::Event`] carries them: the thread
-//! that draws is told room is being made and then what it came to, and neither
-//! of those may name the loop that did it. A third says which of the three
-//! things asking for room can come back with happened, for the same reason: the
-//! screen has a different line for each.
+//! Shared values rather than the compactor's own, because three readers that
+//! may not name the compactor need them: the session log records what a
+//! compaction took and reads it back for display, the event a drawing thread is
+//! told carries it, and the screen recognises the notes a recap left in the
+//! transcript. What a compaction asks the model for, and what asking for room
+//! came back with, belong to `crucible-context`.
 
 /// What a recap is marked with where it stands in a transcript.
 ///
-/// In core because two crates need the same string for opposite reasons: the
+/// Shared because two owners need the same string for opposite reasons: the
 /// loop writes it so the model reads its own notes under a heading saying whose
 /// they are, and the screen reads it so it can draw them as notes rather than
 /// as something the user typed. Two copies of it would come apart, and the day
@@ -50,24 +51,4 @@ pub struct Compacted {
     pub after: u64,
     /// How many turns were kept word for word.
     pub kept: usize,
-}
-
-/// What asking for room came back with.
-///
-/// Three answers rather than an [`Option`], because the two that made no room
-/// made none for opposite reasons and owe the reader different sentences: one
-/// is a session with nothing behind the turns it keeps whole, and the other is
-/// somebody who pressed a key.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Room {
-    /// It was made, and this is what it took.
-    Made(Compacted),
-    /// There was nothing worth replacing — a session with no middle. Nothing
-    /// was asked of the model and nothing changed.
-    Nothing,
-    /// Somebody stopped the recap while it was being written, so nothing
-    /// changed. Half a session's memory is not one, and standing it in place of
-    /// the messages it was meant to replace would lose the rest for good: the
-    /// log still holds them, and nothing the model is sent ever would again.
-    Stopped,
 }

@@ -682,7 +682,7 @@ mod tests {
                     effort: None::<Effort>,
                 },
             ),
-            crucible_runner::ContextInputs::new(std::env::temp_dir()),
+            crucible_context::ContextInputs::new(std::env::temp_dir()),
             Session::nowhere(),
         )
         .resuming(transcript)
