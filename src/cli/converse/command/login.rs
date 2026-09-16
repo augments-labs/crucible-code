@@ -716,7 +716,7 @@ mod tests {
     use crucible_auth::Store;
     use crucible_builtins::{Ledger, Plan};
     use crucible_core::{AgentId, Cancel, Revealed};
-    use crucible_runner::{AgentSpec, Model, Tools};
+    use crucible_runner::{Agent, Model, Tools};
     use crucible_tui::Recording;
 
     use crate::cli::fake::Script;
@@ -769,7 +769,7 @@ mod tests {
         Runner::new(
             Box::new(Script::new(Vec::new())),
             Tools::new(),
-            AgentSpec::new(
+            Agent::new(
                 AgentId::new("test"),
                 Model {
                     name: model.into(),

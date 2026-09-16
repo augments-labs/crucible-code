@@ -16,7 +16,7 @@ use crucible_core::{
     Tool, ToolArgs, ToolCall, ToolContext, ToolError, ToolOutput, TurnError, Verdict, Workspace,
 };
 use crucible_provider::{Anthropic, Endpoint, Google, Https, OpenAi};
-use crucible_runner::{AgentSpec, Compaction, Model, RunPolicy, Runner, Session, Tools};
+use crucible_runner::{Agent, Compaction, Model, RunPolicy, Runner, Session, Tools};
 use serde_json::{Value, json};
 
 pub(crate) const MODELS: [&str; 6] = [
@@ -80,7 +80,7 @@ impl Sample {
         Runner::new(
             provider(model, vendor.endpoint.clone(), KEY),
             tools,
-            AgentSpec::new(
+            Agent::new(
                 AgentId::new("fixture"),
                 Model {
                     name: model.into(),
@@ -167,6 +167,12 @@ pub(crate) fn try_turn(
     let aside = Aside::new();
     let context = run.starting(sample, &cancel, &steer, &aside);
     run.turn(prompt, Box::new([]), &mut Permit(sample), &context)
+        .map(|turned| {
+            turned
+                .result()
+                .expect("a fixture no guardrail refuses")
+                .stop()
+        })
 }
 pub(crate) fn turn(run: &mut Runner, prompt: &str, sample: &Sample) -> StopReason {
     try_turn(run, prompt, sample).expect("valid fixture")

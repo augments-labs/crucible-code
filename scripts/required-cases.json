@@ -724,7 +724,7 @@
       },
       "case": "cli::startup::tests::the_agent_is_named_coding_and_stands_under_what_the_wiring_asked",
       "source": "src/cli/startup/tests.rs",
-      "body_sha256": "0712adfdb19f5e90142bfbd644b619de380a176f2bf031ab2c1290cf91a6bc7b",
+      "body_sha256": "bcf08b741cce4780f950228a07d8e49920c820345d3f12a092aedd92f37ab11e",
       "platforms": [
         "linux",
         "macos",
@@ -735,14 +735,14 @@
       "id": "CASE-AGENT-INSTRUCTIONS-ONE-WAY",
       "family": "agents",
       "obligation": "An agent's instructions reach the definition only through the call that keeps the difference between none and empty.",
-      "package": "crucible-runner",
+      "package": "crucible-agents",
       "target": {
         "kind": "doc",
-        "name": "crucible_runner"
+        "name": "crucible_agents"
       },
-      "case": "agent::AgentSpec::told",
-      "source": "crates/crucible-runner/src/agent.rs",
-      "body_sha256": "d7aab4e4a6994d0d81617ce1b2d8a044f9164fc8055028e5aa230f6a1c5ccb93",
+      "case": "agent::AgentBuilder::telling",
+      "source": "crates/crucible-agents/src/agent.rs",
+      "body_sha256": "5bd114dacc295a94c0ce3252fb48adf3c6010adc271cba74f8afec894c4c8eff",
       "platforms": [
         "linux",
         "macos",

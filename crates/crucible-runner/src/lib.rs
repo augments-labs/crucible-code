@@ -4,7 +4,8 @@
 //! model asks for, feeds the results back, and repeats until the model yields
 //! or the user cancels.
 //!
-//! It depends on `crucible-core` for every domain type, on
+//! It depends on `crucible-agents` for the definition a turn is taken under,
+//! on `crucible-core` for every domain type, on
 //! `crucible-attachments` for the one bounded ingress an attachment's bytes
 //! come through, and on `crucible-session` for the log a turn is recorded to.
 //! Every other collaborator arrives as a trait object chosen during wiring, so
@@ -16,7 +17,6 @@
 //! a turn is the return value, because the caller is what decides whether the
 //! session goes on.
 
-mod agent;
 mod context;
 #[cfg(test)]
 mod fake;
@@ -28,14 +28,17 @@ mod runner;
 mod sample;
 mod tools;
 
-pub use agent::AgentSpec;
 pub use context::RunContext;
+pub use crucible_agents::{
+    Agent, AgentBuilder, AgentContext, Availability, Decision, GuardrailError, InputGuardrail,
+    Model, OutputGuardrail, Rejection,
+};
 pub use crucible_session::{
     DisplayHistory, DisplayItem, Glimpse, PROMPTS, Pruned, Recorded, Session, SessionError,
     glimpse, prompts, recent, remember, retitle,
 };
-pub use outcome::{RunResult, RunStatus};
+pub use outcome::{RunResult, RunStatus, Turned};
 pub use policy::{Bounds, Compaction, MAXIMUM_TOOL_CONCURRENCY, Retry, RunPolicy, ToolScheduling};
 pub use runner::attachments;
-pub use runner::{Model, PromptCacheCleanup, Runner};
+pub use runner::{PromptCacheCleanup, RunState, Runner};
 pub use tools::Tools;

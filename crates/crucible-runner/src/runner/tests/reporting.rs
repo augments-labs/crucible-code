@@ -61,7 +61,7 @@ fn everything_a_turn_adds_to_the_transcript_is_also_recorded() {
     );
 
     scripted.turn("read x").unwrap();
-    let held = scripted.runner.transcript().messages().to_vec();
+    let held = scripted.runner.state.transcript().messages().to_vec();
 
     // Dropping the runner drops the session, which is what waits for the queue.
     drop(scripted);
@@ -112,7 +112,7 @@ fn the_calls_of_a_pass_are_recorded_before_the_tools_run() {
 
     scripted.turn("go").expect("the turn");
 
-    let messages = conversation(scripted.runner.transcript());
+    let messages = conversation(scripted.runner.state.transcript());
     let seen = match messages.get(2) {
         Some(Message::ToolResults(results)) => results
             .first()
@@ -378,7 +378,7 @@ fn a_stream_that_never_said_why_it_stopped_fails_the_turn_rather_than_finishing_
     // What the user already read is still recorded, and it is recorded as an
     // answer that never reached an ending.
     assert_eq!(
-        conversation(scripted.runner.transcript()),
+        conversation(scripted.runner.state.transcript()),
         [
             Message::said("go"),
             Message::Agent {

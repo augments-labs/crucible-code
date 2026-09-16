@@ -576,6 +576,9 @@ code builtins
 code sandbox-broker
 code sandbox-local
 code tui
+agents models
+agents tools
+agents types
 attachments types
 attachments workspace
 auth core
@@ -608,6 +611,7 @@ provider credentials
 provider models
 provider runtime
 provider types
+runner agents
 runner attachments
 runner context
 runner core

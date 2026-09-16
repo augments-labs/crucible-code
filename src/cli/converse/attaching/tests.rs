@@ -7,7 +7,7 @@ use crucible_core::{
     ProviderError, Remember, Request, Sensitivity, Steer, StopReason, ToolCall, Transcript,
     Verdict, Workspace, written,
 };
-use crucible_runner::{AgentSpec, Model, Pruned, Runner, Session, Tools};
+use crucible_runner::{Agent, Model, Pruned, Runner, Session, Tools};
 
 use crucible_tui::{Glyphs, Recording, Renderer};
 
@@ -608,7 +608,7 @@ fn answering() -> (Runner, mpsc::Sender<EventEnvelope>) {
                 Delta::Stopped(StopReason::Yielded),
             ]])),
             Tools::new(),
-            AgentSpec::new(
+            Agent::new(
                 AgentId::new("test"),
                 Model {
                     name: "script".into(),
@@ -714,7 +714,7 @@ fn sending() -> Runner {
     Runner::new(
         Box::new(spelling("anthropic")),
         Tools::new(),
-        AgentSpec::new(
+        Agent::new(
             AgentId::new("test"),
             Model {
                 name: "claude-opus-5".into(),

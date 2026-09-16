@@ -82,7 +82,7 @@ fn audit_exit(fails: Option<&'static str>) {
     let mut runner = Runner::with_toolset(
         Box::new(script),
         toolset,
-        AgentSpec::new(
+        Agent::new(
             AgentId::new("test"),
             Model {
                 name: "test".into(),

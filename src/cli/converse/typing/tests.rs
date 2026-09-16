@@ -6,7 +6,7 @@
 //! everything after that point is called directly.
 
 use crucible_core::{AgentId, Aside, Mode, Permission, Rules, ToolArgs};
-use crucible_runner::{AgentSpec, Model, Session, Tools};
+use crucible_runner::{Agent, Model, Session, Tools};
 use crucible_tui::{Aimed, Key, Recording};
 
 use super::drawing::writing;
@@ -46,7 +46,7 @@ fn engine(mode: Mode) -> Runner {
     Runner::new(
         Box::new(Script::new(vec![])),
         Tools::new(),
-        AgentSpec::new(
+        Agent::new(
             AgentId::new("test"),
             Model {
                 name: "script".into(),

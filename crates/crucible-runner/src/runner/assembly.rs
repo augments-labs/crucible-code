@@ -17,11 +17,11 @@ impl Runner {
         let assembled = assemble(
             &self.context,
             self.session.context_snapshot(),
-            &self.transcript,
+            &self.state.transcript,
             Live {
-                model: &self.spec.model.name,
-                effort: self.spec.model.effort,
-                tools: &self.tools,
+                model: &self.agent.model().name,
+                effort: self.agent.model().effort,
+                tools: &self.state.tools,
                 permission: &self.permission,
             },
         )?;

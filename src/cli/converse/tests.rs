@@ -12,7 +12,7 @@ use crucible_auth::Store;
 use crucible_core::{
     AgentId, Compacting, Delta, Event, Mode, Permission, Revealed, Rules, StopReason, ToolId,
 };
-use crucible_runner::{AgentSpec, Model, Session, Tools};
+use crucible_runner::{Agent, Model, Session, Tools};
 use crucible_tui::{Picture, Recording, Size, Terminal, TerminalError};
 
 use std::sync::mpsc::channel;
@@ -125,7 +125,7 @@ fn scripted(script: Script, offered: Tools) -> Runner {
     Runner::new(
         Box::new(script),
         offered,
-        AgentSpec::new(
+        Agent::new(
             AgentId::new("test"),
             Model {
                 name: "script".into(),
@@ -268,7 +268,7 @@ fn a_theme_taken_mid_session_is_what_the_rows_after_it_are_drawn_in() {
     let runner = Runner::new(
         Box::new(Script::new(vec![])),
         Tools::new(),
-        AgentSpec::new(
+        Agent::new(
             AgentId::new("test"),
             Model {
                 name: "".into(),
@@ -616,7 +616,7 @@ fn a_log_that_failed_with_the_last_line_still_queued_is_reported_before_the_prom
     let runner = Runner::new(
         Box::new(Script::new(vec![])),
         Tools::new(),
-        AgentSpec::new(
+        Agent::new(
             AgentId::new("test"),
             Model {
                 name: "script".into(),
@@ -657,7 +657,7 @@ fn a_terminal_that_fails_mid_turn_leaves_the_turn_recorded_all_the_same() {
     let runner = Runner::new(
         Box::new(provider),
         Tools::new(),
-        AgentSpec::new(
+        Agent::new(
             AgentId::new("test"),
             Model {
                 name: "script".into(),
@@ -701,7 +701,7 @@ fn a_terminal_failure_cancels_a_provider_that_would_otherwise_stay_live() {
     let runner = Runner::new(
         Box::new(provider),
         Tools::new(),
-        AgentSpec::new(
+        Agent::new(
             AgentId::new("test"),
             Model {
                 name: "stalling".into(),
@@ -1277,7 +1277,7 @@ fn a_prompt_that_cannot_be_answered_down_a_pipe_fails_rather_than_ending_quietly
     let runner = Runner::new(
         Box::new(Script::new(Vec::new())),
         Tools::new(),
-        AgentSpec::new(
+        Agent::new(
             AgentId::new("test"),
             Model {
                 name: String::new().into(),

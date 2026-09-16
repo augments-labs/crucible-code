@@ -136,7 +136,7 @@ impl Runner {
         // Measured before anything moves, because this is what the compaction
         // is judged against: pruning can be all the room a current turn needs,
         // and a `before` taken after it would read that progress as none.
-        let before = self.load.tokens();
+        let before = self.state.load.tokens();
 
         // The lightest touch first. Tool results can fill the current turn by
         // themselves, and that is exactly where there is no older middle for a
@@ -147,14 +147,14 @@ impl Runner {
         let replacing = if let Some(replacing) = replacing {
             replacing
         } else {
-            let after = self.load.tokens();
+            let after = self.state.load.tokens();
             if after < before {
                 let compacted = Compacted {
                     why,
                     replaced: 0,
                     before,
                     after,
-                    kept: self.transcript.turns(),
+                    kept: self.state.transcript.turns(),
                 };
                 self.session.display_compacted(compacted, pruned);
                 events.post(crucible_core::Event::Compacted { compacted });
@@ -170,6 +170,7 @@ impl Runner {
             // dead end that used to report NoRoom even though the session log
             // still held everything being replaced.
             let completed_pass = self
+                .state
                 .transcript
                 .messages()
                 .iter()
@@ -177,7 +178,7 @@ impl Runner {
                 .take_while(|message| !matches!(message, Message::User { .. }))
                 .any(|message| matches!(message, Message::ToolResults(_)));
             match (why, completed_pass) {
-                (Compacting::Full | Compacting::Refused, true) => self.transcript.len(),
+                (Compacting::Full | Compacting::Refused, true) => self.state.transcript.len(),
                 (Compacting::Asked | Compacting::Resumed, _)
                 | (Compacting::Full | Compacting::Refused, false) => {
                     return Ok(Room::Nothing);
@@ -211,6 +212,7 @@ impl Runner {
         // message, and counting it here would make the same two turns suddenly
         // look six messages longer after context assembly was introduced.
         let reported_replaced = self
+            .state
             .transcript
             .messages()
             .iter()
@@ -230,25 +232,26 @@ impl Runner {
                 replacing,
                 &standing_as,
             )));
-        self.transcript.compacted(replacing, standing_as);
+        self.state.transcript.compacted(replacing, standing_as);
 
-        self.load.replaced();
-        for message in self.transcript.messages() {
-            self.load.recounted(message);
+        self.state.load.replaced();
+        for message in self.state.transcript.messages() {
+            self.state.load.recounted(message);
         }
-        self.load
-            .requesting(self.spec.instructions(), &self.tools.advertised());
+        self.state
+            .load
+            .requesting(self.agent.instructions(), &self.state.tools.advertised());
 
         // Turns kept whole rather than messages, because that is the shape a
         // reader thinks in: the recap stands in for the front, and what is left
         // standing is the last few things they asked for.
-        let kept = self.transcript.turns();
+        let kept = self.state.transcript.turns();
 
         let compacted = Compacted {
             why,
             replaced: reported_replaced,
             before,
-            after: self.load.tokens(),
+            after: self.state.load.tokens(),
             kept,
         };
         self.session.display_compacted(compacted, pruned);
@@ -283,7 +286,7 @@ impl Runner {
     /// window is judged by the number that decided it was full.
     fn replacing(&self, keep_tokens: u64) -> Option<usize> {
         let budget = keep_tokens.max(1);
-        let messages = self.transcript.messages();
+        let messages = self.state.transcript.messages();
 
         // The newest turn is kept whole. Starting one user prompt back from the
         // end puts the ordinary boundary before whatever the model is doing now,
@@ -334,7 +337,7 @@ impl Runner {
                 .sum::<usize>(),
         } as u64;
 
-        self.load.bytes_to_tokens(bytes)
+        self.state.load.bytes_to_tokens(bytes)
     }
 
     /// Asks the model to write down what is worth keeping.
@@ -356,7 +359,7 @@ impl Runner {
     fn tracked(&self, replacing: usize) -> TrackedFiles {
         let mut files = TrackedFiles::default();
 
-        for message in self.transcript.messages() {
+        for message in self.state.transcript.messages() {
             // A recap from a compaction before this one. The span being
             // replaced starts after the latest of them, but the files it kept
             // are still this session's to remember.
@@ -374,10 +377,10 @@ impl Runner {
         // the rest return `None` and are nobody's to track. `take` rather than a
         // slice, because `replacing` was just decided from this length and a
         // panic on the way back through it is a bug, not a bound to re-check.
-        for message in self.transcript.messages().iter().take(replacing) {
+        for message in self.state.transcript.messages().iter().take(replacing) {
             if let Message::Agent { calls, .. } = message {
                 for call in calls {
-                    if let Some(entry) = self.tools.find(&call.name)
+                    if let Some(entry) = self.state.tools.find(&call.name)
                         && let Some(file) = entry.tool().remember(&call.args)
                     {
                         files.note(file.path(), file.is_modified());
@@ -392,7 +395,8 @@ impl Runner {
     /// Adds the temporary instruction, never a durable user message. Every
     /// exit from `recap` below removes it before returning to the turn loop.
     fn append_recap_prompt(&mut self) -> Result<u64, TurnError> {
-        self.transcript
+        self.state
+            .transcript
             .push(Message::said(RECAP_REQUEST))
             .map_err(|_| ProviderError::Protocol {
                 provider: self.provider.name(),
@@ -418,28 +422,26 @@ impl Runner {
         // `tokens` may include ordinary system/tool overhead that this request
         // omits. Keeping it is the conservative direction; adding only the new
         // instruction avoids estimating the existing transcript a second time.
-        let request_tokens = self
-            .load
-            .tokens()
-            .saturating_add(Load::cautious(asking_bytes));
-        let safe = self.spec.model.window.map_or(u32::MAX, |window| {
+        let carried = self.state.load.tokens();
+        let request_tokens = carried.saturating_add(Load::cautious(asking_bytes));
+        let safe = self.state.window.map_or(u32::MAX, |window| {
             u32::try_from(u64::from(window).saturating_sub(request_tokens)).unwrap_or(u32::MAX)
         });
         let room = run
             .policy()
             .compaction
             .recap_tokens
-            .min(self.spec.model.max_tokens)
+            .min(self.agent.model().max_tokens)
             .min(safe);
         if room == 0 {
-            self.transcript.pop();
+            self.state.transcript.pop();
             return Ok(Recap::Incomplete);
         }
 
         let pricing_date = super::pricing_today();
         let capabilities = self
             .provider
-            .prompt_cache_capabilities(&self.spec.model.name);
+            .prompt_cache_capabilities(&self.agent.model().name);
         let model_revision = capabilities.model_revision();
         let route = self.provider.prompt_cache_route();
         let authority = PermissionsSection::new(&self.permission)
@@ -454,12 +456,12 @@ impl Runner {
             .to_string_lossy();
         let request = Request {
             purpose: crucible_core::RequestPurpose::Recap,
-            model: &self.spec.model.name,
-            transcript: &self.transcript,
+            model: &self.agent.model().name,
+            transcript: &self.state.transcript,
             tools: &[],
             max_tokens: room,
             system: None,
-            effort: self.spec.model.effort,
+            effort: self.agent.model().effort,
             // Nothing, deliberately. This request exists to turn a
             // transcript into a recap, and a recap is text; re-sending
             // megabytes of pictures to write one would spend the whole
@@ -472,10 +474,10 @@ impl Runner {
         let scope = ScopeInputs {
             route,
             policy: run.policy().prompt_cache,
-            model: &self.spec.model.name,
+            model: &self.agent.model().name,
             model_revision,
             max_tokens: room,
-            effort: self.spec.model.effort,
+            effort: self.agent.model().effort,
             run: run.run(),
             session: self.session.id().map(crucible_core::SessionId::as_str),
             workspace: workspace.as_bytes(),
@@ -513,12 +515,12 @@ impl Runner {
         let prepared = match prepared {
             Ok(prepared) => prepared,
             Err(problem) => {
-                self.transcript.pop();
+                self.state.transcript.pop();
                 return Err(problem);
             }
         };
         let mut cache = prepared.request();
-        self.prompt_cache_attempt = Some(PromptCacheAttempt {
+        self.state.prompt_cache_attempt = Some(PromptCacheAttempt {
             id: cache.attempt,
             capabilities: cache.capabilities.clone(),
             policy: cache.policy,
@@ -548,7 +550,7 @@ impl Runner {
             prompt_cache: Some(&cache),
             ..request
         });
-        if let Some(attempt) = self.prompt_cache_attempt.as_mut() {
+        if let Some(attempt) = self.state.prompt_cache_attempt.as_mut() {
             attempt.encoding = encoding;
         }
         if let PromptCacheEncoding::Failed(reason) = encoding {
@@ -561,7 +563,7 @@ impl Runner {
                 }),
             );
             let Some(fallback) = prepared.fallback_request(reason) else {
-                self.transcript.pop();
+                self.state.transcript.pop();
                 return Err(PromptCachePreparationError::Encoding(reason).into());
             };
             cache = fallback;
@@ -571,12 +573,12 @@ impl Runner {
                 prompt_cache: Some(&cache),
                 ..request
             });
-            if let Some(attempt) = self.prompt_cache_attempt.as_mut() {
+            if let Some(attempt) = self.state.prompt_cache_attempt.as_mut() {
                 attempt.selection = cache.selection;
                 attempt.encoding = encoding;
             }
             if let PromptCacheEncoding::Failed(reason) = encoding {
-                self.transcript.pop();
+                self.state.transcript.pop();
                 return Err(PromptCachePreparationError::Encoding(reason).into());
             }
         }
@@ -586,7 +588,7 @@ impl Runner {
         };
         let asked = self.provider.stream(request, cancel);
         let disposition = super::request_disposition(&asked);
-        if let Some(attempt) = self.prompt_cache_attempt.as_mut() {
+        if let Some(attempt) = self.state.prompt_cache_attempt.as_mut() {
             attempt.disposition = disposition;
         }
         self.report_prompt_cache(
@@ -620,7 +622,7 @@ impl Runner {
             },
         );
 
-        self.transcript.pop();
+        self.state.transcript.pop();
         // The final EOF read may have raised cancellation without producing a
         // delta. A complete recap is still provisional until that read ends;
         // it must not replace the original history after the user stopped it.
@@ -684,7 +686,8 @@ impl Runner {
                 }
                 Delta::Usage(usage) => {
                     let usage = super::merge_usage(
-                        self.prompt_cache_attempt
+                        self.state
+                            .prompt_cache_attempt
                             .as_ref()
                             .filter(|attempt| attempt.id == cache.attempt)
                             .and_then(|attempt| attempt.usage.as_ref()),
@@ -698,7 +701,7 @@ impl Runner {
                     let cost = self
                         .provider
                         .prompt_cache_pricing(
-                            &self.spec.model.name,
+                            &self.agent.model().name,
                             cache.model_revision,
                             usage.input.total,
                             cache.retention,
@@ -710,6 +713,7 @@ impl Runner {
                         .unwrap_or(UsageCost::UNKNOWN);
                     let outcome = usage.input.outcome(cache.reporting);
                     if let Some(attempt) = self
+                        .state
                         .prompt_cache_attempt
                         .as_mut()
                         .filter(|attempt| attempt.id == cache.attempt)
@@ -781,7 +785,7 @@ impl Runner {
         let mut clearing: Vec<ToolId> = Vec::new();
         let mut savings = 0_u64;
 
-        for message in self.transcript.messages().iter().rev() {
+        for message in self.state.transcript.messages().iter().rev() {
             let Message::ToolResults(results) = message else {
                 continue;
             };
@@ -819,19 +823,20 @@ impl Runner {
         // leave a log claiming results were cleared that the transcript still
         // holds. The line goes out once the transcript has moved, and replay
         // reads it to make the same move again.
-        let freed = self.transcript.prune(&clearing);
+        let freed = self.state.transcript.prune(&clearing);
         self.session.pruned(freed, &clearing);
 
         // The load drops by what was freed: the transcript is smaller, and the
         // next request is the thing that is measured. Recounted rather than
         // adjusted, because the estimate's rate is the provider's and this is
         // the moment it is known to be exact.
-        self.load.replaced();
-        for message in self.transcript.messages() {
-            self.load.recounted(message);
+        self.state.load.replaced();
+        for message in self.state.transcript.messages() {
+            self.state.load.recounted(message);
         }
-        self.load
-            .requesting(self.spec.instructions(), &self.tools.advertised());
+        self.state
+            .load
+            .requesting(self.agent.instructions(), &self.state.tools.advertised());
         true
     }
 }

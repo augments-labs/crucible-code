@@ -92,13 +92,13 @@ impl Runner {
         &mut self,
         cancel: &Cancel,
     ) -> Result<PromptCacheCleanup, PromptCacheResourceError> {
-        let Some(owner) = self.prompt_cache_owner_scope else {
+        let Some(owner) = self.state.prompt_cache_owner_scope else {
             return Ok(PromptCacheCleanup::default());
         };
         let result =
             self.clean_prompt_cache_in(ResourceCleanupScope::ExclusiveOwner(owner), cancel);
         if result.is_ok() {
-            self.prompt_cache_owner_scope = None;
+            self.state.prompt_cache_owner_scope = None;
         }
         result
     }

@@ -18,6 +18,14 @@ change in any release with no deprecation period.
   re-exports every moved name; `PromptCachePlanned::from_request` is now
   `PromptCacheRequest::planned`, and `PromptCachePolicy::narrowed` is
   `crucible_models::narrow_policy`.
+- **Agent definitions have a crate of their own, and a run's changing state is
+  separate from them.** `crucible-agents` now holds `Agent`, its builder, the
+  `Model` it is aimed at, the instructions it stands under, the tools it may
+  reach for, and the input and output guardrail traits anyone can implement;
+  `AgentSpec` is gone and `crucible-runner` re-exports every name under it. A
+  turn a guardrail refuses now comes back as `Turned::Rejected` or
+  `Turned::Undecided`, so `Runner::turn` answers with a `Turned` where it used
+  to answer with a `StopReason`.
 - **Context and prompt assembly have a crate of their own.** `crucible-context`
   now holds context sections, the order a pass assembles them in, the system
   prompt and what a compaction asks the model for; `Compacted`, `Compacting`,

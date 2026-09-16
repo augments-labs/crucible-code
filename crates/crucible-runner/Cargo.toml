@@ -13,6 +13,10 @@ authors.workspace = true
 # `dyn Tool`; naming a concrete one here is the design failure this crate exists
 # to prevent.
 [dependencies]
+# What an agent is, as against what running one does. The definition a turn is
+# taken under is built elsewhere and handed over whole; this crate holds one
+# and never writes to it.
+crucible-agents.workspace = true
 # The one bounded ingress an attachment's bytes come through. Resolving an
 # attachment reads the recorded file again, and doing that here would be a
 # second answer to what one request may carry.

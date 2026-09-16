@@ -30,7 +30,9 @@ use crucible_provider::{
     Anthropic, AnthropicWeb, Endpoint, Google, GoogleWeb, Https, Moonshot, MoonshotWeb, OpenAi,
     OpenAiWeb, Unavailable,
 };
-use crucible_runner::{AgentSpec, Bounds, Compaction, Model, RunPolicy, Runner, Session, Tools};
+use crucible_runner::{
+    Agent, AgentBuilder, Bounds, Compaction, Model, RunPolicy, Runner, Session, Tools,
+};
 use crucible_sandbox_local::LocalSandbox;
 
 use super::hosting::{Hosting, selecting};
@@ -936,8 +938,8 @@ fn about(schema: &str) -> Box<str> {
 /// The effort stays an `Option` for the opposite reason: there is no rung that
 /// means "nobody said", and the field left off is what a vendor reads as its own
 /// default.
-fn coding(startup: &Startup<'_>, provider: &str, name: &str, asked: &str) -> AgentSpec {
-    let mut spec = AgentSpec::new(
+fn coding(startup: &Startup<'_>, provider: &str, name: &str, asked: &str) -> Agent {
+    AgentBuilder::new(
         AgentId::new("coding"),
         Model {
             name: name.into(),
@@ -948,11 +950,11 @@ fn coding(startup: &Startup<'_>, provider: &str, name: &str, asked: &str) -> Age
             accepts: accepts(startup.providers, provider, name),
             effort: startup.effort,
         },
-    );
-    spec.named("Coding");
-    spec.describing("Reads, changes and checks the code in this workspace.");
-    spec.told(asked);
-    spec
+    )
+    .named("Coding")
+    .describing("Reads, changes and checks the code in this workspace.")
+    .telling(asked)
+    .build()
 }
 
 /// What the documents together say one run may spend, and what it does when

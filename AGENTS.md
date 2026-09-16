@@ -21,6 +21,7 @@ Repository skills live in [`.agents/skills/`](.agents/skills/).
 | `crates/crucible-tools/` | What a tool is, what may run one, and the proof that it may |
 | `crates/crucible-models/` | What a model is asked and answers with, and what a cache attempt may do |
 | `crates/crucible-context/` | The words a request is built from, and what a compaction asks for |
+| `crates/crucible-agents/` | What an agent is: what it may reach for, what it is told, and what checks its words |
 | `crates/crucible-core/` | Domain types and extension traits |
 | `crates/crucible-auth/` | Credentials and account authorization |
 | `crates/crucible-builtins/` | Built-in tools |

@@ -34,6 +34,13 @@ pub(crate) struct SentRequest {
     agent_text: Vec<u64>,
     result_text: Vec<u64>,
     pub(crate) tools: Vec<SentToolSchema>,
+    /// The model this request names.
+    ///
+    /// Kept because a session re-aimed mid-flight is only re-aimed once the
+    /// next request goes out under the new name: a runner that changed what it
+    /// reports without changing what it asks would read correctly off every
+    /// accessor and still be writing to the model the session opened on.
+    pub(crate) model: Box<str>,
     pub(crate) max_tokens: u32,
     pub(crate) effort: Option<Effort>,
     /// Whether this request carried a system prompt at all.
@@ -493,6 +500,7 @@ impl Provider for Script {
                     name: tool.name.into(),
                 })
                 .collect(),
+            model: request.model.into(),
             max_tokens: request.max_tokens,
             effort: request.effort,
             had_system: request.system.is_some(),

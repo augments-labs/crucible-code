@@ -35,6 +35,7 @@ arboard = { version = "=3.6.1", features = ["wayland-data-control"] }
 image = { version = "=0.25.10", default-features = false, features = ["png"] }
 # This workspace's own crates. Path dependencies, released together, so there is
 # no version to pin and no third party whose publish could move them.
+crucible-agents = { path = "crates/crucible-agents" }
 crucible-attachments = { path = "crates/crucible-attachments" }
 crucible-auth = { path = "crates/crucible-auth" }
 crucible-builtins = { path = "crates/crucible-builtins" }

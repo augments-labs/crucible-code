@@ -117,7 +117,7 @@ where
     let mut runner = Runner::with_toolset(
         Box::new(script),
         live,
-        AgentSpec::new(
+        Agent::new(
             AgentId::new("test"),
             Model {
                 name: "test".into(),
@@ -132,7 +132,9 @@ where
         Session::nowhere(),
     );
     let context = runner.starting(&events, &cancel, &steer, &aside);
-    runner.turn("go", Box::new([]), &mut says, &context)
+    runner
+        .turn("go", Box::new([]), &mut says, &context)
+        .map(ran)
 }
 
 struct Marks {

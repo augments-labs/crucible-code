@@ -699,7 +699,7 @@ fn listed<T: Terminal>(
 #[cfg(test)]
 mod tests {
     use crucible_core::AgentId;
-    use crucible_runner::{AgentSpec, Model as RunnerModel, Session, Tools};
+    use crucible_runner::{Agent, Model as RunnerModel, Session, Tools};
     use crucible_tui::{Glyphs, Recording, Renderer};
 
     use crate::cli::converse::tests::plain;
@@ -745,7 +745,7 @@ mod tests {
         crucible_runner::Runner::new(
             Box::new(Script::new(Vec::new())),
             Tools::new(),
-            AgentSpec::new(
+            Agent::new(
                 AgentId::new("test"),
                 RunnerModel {
                     name: "old".into(),
@@ -765,7 +765,7 @@ mod tests {
         crucible_runner::Runner::new(
             Box::new(Script::new(Vec::new())),
             Tools::new(),
-            AgentSpec::new(
+            Agent::new(
                 AgentId::new("test"),
                 RunnerModel {
                     name: "".into(),
@@ -917,7 +917,7 @@ mod tests {
         let mut runner = crucible_runner::Runner::new(
             Box::new(Script::new(Vec::new())),
             Tools::new(),
-            AgentSpec::new(
+            Agent::new(
                 AgentId::new("test"),
                 RunnerModel {
                     name: "old".into(),

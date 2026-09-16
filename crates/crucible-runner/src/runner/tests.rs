@@ -82,13 +82,14 @@ mod attribution;
 mod compaction;
 mod context;
 mod continuation;
+mod guardrails;
+mod instructions;
 mod lifecycle;
 mod lifecycle_audit;
 mod outcome;
 mod pick_up;
 mod preserved;
 mod reporting;
-mod spec;
 mod spending;
 
 /// A destination that keeps the event and lets the attribution go.
@@ -152,6 +153,28 @@ impl PromptCacheResourceStore for SharedStore {
     }
 }
 
+/// What the tests reach for, which is nothing a caller may.
+///
+/// A definition is replaced whole rather than written to, and the between-turn
+/// commands that do that have effects of their own — a load re-estimated, a
+/// window unbelieved. A test about counting wants the new definition without
+/// those, and this is the only way to get one.
+impl Runner {
+    /// Stands the session under a definition built from the one in force.
+    fn redefine(&mut self, built: impl FnOnce(&Agent) -> Agent) {
+        self.agent = Arc::new(built(&self.agent));
+    }
+
+    /// The same, changing the model selection alone.
+    fn reaimed(&mut self, changing: impl FnOnce(&mut Model)) {
+        self.redefine(|agent| {
+            let mut model = agent.model().clone();
+            changing(&mut model);
+            agent.aimed(model)
+        });
+    }
+}
+
 /// A runner over a scripted provider, with somewhere for its events to go.
 struct Scripted {
     runner: Runner,
@@ -164,12 +187,53 @@ struct Scripted {
     seen: Receiver<Event>,
 }
 
+/// The definition these tests run under where none of them is about it.
+fn fixture() -> Agent {
+    Agent::new(
+        AgentId::new("test"),
+        Model {
+            name: "claude-test".into(),
+            max_tokens: 1024,
+            window: None,
+            accepts: Some(READS),
+            effort: None,
+        },
+    )
+}
+
+/// The ending a turn reached, for a test that is not about the checks.
+///
+/// A turn a guardrail refused has no ending, and saying so here rather than
+/// mapping it to one keeps a test about something else from quietly passing on
+/// a refusal it never meant to provoke.
+fn ran(turned: Turned) -> StopReason {
+    match turned {
+        Turned::Ran(result) => result.stop(),
+        refused => panic!("a turn no check refused: {refused:?}"),
+    }
+}
+
 impl Scripted {
     fn new(script: Script, tools: Tools, verdict: Verdict) -> Self {
         Self::recording(script, tools, verdict, Session::nowhere())
     }
 
     fn recording(script: Script, tools: Tools, verdict: Verdict, session: Session) -> Self {
+        Self::built(script, tools, verdict, session, fixture())
+    }
+
+    /// The same, under a definition the test built rather than the fixture one.
+    fn under(script: Script, tools: Tools, agent: Agent) -> Self {
+        Self::built(script, tools, Verdict::Allow, Session::nowhere(), agent)
+    }
+
+    fn built(
+        script: Script,
+        tools: Tools,
+        verdict: Verdict,
+        session: Session,
+        agent: Agent,
+    ) -> Self {
         let (events, seen) = channel();
         let sent = script.sent();
 
@@ -177,16 +241,7 @@ impl Scripted {
             runner: Runner::new(
                 Box::new(script),
                 tools,
-                AgentSpec::new(
-                    AgentId::new("test"),
-                    Model {
-                        name: "claude-test".into(),
-                        max_tokens: 1024,
-                        window: None,
-                        accepts: Some(READS),
-                        effort: None,
-                    },
-                ),
+                agent,
                 ContextInputs::new(std::env::temp_dir())
                     .dated(std::time::UNIX_EPOCH + std::time::Duration::from_hours(496_704)),
                 session,
@@ -213,7 +268,7 @@ impl Scripted {
     /// here and the thing this one has to undo.
     fn within(script: Script, window: u32, compacting: Compaction) -> Self {
         let mut scripted = Self::new(script, Tools::new(), Verdict::Allow);
-        scripted.runner.spec.model.window = Some(window);
+        scripted.runner.state.window = Some(window);
         scripted.runner.policy.compaction = compacting;
         scripted
     }
@@ -245,7 +300,9 @@ impl Scripted {
             .runner
             .starting(&self.events, &self.cancel, &self.steer, &self.aside);
 
-        self.runner.turn(prompt, attachments, &mut self.says, &run)
+        self.runner
+            .turn(prompt, attachments, &mut self.says, &run)
+            .map(ran)
     }
 
     /// The same, under a run that asked for less than the session allows.
@@ -257,6 +314,22 @@ impl Scripted {
     /// exists for, and this is the only way to write it here.
     fn turning_under(&mut self, prompt: &str, asking: RunPolicy) -> Result<StopReason, TurnError> {
         let run = RunContext::new(asking, &self.events, &self.cancel, &self.steer, &self.aside);
+
+        self.runner
+            .turn(prompt, Box::new([]), &mut self.says, &run)
+            .map(ran)
+    }
+
+    /// The same, handing back everything the turn ended as rather than only
+    /// the model's ending.
+    ///
+    /// What the tests about the checks read. Every other test here goes
+    /// through [`Scripted::turn`], which treats a refusal as the harness fault
+    /// it would be there.
+    fn turned(&mut self, prompt: &str) -> Result<Turned, TurnError> {
+        let run = self
+            .runner
+            .starting(&self.events, &self.cancel, &self.steer, &self.aside);
 
         self.runner.turn(prompt, Box::new([]), &mut self.says, &run)
     }
@@ -508,7 +581,7 @@ fn a_tool_result_keeps_a_known_window_reading_present() {
         tools([Fixed::new("read").answering(&output)]),
         Verdict::Allow,
     );
-    scripted.runner.spec.model.window = Some(200_000);
+    scripted.runner.state.window = Some(200_000);
 
     scripted.turn(&"x".repeat(200_000)).expect("a turn");
 
@@ -538,7 +611,7 @@ fn exact_usage_cannot_make_streamed_tool_content_appear_to_free_room() {
         saying("done"),
     ]);
     let mut scripted = Scripted::new(script, tools([Fixed::new("read")]), Verdict::Allow);
-    scripted.runner.spec.model.window = Some(200_000);
+    scripted.runner.state.window = Some(200_000);
 
     scripted.turn(&"x".repeat(200_000)).expect("a tool turn");
 
@@ -575,7 +648,7 @@ impl Steering {
             runner: Runner::new(
                 Box::new(script),
                 tools,
-                AgentSpec::new(
+                Agent::new(
                     AgentId::new("test"),
                     Model {
                         name: "claude-test".into(),
@@ -604,7 +677,9 @@ impl Steering {
             .runner
             .starting(&self.events, &cancel, &self.steer, &self.aside);
 
-        self.runner.turn(prompt, Box::new([]), &mut self.says, &run)
+        self.runner
+            .turn(prompt, Box::new([]), &mut self.says, &run)
+            .map(ran)
     }
 
     fn said(&self) -> String {
@@ -669,7 +744,7 @@ fn a_steered_line_keeps_a_known_window_reading_present() {
         Delta::Stopped(StopReason::Yielded),
     ]]);
     let mut steering = Steering::new(script, Tools::new());
-    steering.runner.spec.model.window = Some(200_000);
+    steering.runner.state.window = Some(200_000);
     steering.steer.say("take this route".into());
 
     steering.turn("first").expect("a turn");
@@ -911,7 +986,12 @@ fn cancellation_after_usage_keeps_the_provider_fact_on_its_attempt() {
 
     assert_eq!(scripted.turn("go").unwrap(), StopReason::Cancelled);
 
-    let attempt = scripted.runner.prompt_cache_attempt().expect("an attempt");
+    let attempt = scripted
+        .runner
+        .state
+        .prompt_cache_attempt
+        .as_ref()
+        .expect("an attempt");
     assert_eq!(attempt.usage.as_ref(), Some(&usage));
     assert_eq!(attempt.outcome, crucible_core::PromptCacheOutcome::Read);
     assert_eq!(
@@ -933,7 +1013,9 @@ fn cancellation_after_usage_keeps_the_provider_fact_on_its_attempt() {
 fn prefer_records_an_adapter_encoding_failure_then_sends_the_unchanged_request() {
     let script = Script::new(vec![saying("done")]).failing_cache_encoding();
     let mut scripted = Scripted::new(script, Tools::new(), Verdict::Deny);
-    scripted.runner.spec.told("stable fixture instructions");
+    scripted
+        .runner
+        .redefine(|agent| agent.telling("stable fixture instructions"));
 
     scripted
         .turn("go")
@@ -973,7 +1055,9 @@ fn prefer_records_an_adapter_encoding_failure_then_sends_the_unchanged_request()
 fn require_fails_before_send_when_the_adapter_cannot_lower_the_selected_control() {
     let script = Script::new(vec![saying("must not be sent")]).failing_cache_encoding();
     let mut scripted = Scripted::new(script, Tools::new(), Verdict::Deny);
-    scripted.runner.spec.told("stable fixture instructions");
+    scripted
+        .runner
+        .redefine(|agent| agent.telling("stable fixture instructions"));
     scripted.runner.policy.prompt_cache =
         PromptCachePolicy::default().with_mode(crucible_core::PromptCacheMode::Require);
 
@@ -994,7 +1078,9 @@ fn persistent_resources_are_ready_before_wire_reference_and_explicit_cleanup_del
     let store = SharedStore::default();
     let records = Arc::clone(&store.0);
     let mut scripted = Scripted::new(script, Tools::new(), Verdict::Deny).storing(store);
-    scripted.runner.spec.told("stable fixture instructions");
+    scripted
+        .runner
+        .redefine(|agent| agent.telling("stable fixture instructions"));
     scripted.runner.policy.prompt_cache = scripted
         .runner
         .policy
@@ -1061,7 +1147,9 @@ fn retirement_deletes_only_the_current_exclusive_owner_scope() {
     let store = SharedStore::default();
     let records = Arc::clone(&store.0);
     let mut scripted = Scripted::new(script, Tools::new(), Verdict::Deny).storing(store);
-    scripted.runner.spec.told("stable fixture instructions");
+    scripted
+        .runner
+        .redefine(|agent| agent.telling("stable fixture instructions"));
     scripted.runner.policy.prompt_cache = scripted
         .runner
         .policy
@@ -1305,7 +1393,7 @@ fn a_turn_that_yields_records_what_the_model_said() {
 
     assert_eq!(scripted.said(), "Hello, world");
     assert_eq!(
-        conversation(scripted.runner.transcript()),
+        conversation(scripted.runner.state.transcript()),
         [
             Message::said("hi"),
             Message::Agent {
@@ -1332,7 +1420,7 @@ fn a_tool_call_runs_and_what_it_produced_goes_back_to_the_model() {
 
     assert_eq!(scripted.turn("read x").unwrap(), StopReason::Yielded);
 
-    let messages = conversation(scripted.runner.transcript());
+    let messages = conversation(scripted.runner.state.transcript());
     assert_eq!(messages.len(), 4, "prompt, call, result, answer");
     assert!(matches!(
         messages.get(2),
@@ -1403,7 +1491,7 @@ fn tool_results_past_the_retained_boundary_end_the_turn() {
 
     assert!(matches!(problem, TurnError::ToolOutputBytes { maximum: 8 }));
     assert!(matches!(
-        scripted.runner.transcript().messages().last(),
+        scripted.runner.state.transcript().messages().last(),
         Some(Message::ToolResults(results)) if results.len() == 1
     ));
 }
@@ -1422,7 +1510,7 @@ fn a_tool_the_user_refused_ends_the_turn_and_is_still_answered() {
     assert_eq!(problem.to_string(), "write was not allowed");
     assert!(
         matches!(
-            scripted.runner.transcript().messages().last(),
+            scripted.runner.state.transcript().messages().last(),
             Some(Message::ToolResults(results)) if results.len() == 1
         ),
         "a call with no result is a transcript the provider refuses"
@@ -1447,7 +1535,7 @@ fn a_call_the_model_never_finished_asking_for_is_not_recorded() {
     assert_eq!(scripted.turn("go").unwrap(), StopReason::Cancelled);
 
     assert_eq!(
-        conversation(scripted.runner.transcript()),
+        conversation(scripted.runner.state.transcript()),
         [
             Message::said("go"),
             Message::Agent {
@@ -1511,7 +1599,7 @@ fn an_answer_the_connection_broke_off_is_still_in_the_transcript() {
         "{problem}"
     );
     assert_eq!(
-        conversation(scripted.runner.transcript()),
+        conversation(scripted.runner.state.transcript()),
         [
             Message::said("what is in main.rs?"),
             Message::Agent {
@@ -1561,7 +1649,7 @@ fn a_response_that_went_away_before_it_said_anything_is_asked_for_again() {
     // Nothing of the attempt that went away is left behind: an empty agent
     // message here is one the next request carries, and every request after it.
     assert_eq!(
-        conversation(scripted.runner.transcript()),
+        conversation(scripted.runner.state.transcript()),
         [
             Message::said("go"),
             Message::Agent {
@@ -1824,7 +1912,7 @@ fn a_turn_that_finds_the_flag_raised_stops_without_sending_anything() {
         "the turn ended without saying so"
     );
     assert!(
-        scripted.runner.transcript().is_empty(),
+        scripted.runner.state.transcript().is_empty(),
         "a turn that never ran recorded a prompt the model was never told"
     );
 }

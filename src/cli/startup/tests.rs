@@ -516,7 +516,7 @@ fn a_session_with_nothing_chosen_starts_and_asks_for_no_model() {
 /// answer build one. Everything the specification does not touch — the
 /// session, the workspace, the credentials — belongs to `assemble`, which
 /// these tests reach through separately.
-fn specified(model: &str, effort: Option<Effort>, settings: &Settings, told: &str) -> AgentSpec {
+fn specified(model: &str, effort: Option<Effort>, settings: &Settings, told: &str) -> Agent {
     let sample = Sample::new(&format!("specified-{model}"));
     let (logs, workspace) = (sample.logs(), sample.workspace());
     let catalogue = catalogue();
@@ -554,7 +554,7 @@ fn a_rung_the_run_resolved_is_on_the_model_every_turn_is_asked_of() {
 
     assert_eq!(
         specified("claude-opus-5", Some(Effort::Xhigh), &settings, "")
-            .model
+            .model()
             .effort,
         Some(Effort::Xhigh)
     );
@@ -562,7 +562,9 @@ fn a_rung_the_run_resolved_is_on_the_model_every_turn_is_asked_of() {
     // And nothing where nothing said, which is the field left off rather than
     // a rung this program chose on the vendor's behalf.
     assert_eq!(
-        specified("claude-opus-5", None, &settings, "").model.effort,
+        specified("claude-opus-5", None, &settings, "")
+            .model()
+            .effort,
         None
     );
 }
@@ -645,12 +647,12 @@ fn how_long_an_answer_may_be_is_the_model_own_limit_held_under_the_ceiling() {
     // A model this build has the limits of: its own output limit is far above
     // the ceiling, so the ceiling is what is asked for.
     let known = specified("claude-opus-5", None, &Settings::default(), "");
-    assert_eq!(known.model.max_tokens, CEILING);
+    assert_eq!(known.model().max_tokens, CEILING);
 
     // And one it has never heard of, where nothing is known and the lower
     // figure is what keeps a request from being refused outright.
     let unknown = specified("claude-from-the-future", None, &Settings::default(), "");
-    assert_eq!(unknown.model.max_tokens, UNKNOWN_CEILING);
+    assert_eq!(unknown.model().max_tokens, UNKNOWN_CEILING);
 }
 
 /// What `named` gets to reach the web with, given a key and maybe a model.
@@ -918,13 +920,13 @@ fn the_agent_is_named_coding_and_stands_under_what_the_wiring_asked() {
     let asked = "read the workspace before changing it";
     let built = specified("claude-opus-5", None, &Settings::default(), asked);
 
-    assert_eq!(built.id.as_str(), "coding");
+    assert_eq!(built.id().as_str(), "coding");
     assert_eq!(built.instructions(), Some(asked));
 }
 
 #[test]
 fn a_definition_the_wiring_had_nothing_to_say_under_is_told_nothing() {
-    // The rule `AgentSpec::told` enforces, at the one site outside the runner
+    // The rule `Agent::telling` enforces, at the one site outside the runner
     // that writes the field: no instructions and empty instructions are two
     // different requests, and a prompt nobody wrote is the first.
     //

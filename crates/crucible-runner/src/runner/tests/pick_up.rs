@@ -200,7 +200,7 @@ fn a_session_picked_up_estimates_window_left_before_it_answers_again() {
     let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
     let id = named(&session);
     let mut scripted = Scripted::recording(measured(), Tools::new(), Verdict::Allow, session);
-    scripted.runner.spec.model.window = Some(200_000);
+    scripted.runner.state.window = Some(200_000);
 
     scripted.turn("go").expect("a measured turn");
     assert_eq!(
@@ -218,7 +218,7 @@ fn a_session_picked_up_estimates_window_left_before_it_answers_again() {
         Some(100),
         "the fresh empty transcript was not estimated"
     );
-    assert_eq!(scripted.runner.load.calibrated(), None);
+    assert_eq!(scripted.runner.state.load.calibrated(), None);
 
     drop(picking(&mut scripted, &sample, &id));
 
@@ -238,24 +238,26 @@ fn a_reading_taken_against_other_instructions_is_reestimated_for_this_run() {
     let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
     let id = named(&session);
     let mut scripted = Scripted::recording(measured(), Tools::new(), Verdict::Allow, session);
-    scripted.runner.spec.model.window = Some(200_000);
+    scripted.runner.state.window = Some(200_000);
 
     scripted.turn("go").expect("a measured turn");
 
     let fresh = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
     drop(scripted.runner.pick_up(fresh, Transcript::new()));
-    scripted.runner.spec.told("answer only in French");
+    scripted
+        .runner
+        .redefine(|agent| agent.telling("answer only in French"));
 
     drop(picking(&mut scripted, &sample, &id));
 
     assert_eq!(scripted.runner.left(), Some(99));
     assert_eq!(
-        scripted.runner.load.calibrated(),
+        scripted.runner.state.load.calibrated(),
         None,
         "the reading taken against other instructions was reused"
     );
     assert!(
-        scripted.runner.load.tokens() < 1_000,
+        scripted.runner.state.load.tokens() < 1_000,
         "nothing of the reading was taken: what came back is a few bytes of          transcript, counted at the rate a session with no report of its own uses"
     );
 }
@@ -517,7 +519,7 @@ fn measured_restricted_search(sample: &Sample) -> SessionId {
         .turn("search for rust")
         .expect("a measured search turn");
     assert!(
-        recorded.runner.load.calibrated().is_some(),
+        recorded.runner.state.load.calibrated().is_some(),
         "the answer left no reading to take back"
     );
     drop(
@@ -556,7 +558,7 @@ fn a_session_picked_up_without_what_its_vendor_restricted_does_not_trust_the_rea
 
     assert_eq!(only_result(&elsewhere).output.text(), RESTRICTED);
     assert_eq!(
-        elsewhere.runner.load.calibrated(),
+        elsewhere.runner.state.load.calibrated(),
         None,
         "the reading taken with the restricted results in the request was trusted after they were taken out"
     );
@@ -583,7 +585,7 @@ fn a_session_resumed_without_what_its_vendor_restricted_does_not_trust_the_readi
 
     assert_eq!(only_result(&resumed).output.text(), RESTRICTED);
     assert_eq!(
-        resumed.runner.load.calibrated(),
+        resumed.runner.state.load.calibrated(),
         None,
         "the reading taken with the restricted results in the request was trusted after they were taken out"
     );

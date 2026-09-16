@@ -129,7 +129,7 @@ mod tests {
     use crucible_auth::Store;
     use crucible_builtins::{Ledger, Plan};
     use crucible_core::{AgentId, Cancel, Message, Revealed, StopReason, ToolArgs, Transcript};
-    use crucible_runner::{AgentSpec, Model, Runner, Session, Tools, recent};
+    use crucible_runner::{Agent, Model, Runner, Session, Tools, recent};
     use crucible_tui::{Recording, Renderer};
 
     use crate::cli::Fatal;
@@ -238,7 +238,7 @@ mod tests {
         Runner::new(
             Box::new(Script::new(Vec::new())),
             Tools::new(),
-            AgentSpec::new(
+            Agent::new(
                 AgentId::new("test"),
                 Model {
                     name: "script".into(),
@@ -449,7 +449,7 @@ mod tests {
         let mut runner = Runner::new(
             Box::new(Script::new(Vec::new())),
             Tools::new(),
-            AgentSpec::new(
+            Agent::new(
                 AgentId::new("test"),
                 Model {
                     name: "script".into(),

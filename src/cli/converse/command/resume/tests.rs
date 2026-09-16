@@ -19,7 +19,7 @@ use crucible_core::{
     AgentId, Cancel, Message, RecordedToolOutput, Revealed, SessionId, StopReason, ToolArgs,
     ToolCall, ToolId, ToolResult,
 };
-use crucible_runner::{AgentSpec, Model, Runner, Tools};
+use crucible_runner::{Agent, Model, Runner, Tools};
 use crucible_tui::{Recording, Renderer, Row};
 
 use crate::cli::converse::{Answers, Held};
@@ -75,7 +75,7 @@ fn over(session: Session) -> Runner {
     Runner::new(
         Box::new(Script::new(Vec::new())),
         Tools::new(),
-        AgentSpec::new(
+        Agent::new(
             AgentId::new("test"),
             Model {
                 name: "script".into(),

@@ -23,6 +23,7 @@
 //! [`Runner::turn`]: crate::Runner::turn
 //! [`Session::trouble`]: crucible_session::Session::trouble
 
+use crucible_agents::{GuardrailError, Rejection};
 use crucible_core::{RunId, Spend, StopReason};
 
 /// How a run ended, in the words the harness uses rather than the model's.
@@ -175,9 +176,112 @@ impl RunResult {
     }
 }
 
+/// How one invocation of an agent ended.
+///
+/// Three, and they are three because the caller has to be able to tell them
+/// apart. A run that ended is an answer. A run a guardrail refused produced no
+/// answer this agent will stand behind, and saying so is not the same as saying
+/// the model stopped. A guardrail that could not decide produced no verdict at
+/// all — the check itself is what went wrong, and treating that as a refusal
+/// would let a check that cannot run refuse everything.
+///
+/// Cancellation is not a fourth: somebody stopping a run is an ending the model
+/// and the loop already have a word for, and it arrives as
+/// [`StopReason::Cancelled`] inside [`Turned::Ran`].
+///
+/// A guardrail never widens anything, so there is no variant here for one
+/// having allowed something. Allowing is the run carrying on.
+#[derive(Debug)]
+pub enum Turned {
+    /// The exchange ran to an ending, and the answer was accepted.
+    Ran(RunResult),
+
+    /// A guardrail refused: the invocation on the way in, or the final
+    /// candidate answer on the way out.
+    Rejected {
+        /// Which check refused, and what it said about why.
+        rejection: Rejection,
+        /// How the model's own answer ended, where there was one to refuse.
+        ///
+        /// `None` for an input check, which runs before the first request of
+        /// the invocation: nothing was asked, so nothing stopped.
+        stop: Option<StopReason>,
+    },
+
+    /// A guardrail ran and could not reach a decision.
+    Undecided {
+        /// What the check said about why not.
+        problem: GuardrailError,
+        /// How the model's own answer ended, where there was one to judge.
+        stop: Option<StopReason>,
+    },
+}
+
+impl Turned {
+    /// How the model's own answer ended, where a request went out at all.
+    ///
+    /// `None` is an invocation that never reached a provider, which is the one
+    /// shape that has no ending to report and the reason this is an option
+    /// rather than a reason invented for it.
+    #[must_use]
+    pub const fn stop(&self) -> Option<StopReason> {
+        match self {
+            Self::Ran(result) => Some(result.stop()),
+            Self::Rejected { stop, .. } | Self::Undecided { stop, .. } => *stop,
+        }
+    }
+
+    /// What the run ended as, where it ran to an ending.
+    #[must_use]
+    pub const fn result(&self) -> Option<&RunResult> {
+        match self {
+            Self::Ran(result) => Some(result),
+            Self::Rejected { .. } | Self::Undecided { .. } => None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_refusal_before_the_first_request_has_no_ending_to_report() {
+        let refused = Turned::Rejected {
+            rejection: Rejection::new("no-secrets", "the prompt carries a private key"),
+            stop: None,
+        };
+
+        assert_eq!(refused.stop(), None);
+        assert!(refused.result().is_none());
+    }
+
+    #[test]
+    fn a_refused_answer_still_says_how_the_model_stopped() {
+        let refused = Turned::Rejected {
+            rejection: Rejection::new("house-style", "the answer names a competitor"),
+            stop: Some(StopReason::Yielded),
+        };
+
+        assert_eq!(
+            refused.stop(),
+            Some(StopReason::Yielded),
+            "a refused answer lost the ending the model gave it"
+        );
+    }
+
+    #[test]
+    fn a_check_that_could_not_decide_is_not_a_refusal() {
+        let undecided = Turned::Undecided {
+            problem: GuardrailError::undecided("no-secrets", "the scanner was unreachable"),
+            stop: None,
+        };
+
+        assert!(
+            matches!(undecided, Turned::Undecided { .. }),
+            "a check that could not decide reads as one that refused"
+        );
+    }
 
     #[test]
     fn a_model_that_yielded_completed_the_run() {

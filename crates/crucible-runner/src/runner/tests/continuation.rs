@@ -30,7 +30,7 @@ fn complete_reasoning_only_answer_is_retained_and_recorded() {
     let mut scripted = Scripted::recording(script, Tools::new(), Verdict::Allow, session);
     scripted.turn("think").unwrap();
     assert!(matches!(
-        scripted.runner.transcript().messages().last(),
+        scripted.runner.state.transcript().messages().last(),
         Some(Message::Agent {
             continuation: Some(_),
             ..
