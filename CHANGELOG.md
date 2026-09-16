@@ -28,10 +28,11 @@ change in any release with no deprecation period.
 
 ### Fixed
 
-- **A compacted session no longer carries forward files it never touched.** The list of files a recap carries forward is read only from the
-  list crucible wrote, so a recap mentioning that list, or a tool call whose path
-  contains a line break, can no longer add files the session never touched.
-  Such a path is now left off the list.
+- **A compacted session no longer carries forward files it never touched.**
+  The list of files a recap carries forward is read only from the list crucible
+  wrote, so a recap mentioning that list, or a tool call whose path contains a
+  line break, can no longer add files the session never touched. Such a path is
+  now left off the list.
 
 - **Only Google's own search results are held back from other providers, and a
   switch is no longer the only moment they are.** Leaving Google cleared every
