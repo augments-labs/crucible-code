@@ -62,6 +62,7 @@ crucible-sandbox-local = { path = "crates/crucible-sandbox-local" }
 crucible-session = { path = "crates/crucible-session" }
 crucible-storage = { path = "crates/crucible-storage" }
 crucible-tools = { path = "crates/crucible-tools" }
+crucible-transport = { path = "crates/crucible-transport" }
 crucible-tui = { path = "crates/crucible-tui" }
 crucible-types = { path = "crates/crucible-types" }
 crucible-workspace = { path = "crates/crucible-workspace" }

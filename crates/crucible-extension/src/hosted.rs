@@ -1,9 +1,9 @@
 //! One extension, spoken to over the process the sandbox started for it.
 //!
 //! Everything either side of this is already written. [`Speaking`] drives a
-//! conversation over any reader and writer and knows every way one can end;
-//! [`Heard`] and [`Said`] turn a confined process's streams into that reader and
-//! that writer. What is left is joining them to a process and answering the one
+//! conversation over any reader and writer and knows every way one can end; the
+//! transport turns a confined process's streams into that reader and that
+//! writer. What is left is joining them to a process and answering the one
 //! question neither can: when the talking stops, is the peer still there.
 //!
 //! It takes a process rather than starting one. Preparing a session,
@@ -12,7 +12,7 @@
 //! deciding sandbox policy on the way past. What arrives here is a command that
 //! has already been through all of that, and the only thing this asks of it is
 //! that crucible kept the writing end of its input — a command built
-//! [`spoken_to`](crucible_core::SandboxCommand::spoken_to). A command that was
+//! [`spoken_to`](crucible_sandbox::SandboxCommand::spoken_to). A command that was
 //! not is refused rather than half-hosted, because a conversation crucible
 //! cannot answer is not one worth starting.
 //!
@@ -26,10 +26,10 @@ use std::fmt;
 use std::io;
 use std::time::Duration;
 
-use crucible_core::{
-    Asking, CallId, Finish, Heard, Muttered, Outcome, Over, Said, SandboxOutput, SandboxProcess,
-    SandboxUsage, SandboxViolation, Speaking, Turn,
-};
+use crucible_sandbox::{SandboxOutput, SandboxProcess, SandboxUsage, SandboxViolation};
+use crucible_transport::{Absent, Finish, Heard, Muttered, Pipes, Said, Unspoken};
+
+use crate::{Asking, CallId, Outcome, Over, Speaking, Turn};
 use serde_json::Value;
 
 /// An extension, hosted over a confined process.
@@ -64,19 +64,11 @@ impl<T> Hosted<T> {
         mut process: Box<dyn SandboxProcess>,
         patience: Duration,
     ) -> Result<Self, Unstarted> {
-        let Some(input) = process.take_stdin() else {
-            return Err(abandon(&mut process, Unstarted::Unspeakable));
-        };
-        let Some(output) = process.take_stdout() else {
-            return Err(abandon(&mut process, Unstarted::Unheard));
-        };
-        let muttered = process
-            .take_stderr()
-            .map_or_else(Muttered::silent, Muttered::draining);
+        let pipes = Pipes::taken(process.as_mut(), patience)?;
         Ok(Self {
             process,
-            talk: Speaking::new(Heard::new(output, patience), Said::new(input, patience)),
-            muttered,
+            talk: Speaking::new(pipes.heard, pipes.said),
+            muttered: pipes.muttered,
         })
     }
 }
@@ -194,17 +186,6 @@ impl<T> Hosted<T> {
     }
 }
 
-/// Stops a process that will not be hosted, preserving both refusal and cleanup.
-fn abandon(process: &mut Box<dyn SandboxProcess>, why: Unstarted) -> Unstarted {
-    match process.stop() {
-        Ok(()) => why,
-        Err(cleanup) => Unstarted::Unreaped {
-            cause: Box::new(why),
-            cleanup,
-        },
-    }
-}
-
 /// Why a process could not be hosted.
 #[derive(Debug, thiserror::Error)]
 pub enum Unstarted {
@@ -249,6 +230,27 @@ pub struct Ended<T> {
     pub waiting: Vec<(CallId, T)>,
     /// What it said beside the conversation, which is usually why it ended.
     pub muttered: Muttered,
+}
+
+impl From<Unspoken> for Unstarted {
+    /// Says which end was missing in the words an extension's user reads.
+    ///
+    /// The transport knows a pipe was not handed back; only here is it known
+    /// that the thing on the other end was supposed to be an extension, which
+    /// is the noun the sentence has to use.
+    fn from(unspoken: Unspoken) -> Self {
+        let cause = match unspoken.absent {
+            Absent::Input => Self::Unspeakable,
+            Absent::Output => Self::Unheard,
+        };
+        match unspoken.cleanup {
+            None => cause,
+            Some(cleanup) => Self::Unreaped {
+                cause: Box::new(cause),
+                cleanup,
+            },
+        }
+    }
 }
 
 #[cfg(test)]

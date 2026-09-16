@@ -13,8 +13,11 @@
 use std::fmt::Write as _;
 use std::path::Path;
 
-use crucible_config::{Extensions, Installed, Settings};
-use crucible_core::{ExtensionDecision, ExtensionManifest, ExtensionProtocol, ExtensionUnhosted};
+use crucible_config::Settings;
+use crucible_extension::{
+    ExtensionDecision, ExtensionManifest, ExtensionProtocol, ExtensionUnhosted, Extensions,
+    Installed,
+};
 
 /// The listing, as one block of text ending in a newline.
 ///

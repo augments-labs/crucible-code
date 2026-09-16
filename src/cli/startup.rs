@@ -26,6 +26,7 @@ use crucible_core::{
     Modalities, Mode, ModelCapabilities, Provider, Revealed, Search, SessionId, Tool, ToolsetError,
     Transcript, Workspace,
 };
+use crucible_mcp::Hosting;
 use crucible_provider::{
     Anthropic, AnthropicWeb, Endpoint, Google, GoogleWeb, Https, Moonshot, MoonshotWeb, OpenAi,
     OpenAiWeb, Unavailable,
@@ -34,8 +35,8 @@ use crucible_runner::{Agent, AgentBuilder, Bounds, Compaction, Model, RunPolicy,
 use crucible_sandbox_local::LocalSandbox;
 use crucible_session::Session;
 
-use super::hosting::{Hosting, selecting};
 use super::seen::Putting;
+use super::selecting;
 use super::standing;
 use super::subscription::Subscriptions;
 use super::{Fatal, Providers, Served};
@@ -252,7 +253,7 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<(Runner, Arc<Session>), 
     } else {
         Runner::with_toolset(
             provider,
-            Hosting::new(offering, sandbox, chosen),
+            Hosting::new(Arc::new(offering), sandbox, chosen),
             asking,
             context,
             session.clone(),

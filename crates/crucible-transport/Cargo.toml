@@ -1,0 +1,29 @@
+[package]
+name = "crucible-transport"
+description = "Bounded framing and the lifetime of a program crucible talks to."
+publish.workspace = true
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+# `Cancel`, which is how a read that is waiting on a quiet program is ended by
+# the near end rather than at the patience.
+crucible-runtime.workspace = true
+# The streams and the process handle this crate adapts: `SandboxOutput` and
+# `SandboxRead` on the way in, `SandboxProcess` for the stopping.
+crucible-sandbox.workspace = true
+# Every fallible function here answers with a module-owned enum, and the derive
+# writes the `Display` and `source` impls rather than shipping a runtime.
+thiserror.workspace = true
+
+# The identities a sandbox request is made under, which only the tests that
+# build one need: nothing on this crate's surface names them.
+[dev-dependencies]
+crucible-types.workspace = true
+
+[lints]
+workspace = true

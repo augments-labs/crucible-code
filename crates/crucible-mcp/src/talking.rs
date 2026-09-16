@@ -25,7 +25,7 @@
 
 use std::io::{self, BufRead, Write};
 
-use crucible_core::{FrameError, Frames, Written};
+use crucible_transport::{FrameError, Frames, Written};
 use serde_json::Value;
 
 use crate::wire::{Call, Garbled, Heard, Reply, Sent};

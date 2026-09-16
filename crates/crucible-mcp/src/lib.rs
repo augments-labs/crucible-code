@@ -6,10 +6,12 @@
 //! it — saying hello, agreeing which version of MCP both ends are speaking, and
 //! reading back the tools the server offers.
 //!
-//! Core alone, deliberately. This crate knows a wire and nothing about which
-//! server is on the other end of it: it takes a reader and a writer, so what
-//! started the process, under what confinement, and what a settings document
-//! said are all decided above it.
+//! It takes a reader and a writer, so what started the process, under what
+//! confinement, and what a settings document said are all decided above it.
+//! [`Hosting`] is the one place that goes further: a run that named servers
+//! gets them beside the roster crucible compiled in, as one generation the
+//! runner can drive. Which servers those are is still somebody else's answer —
+//! a [`Chosen`] arrives already resolved.
 //!
 //! Nothing here decides that a tool may be called. Reading a catalogue is
 //! reading a list of names and schemas somebody else's program wrote, and the
@@ -19,6 +21,7 @@
 mod calling;
 mod catalogue;
 mod hosted;
+mod hosting;
 mod talking;
 mod wire;
 
@@ -28,5 +31,6 @@ pub use catalogue::{
     VERSIONS, hello, tools,
 };
 pub use hosted::{Ended, Hosted, Unstarted};
+pub use hosting::{Chosen, Hosting};
 pub use talking::{ASIDES, Talking, Trouble};
 pub use wire::{Call, Garbled, Heard, NO_SUCH_METHOD, RPC, Reply, SAID_BYTES, Sent};

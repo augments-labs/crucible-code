@@ -8,8 +8,9 @@ use std::fs;
 use std::path::PathBuf;
 
 use crucible_auth::{Store, StoredCredentials};
-use crucible_config::{Extensions, Home, Settings};
+use crucible_config::{Home, Settings};
 use crucible_core::{Ask, Mode, Remember, Sensitivity, Settled, ToolCall, Verdict, Workspace};
+use crucible_extension::Extensions;
 
 /// The key [`Sample::stored`] writes down.
 ///
@@ -133,7 +134,7 @@ impl Sample {
 
     /// What a sweep of this tree's home directory finds.
     pub(super) fn discovered(&self) -> Extensions {
-        Extensions::discover(&self.found())
+        Extensions::discover(self.found().path())
     }
 
     /// What this tree's home file decided, and nothing the checkout said.

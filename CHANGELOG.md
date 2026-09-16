@@ -34,6 +34,14 @@ change in any release with no deprecation period.
   turn a guardrail refuses now comes back as `Turned::Rejected` or
   `Turned::Undecided`, so `Runner::turn` answers with a `Turned` where it used
   to answer with a `StopReason`.
+- **Bounded framing and external integrations have crates of their own.**
+  `crucible-transport` now holds the length-prefixed frames, the hosted-process
+  streams and the restart budget both external protocols run over, and
+  `crucible-core` re-exports every moved name. Everything an extension manifest
+  or an MCP roster is made of is now owned by `crucible-extension` and
+  `crucible-mcp` and imported from there rather than from `crucible-core` or
+  `crucible-config`; `Extensions::discover` takes the home directory as a
+  `&Path`, and `Chosen`'s fields are read through accessors.
 - **Context and prompt assembly have a crate of their own.** `crucible-context`
   now holds context sections, the order a pass assembles them in, the system
   prompt and what a compaction asks the model for; `Compacted`, `Compacting`,

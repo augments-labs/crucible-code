@@ -1,7 +1,6 @@
 //! What the listing says about what was found, and about what was not.
 
-use crucible_config::Extensions;
-use crucible_core::ExtensionProtocol;
+use crucible_extension::{ExtensionProtocol, Extensions};
 
 use super::listing;
 use crate::cli::sample::Sample;
@@ -156,7 +155,7 @@ fn a_directory_that_was_not_read_says_that_rather_than_that_nothing_is_installed
     // that the sweep refused the directory, and why, which is the refusal at
     // the end.
     let sample = Sample::new("extensions-listing-many");
-    for number in 0..=crucible_config::MAX_EXTENSIONS {
+    for number in 0..=crucible_extension::MAX_EXTENSIONS {
         sample.installed(
             &format!("plugin-{number:04}"),
             &manifest(&format!("acme.plugin{number}")),

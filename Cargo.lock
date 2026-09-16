@@ -449,11 +449,10 @@ dependencies = [
  "crucible-sandbox",
  "crucible-storage",
  "crucible-tools",
+ "crucible-transport",
  "crucible-types",
  "crucible-workspace",
  "serde_json",
- "sha2",
- "thiserror",
 ]
 
 [[package]]
@@ -469,8 +468,12 @@ dependencies = [
 name = "crucible-extension"
 version = "0.41.1"
 dependencies = [
- "crucible-core",
+ "crucible-registry",
+ "crucible-sandbox",
+ "crucible-transport",
+ "crucible-types",
  "serde_json",
+ "sha2",
  "thiserror",
 ]
 
@@ -478,7 +481,11 @@ dependencies = [
 name = "crucible-mcp"
 version = "0.41.1"
 dependencies = [
- "crucible-core",
+ "crucible-runtime",
+ "crucible-sandbox",
+ "crucible-tools",
+ "crucible-transport",
+ "crucible-types",
  "serde_json",
  "thiserror",
 ]
@@ -627,6 +634,16 @@ dependencies = [
  "globset",
  "thiserror",
  "uuid",
+]
+
+[[package]]
+name = "crucible-transport"
+version = "0.41.1"
+dependencies = [
+ "crucible-runtime",
+ "crucible-sandbox",
+ "crucible-types",
+ "thiserror",
 ]
 
 [[package]]

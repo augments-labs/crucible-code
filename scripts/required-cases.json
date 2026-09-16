@@ -507,14 +507,14 @@
       "id": "CASE-CREDENTIAL-EXTENSION-VOICE",
       "family": "credentials",
       "obligation": "An extension's own words cannot be printed as Crucible's.",
-      "package": "crucible-core",
+      "package": "crucible-extension",
       "target": {
         "kind": "doc",
-        "name": "crucible_core"
+        "name": "crucible_extension"
       },
-      "case": "extension::spoken::Trouble",
-      "source": "crates/crucible-core/src/extension/spoken.rs",
-      "body_sha256": "e10befd4b781aa3f68cda4b8a0d820083ba8cc5b1b4820720a46e3d9d1f7cdb8",
+      "case": "spoken::Trouble",
+      "source": "crates/crucible-extension/src/spoken.rs",
+      "body_sha256": "947193f188ca983339b12d5a65c5f30dbf4fbb78be00832e2303488692d8ef3a",
       "platforms": [
         "linux",
         "macos",
@@ -880,7 +880,7 @@
       },
       "case": "the_installed_extension_sweep_answers_what_it_read_and_refused",
       "source": "tests/differential.rs",
-      "body_sha256": "fe2818a391c3f1070fe52d87049c2588bc76ae0d309bcb0270a751f3d68c62ba",
+      "body_sha256": "767c561b9d6f4de9c61c890d66e98b8894afecf91980f8088bf625c0e93c7102",
       "platforms": [
         "linux",
         "macos",

@@ -21,7 +21,6 @@ mod extensions;
 #[cfg(test)]
 mod fake;
 mod gathering;
-mod hosting;
 mod kept;
 mod models;
 mod release;
@@ -30,6 +29,7 @@ mod remember;
 mod sample;
 mod sandbox;
 mod seen;
+mod selecting;
 mod standing;
 mod startup;
 mod style;
@@ -980,7 +980,7 @@ fn listed() -> Result<(), Fatal> {
     // happened to be started in has nothing to contribute and is not opened.
     let settings = Settings::read_home(&home)?;
     let found = extensions::listing(
-        &crucible_config::Extensions::discover(&home),
+        &crucible_extension::Extensions::discover(home.path()),
         &settings,
         env!("CARGO_PKG_VERSION"),
     );

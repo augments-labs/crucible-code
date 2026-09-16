@@ -552,7 +552,7 @@ elif [[ -z "$edges" ]]; then
     failed=1
 fi
 
-# `core` names the eleven crates its old names now come from. Those edges are
+# `core` names the twelve crates its old names now come from. Those edges are
 # the compatibility facade and go away with the crate that holds them.
 #
 # Edges past the facade are listed here as they are taken. `attachments` is
@@ -598,14 +598,22 @@ core runtime
 core sandbox
 core storage
 core tools
+core transport
 core types
 core workspace
 credentials types
 models credentials
 models runtime
 models types
-extension core
-mcp core
+extension registry
+extension sandbox
+extension transport
+extension types
+mcp runtime
+mcp sandbox
+mcp tools
+mcp transport
+mcp types
 provider core
 provider credentials
 provider models
@@ -637,6 +645,9 @@ tools sandbox
 tools storage
 tools types
 tools workspace
+transport runtime
+transport sandbox
+transport types
 builtins attachments
 builtins runtime
 builtins sandbox

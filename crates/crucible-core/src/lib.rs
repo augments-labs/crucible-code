@@ -7,7 +7,8 @@
 //! credential contracts, storage contracts, path proofs, attachment ingress,
 //! what a confined process may observe or change, the controls a turn is
 //! steered and stopped by, what a tool is and what may run one, what a
-//! model is asked and answers with, and the words a request is built from.
+//! model is asked and answers with, the words a request is built from, and the
+//! bounded frames crucible exchanges with a program it started.
 //! This crate re-exports their names under the paths it published them at, so a
 //! consumer keeps one import while ownership moves out; new code names the
 //! owning crate. `crucible-attachments` is re-exported only as far as the names
@@ -27,11 +28,8 @@
 //! Authentication is a separate axis from the wire protocol: a `Provider`
 //! receives an already-resolved `Credential` and never learns what kind it is.
 
-mod extension;
 mod interruption;
 mod journal;
-mod sandbox;
-mod version;
 
 pub use crucible_attachments::{AttachmentError, CEILING, KINDS, Kind, kind};
 pub use crucible_context::{
@@ -108,6 +106,9 @@ pub use crucible_tools::{
     ToolProvenance, ToolReceipt, ToolResourceKey, ToolSnapshot, ToolSourceKind, ToolSourceReceipt,
     Toolset, ToolsetContext, ToolsetError, Unwatched, Verdict, Watch, Wrote, narrowest,
 };
+pub use crucible_transport::{
+    FRAME_BYTES, Finish, FrameError, Frames, Heard, Muttered, Said, Written,
+};
 pub use crucible_types::{
     AgentId, CredentialScopeId, IdError, Modalities, Modality, ModalityError, ProviderAttemptId,
     RunId, SandboxId, SessionId, ToolId, TurnId,
@@ -142,19 +143,8 @@ pub use crucible_types::{
 pub use crucible_types::{
     Changed, TOOL_RESULT_BYTES, TOOL_RESULT_MIN_BYTES, ToolArgs, ToolCall, ToolOutputRetention,
 };
-pub use crucible_types::{Compacted, Compacting, RECAP, Tone, ToneError};
+pub use crucible_types::{Compacted, Compacting, RECAP, Tone, ToneError, later};
 pub use crucible_workspace::{PathError, WalkFiles, Workspace, WorkspacePath, written};
-pub use extension::{
-    EXTENSION_ID_BYTES, EXTENSION_MANIFEST_BYTES, EXTENSION_REQUESTS, EXTENSION_TEXT_BYTES,
-    ExtensionCapability, ExtensionContribution, ExtensionError, ExtensionIdentity,
-    ExtensionManifest, ExtensionProtocol, ExtensionRequests, ExtensionUnhosted,
-    calls::{Asked, CallError, EXTENSION_CALLS, Serving},
-    conversation::{Broken, Conversation, Next},
-    speaking::{Asking, Over, Speaking, Turn},
-    spoken::{CallId, EXTENSION_SAID_BYTES, Malformed, Outcome, Spoken, SpokenError, Trouble},
-    trust::{ExtensionDecision, ExtensionTrusted, ExtensionUntrusted},
-    wire::{FRAME_BYTES, FrameError, Frames, Written},
-};
 pub use interruption::{
     CacheCheckpoint, CheckpointStore, ExecutionCheckpoint, ResumeEvidence, ValidatedResume,
 };
@@ -162,5 +152,3 @@ pub use journal::{
     JournalStore, MAX_RUN_HISTORY_BYTES, MAX_RUN_ITEM_BYTES, MAX_RUN_ITEM_RETAINED_BYTES,
     MAX_RUN_ITEMS, RunHistory, RunItem,
 };
-pub use sandbox::{Finish, Heard, Muttered, Said};
-pub use version::later;

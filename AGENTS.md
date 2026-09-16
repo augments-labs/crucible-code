@@ -18,6 +18,7 @@ Repository skills live in [`.agents/skills/`](.agents/skills/).
 | `crates/crucible-runtime/` | The controls a turn is steered and stopped by, and how work is owned |
 | `crates/crucible-sandbox/` | What a confined process may observe or change |
 | `crates/crucible-sandbox-local/` | The confinement this machine can enforce, and the processes it runs |
+| `crates/crucible-transport/` | Bounded frames, the streams a hosted program is spoken to over, and its restart budget |
 | `crates/crucible-tools/` | What a tool is, what may run one, and the proof that it may |
 | `crates/crucible-models/` | What a model is asked and answers with, and what a cache attempt may do |
 | `crates/crucible-context/` | The words a request is built from, and what a compaction asks for |
@@ -42,9 +43,10 @@ Workspace manifests declare crate dependencies; `scripts/sh/repo-checks.sh`
 enforces their allowed directions. `crucible-core` re-exports the names it no
 longer defines when they moved below it, so a consumer keeps one import path;
 a name that moved above it — `Event`, `EventEnvelope`, `Post`, `Reporter` and
-`TurnError`, now owned by `crucible-runner` — is imported from its owner
-instead, because core cannot depend upward. New code names the owning crate
-either way.
+`TurnError`, now owned by `crucible-runner`, and everything an extension
+manifest or an MCP roster is made of, now owned by `crucible-extension` and
+`crucible-mcp` — is imported from its owner instead, because core cannot depend
+upward. New code names the owning crate either way.
 
 ## Changing Crucible
 
