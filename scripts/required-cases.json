@@ -898,7 +898,7 @@
       },
       "case": "a_session_writes_down_the_same_record_of_the_same_turn",
       "source": "tests/differential.rs",
-      "body_sha256": "9aa857afa0cfe6809aa36e9b8f08e15cc0d789ea737a519c5ed46b06460f335f",
+      "body_sha256": "4b831b8572907d4ec05d52a07a4ca42c20af0316655462e8a9a63de9af244c20",
       "platforms": [
         "linux",
         "macos",

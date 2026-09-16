@@ -958,7 +958,7 @@ fn windows_sandbox_maintenance_is_an_exclusive_early_action() {
 
 #[test]
 fn resume_round_trip() {
-    use crucible_runner::Session;
+    use crucible_session::Session;
 
     let sample = Sample::new("resume-round-trip");
     let workspace = sample.workspace();

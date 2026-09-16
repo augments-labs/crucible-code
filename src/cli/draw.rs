@@ -54,10 +54,11 @@ use std::path::Path;
 
 use crucible_builtins::Ended;
 use crucible_core::{
-    Attachment, Change, Changed, Compacted, Compacting, Diff, Event, Modality, Question,
+    Attachment, Change, Changed, Compacted, Compacting, Diff, Modality, Question,
     RecordedToolOutput, Sensitivity, StopReason, Summary, ToolCall, ToolId, ToolOutput, Workspace,
     written,
 };
+use crucible_runner::Event;
 use crucible_tui::{
     Glyphs, Renderer, Row, Slot, Terminal, TerminalError, clip, columns, cut, fold,
 };

@@ -33,7 +33,7 @@ use crucible_core::{
     CompactionRecord, Delta, Message, PromptCacheAttempt, PromptCacheEncoding, PromptCacheFact,
     PromptCacheOutcome, PromptCachePreparationError, PromptCacheRequestDisposition,
     PromptCacheRequestFact, PromptCacheUsageFact, ProviderError, RecordedToolOutput, Request,
-    RunItem, Spend, StopReason, TOOL_RESULT_BYTES, ToolId, TurnError, UsageCost,
+    RunItem, Spend, StopReason, TOOL_RESULT_BYTES, ToolId, UsageCost,
 };
 use crucible_types::{Compacted, Compacting, RECAP};
 
@@ -42,6 +42,7 @@ use crate::prompt_cache::{self, ScopeInputs};
 
 use super::{Load, Runner};
 
+use crate::TurnError;
 /// How much recent tool output is never cleared, in bytes.
 ///
 /// The newest results are the ones the model is still working from, and a turn
@@ -59,7 +60,7 @@ const PROTECT: u64 = TOOL_RESULT_BYTES as u64;
 const MINIMUM: u64 = 30_000;
 
 struct RecapReading<'a> {
-    events: crucible_core::Reporter<'a>,
+    events: crate::Reporter<'a>,
     touched: &'a TrackedFiles,
     spent: &'a mut Spend,
     cache: super::CacheObservation,
@@ -156,9 +157,9 @@ impl Runner {
                     after,
                     kept: self.state.transcript.turns(),
                 };
-                self.session.display_compacted(compacted, pruned);
-                events.post(crucible_core::Event::Compacted { compacted });
-                events.post(crucible_core::Event::Carried {
+                self.store.display_compacted(compacted, pruned);
+                events.post(crate::Event::Compacted { compacted });
+                events.post(crate::Event::Carried {
                     left: self.left_under(run.policy().compaction),
                 });
                 return Ok(Room::Made(compacted));
@@ -192,7 +193,7 @@ impl Runner {
         // this list forward, so a second compaction extends it rather than
         // losing what the first one kept.
         let touched = self.tracked(replacing);
-        events.post(crucible_core::Event::Compacting { why, part: 0 });
+        events.post(crate::Event::Compacting { why, part: 0 });
 
         let recap = match self.recap(why, &touched, run, spent)? {
             Recap::Complete(recap) => recap,
@@ -203,7 +204,7 @@ impl Runner {
         // Completion is a fact only once a structured recap is whole. It goes
         // immediately before Compacted below, preserving event order without
         // sleeping the worker; the renderer gives it a short visible dwell.
-        events.post(crucible_core::Event::Compacting { why, part: 100 });
+        events.post(crate::Event::Compacting { why, part: 100 });
 
         // The log boundary below is in raw transcript messages and therefore
         // includes typed harness context. The reader-facing event keeps its
@@ -225,9 +226,9 @@ impl Runner {
         // Written to the log before the transcript is replaced, so a crash
         // between the two leaves a log that says what happened rather than one
         // that quietly lost the messages.
-        self.session.compacted(replacing, &standing_as);
-        self.session
-            .append_item(&RunItem::Compaction(CompactionRecord::new(
+        self.store.compacted(replacing, &standing_as);
+        self.store
+            .append_run_item(&RunItem::Compaction(CompactionRecord::new(
                 run.ancestry(),
                 replacing,
                 &standing_as,
@@ -254,9 +255,9 @@ impl Runner {
             after: self.state.load.tokens(),
             kept,
         };
-        self.session.display_compacted(compacted, pruned);
-        events.post(crucible_core::Event::Compacted { compacted });
-        events.post(crucible_core::Event::Carried {
+        self.store.display_compacted(compacted, pruned);
+        events.post(crate::Event::Compacted { compacted });
+        events.post(crate::Event::Carried {
             left: self.left_under(run.policy().compaction),
         });
 
@@ -448,12 +449,8 @@ impl Runner {
             .snapshot()
             .to_string();
         let workspace = self.context.workspace().to_string_lossy();
-        let user = self
-            .session
-            .path()
-            .parent()
-            .unwrap_or_else(|| std::path::Path::new(""))
-            .to_string_lossy();
+        let user = self.store.owner();
+        let session = self.store.session_id();
         let request = Request {
             purpose: crucible_core::RequestPurpose::Recap,
             model: &self.agent.model().name,
@@ -479,7 +476,7 @@ impl Runner {
             max_tokens: room,
             effort: self.agent.model().effort,
             run: run.run(),
-            session: self.session.id().map(crucible_core::SessionId::as_str),
+            session: session.as_ref().map(crucible_core::SessionId::as_str),
             workspace: workspace.as_bytes(),
             user: user.as_bytes(),
             trust: b"local-workspace-authority-v1",
@@ -677,12 +674,12 @@ impl Runner {
                     let now = reached(said.len() as u64);
                     if now != part {
                         part = now;
-                        events.post(crucible_core::Event::Compacting { why, part });
+                        events.post(crate::Event::Compacting { why, part });
                     }
                 }
                 Delta::Spent(reported) => {
                     *spent = before.and(reported);
-                    events.post(crucible_core::Event::Spent { spend: *spent });
+                    events.post(crate::Event::Spent { spend: *spent });
                 }
                 Delta::Usage(usage) => {
                     let usage = super::merge_usage(
@@ -696,7 +693,7 @@ impl Runner {
                     )?;
                     if let Some(tokens) = usage.output {
                         *spent = before.and(crucible_core::Spend::new(tokens));
-                        events.post(crucible_core::Event::Spent { spend: *spent });
+                        events.post(crate::Event::Spent { spend: *spent });
                     }
                     let cost = self
                         .provider
@@ -824,7 +821,7 @@ impl Runner {
         // holds. The line goes out once the transcript has moved, and replay
         // reads it to make the same move again.
         let freed = self.state.transcript.prune(&clearing);
-        self.session.pruned(freed, &clearing);
+        self.store.pruned(freed, &clearing);
 
         // The load drops by what was freed: the transcript is smaller, and the
         // next request is the thing that is measured. Recounted rather than

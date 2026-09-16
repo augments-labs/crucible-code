@@ -27,7 +27,6 @@
 //! Authentication is a separate axis from the wire protocol: a `Provider`
 //! receives an already-resolved `Credential` and never learns what kind it is.
 
-mod event;
 mod extension;
 mod interruption;
 mod journal;
@@ -145,7 +144,6 @@ pub use crucible_types::{
 };
 pub use crucible_types::{Compacted, Compacting, RECAP, Tone, ToneError};
 pub use crucible_workspace::{PathError, WalkFiles, Workspace, WorkspacePath, written};
-pub use event::{Event, EventEnvelope, Post, Reporter, TurnError};
 pub use extension::{
     EXTENSION_ID_BYTES, EXTENSION_MANIFEST_BYTES, EXTENSION_REQUESTS, EXTENSION_TEXT_BYTES,
     ExtensionCapability, ExtensionContribution, ExtensionError, ExtensionIdentity,

@@ -47,50 +47,37 @@ fn everything_a_turn_adds_to_the_transcript_is_also_recorded() {
     // The two are written in one place so they cannot drift apart. A turn that
     // pushed a message without recording it would leave a session that
     // continues from somewhere other than where it stopped.
-    let sample = Sample::new("runner-recording");
     let script = Script::new(vec![
         calling("a", "read", r#"{"path":"x"}"#),
         saying("done"),
     ]);
-    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
+    let store = Recording::started("recordings");
     let mut scripted = Scripted::recording(
         script,
         tools([Fixed::new("read").answering("fn main() {}")]),
         Verdict::Allow,
-        session,
+        Arc::clone(&store),
     );
 
     scripted.turn("read x").unwrap();
     let held = scripted.runner.state.transcript().messages().to_vec();
 
-    // Dropping the runner drops the session, which is what waits for the queue.
     drop(scripted);
-    let (_session, replayed) =
-        Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
+    let (_picked, replayed) = store.reopened();
 
     assert_eq!(replayed.messages(), held.as_slice());
 }
 
-// When a pass reaches the log, measured against when its tools run.
+// When a pass reaches the record, measured against when its tools run.
 //
-// Recording is queued rather than written, so what a test can see from inside
-// a running tool is the log as the disk has it — which is the only place the
-// ordering shows. A tool that reads the log while the pass is still going is
-// how that becomes an observation rather than a claim about the source.
+// A tool that reads the store while the pass it belongs to is still going is
+// how the order becomes an observation rather than a claim about the source.
 
-/// The tool whose call the log is watched for.
+/// The tool whose call the record is watched for.
 ///
-/// A word that appears nowhere else in the turn, so finding it in the log can
-/// only mean the call was recorded.
+/// A word that appears nowhere else in the turn, so finding it in the record
+/// can only mean the call was recorded.
 const WATCH: &str = "watch";
-
-/// How long the tool waits for what was queued to reach the disk.
-///
-/// The write happens on the session's own thread, so a log that has not caught
-/// up yet is slow rather than wrong. Long enough that a loaded machine does not
-/// report the delay as a record that was never made, and bounded so that a
-/// record which is never made fails instead of hanging.
-const SETTLE: Duration = Duration::from_secs(5);
 
 #[test]
 fn the_calls_of_a_pass_are_recorded_before_the_tools_run() {
@@ -100,15 +87,17 @@ fn the_calls_of_a_pass_are_recorded_before_the_tools_run() {
     // which files it has already edited have never been touched. Recording the
     // calls first costs a line the replay knows how to drop; recording them
     // last costs the work.
-    let sample = Sample::new("runner-recorded");
-    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
-    let log = session.path().to_owned();
+    let store = Recording::started("recordings");
 
     let mut offered = Tools::new();
-    offered.add_builtin(Logged { log }).unwrap();
+    offered
+        .add_builtin(Logged {
+            store: Arc::clone(&store),
+        })
+        .unwrap();
 
     let script = Script::new(vec![calling("a", WATCH, "{}"), saying("done")]);
-    let mut scripted = Scripted::recording(script, offered, Verdict::Allow, session);
+    let mut scripted = Scripted::recording(script, offered, Verdict::Allow, store);
 
     scripted.turn("go").expect("the turn");
 
@@ -127,9 +116,9 @@ fn the_calls_of_a_pass_are_recorded_before_the_tools_run() {
     );
 }
 
-/// A tool that hands back the session log as it stood while the tool ran.
+/// A tool that hands back the calls the run record held while the tool ran.
 struct Logged {
-    log: PathBuf,
+    store: Arc<Recording>,
 }
 
 impl DescribeTool for Logged {
@@ -162,17 +151,20 @@ impl Tool for Logged {
         _approved: Approved,
         _context: &ToolContext<'_>,
     ) -> Result<ToolOutput, ToolError> {
-        let deadline = Instant::now() + SETTLE;
+        let named = self
+            .store
+            .said()
+            .iter()
+            .filter_map(|message| match message {
+                Message::Agent { calls, .. } => Some(calls.clone()),
+                _ => None,
+            })
+            .flatten()
+            .map(|call| call.name.into_string())
+            .collect::<Vec<_>>()
+            .join(",");
 
-        loop {
-            let held = std::fs::read_to_string(&self.log).unwrap_or_default();
-
-            if held.contains(WATCH) || Instant::now() >= deadline {
-                return Ok(ToolOutput::ok(held));
-            }
-
-            thread::sleep(Duration::from_millis(1));
-        }
+        Ok(ToolOutput::ok(named))
     }
 }
 
@@ -330,20 +322,18 @@ fn a_turn_that_was_cut_off_comes_back_from_a_replay_still_cut_off() {
     // quits, continues, and replay hands the half-sentence back as a finished
     // turn — so the model is shown its own truncation as an answer it chose to
     // end.
-    let sample = Sample::new("runner-cut-off");
     let script = Script::new(vec![vec![
         Delta::Text("as I was say".into()),
         Delta::Stopped(StopReason::OutOfTokens),
     ]]);
-    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
-    let mut scripted = Scripted::recording(script, Tools::new(), Verdict::Allow, session);
+    let store = Recording::started("recordings");
+    let mut scripted =
+        Scripted::recording(script, Tools::new(), Verdict::Allow, Arc::clone(&store));
 
     scripted.turn("write it all out").unwrap();
 
-    // Dropping the runner drops the session, which is what waits for the queue.
     drop(scripted);
-    let (_session, replayed) =
-        Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
+    let (_picked, replayed) = store.reopened();
 
     assert_eq!(
         conversation(&replayed),

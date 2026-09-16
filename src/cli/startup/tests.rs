@@ -483,7 +483,7 @@ fn a_session_with_nothing_chosen_starts_and_asks_for_no_model() {
     let sample = Sample::new("no-model");
     let (logs, workspace) = (sample.logs(), sample.workspace());
 
-    let runner = assemble(&Startup {
+    let (runner, _session) = assemble(&Startup {
         providers: &catalogue(),
         provider: None,
         unasked: NOTHING_TO_ASK,
@@ -955,7 +955,7 @@ fn a_session_is_assembled_with_stable_instructions_and_workspace_context() {
     let (logs, workspace) = (sample.logs(), sample.workspace());
     let configured = sample.settings(r#"{"compaction":{"spendCeiling":500000}}"#);
 
-    let mut runner = assemble(&Startup {
+    let (mut runner, _session) = assemble(&Startup {
         providers: &catalogue(),
         provider: None,
         unasked: NOTHING_TO_ASK,
@@ -1160,6 +1160,7 @@ fn a_run_that_named_a_server_reaches_the_runner_as_a_live_toolset() {
             subscriptions: &Subscriptions::production(),
         })
         .expect("a run this test wrote the record for")
+        .0
     };
 
     let hosted = starting(&["docs".to_owned()]);

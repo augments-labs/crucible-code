@@ -1,8 +1,7 @@
 //! The live turn footing, its calls, output, queue, and plan.
 
-use crucible_core::{
-    Spend, StopReason, Summary, ToolArgs, ToolCall, ToolId, ToolOutput, TurnError, TurnId,
-};
+use crucible_core::{Spend, StopReason, Summary, ToolArgs, ToolCall, ToolId, ToolOutput, TurnId};
+use crucible_runner::TurnError;
 use crucible_tui::Glyphs;
 
 use super::*;

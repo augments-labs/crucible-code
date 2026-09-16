@@ -156,7 +156,7 @@ pub(crate) enum StartupError {
 
     /// A production-shaped benchmark session could not be started.
     #[error("{0}")]
-    Session(#[from] crucible_runner::SessionError),
+    Session(#[from] crucible_session::SessionError),
 
     /// A production-shaped benchmark session could not be finished.
     #[error("session log: {0}")]
@@ -669,7 +669,7 @@ fn worked_in(sessions: &Path) -> Result<HashSet<OsString>, StartupError> {
     // sixty-four-log bound. The pause is outside the timed region.
     for nth in 0..LOGS {
         let workspace = if USABLE.contains(&nth) { &here } else { &away };
-        let session = crucible_runner::Session::start(sessions, workspace, None)?;
+        let session = crucible_session::Session::start(sessions, workspace, None)?;
         let name = session.id().cloned();
         if let Some(id) = name.as_ref() {
             planted.insert(OsString::from(format!("{}.jsonl", id.as_str())));
@@ -697,7 +697,7 @@ fn worked_in(sessions: &Path) -> Result<HashSet<OsString>, StartupError> {
 /// Prompts, answers, calls and results, because a preview draws all four and a
 /// log of prose alone would measure the cheapest of them. The last word is
 /// [`ENDED`], which is what a probe waits to see.
-fn worked(session: &crucible_runner::Session) {
+fn worked(session: &crucible_session::Session) {
     use crucible_core::{
         Message, RecordedToolOutput, StopReason, ToolArgs, ToolCall, ToolId, ToolResult,
     };
@@ -740,7 +740,7 @@ fn deep_enough(
     workspace: &crucible_core::Workspace,
     id: &crucible_core::SessionId,
 ) -> Result<(), StartupError> {
-    if crucible_runner::glimpse(sessions, workspace, id)?.cut() {
+    if crucible_session::glimpse(sessions, workspace, id)?.cut() {
         return Ok(());
     }
 
@@ -970,7 +970,7 @@ mod tests {
                 .expect("a workspace");
 
         let recent =
-            crucible_runner::recent(&home.path().join("sessions"), &workspace, USABLE.len());
+            crucible_session::recent(&home.path().join("sessions"), &workspace, USABLE.len());
 
         assert_eq!(recent.len(), USABLE.len());
         assert!(recent.iter().all(|session| session.asked() == TITLE));

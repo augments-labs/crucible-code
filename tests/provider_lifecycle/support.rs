@@ -11,12 +11,14 @@ use std::time::{Duration, Instant};
 
 use crucible_context::ContextInputs;
 use crucible_core::{
-    AgentId, ApiKey, Approved, Aside, Ask, Cancel, DescribeTool, Effort, EventEnvelope, Header,
-    HeaderKey, Host, Post, Provider, Remember, Sensitivity, SessionId, Steer, StopReason, Summary,
-    Tool, ToolArgs, ToolCall, ToolContext, ToolError, ToolOutput, TurnError, Verdict, Workspace,
+    AgentId, ApiKey, Approved, Aside, Ask, Cancel, DescribeTool, Effort, Header, HeaderKey, Host,
+    Provider, Remember, Sensitivity, SessionId, Steer, StopReason, Summary, Tool, ToolArgs,
+    ToolCall, ToolContext, ToolError, ToolOutput, Verdict, Workspace,
 };
 use crucible_provider::{Anthropic, Endpoint, Google, Https, OpenAi};
-use crucible_runner::{Agent, Compaction, Model, RunPolicy, Runner, Session, Tools};
+use crucible_runner::{Agent, Compaction, Model, RunPolicy, Runner, Tools};
+use crucible_runner::{EventEnvelope, Post, TurnError};
+use crucible_session::Session;
 use serde_json::{Value, json};
 
 pub(crate) const MODELS: [&str; 6] = [
@@ -73,6 +75,14 @@ impl Sample {
         format!("{:?}", self.events.lock().expect("valid fixture"))
     }
     pub(crate) fn runner(&self, model: &str, vendor: &Vendor, session: Session) -> Runner {
+        self.recording(model, vendor, Arc::new(session))
+    }
+    /// The same runner, over a session the caller keeps a share of.
+    ///
+    /// The runner is handed a storage contract and never learns what is behind
+    /// it, so a test that wants to end the recording itself, or read the file
+    /// the records landed in, has to hold the session too.
+    pub(crate) fn recording(&self, model: &str, vendor: &Vendor, session: Arc<Session>) -> Runner {
         let mut tools = Tools::new();
         tools
             .add_builtin(Count(self.executed.clone(), self.padding))

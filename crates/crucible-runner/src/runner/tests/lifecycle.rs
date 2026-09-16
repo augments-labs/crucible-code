@@ -6,12 +6,12 @@ use std::sync::{Arc, Mutex};
 use crucible_core::{
     AgentId, Ancestry, Approved, Aside, Cancel, DescribeTool, Sensitivity, Steer, StopReason,
     Summary, Target, Tool, ToolArgs, ToolContext, ToolDescriptor, ToolEntry, ToolError, ToolOutput,
-    ToolProvenance, ToolSnapshot, ToolSourceKind, Toolset, ToolsetContext, ToolsetError, TurnError,
-    Verdict,
+    ToolProvenance, ToolSnapshot, ToolSourceKind, Toolset, ToolsetContext, ToolsetError, Verdict,
 };
 
 use super::*;
 
+use crate::TurnError;
 #[derive(Clone)]
 struct Live {
     calls: Arc<Mutex<Vec<&'static str>>>,
@@ -129,7 +129,7 @@ where
         ),
         ContextInputs::new(std::env::temp_dir())
             .dated(std::time::UNIX_EPOCH + std::time::Duration::from_hours(496_704)),
-        Session::nowhere(),
+        Recording::nowhere(),
     );
     let context = runner.starting(&events, &cancel, &steer, &aside);
     runner

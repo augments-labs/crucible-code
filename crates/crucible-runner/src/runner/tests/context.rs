@@ -1,7 +1,5 @@
 //! Per-pass context assembly, including the history-rewrite adversary.
 
-use std::fs;
-
 use crucible_core::{ContextSection, Fragment, Revealed, Seen, ToolOutput, WorkspaceSection};
 
 use super::*;
@@ -63,7 +61,11 @@ fn static_context_is_assembled_once_in_stable_order_and_charged_before_fullness(
     assert!(!before.full(Some(window), reserve));
     assert!(scripted.runner.state.load.full(Some(window), reserve));
 
-    let snapshot = scripted.runner.session.context_snapshot().unwrap().clone();
+    let snapshot = scripted
+        .runner
+        .store
+        .context_snapshot()
+        .expect("the typed state recorded so far");
     let messages = scripted.runner.state.transcript().len();
     let charged = scripted.runner.state.load.tokens();
     scripted
@@ -73,7 +75,10 @@ fn static_context_is_assembled_once_in_stable_order_and_charged_before_fullness(
 
     assert_eq!(scripted.runner.state.transcript().len(), messages);
     assert_eq!(scripted.runner.state.load.tokens(), charged);
-    assert_eq!(scripted.runner.session.context_snapshot(), Some(&snapshot));
+    assert_eq!(
+        scripted.runner.store.context_snapshot(),
+        Some(snapshot.clone())
+    );
     let later_assembled = contexts(scripted.runner.state.transcript())
         .into_iter()
         .skip(6)
@@ -131,11 +136,11 @@ fn a_compaction_that_removes_context_forces_a_full_render_on_the_next_pass() {
     let section = WorkspaceSection::new(workspace.as_path());
     let recorded = scripted
         .runner
-        .session
+        .store
         .context_snapshot()
         .expect("the typed state survived compaction");
     assert!(matches!(
-        crucible_core::seen(recorded, &section, scripted.runner.state.transcript()),
+        crucible_core::seen(&recorded, &section, scripted.runner.state.transcript()),
         Seen::Stale
     ));
 
@@ -162,31 +167,18 @@ fn a_compaction_that_removes_context_forces_a_full_render_on_the_next_pass() {
 
 #[test]
 fn a_pre_context_session_supersedes_every_unknown_section_on_its_first_pass() {
-    let sample = Sample::new("runner-legacy-context");
-    let workspace = sample.workspace();
-    let session = Session::start(&sample.logs(), &workspace, None).unwrap();
-    let path = session.path().to_owned();
-    drop(session);
-
-    // Whatever this build writes, rewritten to the last format before typed
-    // context. Reading the number out of the header rather than naming it keeps
-    // the fixture a pre-context log across a format bump, instead of quietly
-    // becoming a current one that asserts nothing.
-    let current = fs::read_to_string(&path).unwrap();
-    let written = current
-        .split_once(r#""format":"#)
-        .and_then(|(_, rest)| rest.split_once(','))
-        .map(|(format, _)| format.to_owned())
-        .expect("the header says what format it is");
-    let legacy = current.replacen(&format!(r#""format":{written}"#), r#""format":9"#, 1);
-    assert_ne!(legacy, current, "the fixture header was not downgraded");
-    fs::write(&path, legacy).unwrap();
-
-    let (session, transcript) = Session::resume(&sample.logs(), &workspace).unwrap();
-    assert_eq!(session.context_snapshot(), None);
+    // A store that answers unknown vintage rather than a known empty snapshot:
+    // a session recorded before typed model-visible state existed. Nothing in
+    // it says what the model was last told, so every section the first pass
+    // renders has to say it supersedes whatever came before instead of
+    // describing a change from a baseline nobody recorded. Which formats read
+    // back that way is the store's own business, and is settled where the
+    // format is.
+    let store = Recording::pre_context("a session from before typed context");
+    assert_eq!(store.context_snapshot(), None);
     let script = Script::new(vec![saying("continued")]);
-    let mut scripted = Scripted::recording(script, Tools::new(), Verdict::Allow, session);
-    scripted.runner = scripted.runner.resuming(transcript);
+    let mut scripted = Scripted::recording(script, Tools::new(), Verdict::Allow, store);
+    scripted.runner = scripted.runner.resuming(Transcript::new());
 
     scripted.turn("continue").expect("the first upgraded turn");
 

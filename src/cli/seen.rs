@@ -29,9 +29,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crucible_core::{
-    Answered, Ask, Event, EventEnvelope, Post, Put, Question, Remember, Sensitivity, ToolCall,
-    Verdict, Wrote,
+    Answered, Ask, Put, Question, Remember, Sensitivity, ToolCall, Verdict, Wrote,
 };
+use crucible_runner::{Event, EventEnvelope, Post};
 
 /// Events allowed to wait for the terminal.
 ///
@@ -262,7 +262,8 @@ mod tests {
     use std::sync::mpsc::{channel, sync_channel};
     use std::time::Duration;
 
-    use crucible_core::{Ancestry, Command, Reporter, ToolArgs, ToolId, TurnId, Wrote};
+    use crucible_core::{Ancestry, Command, ToolArgs, ToolId, TurnId, Wrote};
+    use crucible_runner::Reporter;
 
     use super::*;
 

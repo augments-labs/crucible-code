@@ -5,8 +5,9 @@ use std::path::Path;
 
 use crucible_core::{
     Attachment, Change, Command, Diff, Line, Modality, ProviderError, Question, Summary, Target,
-    ToolArgs, ToolId, TurnError, TurnId, Workspace, written,
+    ToolArgs, ToolId, TurnId, Workspace, written,
 };
+use crucible_runner::TurnError;
 use crucible_tui::{Picture, Recording, Size};
 
 use super::*;

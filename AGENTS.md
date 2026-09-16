@@ -12,7 +12,7 @@ Repository skills live in [`.agents/skills/`](.agents/skills/).
 | `crates/crucible-types/` | Shared validated values every crate exchanges |
 | `crates/crucible-registry/` | Bounded, source-aware registries |
 | `crates/crucible-credentials/` | Credential contracts and outgoing redaction |
-| `crates/crucible-storage/` | History, checkpoint and cache contracts |
+| `crates/crucible-storage/` | Session, history, checkpoint and cache contracts |
 | `crates/crucible-workspace/` | The directories crucible reaches, and path proofs |
 | `crates/crucible-attachments/` | What may be attached, and the one read it comes through |
 | `crates/crucible-runtime/` | The controls a turn is steered and stopped by, and how work is owned |
@@ -40,8 +40,11 @@ Repository skills live in [`.agents/skills/`](.agents/skills/).
 
 Workspace manifests declare crate dependencies; `scripts/sh/repo-checks.sh`
 enforces their allowed directions. `crucible-core` re-exports the names it no
-longer defines, so a consumer keeps one import path while ownership moves out of
-it; new code names the owning crate.
+longer defines when they moved below it, so a consumer keeps one import path;
+a name that moved above it — `Event`, `EventEnvelope`, `Post`, `Reporter` and
+`TurnError`, now owned by `crucible-runner` — is imported from its owner
+instead, because core cannot depend upward. New code names the owning crate
+either way.
 
 ## Changing Crucible
 

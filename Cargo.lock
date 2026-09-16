@@ -535,9 +535,9 @@ dependencies = [
  "crucible-context",
  "crucible-core",
  "crucible-models",
- "crucible-session",
  "crucible-types",
  "sha2",
+ "thiserror",
 ]
 
 [[package]]

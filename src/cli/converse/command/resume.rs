@@ -30,11 +30,13 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr as _;
+use std::sync::Arc;
 use std::time::SystemTime;
 
-use crucible_core::{Compacting, SessionId, Workspace};
-use crucible_runner::{
-    Glimpse, Pruned, Recorded, Runner, Session, SessionError, glimpse, recent, retitle,
+use crucible_core::{Compacting, JournalStore, SessionId, Workspace};
+use crucible_runner::Runner;
+use crucible_session::{
+    Glimpse, Pruned, Recorded, Session, SessionError, glimpse, recent, retitle,
 };
 use crucible_tui::{Editor, Glyphs, Kept, Picker, Renderer, Row, Slot, Terminal, clip};
 
@@ -145,7 +147,7 @@ fn picking<T: Terminal>(
     // file, so continuing it would come back as "open in another crucible" —
     // which names the wrong crucible, and reads as a reason to go and close
     // something.
-    if runner.session().id() == Some(id) {
+    if held.session.id() == Some(id) {
         let rows = [Row::new().then(Slot::Quiet, clip("this is the session you are in", columns))];
         renderer.present(&rows)?;
         return Ok(None);
@@ -171,7 +173,13 @@ fn picking<T: Terminal>(
         }
     };
 
-    let left = runner.pick_up(session, transcript);
+    // The application's session is swapped first, and the runner is handed the
+    // same one through the contract it records into. The one being left is kept
+    // here rather than dropped: it is still this loop's to close.
+    let session = Arc::new(session);
+    let onto: Arc<dyn JournalStore> = session.clone();
+    let left = std::mem::replace(&mut held.session, session);
+    runner.pick_up(onto, transcript);
 
     // The files remembered were read by the session just left, and `write`
     // replaces a file on the strength of that record. The session picked up saw
@@ -219,11 +227,11 @@ fn picking<T: Terminal>(
     // reader scrolling back after a `/resume` finds exactly the screen a
     // launch would have drawn.
     held.opening.commit(renderer)?;
-    let pruned = runner.take_pruned();
+    let pruned = held.session.take_pruned();
     let against = replaying::Replay::of(runner, terms, &pruned);
-    super::super::replaying::replayed(renderer, &against, &mut held.kept)?;
+    super::super::replaying::replayed(renderer, &against, &held.session, &mut held.kept)?;
     drop(pruned);
-    super::super::resuming::asked(renderer, runner, terms, held.answers.keys)
+    super::super::resuming::asked(renderer, runner, &held.session, terms, held.answers.keys)
 }
 
 /// Offers what was worked on here: the picker, or the listing for a run that

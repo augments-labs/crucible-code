@@ -10,9 +10,11 @@ use std::time::{Duration, Instant};
 
 use crucible_auth::Store;
 use crucible_core::{
-    AgentId, Compacting, Delta, Event, Mode, Permission, Revealed, Rules, StopReason, ToolId,
+    AgentId, Compacting, Delta, Mode, Permission, Revealed, Rules, StopReason, ToolId,
 };
-use crucible_runner::{Agent, Model, Session, Tools};
+use crucible_runner::Event;
+use crucible_runner::{Agent, Model, Tools};
+use crucible_session::Session;
 use crucible_tui::{Picture, Recording, Size, Terminal, TerminalError};
 
 use std::sync::mpsc::channel;
@@ -136,7 +138,7 @@ fn scripted(script: Script, offered: Tools) -> Runner {
             },
         ),
         crucible_context::ContextInputs::new(std::env::temp_dir()),
-        Session::nowhere(),
+        Arc::new(Session::nowhere()),
     )
 }
 
@@ -149,7 +151,17 @@ fn over(script: Script, offered: Tools, typed: &str) -> (String, usize) {
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(typed.as_bytes().to_vec());
 
-    converse(runner, &mut renderer, &plain(), &opening(), &mut input).expect("the loop to finish");
+    converse(
+        Talking {
+            runner,
+            session: Arc::new(Session::nowhere()),
+        },
+        &mut renderer,
+        &plain(),
+        &opening(),
+        &mut input,
+    )
+    .expect("the loop to finish");
 
     (
         renderer.terminal().written().to_string(),
@@ -203,6 +215,7 @@ fn an_explicit_compaction_holds_completion_after_its_worker_disconnects() {
     let mut held = Held::new(
         terms.plan.clone(),
         terms.sending,
+        Arc::new(Session::nowhere()),
         Answers {
             input: &mut input,
             keys: false,
@@ -279,13 +292,23 @@ fn a_theme_taken_mid_session_is_what_the_rows_after_it_are_drawn_in() {
             },
         ),
         crucible_context::ContextInputs::new(std::env::temp_dir()),
-        Session::nowhere(),
+        Arc::new(Session::nowhere()),
     );
 
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(b"/theme colourblind-dark\nhello\n".to_vec());
 
-    converse(runner, &mut renderer, &terms, &opening(), &mut input).expect("the loop to finish");
+    converse(
+        Talking {
+            runner,
+            session: Arc::new(Session::nowhere()),
+        },
+        &mut renderer,
+        &terms,
+        &opening(),
+        &mut input,
+    )
+    .expect("the loop to finish");
 
     let worn = |style: Style| {
         style
@@ -319,7 +342,17 @@ fn a_window_the_user_resized_wraps_the_turns_that_follow_it() {
     let mut renderer = Renderer::new(Narrowing::new());
     let mut input = Cursor::new(b"go\n".to_vec());
 
-    converse(runner, &mut renderer, &plain(), &opening(), &mut input).expect("the loop to finish");
+    converse(
+        Talking {
+            runner,
+            session: Arc::new(Session::nowhere()),
+        },
+        &mut renderer,
+        &plain(),
+        &opening(),
+        &mut input,
+    )
+    .expect("the loop to finish");
 
     let shown = Picture::of(renderer.terminal().written(), NARROW, 24);
     let said = shown.said();
@@ -610,7 +643,7 @@ fn a_log_that_failed_with_the_last_line_still_queued_is_reported_before_the_prom
     // turn, so the in-loop poll never runs at all, and the only path that can
     // still say anything is the drain after it. A test that let the poll run
     // would pass with the report after the loop deleted.
-    let session = Session::onto("/nowhere".into(), Failing);
+    let session = Arc::new(Session::onto("/nowhere".into(), Failing));
     session.append(&crucible_core::Message::said("queued"));
 
     let runner = Runner::new(
@@ -627,13 +660,20 @@ fn a_log_that_failed_with_the_last_line_still_queued_is_reported_before_the_prom
             },
         ),
         crucible_context::ContextInputs::new(std::env::temp_dir()),
-        session,
+        session.clone(),
     );
 
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(Vec::new());
 
-    converse(runner, &mut renderer, &plain(), &opening(), &mut input).expect("the loop to finish");
+    converse(
+        Talking { runner, session },
+        &mut renderer,
+        &plain(),
+        &opening(),
+        &mut input,
+    )
+    .expect("the loop to finish");
 
     let written = renderer.terminal().written();
     assert!(
@@ -650,7 +690,7 @@ fn a_terminal_that_fails_mid_turn_leaves_the_turn_recorded_all_the_same() {
     // and leave that thread running with the process on its way out, so the
     // turn on screen when the window closed is the turn missing from the log.
     let kept = Arc::new(Mutex::new(Vec::new()));
-    let session = Session::onto("/nowhere".into(), Kept(Arc::clone(&kept)));
+    let session = Arc::new(Session::onto("/nowhere".into(), Kept(Arc::clone(&kept))));
 
     let provider = Script::new(vec![saying("what the model said")]);
     let started = provider.asked();
@@ -668,7 +708,7 @@ fn a_terminal_that_fails_mid_turn_leaves_the_turn_recorded_all_the_same() {
             },
         ),
         crucible_context::ContextInputs::new(std::env::temp_dir()),
-        session,
+        session.clone(),
     );
 
     // Three writes come before the turn: the row at the top of the window, the
@@ -682,8 +722,14 @@ fn a_terminal_that_fails_mid_turn_leaves_the_turn_recorded_all_the_same() {
     });
     let mut input = Cursor::new(b"go\n".to_vec());
 
-    let problem = converse(runner, &mut renderer, &plain(), &opening(), &mut input)
-        .expect_err("the terminal to fail");
+    let problem = converse(
+        Talking { runner, session },
+        &mut renderer,
+        &plain(),
+        &opening(),
+        &mut input,
+    )
+    .expect_err("the terminal to fail");
 
     assert!(matches!(problem, Fatal::Terminal(_)), "{problem:?}");
     assert_eq!(started.load(Ordering::Acquire), 1, "the turn never began");
@@ -712,7 +758,7 @@ fn a_terminal_failure_cancels_a_provider_that_would_otherwise_stay_live() {
             },
         ),
         crucible_context::ContextInputs::new(std::env::temp_dir()),
-        Session::nowhere(),
+        Arc::new(Session::nowhere()),
     );
     let terms = plain();
     let cancellation = terms.cancel.clone();
@@ -722,8 +768,17 @@ fn a_terminal_failure_cancels_a_provider_that_would_otherwise_stay_live() {
     });
     let mut input = Cursor::new(b"go\n".to_vec());
 
-    let problem = converse(runner, &mut renderer, &terms, &opening(), &mut input)
-        .expect_err("the terminal to fail");
+    let problem = converse(
+        Talking {
+            runner,
+            session: Arc::new(Session::nowhere()),
+        },
+        &mut renderer,
+        &terms,
+        &opening(),
+        &mut input,
+    )
+    .expect_err("the terminal to fail");
 
     assert!(matches!(problem, Fatal::Terminal(_)), "{problem:?}");
     assert!(cancellation.requested(), "the provider was never cancelled");
@@ -744,7 +799,17 @@ fn a_piped_run_ends_the_row_its_prompt_was_left_on() {
     let mut renderer = Renderer::new(Recording::redirected(80, 24));
     let mut input = Cursor::new(Vec::new());
 
-    converse(runner, &mut renderer, &plain(), &opening(), &mut input).expect("the loop to finish");
+    converse(
+        Talking {
+            runner,
+            session: Arc::new(Session::nowhere()),
+        },
+        &mut renderer,
+        &plain(),
+        &opening(),
+        &mut input,
+    )
+    .expect("the loop to finish");
 
     let written = renderer.terminal().written();
     assert!(written.ends_with('\n'), "{written:?}");
@@ -761,7 +826,17 @@ fn the_prompt_line_names_the_mode_in_force() {
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(Vec::new());
 
-    converse(runner, &mut renderer, &plain(), &opening(), &mut input).expect("the loop to finish");
+    converse(
+        Talking {
+            runner,
+            session: Arc::new(Session::nowhere()),
+        },
+        &mut renderer,
+        &plain(),
+        &opening(),
+        &mut input,
+    )
+    .expect("the loop to finish");
 
     let written = renderer.terminal().written();
     assert!(written.contains("fullAccess › "), "{written}");
@@ -786,8 +861,17 @@ fn the_mark_a_piped_line_is_typed_after_comes_out_of_the_glyph_set() {
             ..plain()
         };
 
-        converse(runner, &mut renderer, &terms, &opening(), &mut input)
-            .expect("the loop to finish");
+        converse(
+            Talking {
+                runner,
+                session: Arc::new(Session::nowhere()),
+            },
+            &mut renderer,
+            &terms,
+            &opening(),
+            &mut input,
+        )
+        .expect("the loop to finish");
 
         let written = renderer.terminal().written();
         assert!(written.contains(said), "{glyphs:?}: {written}");
@@ -811,7 +895,17 @@ fn the_box_and_the_mode_stand_under_a_turn_that_is_still_being_written() {
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(b"go\n".to_vec());
 
-    converse(runner, &mut renderer, &plain(), &opening(), &mut input).expect("the loop to finish");
+    converse(
+        Talking {
+            runner,
+            session: Arc::new(Session::nowhere()),
+        },
+        &mut renderer,
+        &plain(),
+        &opening(),
+        &mut input,
+    )
+    .expect("the loop to finish");
 
     let shown = moment(renderer.terminal().written(), "thinking");
     let rows = shown.rows();
@@ -893,7 +987,17 @@ fn answering(terms: &Terms, rounds: Vec<Vec<Delta>>, offered: Tools, typed: &str
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(typed.as_bytes().to_vec());
 
-    converse(runner, &mut renderer, terms, &opening(), &mut input).expect("the loop to finish");
+    converse(
+        Talking {
+            runner,
+            session: Arc::new(Session::nowhere()),
+        },
+        &mut renderer,
+        terms,
+        &opening(),
+        &mut input,
+    )
+    .expect("the loop to finish");
 
     renderer.terminal().written().to_string()
 }
@@ -951,7 +1055,17 @@ fn a_turn_that_asks_a_loop_with_nobody_at_it_is_told_so_and_carries_on() {
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(b"go\n".to_vec());
 
-    converse(runner, &mut renderer, &terms, &opening(), &mut input).expect("the loop to finish");
+    converse(
+        Talking {
+            runner,
+            session: Arc::new(Session::nowhere()),
+        },
+        &mut renderer,
+        &terms,
+        &opening(),
+        &mut input,
+    )
+    .expect("the loop to finish");
 
     let written = renderer.terminal().written().to_string();
     assert!(written.contains("carried on"), "{written}");
@@ -982,7 +1096,17 @@ fn deciding(mode: Mode, offered: Tools, rounds: Vec<Vec<Delta>>, typed: &str) ->
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(typed.as_bytes().to_vec());
 
-    converse(runner, &mut renderer, &plain(), &opening(), &mut input).expect("the loop to finish");
+    converse(
+        Talking {
+            runner,
+            session: Arc::new(Session::nowhere()),
+        },
+        &mut renderer,
+        &plain(),
+        &opening(),
+        &mut input,
+    )
+    .expect("the loop to finish");
 
     renderer.terminal().written().to_string()
 }
@@ -1288,14 +1412,23 @@ fn a_prompt_that_cannot_be_answered_down_a_pipe_fails_rather_than_ending_quietly
             },
         ),
         crucible_context::ContextInputs::new(std::env::temp_dir()),
-        Session::nowhere(),
+        Arc::new(Session::nowhere()),
     );
 
     let mut renderer = Renderer::new(Recording::redirected(80, 24));
     let mut input = Cursor::new(b"what is 2+2\n".to_vec());
 
-    let problem = converse(runner, &mut renderer, &plain(), &opening(), &mut input)
-        .expect_err("a run that answered nothing to fail");
+    let problem = converse(
+        Talking {
+            runner,
+            session: Arc::new(Session::nowhere()),
+        },
+        &mut renderer,
+        &plain(),
+        &opening(),
+        &mut input,
+    )
+    .expect_err("a run that answered nothing to fail");
 
     assert!(matches!(problem, Fatal::Unanswerable(_)), "{problem:?}");
 }

@@ -52,8 +52,8 @@ use crucible_core::{
     SandboxService as _, SessionId, SourceKind, ToolId, ToolsetError, Workspace,
 };
 use crucible_provider::EndpointError;
-use crucible_runner::SessionError;
 use crucible_sandbox_local::LocalSandbox;
+use crucible_session::SessionError;
 use crucible_tui::{
     RawError, Renderer, ScreenError, SystemTerminal, TerminalError, Title, TitleError, Welcome,
 };
@@ -1280,7 +1280,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     // put a directory in time order and opens only the newest few files it
     // finds there. A directory nobody has worked in costs one read and draws
     // the heading with nothing under it.
-    let sessions = crucible_runner::recent(home.sessions(), &workspace, Welcome::WANTED);
+    let sessions = crucible_session::recent(home.sessions(), &workspace, Welcome::WANTED);
 
     // Off the disk, so no socket is opened on the path the first frame is
     // measured on. Asking again happens after the frame is drawn, on a thread
@@ -1314,7 +1314,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     // the same generation. A registration committed after this point is for the
     // next reader to see, not for a runner already built.
     let catalogue = terms.providers.snapshot();
-    let runner = assemble(&Startup {
+    let (runner, session) = assemble(&Startup {
         leaving: &leaving,
         providers: &catalogue,
         provider: launch.serving,
@@ -1335,12 +1335,12 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         from: &from,
         stored: &keys,
         subscriptions: &subscriptions,
-    })?
-    .with_prompt_cache_store(crucible_session::FilePromptCacheResourceStore::in_home(
-        home.path(),
-    ));
+    })?;
+    let runner = runner.with_prompt_cache_store(
+        crucible_session::FilePromptCacheResourceStore::in_home(home.path()),
+    );
     let outcome = converse::converse(
-        runner,
+        converse::Talking { runner, session },
         &mut renderer,
         &terms,
         &opening,

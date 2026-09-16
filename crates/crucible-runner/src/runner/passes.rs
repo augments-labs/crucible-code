@@ -21,8 +21,8 @@
 
 use crucible_agents::{Decision, GuardrailError, Rejection};
 use crucible_core::{
-    Ask, Compacting, Event, Message, ProviderContinuation, ProviderError, RunId, Spend, StopReason,
-    ToolCall, ToolsetContext, TurnError,
+    Ask, Compacting, Message, ProviderContinuation, ProviderError, RunId, Spend, StopReason,
+    ToolCall, ToolsetContext,
 };
 
 use crate::context::RunContext;
@@ -30,6 +30,7 @@ use crate::outcome::{RunResult, Turned};
 
 use super::{After, Counting, Listening, Runner, TurnBounds, Went, Work};
 
+use crate::{Event, TurnError};
 /// How one run's passes ended.
 ///
 /// The loop's own word for it, because the value a caller gets back carries a
@@ -438,7 +439,7 @@ impl<'a> AgentLoop<'a> {
                 events,
                 cancel,
                 ancestry: run.ancestry(),
-                journal: &self.runner.session,
+                journal: &*self.runner.store,
                 audits: &self.runner.sandbox_audits,
                 concurrency: run.policy().tools.maximum_concurrency(),
             }

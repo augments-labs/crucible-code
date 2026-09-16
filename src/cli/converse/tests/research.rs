@@ -84,7 +84,17 @@ fn researching(failed: bool) -> String {
     ));
     let mut renderer = Renderer::new(Recording::new(100, 30));
     let mut input = Cursor::new(b"research\n".to_vec());
-    converse(runner, &mut renderer, &plain(), &opening(), &mut input).unwrap();
+    converse(
+        Talking {
+            runner,
+            session: Arc::new(Session::nowhere()),
+        },
+        &mut renderer,
+        &plain(),
+        &opening(),
+        &mut input,
+    )
+    .unwrap();
     renderer.terminal().picture().said().join("\n")
 }
 

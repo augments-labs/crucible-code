@@ -30,16 +30,15 @@ crucible-core.workspace = true
 # vendor restricts what it produced; the runner applies that decision and never
 # makes it from a vendor's or a tool's name.
 crucible-models.workspace = true
-# The log a turn is recorded to, re-exported for the wiring that drives turns.
-# Composition names the session crate itself for what the runner never
-# touches, such as the file persistent prompt-cache resources are kept in.
-crucible-session.workspace = true
 # Who answered a recorded result, which is what the transfer decision reads.
 crucible-types.workspace = true
 # The prompt-cache scope is named by a domain-separated digest of what it
 # covers, so a resumed run reuses a cache entry only where the same inputs
 # produced it.
 sha2.workspace = true
+# Writes the turn failure enum, which holds each collaborator's own typed error
+# with `#[from]` rather than erasing it into a sentence.
+thiserror.workspace = true
 
 [lints]
 workspace = true

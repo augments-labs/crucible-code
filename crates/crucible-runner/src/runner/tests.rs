@@ -1,22 +1,22 @@
 //! What the turn loop does, over a provider that answers from a script and
 //! tools that answer from a field.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    AgentId, Approved, Aside, Attachment, Carried, Change, DescribeTool, Diff, EventEnvelope,
-    InputTokenUsage, Line, Modalities, Modality, Post, PromptCacheFact, PromptCacheFingerprint,
+    AgentId, Approved, Aside, Attachment, Carried, Change, DescribeTool, Diff, InputTokenUsage,
+    JournalStore, Line, Modalities, Modality, PromptCacheFact, PromptCacheFingerprint,
     PromptCacheIsolation, PromptCachePersistentMode, PromptCachePolicy, PromptCachePolicyDigest,
     PromptCacheResourceBinding, PromptCacheResourceError, PromptCacheResourceHandle,
     PromptCacheResourceId, PromptCacheResourceOperation, PromptCacheResourceOwner,
     PromptCacheResourceRecord, PromptCacheResourceState, PromptCacheResourceStore,
-    PromptCacheScopeDigest, ProviderError, ProviderLimit, ProviderUsage, Sensitivity, SessionId,
-    Spend, Summary, Target, Tool, ToolArgs, ToolContext, ToolError, ToolId, ToolOutput, ToolResult,
-    Verdict,
+    PromptCacheScopeDigest, ProviderError, ProviderLimit, ProviderUsage, RunItem, Sensitivity,
+    SessionStore, Spend, Summary, Target, Tool, ToolArgs, ToolContext, ToolError, ToolId,
+    ToolOutput, ToolResult, Verdict,
 };
 
 use sha2::{Digest as _, Sha256};
@@ -25,8 +25,10 @@ use super::*;
 use crate::fake::{Fixed, Says, Script, Sent, Typing, changing};
 use crate::outcome::RunStatus;
 use crate::policy::{Bounds, Retry};
+use crate::recording::{Kept, Recording};
 use crate::sample::Sample;
 
+use crate::{EventEnvelope, Post};
 /// A policy holding one turn's tool output to `maximum` bytes, so a test can
 /// put a turn over the boundary without printing megabytes to get there.
 fn holding(maximum: usize) -> RunPolicy {
@@ -91,6 +93,7 @@ mod pick_up;
 mod preserved;
 mod reporting;
 mod spending;
+mod storage;
 
 /// A destination that keeps the event and lets the attribution go.
 ///
@@ -215,23 +218,23 @@ fn ran(turned: Turned) -> StopReason {
 
 impl Scripted {
     fn new(script: Script, tools: Tools, verdict: Verdict) -> Self {
-        Self::recording(script, tools, verdict, Session::nowhere())
+        Self::recording(script, tools, verdict, Recording::nowhere())
     }
 
-    fn recording(script: Script, tools: Tools, verdict: Verdict, session: Session) -> Self {
-        Self::built(script, tools, verdict, session, fixture())
+    fn recording(script: Script, tools: Tools, verdict: Verdict, store: Arc<Recording>) -> Self {
+        Self::built(script, tools, verdict, store, fixture())
     }
 
     /// The same, under a definition the test built rather than the fixture one.
     fn under(script: Script, tools: Tools, agent: Agent) -> Self {
-        Self::built(script, tools, Verdict::Allow, Session::nowhere(), agent)
+        Self::built(script, tools, Verdict::Allow, Recording::nowhere(), agent)
     }
 
     fn built(
         script: Script,
         tools: Tools,
         verdict: Verdict,
-        session: Session,
+        store: Arc<Recording>,
         agent: Agent,
     ) -> Self {
         let (events, seen) = channel();
@@ -244,7 +247,7 @@ impl Scripted {
                 agent,
                 ContextInputs::new(std::env::temp_dir())
                     .dated(std::time::UNIX_EPOCH + std::time::Duration::from_hours(496_704)),
-                session,
+                store,
             ),
             sent,
             says: Says::new(verdict),
@@ -660,7 +663,7 @@ impl Steering {
                 ),
                 ContextInputs::new(std::env::temp_dir())
                     .dated(std::time::UNIX_EPOCH + std::time::Duration::from_hours(496_704)),
-                Session::nowhere(),
+                Recording::nowhere(),
             ),
             sent,
             says: Says::new(Verdict::Allow),

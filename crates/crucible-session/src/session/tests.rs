@@ -362,13 +362,13 @@ fn a_fresh_session_starts_with_a_known_empty_context_snapshot() {
     let sample = Sample::new("fresh-context-snapshot");
     let session = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();
 
-    assert_eq!(session.context_snapshot(), Some(&ContextSnapshot::new()));
+    assert_eq!(session.context_snapshot(), Some(ContextSnapshot::new()));
 }
 
 #[test]
 fn context_is_recorded_as_ordered_patches_and_reconstructed_on_resume() {
     let sample = Sample::new("context-patch-replay");
-    let mut session = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();
     let path = session.path().to_owned();
     let first = ContextPatch::from_value(serde_json::json!({
         "workspace": { "root": "/work" },
@@ -819,7 +819,7 @@ fn a_compacted_session_replays_as_the_notes_and_what_they_did_not_replace() {
 #[test]
 fn compaction_replay_drops_context_from_the_tail_but_keeps_its_typed_snapshot() {
     let sample = Sample::new("session-compacted-context");
-    let mut session = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();
     let patch = ContextPatch::from_value(serde_json::json!({
         "model": { "model": "kept-model" }
     }))
@@ -844,7 +844,7 @@ fn compaction_replay_drops_context_from_the_tail_but_keeps_its_typed_snapshot() 
         "typed context must not survive independently in the retained tail"
     );
     assert_eq!(
-        resumed.context_snapshot().map(ContextSnapshot::value),
+        resumed.context_snapshot().map(|snapshot| snapshot.value()),
         Some(serde_json::json!({
             "model": { "model": "kept-model" }
         }))

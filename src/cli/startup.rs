@@ -30,10 +30,9 @@ use crucible_provider::{
     Anthropic, AnthropicWeb, Endpoint, Google, GoogleWeb, Https, Moonshot, MoonshotWeb, OpenAi,
     OpenAiWeb, Unavailable,
 };
-use crucible_runner::{
-    Agent, AgentBuilder, Bounds, Compaction, Model, RunPolicy, Runner, Session, Tools,
-};
+use crucible_runner::{Agent, AgentBuilder, Bounds, Compaction, Model, RunPolicy, Runner, Tools};
 use crucible_sandbox_local::LocalSandbox;
+use crucible_session::Session;
 
 use super::hosting::{Hosting, selecting};
 use super::seen::Putting;
@@ -163,8 +162,12 @@ pub(super) struct Startup<'a> {
     pub(super) subscriptions: &'a Subscriptions,
 }
 
-/// The runner the loop drives, built from what the startup resolved.
-pub(super) fn assemble(startup: &Startup<'_>) -> Result<Runner, Fatal> {
+/// The runner the loop drives, and the session it records into.
+///
+/// Both, because the runner writes through a storage contract and never learns
+/// what is behind it: closing the log, browsing it and reporting on it are the
+/// application's, so the application keeps the session it built.
+pub(super) fn assemble(startup: &Startup<'_>) -> Result<(Runner, Arc<Session>), Fatal> {
     let Startup {
         settings,
         sessions,
@@ -243,15 +246,16 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<Runner, Fatal> {
     // for every run that never asked for one.
     let context = ContextInputs::new(workspace.root());
     let permission = settings.permission(startup.mode);
+    let session = Arc::new(session);
     let mut runner = if chosen.is_empty() {
-        Runner::new(provider, offering, asking, context, session)
+        Runner::new(provider, offering, asking, context, session.clone())
     } else {
         Runner::with_toolset(
             provider,
             Hosting::new(offering, sandbox, chosen),
             asking,
             context,
-            session,
+            session.clone(),
         )
     }
     .permitting(permission)
@@ -261,7 +265,7 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<Runner, Fatal> {
         runner = runner.resuming(transcript);
     }
 
-    Ok(runner)
+    Ok((runner, session))
 }
 
 /// The session `--resume` named, and everything it already holds.
@@ -275,7 +279,7 @@ pub(super) fn reopening(
     workspace: &Workspace,
     id: &SessionId,
 ) -> Result<(Session, Transcript), Fatal> {
-    use crucible_runner::SessionError;
+    use crucible_session::SessionError;
 
     Session::reopen(sessions, workspace, id).map_err(|problem| match problem {
         SessionError::Unknown { id, .. } => Fatal::NoSession(id),

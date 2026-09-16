@@ -712,6 +712,7 @@ fn taken<T: Terminal>(
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
+    use std::sync::Arc;
 
     use crucible_auth::Store;
     use crucible_builtins::{Ledger, Plan};
@@ -780,7 +781,7 @@ mod tests {
                 },
             ),
             crucible_context::ContextInputs::new(std::env::temp_dir()),
-            crucible_runner::Session::nowhere(),
+            Arc::new(crucible_session::Session::nowhere()),
         )
     }
 

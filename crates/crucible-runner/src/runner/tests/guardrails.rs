@@ -333,11 +333,9 @@ fn a_session_picked_up_puts_the_same_words_to_the_checks_again() {
             .turned("go")
             .expect_err("a provider that refuses everything"),
     );
-    drop(
-        scripted
-            .runner
-            .pick_up(Session::nowhere(), Transcript::new()),
-    );
+    scripted
+        .runner
+        .pick_up(Recording::nowhere(), Transcript::new());
     drop(
         scripted
             .turned("go")

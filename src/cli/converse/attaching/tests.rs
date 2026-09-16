@@ -1,13 +1,15 @@
 use std::fs;
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 
 use crucible_core::{
-    AgentId, Aside, Ask, Cancel, CredentialScopeId, Delta, DeltaStream, EventEnvelope, Message,
-    Modalities, Modality, PromptCacheCapabilities, PromptCacheEncoding, PromptCacheRoute, Provider,
+    AgentId, Aside, Ask, Cancel, CredentialScopeId, Delta, DeltaStream, Message, Modalities,
+    Modality, PromptCacheCapabilities, PromptCacheEncoding, PromptCacheRoute, Provider,
     ProviderError, Remember, Request, Sensitivity, Steer, StopReason, ToolCall, Transcript,
     Verdict, Workspace, written,
 };
-use crucible_runner::{Agent, Model, Pruned, Runner, Session, Tools};
+use crucible_runner::EventEnvelope;
+use crucible_runner::{Agent, Model, Runner, Tools};
+use crucible_session::{Pruned, Session};
 
 use crucible_tui::{Glyphs, Recording, Renderer};
 
@@ -165,9 +167,9 @@ fn an_external_picture_is_imported_for_the_session() {
             provider: &spelling("anthropic"),
             model: "claude-opus-5",
             reads: Some(opus()),
+            imported: Some(&imported),
         },
         outside.to_str().expect("a text path"),
-        Some(&imported),
     ) else {
         panic!("the user-selected external picture is attached")
     };
@@ -202,12 +204,12 @@ fn a_picture_named_at_the_prompt_is_attached() {
             provider: &spelling("anthropic"),
             model: "claude-opus-5",
             reads: Some(opus()),
+            imported: None,
         },
         Sent {
             prompt: "what is in holiday.png",
             images: &[],
         },
-        None,
     );
 
     assert!(refusals.is_empty(), "nothing was refused: {refusals:?}");
@@ -241,12 +243,12 @@ fn an_mp4_is_attached_only_when_provider_and_model_both_accept_video() {
             provider: &videos(),
             model: "k3",
             reads: Some(kimi()),
+            imported: None,
         },
         Sent {
             prompt: "describe demo.MP4",
             images: &[],
         },
-        None,
     );
 
     assert!(refusals.is_empty(), "nothing was refused: {refusals:?}");
@@ -269,12 +271,12 @@ fn an_mp4_is_refused_when_the_provider_has_no_video_shape() {
             provider: &spelling("moonshot"),
             model: "k3",
             reads: Some(kimi()),
+            imported: None,
         },
         Sent {
             prompt: "describe demo.mp4",
             images: &[],
         },
-        None,
     );
 
     assert!(attachments.is_empty());
@@ -300,12 +302,12 @@ fn an_mp4_name_with_non_mp4_bytes_is_refused() {
             provider: &videos(),
             model: "k3",
             reads: Some(kimi()),
+            imported: None,
         },
         Sent {
             prompt: "describe demo.mp4",
             images: &[],
         },
-        None,
     );
 
     assert!(attachments.is_empty());
@@ -331,12 +333,12 @@ fn a_prompt_naming_no_file_attaches_nothing_and_says_nothing() {
             provider: &spelling("anthropic"),
             model: "claude-opus-5",
             reads: Some(opus()),
+            imported: None,
         },
         Sent {
             prompt: "rename the field and run the tests",
             images: &[],
         },
-        None,
     );
 
     assert!(attachments.is_empty(), "no file was named");
@@ -357,12 +359,12 @@ fn a_source_file_named_at_the_prompt_is_still_only_text() {
             provider: &spelling("anthropic"),
             model: "claude-opus-5",
             reads: Some(opus()),
+            imported: None,
         },
         Sent {
             prompt: "have a look at main.rs",
             images: &[],
         },
-        None,
     );
 
     assert!(
@@ -391,12 +393,12 @@ fn the_provider_half_of_the_intersection_names_the_protocol() {
             provider: &spelling("anthropic"),
             model: "claude-opus-5",
             reads: Some(opus()),
+            imported: None,
         },
         Sent {
             prompt: "read invoice.pdf",
             images: &[],
         },
-        None,
     );
 
     assert!(attachments.is_empty());
@@ -429,12 +431,12 @@ fn a_pdf_on_moonshot_is_refused_by_the_protocol_and_never_sent() {
             provider: &spelling("moonshot"),
             model: "k3",
             reads: Some(kimi()),
+            imported: None,
         },
         Sent {
             prompt: "read invoice.pdf",
             images: &[],
         },
-        None,
     );
 
     assert!(attachments.is_empty(), "nothing goes with the prompt");
@@ -472,12 +474,12 @@ fn the_model_half_of_the_intersection_names_the_model() {
             provider: &spelling,
             model: "k3",
             reads: Some(kimi()),
+            imported: None,
         },
         Sent {
             prompt: "read invoice.pdf",
             images: &[],
         },
-        None,
     );
 
     assert!(attachments.is_empty());
@@ -504,12 +506,12 @@ fn a_model_outside_the_table_neither_offers_the_file_nor_refuses_it() {
             provider: &spelling("anthropic"),
             model: "claude-opus-9",
             reads: None,
+            imported: None,
         },
         Sent {
             prompt: "what is in holiday.png",
             images: &[],
         },
-        None,
     );
 
     assert!(attachments.is_empty());
@@ -539,12 +541,12 @@ fn a_file_over_the_ceiling_is_refused_where_the_user_can_still_hear_it() {
             provider: &spelling("anthropic"),
             model: "claude-opus-5",
             reads: Some(opus()),
+            imported: None,
         },
         Sent {
             prompt: "what is in huge.png",
             images: &[],
         },
-        None,
     );
 
     assert!(attachments.is_empty());
@@ -572,12 +574,12 @@ fn a_png_that_is_not_a_png_is_refused_before_any_request() {
             provider: &spelling("anthropic"),
             model: "claude-opus-5",
             reads: Some(opus()),
+            imported: None,
         },
         Sent {
             prompt: "what is in holiday.png",
             images: &[],
         },
-        None,
     );
 
     assert!(attachments.is_empty());
@@ -619,7 +621,7 @@ fn answering() -> (Runner, mpsc::Sender<EventEnvelope>) {
                 },
             ),
             crucible_context::ContextInputs::new(std::env::temp_dir()),
-            Session::nowhere(),
+            Arc::new(Session::nowhere()),
         ),
         events,
     )
@@ -646,12 +648,12 @@ fn what_the_prompt_attached_reaches_the_transcript() {
             provider: &spelling("anthropic"),
             model: "claude-opus-5",
             reads: Some(opus()),
+            imported: None,
         },
         Sent {
             prompt,
             images: &[],
         },
-        None,
     );
 
     let (mut runner, events) = answering();
@@ -685,12 +687,12 @@ fn a_prompt_naming_no_file_records_the_message_it_always_did() {
             provider: &spelling("anthropic"),
             model: "claude-opus-5",
             reads: Some(opus()),
+            imported: None,
         },
         Sent {
             prompt,
             images: &[],
         },
-        None,
     );
 
     let (mut runner, events) = answering();
@@ -725,7 +727,7 @@ fn sending() -> Runner {
             },
         ),
         crucible_context::ContextInputs::new(std::env::temp_dir()),
-        Session::nowhere(),
+        Arc::new(Session::nowhere()),
     )
 }
 
@@ -743,7 +745,7 @@ fn a_file_sent_with_a_prompt_is_marked_under_it_whichever_way_it_reached_the_scr
     draw::queued(&mut live, prompt, style).expect("a recording cannot fail");
     let attachments = beside(
         &mut live,
-        &runner,
+        Asking::of(&runner, None),
         &workspace,
         Sent {
             prompt,
@@ -771,6 +773,7 @@ fn a_file_sent_with_a_prompt_is_marked_under_it_whichever_way_it_reached_the_scr
             pruned: &Pruned::default(),
             style,
         },
+        &Session::nowhere(),
         &mut Kept::default(),
     )
     .expect("a recording cannot fail");
@@ -826,12 +829,12 @@ fn a_marker_names_the_image_pasted_before_it() {
             provider: &spelling("anthropic"),
             model: "claude-opus-5",
             reads: Some(opus()),
+            imported: Some(&imported),
         },
         Sent {
             prompt: "what is in [Image #1]",
             images: &pasted,
         },
-        Some(&imported),
     );
 
     assert!(refusals.is_empty(), "nothing was refused: {refusals:?}");
@@ -858,12 +861,12 @@ fn a_marker_with_nothing_pasted_behind_it_is_a_word() {
             provider: &spelling("anthropic"),
             model: "claude-opus-5",
             reads: Some(opus()),
+            imported: None,
         },
         Sent {
             prompt: "the plan in [Image #3] step one",
             images: &[],
         },
-        None,
     );
 
     assert!(attachments.is_empty(), "no paste stands behind the marker");
@@ -892,12 +895,12 @@ fn a_marker_said_twice_attaches_the_image_once() {
             provider: &spelling("anthropic"),
             model: "claude-opus-5",
             reads: Some(opus()),
+            imported: Some(&imported),
         },
         Sent {
             prompt: "compare [Image #1] with [Image #1]",
             images: &pasted,
         },
-        Some(&imported),
     );
 
     assert!(refusals.is_empty(), "nothing was refused: {refusals:?}");

@@ -837,7 +837,7 @@ fn a_session_re_aimed_between_turns_asks_every_later_turn_under_all_of_it() {
     carried
         .push(Message::said("what came before"))
         .expect("an opening message");
-    drop(scripted.runner.pick_up(Session::nowhere(), carried));
+    scripted.runner.pick_up(Recording::nowhere(), carried);
 
     assert_eq!(scripted.runner.model(), "other");
     assert_eq!(scripted.runner.effort(), Some(Effort::Low));

@@ -20,14 +20,14 @@ fn state() -> Continuation {
 
 #[test]
 fn complete_reasoning_only_answer_is_retained_and_recorded() {
-    let sample = Sample::new("continuation-recorded");
     let script = Script::new(vec![vec![
         Delta::Progress,
         Delta::Continuation(state()),
         Delta::Stopped(StopReason::Yielded),
     ]]);
-    let session = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();
-    let mut scripted = Scripted::recording(script, Tools::new(), Verdict::Allow, session);
+    let store = Recording::started("continuations");
+    let mut scripted =
+        Scripted::recording(script, Tools::new(), Verdict::Allow, Arc::clone(&store));
     scripted.turn("think").unwrap();
     assert!(matches!(
         scripted.runner.state.transcript().messages().last(),
@@ -39,7 +39,7 @@ fn complete_reasoning_only_answer_is_retained_and_recorded() {
     let visible = format!("{:?}", scripted.seen.try_iter().collect::<Vec<_>>());
     assert!(!visible.contains("private-signature-canary"));
     drop(scripted);
-    let (_session, transcript) = Session::resume(&sample.logs(), &sample.workspace()).unwrap();
+    let (_picked, transcript) = store.reopened();
     assert!(matches!(
         transcript.messages().last(),
         Some(Message::Agent {
@@ -107,9 +107,9 @@ fn broken_and_unfinished_private_output_never_becomes_replayable_or_retries() {
             ]]),
         ),
     ] {
-        let sample = Sample::new(name);
-        let session = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();
-        let mut scripted = Scripted::recording(script, Tools::new(), Verdict::Allow, session);
+        let store = Recording::started("continuations");
+        let mut scripted =
+            Scripted::recording(script, Tools::new(), Verdict::Allow, Arc::clone(&store));
         let _ = scripted.turn("think");
         assert_eq!(
             scripted.sent.lock().unwrap().len(),
@@ -134,7 +134,7 @@ fn broken_and_unfinished_private_output_never_becomes_replayable_or_retries() {
         );
         assert!(!format!("{events:?}").contains("private-signature-canary"));
         drop(scripted);
-        let (_session, replayed) = Session::resume(&sample.logs(), &sample.workspace()).unwrap();
+        let (_picked, replayed) = store.reopened();
         assert!(
             replayed
                 .messages()

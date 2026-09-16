@@ -10,6 +10,14 @@ change in any release with no deprecation period.
 
 ### Changed
 
+- **The runner records through a storage contract rather than a session.**
+  `crucible-runner` no longer depends on `crucible-session`: `Runner::new`,
+  `Runner::with_toolset` and `Runner::pick_up` take an `Arc<dyn JournalStore>`,
+  which now stands above the new `crucible_storage::SessionStore`. `Event`,
+  `EventEnvelope`, `Post`, `Reporter` and `TurnError` move from `crucible-core`
+  to `crucible-runner`. The session names the runner used to re-export are
+  imported from `crucible-session`, and `Session::finish` now takes a shared
+  session, because the application and the runner hold the same one.
 - **Model contracts have a crate of their own.** `crucible-models` now holds
   `Provider`, the model record and the neutral prompt-cache capabilities,
   projection, selection and pricing; the usage, cost and cache facts a session

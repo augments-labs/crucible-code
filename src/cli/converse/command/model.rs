@@ -698,8 +698,11 @@ fn listed<T: Terminal>(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use crucible_core::AgentId;
-    use crucible_runner::{Agent, Model as RunnerModel, Session, Tools};
+    use crucible_runner::{Agent, Model as RunnerModel, Tools};
+    use crucible_session::Session;
     use crucible_tui::{Glyphs, Recording, Renderer};
 
     use crate::cli::converse::tests::plain;
@@ -756,7 +759,7 @@ mod tests {
                 },
             ),
             crucible_context::ContextInputs::new(std::env::temp_dir()),
-            Session::nowhere(),
+            Arc::new(Session::nowhere()),
         )
     }
 
@@ -776,7 +779,7 @@ mod tests {
                 },
             ),
             crucible_context::ContextInputs::new(std::env::temp_dir()),
-            Session::nowhere(),
+            Arc::new(Session::nowhere()),
         )
     }
 
@@ -928,7 +931,7 @@ mod tests {
                 },
             ),
             crucible_context::ContextInputs::new(std::env::temp_dir()),
-            Session::nowhere(),
+            Arc::new(Session::nowhere()),
         );
         let mut renderer = Renderer::new(Recording::new(80, 24));
         let anthropic = offered(&catalogue())

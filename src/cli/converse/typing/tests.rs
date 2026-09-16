@@ -5,8 +5,11 @@
 //! being run in — so [`super::ask`] is exercised only where it declines to, and
 //! everything after that point is called directly.
 
+use std::sync::Arc;
+
 use crucible_core::{AgentId, Aside, Mode, Permission, Rules, ToolArgs};
-use crucible_runner::{Agent, Model, Session, Tools};
+use crucible_runner::{Agent, Model, Tools};
+use crucible_session::Session;
 use crucible_tui::{Aimed, Key, Recording};
 
 use super::drawing::writing;
@@ -57,7 +60,7 @@ fn engine(mode: Mode) -> Runner {
             },
         ),
         crucible_context::ContextInputs::new(std::env::temp_dir()),
-        Session::nowhere(),
+        Arc::new(Session::nowhere()),
     )
     .permitting(Permission::with(mode, Rules::new()))
 }
@@ -252,6 +255,7 @@ fn a_run_with_nothing_to_type_into_says_so_rather_than_reading_keys() {
         Between {
             commands: &commands(),
             runner: &mut runner,
+            attachment_store: None,
             editor: &mut editor,
             planning: &mut nothing(),
             recalling: &mut unwalked(),
@@ -968,7 +972,7 @@ fn a_running_turn_moves_its_latest_window_reading_into_the_prompt_border() {
     let renderer = roomy();
     let editor = typed("next");
     let mut turning = Turning::started(None);
-    turning.saw(&crucible_core::Event::Carried { left: Some(61) });
+    turning.saw(&crucible_runner::Event::Carried { left: Some(61) });
     let planning = nothing();
     let mut says = settled(Mode::Ask);
     says.left = Some(88);

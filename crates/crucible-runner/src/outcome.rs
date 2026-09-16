@@ -15,13 +15,12 @@
 //! What is *not* here: failures. A provider that would not answer, a tool the
 //! user refused, a turn that spent past its ceiling — those stay [`TurnError`],
 //! because a caller has to be made to tell them from an ending, and a status
-//! field is a thing you can forget to read. A session log that would not write
-//! is not one of them: it does not stop a turn, and it is reported on its own
-//! through [`Session::trouble`].
+//! field is a thing you can forget to read. A store that would not keep what it
+//! was told is not one of them: it does not stop a turn, and whoever opened the
+//! store reports it when they close it.
 //!
-//! [`TurnError`]: crucible_core::TurnError
+//! [`TurnError`]: crate::TurnError
 //! [`Runner::turn`]: crate::Runner::turn
-//! [`Session::trouble`]: crucible_session::Session::trouble
 
 use crucible_agents::{GuardrailError, Rejection};
 use crucible_core::{RunId, Spend, StopReason};
@@ -73,7 +72,7 @@ pub enum RunStatus {
     /// [`TurnError`] and stay there: they are the turn failing to fit inside
     /// what it was given rather than an answer that arrived.
     ///
-    /// [`TurnError`]: crucible_core::TurnError
+    /// [`TurnError`]: crate::TurnError
     LimitReached,
 }
 

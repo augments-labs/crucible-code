@@ -1283,7 +1283,7 @@ fn a_session_writes_down_the_same_record_of_the_same_turn() {
     // between two correct runs for no reason a reader could use.
     let kept = Kept::default();
     let path = PathBuf::from("/nowhere/01900000-0000-7000-8000-0000000000aa.jsonl");
-    let mut session = Session::onto(path, kept.clone());
+    let session = Session::onto(path, kept.clone());
 
     // The conversation, one message of each kind the log has a shape for.
     for message in spoken().messages() {

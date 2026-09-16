@@ -21,8 +21,11 @@
 //!
 //! [`resume`]: super::resume
 
-use crucible_core::Transcript;
-use crucible_runner::{Runner, Session};
+use std::sync::Arc;
+
+use crucible_core::{JournalStore, Transcript};
+use crucible_runner::Runner;
+use crucible_session::Session;
 use crucible_tui::{Renderer, Row, Slot, Terminal, clip};
 
 use crate::cli::Fatal;
@@ -67,7 +70,14 @@ pub(super) fn run<T: Terminal>(
         Err(problem) => return Ok(renderer.commit(&format!("! {problem}"))?),
     };
 
-    let left = runner.pick_up(session, Transcript::new());
+    // The application's session is swapped first, and the runner is handed the
+    // same one through the contract it records into. The one being left is kept
+    // here rather than dropped: it is still this loop's to close, and closing it
+    // is what says its log stopped being written to.
+    let session = Arc::new(session);
+    let onto: Arc<dyn JournalStore> = session.clone();
+    let left = std::mem::replace(&mut held.session, session);
+    runner.pick_up(onto, Transcript::new());
 
     // The files remembered were read by a session this is no longer in, and
     // `write` replaces a file on the strength of that record. Emptying it costs
@@ -124,12 +134,14 @@ pub(super) fn run<T: Terminal>(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
     use std::time::{Duration, Instant};
 
     use crucible_auth::Store;
     use crucible_builtins::{Ledger, Plan};
     use crucible_core::{AgentId, Cancel, Message, Revealed, StopReason, ToolArgs, Transcript};
-    use crucible_runner::{Agent, Model, Runner, Session, Tools, recent};
+    use crucible_runner::{Agent, Model, Runner, Tools};
+    use crucible_session::{Session, recent};
     use crucible_tui::{Recording, Renderer};
 
     use crate::cli::Fatal;
@@ -144,10 +156,15 @@ mod tests {
 
     /// What a session holds, for a session holding nothing — the same holder
     /// `/resume`'s tests lend their runs.
-    fn lent<'a>(input: &'a mut dyn std::io::BufRead, opening: &'a Standing) -> Held<'a> {
+    fn lent<'a>(
+        input: &'a mut dyn std::io::BufRead,
+        opening: &'a Standing,
+        session: Arc<Session>,
+    ) -> Held<'a> {
         Held::new(
             crucible_builtins::Plan::new(),
             crucible_tui::Sending::default(),
+            session,
             Answers { input, keys: false },
             opening,
         )
@@ -216,7 +233,7 @@ mod tests {
     /// what a session that took a turn looks like: what `/clear` leaves behind
     /// is read back off the disk, and a log the transcript disagrees with would
     /// prove nothing about either.
-    fn talking(sample: &Sample, asked: &str) -> Runner {
+    fn talking(sample: &Sample, asked: &str) -> (Runner, Arc<Session>) {
         let answered = Message::Agent {
             continuation: None,
             text: "an answer".into(),
@@ -224,8 +241,9 @@ mod tests {
             stop: Some(StopReason::Yielded),
         };
 
-        let session =
-            Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
+        let session = Arc::new(
+            Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session"),
+        );
         session.append(&Message::said(asked));
         session.append(&answered);
 
@@ -235,7 +253,7 @@ mod tests {
             .expect("valid fixture transcript");
         transcript.push(answered).expect("valid fixture transcript");
 
-        Runner::new(
+        let runner = Runner::new(
             Box::new(Script::new(Vec::new())),
             Tools::new(),
             Agent::new(
@@ -249,21 +267,29 @@ mod tests {
                 },
             ),
             crucible_context::ContextInputs::new(std::env::temp_dir()),
-            session,
+            session.clone(),
         )
-        .resuming(transcript)
+        .resuming(transcript);
+
+        (runner, session)
     }
 
-    /// Runs `/clear` against `runner`, and says what reached the terminal.
-    fn clearing(sample: &Sample, terms: &Terms, runner: &mut Runner) -> String {
+    /// Runs `/clear` against `runner`, and says what reached the terminal and
+    /// which session the loop holds afterwards.
+    fn clearing(
+        sample: &Sample,
+        terms: &Terms,
+        runner: &mut Runner,
+        session: Arc<Session>,
+    ) -> (String, Arc<Session>) {
         let mut renderer = Renderer::new(Recording::new(80, 24));
         let mut input = std::io::empty();
         let opening = standing(sample);
-        let mut held = lent(&mut input, &opening);
+        let mut held = lent(&mut input, &opening, session);
 
         run(&mut renderer, runner, &mut held, terms).expect("the terminal to be written");
 
-        renderer.terminal().written().to_string()
+        (renderer.terminal().written().to_string(), held.session)
     }
 
     /// How long the list is given to hold the session that was left.
@@ -303,16 +329,17 @@ mod tests {
         // it was, what the model is told is nothing, and what was said is still
         // somewhere — which is the one outcome this command must never lose.
         let sample = Sample::new("clear-starts-a-session");
-        let mut runner = talking(&sample, "what was said before");
-        let left = runner.session().id().cloned().expect("a recorded session");
+        let (mut runner, session) = talking(&sample, "what was said before");
+        let left = session.id().cloned().expect("a recorded session");
 
-        clearing(
+        let (_, now) = clearing(
             &sample,
             &terms(&sample, &Ledger::new(), &Plan::new()),
             &mut runner,
+            session,
         );
 
-        let now = runner.session().id().cloned().expect("a recorded session");
+        let now = now.id().cloned().expect("a recorded session");
         assert_ne!(now, left, "the session in hand is the one that was left");
         assert_eq!(runner.transcript().len(), 0, "the transcript came with it");
         assert_eq!(listed(&sample, 1), ["what was said before"]);
@@ -325,7 +352,7 @@ mod tests {
         // of, and what was held behind those rows goes with them — a key
         // opening what is behind a row nobody can see is worse than no offer.
         let sample = Sample::new("clear-empties-the-screen");
-        let mut runner = talking(&sample, "what was said before");
+        let (mut runner, session) = talking(&sample, "what was said before");
         let terms = terms(&sample, &Ledger::new(), &Plan::new());
 
         let mut renderer = Renderer::new(Recording::new(80, 24));
@@ -335,7 +362,7 @@ mod tests {
 
         let mut input = std::io::empty();
         let opening = standing(&sample);
-        let mut held = lent(&mut input, &opening);
+        let mut held = lent(&mut input, &opening, session);
         let call = crucible_core::ToolId::new("call-1");
         held.kept.calling(call.clone(), "read".into());
         held.kept
@@ -366,7 +393,7 @@ mod tests {
         // written by a session that is now over. Left standing, it would list
         // work above a prompt whose agent has never heard of any of it.
         let sample = Sample::new("clear-forgets-the-plan");
-        let mut runner = talking(&sample, "what was said before");
+        let (mut runner, session) = talking(&sample, "what was said before");
         let plan = Plan::new();
 
         plan.replay(&ToolArgs::new(
@@ -374,7 +401,12 @@ mod tests {
         ));
         assert_eq!(plan.tasks().len(), 1);
 
-        clearing(&sample, &terms(&sample, &Ledger::new(), &plan), &mut runner);
+        clearing(
+            &sample,
+            &terms(&sample, &Ledger::new(), &plan),
+            &mut runner,
+            session,
+        );
 
         assert!(plan.tasks().is_empty());
     }
@@ -387,13 +419,13 @@ mod tests {
         // marker — a picture the agent was never shown and the user never sent
         // it.
         let sample = Sample::new("clear-forgets-the-images");
-        let mut runner = talking(&sample, "what was said before");
+        let (mut runner, session) = talking(&sample, "what was said before");
         let terms = terms(&sample, &Ledger::new(), &Plan::new());
 
         let mut renderer = Renderer::new(Recording::new(80, 24));
         let mut input = std::io::empty();
         let opening = standing(&sample);
-        let mut held = lent(&mut input, &opening);
+        let mut held = lent(&mut input, &opening, session);
         held.images.push("a-picture.png".into());
 
         run(&mut renderer, &mut runner, &mut held, &terms).expect("the terminal to be written");
@@ -407,10 +439,10 @@ mod tests {
         // one still holds a claim, and `/resume` would refuse it as open in
         // another crucible — which names this crucible.
         let sample = Sample::new("clear-then-resume");
-        let mut runner = talking(&sample, "what was said before");
+        let (mut runner, session) = talking(&sample, "what was said before");
         let terms = terms(&sample, &Ledger::new(), &Plan::new());
 
-        clearing(&sample, &terms, &mut runner);
+        let (_, session) = clearing(&sample, &terms, &mut runner, session);
         assert_eq!(listed(&sample, 1), ["what was said before"]);
         let picked = recent(&sample.logs(), &sample.workspace(), 1)
             .first()
@@ -423,6 +455,7 @@ mod tests {
         let mut held = crate::cli::converse::Held::new(
             Plan::new(),
             crucible_tui::Sending::default(),
+            session,
             crate::cli::converse::Answers {
                 input: &mut input,
                 keys: false,
@@ -443,8 +476,9 @@ mod tests {
         // second one about to be, which is two files for a session that never
         // happened -- and `--continue` picks the newest of them.
         let sample = Sample::new("clear-said-nothing");
-        let session =
-            Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
+        let session = Arc::new(
+            Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session"),
+        );
         let held = session.id().cloned().expect("a recorded session");
         let mut runner = Runner::new(
             Box::new(Script::new(Vec::new())),
@@ -460,17 +494,18 @@ mod tests {
                 },
             ),
             crucible_context::ContextInputs::new(std::env::temp_dir()),
-            session,
+            session.clone(),
         );
 
-        let written = clearing(
+        let (written, now) = clearing(
             &sample,
             &terms(&sample, &Ledger::new(), &Plan::new()),
             &mut runner,
+            session,
         );
 
         assert!(written.contains("nothing had been said"), "{written}");
-        assert_eq!(runner.session().id(), Some(&held), "{written}");
+        assert_eq!(now.id(), Some(&held), "{written}");
     }
 
     #[test]
@@ -479,8 +514,8 @@ mod tests {
         // cost. Reported the way every other path with a filename in it is, and
         // the loop carries on with the session it had.
         let sample = Sample::new("clear-cannot-start");
-        let mut runner = talking(&sample, "what was said before");
-        let held = runner.session().id().cloned().expect("a recorded session");
+        let (mut runner, session) = talking(&sample, "what was said before");
+        let held = session.id().cloned().expect("a recorded session");
 
         let blocked = sample.root().join("not-a-directory");
         std::fs::write(&blocked, "").expect("a file where a directory is wanted");
@@ -489,14 +524,14 @@ mod tests {
             ..terms(&sample, &Ledger::new(), &Plan::new())
         };
 
-        let written = clearing(&sample, &terms, &mut runner);
+        let (written, now) = clearing(&sample, &terms, &mut runner, session);
 
         assert!(written.contains("! "), "{written}");
         assert!(
             !written.contains("Tips"),
             "a failed clear leaves the screen exactly as it was: {written}"
         );
-        assert_eq!(runner.session().id(), Some(&held), "{written}");
+        assert_eq!(now.id(), Some(&held), "{written}");
     }
 
     #[test]
@@ -505,13 +540,13 @@ mod tests {
         // would be advertised to a session that never asked — the schema cost this
         // whole mechanism exists to avoid, paid for a model with no memory of why.
         let sample = Sample::new("clear-forgets-the-lookups");
-        let mut runner = talking(&sample, "what was said before");
+        let (mut runner, session) = talking(&sample, "what was said before");
         let terms = terms(&sample, &Ledger::new(), &Plan::new());
 
         terms.revealed.reveal("web_search");
         assert!(terms.revealed.holds("web_search"));
 
-        clearing(&sample, &terms, &mut runner);
+        clearing(&sample, &terms, &mut runner, session);
 
         assert!(!terms.revealed.holds("web_search"));
     }

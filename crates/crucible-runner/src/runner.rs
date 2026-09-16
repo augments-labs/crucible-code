@@ -15,7 +15,7 @@
 //!
 //! The loop's own body lives in [`passes`], because it lasts one turn and this
 //! does not. What stays here is the session it is taken against — the provider,
-//! the transcript, what the user has already allowed, the log — together with
+//! the transcript, what the user has already allowed, the store — together with
 //! the one request, the recap and the retry that a pass reaches for. A caller
 //! never sees the split: [`Runner::turn`] is still the whole of the way in.
 //!
@@ -29,19 +29,17 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crucible_core::{
     Ancestry, Aside, Ask, Attachment, Cancel, Compacting, Content, ContextSection, Delta,
-    DeltaStream, Effort, Event, JournalStore, Looking, Message, Modalities, Mode, Permission,
-    PermissionsSection, Post, PromptCacheAttempt, PromptCacheEncoding, PromptCacheFact,
+    DeltaStream, Effort, JournalStore, Looking, Message, Modalities, Mode, Permission,
+    PermissionsSection, PromptCacheAttempt, PromptCacheEncoding, PromptCacheFact,
     PromptCacheOutcome, PromptCachePreparationError, PromptCacheRequestDisposition,
     PromptCacheRequestFact, PromptCacheResourceError, PromptCacheResourceRecord,
     PromptCacheRetentionClass, PromptCacheUsageFact, PromptCacheUsageReporting, Provider,
-    ProviderError, ProviderUsage, Reporter, Request, Room, RunItem, SandboxAuditRegistry,
-    SessionStore, Spend, Steer, StopReason, Summary, ToolCall, ToolEntry, ToolError,
-    ToolGeneration, ToolSchema, ToolSnapshot, Toolset, ToolsetContext, Transcript, TurnError,
-    TurnId, UsageCost,
+    ProviderError, ProviderUsage, Request, Room, RunItem, SandboxAuditRegistry, Spend, Steer,
+    StopReason, Summary, ToolCall, ToolEntry, ToolError, ToolGeneration, ToolSchema, ToolSnapshot,
+    Toolset, ToolsetContext, Transcript, TurnId, UsageCost,
 };
 
 use crucible_context::ContextInputs;
-use crucible_session::{Pruned, Session};
 
 use crucible_agents::{Agent, AgentContext, Decision, GuardrailError, Model};
 
@@ -51,6 +49,7 @@ use crate::policy::{Compaction, RunPolicy};
 use crate::prompt_cache::{self, ScopeInputs};
 use crate::tools::Tools;
 
+use crate::{Event, Post, Reporter, TurnError};
 mod answer;
 mod assembly;
 pub mod attachments;
@@ -155,7 +154,12 @@ pub struct Runner {
     state: RunState,
     context: ContextInputs,
     permission: Permission,
-    session: Session,
+    /// Where the turn is recorded, as a contract rather than a file.
+    ///
+    /// Shared rather than owned: whoever opened the store still holds it —
+    /// closing it, browsing it and reporting on it are theirs — and this crate
+    /// writes to it without ever learning what it writes to.
+    store: Arc<dyn JournalStore>,
     policy: RunPolicy,
     prompt_cache_store: Option<Box<dyn crucible_core::PromptCacheResourceStore>>,
     sandbox_audits: SandboxAuditRegistry,
@@ -174,7 +178,7 @@ impl Runner {
         tools: Tools,
         agent: Agent,
         context: ContextInputs,
-        session: Session,
+        store: Arc<dyn JournalStore>,
     ) -> Self {
         let snapshot = tools.snapshot().unwrap_or_default();
         Self::from_parts(
@@ -185,7 +189,7 @@ impl Runner {
             },
             agent,
             context,
-            session,
+            store,
         )
     }
 
@@ -200,7 +204,7 @@ impl Runner {
         toolset: T,
         agent: Agent,
         context: ContextInputs,
-        session: Session,
+        store: Arc<dyn JournalStore>,
     ) -> Self
     where
         T: Toolset + 'static,
@@ -213,7 +217,7 @@ impl Runner {
             },
             agent,
             context,
-            session,
+            store,
         )
     }
 
@@ -222,7 +226,7 @@ impl Runner {
         tooling: Tooling,
         agent: Agent,
         context: ContextInputs,
-        session: Session,
+        store: Arc<dyn JournalStore>,
     ) -> Self {
         let Tooling {
             source: toolset,
@@ -238,7 +242,7 @@ impl Runner {
             agent: Arc::new(agent),
             context,
             permission: Permission::new(),
-            session,
+            store,
             policy: RunPolicy::default(),
             prompt_cache_store: None,
             sandbox_audits: SandboxAuditRegistry::new(),
@@ -355,7 +359,7 @@ impl Runner {
         // caller runs next rebuilds the load from the transcript either way.
         self.clear_untransferable(&clearing, self.state.transcript.messages().len());
         if clearing.is_empty() {
-            self.session.calibrated()
+            self.store.calibrated()
         } else {
             None
         }
@@ -403,23 +407,22 @@ impl Runner {
         self.state.load.resumed();
     }
 
-    /// Puts this runner on a different session, and hands back the one it was
-    /// recording to.
+    /// Puts this runner on a different session.
     ///
-    /// What `/resume` runs, and the reason it hands the old session back rather
-    /// than dropping it: closing one properly means consuming it — see
-    /// [`Session::finish`] — and the first write that failed is worth saying
-    /// before the session it failed in is out of sight.
+    /// What `/resume` runs. The store handed in is the one the caller opened
+    /// and still holds: nothing is handed back, because closing the store this
+    /// runner was writing to was never this crate's to do, and the caller that
+    /// opened it is the one that reports what its last write came to.
     ///
     /// Everything about the session that was answered is answered again. The
-    /// transcript, the log and the turn count come from the session picked up;
-    /// what was allowed for the rest of the *last* session is forgotten, since
-    /// that scope was the thing just left behind — and so is any input decision
-    /// committed there, for the same reason. The mode is not an answer of
-    /// that kind — it is where this process is being run, it is on screen at
+    /// transcript, the store and the turn count come from the session picked
+    /// up; what was allowed for the rest of the *last* session is forgotten,
+    /// since that scope was the thing just left behind — and so is any input
+    /// decision committed there, for the same reason. The mode is not an answer
+    /// of that kind — it is where this process is being run, it is on screen at
     /// all times, and a session that quietly moved it would be the one place
     /// the row under the box could be wrong.
-    pub fn pick_up(&mut self, session: Session, transcript: Transcript) -> Session {
+    pub fn pick_up(&mut self, store: Arc<dyn JournalStore>, transcript: Transcript) {
         self.permission.forget();
         self.state.forget_checked();
         self.state.turn = Self::counting(&transcript);
@@ -427,11 +430,9 @@ impl Runner {
 
         // Before the recount rather than after it: what the session picked up
         // remembers about its own load is part of what is being recounted.
-        let left = std::mem::replace(&mut self.session, session);
+        self.store = store;
         let reading = self.admit_restricted();
         self.recount(reading);
-
-        left
     }
 
     /// The transcript so far.
@@ -574,22 +575,6 @@ impl Runner {
     #[must_use]
     pub fn instructions(&self) -> Option<&str> {
         self.agent.instructions()
-    }
-
-    /// Where the session is being recorded.
-    #[must_use]
-    pub fn session(&self) -> &Session {
-        &self.session
-    }
-
-    /// What the results a pruning cleared said, before it cleared them.
-    ///
-    /// Straight through to the session, and taken from it rather than borrowed:
-    /// [`Session::take_pruned`] says why. Here rather than reached through
-    /// [`Runner::session`] because that hands back a shared borrow, and this is
-    /// the one thing about a session that leaves it.
-    pub fn take_pruned(&mut self) -> Pruned {
-        self.session.take_pruned()
     }
 
     /// The permission mode this session is in, which the prompt shows at all
@@ -858,7 +843,7 @@ impl Runner {
             // written and for the same reason: a crash between the two must not
             // leave a log claiming a clearing that the transcript never made.
             let freed = self.state.transcript.clear_tool_outputs(&results, notice);
-            self.session.restricted(freed, &results, notice);
+            self.store.restricted(freed, &results, notice);
         }
         self.state
             .load
@@ -892,15 +877,6 @@ impl Runner {
         self.agent = Arc::new(self.agent.aimed(harder));
     }
 
-    /// Hands the session out, for the caller that is finished driving turns.
-    ///
-    /// The loop ends owning the runner, and closing a session properly means
-    /// consuming it — see [`Session::finish`].
-    #[must_use]
-    pub fn into_session(self) -> Session {
-        self.session
-    }
-
     /// Appends a message to the transcript.
     ///
     /// The only way either the transcript or the log is written. Two calls
@@ -917,14 +893,14 @@ impl Runner {
         let settles_call_results = matches!(&message, Message::ToolResults(_));
         match RunItem::message(ancestry, message.clone()) {
             Ok(item) => {
-                SessionStore::append_message(&self.session, &message);
-                JournalStore::append_run_item(&self.session, &item);
+                self.store.append_message(&message);
+                self.store.append_run_item(&item);
             }
             // The provider and tool admission boundaries already enforce
             // these bounds. Preserve the conversation if an internal caller
             // ever violates that contract, while its missing companion record
             // makes the defect visible instead of writing unsafe metadata.
-            Err(_) => SessionStore::append_message(&self.session, &message),
+            Err(_) => self.store.append_message(&message),
         }
         self.state.load.recorded(&message);
         self.state
@@ -939,10 +915,10 @@ impl Runner {
         // transcript including what was just appended, and a reader that found
         // it in the other order would have it covering one message less.
         if let Some(calibration) = self.state.load.calibrated() {
-            self.session.measured(&calibration);
+            self.store.measured(&calibration);
         }
         if settles_call_results {
-            JournalStore::settle_call_results(&self.session);
+            self.store.settle_call_results();
             // After the results line, so the log reads what was answered and
             // then what was taken out of it. The search source was chosen when
             // the run started, so a session that moved away from its vendor
@@ -954,7 +930,7 @@ impl Runner {
     }
 
     fn flush_sandbox_audits(&self, events: Reporter<'_>) -> Result<(), ToolError> {
-        work::report_sandbox_registry(&self.sandbox_audits, events, &self.session)
+        work::report_sandbox_registry(&self.sandbox_audits, events, &*self.store)
     }
 
     /// Writes one normalized cache fact to the durable framework journal and
@@ -964,10 +940,8 @@ impl Runner {
     }
 
     fn report_prompt_cache_to(&self, events: &Reporter<'_>, fact: PromptCacheFact) {
-        JournalStore::append_run_item(
-            &self.session,
-            &RunItem::provider_attempt(events.ancestry(), fact.clone()),
-        );
+        self.store
+            .append_run_item(&RunItem::provider_attempt(events.ancestry(), fact.clone()));
         events.post(Event::PromptCache { fact });
     }
 
@@ -1551,12 +1525,8 @@ impl Runner {
                 .snapshot()
                 .to_string();
             let workspace = self.context.workspace().to_string_lossy();
-            let user = self
-                .session
-                .path()
-                .parent()
-                .unwrap_or_else(|| std::path::Path::new(""))
-                .to_string_lossy();
+            let user = self.store.owner();
+            let session = self.store.session_id();
             let scope = ScopeInputs {
                 route,
                 policy: listening.run.policy().prompt_cache,
@@ -1565,7 +1535,7 @@ impl Runner {
                 max_tokens: self.agent.model().max_tokens,
                 effort: self.agent.model().effort,
                 run: listening.run.run(),
-                session: self.session.id().map(crucible_core::SessionId::as_str),
+                session: session.as_ref().map(crucible_core::SessionId::as_str),
                 workspace: workspace.as_bytes(),
                 user: user.as_bytes(),
                 trust: b"local-workspace-authority-v1",

@@ -31,6 +31,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::io::BufRead;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::mpsc::{RecvTimeoutError, sync_channel};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -38,9 +39,11 @@ use std::time::{Duration, Instant};
 use crucible_auth::Store;
 use crucible_builtins::{Background, Ledger, Plan};
 use crucible_core::{
-    Attachment, Cancel, Compacting, Event, Mode, Revealed, Room, SessionId, Spend, Workspace,
+    Attachment, Cancel, Compacting, Mode, Revealed, Room, SessionId, Spend, Workspace,
 };
+use crucible_runner::Event;
 use crucible_runner::Runner;
+use crucible_session::Session;
 use crucible_tui::{
     Editor, Pasting, Raw, Renderer, Reporting, Screen, Sending, Spelling, Terminal, TerminalError,
 };
@@ -314,18 +317,36 @@ impl Parting {
     }
 }
 
+/// A conversation's two halves: what takes its turns, and what they are kept in.
+///
+/// They arrive together because the loop drives one and closes the other. The
+/// runner records through a storage contract and never learns what is behind
+/// it, so closing the log, browsing it and reporting on it stay here, with the
+/// session this loop was handed.
+pub(crate) struct Talking {
+    /// What takes the turns.
+    pub(crate) runner: Runner,
+    /// The log they are recorded into, and this loop's to close.
+    pub(crate) session: Arc<Session>,
+}
+
 /// Reads prompts and takes turns until input ends.
 ///
 /// `input` is standard input in a real run. It is a parameter so that a test
 /// can drive the loop: the deadlock this file has to avoid is one that only
 /// shows up when a whole turn runs, and a hardwired stdin makes that unrunnable.
 pub(crate) fn converse<T: Terminal>(
-    mut runner: Runner,
+    talking: Talking,
     renderer: &mut Renderer<T>,
     terms: &Terms,
     opening: &draw::opening::Standing,
     input: &mut dyn BufRead,
 ) -> Result<Parting, Fatal> {
+    let Talking {
+        mut runner,
+        session,
+    } = talking;
+
     // Named once here because the prompt asks for it every frame: it is what the
     // row under the box counts, and what that loop wakes on a clock for while
     // there is anything left to end.
@@ -391,6 +412,7 @@ pub(crate) fn converse<T: Terminal>(
     let mut held = Held::new(
         terms.plan.clone(),
         terms.sending,
+        session,
         Answers { input, keys },
         opening,
     );
@@ -408,7 +430,7 @@ pub(crate) fn converse<T: Terminal>(
     // every frame until the first prompt goes.
     opening.commit(renderer)?;
 
-    attaching::refresh_store(&mut held, &runner);
+    attaching::refresh_store(&mut held);
 
     // The session already has model context and recorded display history.
     // Put that history onto the newly opened screen before asking what to do
@@ -420,16 +442,16 @@ pub(crate) fn converse<T: Terminal>(
     // Taken from the session here and dropped at the end of the walk: it is the
     // room a pruning gave back, and holding it for the length of the run would
     // be this screen undoing what that pruning was run to do.
-    let pruned = runner.take_pruned();
+    let pruned = held.session.take_pruned();
     let against = replaying::Replay::of(&runner, terms, &pruned);
-    replaying::replayed(renderer, &against, &mut held.kept)?;
+    replaying::replayed(renderer, &against, &held.session, &mut held.kept)?;
     drop(pruned);
 
     // Answered rather than acted on. Making room is a request, and a request is
     // run the one way this file runs one — on a worker, with the box live under
     // it — which is the loop below. Carried in as a value so that the panel
     // above the loop and the command inside it reach the same code.
-    let mut making = resuming::asked(renderer, &mut runner, terms, keys)?;
+    let mut making = resuming::asked(renderer, &mut runner, &held.session, terms, keys)?;
 
     loop {
         // Read here rather than before the loop, because one command changes
@@ -508,9 +530,10 @@ pub(crate) fn converse<T: Terminal>(
         if let Some(said) = batched(&mut held.queued, &terms.steer) {
             draw::queued(renderer, &said, style)?;
 
+            let imported = attaching::imported(&held);
             let attached = attaching::beside(
                 renderer,
-                &runner,
+                attaching::Asking::of(&runner, imported.as_deref()),
                 &terms.workspace,
                 attaching::Sent {
                     prompt: &said,
@@ -535,6 +558,10 @@ pub(crate) fn converse<T: Terminal>(
         let between = typing::Between {
             commands: &commands,
             runner: &mut runner,
+            attachment_store: held
+                .attachment_store
+                .as_ref()
+                .map(|(path, id)| (path.as_path(), id)),
             editor: &mut held.editor,
             planning: &mut held.planning,
             recalling: &mut held.recalling,
@@ -576,7 +603,7 @@ pub(crate) fn converse<T: Terminal>(
         // what was said to it, and `/help` was not.
         if local && let Some(wanted) = command::wanted(&terms.commands.snapshot(), &prompt) {
             let ran = command::run(wanted, renderer, &mut runner, &mut held, terms)?;
-            attaching::refresh_store(&mut held, &runner);
+            attaching::refresh_store(&mut held);
             match ran {
                 Ran::Again => continue,
                 Ran::Leave => break,
@@ -612,9 +639,10 @@ pub(crate) fn converse<T: Terminal>(
             continue;
         }
 
+        let imported = attaching::imported(&held);
         let attached = attaching::beside(
             renderer,
-            &runner,
+            attaching::Asking::of(&runner, imported.as_deref()),
             &terms.workspace,
             attaching::Sent {
                 prompt: &prompt,
@@ -631,10 +659,14 @@ pub(crate) fn converse<T: Terminal>(
         }
     }
 
-    // Read before the drain below, which consumes the session. A session that
-    // recorded nothing has no name and no file, and that is the same answer as
-    // a session nothing was hidden from: there is nowhere to send the reader.
-    let session = runner.into_session();
+    // Read before the drain below. A session that recorded nothing has no name
+    // and no file, and that is the same answer as a session nothing was hidden
+    // from: there is nowhere to send the reader.
+    //
+    // Taken off `held` rather than off the runner, because `/clear` and
+    // `/resume` put a different session there and closed the one they replaced:
+    // this is whichever one the loop ended on.
+    let session = Arc::clone(&held.session);
     let written = session.id().is_some().then(|| session.path().to_path_buf());
 
     // The writer thread is usually still holding the last turn when the loop
@@ -671,10 +703,10 @@ pub(crate) fn converse<T: Terminal>(
 /// passed rather than read back off anything.
 fn troubled<T: Terminal>(
     renderer: &mut Renderer<T>,
-    runner: &Runner,
+    session: &Session,
     told: &mut bool,
 ) -> Result<(), Fatal> {
-    if !*told && let Some(problem) = runner.session().trouble() {
+    if !*told && let Some(problem) = session.trouble() {
         draw::trouble(renderer, &problem)?;
         *told = true;
     }
@@ -753,7 +785,7 @@ fn ran<T: Terminal>(
     let took = take(runner, renderer, terms, work, held)?;
     let style = terms.style();
 
-    troubled(renderer, &took.runner, &mut held.told)?;
+    troubled(renderer, &held.session, &mut held.told)?;
 
     // Neither of the two that changed nothing posted anything, because neither
     // took anything: a compaction reports what it replaced, and these replaced
@@ -1216,7 +1248,7 @@ fn take<T: Terminal>(
     // panel naming what is coming is right on the frame it first appears in.
     turning.queueing(held.queued.waiting_all(), renderer.columns(), terms.style());
 
-    attaching::refresh_store(held, &runner);
+    attaching::refresh_store(held);
     let working = sent(
         runner,
         work,
@@ -1622,6 +1654,14 @@ struct Held<'a> {
     /// Whether the log's trouble has been said. Once is all it is worth, for
     /// the reason [`troubled`] gives.
     told: bool,
+    /// The session everything said here is being recorded into.
+    ///
+    /// The application's, not the runner's: the runner writes to it through a
+    /// contract and never learns what it writes to, so closing it, browsing it
+    /// and reporting on it are this loop's. Shared rather than owned because
+    /// the turn running under the box holds the same one. `/clear` and
+    /// `/resume` put a different session here and close the one they replaced.
+    session: Arc<Session>,
     /// Where the answer to a permission question comes from.
     answers: Answers<'a>,
     /// The card the session opened with, which `/clear` and `/resume` write
@@ -1635,6 +1675,7 @@ impl<'a> Held<'a> {
     fn new(
         plan: Plan,
         sending: Sending,
+        session: Arc<Session>,
         answers: Answers<'a>,
         opening: &'a draw::opening::Standing,
     ) -> Self {
@@ -1660,6 +1701,7 @@ impl<'a> Held<'a> {
             clipboard: None,
             attachment_store: None,
             told: false,
+            session,
             answers,
             opening,
         }

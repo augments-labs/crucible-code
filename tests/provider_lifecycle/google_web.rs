@@ -55,7 +55,7 @@ fn web_runner(
             },
         ),
         ContextInputs::new(sample.workspace().root()),
-        session,
+        Arc::new(session),
     )
     .under(RunPolicy {
         compaction: Compaction {

@@ -13,7 +13,8 @@
 use std::collections::HashMap;
 
 use crucible_core::{Diff, Message, RECAP, ToolId};
-use crucible_runner::{DisplayHistory, DisplayItem, Pruned, Runner, SessionError};
+use crucible_runner::Runner;
+use crucible_session::{DisplayHistory, DisplayItem, Pruned, Session, SessionError};
 use crucible_tui::{Recording, Renderer, Row, Slot, Terminal, clip};
 
 use crate::cli::Fatal;
@@ -43,16 +44,17 @@ const NOTES: &str = "notes on everything before this";
 pub(super) fn replayed<T: Terminal>(
     renderer: &mut Renderer<T>,
     against: &Replay<'_>,
+    session: &Session,
     kept: &mut Kept,
 ) -> Result<(), Fatal> {
-    if let Some(history) = against.runner.session().display_history()? {
+    if let Some(history) = session.display_history()? {
         let pruned = Pruned::default();
         let original = Replay {
             runner: against.runner,
             style: against.style,
             pruned: &pruned,
         };
-        return streamed(renderer, history, &original, kept);
+        return streamed(renderer, history, &original, session, kept);
     }
     walked(
         renderer,
@@ -76,12 +78,13 @@ fn streamed<T: Terminal>(
     renderer: &mut Renderer<T>,
     history: DisplayHistory,
     against: &Replay<'_>,
+    session: &Session,
     kept: &mut Kept,
 ) -> Result<(), Fatal> {
     let mut pending: Option<(Message, Previews)> = None;
     for item in history {
         let item = item.map_err(|source| SessionError::Log {
-            at: against.runner.session().path().display().to_string().into(),
+            at: session.path().display().to_string().into(),
             source,
         })?;
         match item {
@@ -581,11 +584,13 @@ impl Folded {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use crucible_core::{
         AgentId, Cancel, Effort, Fetch, Host, Page, RecordedToolOutput, Search, SearchResponse,
         SourceError, StopReason, ToolArgs, ToolCall, ToolId, ToolResult, Transcript, Workspace,
     };
-    use crucible_runner::{Agent, Model, Session, Tools};
+    use crucible_runner::{Agent, Model, Tools};
     use crucible_tui::Picture;
 
     use crate::cli::fake::Script;
@@ -683,7 +688,7 @@ mod tests {
                 },
             ),
             crucible_context::ContextInputs::new(std::env::temp_dir()),
-            Session::nowhere(),
+            Arc::new(Session::nowhere()),
         )
         .resuming(transcript)
     }
@@ -699,6 +704,10 @@ mod tests {
         session.append(&Message::said("before legacy reset"));
         let path = session.path().to_path_buf();
         assert!(session.finish().is_none());
+        // Finishing ends the recording; the claim on the file goes with the
+        // last holder of the session, and the resume below is another holder
+        // asking for it.
+        drop(session);
         let mut log = std::fs::OpenOptions::new().append(true).open(path).unwrap();
         writeln!(log, "{{\"forgotten\":true}}").unwrap();
         drop(log);
@@ -714,6 +723,7 @@ mod tests {
             &mut renderer,
             history,
             &against(&runner, &Pruned::default()),
+            &Session::nowhere(),
             &mut kept,
         )
         .unwrap();
@@ -779,6 +789,7 @@ mod tests {
     /// renderer nobody told would be judged with the colour switched off.
     fn painted(transcript: Transcript, columns: usize, style: Style) -> String {
         let runner = resumed(transcript);
+        let session = Session::nowhere();
         let mut renderer = Renderer::new(Recording::new(columns, 24));
         renderer.wears(style.palette());
 
@@ -789,6 +800,7 @@ mod tests {
                 pruned: &Pruned::default(),
                 style,
             },
+            &session,
             &mut Kept::default(),
         )
         .expect("a recording cannot fail");
@@ -806,6 +818,7 @@ mod tests {
         replayed(
             &mut renderer,
             &against(&runner, &Pruned::default()),
+            &Session::nowhere(),
             &mut kept,
         )
         .expect("a recording cannot fail");
@@ -989,6 +1002,7 @@ mod tests {
         replayed(
             &mut renderer,
             &against(&runner, &pruned),
+            &Session::nowhere(),
             &mut Kept::default(),
         )
         .expect("a recording cannot fail");
@@ -1085,6 +1099,7 @@ mod tests {
         replayed(
             &mut renderer,
             &against(&runner, &Pruned::default()),
+            &Session::nowhere(),
             &mut Kept::default(),
         )
         .expect("a recording cannot fail");
