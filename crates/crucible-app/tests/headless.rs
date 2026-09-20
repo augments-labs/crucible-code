@@ -19,7 +19,6 @@ use std::sync::{Arc, Mutex};
 
 use crucible_agents::{
     AgentBuilder, AgentContext, Decision, GuardrailError, InputGuardrail, Model, OutputGuardrail,
-    Rejection,
 };
 use crucible_app::providers::{
     CredentialSource, NO_PROVIDER_CHOSEN, NOTHING_TO_ASK, Providers, Resolved, Served, Serving,
@@ -190,10 +189,7 @@ impl InputGuardrail for Refusing {
     }
 
     fn checking(&self, _context: &AgentContext<'_>) -> Result<Decision, GuardrailError> {
-        Ok(Decision::Rejected(Rejection::new(
-            self.name(),
-            "the prompt carries a credential",
-        )))
+        Ok(Decision::rejected("the prompt carries a credential"))
     }
 }
 
@@ -237,10 +233,7 @@ impl OutputGuardrail for Vetoing {
         _context: &AgentContext<'_>,
         _candidate: &str,
     ) -> Result<Decision, GuardrailError> {
-        Ok(Decision::Rejected(Rejection::new(
-            self.name(),
-            "the answer repeats a credential",
-        )))
+        Ok(Decision::rejected("the answer repeats a credential"))
     }
 }
 

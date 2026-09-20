@@ -678,8 +678,8 @@ impl crucible_runner::InputGuardrail for Refusing {
         &self,
         _context: &crucible_runner::AgentContext<'_>,
     ) -> Result<crucible_runner::Decision, crucible_runner::GuardrailError> {
-        Ok(crucible_runner::Decision::Rejected(
-            crucible_runner::Rejection::new(self.name(), "the prompt carries a credential"),
+        Ok(crucible_runner::Decision::rejected(
+            "the prompt carries a credential",
         ))
     }
 }

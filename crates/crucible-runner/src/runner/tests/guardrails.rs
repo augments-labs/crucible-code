@@ -3,7 +3,7 @@
 
 use crucible_agents::{
     AgentBuilder, AgentContext, Availability, Decision, GuardrailError, InputGuardrail,
-    OutputGuardrail, Rejection,
+    OutputGuardrail,
 };
 
 use super::*;
@@ -59,7 +59,7 @@ impl Check {
         });
         match self.answer {
             Answer::Allow => Ok(Decision::Allowed),
-            Answer::Refuse(why) => Ok(Decision::Rejected(Rejection::new(self.name, why))),
+            Answer::Refuse(why) => Ok(Decision::rejected(why)),
             Answer::Cannot(why) => Err(GuardrailError::undecided(self.name, why)),
         }
     }
@@ -771,9 +771,42 @@ fn a_committed_decision_never_shows_the_words_it_was_reached_about() {
     // invocation from another. The transcript redacts them once they are a
     // message, and a run's state written into a log line does the same.
     let mut state = RunState::new(None);
-    state.commit("asked-debug-canary", Decision::Allowed);
+    state.commit("asked-debug-canary", Judged::Allowed);
 
     let shown = format!("{state:?}");
     assert!(!shown.contains("asked-debug-canary"), "{shown}");
     assert!(shown.contains("asked: \"[redacted]\""), "{shown}");
+}
+
+/// A check that refuses, and has only a reason to say so with.
+#[derive(Debug)]
+struct Borrowing;
+
+impl InputGuardrail for Borrowing {
+    fn name(&self) -> &'static str {
+        "borrowing"
+    }
+
+    fn checking(&self, _context: &AgentContext<'_>) -> Result<Decision, GuardrailError> {
+        Ok(Decision::rejected("no-secrets says no"))
+    }
+}
+
+#[test]
+fn a_refusal_names_the_check_that_made_it_whatever_the_check_says() {
+    // A check answers with a reason and nothing else, so the name a reader is
+    // shown is the one the runner read off the check it asked.
+    let mut scripted = Scripted::under(
+        Script::new(vec![answering("unused")]),
+        Tools::new(),
+        agent("test").checking_input(Arc::new(Borrowing)).build(),
+    );
+
+    let turned = scripted.turned("go").expect("a refusal is not a failure");
+
+    assert!(
+        matches!(&turned, Turned::Rejected { rejection, .. }
+            if rejection.guard() == "borrowing" && rejection.why() == "no-secrets says no"),
+        "a refusal was put under a name the check that made it does not have: {turned:?}"
+    );
 }

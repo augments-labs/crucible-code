@@ -19,7 +19,7 @@
 //! Nothing here decides anything the runner did not already decide. This is
 //! where the loop lives now, not a second opinion about how a turn should go.
 
-use crucible_agents::{Decision, GuardrailError, Rejection};
+use crucible_agents::{GuardrailError, Rejection};
 use crucible_core::{
     Ask, Compacting, Message, ProviderContinuation, ProviderError, RunId, Spend, StopReason,
     ToolCall, ToolsetContext,
@@ -28,7 +28,7 @@ use crucible_core::{
 use crate::context::RunContext;
 use crate::outcome::{RunResult, Turned};
 
-use super::{After, Counting, Listening, Runner, TurnBounds, Went, Work};
+use super::{After, Counting, Judged, Listening, Runner, TurnBounds, Went, Work};
 
 use crate::{Event, TurnError};
 /// How one run's passes ended.
@@ -173,8 +173,8 @@ impl<'a> AgentLoop<'a> {
         stop: StopReason,
     ) -> Result<Ending, TurnError> {
         match self.runner.vouching(&text, self.run) {
-            Ok(Decision::Allowed) => {}
-            Ok(Decision::Rejected(rejection)) => return Ok(Ending::Rejected { rejection, stop }),
+            Ok(Judged::Allowed) => {}
+            Ok(Judged::Rejected(rejection)) => return Ok(Ending::Rejected { rejection, stop }),
             Err(problem) => return Ok(Ending::Undecided { problem, stop }),
         }
 

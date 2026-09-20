@@ -41,7 +41,7 @@ use crucible_core::{
 
 use crucible_context::ContextInputs;
 
-use crucible_agents::{Agent, AgentContext, Decision, GuardrailError, Model};
+use crucible_agents::{Agent, AgentContext, Decision, GuardrailError, Model, Rejection};
 
 use crate::context::RunContext;
 use crate::outcome::{RunResult, Turned};
@@ -64,6 +64,7 @@ use answer::Answer;
 pub use cleanup::PromptCacheCleanup;
 use load::{Counting, Load};
 use passes::AgentLoop;
+use state::Judged;
 pub use state::RunState;
 use work::{Went, Work};
 
@@ -1081,8 +1082,8 @@ impl Runner {
         // turn began. A check reaching no decision is not a refusal and does
         // not say the prompt was rejected, because it did not say that.
         match self.checking_input(prompt, run) {
-            Ok(Decision::Allowed) => {}
-            Ok(Decision::Rejected(rejection)) => {
+            Ok(Judged::Allowed) => {}
+            Ok(Judged::Rejected(rejection)) => {
                 return Ok(Turned::Rejected {
                     rejection,
                     stop: None,
@@ -1150,9 +1151,9 @@ impl Runner {
         &mut self,
         prompt: &str,
         run: &RunContext<'_>,
-    ) -> Result<Decision, GuardrailError> {
+    ) -> Result<Judged, GuardrailError> {
         if self.agent.input_guardrails().is_empty() {
-            return Ok(Decision::Allowed);
+            return Ok(Judged::Allowed);
         }
         if let Some(committed) = self.state.checked(prompt) {
             return Ok(committed.clone());
@@ -1163,12 +1164,14 @@ impl Runner {
         // while it was being walked.
         let agent = Arc::clone(&self.agent);
         let context = AgentContext::new(run.run(), agent.id(), prompt);
-        let mut decision = Decision::Allowed;
+        let mut decision = Judged::Allowed;
         for guard in agent.input_guardrails() {
             match guard.checking(&context)? {
                 Decision::Allowed => {}
-                refused @ Decision::Rejected(_) => {
-                    decision = refused;
+                // The name is read off the check that was asked, never taken
+                // from what it answered.
+                Decision::Rejected(why) => {
+                    decision = Judged::Rejected(Rejection::new(guard.name(), &why));
                     break;
                 }
             }
@@ -1192,19 +1195,21 @@ impl Runner {
     /// # Errors
     ///
     /// [`GuardrailError`] where a check ran and could not reach a decision.
-    fn vouching(&self, candidate: &str, run: &RunContext<'_>) -> Result<Decision, GuardrailError> {
+    fn vouching(&self, candidate: &str, run: &RunContext<'_>) -> Result<Judged, GuardrailError> {
         if self.agent.output_guardrails().is_empty() {
-            return Ok(Decision::Allowed);
+            return Ok(Judged::Allowed);
         }
 
         let context = AgentContext::new(run.run(), self.agent.id(), self.said());
         for guard in self.agent.output_guardrails() {
             match guard.checking(&context, candidate)? {
                 Decision::Allowed => {}
-                refused @ Decision::Rejected(_) => return Ok(refused),
+                Decision::Rejected(why) => {
+                    return Ok(Judged::Rejected(Rejection::new(guard.name(), &why)));
+                }
             }
         }
-        Ok(Decision::Allowed)
+        Ok(Judged::Allowed)
     }
 
     /// The last thing the caller said, which is what an invocation is about.

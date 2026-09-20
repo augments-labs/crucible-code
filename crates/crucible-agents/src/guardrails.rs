@@ -87,10 +87,23 @@ impl<'a> AgentContext<'a> {
     }
 }
 
-/// Why a guardrail refused.
+/// Which guardrail refused, and why.
 ///
 /// Kept apart from a failure to decide because the two mean opposite things to
 /// a reader: this one is the check working.
+///
+/// A check does not make one. It answers [`Decision::Rejected`] with its reason
+/// alone, and whoever asked it writes the refusal under the name of the check
+/// that was asked, so a refusal cannot be put under another check's name. The
+/// error code below is what handing a decision a refusal fails with today,
+/// rather than something the harness checks: it pins that a decision has no
+/// room for a name.
+///
+/// ```compile_fail,E0308
+/// use crucible_agents::{Decision, Rejection};
+///
+/// let _ = Decision::Rejected(Rejection::new("somebody-else", "no"));
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rejection {
     guard: Box<str>,
@@ -99,6 +112,10 @@ pub struct Rejection {
 
 impl Rejection {
     /// A refusal from `guard`, for the reason a reader is shown.
+    ///
+    /// Public because the runner is what asks a check and lives in another
+    /// crate. No check can hand one back, so the name is whatever the caller
+    /// that asked knows the check to be called.
     #[must_use]
     pub fn new(guard: &str, why: &str) -> Self {
         Self {
@@ -129,8 +146,17 @@ impl Rejection {
 pub enum Decision {
     /// Carry on.
     Allowed,
-    /// Do not.
-    Rejected(Rejection),
+    /// Do not, for the reason a reader is shown. Which check said so is not
+    /// the check's to say: it is read off the check that was asked.
+    Rejected(Box<str>),
+}
+
+impl Decision {
+    /// A refusal, for the reason a reader is shown.
+    #[must_use]
+    pub fn rejected(why: &str) -> Self {
+        Self::Rejected(why.into())
+    }
 }
 
 /// Why a check could not reach a decision.
@@ -167,7 +193,7 @@ impl GuardrailError {
 /// anything a caller cannot already build.
 ///
 /// ```
-/// use crucible_agents::{AgentContext, Decision, GuardrailError, InputGuardrail, Rejection};
+/// use crucible_agents::{AgentContext, Decision, GuardrailError, InputGuardrail};
 ///
 /// /// Refuses anything that reads like a credential being pasted in.
 /// #[derive(Debug)]
@@ -180,17 +206,15 @@ impl GuardrailError {
 ///
 ///     fn checking(&self, context: &AgentContext<'_>) -> Result<Decision, GuardrailError> {
 ///         if context.said().contains("api-key:") {
-///             return Ok(Decision::Rejected(Rejection::new(
-///                 self.name(),
-///                 "the prompt carries a credential",
-///             )));
+///             return Ok(Decision::rejected("the prompt carries a credential"));
 ///         }
 ///         Ok(Decision::Allowed)
 ///     }
 /// }
 /// ```
 pub trait InputGuardrail: std::fmt::Debug + Send + Sync {
-    /// What this guardrail is called, in a refusal a reader sees.
+    /// What this guardrail is called, in a refusal a reader sees. A refusal it
+    /// makes is written under this name by whoever asked it.
     fn name(&self) -> &str;
 
     /// Judges what the caller asked.
