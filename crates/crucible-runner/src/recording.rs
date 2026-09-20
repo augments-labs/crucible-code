@@ -18,8 +18,8 @@ use sha2::{Digest as _, Sha256};
 
 use crucible_core::{
     Calibration, CallResultKey, CallResultReceipt, CallResultStoreError, Compacted, ContextError,
-    ContextPatch, ContextSnapshot, JournalStore, Message, RunItem, SessionId, SessionStore, ToolId,
-    ToolResult, Transcript,
+    ContextPatch, ContextSnapshot, JournalStore, Message, RunItem, SessionId, SessionOwner,
+    SessionStore, ToolId, ToolResult, Transcript,
 };
 
 /// Domain separator for the receipt this store answers with.
@@ -68,7 +68,7 @@ pub(crate) struct Recording {
     id: Option<SessionId>,
     /// Whose records these are. Two stores under different names are two
     /// principals, which is all anything above compares them for.
-    owner: Box<str>,
+    owner: Option<SessionOwner>,
     /// What was recorded, in order. Behind a lock because a turn writes from
     /// the thread it runs on while the test reads the same store.
     kept: Mutex<Vec<Kept>>,
@@ -85,14 +85,14 @@ pub(crate) struct Recording {
 impl Recording {
     /// A store nothing is kept in: a run asked not to be recorded.
     pub(crate) fn nowhere() -> Arc<Self> {
-        Arc::new(Self::held(None, "".into(), Vec::new(), None))
+        Arc::new(Self::held(None, None, Vec::new(), None))
     }
 
     /// A session recorded under a name of its own, in `owner`.
     pub(crate) fn started(owner: &str) -> Arc<Self> {
         Arc::new(Self::held(
             Some(SessionId::new()),
-            owner.into(),
+            SessionOwner::new(owner),
             Vec::new(),
             None,
         ))
@@ -104,7 +104,12 @@ impl Recording {
     /// the distinction a run picking it up has to state defensively instead of
     /// assuming: nothing here says what the model was last told.
     pub(crate) fn pre_context(owner: &str) -> Arc<Self> {
-        let store = Self::held(Some(SessionId::new()), owner.into(), Vec::new(), None);
+        let store = Self::held(
+            Some(SessionId::new()),
+            SessionOwner::new(owner),
+            Vec::new(),
+            None,
+        );
         *store.context.lock().unwrap_or_else(PoisonError::into_inner) = None;
         Arc::new(store)
     }
@@ -214,7 +219,7 @@ impl Recording {
 
     fn held(
         id: Option<SessionId>,
-        owner: Box<str>,
+        owner: Option<SessionOwner>,
         kept: Vec<Kept>,
         carried: Option<Calibration>,
     ) -> Self {
@@ -241,7 +246,7 @@ impl SessionStore for Recording {
         self.id.clone()
     }
 
-    fn owner(&self) -> Box<str> {
+    fn owner(&self) -> Option<SessionOwner> {
         self.owner.clone()
     }
 

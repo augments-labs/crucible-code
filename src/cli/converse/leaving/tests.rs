@@ -9,8 +9,8 @@ use crucible_core::{
     Ancestry, Ask, Calibration, CallResultKey, CallResultReceipt, CallResultStoreError, Cancel,
     Compacted, ContextError, ContextPatch, ContextSnapshot, DescribeTool, InvocationId,
     JournalStore, Message, Mode, Permission, Remember, Rules, RunItem, Sensitivity, SessionId,
-    SessionStore, Settled, Tool, ToolArgs, ToolCall, ToolContext, ToolId, ToolResult, Unwatched,
-    Verdict,
+    SessionOwner, SessionStore, Settled, Tool, ToolArgs, ToolCall, ToolContext, ToolId, ToolResult,
+    Unwatched, Verdict,
 };
 use crucible_sandbox_local::LocalSandbox;
 use sha2::{Digest, Sha256};
@@ -157,8 +157,8 @@ impl SessionStore for Journal {
         None
     }
 
-    fn owner(&self) -> Box<str> {
-        "".into()
+    fn owner(&self) -> Option<SessionOwner> {
+        None
     }
 
     fn append_message(&self, _message: &Message) {}

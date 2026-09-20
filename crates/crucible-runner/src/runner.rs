@@ -1542,7 +1542,9 @@ impl Runner {
                 run: listening.run.run(),
                 session: session.as_ref().map(crucible_core::SessionId::as_str),
                 workspace: workspace.as_bytes(),
-                user: user.as_bytes(),
+                user: user
+                    .as_ref()
+                    .map_or(&[], crucible_core::SessionOwner::as_bytes),
                 trust: b"local-workspace-authority-v1",
                 authority: authority.as_bytes(),
                 instructions: self.agent.instructions().unwrap_or_default().as_bytes(),

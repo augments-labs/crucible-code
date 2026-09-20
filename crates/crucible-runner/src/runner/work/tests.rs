@@ -7,8 +7,8 @@ use crucible_core::{
     Ancestry, ArgumentTransform, CallResultAcceptance, CallResultKey, CallResultReceipt,
     CallResultStoreError, Disposition, IdempotencyKey, InputGuard, InvocationState, JournalStore,
     Mode, OutputGuard, RecoveryAction, Remember, Rules, SandboxCleanup, SandboxFactKind, SandboxId,
-    SandboxLifecycle, Sensitivity, SessionId, SessionStore, Summary, Target, Tool, ToolArgs,
-    ToolDescriptor, ToolEffect, ToolExecutionMode, ToolHooks, ToolId, ToolProvenance,
+    SandboxLifecycle, Sensitivity, SessionId, SessionOwner, SessionStore, Summary, Target, Tool,
+    ToolArgs, ToolDescriptor, ToolEffect, ToolExecutionMode, ToolHooks, ToolId, ToolProvenance,
     ToolResourceKey, ToolSourceKind, Verdict,
 };
 
@@ -36,8 +36,8 @@ macro_rules! journal_only {
                 None
             }
 
-            fn owner(&self) -> Box<str> {
-                "".into()
+            fn owner(&self) -> Option<SessionOwner> {
+                None
             }
 
             fn append_message(&self, _message: &Message) {}

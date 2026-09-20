@@ -18,6 +18,41 @@ use crucible_types::{
     Calibration, Compacted, ContextError, ContextPatch, ContextSnapshot, Message, SessionId, ToolId,
 };
 
+/// Whose records a store keeps, as an opaque separator.
+///
+/// Two stores that answer differently belong to different principals, and
+/// nothing one of them kept may be offered under the other's identity. What the
+/// words spell is the store's own business — a directory, an account, a tenant
+/// — and a reader above compares them, or folds their bytes into a digest,
+/// rather than parsing them.
+///
+/// It always names somebody. A store that keeps nothing for anybody has no
+/// owner to answer with, which is a different answer from an owner whose name
+/// happens to be empty, and the only one of the two that can be written.
+///
+/// ```
+/// use crucible_storage::SessionOwner;
+///
+/// assert_eq!(SessionOwner::new(""), None);
+/// assert_ne!(SessionOwner::new("/home/one/sessions"), SessionOwner::new("/home/two/sessions"));
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SessionOwner(Box<str>);
+
+impl SessionOwner {
+    /// The owner `named` spells, or `None` where it spells nobody.
+    #[must_use]
+    pub fn new(named: &str) -> Option<Self> {
+        (!named.is_empty()).then(|| Self(named.into()))
+    }
+
+    /// The bytes that tell this owner from another, for a digest to take in.
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8] {
+        self.0.as_bytes()
+    }
+}
+
 /// The conversation-writing seam used by a runner.
 ///
 /// Every method takes `&self`: a turn records from the thread it runs on while
@@ -31,13 +66,12 @@ pub trait SessionStore: Send + Sync {
     /// it.
     fn session_id(&self) -> Option<SessionId>;
 
-    /// Whose records these are, as an opaque separator.
+    /// Whose records these are, or `None` where they are nobody's.
     ///
-    /// Two stores that answer differently belong to different principals, and
-    /// nothing one of them kept may be offered under the other's identity. What
-    /// the bytes spell is the store's own business — a directory, an account, a
-    /// tenant — and a reader above compares them rather than parsing them.
-    fn owner(&self) -> Box<str>;
+    /// A store that keeps nothing, or keeps it only for as long as it lives,
+    /// holds no principal's records and says so; one that does answers with the
+    /// [`SessionOwner`] every other store of the same principal answers with.
+    fn owner(&self) -> Option<SessionOwner>;
 
     /// Appends one closed conversation message.
     fn append_message(&self, message: &Message);

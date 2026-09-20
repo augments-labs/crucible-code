@@ -478,7 +478,9 @@ impl Runner {
             run: run.run(),
             session: session.as_ref().map(crucible_core::SessionId::as_str),
             workspace: workspace.as_bytes(),
-            user: user.as_bytes(),
+            user: user
+                .as_ref()
+                .map_or(&[], crucible_core::SessionOwner::as_bytes),
             trust: b"local-workspace-authority-v1",
             authority: authority.as_bytes(),
             // The standalone recap deliberately sends no system prompt or

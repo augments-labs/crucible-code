@@ -16,7 +16,7 @@
 //!
 //! use crucible_storage::{
 //!     CallResultKey, CallResultReceipt, CallResultStoreError, CustomEntry, CustomProjector,
-//!     SessionStore,
+//!     SessionOwner, SessionStore,
 //! };
 //! use crucible_types::{
 //!     Calibration, Compacted, ContextError, ContextPatch, ContextSnapshot, Message, SessionId,
@@ -43,8 +43,9 @@
 //!         None
 //!     }
 //!
-//!     fn owner(&self) -> Box<str> {
-//!         "in-memory".into()
+//!     // Held in memory for one run: nobody's records, so nobody to name.
+//!     fn owner(&self) -> Option<SessionOwner> {
+//!         None
 //!     }
 //!
 //!     fn append_message(&self, message: &Message) {
@@ -129,4 +130,4 @@ pub use journal::{
     CallResultKey, CallResultReceipt, CallResultStoreError, CompactionRecord, CustomEntry,
     CustomProjector, JournalError, MAX_CUSTOM_DATA_BYTES, MAX_JOURNAL_WORD_BYTES,
 };
-pub use session::SessionStore;
+pub use session::{SessionOwner, SessionStore};
