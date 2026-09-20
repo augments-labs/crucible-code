@@ -221,6 +221,14 @@ grep-regex = "=0.1.14"
 # snapshots are already values rather than mirror structs.
 serde_json = "=1.0.151"
 
+# The traits `serde_json`'s reader drives, without serde's derive. A frame from
+# a client is hostile input, and the only way to stop reading one at its
+# thousandth entry, its seventeenth level or a key said twice — rather than
+# after the whole tree is in memory — is to hand the reader a visitor that
+# counts. `serde_json` does not re-export the traits a visitor implements.
+# Already in the graph as its dependency, at this version.
+serde_core = "=1.0.229"
+
 # Display width. A terminal wraps by columns, not by characters: CJK takes two
 # and a combining mark takes none, so counting `char`s puts the cursor somewhere
 # the renderer did not predict and the next frame erases the wrong lines. This
