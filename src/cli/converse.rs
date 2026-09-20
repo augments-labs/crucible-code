@@ -22,6 +22,10 @@
 //! The session log is append-only and written as the turn goes, so `--continue`
 //! picks the session up from wherever it stopped.
 //!
+//! A turn that ends in an error has its session finished here, before the
+//! error leaves, so what was said is on the disk whoever else still holds the
+//! session.
+//!
 //! Which is also the last thing a session does. The screen it drew on is
 //! borrowed and handed back, so the transcript goes with it — and this loop
 //! returns a [`Parting`] saying where the log is and whether it kept up, for
@@ -1344,6 +1348,19 @@ fn take<T: Terminal>(
     }
 
     let (conversation, did) = working.join().map_err(|_| Fatal::Lost)?;
+
+    // A turn that failed here takes the session out with it, and the last
+    // thing the worker did was record what it had: the answer as far as it
+    // got. That is still in the writer's queue. Waiting for it here is what
+    // puts it on the disk whoever else holds the session — dropping the
+    // conversation below joins the writer only if nothing else does, and the
+    // way this process is about to leave may not unwind far enough to find
+    // out. The loop's own end asks the same thing on the way out of a session
+    // that did not fail, and asking twice is allowed.
+    if drawn.is_err() {
+        let _ = conversation.session().finish();
+    }
+
     drawn.map(|()| Took {
         conversation,
         meanwhile,

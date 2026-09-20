@@ -804,9 +804,9 @@ fn a_terminal_that_fails_mid_turn_leaves_the_turn_recorded_all_the_same() {
     // and leave that thread running with the process on its way out, so the
     // turn on screen when the window closed is the turn missing from the log.
     //
-    // The session is handed over whole, with no handle kept back here: the
-    // `Drop` that waits runs when the last holder lets go, and a holder left
-    // in this test would have the log read while its thread was still writing.
+    // The session is handed over whole, with no handle kept back here, so the
+    // `Drop` that waits has run by the time the log is read. The test below
+    // keeps a handle back, and is about the wait that does not need the drop.
     let kept = Arc::new(Mutex::new(Vec::new()));
     let session = Arc::new(Session::onto("/nowhere".into(), Kept(Arc::clone(&kept))));
 
@@ -859,6 +859,57 @@ fn a_terminal_that_fails_mid_turn_leaves_the_turn_recorded_all_the_same() {
         written.contains("what the model said"),
         "the turn never reached the log: {written:?}"
     );
+}
+
+#[test]
+fn a_turn_that_failed_is_on_the_disk_whoever_else_still_holds_the_session() {
+    // The same closing window as above, with the one thing that test is
+    // careful not to do: a handle on the session kept back. Nothing about who
+    // holds a session may decide whether a turn reaches its log — a process
+    // on its way out does not always unwind as far as the last holder, and a
+    // turn that is only written once everybody has let go is one that is
+    // written if nothing goes wrong a second time.
+    //
+    // The log is a slow one so that the question has one answer. A writer that
+    // keeps up hides a turn nobody waited for; one that is behind shows it,
+    // and how far behind only decides how plainly this fails without the wait
+    // — with it, the log is read after everything queued has landed, however
+    // slow the disk.
+    let kept = Arc::new(Mutex::new(Vec::new()));
+    let session = Arc::new(Session::onto(
+        "/nowhere".into(),
+        Behind(Kept(Arc::clone(&kept))),
+    ));
+    let held_back = Arc::clone(&session);
+
+    let provider = Script::new(vec![saying("what the model said")]);
+    let started = provider.asked();
+    let conversation = paired(session, |session| scripted(provider, Tools::new(), session));
+
+    let mut renderer = Renderer::new(BreakingWhenStarted {
+        inner: Recording::new(80, 24),
+        left: 3,
+        started: Arc::clone(&started),
+    });
+    let mut input = Cursor::new(b"go\n".to_vec());
+
+    let problem = converse(
+        conversation,
+        &mut renderer,
+        &plain(),
+        &opening(),
+        &mut input,
+    )
+    .expect_err("the terminal to fail");
+    assert!(matches!(problem, Fatal::Terminal(_)), "{problem:?}");
+
+    // Read with the handle still alive, which is the whole of the case.
+    let written = String::from_utf8(kept.lock().expect("a lock").clone()).expect("a log of text");
+    assert!(
+        written.contains("what the model said"),
+        "the turn was left waiting on a holder: {written:?}"
+    );
+    drop(held_back);
 }
 
 #[test]
@@ -1468,6 +1519,21 @@ impl io::Write for Kept {
 
     fn flush(&mut self) -> io::Result<()> {
         Ok(())
+    }
+}
+
+/// A log whose writer is always behind: every write takes a while to land.
+#[derive(Debug)]
+struct Behind(Kept);
+
+impl io::Write for Behind {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        std::thread::sleep(Duration::from_millis(10));
+        self.0.write(bytes)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.0.flush()
     }
 }
 
