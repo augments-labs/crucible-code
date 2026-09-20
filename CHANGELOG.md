@@ -8,6 +8,8 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.42.0] - 2026-09-20
+
 ### Changed
 
 - **What the terminal asks of a session is a contract any front end can
@@ -27,15 +29,18 @@ change in any release with no deprecation period.
   and drawing. No library name moved; what was the binary's private wiring is
   imported from `crucible_app`, never through `crucible-core`. A prompt or an
   answer a guardrail refuses now prints the guardrail and its reason instead of
-  returning a silent prompt.
+  returning a silent prompt; no shipped agent declares a guardrail yet, so only
+  a build that adds one sees it.
 - **The runner records through a storage contract rather than a session.**
   `crucible-runner` no longer depends on `crucible-session`: `Runner::new`,
   `Runner::with_toolset` and `Runner::pick_up` take an `Arc<dyn JournalStore>`,
-  which now stands above the new `crucible_storage::SessionStore`. `Event`,
-  `EventEnvelope`, `Post`, `Reporter` and `TurnError` move from `crucible-core`
-  to `crucible-runner`. The session names the runner used to re-export are
-  imported from `crucible-session`, and `Session::finish` now takes a shared
-  session, because the application and the runner hold the same one.
+  which now requires `crucible_storage::SessionStore`; that trait grew from
+  `append_message` alone to everything the runner records and reads, so an
+  implementation must add those methods. `Event`, `EventEnvelope`, `Post`,
+  `Reporter` and `TurnError` move from `crucible-core` to `crucible-runner`.
+  The session names the runner used to re-export are imported from
+  `crucible-session`, and `Session::finish` now takes a shared session, because
+  the application and the runner hold the same one.
 - **Model contracts have a crate of their own.** `crucible-models` now holds
   `Provider`, the model record and the neutral prompt-cache capabilities,
   projection, selection and pricing; the usage, cost and cache facts a session
@@ -85,20 +90,19 @@ change in any release with no deprecation period.
   is allowed" about a server nobody had installed as one; it now says "the
   server". `crucible_transport::NoRestart` prints through `said_of`, which takes
   the noun from the host, and no longer implements `Display`.
-
 - **A compacted session no longer carries forward files it never touched.**
   The list of files a recap carries forward is read only from the list crucible
   wrote, so a recap mentioning that list, or a tool call whose path contains a
   line break, can no longer add files the session never touched. Such a path is
   now left off the list.
-
 - **Only Google's own search results are held back from other providers, and a
   switch is no longer the only moment they are.** Leaving Google cleared every
   search result, including ones another provider had answered, while a resumed
   session, or a search answered through Google after moving on, sent Google's
   results to the new provider. Each search result now records who answered it, so
   those cases follow Google's terms; results in sessions written before this
-  release keep the old rule.
+  release keep the old rule. The session format number is unchanged, and 0.41
+  builds still resume these logs.
 - **Leaving Google no longer leaves the context estimate counting the results it
   cleared.** The cleared search results kept their full length in the byte count
   the next provider report calibrates against, so text was estimated as cheaper
@@ -3944,7 +3948,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.41.1...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.42.0...HEAD
+[0.42.0]: https://github.com/augments-labs/crucible-code/compare/v0.41.1...v0.42.0
 [0.41.1]: https://github.com/augments-labs/crucible-code/compare/v0.41.0...v0.41.1
 [0.41.0]: https://github.com/augments-labs/crucible-code/compare/v0.40.1...v0.41.0
 [0.40.1]: https://github.com/augments-labs/crucible-code/compare/v0.40.0...v0.40.1
