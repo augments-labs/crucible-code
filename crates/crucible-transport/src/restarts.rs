@@ -115,25 +115,38 @@ impl Restarting {
 
 /// Why a program will not be started again.
 ///
-/// The sentences say "the extension" because that is the wording people
-/// already see when a restart is refused, and a refusal is read by whoever was
-/// using the thing rather than by whoever wrote it. Changing them here would
-/// change what is printed for every hosted program at once.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+/// A refusal is read by whoever was using the thing rather than by whoever
+/// wrote it, and what they were using is an MCP server or an extension, never
+/// "a hosted program". Only the host knows which, so there is no sentence here
+/// until it says: [`NoRestart::said_of`] is the one way to print a refusal,
+/// and the wording around the noun is decided once for every host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NoRestart {
     /// It ended while crucible was still waiting on it.
-    #[error(
-        "the extension ended while crucible was waiting on it, so what it had \
-         already done cannot be known"
-    )]
     Unsettled,
 
     /// It has been started again as often as it is allowed to be.
-    #[error("the extension has used all {ceiling} of the restarts it is allowed")]
     Spent {
         /// The ceiling it reached.
         ceiling: u32,
     },
+}
+
+impl NoRestart {
+    /// The refusal as a sentence about `hosted`, which is what the host calls
+    /// the program where a person reads it: `the server`, `the extension`.
+    #[must_use]
+    pub fn said_of(&self, hosted: &str) -> String {
+        match self {
+            Self::Unsettled => format!(
+                "{hosted} ended while crucible was waiting on it, so what it had already done \
+                 cannot be known"
+            ),
+            Self::Spent { ceiling } => {
+                format!("{hosted} has used all {ceiling} of the restarts it is allowed")
+            }
+        }
+    }
 }
 
 #[cfg(test)]

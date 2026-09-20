@@ -104,10 +104,32 @@ fn a_permitted_restart_is_spent_whether_or_not_it_starts_anything() {
 
 #[test]
 fn each_refusal_says_which_of_the_two_it_is() {
-    assert!(NoRestart::Unsettled.to_string().contains("cannot be known"),);
+    assert!(
+        NoRestart::Unsettled
+            .said_of("the server")
+            .contains("cannot be known"),
+    );
     assert!(
         NoRestart::Spent { ceiling: 3 }
-            .to_string()
+            .said_of("the server")
             .contains("all 3 of the restarts"),
     );
+}
+
+#[test]
+fn a_refusal_is_about_whatever_the_host_says_it_was_hosting() {
+    // Two hosts share this budget and neither is the default: a sentence that
+    // named one of them here would be wrong every time the other was refused.
+    for hosted in ["the server", "the extension"] {
+        for refused in [NoRestart::Unsettled, NoRestart::Spent { ceiling: 1 }] {
+            let said = refused.said_of(hosted);
+
+            assert!(said.starts_with(hosted), "not about {hosted}: {said}");
+            assert_eq!(
+                said.matches("extension").count(),
+                usize::from(hosted == "the extension"),
+                "a kind of program the host never named: {said}"
+            );
+        }
+    }
 }

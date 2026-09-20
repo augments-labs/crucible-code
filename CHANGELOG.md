@@ -70,6 +70,12 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **An MCP server that will not be restarted is no longer called an
+  extension.** The refusal read "the extension has used all 2 of the restarts it
+  is allowed" about a server nobody had installed as one; it now says "the
+  server". `crucible_transport::NoRestart` prints through `said_of`, which takes
+  the noun from the host, and no longer implements `Display`.
+
 - **A compacted session no longer carries forward files it never touched.**
   The list of files a recap carries forward is read only from the list crucible
   wrote, so a recap mentioning that list, or a tool call whose path contains a
