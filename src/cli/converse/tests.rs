@@ -799,12 +799,16 @@ fn a_terminal_that_fails_mid_turn_leaves_the_turn_recorded_all_the_same() {
     // holds it. Returning the moment a write failed would drop the join handle
     // and leave that thread running with the process on its way out, so the
     // turn on screen when the window closed is the turn missing from the log.
+    //
+    // The session is handed over whole, with no handle kept back here: the
+    // `Drop` that waits runs when the last holder lets go, and a holder left
+    // in this test would have the log read while its thread was still writing.
     let kept = Arc::new(Mutex::new(Vec::new()));
     let session = Arc::new(Session::onto("/nowhere".into(), Kept(Arc::clone(&kept))));
 
     let provider = Script::new(vec![saying("what the model said")]);
     let started = provider.asked();
-    let conversation = paired(Arc::clone(&session), |session| {
+    let conversation = paired(session, |session| {
         Runner::new(
             Box::new(provider),
             Tools::new(),
