@@ -116,6 +116,14 @@ fn asking(tree: &Tree, script: Script) -> Result<(Conversation, Arc<AtomicUsize>
     Ok((conversation, ran))
 }
 
+/// The one syntax theme the host in these tests reads code in.
+const READ: &str = "a theme this host reads";
+
+/// Whether the host in these tests reads code in `named`.
+fn reads(named: &str) -> bool {
+    named == READ
+}
+
 /// Requests numbered in the order they were made, each one read back off the
 /// bytes it travels as.
 #[derive(Default)]
@@ -394,6 +402,7 @@ fn a_decision_sent_outside_a_turn_settles_nothing() -> Result<(), Failed> {
         switching: standing.with(),
         sessions: &sessions,
         workspace: &workspace,
+        reads,
     };
     let request = Wire::default().sent(Command::Decide(Decision::Ruled {
         id: PendingId::new(1),
@@ -412,6 +421,84 @@ fn a_decision_sent_outside_a_turn_settles_nothing() -> Result<(), Failed> {
 }
 
 #[test]
+fn a_decision_on_its_own_is_answered_the_same_at_every_door() -> Result<(), Failed> {
+    let tree = Tree::new("client-lone-decision")?;
+    let (mut conversation, ran) = asking(&tree, Script::new(Vec::new()))?;
+    let standing = Standing::new(&tree, &[])?;
+    let workspace = tree.workspace()?;
+    let sessions = tree.sessions();
+    let desk = client::Desk {
+        switching: standing.with(),
+        sessions: &sessions,
+        workspace: &workspace,
+        reads,
+    };
+    let request = Wire::default().sent(Command::Decide(Decision::Ruled {
+        id: PendingId::new(1),
+        ruling: Ruling::Allow,
+        lasting: Lasting::Session,
+    }))?;
+    let stale = Outcome::Refused(ErrorCode::StaleDecision.into());
+
+    // Whichever door it is handed in at, no action is pending there for it to
+    // be about, and a client is told that in one word rather than two.
+    let performed = client::perform(&mut conversation, &request, &desk);
+    assert_eq!(received(&performed.response(&request))?.outcome, stale);
+
+    let kept = client::keep(&request, &desk);
+    assert_eq!(received(&kept.response(&request))?.outcome, stale);
+
+    let mut remote = Remote::new(vec![Saying::Fitting(Ruling::Allow)]);
+    let (response, _) = turned(&mut conversation, &request, &mut remote)?;
+    assert_eq!(response.outcome, stale);
+    assert!(remote.put.is_empty());
+
+    let cancel = Cancel::new();
+    assert_eq!(client::interrupt(&request, &cancel), stale);
+    assert!(!cancel.requested());
+
+    assert_eq!(ran.load(Ordering::Relaxed), 0);
+    Ok(())
+}
+
+#[test]
+fn a_syntax_theme_this_host_does_not_read_is_refused_and_not_written_down() -> Result<(), Failed> {
+    let tree = Tree::new("client-syntax-theme")?;
+    let mut conversation = super::conversation(&tree, Script::new(Vec::new()), false)?;
+    let standing = Standing::new(&tree, &[])?;
+    let workspace = tree.workspace()?;
+    let sessions = tree.sessions();
+    let desk = client::Desk {
+        switching: standing.with(),
+        sessions: &sessions,
+        workspace: &workspace,
+        reads,
+    };
+    let mut wire = Wire::default();
+    let invalid = Outcome::Refused(ErrorCode::InvalidArgument.into());
+
+    let unread = crucible_client_api::Name::new("no theme by this name")?;
+    let request = wire.sent(Command::Theme(Theme::Syntax(unread)))?;
+    let performed = client::perform(&mut conversation, &request, &desk);
+    assert_eq!(received(&performed.response(&request))?.outcome, invalid);
+    let kept = client::keep(&request, &desk);
+    assert_eq!(received(&kept.response(&request))?.outcome, invalid);
+    assert_eq!(super::written(&tree)?.syntax_theme(), None);
+
+    // The one it does read is written down, through either door.
+    let request = wire.sent(Command::Theme(Theme::Syntax(
+        crucible_client_api::Name::new(READ)?,
+    )))?;
+    let kept = client::keep(&request, &desk);
+    assert_eq!(
+        received(&kept.response(&request))?.outcome,
+        Outcome::Theme(crucible_client_api::ThemeOutcome::Remembered)
+    );
+    assert_eq!(super::written(&tree)?.syntax_theme(), Some(READ));
+    Ok(())
+}
+
+#[test]
 fn the_shipped_commands_are_carried_out_from_bytes_and_answered_in_bytes() -> Result<(), Failed> {
     let tree = Tree::new("client-commands")?;
     let mut conversation = super::conversation(&tree, Script::new(vec![saying("one")]), false)?;
@@ -422,6 +509,7 @@ fn the_shipped_commands_are_carried_out_from_bytes_and_answered_in_bytes() -> Re
         switching: standing.with(),
         sessions: &sessions,
         workspace: &workspace,
+        reads,
     };
     let mut wire = Wire::default();
     let mut answered = |conversation: &mut Conversation, command: Command| {
@@ -496,6 +584,7 @@ fn what_cannot_be_carried_out_is_refused_by_code_and_changes_nothing() -> Result
         switching: standing.with(),
         sessions: &sessions,
         workspace: &workspace,
+        reads,
     };
     let before = client::snapshot(&conversation);
     let nobody = crucible_client_api::Name::new("nobody-by-this-name")?;
@@ -556,6 +645,7 @@ fn every_palette_a_client_can_name_is_one_the_settings_file_reads_back() -> Resu
         switching: standing.with(),
         sessions: &sessions,
         workspace: &workspace,
+        reads,
     };
     let mut wire = Wire::default();
     let mut read = Vec::new();

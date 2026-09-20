@@ -265,6 +265,82 @@ fn a_question_that_cannot_be_put_whole_is_not_put_short() {
 }
 
 #[test]
+fn questions_declined_without_being_put_spend_no_identity() {
+    /// Far more than every other test in this process mints between them, so
+    /// the count below is about this test whatever runs beside it.
+    const DECLINED: u64 = 10_000;
+
+    let minted = || {
+        let mut front = Scripted::default();
+        asked(&mut front, Capabilities::every());
+        front.put.first().map(|put| put.id().number())
+    };
+    let many = (0..=ITEMS).map(|number| Answer::new(format!("answer {number}")));
+    let crowded = vec![Question::new("Colour", "Which colour?", many)];
+
+    let before = minted().expect("a permission question is put");
+    for _ in 0..DECLINED {
+        let mut front = Scripted::default();
+        assert!(questions(Capabilities::every(), &mut front, &crowded).is_none());
+        assert!(front.put.is_empty());
+    }
+    let after = minted().expect("a permission question is put");
+
+    assert!(
+        after - before < DECLINED,
+        "{} identities went to questions nobody was put",
+        after - before
+    );
+}
+
+/// A call to run a line too long for the words a pending action carries.
+fn running_a_long_line() -> Sensitivity {
+    Sensitivity::SpawnsProcess {
+        command: crucible_tools::Command::Opaque("x".repeat(TEXT_BYTES + 1).into()),
+    }
+}
+
+#[test]
+fn a_call_whose_subject_would_be_cut_is_denied_rather_than_put_short() {
+    // A yes to half a command line is a yes to a line nobody read, so a front
+    // end that reads the pending action alone is not asked, and the call is
+    // refused as it is where nobody answers.
+    let mut front = Scripted::saying([Reply::Fitting(Ruling::Allow, Lasting::Session)]);
+    let handed =
+        Deciding::new(&mut front, Capabilities::every()).ask(&call(), &running_a_long_line());
+
+    assert_eq!(handed, (Verdict::Deny, Remember::Never));
+    assert!(front.put.is_empty(), "put with its subject cut");
+
+    // One that draws the call itself reads all of it, and is asked as ever.
+    let mut whole = Whole(Scripted::saying([Reply::Fitting(
+        Ruling::Allow,
+        Lasting::Once,
+    )]));
+    let handed =
+        Deciding::new(&mut whole, Capabilities::every()).ask(&call(), &running_a_long_line());
+    assert_eq!(handed, (Verdict::Allow, Remember::Never));
+    assert_eq!(whole.0.put.len(), 1);
+}
+
+/// A scripted front end that draws from the whole value it is lent.
+struct Whole(Scripted);
+
+impl Front for Whole {
+    fn put(&mut self, pending: &Pending, shown: Shown<'_>) -> Option<Decision> {
+        self.0.put(pending, shown)
+    }
+
+    fn refused(&mut self, refusal: Refusal) {
+        self.0.refused(refusal);
+    }
+
+    fn draws_whole(&self) -> bool {
+        true
+    }
+}
+
+#[test]
 fn an_identity_is_never_minted_twice() {
     let mut front = Scripted::default();
 

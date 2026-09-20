@@ -221,6 +221,12 @@ impl Front for Asking {
     /// Nothing to say: every decision made above names the action it was put
     /// and rules on it, so the application has none of them to turn away.
     fn refused(&mut self, _: Refusal) {}
+
+    /// The panel is drawn from the call and what it would do, as they stand
+    /// on the host, and never from the cut words a pending action carries.
+    fn draws_whole(&self) -> bool {
+        true
+    }
 }
 
 /// The bounded event receiver, merging only adjacent deltas already waiting.
