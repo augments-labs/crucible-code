@@ -90,7 +90,7 @@ impl OutputGuardrail for Check {
 }
 
 /// A definition called `id`, with whatever the test wants said about it.
-fn agent(id: &str) -> AgentBuilder {
+pub(super) fn agent(id: &str) -> AgentBuilder {
     AgentBuilder::new(
         AgentId::new(id),
         Model {
@@ -104,7 +104,7 @@ fn agent(id: &str) -> AgentBuilder {
 }
 
 /// The tool names one request advertised.
-fn offered(request: &crate::fake::SentRequest) -> Vec<String> {
+pub(super) fn offered(request: &crate::fake::SentRequest) -> Vec<String> {
     request
         .tools
         .iter()
@@ -113,7 +113,7 @@ fn offered(request: &crate::fake::SentRequest) -> Vec<String> {
 }
 
 /// One response that says `text` and yields.
-fn answering(text: &str) -> Vec<Delta> {
+pub(super) fn answering(text: &str) -> Vec<Delta> {
     vec![
         Delta::Text(text.into()),
         Delta::Stopped(StopReason::Yielded),
@@ -586,7 +586,7 @@ fn re_aiming_a_session_leaves_the_definition_a_sibling_holds_alone() {
 /// The one place a turn stops of its own accord for as long as a test needs it
 /// to: while a call is out. Holding a turn there is how the test below gets two
 /// runs genuinely overlapping rather than merely interleaved on one thread.
-struct Gate {
+pub(super) struct Gate {
     /// What it answers to, which is what the definition below declares.
     name: &'static str,
     /// Told once the call is out, so the test knows the turn is under way.
@@ -596,7 +596,7 @@ struct Gate {
 }
 
 impl Gate {
-    fn new(started: Sender<()>, go: Receiver<()>) -> Self {
+    pub(super) fn new(started: Sender<()>, go: Receiver<()>) -> Self {
         Self {
             name: "gate",
             started,
