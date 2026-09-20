@@ -960,7 +960,7 @@ kinds=$(sed -n '/pub const KINDS: \[/,/\];/p' "$request_owner/command.rs" | grep
 # The five were picked out of the eighteen commands there were. One more is one
 # nobody has asked this of.
 if (($(grep -c . <<<"$kinds") != 18)); then
-    printf '    FAIL the client contract no longer has eighteen commands; decide whether the new one changes what a session may do, then write the count here\n'
+    printf '    FAIL the client contract no longer has the 18 commands the five were picked out of; decide whether the new one changes what a session may do, then move the 18 in this check\n'
     failed=1
 fi
 while IFS= read -r word; do
@@ -982,7 +982,9 @@ reading=$(grep -vE '(^|/)tests(/|\.rs$)|_tests\.rs$' <<<"$reading" || true)
 while IFS= read -r file; do
     [[ -z "$file" ]] && continue
     while IFS= read -r word; do
-        if ! grep -qE "^$file $word [^ ]" <<<"$decided"; then
+        # A row is looked up as the words it is, never as a pattern: a dot in a
+        # file name would otherwise stand for any character.
+        if ! cut -d' ' -f1,2 <<<"$decided" | grep -Fxq "$file $word"; then
             printf '    FAIL %s reads a request from bytes, and nothing is written here about what it does with %s\n' "$file" "$word"
             failed=1
         fi
@@ -998,8 +1000,58 @@ while IFS= read -r row; do
     elif ! grep -Fxq "${rest%% *}" <<<"$authority"; then
         printf '    FAIL %s is written down about %s, which is not one of the commands this asks about\n' "$file" "${rest%% *}"
         failed=1
+    elif [[ "$rest" != *' '* || -z "${rest#* }" ]]; then
+        printf '    FAIL %s is written down about %s with nothing said about what it does\n' "$file" "${rest%% *}"
+        failed=1
     fi
 done <<<"$decided"
+# Reading bytes is one way a request arrives from somewhere else. The other is
+# an adapter that reads a format of its own and builds the command: the variants
+# are public, and no `decode` is named on that road. So the files that name one
+# of the five are written down too. They are the terminal, which builds them
+# from keys pressed on the host, and the application, which performs them. A
+# file that joins them is one more place a session's mode, sandbox or account
+# can be changed from, and it is added here by somebody who looked at where its
+# commands come from.
+naming='crates/crucible-app/src/client/performing.rs
+crates/crucible-app/src/client/turning.rs
+src/cli/converse.rs
+src/cli/converse/command.rs
+src/cli/converse/command/login.rs
+src/cli/converse/command/logout.rs
+src/cli/converse/command/sandbox.rs
+src/cli/converse/typing.rs'
+variants=''
+while IFS= read -r word; do
+    variant=$(awk -F_ '{ for (i = 1; i <= NF; i++) printf "%s%s", toupper(substr($i, 1, 1)), substr($i, 2) }' <<<"$word")
+    # The variant is found by the word it is written as, so the two lists
+    # cannot drift apart without this saying so.
+    if ! grep -qE "Self::$variant( \{ \.\. \}|\(_\))? => \"$word\"" "$request_owner/command.rs"; then
+        printf '    FAIL no variant %s is written as %s in %s/command.rs; this check measured nothing\n' "$variant" "$word" "$request_owner"
+        failed=1
+    fi
+    variants+="${variants:+|}$variant"
+done <<<"$authority"
+named=$(grep -rlE --include='*.rs' "(^|[^A-Za-z0-9_])Command::($variants)([^A-Za-z0-9_]|\$)" src crates 2>/dev/null |
+    grep -v "^$request_owner/" | grep -vE '(^|/)tests(/|\.rs$)|_tests\.rs$' |
+    while IFS= read -r file; do
+        # Other enums are called `Command` too; the contract's is the one a
+        # file cannot reach without naming the crate.
+        if grep -q 'crucible_client_api' "$file"; then printf '%s\n' "$file"; fi
+    done | sort || true)
+while IFS= read -r file; do
+    [[ -z "$file" ]] && continue
+    if ! grep -Fxq "$file" <<<"$naming"; then
+        printf '    FAIL %s names a command that changes what a session may do, and is not one of the files known to; find where its commands come from, decide about each of the five if that is outside the host, then add the file here\n' "$file"
+        failed=1
+    fi
+done <<<"$named"
+while IFS= read -r file; do
+    if ! grep -Fxq "$file" <<<"$named"; then
+        printf '    FAIL %s was not found naming one of the five; take it out, or the search measured nothing\n' "$file"
+        failed=1
+    fi
+done <<<"$naming"
 
 section "workspace inheritance"
 if ((${#member_manifests[@]} == 0)); then
