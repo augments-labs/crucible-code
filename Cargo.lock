@@ -333,7 +333,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-agents"
-version = "0.41.1"
+version = "0.42.0"
 dependencies = [
  "crucible-models",
  "crucible-tools",
@@ -343,7 +343,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-app"
-version = "0.41.1"
+version = "0.42.0"
 dependencies = [
  "crucible-agents",
  "crucible-auth",
@@ -372,7 +372,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-attachments"
-version = "0.41.1"
+version = "0.42.0"
 dependencies = [
  "crucible-types",
  "crucible-workspace",
@@ -383,7 +383,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-auth"
-version = "0.41.1"
+version = "0.42.0"
 dependencies = [
  "base64 0.23.1",
  "crucible-core",
@@ -397,7 +397,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-builtins"
-version = "0.41.1"
+version = "0.42.0"
 dependencies = [
  "crucible-attachments",
  "crucible-runtime",
@@ -417,7 +417,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-client-api"
-version = "0.41.1"
+version = "0.42.0"
 dependencies = [
  "crucible-types",
  "serde_core",
@@ -426,7 +426,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-code"
-version = "0.41.1"
+version = "0.42.0"
 dependencies = [
  "arboard",
  "clap",
@@ -458,7 +458,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-config"
-version = "0.41.1"
+version = "0.42.0"
 dependencies = [
  "crucible-core",
  "crucible-models",
@@ -468,7 +468,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-context"
-version = "0.41.1"
+version = "0.42.0"
 dependencies = [
  "crucible-models",
  "crucible-tools",
@@ -479,7 +479,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-core"
-version = "0.41.1"
+version = "0.42.0"
 dependencies = [
  "crucible-attachments",
  "crucible-context",
@@ -498,7 +498,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-credentials"
-version = "0.41.1"
+version = "0.42.0"
 dependencies = [
  "crucible-types",
  "sha2",
@@ -507,7 +507,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-extension"
-version = "0.41.1"
+version = "0.42.0"
 dependencies = [
  "crucible-registry",
  "crucible-sandbox",
@@ -520,7 +520,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-mcp"
-version = "0.41.1"
+version = "0.42.0"
 dependencies = [
  "crucible-runtime",
  "crucible-sandbox",
@@ -533,7 +533,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-models"
-version = "0.41.1"
+version = "0.42.0"
 dependencies = [
  "crucible-credentials",
  "crucible-runtime",
@@ -544,7 +544,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-privacy"
-version = "0.41.1"
+version = "0.42.0"
 dependencies = [
  "rustix",
  "thiserror",
@@ -553,7 +553,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-provider"
-version = "0.41.1"
+version = "0.42.0"
 dependencies = [
  "base64 0.23.1",
  "crucible-core",
@@ -568,7 +568,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-registry"
-version = "0.41.1"
+version = "0.42.0"
 dependencies = [
  "thiserror",
  "uuid",
@@ -576,7 +576,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-runner"
-version = "0.41.1"
+version = "0.42.0"
 dependencies = [
  "crucible-agents",
  "crucible-attachments",
@@ -590,14 +590,14 @@ dependencies = [
 
 [[package]]
 name = "crucible-runtime"
-version = "0.41.1"
+version = "0.42.0"
 dependencies = [
  "tokio",
 ]
 
 [[package]]
 name = "crucible-sandbox"
-version = "0.41.1"
+version = "0.42.0"
 dependencies = [
  "crucible-storage",
  "crucible-types",
@@ -609,7 +609,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-sandbox-broker"
-version = "0.41.1"
+version = "0.42.0"
 dependencies = [
  "libc",
  "rustix",
@@ -620,7 +620,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-sandbox-local"
-version = "0.41.1"
+version = "0.42.0"
 dependencies = [
  "base64 0.23.1",
  "crucible-privacy",
@@ -639,7 +639,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-session"
-version = "0.41.1"
+version = "0.42.0"
 dependencies = [
  "crucible-core",
  "crucible-privacy",
@@ -653,7 +653,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-storage"
-version = "0.41.1"
+version = "0.42.0"
 dependencies = [
  "crucible-types",
  "serde_json",
@@ -664,7 +664,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-tools"
-version = "0.41.1"
+version = "0.42.0"
 dependencies = [
  "crucible-registry",
  "crucible-runtime",
@@ -679,7 +679,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-transport"
-version = "0.41.1"
+version = "0.42.0"
 dependencies = [
  "crucible-runtime",
  "crucible-sandbox",
@@ -689,7 +689,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-tui"
-version = "0.41.1"
+version = "0.42.0"
 dependencies = [
  "base64 0.23.1",
  "crossterm",
@@ -703,7 +703,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-types"
-version = "0.41.1"
+version = "0.42.0"
 dependencies = [
  "serde_json",
  "sha2",
@@ -713,7 +713,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-workspace"
-version = "0.41.1"
+version = "0.42.0"
 dependencies = [
  "rustix",
  "thiserror",
