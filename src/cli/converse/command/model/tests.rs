@@ -7,7 +7,7 @@ use crucible_runner::{Agent, Model as RunnerModel, Tools};
 use crucible_session::Session;
 use crucible_tui::{Glyphs, Recording, Renderer};
 
-use crate::cli::converse::tests::plain;
+use crate::cli::converse::tests::{keeping, plain};
 use crate::cli::fake::Script;
 use crate::cli::sample::Sample;
 
@@ -142,7 +142,8 @@ fn taking_a_row_asks_for_the_model_and_then_the_rung_marked_under_it() {
     // Both halves, in that order. A rung is asked of a model, so a shelf
     // that applied the rung first would be asking it of the model being
     // left behind.
-    let terms = plain();
+    let sample = Sample::new("model-row-and-rung");
+    let terms = keeping(&sample);
     let mut conversation = asking();
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let selected = row("anthropic", "claude-sonnet-5");
@@ -162,7 +163,8 @@ fn taking_a_row_asks_for_the_model_and_then_the_rung_marked_under_it() {
 
 #[test]
 fn google_model_switch_requires_an_explicit_compatible_effort() {
-    let mut terms = plain();
+    let sample = Sample::new("model-google-effort");
+    let mut terms = keeping(&sample);
     terms.serving = Box::new(|_, _| {
         Ok(crucible_app::providers::Resolved {
             provider: Box::new(Script::new(Vec::new())),
@@ -205,7 +207,8 @@ fn taking_a_model_that_serves_no_rung_leaves_the_rung_exactly_as_it_was() {
     // Not an error and nothing said about it. The row carried `no rung`
     // and the strip carried the same sentence, so a session that took it
     // has already been told.
-    let terms = plain();
+    let sample = Sample::new("model-no-rung");
+    let terms = keeping(&sample);
     let mut conversation = conversing(Some("anthropic"), "old", Some(99), Some(Effort::High));
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let selected = row("anthropic", "claude-haiku-4-5");
@@ -220,7 +223,7 @@ fn taking_a_model_that_serves_no_rung_leaves_the_rung_exactly_as_it_was() {
 #[test]
 fn taking_a_model_replaces_name_output_and_startup_resolved_window_together() {
     let sample = Sample::new("model-runtime-limits");
-    let mut terms = plain();
+    let mut terms = keeping(&sample);
     terms.settings = sample
         .settings(r#"{"providers":{"anthropic":{"contextWindow":{"claude-haiku-4-5":345678}}}}"#);
     let mut conversation = asking();

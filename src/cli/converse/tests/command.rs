@@ -26,7 +26,7 @@ use crate::cli::converse::{Answers, Held, Terms, command, converse};
 use crate::cli::fake::Script;
 use crate::cli::sample::Sample;
 
-use super::{opening, over, paired, plain, saying, scripted};
+use super::{keeping, opening, over, paired, plain, saying, scripted};
 
 /// Terms recording to a tree of `sample`'s own, so a command that starts or
 /// picks up a session has somewhere to do it — over the record the tools of
@@ -214,13 +214,14 @@ fn a_model_taken_mid_session_is_what_the_next_turn_is_told_it_is() {
         scripted(script, Tools::new(), session)
     });
 
+    let sample = Sample::new("model-mid-session");
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(b"/model claude-haiku-4-5\n/effort max\nwhat are you\n".to_vec());
 
     converse(
         conversation,
         &mut renderer,
-        &plain(),
+        &keeping(&sample),
         &opening(),
         &mut input,
     )
