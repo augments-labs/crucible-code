@@ -190,12 +190,14 @@ fn retry(error: &io::Error) -> bool {
 mod tests {
     use super::*;
     use std::net::{TcpListener, TcpStream};
+    use std::sync::mpsc::{self, TryRecvError};
     use std::thread;
 
     #[test]
     fn stalled_write_expires_despite_fresh_reverse_activity() {
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind");
         let address = listener.local_addr().expect("address");
+        let (written, finished) = mpsc::channel::<()>();
         let server = thread::spawn(move || {
             let (mut socket, _) = listener.accept().expect("accept");
             socket
@@ -203,16 +205,21 @@ mod tests {
                 .expect("write timeout");
             let bytes = [b'r'; 1024];
             let deadline = Instant::now() + Duration::from_secs(4);
-            while Instant::now() < deadline {
+            // The socket stays open until the client's write has returned. A
+            // reverse reader that falls behind times this write out, and
+            // closing then, with the client's bytes unread, resets the
+            // connection: the stalled write would fail as reset or broken
+            // pipe before its idle bound could expire.
+            while Instant::now() < deadline
+                && matches!(finished.try_recv(), Err(TryRecvError::Empty))
+            {
                 match socket.write(&bytes) {
                     Ok(_) => {}
+                    Err(error) if retry(&error) => {}
                     Err(error)
                         if matches!(
                             error.kind(),
-                            std::io::ErrorKind::BrokenPipe
-                                | std::io::ErrorKind::ConnectionReset
-                                | std::io::ErrorKind::TimedOut
-                                | std::io::ErrorKind::WouldBlock
+                            io::ErrorKind::BrokenPipe | io::ErrorKind::ConnectionReset
                         ) =>
                     {
                         break;
@@ -241,6 +248,7 @@ mod tests {
         let started = Instant::now();
         let result = (0..8192).try_for_each(|_| stream.write_all(&payload));
         let elapsed = started.elapsed();
+        drop(written);
         assert_eq!(
             result.expect_err("stalled write must expire").kind(),
             io::ErrorKind::TimedOut
