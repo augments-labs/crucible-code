@@ -19,11 +19,12 @@ change in any release with no deprecation period.
 
 ### Fixed
 
-- **Two session directories whose names are not valid UTF-8 are no longer one
-  owner.** The directory a session is kept in separates one reader's prompt
-  cache resources from another's, and it was compared as text with every
-  invalid byte replaced, so two such directories could share a scope. It is
-  now compared byte for byte; a directory whose name is text is unaffected.
+- **Two session directories, or two workspaces, whose names are not valid
+  UTF-8 are no longer one prompt cache scope.** The directory a session is kept
+  in and the workspace each separate one reader's prompt cache resources from
+  another's, and both were compared as text with every invalid byte replaced,
+  so two such directories could share a scope. They are now compared byte for
+  byte; a directory whose name is text is unaffected.
 
 ## [0.42.0] - 2026-09-20
 

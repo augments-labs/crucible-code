@@ -449,7 +449,7 @@ impl Runner {
         let authority = PermissionsSection::new(&self.permission)
             .snapshot()
             .to_string();
-        let workspace = self.context.workspace().to_string_lossy();
+        let workspace = self.context.workspace();
         let user = self.store.owner();
         let session = self.store.session_id();
         let request = Request {
@@ -478,7 +478,7 @@ impl Runner {
             effort: self.agent.model().effort,
             run: run.run(),
             session: session.as_ref().map(crucible_core::SessionId::as_str),
-            workspace: workspace.as_bytes(),
+            workspace,
             user: user
                 .as_ref()
                 .map_or(&[], crucible_core::SessionOwner::as_bytes),
