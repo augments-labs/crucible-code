@@ -9,12 +9,23 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
-# Core alone, for the reason crucible-extension takes core alone: this crate
-# knows a wire and nothing about which server is on the other end of it. What
-# starts a process and what a settings document said are decided above.
 [dependencies]
-crucible-core.workspace = true
+# The bounded frames and the hosted-process streams every conversation in this
+# workspace runs over, so the protocol here is the only thing this crate holds.
+crucible-transport.workspace = true
+# What a confined process is, so a server can be hosted over one without this
+# crate knowing which backend confined it.
+crucible-sandbox.workspace = true
+# The cancellation a caller raises to stop waiting on a server mid-exchange.
+crucible-runtime.workspace = true
+# What a tool and a toolset are, so a server's catalogue can be published as a
+# generation the runner drives beside the built-in roster.
+crucible-tools.workspace = true
+# The identifiers and call arguments a hosted tool is named and invoked with.
+crucible-types.workspace = true
+# Reads and writes the JSON-RPC documents MCP frames carry.
 serde_json.workspace = true
+# Typed errors a caller can match on and hold with `#[from]`.
 thiserror.workspace = true
 
 [lints]

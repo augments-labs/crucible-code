@@ -32,7 +32,9 @@
 use std::borrow::Cow;
 use std::time::{Duration, Instant};
 
+use crucible_app::Conversation;
 use crucible_builtins::{Background, Ended};
+use crucible_client_api::Command;
 use crucible_core::{Aside, Cancel, Effort, Mode};
 use crucible_runner::Runner;
 use crucible_tui::{
@@ -311,7 +313,13 @@ pub(crate) struct Between<'a> {
     pub(crate) commands: &'a command::Commands,
     /// Holds the mode, which is the one thing a key at the prompt changes about
     /// the session rather than about the screen.
-    pub(crate) runner: &'a mut Runner,
+    pub(crate) conversation: &'a mut Conversation,
+    /// What a command is asked of the application with.
+    pub(crate) terms: &'a Terms,
+    /// Where clipboard images are durably imported, as [`During`] takes it:
+    /// the application's session says where that is, because the runner records
+    /// into a contract and never learns what is behind it.
+    pub(crate) attachment_store: Option<(&'a std::path::Path, &'a crucible_core::SessionId)>,
     /// The line being written, which still holds whatever was typed while the
     /// last turn ran.
     pub(crate) editor: &'a mut Editor,
@@ -442,7 +450,9 @@ pub(crate) fn ask<T: Terminal>(
 ) -> Result<Asked, Fatal> {
     let Between {
         commands,
-        runner,
+        conversation,
+        terms,
+        attachment_store,
         editor,
         planning,
         recalling,
@@ -465,7 +475,7 @@ pub(crate) fn ask<T: Terminal>(
     // inside one.
     planning.moved();
 
-    let mut says = saying(runner);
+    let mut says = saying(conversation.runner());
     says.running = left.count();
 
     // A local, because where the mark was in it is not worth keeping: a list of
@@ -565,17 +575,9 @@ pub(crate) fn ask<T: Terminal>(
             // holds only `[Image #N]` and the session holds the path the marker
             // stands for, so submission takes the ordinary attachment path and
             // all of its capability checks.
-            Pressed::PasteImage => match clipboard(board).and_then(|board| {
-                paste_image(
-                    runner
-                        .session()
-                        .id()
-                        .map(|id| (runner.session().path(), id)),
-                    board,
-                    editor,
-                    images,
-                )
-            }) {
+            Pressed::PasteImage => match clipboard(board)
+                .and_then(|board| paste_image(attachment_store, board, editor, images))
+            {
                 Ok(Typed::Changed) => {
                     open = Opened::filtered(commands, editor.projection().text(), glyphs);
                     true
@@ -654,9 +656,9 @@ pub(crate) fn ask<T: Terminal>(
             // row under the box says which mode that landed in, and the same
             // key is what steps out of it again.
             Pressed::Cycle => {
-                runner.cycle();
+                terms.perform(conversation, Command::CycleMode);
 
-                says = saying(runner);
+                says = saying(conversation.runner());
                 true
             }
 
@@ -1074,7 +1076,7 @@ pub(super) fn during<T: Terminal>(
             }
 
             Meant::Interrupt => {
-                cancel.request();
+                terms.interrupt(cancel);
                 turning.interrupting();
                 moved = true;
             }
@@ -1142,7 +1144,7 @@ pub(super) fn during<T: Terminal>(
                 // reader for.
                 Typed::Interrupted => {
                     if together(offered, Instant::now()) {
-                        cancel.request();
+                        terms.interrupt(cancel);
                         turning.interrupting();
                         return Ok(Meanwhile::Leaving);
                     }

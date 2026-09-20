@@ -35,9 +35,12 @@ arboard = { version = "=3.6.1", features = ["wayland-data-control"] }
 image = { version = "=0.25.10", default-features = false, features = ["png"] }
 # This workspace's own crates. Path dependencies, released together, so there is
 # no version to pin and no third party whose publish could move them.
+crucible-agents = { path = "crates/crucible-agents" }
+crucible-app = { path = "crates/crucible-app" }
 crucible-attachments = { path = "crates/crucible-attachments" }
 crucible-auth = { path = "crates/crucible-auth" }
 crucible-builtins = { path = "crates/crucible-builtins" }
+crucible-client-api = { path = "crates/crucible-client-api" }
 crucible-config = { path = "crates/crucible-config" }
 crucible-context = { path = "crates/crucible-context" }
 crucible-core = { path = "crates/crucible-core" }
@@ -61,6 +64,7 @@ crucible-sandbox-local = { path = "crates/crucible-sandbox-local" }
 crucible-session = { path = "crates/crucible-session" }
 crucible-storage = { path = "crates/crucible-storage" }
 crucible-tools = { path = "crates/crucible-tools" }
+crucible-transport = { path = "crates/crucible-transport" }
 crucible-tui = { path = "crates/crucible-tui" }
 crucible-types = { path = "crates/crucible-types" }
 crucible-workspace = { path = "crates/crucible-workspace" }
@@ -217,6 +221,14 @@ grep-regex = "=0.1.14"
 # shapes differ per provider and are read once at the boundary, while context
 # snapshots are already values rather than mirror structs.
 serde_json = "=1.0.151"
+
+# The traits `serde_json`'s reader drives, without serde's derive. A frame from
+# a client is hostile input, and the only way to stop reading one at the entry,
+# level or value that goes over its bound, or at a key said twice — rather
+# than after the whole tree is in memory — is to hand the reader a visitor that
+# counts. `serde_json` does not re-export the traits a visitor implements.
+# Already in the graph as its dependency, at this version.
+serde_core = "=1.0.229"
 
 # Display width. A terminal wraps by columns, not by characters: CJK takes two
 # and a combining mark takes none, so counting `char`s puts the cursor somewhere
@@ -384,6 +396,13 @@ path = "src/main.rs"
 # drawn here or nowhere.
 [dependencies]
 arboard.workspace = true
+# The composition root: every concrete provider, tool, server and session a run
+# is assembled from, and the conversation the command line then drives. The
+# command line adapts it to a terminal and adds nothing to it.
+crucible-app.workspace = true
+# The requests the terminal makes of the application, which are the ones any
+# front end makes: the command line is one client of that contract.
+crucible-client-api.workspace = true
 clap.workspace = true
 crucible-attachments.workspace = true
 crucible-auth.workspace = true
@@ -391,17 +410,6 @@ crucible-builtins.workspace = true
 crucible-config.workspace = true
 crucible-context.workspace = true
 crucible-core.workspace = true
-# The restart budget an ended program is started again under, and the question
-# of whether starting it again is safe at all. Taken here because composition is
-# where a hosted server's process ends and something has to decide what happens
-# next; the rule itself belongs beside every other program crucible supervises
-# rather than being written a second time for this one.
-crucible-extension.workspace = true
-# The one crate that speaks the Model Context Protocol. Only the binary may
-# take it: a library crate depending on it would put somebody else's server
-# behind a trait the runner drives, and the repository gate refuses that edge.
-# Composition is where a hosted server becomes a tool, so it is taken here.
-crucible-mcp.workspace = true
 crucible-privacy.workspace = true
 crucible-provider.workspace = true
 crucible-runner.workspace = true
@@ -438,6 +446,12 @@ thiserror.workspace = true
 # dev-dependencies for a build, so this turns the feature on for `cargo test`
 # and for nothing that ships.
 [dev-dependencies]
+# Named by the integration tests alone, which drive the seams these two own from
+# outside: what an extension sweep finds, and what hosting a server comes to.
+# The shipped command line reaches both through the application crate and names
+# neither, which the repository gate holds it to.
+crucible-extension.workspace = true
+crucible-mcp.workspace = true
 crucible-session = { workspace = true, features = ["proof"] }
 insta.workspace = true
 

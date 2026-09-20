@@ -1,6 +1,6 @@
 [package]
 name = "crucible-extension"
-description = "Runs somebody else's program under confinement and keeps talking to it."
+description = "What an extension is, whether it may run, and talking to one that does."
 publish.workspace = true
 version.workspace = true
 edition.workspace = true
@@ -9,13 +9,32 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
-# One crucible crate, deliberately. What an extension is, what it says and the
-# sandbox it runs under are all domain types; a host that named a concrete
-# backend or a settings document here would be deciding what it is only
+# Nothing above a contract, deliberately. A crate that named a concrete sandbox
+# backend or read a settings document here would be deciding what it is only
 # supposed to run.
 [dependencies]
-crucible-core.workspace = true
+# `SourceKind`, which is how a manifest records where its bytes came from and
+# what a trust decision is made against.
+crucible-registry.workspace = true
+# The process an extension runs as: `SandboxProcess` to watch and stop it, and
+# `SandboxOutput` for the stream it talks over.
+crucible-sandbox.workspace = true
+# The half of talking to somebody else's program that this protocol does not
+# own: bounded frames, the streams they travel over, and the restart budget.
+crucible-transport.workspace = true
+# `later`, the one rule for which of two release names is ahead, so a manifest
+# naming a crucible newer than this one is refused the same way an update is
+# offered.
+crucible-types.workspace = true
+# Manifests and everything said over the wire are JSON, and a hand-written
+# reader for somebody else's file is a parser crucible would then own.
 serde_json.workspace = true
+# A manifest is identified by a domain-separated one-way digest of what it
+# says, so a resumed run can tell that the thing it is about to trust is the
+# thing that was approved.
+sha2.workspace = true
+# Every refusal here is a module-owned enum, and the derive writes the
+# `Display` and `source` impls rather than shipping a runtime.
 thiserror.workspace = true
 
 [lints]

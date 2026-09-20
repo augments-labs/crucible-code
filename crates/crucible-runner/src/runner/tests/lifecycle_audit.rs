@@ -67,9 +67,8 @@ impl Post for Observing {
 fn audit_exit(fails: Option<&'static str>) {
     let root = std::env::temp_dir().join(format!("crucible-lifecycle-audit-{}", SandboxId::new()));
     std::fs::create_dir(&root).unwrap();
-    let workspace = crucible_core::Workspace::open(&root).unwrap();
-    let session = Session::start(&root.join("sessions"), &workspace, None).unwrap();
-    let path = session.path().to_owned();
+    let store = Recording::started("lifecycle audits");
+    let recording: Arc<dyn JournalStore> = store.clone();
     let script = Script::new(vec![calling("a", "read", "{}"), saying("done")]);
     let events = Observing {
         sent: script.sent(),
@@ -82,7 +81,7 @@ fn audit_exit(fails: Option<&'static str>) {
     let mut runner = Runner::with_toolset(
         Box::new(script),
         toolset,
-        AgentSpec::new(
+        Agent::new(
             AgentId::new("test"),
             Model {
                 name: "test".into(),
@@ -94,7 +93,7 @@ fn audit_exit(fails: Option<&'static str>) {
         ),
         ContextInputs::new(&root)
             .dated(std::time::UNIX_EPOCH + std::time::Duration::from_hours(496_824)),
-        session,
+        recording,
     );
     let cancel = Cancel::new();
     let steer = Steer::new();
@@ -104,7 +103,7 @@ fn audit_exit(fails: Option<&'static str>) {
     let ancestry = context.ancestry();
     let result = runner.turn("go", Box::new([]), &mut asks, &context);
     assert_eq!(result.is_err(), fails.is_some(), "{fails:?}: {result:?}");
-    assert!(runner.into_session().finish().is_none());
+    drop(runner);
     let expected = match fails {
         Some("prepare") => vec![("prepare", 0), ("dispose", 0)],
         Some("snapshot") => vec![("prepare", 0), ("snapshot", 0), ("dispose", 0)],
@@ -131,21 +130,22 @@ fn audit_exit(fails: Option<&'static str>) {
         "{fails:?}: provider request counts at each audit event"
     );
     assert!(facts.iter().all(|(_, actual, _)| *actual == ancestry));
-    // The session owns its JSON codec. These fixed fixture identities
-    // cannot contain escapes; check the persisted compact journal records
-    // without adding a second parser dependency to the runner.
-    let journal = std::fs::read_to_string(&path).unwrap();
-    let lines: Vec<_> = journal
-        .lines()
-        .filter(|line| line.contains("\"kind\":\"sandbox\""))
+    // The same facts as the run record holds them, which is what a later
+    // reader gets. How a store spells them is its own business; what matters
+    // here is that every audit the reader watched was also written down,
+    // attributed to the call it belongs to and to the run that made it.
+    let recorded: Vec<_> = store
+        .journaled()
+        .into_iter()
+        .filter_map(|item| match item {
+            RunItem::Sandbox { ancestry, call, .. } => Some((call, ancestry)),
+            _ => None,
+        })
         .collect();
-    assert_eq!(lines.len(), expected.len());
-    for (line, (stage, _)) in lines.iter().zip(&expected) {
-        assert!(line.contains(&format!("\"call\":\"{stage}\"")), "{line}");
-        assert!(
-            line.contains(&format!("\"run\":\"{}\"", ancestry.run())),
-            "{line}"
-        );
+    assert_eq!(recorded.len(), expected.len());
+    for ((call, recorded), (stage, _)) in recorded.iter().zip(&expected) {
+        assert_eq!(call.as_str(), *stage);
+        assert_eq!(recorded.run(), ancestry.run());
     }
     std::fs::remove_dir_all(root).unwrap();
 }

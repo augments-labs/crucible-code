@@ -54,10 +54,11 @@ use std::path::Path;
 
 use crucible_builtins::Ended;
 use crucible_core::{
-    Attachment, Change, Changed, Compacted, Compacting, Diff, Event, Modality, Question,
+    Attachment, Change, Changed, Compacted, Compacting, Diff, Modality, Question,
     RecordedToolOutput, Sensitivity, StopReason, Summary, ToolCall, ToolId, ToolOutput, Workspace,
     written,
 };
+use crucible_runner::{Event, Turned};
 use crucible_tui::{
     Glyphs, Renderer, Row, Slot, Terminal, TerminalError, clip, columns, cut, fold,
 };
@@ -1502,6 +1503,59 @@ pub(crate) fn stopped<T: Terminal>(renderer: &mut Renderer<T>) -> Result<(), Ter
     let said = notice(StopReason::Cancelled).unwrap_or_default();
     let rows = [Row::new().then(Slot::Quiet, clip(said, window))];
 
+    renderer.present(&rows)
+}
+
+/// Says that a guardrail turned a turn away, or could not decide about it.
+///
+/// The one ending of a turn that may have drawn nothing at all: a prompt
+/// refused on the way in is refused before any request is made, so no event
+/// was posted and the reader would otherwise be handed a fresh prompt with no
+/// word on why nothing answered. Drawn the way a failed turn is — on its own,
+/// with no mark in front, in the colour kept for trouble — because nobody's
+/// line asked for it either.
+///
+/// Which check and what it said, and then whether anything was asked: a
+/// refusal with no stop beside it never reached a provider, and one with a
+/// stop is an answer that was made and that the check did not accept. A turn that
+/// ran says nothing here; it reported itself as it went.
+///
+/// # Errors
+///
+/// [`TerminalError::Io`] if the terminal could not be written to.
+pub(crate) fn refused<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    turned: &Turned,
+) -> Result<(), TerminalError> {
+    let said = match turned {
+        Turned::Ran(_) => return Ok(()),
+        Turned::Rejected { rejection, stop } => format!(
+            "the guardrail `{}` refused {}: {}",
+            rejection.guard(),
+            if stop.is_some() {
+                "the answer"
+            } else {
+                "this prompt, and nothing was asked"
+            },
+            rejection.why(),
+        ),
+        Turned::Undecided { problem, stop } => format!(
+            "{problem}{}",
+            if stop.is_some() {
+                ", so the answer is not one it accepted"
+            } else {
+                ", and nothing was asked"
+            },
+        ),
+    };
+
+    renderer.settle()?;
+    renderer.apart()?;
+    let flat = said.split_whitespace().collect::<Vec<_>>().join(" ");
+    let rows: Vec<Row> = fold(&flat, renderer.columns())
+        .into_iter()
+        .map(|row| Row::new().then(Slot::Trouble, row))
+        .collect();
     renderer.present(&rows)
 }
 

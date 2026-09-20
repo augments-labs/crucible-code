@@ -175,7 +175,11 @@ fn a_session_another_crucible_holds_open_says_it_is_busy() {
     let held = glimpse(&sample.logs(), &sample.workspace(), &id).expect("a glimpse while open");
     assert!(held.busy());
 
+    // The recording is ended and then the session itself goes: what holds the
+    // file open is a live session, and the last holder of one is what lets go
+    // of it.
     drop(session.finish());
+    drop(session);
 
     let released = glimpse(&sample.logs(), &sample.workspace(), &id).expect("a glimpse after");
     assert!(!released.busy());

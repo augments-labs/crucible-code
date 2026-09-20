@@ -8,20 +8,24 @@ Repository skills live in [`.agents/skills/`](.agents/skills/).
 
 | Directory | Purpose |
 | --- | --- |
-| `src/` | CLI and application wiring |
+| `src/` | Argument parsing, terminal adaptation and probes |
 | `crates/crucible-types/` | Shared validated values every crate exchanges |
 | `crates/crucible-registry/` | Bounded, source-aware registries |
 | `crates/crucible-credentials/` | Credential contracts and outgoing redaction |
-| `crates/crucible-storage/` | History, checkpoint and cache contracts |
+| `crates/crucible-storage/` | Session, history, checkpoint and cache contracts |
 | `crates/crucible-workspace/` | The directories crucible reaches, and path proofs |
 | `crates/crucible-attachments/` | What may be attached, and the one read it comes through |
 | `crates/crucible-runtime/` | The controls a turn is steered and stopped by, and how work is owned |
 | `crates/crucible-sandbox/` | What a confined process may observe or change |
 | `crates/crucible-sandbox-local/` | The confinement this machine can enforce, and the processes it runs |
+| `crates/crucible-transport/` | Bounded frames, the streams a hosted program is spoken to over, and its restart budget |
 | `crates/crucible-tools/` | What a tool is, what may run one, and the proof that it may |
 | `crates/crucible-models/` | What a model is asked and answers with, and what a cache attempt may do |
 | `crates/crucible-context/` | The words a request is built from, and what a compaction asks for |
+| `crates/crucible-agents/` | What an agent is: what it may reach for, what it is told, and what checks its words |
 | `crates/crucible-core/` | Domain types and extension traits |
+| `crates/crucible-client-api/` | What a front end asks the application and is answered with, in values that can leave the process |
+| `crates/crucible-app/` | What a run is assembled from, and the conversation it then owns |
 | `crates/crucible-auth/` | Credentials and account authorization |
 | `crates/crucible-builtins/` | Built-in tools |
 | `crates/crucible-config/` | Configuration and settings |
@@ -39,8 +43,12 @@ Repository skills live in [`.agents/skills/`](.agents/skills/).
 
 Workspace manifests declare crate dependencies; `scripts/sh/repo-checks.sh`
 enforces their allowed directions. `crucible-core` re-exports the names it no
-longer defines, so a consumer keeps one import path while ownership moves out of
-it; new code names the owning crate.
+longer defines when they moved below it, so a consumer keeps one import path;
+a name that moved above it — `Event`, `EventEnvelope`, `Post`, `Reporter` and
+`TurnError`, now owned by `crucible-runner`, and everything an extension
+manifest or an MCP roster is made of, now owned by `crucible-extension` and
+`crucible-mcp` — is imported from its owner instead, because core cannot depend
+upward. New code names the owning crate either way.
 
 ## Changing Crucible
 
@@ -51,9 +59,18 @@ invariants. Update it when the implementation makes a sentence false.
   skill loader must not require naming its implementation in `crucible-core`.
   Closed domain states use enums, matched exhaustively where new cases require
   every consumer to decide.
-- `src/` composes concrete implementations into trait objects before passing
-  them downward. `crucible-runner` drives domain traits and must not depend on
-  concrete providers, tools or other plugin implementations.
+- `crucible-app` composes concrete implementations into trait objects before
+  passing them downward, and `src/` adapts a terminal to what it hands back.
+  `crucible-runner` drives domain traits and must not depend on concrete
+  providers, tools or other plugin implementations.
+- A front end reaches a conversation through `crucible_app::client`, with a
+  `crucible-client-api` request: the terminal is one client and a consumer with
+  no terminal is another, and neither can do what the other cannot. Runner
+  events and errors are translated to the contract's bounded values by a match
+  written out in `crucible-app`, never serialized as they stand, and the
+  contract depends on `crucible-types` alone. A decision from a client names a
+  pending action and is held against it; it is never a permission, and cannot
+  construct `Approved`.
 - Parse external text once at its format owner: provider wire objects in
   provider modules, tool arguments in tools, configuration in config and
   session lines in session.

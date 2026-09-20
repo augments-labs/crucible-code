@@ -41,6 +41,7 @@ fn a_finished_run_reports_the_run_it_was_given_and_what_it_spent() {
         .runner
         .exchange(&mut scripted.says, &run)
         .expect("a finished run");
+    let result = result.result().expect("a run no check refused");
 
     assert_eq!(result.run(), run.run(), "the result named a different run");
     assert_eq!(result.status(), RunStatus::Completed);
@@ -61,6 +62,7 @@ fn a_stopped_run_says_a_person_ended_it_rather_than_that_it_finished() {
         .runner
         .exchange(&mut scripted.says, &run)
         .expect("a stopped run is not a failure");
+    let result = result.result().expect("a run no check refused");
 
     assert_eq!(result.status(), RunStatus::Cancelled);
     assert_eq!(result.stop(), StopReason::Cancelled);

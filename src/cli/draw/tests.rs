@@ -5,8 +5,9 @@ use std::path::Path;
 
 use crucible_core::{
     Attachment, Change, Command, Diff, Line, Modality, ProviderError, Question, Summary, Target,
-    ToolArgs, ToolId, TurnError, TurnId, Workspace, written,
+    ToolArgs, ToolId, TurnId, Workspace, written,
 };
+use crucible_runner::TurnError;
 use crucible_tui::{Picture, Recording, Size};
 
 use super::*;
@@ -1816,4 +1817,60 @@ fn a_line_that_merely_opens_with_a_bracket_is_the_line_it_always_was() {
             "{text:?}"
         );
     }
+}
+
+/// What a reader is shown for a turn that ended as `turned`, on one row.
+fn refusal(turned: &Turned) -> String {
+    let mut renderer = Renderer::new(Recording::new(WIDE, 24));
+    refused(&mut renderer, turned).expect("the terminal to be written");
+    renderer.terminal().written().to_string()
+}
+
+#[test]
+fn an_answer_a_guardrail_refused_says_the_answer_was_what_it_refused() {
+    // The stop beside the rejection is the whole difference between "nothing
+    // was asked" and "an answer was made and thrown away", and a reader told
+    // the first about the second goes looking for a prompt that was fine.
+    let written = refusal(&Turned::Rejected {
+        rejection: crucible_runner::Rejection::new("no-secrets", "the answer quotes a key"),
+        stop: Some(crucible_core::StopReason::Yielded),
+    });
+
+    assert!(
+        written.contains("the guardrail `no-secrets` refused the answer: the answer quotes a key"),
+        "{written}"
+    );
+    assert!(!written.contains("nothing was asked"), "{written}");
+}
+
+#[test]
+fn a_guardrail_that_could_not_decide_about_a_prompt_says_nothing_was_asked() {
+    let written = refusal(&Turned::Undecided {
+        problem: crucible_runner::GuardrailError::undecided("no-secrets", "its list is missing"),
+        stop: None,
+    });
+
+    assert!(
+        written.contains(
+            "the guardrail `no-secrets` could not decide: its list is missing, and nothing was asked"
+        ),
+        "{written}"
+    );
+}
+
+#[test]
+fn a_guardrail_that_could_not_decide_about_an_answer_says_the_answer_is_not_accepted() {
+    let written = refusal(&Turned::Undecided {
+        problem: crucible_runner::GuardrailError::undecided("no-secrets", "its list is missing"),
+        stop: Some(crucible_core::StopReason::Yielded),
+    });
+
+    assert!(
+        written.contains(
+            "the guardrail `no-secrets` could not decide: its list is missing, so the answer is \
+             not one it accepted"
+        ),
+        "{written}"
+    );
+    assert!(!written.contains("nothing was asked"), "{written}");
 }

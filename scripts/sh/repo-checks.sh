@@ -552,7 +552,7 @@ elif [[ -z "$edges" ]]; then
     failed=1
 fi
 
-# `core` names the eleven crates its old names now come from. Those edges are
+# `core` names the twelve crates its old names now come from. Those edges are
 # the compatibility facade and go away with the crate that holds them.
 #
 # Edges past the facade are listed here as they are taken. `attachments` is
@@ -561,8 +561,22 @@ fi
 # backend and the contract it answers are what this split gave their own names;
 # `tools` and `builtins` name their owners directly because neither may reach
 # back into core.
-allowed='code attachments
+#
+# `app` is where a run is composed, so it is the one crate that names concrete
+# providers, tools, storage and sandboxes together. It names their owners
+# directly and never the facade, and never the broker, which is the command
+# line's to install. `code extension` and `code mcp` are test-only edges: the
+# integration tests drive those two crates, and nothing that ships names them,
+# which the next section holds.
+#
+# `client-api` is what a front end and the application say to each other, so it
+# has one owner below it -- `types`, for the identity a session is resumed by --
+# and two crates above it: `app`, which carries a request out, and the command
+# line, which is one front end. The check after the list holds both ends.
+allowed='code app
+code attachments
 code auth
+code client-api
 code config
 code context
 code core
@@ -576,8 +590,33 @@ code builtins
 code sandbox-broker
 code sandbox-local
 code tui
+app agents
+app auth
+app builtins
+app client-api
+app config
+app context
+app credentials
+app extension
+app mcp
+app models
+app privacy
+app provider
+app registry
+app runner
+app runtime
+app sandbox
+app sandbox-local
+app session
+app tools
+app types
+app workspace
+agents models
+agents tools
+agents types
 attachments types
 attachments workspace
+client-api types
 auth core
 auth privacy
 config core
@@ -595,24 +634,32 @@ core runtime
 core sandbox
 core storage
 core tools
+core transport
 core types
 core workspace
 credentials types
 models credentials
 models runtime
 models types
-extension core
-mcp core
+extension registry
+extension sandbox
+extension transport
+extension types
+mcp runtime
+mcp sandbox
+mcp tools
+mcp transport
+mcp types
 provider core
 provider credentials
 provider models
 provider runtime
 provider types
+runner agents
 runner attachments
 runner context
 runner core
 runner models
-runner session
 runner types
 session core
 session privacy
@@ -634,6 +681,9 @@ tools sandbox
 tools storage
 tools types
 tools workspace
+transport runtime
+transport sandbox
+transport types
 builtins attachments
 builtins runtime
 builtins sandbox
@@ -657,6 +707,29 @@ for crate in privacy registry runtime sandbox-broker tui types workspace; do
         failed=1
     fi
 done
+
+# The client contract is what may leave the process, so no engine type may
+# become reachable from it, and nothing the engine is made of may come to depend
+# on how a front end spells a request. The list above already says so; this
+# says it as a rule, so that adding a line there is not all it takes.
+while IFS= read -r edge; do
+    [[ -z "$edge" ]] && continue
+    case "$edge" in
+        'client-api types' | 'app client-api' | 'code client-api') ;;
+        'client-api '*)
+            printf '    FAIL crucible-client-api depends on crucible-%s; it may name crucible-types alone\n' "${edge#client-api }"
+            failed=1
+            ;;
+        *' client-api')
+            printf '    FAIL crucible-%s depends on crucible-client-api; only the application and a front end may\n' "${edge% client-api}"
+            failed=1
+            ;;
+    esac
+done <<<"$edges"
+if ! grep -Fxq 'client-api types' <<<"$edges" || ! grep -Fxq 'app client-api' <<<"$edges"; then
+    printf '    FAIL the client contract is not between the application and crucible-types; this check measured nothing\n'
+    failed=1
+fi
 
 # `builtins sandbox-local` above is a test-support edge, and a test-support edge
 # never justifies a shipped one. A tool names the sandbox service contract;
@@ -682,6 +755,155 @@ case $? in
         failed=1
         ;;
 esac
+
+section "shipping source boundary"
+# The crate graph above is about packages, and the root package is three things
+# at once: the command line that ships, the probes that measure it, and the
+# integration tests. What the package may depend on is therefore wider than what
+# the shipping command line may name. This section is about source text: the
+# command line composes a run through `crucible_app` and draws it through
+# `crucible_tui`, and the crates that implement a provider, a tool, storage --
+# the credential store included -- or a sandbox are named in the application
+# instead.
+#
+# Two of them are named nowhere in the command line and may not come back. The
+# rest are still named in the files listed here, each for something that reads a
+# key or draws a cell around a concrete value, and the list is a ratchet: a name
+# in a file that is not listed fails, and so does a line whose file no longer
+# names the crate, so the list can only get shorter.
+#
+# Files that compile only under test are left out, because a fixture has to
+# build the thing it stands in for -- which is why a test module that names one
+# of these crates is a `tests.rs` of its own and not a block inside the file it
+# tests: inside, its names would be counted as the command line's. Comment lines
+# are left out because a sentence about a crate is not a dependency on it.
+names_in() {
+    local file
+    for file in "$@"; do
+        grep -vE '^[[:space:]]*//' "$file" |
+            grep -oE '\bcrucible_[a-z_]+\b' |
+            LC_ALL=C sort -u |
+            sed "s|^|$file |"
+    done
+}
+
+shipping=()
+while IFS= read -r file; do
+    shipping+=("$file")
+done < <(
+    {
+        printf '%s\n' src/main.rs src/cli.rs
+        find src/cli -name '*.rs'
+    } | grep -vE '(^|/)tests(\.rs|/)|/fake\.rs$|/sample\.rs$' | LC_ALL=C sort
+)
+if ((${#shipping[@]} < 3)); then
+    printf '    FAIL no command-line sources found; this check measured nothing\n'
+    failed=1
+fi
+
+named=$(names_in "${shipping[@]}")
+for never in crucible_extension crucible_mcp; do
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        printf '    FAIL %s names %s; the command line reaches it through crucible_app\n' "${line% *}" "$never"
+        failed=1
+    done < <(grep -E " $never\$" <<<"$named")
+done
+
+residue='src/cli.rs crucible_auth
+src/cli.rs crucible_builtins
+src/cli.rs crucible_sandbox_broker
+src/cli.rs crucible_session
+src/cli/converse.rs crucible_auth
+src/cli/converse.rs crucible_builtins
+src/cli/converse.rs crucible_session
+src/cli/converse/answering.rs crucible_builtins
+src/cli/converse/asking.rs crucible_builtins
+src/cli/converse/attaching.rs crucible_privacy
+src/cli/converse/command/login.rs crucible_auth
+src/cli/converse/command/resume.rs crucible_session
+src/cli/converse/command/sandbox.rs crucible_sandbox_local
+src/cli/converse/leaving.rs crucible_builtins
+src/cli/converse/planning.rs crucible_builtins
+src/cli/converse/recalling.rs crucible_session
+src/cli/converse/replaying.rs crucible_session
+src/cli/converse/resuming.rs crucible_session
+src/cli/converse/typing.rs crucible_builtins
+src/cli/draw.rs crucible_builtins
+src/cli/draw/opening.rs crucible_session
+src/cli/release.rs crucible_privacy
+src/cli/release.rs crucible_provider
+src/cli/standing.rs crucible_builtins'
+concrete=$(grep -E ' crucible_(auth|builtins|privacy|provider|sandbox_broker|sandbox_local|session)$' <<<"$named")
+while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    if ! grep -Fxq "$line" <<<"$residue"; then
+        printf '    FAIL %s names %s; the command line reaches it through crucible_app\n' "${line% *}" "${line#* }"
+        failed=1
+    fi
+done <<<"$concrete"
+while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    if ! grep -Fxq "$line" <<<"$concrete"; then
+        printf '    FAIL %s no longer names %s; take the line out of the residue so it stays out\n' "${line% *}" "${line#* }"
+        failed=1
+    fi
+done <<<"$residue"
+
+# The client contract says what crosses; it does not carry it anywhere. Nothing
+# in the contract or in the module that carries a request out opens a socket or
+# listens on one, so a front end off this machine is a decision about a
+# transport that has not been taken, and cannot be taken by accident here.
+contract=(crates/crucible-client-api/src crates/crucible-app/src/client.rs crates/crucible-app/src/client)
+for owner in "${contract[@]}"; do
+    if [[ ! -e "$owner" ]]; then
+        printf '    FAIL %s is missing; the client contract check measured nothing\n' "$owner"
+        failed=1
+    fi
+done
+while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    printf '    FAIL %s reaches for the network; the client contract names values, not a transport\n' "$line"
+    failed=1
+done < <(grep -rnE --include='*.rs' 'std::net|std::os::unix::net|TcpListener|TcpStream|UdpSocket|UnixListener|UnixStream' "${contract[@]}" 2>/dev/null | cut -d: -f1,2)
+
+# A probe measures one owner and imports it directly: routed through the
+# application it would measure the composition instead, and a budget would move
+# for a reason the probe cannot see. What each probe names is written down
+# whole, so a new import is a decision taken here. `generate-models` imports
+# `crucible_core` alone; `crucible_types` is in the text of the table it writes,
+# which is compiled where the table is kept and not where it is generated.
+probes='src/bin/bench-grep.rs crucible_builtins
+src/bin/bench-grep.rs crucible_core
+src/bin/bench-live-burst.rs crucible_tui
+src/bin/bench-render-burst.rs crucible_tui
+src/bin/bench-session-rss.rs crucible_attachments
+src/bin/bench-session-rss.rs crucible_config
+src/bin/bench-tools.rs crucible_builtins
+src/bin/bench-tools.rs crucible_core
+src/bin/bench-tools.rs crucible_sandbox_local
+src/bin/generate-models.rs crucible_core
+src/bin/generate-models.rs crucible_types'
+probe_sources=(src/bin/*.rs)
+if ((${#probe_sources[@]} == 0)); then
+    printf '    FAIL no probes found under src/bin; this check measured nothing\n'
+    failed=1
+fi
+probing=$(names_in "${probe_sources[@]}")
+while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    if ! grep -Fxq "$line" <<<"$probes"; then
+        printf '    FAIL %s names %s, which is not what this probe is recorded as measuring\n' "${line% *}" "${line#* }"
+        failed=1
+    fi
+done <<<"$probing"
+while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    if ! grep -Fxq "$line" <<<"$probing"; then
+        printf '    FAIL %s no longer names %s; take the line out of the probe list\n' "${line% *}" "${line#* }"
+        failed=1
+    fi
+done <<<"$probes"
 
 section "workspace inheritance"
 if ((${#member_manifests[@]} == 0)); then

@@ -1,65 +1,96 @@
 //! What a runner put on a different session carries into the next turn.
 //!
 //! The transcript is the observable part — it is what every request holds — and
-//! the session handed back is the other half: a log is closed by consuming it,
-//! so a swap that dropped the old one would lose the last thing it had to say.
-//! Neither is read off the runner's own fields, which is what keeps a swap that
-//! set every one of them correctly from passing while the log it left behind
-//! went unclosed.
-
-use std::str::FromStr as _;
+//! the store is the other half: what a swap wrote down is what the next pick-up
+//! reads, so a swap that moved the transcript and wrote nothing would come
+//! apart the moment the session was opened again. Neither is read off the
+//! runner's own fields, which is what keeps a swap that set every one of them
+//! correctly from passing while the record it left behind said something else.
 
 use crucible_types::ResultProvenance;
 
 use super::*;
 
-/// A session recorded and closed, holding one turn, and the name it has.
-fn earlier(sample: &Sample) -> SessionId {
-    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
-    let id = named(&session);
+/// Whose sessions these are. One reader throughout, since nothing here is
+/// about telling two of them apart.
+const OWNER: &str = "a reader's own sessions";
 
-    session.append(&Message::said("what came before"));
-    session.append(&Message::Agent {
+/// A session holding one turn, closed, ready to be picked up.
+fn earlier() -> Arc<Recording> {
+    let store = Recording::started(OWNER);
+    store.append_message(&Message::said("what came before"));
+    store.append_message(&Message::Agent {
         continuation: None,
         text: "an answer from before".into(),
         calls: Vec::new(),
         stop: Some(StopReason::Yielded),
     });
-
-    // Dropping is what waits for the queue, so the log is complete after it.
-    drop(session);
-    id
+    store
 }
 
-/// Which session a log belongs to, read back from what it is called.
-fn named(session: &Session) -> SessionId {
-    session
-        .path()
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .and_then(|stem| SessionId::from_str(stem).ok())
-        .expect("the log is named by its session")
+/// Puts this run on the session `store` recorded, and answers the store the
+/// next turn is recorded to.
+///
+/// The transcript comes back from the store's own replay rather than from
+/// anything the test held, which is the whole of what a pick-up depends on.
+fn picking(scripted: &mut Scripted, store: &Recording) -> Arc<Recording> {
+    let (picked, transcript) = store.reopened();
+    let onto: Arc<dyn JournalStore> = picked.clone();
+    scripted.runner.pick_up(onto, transcript);
+    picked
 }
 
-/// The one this run is on, and what it was recording to before.
-fn picking(scripted: &mut Scripted, sample: &Sample, id: &SessionId) -> Session {
-    let (session, transcript) =
-        Session::reopen(&sample.logs(), &sample.workspace(), id).expect("the session named");
+/// What each clearing this store was told about freed, in order.
+fn restrictions(store: &Recording) -> Vec<usize> {
+    store
+        .kept()
+        .iter()
+        .filter_map(|one| match one {
+            Kept::Restricted { freed, .. } => Some(*freed),
+            _ => None,
+        })
+        .collect()
+}
 
-    scripted.runner.pick_up(session, transcript)
+/// A run that recorded one restricted search result, and the store it used.
+fn restricted_search() -> (Scripted, Arc<Recording>) {
+    let store = Recording::started(OWNER);
+    let restricting = Script::new(vec![
+        calling("call_search", "web_search", r#"{"query":"rust"}"#),
+        saying("an answer from the vendor that restricts its results"),
+    ])
+    .with_name("google")
+    .restricting(RESTRICTED);
+
+    let scripted =
+        Scripted::recording(restricting, searching(), Verdict::Allow, Arc::clone(&store));
+    (scripted, store)
+}
+
+/// The search both runs advertise, so a reading one took covers the fixed
+/// content of the other's request.
+fn searching() -> Tools {
+    tools([Fixed::new("web_search")
+        .answering("grounded search results canary")
+        .answered_by(
+            ResultProvenance::answered("google", Some(RESTRICTED)).expect("a bounded term"),
+        )])
 }
 
 #[test]
 fn the_next_turn_is_asked_with_the_transcript_of_the_session_picked_up() {
-    let sample = Sample::new("runner-picked-up");
-    let id = earlier(&sample);
+    let before = earlier();
 
     let script = Script::new(vec![saying("here"), saying("and now")]);
-    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
-    let mut scripted = Scripted::recording(script, Tools::new(), Verdict::Allow, session);
+    let mut scripted = Scripted::recording(
+        script,
+        Tools::new(),
+        Verdict::Allow,
+        Recording::started(OWNER),
+    );
 
     scripted.turn("what is in main.rs?").unwrap();
-    drop(picking(&mut scripted, &sample, &id));
+    picking(&mut scripted, &before);
     scripted.turn("and after that?").unwrap();
 
     assert_eq!(
@@ -82,14 +113,17 @@ fn the_next_turn_is_asked_with_the_transcript_of_the_session_picked_up() {
 fn the_turn_count_carries_on_from_the_session_picked_up() {
     // What the user is told each turn. A session continued at turn one says
     // this is a new one, which is the opposite of what was asked for.
-    let sample = Sample::new("runner-picked-count");
-    let id = earlier(&sample);
+    let before = earlier();
 
     let script = Script::new(vec![saying("here")]);
-    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
-    let mut scripted = Scripted::recording(script, Tools::new(), Verdict::Allow, session);
+    let mut scripted = Scripted::recording(
+        script,
+        Tools::new(),
+        Verdict::Allow,
+        Recording::started(OWNER),
+    );
 
-    drop(picking(&mut scripted, &sample, &id));
+    picking(&mut scripted, &before);
     scripted.turn("and after that?").unwrap();
 
     assert_eq!(scripted.started(), [2]);
@@ -102,17 +136,19 @@ fn a_session_picked_up_with_nothing_in_it_is_asked_at_turn_one_and_carries_nothi
     // request still carrying the last session's turn is the same session under
     // a new name, and a turn counted after the one before it names a turn
     // nothing on screen or in either log has any record of.
-    let sample = Sample::new("runner-picked-empty");
-
     let script = Script::new(vec![saying("here"), saying("and now")]);
-    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
-    let mut scripted = Scripted::recording(script, Tools::new(), Verdict::Allow, session);
+    let mut scripted = Scripted::recording(
+        script,
+        Tools::new(),
+        Verdict::Allow,
+        Recording::started(OWNER),
+    );
 
     scripted.turn("what is in main.rs?").unwrap();
 
-    let fresh =
-        Session::start(&sample.logs(), &sample.workspace(), None).expect("a second session");
-    drop(scripted.runner.pick_up(fresh, Transcript::new()));
+    scripted
+        .runner
+        .pick_up(Recording::started(OWNER), Transcript::new());
     scripted.turn("and now?").unwrap();
 
     assert_eq!(
@@ -124,22 +160,30 @@ fn a_session_picked_up_with_nothing_in_it_is_asked_at_turn_one_and_carries_nothi
 }
 
 #[test]
-fn the_session_left_behind_is_handed_back_rather_than_dropped() {
-    // Closing one means consuming it, and the first write that failed is worth
-    // saying while there is still a session on screen it belongs to.
-    let sample = Sample::new("runner-picked-handed-back");
-    let id = earlier(&sample);
+fn the_session_left_behind_stops_being_written_to_and_keeps_what_it_held() {
+    // The runner hands nothing back, because the caller that opened the store
+    // still holds it: closing it and saying what its last write came to are
+    // that caller's. What this watches is the other half of the same promise —
+    // that after the swap the turns go to the store handed in, and the one left
+    // behind is exactly as complete as it was.
+    let left = Recording::started(OWNER);
+    let script = Script::new(vec![saying("here"), saying("and now")]);
+    let mut scripted = Scripted::recording(script, Tools::new(), Verdict::Allow, Arc::clone(&left));
 
-    let script = Script::new(vec![saying("here")]);
-    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
-    let was = session.path().to_owned();
-    let mut scripted = Scripted::recording(script, Tools::new(), Verdict::Allow, session);
+    scripted.turn("what is in main.rs?").unwrap();
+    let held = left.said();
+    assert!(!held.is_empty(), "the first session recorded nothing");
 
-    let left = picking(&mut scripted, &sample, &id);
+    let onto = picking(&mut scripted, &earlier());
+    scripted.turn("and after that?").unwrap();
 
-    assert_eq!(left.path(), was);
-    assert_ne!(scripted.runner.session().path(), was);
-    assert!(left.finish().is_none(), "nothing failed to be written");
+    assert_eq!(left.said(), held, "the session left behind was written to");
+    assert!(
+        onto.said()
+            .iter()
+            .any(|said| *said == Message::said("and after that?")),
+        "the turn after the swap was not recorded to the session picked up"
+    );
 }
 
 #[test]
@@ -147,8 +191,7 @@ fn what_the_last_session_allowed_is_asked_about_again() {
     // "For the rest of this session" was answered about the session being left
     // behind. Carrying it across would run a tool in a session nobody was
     // asked about.
-    let sample = Sample::new("runner-picked-permission");
-    let id = earlier(&sample);
+    let before = earlier();
 
     let script = Script::new(vec![
         calling("a", "write", "{}"),
@@ -158,12 +201,11 @@ fn what_the_last_session_allowed_is_asked_about_again() {
         calling("c", "write", "{}"),
         saying("done"),
     ]);
-    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
     let mut scripted = Scripted::recording(
         script,
         tools([Fixed::new("write").risking(changing())]),
         Verdict::Allow,
-        session,
+        Recording::started(OWNER),
     );
     scripted.says = Says::for_the_session();
 
@@ -171,7 +213,7 @@ fn what_the_last_session_allowed_is_asked_about_again() {
     scripted.turn("write it again").unwrap();
     assert_eq!(scripted.says.asked, 1, "the session allow held");
 
-    drop(picking(&mut scripted, &sample, &id));
+    picking(&mut scripted, &before);
     scripted.turn("and once more").unwrap();
 
     assert_eq!(
@@ -193,14 +235,13 @@ fn measured() -> Script {
 #[test]
 fn a_session_picked_up_estimates_window_left_before_it_answers_again() {
     // Everything the load measured belongs to this process, and a transcript
-    // read off a disk arrives with none of it — so a session picked up used to
+    // read off a store arrives with none of it — so a session picked up used to
     // come back estimating, with the row saying nothing until the next answer
-    // reported. The log records what the last request carried for exactly this.
-    let sample = Sample::new("runner-picked-up-carrying");
-    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
-    let id = named(&session);
-    let mut scripted = Scripted::recording(measured(), Tools::new(), Verdict::Allow, session);
-    scripted.runner.spec.model.window = Some(200_000);
+    // reported. The record says what the last request carried for exactly this.
+    let store = Recording::started(OWNER);
+    let mut scripted =
+        Scripted::recording(measured(), Tools::new(), Verdict::Allow, Arc::clone(&store));
+    scripted.runner.state.window = Some(200_000);
 
     scripted.turn("go").expect("a measured turn");
     assert_eq!(
@@ -209,18 +250,18 @@ fn a_session_picked_up_estimates_window_left_before_it_answers_again() {
         "the exact output correction visibly freed uncompacted context"
     );
 
-    // Started, so it brings nothing back with it, and closing the recorded one
-    // is what finishes writing its log.
-    let fresh = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
-    drop(scripted.runner.pick_up(fresh, Transcript::new()));
+    // Started, so it brings nothing back with it.
+    scripted
+        .runner
+        .pick_up(Recording::started(OWNER), Transcript::new());
     assert_eq!(
         scripted.runner.left(),
         Some(100),
         "the fresh empty transcript was not estimated"
     );
-    assert_eq!(scripted.runner.load.calibrated(), None);
+    assert_eq!(scripted.runner.state.load.calibrated(), None);
 
-    drop(picking(&mut scripted, &sample, &id));
+    picking(&mut scripted, &store);
 
     assert_eq!(
         scripted.runner.left(),
@@ -234,28 +275,30 @@ fn a_reading_taken_against_other_instructions_is_reestimated_for_this_run() {
     // What a request carries includes its fixed content, and the reading covers
     // the two together. Sent under different instructions it describes neither,
     // so the estimate stands and the next answer measures this run for itself.
-    let sample = Sample::new("runner-picked-up-elsewhere");
-    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
-    let id = named(&session);
-    let mut scripted = Scripted::recording(measured(), Tools::new(), Verdict::Allow, session);
-    scripted.runner.spec.model.window = Some(200_000);
+    let store = Recording::started(OWNER);
+    let mut scripted =
+        Scripted::recording(measured(), Tools::new(), Verdict::Allow, Arc::clone(&store));
+    scripted.runner.state.window = Some(200_000);
 
     scripted.turn("go").expect("a measured turn");
 
-    let fresh = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
-    drop(scripted.runner.pick_up(fresh, Transcript::new()));
-    scripted.runner.spec.told("answer only in French");
+    scripted
+        .runner
+        .pick_up(Recording::started(OWNER), Transcript::new());
+    scripted
+        .runner
+        .redefine(|agent| agent.telling("answer only in French"));
 
-    drop(picking(&mut scripted, &sample, &id));
+    picking(&mut scripted, &store);
 
     assert_eq!(scripted.runner.left(), Some(99));
     assert_eq!(
-        scripted.runner.load.calibrated(),
+        scripted.runner.state.load.calibrated(),
         None,
         "the reading taken against other instructions was reused"
     );
     assert!(
-        scripted.runner.load.tokens() < 1_000,
+        scripted.runner.state.load.tokens() < 1_000,
         "nothing of the reading was taken: what came back is a few bytes of          transcript, counted at the rate a session with no report of its own uses"
     );
 }
@@ -263,45 +306,23 @@ fn a_reading_taken_against_other_instructions_is_reestimated_for_this_run() {
 #[test]
 fn a_result_cleared_for_another_vendor_stays_cleared_when_the_session_comes_back() {
     // The half a live swap could not answer for. Clearing moved the transcript
-    // and nothing else, so the log still held what the transcript no longer
-    // did, and the next `--resume` read it back and sent it to the vendor it
-    // had just been taken away from — the swap undone by the reopen, silently,
-    // with no second swap to notice.
-    let sample = Sample::new("runner-picked-restricted");
-    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
-    let id = named(&session);
-
-    let restricting = Script::new(vec![
-        calling("call_search", "web_search", r#"{"query":"rust"}"#),
-        saying("an answer from the vendor that restricts its results"),
-    ])
-    .with_name("google")
-    .restricting(RESTRICTED);
-
-    let mut scripted = Scripted::recording(
-        restricting,
-        tools([Fixed::new("web_search")
-            .answering("grounded search results canary")
-            .answered_by(
-                ResultProvenance::answered("google", Some(RESTRICTED)).expect("a bounded term"),
-            )]),
-        Verdict::Allow,
-        session,
-    );
+    // and nothing else, so the record still held what the transcript no longer
+    // did, and the next pick-up read it back and sent it to the vendor it had
+    // just been taken away from — the swap undone by the reopen, silently, with
+    // no second swap to notice.
+    let (mut scripted, store) = restricted_search();
 
     scripted.turn("search for rust").expect("a search turn");
     scripted
         .runner
         .serve(Box::new(Script::new(vec![]).with_name("anthropic")));
 
-    // The run ends: the session being recorded to is released, which is what
-    // waits for its queue, and then it is opened again the way `--resume` does.
-    drop(
-        scripted
-            .runner
-            .pick_up(Session::nowhere(), Transcript::new()),
-    );
-    drop(picking(&mut scripted, &sample, &id));
+    // The run ends: the session being recorded to is let go of, and then it is
+    // opened again the way `--resume` does.
+    scripted
+        .runner
+        .pick_up(Recording::nowhere(), Transcript::new());
+    picking(&mut scripted, &store);
 
     let result = only_result(&scripted);
     assert!(
@@ -309,7 +330,7 @@ fn a_result_cleared_for_another_vendor_stays_cleared_when_the_session_comes_back
             .output
             .text()
             .contains("grounded search results canary"),
-        "a restricted result came back off the log and into another vendor's request: {}",
+        "a restricted result came back off the record and into another vendor's request: {}",
         result.output.text()
     );
     assert_eq!(
@@ -326,27 +347,7 @@ fn a_session_moved_twice_says_once_that_its_results_were_taken_away() {
     // reports the sentence's own length as freed — so a runner that did not
     // look first would write a second line claiming a clearing that had already
     // happened, and every later swap another.
-    let sample = Sample::new("runner-picked-restricted-twice");
-    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
-    let path = session.path().to_owned();
-
-    let restricting = Script::new(vec![
-        calling("call_search", "web_search", r#"{"query":"rust"}"#),
-        saying("an answer from the vendor that restricts its results"),
-    ])
-    .with_name("google")
-    .restricting(RESTRICTED);
-
-    let mut scripted = Scripted::recording(
-        restricting,
-        tools([Fixed::new("web_search")
-            .answering("grounded search results canary")
-            .answered_by(
-                ResultProvenance::answered("google", Some(RESTRICTED)).expect("a bounded term"),
-            )]),
-        Verdict::Allow,
-        session,
-    );
+    let (mut scripted, store) = restricted_search();
 
     // Away, back, and away again — the shape a user gets by trying the other
     // vendor and changing their mind. Only the first move has anything to take.
@@ -363,20 +364,19 @@ fn a_session_moved_twice_says_once_that_its_results_were_taken_away() {
         .runner
         .serve(Box::new(Script::new(vec![]).with_name("openai")));
 
-    drop(
-        scripted
-            .runner
-            .pick_up(Session::nowhere(), Transcript::new()),
-    );
+    scripted
+        .runner
+        .pick_up(Recording::nowhere(), Transcript::new());
 
-    let written = std::fs::read_to_string(&path).expect("the log the run wrote");
+    let cleared = restrictions(&store);
     assert_eq!(
-        written
-            .lines()
-            .filter(|line| line.contains("\"restricted\""))
-            .count(),
+        cleared.len(),
         1,
-        "the log says more than once that the same results were taken away:\n{written}"
+        "the record says more than once that the same results were taken away"
+    );
+    assert!(
+        cleared.iter().all(|freed| *freed > 0),
+        "a clearing that took real results away was recorded as freeing nothing"
     );
 }
 
@@ -384,42 +384,20 @@ fn a_session_moved_twice_says_once_that_its_results_were_taken_away() {
 fn a_session_picked_up_by_a_run_serving_another_vendor_leaves_out_what_its_vendor_restricted() {
     // No switch is ever observed here: the run that recorded the results served
     // the vendor that restricts them, and the run that picks the session up was
-    // started on another. What the log holds is all that can say the results may
-    // not go where this run sends its requests.
-    let sample = Sample::new("runner-picked-by-another-vendor");
-    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
-    let id = named(&session);
-    let path = session.path().to_owned();
-
-    let restricting = Script::new(vec![
-        calling("call_search", "web_search", r#"{"query":"rust"}"#),
-        saying("an answer from the vendor that restricts its results"),
-    ])
-    .with_name("google")
-    .restricting(RESTRICTED);
-    let mut recorded = Scripted::recording(
-        restricting,
-        tools([Fixed::new("web_search")
-            .answering("grounded search results canary")
-            .answered_by(
-                ResultProvenance::answered("google", Some(RESTRICTED)).expect("a bounded term"),
-            )]),
-        Verdict::Allow,
-        session,
-    );
+    // started on another. What the record holds is all that can say the results
+    // may not go where this run sends its requests.
+    let (mut recorded, store) = restricted_search();
     recorded.turn("search for rust").expect("a search turn");
-    drop(
-        recorded
-            .runner
-            .pick_up(Session::nowhere(), Transcript::new()),
-    );
+    recorded
+        .runner
+        .pick_up(Recording::nowhere(), Transcript::new());
 
     let mut elsewhere = Scripted::new(
         Script::new(vec![saying("an answer from elsewhere")]).with_name("anthropic"),
         tools([]),
         Verdict::Allow,
     );
-    drop(picking(&mut elsewhere, &sample, &id));
+    let picked = picking(&mut elsewhere, &store);
 
     let result = only_result(&elsewhere);
     assert_eq!(
@@ -429,19 +407,13 @@ fn a_session_picked_up_by_a_run_serving_another_vendor_leaves_out_what_its_vendo
         result.output.text()
     );
 
-    drop(
-        elsewhere
-            .runner
-            .pick_up(Session::nowhere(), Transcript::new()),
-    );
-    let written = std::fs::read_to_string(&path).expect("the log the runs wrote");
+    elsewhere
+        .runner
+        .pick_up(Recording::nowhere(), Transcript::new());
     assert_eq!(
-        written
-            .lines()
-            .filter(|line| line.contains("\"restricted\""))
-            .count(),
+        restrictions(&picked).len(),
         1,
-        "the clearing was not written down, so the next pick-up depends on who does it:\n{written}"
+        "the clearing was not written down, so the next pick-up depends on who does it"
     );
 }
 
@@ -449,40 +421,18 @@ fn a_session_picked_up_by_a_run_serving_another_vendor_leaves_out_what_its_vendo
 fn a_run_started_on_another_vendor_resumes_a_session_without_what_its_vendor_restricted() {
     // The same question asked of `--resume`, which hands the transcript to a
     // runner being built rather than to one already running.
-    let sample = Sample::new("runner-resumed-by-another-vendor");
-    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
-    let id = named(&session);
-
-    let restricting = Script::new(vec![
-        calling("call_search", "web_search", r#"{"query":"rust"}"#),
-        saying("an answer from the vendor that restricts its results"),
-    ])
-    .with_name("google")
-    .restricting(RESTRICTED);
-    let mut recorded = Scripted::recording(
-        restricting,
-        tools([Fixed::new("web_search")
-            .answering("grounded search results canary")
-            .answered_by(
-                ResultProvenance::answered("google", Some(RESTRICTED)).expect("a bounded term"),
-            )]),
-        Verdict::Allow,
-        session,
-    );
+    let (mut recorded, store) = restricted_search();
     recorded.turn("search for rust").expect("a search turn");
-    drop(
-        recorded
-            .runner
-            .pick_up(Session::nowhere(), Transcript::new()),
-    );
+    recorded
+        .runner
+        .pick_up(Recording::nowhere(), Transcript::new());
 
-    let (session, transcript) =
-        Session::reopen(&sample.logs(), &sample.workspace(), &id).expect("the session named");
+    let (picked, transcript) = store.reopened();
     let started = Scripted::recording(
         Script::new(vec![saying("an answer from elsewhere")]).with_name("anthropic"),
         tools([]),
         Verdict::Allow,
-        session,
+        picked,
     );
     let resumed = Scripted {
         runner: started.runner.resuming(transcript),
@@ -497,10 +447,9 @@ fn a_run_started_on_another_vendor_resumes_a_session_without_what_its_vendor_res
 }
 
 /// A session whose last answer measured a request that carried a search result
-/// its vendor restricts, closed so its log is complete.
-fn measured_restricted_search(sample: &Sample) -> SessionId {
-    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
-    let id = named(&session);
+/// its vendor restricts, closed so its record is complete.
+fn measured_restricted_search() -> Arc<Recording> {
+    let store = Recording::started(OWNER);
     let restricting = Script::new(vec![
         calling("call_search", "web_search", r#"{"query":"rust"}"#),
         vec![
@@ -512,51 +461,39 @@ fn measured_restricted_search(sample: &Sample) -> SessionId {
     ])
     .with_name("google")
     .restricting(RESTRICTED);
-    let mut recorded = Scripted::recording(restricting, searching(), Verdict::Allow, session);
+    let mut recorded =
+        Scripted::recording(restricting, searching(), Verdict::Allow, Arc::clone(&store));
     recorded
         .turn("search for rust")
         .expect("a measured search turn");
     assert!(
-        recorded.runner.load.calibrated().is_some(),
+        recorded.runner.state.load.calibrated().is_some(),
         "the answer left no reading to take back"
     );
-    drop(
-        recorded
-            .runner
-            .pick_up(Session::nowhere(), Transcript::new()),
-    );
-    id
-}
-
-/// The search both runs advertise, so a reading one took covers the fixed
-/// content of the other's request.
-fn searching() -> Tools {
-    tools([Fixed::new("web_search")
-        .answering("grounded search results canary")
-        .answered_by(
-            ResultProvenance::answered("google", Some(RESTRICTED)).expect("a bounded term"),
-        )])
+    recorded
+        .runner
+        .pick_up(Recording::nowhere(), Transcript::new());
+    store
 }
 
 #[test]
 fn a_session_picked_up_without_what_its_vendor_restricted_does_not_trust_the_reading_taken_with_it()
 {
-    // The log's last reading measured a request that carried the results, and
-    // this run sends one without them. The reading describes a request nobody
-    // will send again, which is why replaying the clearing's line drops it too.
-    let sample = Sample::new("runner-picked-up-cleared-reading");
-    let id = measured_restricted_search(&sample);
+    // The record's last reading measured a request that carried the results,
+    // and this run sends one without them. The reading describes a request
+    // nobody will send again, which is why replaying the clearing drops it too.
+    let store = measured_restricted_search();
 
     let mut elsewhere = Scripted::new(
         Script::new(vec![saying("an answer from elsewhere")]).with_name("anthropic"),
         searching(),
         Verdict::Allow,
     );
-    drop(picking(&mut elsewhere, &sample, &id));
+    picking(&mut elsewhere, &store);
 
     assert_eq!(only_result(&elsewhere).output.text(), RESTRICTED);
     assert_eq!(
-        elsewhere.runner.load.calibrated(),
+        elsewhere.runner.state.load.calibrated(),
         None,
         "the reading taken with the restricted results in the request was trusted after they were taken out"
     );
@@ -565,16 +502,14 @@ fn a_session_picked_up_without_what_its_vendor_restricted_does_not_trust_the_rea
 #[test]
 fn a_session_resumed_without_what_its_vendor_restricted_does_not_trust_the_reading_taken_with_it() {
     // The same question asked of `--resume`.
-    let sample = Sample::new("runner-resumed-cleared-reading");
-    let id = measured_restricted_search(&sample);
+    let store = measured_restricted_search();
 
-    let (session, transcript) =
-        Session::reopen(&sample.logs(), &sample.workspace(), &id).expect("the session named");
+    let (picked, transcript) = store.reopened();
     let started = Scripted::recording(
         Script::new(vec![saying("an answer from elsewhere")]).with_name("anthropic"),
         searching(),
         Verdict::Allow,
-        session,
+        picked,
     );
     let resumed = Scripted {
         runner: started.runner.resuming(transcript),
@@ -583,7 +518,7 @@ fn a_session_resumed_without_what_its_vendor_restricted_does_not_trust_the_readi
 
     assert_eq!(only_result(&resumed).output.text(), RESTRICTED);
     assert_eq!(
-        resumed.runner.load.calibrated(),
+        resumed.runner.state.load.calibrated(),
         None,
         "the reading taken with the restricted results in the request was trusted after they were taken out"
     );
@@ -594,40 +529,18 @@ fn a_session_picked_up_where_nothing_is_set_up_keeps_what_its_vendor_answered() 
     // A run with no usable credential serves a stand-in that sends nothing, so
     // nothing has to be kept from it — and clearing for its sake would take the
     // results away from the vendor the session goes back to once one is set up.
-    let sample = Sample::new("runner-picked-up-with-nothing-set-up");
-    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
-    let id = named(&session);
-    let path = session.path().to_owned();
-
-    let restricting = Script::new(vec![
-        calling("call_search", "web_search", r#"{"query":"rust"}"#),
-        saying("an answer from the vendor that restricts its results"),
-    ])
-    .with_name("google")
-    .restricting(RESTRICTED);
-    let mut recorded = Scripted::recording(
-        restricting,
-        tools([Fixed::new("web_search")
-            .answering("grounded search results canary")
-            .answered_by(
-                ResultProvenance::answered("google", Some(RESTRICTED)).expect("a bounded term"),
-            )]),
-        Verdict::Allow,
-        session,
-    );
+    let (mut recorded, store) = restricted_search();
     recorded.turn("search for rust").expect("a search turn");
-    drop(
-        recorded
-            .runner
-            .pick_up(Session::nowhere(), Transcript::new()),
-    );
+    recorded
+        .runner
+        .pick_up(Recording::nowhere(), Transcript::new());
 
     let mut unset = Scripted::new(
         Script::new(vec![]).with_name("none").reaching_nothing(),
         tools([]),
         Verdict::Allow,
     );
-    drop(picking(&mut unset, &sample, &id));
+    let picked = picking(&mut unset, &store);
     unset.runner.serve(Box::new(
         Script::new(vec![])
             .with_name("google")
@@ -639,10 +552,11 @@ fn a_session_picked_up_where_nothing_is_set_up_keeps_what_its_vendor_answered() 
         "grounded search results canary",
         "a stand-in that sends nothing took the results away from the vendor that answered them"
     );
-    drop(unset.runner.pick_up(Session::nowhere(), Transcript::new()));
-    let written = std::fs::read_to_string(&path).expect("the log the runs wrote");
+    unset
+        .runner
+        .pick_up(Recording::nowhere(), Transcript::new());
     assert!(
-        !written.contains("\"restricted\""),
-        "a clearing was written for a provider nothing is sent to:\n{written}"
+        restrictions(&picked).is_empty(),
+        "a clearing was written for a provider nothing is sent to"
     );
 }

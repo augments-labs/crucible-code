@@ -22,12 +22,10 @@ use crate::cli::style::Style;
 use super::Held;
 
 /// Refreshes the durable image store after a command may replace the session.
-pub(super) fn refresh_store(held: &mut Held<'_>, runner: &Runner) {
-    let store = runner
-        .session()
-        .id()
-        .cloned()
-        .map(|id: SessionId| (runner.session().path().to_owned(), id));
+///
+/// `store` is where the session now in hand keeps imported copies, which the
+/// caller reads off the conversation that owns it.
+pub(super) fn refresh_store(held: &mut Held<'_>, store: Option<(PathBuf, SessionId)>) {
     if held.attachment_store != store {
         // A platform clipboard connection has no session identity itself, but
         // dropping it here prevents a long-lived handle from crossing a session
@@ -35,6 +33,17 @@ pub(super) fn refresh_store(held: &mut Held<'_>, runner: &Runner) {
         held.clipboard = None;
     }
     held.attachment_store = store;
+}
+
+/// Where this session's imported copies go, beside the log that names them.
+///
+/// Answered from what the loop holds rather than from the runner: the runner
+/// records through a storage contract and never learns what is behind it, and
+/// a run that keeps no log has nowhere durable to import to.
+pub(super) fn imported(held: &Held<'_>) -> Option<PathBuf> {
+    held.attachment_store
+        .as_ref()
+        .map(|(path, id)| path.with_file_name("attachments").join(id.as_str()))
 }
 
 /// What a prompt turned out to be carrying.
@@ -61,11 +70,13 @@ pub(super) struct Sent<'a> {
 
 /// Who the prompt is going to, and what this session says they can be given.
 ///
-/// The two halves of "can this file be sent" travel together because a refusal
-/// has to name which of them said no. `reads` is the model's half as the
-/// session itself holds it — the same answer the next request carries — and
-/// `None` there is nobody having said what the model reads rather than a model
-/// that reads nothing.
+/// The three halves of "can this file be sent" travel together because a
+/// refusal has to name which of them said no. `reads` is the model's half as
+/// the session itself holds it — the same answer the next request carries —
+/// and `None` there is nobody having said what the model reads rather than a
+/// model that reads nothing. `imported` is the session's half: where a file
+/// from outside the workspace can be copied so a resumed session still finds
+/// it, and `None` there is a run with nowhere durable to put one.
 #[derive(Clone, Copy)]
 pub(super) struct Asking<'a> {
     /// The protocol a request is written to.
@@ -74,28 +85,31 @@ pub(super) struct Asking<'a> {
     pub(super) model: &'a str,
     /// What the model reads, where the session was told.
     pub(super) reads: Option<Modalities>,
+    /// Where a user-selected file outside the workspace is durably copied.
+    pub(super) imported: Option<&'a Path>,
 }
 
 impl<'a> Asking<'a> {
     /// What the session in hand is asking, read off the runner driving it.
-    pub(super) fn of(runner: &'a Runner) -> Self {
+    ///
+    /// `imported` comes from the caller rather than the runner: the runner
+    /// records through a storage contract and never learns what is behind it,
+    /// so where this session keeps its imported copies is the application's to
+    /// say.
+    pub(super) fn of(runner: &'a Runner, imported: Option<&'a Path>) -> Self {
         Self {
             provider: runner.provider(),
             model: runner.model(),
             reads: runner.reads(),
+            imported,
         }
     }
 }
 
 /// Reads the prompt for files, and decides about each one.
 #[cfg(test)]
-pub(super) fn attaching(
-    workspace: &Workspace,
-    asking: Asking<'_>,
-    sent: Sent<'_>,
-    imported: Option<&Path>,
-) -> Attaching {
-    let (attachments, refusals) = gathered(workspace, asking, sent, imported);
+pub(super) fn attaching(workspace: &Workspace, asking: Asking<'_>, sent: Sent<'_>) -> Attaching {
+    let (attachments, refusals) = gathered(workspace, asking, sent);
 
     Attaching {
         attachments: attachments.into_boxed_slice(),
@@ -114,7 +128,6 @@ fn gathered(
     workspace: &Workspace,
     asking: Asking<'_>,
     sent: Sent<'_>,
-    imported: Option<&Path>,
 ) -> (Vec<Attachment>, Vec<String>) {
     let Sent { prompt, images } = sent;
     let mut attachments: Vec<Attachment> = Vec::new();
@@ -130,13 +143,13 @@ fn gathered(
     };
 
     for word in names(prompt) {
-        one(decide(workspace, asking, &word, imported), &mut attachments);
+        one(decide(workspace, asking, &word), &mut attachments);
     }
     for mark in marked(prompt) {
         let Some(path) = mark.checked_sub(1).and_then(|at| images.get(at)) else {
             continue;
         };
-        one(decide(workspace, asking, path, imported), &mut attachments);
+        one(decide(workspace, asking, path), &mut attachments);
     }
 
     (attachments, refusals)
@@ -151,20 +164,12 @@ fn gathered(
 /// half, and clipping is what would cut it off.
 pub(super) fn beside<T: Terminal>(
     renderer: &mut Renderer<T>,
-    runner: &Runner,
+    asking: Asking<'_>,
     workspace: &Workspace,
     sent: Sent<'_>,
     style: Style,
 ) -> Result<Box<[Attachment]>, TerminalError> {
-    let imported = runner.session().id().map(|id| {
-        runner
-            .session()
-            .path()
-            .with_file_name("attachments")
-            .join(id.as_str())
-    });
-    let (attachments, refusals) =
-        gathered(workspace, Asking::of(runner), sent, imported.as_deref());
+    let (attachments, refusals) = gathered(workspace, asking, sent);
     let attachments = attachments.into_boxed_slice();
 
     // Before the refusals, because this is the line's own block closing over
@@ -269,11 +274,12 @@ enum Named {
 /// those answers. That is one lookup where there were three, and it is the
 /// lookup every later question is asked of: what is standing at the name
 /// cannot change into something else between being described and being read.
-fn decide(workspace: &Workspace, asking: Asking<'_>, word: &str, imported: Option<&Path>) -> Named {
+fn decide(workspace: &Workspace, asking: Asking<'_>, word: &str) -> Named {
     let Asking {
         provider,
         model,
         reads,
+        imported,
     } = asking;
     let Some(kind) = kind(word) else {
         return Named::Nothing;

@@ -13,14 +13,17 @@
 //! tells the user where it has to be removed; it never says the provider is
 //! signed out while that source is active.
 
-use crucible_provider::Unavailable;
-use crucible_runner::Runner;
+use crucible_app::Conversation;
+use crucible_app::client::Performed;
+use crucible_app::switching::{LoggedOut, Retained};
+use crucible_client_api::Command;
 use crucible_tui::{Offered, Panel, Renderer, Row, Slot, Terminal, clip};
 
+use crate::cli::Fatal;
+use crate::cli::client::astray;
 use crate::cli::converse::picking::{self, Taken};
-use crate::cli::{
-    CredentialSource, Fatal, NO_PROVIDER_CHOSEN, NOTHING_TO_ASK, Providers, Served, offered, served,
-};
+use crucible_app::providers::{CredentialSource, Providers, Served, offered};
+use crucible_app::startup::served;
 
 use super::{Terms, about, say};
 
@@ -46,7 +49,7 @@ const LEFT: &str = "cancelled, nothing signed out";
 pub(super) fn run<T: Terminal>(
     said: &str,
     renderer: &mut Renderer<T>,
-    runner: &mut Runner,
+    conversation: &mut Conversation,
     terms: &Terms,
     keys: bool,
 ) -> Result<(), Fatal> {
@@ -58,15 +61,17 @@ pub(super) fn run<T: Terminal>(
     // Before anything is drawn: a panel of nothing has no entry to take and no
     // reason to be stood up, and the rows underneath would be none as well.
     if held.is_empty() {
-        let remaining = terms
-            .provider
-            .get()
+        let remaining = conversation
+            .serving()
             .and_then(|provider| served(&providers, provider).ok())
             .and_then(|provider| (terms.serving)(provider, &stored).ok());
         if let Some(remaining) = remaining {
             return say(
                 renderer,
-                &not_stored(terms.provider.get().unwrap_or_default(), &remaining.source),
+                &not_stored(
+                    conversation.serving().unwrap_or_default(),
+                    &remaining.source,
+                ),
             );
         }
         return say(
@@ -76,14 +81,14 @@ pub(super) fn run<T: Terminal>(
     }
 
     if let Some(named) = held.iter().copied().find(|one| one.name == said) {
-        return forgetting(named, renderer, runner, terms);
+        return forgetting(named, renderer, conversation, terms);
     }
 
     // Nobody named and a keyboard to walk a list with: the panel, and what comes
     // off it is the same fact as a name typed on the line.
     if keys && said.is_empty() {
         match chosen(&held, renderer, terms)? {
-            Taken::Took(taken) => return forgetting(taken, renderer, runner, terms),
+            Taken::Took(taken) => return forgetting(taken, renderer, conversation, terms),
             // Escape asked for the screen that was there before the panel. The
             // rows under it would be the same question put a second time.
             Taken::Left => return say(renderer, LEFT),
@@ -178,42 +183,33 @@ fn chosen<T: Terminal>(
 fn forgetting<T: Terminal>(
     named: Served,
     renderer: &mut Renderer<T>,
-    runner: &mut Runner,
+    conversation: &mut Conversation,
     terms: &Terms,
 ) -> Result<(), Fatal> {
-    if terms.provider.get() == Some(named.name) && !super::cache::retire(renderer, runner)? {
-        return Ok(());
-    }
-    // Whether there was still one there to forget is not the question being
-    // answered. Another crucible having taken it between the read above and
-    // this line leaves the key gone, which is what was asked for.
-    if let Err(problem) = terms.logins.forget(named.name) {
-        return say(renderer, &format!("! {problem}"));
-    }
+    // Retired before it is forgotten, forgotten before anything is set up
+    // again: the order is the conversation's. What is here is what each way it
+    // can end is said as.
+    let asking = |provider| Command::Logout { provider };
+    let logged_out = match terms.perform_naming(conversation, named.name, asking) {
+        Performed::Logout(logged_out) => logged_out,
+        other => return say(renderer, &astray(&other)),
+    };
+    let (retained, status) = match logged_out {
+        LoggedOut::CacheHeld(problem) => return super::cache::held(renderer, &problem),
+        LoggedOut::Unforgotten { retained, problem } => {
+            super::cache::retained(renderer, retained)?;
+            return say(renderer, &format!("! {problem}"));
+        }
+        LoggedOut::Kept => (Retained::default(), KEPT.to_owned()),
+        LoggedOut::StillServed { retained, source } => (retained, not_stored(named.name, &source)),
+        LoggedOut::SignedOut { retained } => {
+            (retained, "the active session is now signed out".to_owned())
+        }
+    };
+    super::cache::retained(renderer, retained)?;
 
     let columns = renderer.columns();
     let said = format!("removed the stored credential for {}", named.name);
-    let status = if terms.provider.get() == Some(named.name) {
-        let stored = terms.logins.read();
-        if let Ok(remaining) = (terms.serving)(named, &stored) {
-            runner.serve(remaining.provider);
-            not_stored(named.name, &remaining.source)
-        } else {
-            let warning = if offered(&terms.providers.snapshot())
-                .any(|provider| (terms.serving)(provider, &stored).is_ok())
-            {
-                NO_PROVIDER_CHOSEN
-            } else {
-                NOTHING_TO_ASK
-            };
-            runner.ask("", crate::cli::startup::UNKNOWN_CEILING, None, None);
-            runner.serve(Box::new(Unavailable::new(warning)));
-            terms.provider.set(None);
-            "the active session is now signed out".to_owned()
-        }
-    } else {
-        KEPT.to_owned()
-    };
     let rows = [
         Row::new().then(Slot::Plain, clip(&said, columns)),
         Row::new().then(Slot::Quiet, clip(&status, columns)),

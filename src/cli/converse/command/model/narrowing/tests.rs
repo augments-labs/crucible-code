@@ -4,13 +4,13 @@
 //! catching is a query that stopped matching because a model was renamed, and a
 //! fixture is exactly the thing that goes on agreeing after that happens.
 
-use crate::cli::offered;
+use crucible_app::providers::offered;
 
 use super::*;
 
 /// The built-in providers, as one generation to read a query against.
 fn catalogue() -> Providers {
-    crate::cli::providers()
+    crucible_app::providers::providers()
         .expect("the built-in providers register")
         .snapshot()
 }

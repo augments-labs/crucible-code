@@ -15,7 +15,7 @@ use std::fmt;
 
 use crucible_storage::{
     CallResultKey, CallResultReceipt, CallResultStoreError, CompactionRecord, CustomEntry,
-    CustomProjector, InvocationRecord, InvocationState, JournalError, PendingAction,
+    CustomProjector, InvocationRecord, InvocationState, JournalError, PendingAction, SessionStore,
 };
 use crucible_types::{
     Ancestry, Diff, Message, RecordedToolOutput, StopReason, TOOL_ARGUMENT_BYTES,
@@ -353,7 +353,13 @@ impl RunHistory {
 }
 
 /// The framework-history writing seam used by runners and invocation workers.
-pub trait JournalStore: Send + Sync {
+///
+/// Above [`SessionStore`] rather than beside it, because framework history and
+/// conversation are two readings of one turn: a journal record that named a
+/// message the conversation never kept, or a conversation that went on past the
+/// journal, would be a session whose two halves disagree about what happened. A
+/// runner therefore holds one store and writes both through it.
+pub trait JournalStore: SessionStore + Send + Sync {
     /// Appends one already bounded framework record.
     fn append_run_item(&self, item: &RunItem);
 
@@ -382,6 +388,19 @@ pub trait JournalStore: Send + Sync {
     ///
     /// The default is for in-memory journals, which cannot own sidecars.
     fn settle_call_results(&self) {}
+}
+
+impl fmt::Debug for dyn JournalStore {
+    /// Names the session and nothing else.
+    ///
+    /// A store's contents are the conversation; printing them here would put a
+    /// transcript into any structure that derives `Debug` over one.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.session_id() {
+            Some(id) => write!(f, "JournalStore({})", id.as_str()),
+            None => f.write_str("JournalStore(unrecorded)"),
+        }
+    }
 }
 
 fn validate_projection(

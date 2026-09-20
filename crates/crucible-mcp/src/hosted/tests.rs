@@ -8,13 +8,15 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crucible_core::{
-    Ancestry, Cancel, Finish, SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance,
-    SandboxCapabilities, SandboxFilesystemAccess, SandboxFilesystemProvenance,
-    SandboxFilesystemRule, SandboxId, SandboxInspection, SandboxManifest, SandboxNetworkPolicy,
-    SandboxOutput, SandboxPolicy, SandboxProcess, SandboxRead, SandboxRequest,
-    SandboxResourceLimits, SandboxUsage, SandboxViolation, ToolId,
+use crucible_runtime::Cancel;
+use crucible_sandbox::{
+    SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities,
+    SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxInspection,
+    SandboxManifest, SandboxNetworkPolicy, SandboxOutput, SandboxPolicy, SandboxProcess,
+    SandboxRead, SandboxRequest, SandboxResourceLimits, SandboxUsage, SandboxViolation,
 };
+use crucible_transport::Finish;
+use crucible_types::{Ancestry, SandboxId, ToolId};
 use serde_json::{Value, json};
 
 use super::{Hosted, Unstarted};

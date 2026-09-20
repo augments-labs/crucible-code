@@ -7,23 +7,26 @@
 //! taken under, and that `/exit` ends the session with the lines after it
 //! unread.
 
-use std::cell::Cell;
 use std::io::Cursor;
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
+use crucible_app::Conversation;
+use crucible_app::providers::{offered, providers};
 use crucible_auth::StoredCredentials;
 use crucible_builtins::Ledger;
 use crucible_core::{
     Delta, Message, Mode, Permission, Revealed, Rules, StopReason, ToolId, Workspace,
 };
-use crucible_runner::{Session, Tools};
+use crucible_runner::Tools;
+use crucible_session::Session;
 use crucible_tui::{Prompt, Recording, Renderer};
 
 use crate::cli::converse::{Answers, Held, Terms, command, converse};
 use crate::cli::fake::Script;
 use crate::cli::sample::Sample;
 
-use super::{opening, over, plain, saying, scripted};
+use super::{opening, over, paired, plain, saying, scripted};
 
 /// Terms recording to a tree of `sample`'s own, so a command that starts or
 /// picks up a session has somewhere to do it — over the record the tools of
@@ -64,13 +67,16 @@ fn reaching(
 ) -> (String, usize) {
     let script = Script::new(rounds);
     let asked = script.asked();
-    let runner =
-        scripted(script, offered).permitting(Permission::with(Mode::FullAccess, Rules::new()));
+    let conversation = paired(Arc::new(Session::nowhere()), |session| {
+        scripted(script, offered, session)
+            .permitting(Permission::with(Mode::FullAccess, Rules::new()))
+    });
 
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(typed.as_bytes().to_vec());
 
-    converse(runner, &mut renderer, terms, &opening(), &mut input).expect("the loop to finish");
+    converse(conversation, &mut renderer, terms, &opening(), &mut input)
+        .expect("the loop to finish");
 
     (
         renderer.terminal().written().to_string(),
@@ -114,6 +120,14 @@ fn looking_then_replacing() -> Vec<Vec<Delta>> {
     ]
 }
 
+/// A conversation already asking `provider`, recording nowhere.
+fn served_by(
+    provider: &'static str,
+    build: impl FnOnce(Arc<Session>) -> crucible_runner::Runner,
+) -> Conversation {
+    Conversation::recording(Arc::new(Session::nowhere()), Some(provider), build)
+}
+
 fn commanding(typed: &str) -> (String, usize) {
     over(Script::new(vec![saying("answered")]), Tools::new(), typed)
 }
@@ -124,18 +138,18 @@ fn commanding(typed: &str) -> (String, usize) {
 /// [`scripted`] hands back is a name no vendor serves — which is what every
 /// other test here wants and the one thing this one cannot use.
 fn asking(provider: &'static str, model: &str, typed: &str) -> String {
-    let terms = Terms {
-        provider: Cell::new(Some(provider)),
-        ..plain()
-    };
-
-    let mut runner = scripted(Script::new(vec![]), Tools::new());
-    runner.ask(model, 8192, None, None);
+    let terms = plain();
+    let conversation = served_by(provider, |session| {
+        let mut runner = scripted(Script::new(vec![]), Tools::new(), session);
+        runner.ask(model, 8192, None, None);
+        runner
+    });
 
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(typed.as_bytes().to_vec());
 
-    converse(runner, &mut renderer, &terms, &opening(), &mut input).expect("the loop to finish");
+    converse(conversation, &mut renderer, &terms, &opening(), &mut input)
+        .expect("the loop to finish");
     renderer.terminal().written().to_string()
 }
 
@@ -165,7 +179,8 @@ fn model_down_a_pipe_lists_every_provider_beside_its_models() {
 
     assert_eq!(asked, 0, "{written}");
     assert!(written.contains("script"), "{written}");
-    for provider in crate::cli::PROVIDERS {
+    let providers = providers().expect("the built-in providers").snapshot();
+    for provider in offered(&providers) {
         for model in provider.models {
             assert!(
                 written.contains(&format!("/model {}/{}", provider.name, model.name)),
@@ -195,12 +210,21 @@ fn a_model_taken_mid_session_is_what_the_next_turn_is_told_it_is() {
     // turn after the first would be told something false about itself.
     let script = Script::new(vec![saying("answered")]);
     let under = script.under();
-    let runner = scripted(script, Tools::new());
+    let conversation = paired(Arc::new(Session::nowhere()), |session| {
+        scripted(script, Tools::new(), session)
+    });
 
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(b"/model claude-haiku-4-5\n/effort max\nwhat are you\n".to_vec());
 
-    converse(runner, &mut renderer, &plain(), &opening(), &mut input).expect("the loop to finish");
+    converse(
+        conversation,
+        &mut renderer,
+        &plain(),
+        &opening(),
+        &mut input,
+    )
+    .expect("the loop to finish");
 
     let under = under.lock().expect("what the turn was asked under");
     let said = under.last().expect("one turn was taken");
@@ -224,11 +248,14 @@ fn a_model_named_on_the_line_is_written_down_under_a_provider_and_beside_it() {
         ..plain()
     };
 
-    let runner = scripted(Script::new(vec![saying("answered")]), Tools::new());
+    let conversation = paired(Arc::new(Session::nowhere()), |session| {
+        scripted(Script::new(vec![saying("answered")]), Tools::new(), session)
+    });
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(b"/model claude-haiku-4-5\n".to_vec());
 
-    converse(runner, &mut renderer, &terms, &opening(), &mut input).expect("the loop to finish");
+    converse(conversation, &mut renderer, &terms, &opening(), &mut input)
+        .expect("the loop to finish");
 
     let written = renderer.terminal().written().to_string();
     assert!(written.contains("anthropic/claude-haiku-4-5"), "{written}");
@@ -249,11 +276,14 @@ fn a_rung_named_on_the_line_is_asked_for_and_written_down() {
         ..plain()
     };
 
-    let runner = scripted(Script::new(vec![saying("answered")]), Tools::new());
+    let conversation = paired(Arc::new(Session::nowhere()), |session| {
+        scripted(Script::new(vec![saying("answered")]), Tools::new(), session)
+    });
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(b"/effort max\n".to_vec());
 
-    converse(runner, &mut renderer, &terms, &opening(), &mut input).expect("the loop to finish");
+    converse(conversation, &mut renderer, &terms, &opening(), &mut input)
+        .expect("the loop to finish");
 
     let written = renderer.terminal().written().to_string();
     assert!(written.contains("max effort"), "{written}");
@@ -347,7 +377,8 @@ fn login_says_where_every_provider_reads_its_key_from() {
     let (written, asked) = commanding("/login\n");
 
     assert_eq!(asked, 0, "{written}");
-    for one in crate::cli::PROVIDERS {
+    let providers = providers().expect("the built-in providers").snapshot();
+    for one in offered(&providers) {
         assert!(written.contains(one.name), "{written}");
         assert!(written.contains(one.key), "{written}");
     }
@@ -394,17 +425,16 @@ fn logout_says_so_where_nothing_was_ever_written_down() {
     );
 }
 
-/// Terms whose selected provider is authenticated by its ordinary environment
-/// variable, without reading or retaining any secret in the test.
-fn environmental(provider: &'static str) -> Terms {
+/// Terms under which every provider is authenticated by its ordinary
+/// environment variable, without reading or retaining any secret in the test.
+fn environmental() -> Terms {
     let mut terms = plain();
-    terms.provider = Cell::new(Some(provider));
     terms.serving = Box::new(|named, _| {
-        Ok(crate::cli::Resolved {
+        Ok(crucible_app::providers::Resolved {
             provider: Box::new(crucible_provider::Unavailable::new(
-                crate::cli::NOTHING_TO_ASK,
+                crucible_app::providers::NOTHING_TO_ASK,
             )),
-            source: crate::cli::CredentialSource::Environment(named.key.into()),
+            source: crucible_app::providers::CredentialSource::Environment(named.key.into()),
         })
     });
     terms
@@ -412,12 +442,15 @@ fn environmental(provider: &'static str) -> Terms {
 
 #[test]
 fn logout_names_an_active_environment_credential_and_how_to_remove_it() {
-    let terms = environmental("openai");
-    let runner = scripted(Script::new(Vec::new()), Tools::new());
+    let terms = environmental();
+    let conversation = served_by("openai", |session| {
+        scripted(Script::new(Vec::new()), Tools::new(), session)
+    });
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(b"/logout\n".to_vec());
 
-    converse(runner, &mut renderer, &terms, &opening(), &mut input).expect("the session to finish");
+    converse(conversation, &mut renderer, &terms, &opening(), &mut input)
+        .expect("the session to finish");
 
     let written = renderer.terminal().written();
     assert!(written.contains("OPENAI_API_KEY"), "{written}");
@@ -442,11 +475,14 @@ fn logging_out(tree: &str, provider: &str, typed: &str) -> (String, StoredCreden
         ..plain()
     };
 
-    let runner = scripted(Script::new(vec![saying("answered")]), Tools::new());
+    let conversation = paired(Arc::new(Session::nowhere()), |session| {
+        scripted(Script::new(vec![saying("answered")]), Tools::new(), session)
+    });
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(typed.as_bytes().to_vec());
 
-    converse(runner, &mut renderer, &terms, &opening(), &mut input).expect("the loop to finish");
+    converse(conversation, &mut renderer, &terms, &opening(), &mut input)
+        .expect("the loop to finish");
 
     (
         renderer.terminal().written().to_string(),
@@ -476,13 +512,16 @@ fn logout_naming_a_provider_forgets_its_key_and_says_what_it_left() {
 fn removing_the_active_stored_credential_exposes_an_environment_fallback() {
     let sample = Sample::new("logout-active-environment");
     sample.stored("openai");
-    let mut terms = environmental("openai");
+    let mut terms = environmental();
     terms.logins = sample.store();
-    let runner = scripted(Script::new(Vec::new()), Tools::new());
+    let conversation = served_by("openai", |session| {
+        scripted(Script::new(Vec::new()), Tools::new(), session)
+    });
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(b"/logout openai\n".to_vec());
 
-    converse(runner, &mut renderer, &terms, &opening(), &mut input).expect("the session to finish");
+    converse(conversation, &mut renderer, &terms, &opening(), &mut input)
+        .expect("the session to finish");
 
     let written = renderer.terminal().written();
     assert!(
@@ -499,20 +538,27 @@ fn removing_the_only_active_credential_disables_the_current_session() {
     let sample = Sample::new("logout-active-only");
     sample.stored("openai");
     let mut terms = plain();
-    terms.provider = Cell::new(Some("openai"));
     terms.logins = sample.store();
-    let runner = scripted(Script::new(Vec::new()), Tools::new());
+    let conversation = served_by("openai", |session| {
+        scripted(Script::new(Vec::new()), Tools::new(), session)
+    });
     let mut renderer = Renderer::new(Recording::new(80, 24));
-    let mut input = Cursor::new(b"/logout openai\n".to_vec());
+    // A prompt after the command, because who a conversation asks is the
+    // conversation's to know and the loop says it the one way it can: a prompt
+    // nobody can answer gets the sentence for a session with no provider at
+    // all rather than the one for a provider with no model.
+    let mut input = Cursor::new(b"/logout openai\nhello\n".to_vec());
 
-    converse(runner, &mut renderer, &terms, &opening(), &mut input).expect("the session to finish");
+    converse(conversation, &mut renderer, &terms, &opening(), &mut input)
+        .expect("the session to finish");
 
     let written = renderer.terminal().written();
     assert!(
         written.contains("active session is now signed out"),
         "{written}"
     );
-    assert_eq!(terms.provider.get(), None, "{written}");
+    assert!(written.contains("No models available"), "{written}");
+    assert!(!written.contains("No model selected"), "{written}");
 }
 
 #[test]
@@ -707,7 +753,9 @@ fn answered(command: &str) -> Vec<String> {
         },
         &opening,
     );
-    let mut runner = scripted(Script::new(vec![]), Tools::new());
+    let mut conversation = paired(Arc::new(Session::nowhere()), |session| {
+        scripted(Script::new(vec![]), Tools::new(), session)
+    });
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let style = terms.style();
 
@@ -726,7 +774,7 @@ fn answered(command: &str) -> Vec<String> {
         .expect("the prompt row to be committed");
 
     let wanted = command::wanted(&terms.commands.snapshot(), command).expect("a command");
-    command::run(wanted, &mut renderer, &mut runner, &mut held, &terms)
+    command::run(wanted, &mut renderer, &mut conversation, &mut held, &terms)
         .expect("the command to be answered");
 
     renderer.terminal().picture().rows()

@@ -21,6 +21,7 @@ use std::time::SystemTime;
 
 use crucible_core::Compacting;
 use crucible_runner::Runner;
+use crucible_session::Session;
 use crucible_tui::{Offered, Panel, Renderer, Terminal};
 
 use crate::cli::Fatal;
@@ -58,9 +59,8 @@ const KEYS: &str = "enter to choose · esc to carry it whole";
 /// Written here rather than inline so it can be looked at without a terminal —
 /// it is the row that has to persuade somebody, and the only one whose wording
 /// is worth arguing about.
-fn sentence(carrying: u64, runner: &Runner) -> String {
-    let started = runner
-        .session()
+fn sentence(carrying: u64, session: &Session) -> String {
+    let started = session
         .id()
         .map(|id| when::ago(id.started(), SystemTime::now()));
 
@@ -100,7 +100,8 @@ fn worth_asking(carrying: u64, said: Option<u64>) -> bool {
 /// [`Fatal::Terminal`] if the terminal could not be drawn on or read from.
 pub(super) fn asked<T: Terminal>(
     renderer: &mut Renderer<T>,
-    runner: &mut Runner,
+    runner: &Runner,
+    session: &Session,
     terms: &Terms,
     keys: bool,
 ) -> Result<Option<Compacting>, Fatal> {
@@ -117,7 +118,7 @@ pub(super) fn asked<T: Terminal>(
     }
 
     let style = terms.style();
-    let said = sentence(carrying, runner);
+    let said = sentence(carrying, session);
     let shown = [
         Offered {
             name: RECAP,
@@ -156,7 +157,7 @@ pub(super) fn asked<T: Terminal>(
 
 /// Writes down that this question is not wanted again.
 fn stop<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms) {
-    if let Err(problem) = crate::cli::remember::unasked(&terms.choosing) {
+    if let Err(problem) = crucible_app::remember::unasked(&terms.choosing) {
         drop(renderer.commit(&format!("! could not write that down: {problem}")));
     }
 }

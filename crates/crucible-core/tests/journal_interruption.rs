@@ -1,20 +1,56 @@
 //! Cross-module contracts for framework history and durable interruption.
 
 use crucible_core::{
-    ActionResolution, Ancestry, ApprovalDecision, CacheCheckpoint, CallResultKey,
-    CallResultStoreError, Change, CheckpointId, CompactionRecord, CustomEntry, CustomProjector,
-    Diff, ExecutionCheckpoint, IdempotencyKey, InputTokenUsage, InterruptionError, InvocationId,
-    InvocationRecord, InvocationState, JournalError, JournalStore, Line,
-    MAX_RUN_ITEM_RETAINED_BYTES, MAX_RUN_ITEMS, Message, PendingAction, PendingActions,
-    PendingApproval, PendingExternalTool, PendingHumanInput, PromptCacheFingerprint,
-    PromptCachePolicyVersion, PromptCacheResourceId, PromptCacheScopeDigest, RecordedToolOutput,
-    RecoveryAction, ResumeDigest, ResumeEvidence, ResumeScope, RunHistory, RunItem,
-    SandboxAuditRegistry, SandboxFactKind, SandboxId, SandboxLifecycle, StopReason,
-    TOOL_CALL_ID_BYTES, TOOL_RESULT_BYTES, ToolArgs, ToolCall, ToolEffect, ToolId, ToolOutcome,
-    ToolResult,
+    ActionResolution, Ancestry, ApprovalDecision, CacheCheckpoint, Calibration, CallResultKey,
+    CallResultStoreError, Change, CheckpointId, Compacted, CompactionRecord, ContextError,
+    ContextPatch, ContextSnapshot, CustomEntry, CustomProjector, Diff, ExecutionCheckpoint,
+    IdempotencyKey, InputTokenUsage, InterruptionError, InvocationId, InvocationRecord,
+    InvocationState, JournalError, JournalStore, Line, MAX_RUN_ITEM_RETAINED_BYTES, MAX_RUN_ITEMS,
+    Message, PendingAction, PendingActions, PendingApproval, PendingExternalTool,
+    PendingHumanInput, PromptCacheFingerprint, PromptCachePolicyVersion, PromptCacheResourceId,
+    PromptCacheScopeDigest, RecordedToolOutput, RecoveryAction, ResumeDigest, ResumeEvidence,
+    ResumeScope, RunHistory, RunItem, SandboxAuditRegistry, SandboxFactKind, SandboxId,
+    SandboxLifecycle, SessionId, SessionStore, StopReason, TOOL_CALL_ID_BYTES, TOOL_RESULT_BYTES,
+    ToolArgs, ToolCall, ToolEffect, ToolId, ToolOutcome, ToolResult,
 };
 
 struct MemoryOnlyJournal;
+
+/// Nothing model-visible is kept: what this journal exists to answer is what a
+/// framework record and a durable result do without a session behind them.
+impl SessionStore for MemoryOnlyJournal {
+    fn session_id(&self) -> Option<SessionId> {
+        None
+    }
+
+    fn owner(&self) -> Box<str> {
+        "".into()
+    }
+
+    fn append_message(&self, _message: &Message) {}
+
+    fn context_snapshot(&self) -> Option<ContextSnapshot> {
+        None
+    }
+
+    fn contextual(&self, _patch: &ContextPatch) -> Result<(), ContextError> {
+        Ok(())
+    }
+
+    fn compacted(&self, _replaced: usize, _recap: &str) {}
+
+    fn display_compacted(&self, _compacted: Compacted, _pruned: bool) {}
+
+    fn pruned(&self, _freed: usize, _results: &[ToolId]) {}
+
+    fn restricted(&self, _freed: usize, _results: &[ToolId], _notice: &str) {}
+
+    fn measured(&self, _calibration: &Calibration) {}
+
+    fn calibrated(&self) -> Option<Calibration> {
+        None
+    }
+}
 
 impl JournalStore for MemoryOnlyJournal {
     fn append_run_item(&self, _item: &RunItem) {}

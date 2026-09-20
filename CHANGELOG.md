@@ -10,6 +10,32 @@ change in any release with no deprecation period.
 
 ### Changed
 
+- **What the terminal asks of a session is a contract any front end can
+  speak.** The new `crucible-client-api` crate defines versioned requests,
+  outcomes, snapshots, progress and pending decisions with stated size limits,
+  and `crucible_app::client` carries them out; the terminal now sends typed
+  prompts and commands, permission answers and interrupts through it, so a
+  consumer with no terminal gets the same behavior. Nothing listens on a
+  network, and a name after `/model` that is empty, longer than 256 bytes or
+  holds a control character is now refused with a line instead of being tried.
+- **The application has a crate of its own, and a refused prompt says so.**
+  `crucible-app` now assembles a run and owns its conversation:
+  `startup::assemble` returns a `Conversation` holding the runner beside its
+  session, and a prompt, `/clear`, `/resume`, a model, provider or effort
+  switch, and what `/login` and `/logout` do to the session are all driven
+  through it with no terminal, which leaves the command line argument parsing
+  and drawing. No library name moved; what was the binary's private wiring is
+  imported from `crucible_app`, never through `crucible-core`. A prompt or an
+  answer a guardrail refuses now prints the guardrail and its reason instead of
+  returning a silent prompt.
+- **The runner records through a storage contract rather than a session.**
+  `crucible-runner` no longer depends on `crucible-session`: `Runner::new`,
+  `Runner::with_toolset` and `Runner::pick_up` take an `Arc<dyn JournalStore>`,
+  which now stands above the new `crucible_storage::SessionStore`. `Event`,
+  `EventEnvelope`, `Post`, `Reporter` and `TurnError` move from `crucible-core`
+  to `crucible-runner`. The session names the runner used to re-export are
+  imported from `crucible-session`, and `Session::finish` now takes a shared
+  session, because the application and the runner hold the same one.
 - **Model contracts have a crate of their own.** `crucible-models` now holds
   `Provider`, the model record and the neutral prompt-cache capabilities,
   projection, selection and pricing; the usage, cost and cache facts a session
@@ -18,6 +44,22 @@ change in any release with no deprecation period.
   re-exports every moved name; `PromptCachePlanned::from_request` is now
   `PromptCacheRequest::planned`, and `PromptCachePolicy::narrowed` is
   `crucible_models::narrow_policy`.
+- **Agent definitions have a crate of their own, and a run's changing state is
+  separate from them.** `crucible-agents` now holds `Agent`, its builder, the
+  `Model` it is aimed at, the instructions it stands under, the tools it may
+  reach for, and the input and output guardrail traits anyone can implement;
+  `AgentSpec` is gone and `crucible-runner` re-exports every name under it. A
+  turn a guardrail refuses now comes back as `Turned::Rejected` or
+  `Turned::Undecided`, so `Runner::turn` answers with a `Turned` where it used
+  to answer with a `StopReason`.
+- **Bounded framing and external integrations have crates of their own.**
+  `crucible-transport` now holds the length-prefixed frames, the hosted-process
+  streams and the restart budget both external protocols run over, and
+  `crucible-core` re-exports every moved name. Everything an extension manifest
+  or an MCP roster is made of is now owned by `crucible-extension` and
+  `crucible-mcp` and imported from there rather than from `crucible-core` or
+  `crucible-config`; `Extensions::discover` takes the home directory as a
+  `&Path`, and `Chosen`'s fields are read through accessors.
 - **Context and prompt assembly have a crate of their own.** `crucible-context`
   now holds context sections, the order a pass assembles them in, the system
   prompt and what a compaction asks the model for; `Compacted`, `Compacting`,

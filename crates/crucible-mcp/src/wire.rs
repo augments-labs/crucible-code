@@ -1,6 +1,6 @@
 //! What one MCP frame says.
 //!
-//! [`Frames`](crucible_core::Frames) finds the boundaries; this reads what is
+//! [`Frames`](crucible_transport::Frames) finds the boundaries; this reads what is
 //! inside them. MCP is JSON-RPC 2.0 over a pipe, one document per line, and the
 //! part that matters here is that every field arriving is a field somebody
 //! else's program wrote. Nothing is believed because it is well-formed.

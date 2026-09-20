@@ -17,10 +17,11 @@ use crucible_core::{
     PromptCacheResourceError, PromptCacheResourceFact, PromptCacheResourceLifecycle,
     PromptCacheResourceOperation, PromptCacheResourceOwner, PromptCacheResourceRecord,
     PromptCacheResourceReference, PromptCacheResourceState, PromptCacheResourceStore,
-    PromptCacheRoute, PromptCacheSelection, ProviderAttemptId, Request, RunId, TurnError,
+    PromptCacheRoute, PromptCacheSelection, ProviderAttemptId, Request, RunId,
 };
 use sha2::{Digest, Sha256};
 
+use crate::TurnError;
 #[derive(Clone, Copy)]
 pub(super) struct ScopeInputs<'a> {
     pub route: PromptCacheRoute<'a>,

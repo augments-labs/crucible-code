@@ -47,7 +47,6 @@ pub const MAX_DOCUMENT_BYTES: usize = 1024 * 1024;
 mod document;
 mod env;
 mod error;
-mod extensions;
 mod home;
 mod remember;
 #[cfg(test)]
@@ -60,7 +59,6 @@ mod shape;
 // crate-private: a caller who could build a `Document` would then have nothing
 // to do with it, and a second way in is a second answer to which files exist.
 pub use error::{Accepted, At, ConfigError};
-pub use extensions::{Extensions, Installed, MAX_EXTENSIONS, Refusal};
 pub use home::{HOME, Home};
 pub use remember::{allowing, asking, choosing, drawing, reading, sandboxing, thinking, unasked};
 pub use settings::{

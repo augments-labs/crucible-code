@@ -1,10 +1,10 @@
 //! One MCP server, spoken to over the process the sandbox started for it.
 //!
-//! [`Talking`] holds a conversation over any reader and any writer, and core
-//! turns a confined process's streams into exactly those. What is left is
-//! joining them to a process, and answering the one question neither can: a
-//! server that has stopped saying anything is either thinking or gone, and the
-//! only thing that tells them apart is the process itself.
+//! [`Talking`] holds a conversation over any reader and any writer, and the
+//! transport turns a confined process's streams into exactly those. What is
+//! left is joining them to a process, and answering the one question neither
+//! can: a server that has stopped saying anything is either thinking or gone,
+//! and the only thing that tells them apart is the process itself.
 //!
 //! It takes a process rather than starting one. What to run, under what
 //! confinement, with what environment and on whose authority is a lifecycle
@@ -22,10 +22,9 @@ use std::fmt;
 use std::io;
 use std::time::{Duration, Instant};
 
-use crucible_core::{
-    Cancel, Finish, Heard, Muttered, Said, SandboxOutput, SandboxProcess, SandboxUsage,
-    SandboxViolation,
-};
+use crucible_runtime::Cancel;
+use crucible_sandbox::{SandboxOutput, SandboxProcess, SandboxUsage, SandboxViolation};
+use crucible_transport::{Absent, Finish, Heard, Muttered, Pipes, Said, Unspoken};
 
 use crate::calling::{Answered, Unanswered};
 use crate::catalogue::{Greeting, Offered, Rebuffed};
@@ -63,19 +62,11 @@ impl Hosted {
         mut process: Box<dyn SandboxProcess>,
         patience: Duration,
     ) -> Result<Self, Unstarted> {
-        let Some(input) = process.take_stdin() else {
-            return Err(abandon(&mut process, Unstarted::Unspeakable));
-        };
-        let Some(output) = process.take_stdout() else {
-            return Err(abandon(&mut process, Unstarted::Unheard));
-        };
-        let muttered = process
-            .take_stderr()
-            .map_or_else(Muttered::silent, Muttered::draining);
+        let pipes = Pipes::taken(process.as_mut(), patience)?;
         Ok(Self {
             process,
-            talking: Talking::new(Heard::new(output, patience), Said::new(input, patience)),
-            muttered,
+            talking: Talking::new(pipes.heard, pipes.said),
+            muttered: pipes.muttered,
             patience,
         })
     }
@@ -252,17 +243,6 @@ impl fmt::Debug for Hosted {
     }
 }
 
-/// Stops a process that will not be hosted, preserving both refusal and cleanup.
-fn abandon(process: &mut Box<dyn SandboxProcess>, why: Unstarted) -> Unstarted {
-    match process.stop() {
-        Ok(()) => why,
-        Err(cleanup) => Unstarted::Unreaped {
-            cause: Box::new(why),
-            cleanup,
-        },
-    }
-}
-
 /// Why a process could not host a server.
 #[derive(Debug, thiserror::Error)]
 pub enum Unstarted {
@@ -308,6 +288,27 @@ pub struct Ended {
     pub violation: Option<SandboxViolation>,
     /// What it said beside the conversation, which is usually why it ended.
     pub muttered: Muttered,
+}
+
+impl From<Unspoken> for Unstarted {
+    /// Says which end was missing in the words an MCP server's user reads.
+    ///
+    /// The transport knows a pipe was not handed back; only here is it known
+    /// that the thing on the other end was supposed to be a server, which is
+    /// the noun the sentence has to use.
+    fn from(unspoken: Unspoken) -> Self {
+        let cause = match unspoken.absent {
+            Absent::Input => Self::Unspeakable,
+            Absent::Output => Self::Unheard,
+        };
+        match unspoken.cleanup {
+            None => cause,
+            Some(cleanup) => Self::Unreaped {
+                cause: Box::new(cause),
+                cleanup,
+            },
+        }
+    }
 }
 
 #[cfg(test)]

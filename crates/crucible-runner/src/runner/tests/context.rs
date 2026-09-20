@@ -1,7 +1,5 @@
 //! Per-pass context assembly, including the history-rewrite adversary.
 
-use std::fs;
-
 use crucible_core::{ContextSection, Fragment, Revealed, Seen, ToolOutput, WorkspaceSection};
 
 use super::*;
@@ -20,7 +18,7 @@ fn contexts(transcript: &Transcript) -> Vec<&Fragment> {
 #[test]
 fn static_context_is_assembled_once_in_stable_order_and_charged_before_fullness() {
     let mut scripted = Scripted::new(Script::new(Vec::new()), Tools::new(), Verdict::Allow);
-    let before = scripted.runner.load;
+    let before = scripted.runner.state.load;
     let ancestry = Ancestry::new();
 
     scripted
@@ -28,7 +26,7 @@ fn static_context_is_assembled_once_in_stable_order_and_charged_before_fullness(
         .assemble_context(ancestry)
         .expect("the first context");
 
-    let first = contexts(scripted.runner.transcript());
+    let first = contexts(scripted.runner.state.transcript());
     assert_eq!(
         first
             .iter()
@@ -48,33 +46,40 @@ fn static_context_is_assembled_once_in_stable_order_and_charged_before_fullness(
         .map(|fragment| fragment.text().len())
         .sum::<usize>();
     assert!(old_full_preamble > 0);
-    assert!(scripted.runner.load.tokens() > before.tokens());
+    assert!(scripted.runner.state.load.tokens() > before.tokens());
 
     // Put the exact charged load on the compaction boundary. If fragments
     // were recorded after reserve/fullness was read, this comparison would
     // still see the empty `before` value and let the request through.
     scripted.runner.policy.compaction.reserve = Some(100);
-    let window = u32::try_from(scripted.runner.load.tokens() + 100).unwrap();
-    scripted.runner.spec.model.window = Some(window);
+    let window = u32::try_from(scripted.runner.state.load.tokens() + 100).unwrap();
+    scripted.runner.state.window = Some(window);
     let reserve = scripted
         .runner
         .reserve(scripted.runner.policy.compaction, Some(window));
     assert_eq!(reserve, 100);
     assert!(!before.full(Some(window), reserve));
-    assert!(scripted.runner.load.full(Some(window), reserve));
+    assert!(scripted.runner.state.load.full(Some(window), reserve));
 
-    let snapshot = scripted.runner.session.context_snapshot().unwrap().clone();
-    let messages = scripted.runner.transcript().len();
-    let charged = scripted.runner.load.tokens();
+    let snapshot = scripted
+        .runner
+        .store
+        .context_snapshot()
+        .expect("the typed state recorded so far");
+    let messages = scripted.runner.state.transcript().len();
+    let charged = scripted.runner.state.load.tokens();
     scripted
         .runner
         .assemble_context(ancestry)
         .expect("unchanged context");
 
-    assert_eq!(scripted.runner.transcript().len(), messages);
-    assert_eq!(scripted.runner.load.tokens(), charged);
-    assert_eq!(scripted.runner.session.context_snapshot(), Some(&snapshot));
-    let later_assembled = contexts(scripted.runner.transcript())
+    assert_eq!(scripted.runner.state.transcript().len(), messages);
+    assert_eq!(scripted.runner.state.load.tokens(), charged);
+    assert_eq!(
+        scripted.runner.store.context_snapshot(),
+        Some(snapshot.clone())
+    );
+    let later_assembled = contexts(scripted.runner.state.transcript())
         .into_iter()
         .skip(6)
         .map(|fragment| fragment.text().len())
@@ -115,7 +120,7 @@ fn a_compaction_that_removes_context_forces_a_full_render_on_the_next_pass() {
     };
     scripted.turn("first").expect("a first turn");
     scripted.turn("second").expect("a second turn");
-    assert_eq!(contexts(scripted.runner.transcript()).len(), 6);
+    assert_eq!(contexts(scripted.runner.state.transcript()).len(), 6);
 
     let room = scripted.compacting().expect("a structured compaction");
     let Room::Made(compacted) = room else {
@@ -125,17 +130,17 @@ fn a_compaction_that_removes_context_forces_a_full_render_on_the_next_pass() {
         compacted.replaced, 2,
         "typed harness fragments were reported as conversation messages"
     );
-    assert!(contexts(scripted.runner.transcript()).is_empty());
+    assert!(contexts(scripted.runner.state.transcript()).is_empty());
 
     let workspace = std::env::temp_dir();
     let section = WorkspaceSection::new(workspace.as_path());
     let recorded = scripted
         .runner
-        .session
+        .store
         .context_snapshot()
         .expect("the typed state survived compaction");
     assert!(matches!(
-        crucible_core::seen(recorded, &section, scripted.runner.transcript()),
+        crucible_core::seen(&recorded, &section, scripted.runner.state.transcript()),
         Seen::Stale
     ));
 
@@ -149,7 +154,7 @@ fn a_compaction_that_removes_context_forces_a_full_render_on_the_next_pass() {
     assert!(section.render(two_state).is_none());
 
     scripted.turn("third").expect("the turn after compaction");
-    let rendered = contexts(scripted.runner.transcript());
+    let rendered = contexts(scripted.runner.state.transcript());
     assert_eq!(rendered.len(), 6);
     let workspace = rendered
         .iter()
@@ -162,31 +167,18 @@ fn a_compaction_that_removes_context_forces_a_full_render_on_the_next_pass() {
 
 #[test]
 fn a_pre_context_session_supersedes_every_unknown_section_on_its_first_pass() {
-    let sample = Sample::new("runner-legacy-context");
-    let workspace = sample.workspace();
-    let session = Session::start(&sample.logs(), &workspace, None).unwrap();
-    let path = session.path().to_owned();
-    drop(session);
-
-    // Whatever this build writes, rewritten to the last format before typed
-    // context. Reading the number out of the header rather than naming it keeps
-    // the fixture a pre-context log across a format bump, instead of quietly
-    // becoming a current one that asserts nothing.
-    let current = fs::read_to_string(&path).unwrap();
-    let written = current
-        .split_once(r#""format":"#)
-        .and_then(|(_, rest)| rest.split_once(','))
-        .map(|(format, _)| format.to_owned())
-        .expect("the header says what format it is");
-    let legacy = current.replacen(&format!(r#""format":{written}"#), r#""format":9"#, 1);
-    assert_ne!(legacy, current, "the fixture header was not downgraded");
-    fs::write(&path, legacy).unwrap();
-
-    let (session, transcript) = Session::resume(&sample.logs(), &workspace).unwrap();
-    assert_eq!(session.context_snapshot(), None);
+    // A store that answers unknown vintage rather than a known empty snapshot:
+    // a session recorded before typed model-visible state existed. Nothing in
+    // it says what the model was last told, so every section the first pass
+    // renders has to say it supersedes whatever came before instead of
+    // describing a change from a baseline nobody recorded. Which formats read
+    // back that way is the store's own business, and is settled where the
+    // format is.
+    let store = Recording::pre_context("a session from before typed context");
+    assert_eq!(store.context_snapshot(), None);
     let script = Script::new(vec![saying("continued")]);
-    let mut scripted = Scripted::recording(script, Tools::new(), Verdict::Allow, session);
-    scripted.runner = scripted.runner.resuming(transcript);
+    let mut scripted = Scripted::recording(script, Tools::new(), Verdict::Allow, store);
+    scripted.runner = scripted.runner.resuming(Transcript::new());
 
     scripted.turn("continue").expect("the first upgraded turn");
 

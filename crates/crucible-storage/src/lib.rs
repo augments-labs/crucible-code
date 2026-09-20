@@ -1,4 +1,5 @@
-//! History, checkpoint and cache contracts a durable store is written against.
+//! Session, history, checkpoint and cache contracts a durable store is written
+//! against.
 //!
 //! Persistence has two halves that are easy to confuse. One is what a record
 //! *means* — the identity a stored call result is keyed by, the receipt a sink
@@ -17,15 +18,79 @@
 //!     CallResultKey, CallResultReceipt, CallResultStoreError, CustomEntry, CustomProjector,
 //!     SessionStore,
 //! };
-//! use crucible_types::{Message, ToolResult};
+//! use crucible_types::{
+//!     Calibration, Compacted, ContextError, ContextPatch, ContextSnapshot, Message, SessionId,
+//!     ToolId, ToolResult,
+//! };
+//!
+//! /// Everything one session was told, in the order it was told.
+//! #[derive(Debug)]
+//! enum Kept {
+//!     Said(Message),
+//!     Compacted { replaced: usize, recap: String },
+//!     Cleared { results: Vec<ToolId>, notice: Option<String> },
+//!     Measured(Calibration),
+//! }
 //!
 //! #[derive(Default)]
-//! struct Everything(Mutex<Vec<Message>>);
+//! struct Everything {
+//!     kept: Mutex<Vec<Kept>>,
+//!     context: Mutex<Option<ContextSnapshot>>,
+//! }
 //!
 //! impl SessionStore for Everything {
+//!     fn session_id(&self) -> Option<SessionId> {
+//!         None
+//!     }
+//!
+//!     fn owner(&self) -> Box<str> {
+//!         "in-memory".into()
+//!     }
+//!
 //!     fn append_message(&self, message: &Message) {
-//!         if let Ok(mut held) = self.0.lock() {
-//!             held.push(message.clone());
+//!         self.push(Kept::Said(message.clone()));
+//!     }
+//!
+//!     fn context_snapshot(&self) -> Option<ContextSnapshot> {
+//!         self.context.lock().ok().and_then(|held| held.clone())
+//!     }
+//!
+//!     fn contextual(&self, patch: &ContextPatch) -> Result<(), ContextError> {
+//!         let Ok(mut held) = self.context.lock() else {
+//!             return Ok(());
+//!         };
+//!         *held = Some(patch.apply(&held.clone().unwrap_or_default())?);
+//!         Ok(())
+//!     }
+//!
+//!     fn compacted(&self, replaced: usize, recap: &str) {
+//!         self.push(Kept::Compacted { replaced, recap: recap.to_owned() });
+//!     }
+//!
+//!     fn display_compacted(&self, _compacted: Compacted, _pruned: bool) {}
+//!
+//!     fn pruned(&self, _freed: usize, results: &[ToolId]) {
+//!         self.push(Kept::Cleared { results: results.to_vec(), notice: None });
+//!     }
+//!
+//!     fn restricted(&self, _freed: usize, results: &[ToolId], notice: &str) {
+//!         let notice = Some(notice.to_owned());
+//!         self.push(Kept::Cleared { results: results.to_vec(), notice });
+//!     }
+//!
+//!     fn measured(&self, calibration: &Calibration) {
+//!         self.push(Kept::Measured(*calibration));
+//!     }
+//!
+//!     fn calibrated(&self) -> Option<Calibration> {
+//!         None
+//!     }
+//! }
+//!
+//! impl Everything {
+//!     fn push(&self, one: Kept) {
+//!         if let Ok(mut held) = self.kept.lock() {
+//!             held.push(one);
 //!         }
 //!     }
 //! }
@@ -49,6 +114,7 @@
 pub mod cache;
 pub mod interruption;
 pub mod journal;
+pub mod session;
 
 pub use cache::PromptCacheResourceStore;
 pub use interruption::{
@@ -61,5 +127,6 @@ pub use interruption::{
 };
 pub use journal::{
     CallResultKey, CallResultReceipt, CallResultStoreError, CompactionRecord, CustomEntry,
-    CustomProjector, JournalError, MAX_CUSTOM_DATA_BYTES, MAX_JOURNAL_WORD_BYTES, SessionStore,
+    CustomProjector, JournalError, MAX_CUSTOM_DATA_BYTES, MAX_JOURNAL_WORD_BYTES,
 };
+pub use session::SessionStore;

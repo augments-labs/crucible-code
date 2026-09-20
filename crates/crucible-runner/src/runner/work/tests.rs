@@ -5,19 +5,72 @@ use std::time::Duration;
 
 use crucible_core::{
     Ancestry, ArgumentTransform, CallResultAcceptance, CallResultKey, CallResultReceipt,
-    CallResultStoreError, Disposition, EventEnvelope, IdempotencyKey, InputGuard, InvocationState,
-    JournalStore, Mode, OutputGuard, Post, RecoveryAction, Remember, Rules, SandboxCleanup,
-    SandboxFactKind, SandboxId, SandboxLifecycle, Sensitivity, Summary, Target, Tool, ToolArgs,
+    CallResultStoreError, Disposition, IdempotencyKey, InputGuard, InvocationState, JournalStore,
+    Mode, OutputGuard, RecoveryAction, Remember, Rules, SandboxCleanup, SandboxFactKind, SandboxId,
+    SandboxLifecycle, Sensitivity, SessionId, SessionStore, Summary, Target, Tool, ToolArgs,
     ToolDescriptor, ToolEffect, ToolExecutionMode, ToolHooks, ToolId, ToolProvenance,
     ToolResourceKey, ToolSourceKind, Verdict,
+};
+
+use crucible_types::{
+    Calibration, Compacted, ContextError, ContextPatch, ContextSnapshot, Message,
 };
 
 use super::*;
 use crate::Tools;
 use crate::fake::{Fixed, Says, changing};
+use crate::recording::Recording;
+
+use crate::{EventEnvelope, Post};
+/// Gives a journal-only double the conversation half of a store.
+///
+/// The doubles below stand in for the run record: what a pass appends to it,
+/// and what it does with a deferred result. None of them is ever read back as a
+/// conversation, so rather than pretend to keep one they keep nothing and say
+/// they are nobody's session — which is exactly what a store with no log
+/// answers.
+macro_rules! journal_only {
+    ($kind:ty) => {
+        impl SessionStore for $kind {
+            fn session_id(&self) -> Option<SessionId> {
+                None
+            }
+
+            fn owner(&self) -> Box<str> {
+                "".into()
+            }
+
+            fn append_message(&self, _message: &Message) {}
+
+            fn context_snapshot(&self) -> Option<ContextSnapshot> {
+                None
+            }
+
+            fn contextual(&self, _patch: &ContextPatch) -> Result<(), ContextError> {
+                Ok(())
+            }
+
+            fn compacted(&self, _replaced: usize, _recap: &str) {}
+
+            fn display_compacted(&self, _compacted: Compacted, _pruned: bool) {}
+
+            fn pruned(&self, _freed: usize, _results: &[ToolId]) {}
+
+            fn restricted(&self, _freed: usize, _results: &[ToolId], _notice: &str) {}
+
+            fn measured(&self, _calibration: &Calibration) {}
+
+            fn calibrated(&self) -> Option<Calibration> {
+                None
+            }
+        }
+    };
+}
 
 #[derive(Default)]
 struct KeepingJournal(Mutex<Vec<RunItem>>);
+
+journal_only!(KeepingJournal);
 
 impl JournalStore for KeepingJournal {
     fn append_run_item(&self, item: &RunItem) {
@@ -30,6 +83,8 @@ struct ResultJournal {
     items: Mutex<Vec<RunItem>>,
     results: Mutex<Vec<(CallResultKey, ToolResult)>>,
 }
+
+journal_only!(ResultJournal);
 
 impl JournalStore for ResultJournal {
     fn append_run_item(&self, item: &RunItem) {
@@ -251,6 +306,8 @@ impl OutputGuard for LongOutput {
 #[derive(Default)]
 struct FailingResultJournal;
 
+journal_only!(FailingResultJournal);
+
 impl JournalStore for FailingResultJournal {
     fn append_run_item(&self, _item: &RunItem) {}
 
@@ -456,7 +513,7 @@ fn invoke_many(
     let ancestry = Ancestry::new();
     let snapshot = tools.snapshot().unwrap();
     let cancel = Cancel::new();
-    let journal = crucible_session::Session::nowhere();
+    let journal = Recording::nowhere();
     let (results, went, _) = Work {
         tools: &snapshot,
         permission,
@@ -464,7 +521,7 @@ fn invoke_many(
         events: Reporter::new(ancestry, &keeping),
         cancel: &cancel,
         ancestry,
-        journal: &journal,
+        journal: &*journal,
         audits: &SandboxAuditRegistry::new(),
         concurrency,
     }
@@ -1081,7 +1138,7 @@ impl Proof {
     ) -> (Vec<ToolResult>, Went, usize) {
         let events = Reporter::new(Ancestry::new(), &self.events);
         let tools = self.tools.snapshot().unwrap();
-        let journal = crucible_session::Session::nowhere();
+        let journal = Recording::nowhere();
 
         Work {
             tools: &tools,
@@ -1090,7 +1147,7 @@ impl Proof {
             events,
             cancel: &self.cancel,
             ancestry: Ancestry::new(),
-            journal: &journal,
+            journal: &*journal,
             audits: &SandboxAuditRegistry::new(),
             concurrency: 1,
         }

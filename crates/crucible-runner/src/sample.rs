@@ -1,7 +1,7 @@
-//! A sessions directory and a workspace, both real, both temporary.
+//! A workspace with a real directory behind it, made and removed per test.
 //!
-//! Sessions are read back from a file by a thread that is not the one that
-//! wrote them, so a fake filesystem would test something other than what runs.
+//! An attachment is resolved by reading the file again, so a fake filesystem
+//! would test something other than what runs.
 
 use std::fs;
 use std::path::PathBuf;
@@ -12,7 +12,7 @@ use crucible_core::Workspace;
 /// Tells apart two samples that were given the same name.
 static NTH: AtomicU32 = AtomicU32::new(0);
 
-/// Somewhere for a test to keep sessions, and something for them to be about.
+/// Something for a test's attachments and paths to be about.
 pub(crate) struct Sample {
     base: PathBuf,
 }
@@ -29,16 +29,9 @@ impl Sample {
             std::env::temp_dir().join(format!("crucible-{name}-{}-{nth}", std::process::id()));
         let _ = fs::remove_dir_all(&base);
 
-        for under in ["logs", "work"] {
-            fs::create_dir_all(base.join(under)).expect("a temporary directory");
-        }
+        fs::create_dir_all(base.join("work")).expect("a temporary directory");
 
         Self { base }
-    }
-
-    /// Where session logs go.
-    pub(crate) fn logs(&self) -> PathBuf {
-        self.base.join("logs")
     }
 
     /// The workspace a session is about.

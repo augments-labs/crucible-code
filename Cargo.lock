@@ -332,6 +332,45 @@ dependencies = [
 ]
 
 [[package]]
+name = "crucible-agents"
+version = "0.41.1"
+dependencies = [
+ "crucible-models",
+ "crucible-tools",
+ "crucible-types",
+ "thiserror",
+]
+
+[[package]]
+name = "crucible-app"
+version = "0.41.1"
+dependencies = [
+ "crucible-agents",
+ "crucible-auth",
+ "crucible-builtins",
+ "crucible-client-api",
+ "crucible-config",
+ "crucible-context",
+ "crucible-credentials",
+ "crucible-extension",
+ "crucible-mcp",
+ "crucible-models",
+ "crucible-privacy",
+ "crucible-provider",
+ "crucible-registry",
+ "crucible-runner",
+ "crucible-runtime",
+ "crucible-sandbox",
+ "crucible-sandbox-local",
+ "crucible-session",
+ "crucible-tools",
+ "crucible-types",
+ "crucible-workspace",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "crucible-attachments"
 version = "0.41.1"
 dependencies = [
@@ -377,14 +416,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "crucible-client-api"
+version = "0.41.1"
+dependencies = [
+ "crucible-types",
+ "serde_core",
+ "serde_json",
+]
+
+[[package]]
 name = "crucible-code"
 version = "0.41.1"
 dependencies = [
  "arboard",
  "clap",
+ "crucible-app",
  "crucible-attachments",
  "crucible-auth",
  "crucible-builtins",
+ "crucible-client-api",
  "crucible-config",
  "crucible-context",
  "crucible-core",
@@ -439,11 +489,10 @@ dependencies = [
  "crucible-sandbox",
  "crucible-storage",
  "crucible-tools",
+ "crucible-transport",
  "crucible-types",
  "crucible-workspace",
  "serde_json",
- "sha2",
- "thiserror",
 ]
 
 [[package]]
@@ -459,8 +508,12 @@ dependencies = [
 name = "crucible-extension"
 version = "0.41.1"
 dependencies = [
- "crucible-core",
+ "crucible-registry",
+ "crucible-sandbox",
+ "crucible-transport",
+ "crucible-types",
  "serde_json",
+ "sha2",
  "thiserror",
 ]
 
@@ -468,7 +521,11 @@ dependencies = [
 name = "crucible-mcp"
 version = "0.41.1"
 dependencies = [
- "crucible-core",
+ "crucible-runtime",
+ "crucible-sandbox",
+ "crucible-tools",
+ "crucible-transport",
+ "crucible-types",
  "serde_json",
  "thiserror",
 ]
@@ -520,13 +577,14 @@ dependencies = [
 name = "crucible-runner"
 version = "0.41.1"
 dependencies = [
+ "crucible-agents",
  "crucible-attachments",
  "crucible-context",
  "crucible-core",
  "crucible-models",
- "crucible-session",
  "crucible-types",
  "sha2",
+ "thiserror",
 ]
 
 [[package]]
@@ -616,6 +674,16 @@ dependencies = [
  "globset",
  "thiserror",
  "uuid",
+]
+
+[[package]]
+name = "crucible-transport"
+version = "0.41.1"
+dependencies = [
+ "crucible-runtime",
+ "crucible-sandbox",
+ "crucible-types",
+ "thiserror",
 ]
 
 [[package]]

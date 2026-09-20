@@ -26,6 +26,7 @@ pub mod run;
 pub mod tone;
 pub mod transcript;
 pub mod usage;
+pub mod version;
 
 pub use ask::{Answer, Answered, Question};
 pub use cache::{
@@ -72,3 +73,4 @@ pub use usage::{
     Calibration, Carried, InputTokenUsage, MAX_PROVIDER_USAGE_DETAIL_LABEL_BYTES,
     MAX_PROVIDER_USAGE_DETAILS, ProviderNumericDetail, ProviderUsage, Spend, UsageError,
 };
+pub use version::later;

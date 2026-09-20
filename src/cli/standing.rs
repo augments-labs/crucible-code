@@ -1,30 +1,15 @@
-//! Stable operator instructions for every provider request.
+//! What the model is told about commands that ended while nobody waited.
 //!
-//! Session facts no longer enter this string. The runner assembles workspace,
-//! permission, skill, tool, environment, and model sections once per pass and
-//! retains those fragments in the transcript. Keeping this value to
-//! operator-authored instructions leaves the most stable request content in
-//! the provider's system field and prevents a model or tool change from
-//! rewriting it.
+//! The stable operator instructions a turn is asked under are the
+//! application's — `crucible_app::startup::under` — and no session fact enters
+//! them. What is written here is the one note the loop adds about the session
+//! itself: which background commands have ended since the model last heard.
 
 use std::fmt::Write as _;
 
 use crucible_builtins::Ended;
-use crucible_config::Settings;
-use crucible_core::SystemPrompt;
 
 use crate::cli::draw::spelled;
-
-/// The stable instructions configured for this run.
-pub(crate) fn under(settings: &Settings) -> String {
-    SystemPrompt {
-        tone: settings.tone(),
-        custom: settings.custom_prompt().map(str::to_owned),
-        append: settings.appended_prompt().map(str::to_owned),
-        ..SystemPrompt::default()
-    }
-    .instructions_text()
-}
 
 /// What has ended, in the words the model is told it in.
 ///

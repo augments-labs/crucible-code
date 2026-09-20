@@ -1,0 +1,24 @@
+[package]
+name = "crucible-agents"
+description = "What an agent is: its instructions, the model that answers for it, the tools it declares and the guardrails it is checked by."
+publish.workspace = true
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# A definition and nothing live. The model crate supplies the effort rung a
+# selection names, the tools crate the immutable roster a declaration narrows,
+# and the types crate the identities a definition and an invocation are known
+# by. There is no provider, no transcript and no session here, because those
+# are facts about one run rather than about the agent.
+[dependencies]
+crucible-models.workspace = true
+crucible-tools.workspace = true
+crucible-types.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

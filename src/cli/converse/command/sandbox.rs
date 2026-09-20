@@ -5,26 +5,28 @@
 //! snapshot, so an already-running background command keeps its original
 //! boundary. Project requirements survive every interactive choice.
 
-use crucible_core::{
-    Ancestry, SandboxEnablement, SandboxId, SandboxManifest, SandboxRequest, SandboxService, ToolId,
-};
+use crucible_app::Conversation;
+use crucible_app::client::Performed;
+use crucible_client_api::Command;
+use crucible_core::SandboxService;
 use crucible_sandbox_local::LocalSandbox;
 use crucible_tui::{Key, Offered, Pressed, Renderer, SandboxPanel, SandboxTab, Terminal};
 
+use crate::cli::Fatal;
+use crate::cli::client::astray;
 use crate::cli::converse::region::{self, Ended, Moved};
-use crate::cli::{Fatal, remember};
 
 use super::{Terms, say};
 
 pub(super) fn run<T: Terminal>(
     rest: &str,
     renderer: &mut Renderer<T>,
-    terms: &Terms,
+    (conversation, terms): (&mut Conversation, &Terms),
     keys: bool,
 ) -> Result<(), Fatal> {
     match rest.trim() {
-        "enable" => return taken(true, renderer, terms),
-        "disable" => return taken(false, renderer, terms),
+        "enable" => return taken(true, renderer, conversation, terms),
+        "disable" => return taken(false, renderer, conversation, terms),
         "" => {}
         _ => {
             return say(
@@ -60,7 +62,7 @@ pub(super) fn run<T: Terminal>(
     )?;
     match ended {
         Ended::Took if standing.tab == SandboxTab::Sandbox && standing.at() < 2 => {
-            taken(standing.at() == 0, renderer, terms)
+            taken(standing.at() == 0, renderer, conversation, terms)
         }
         Ended::Took => {
             if let Some((name, says)) = standing.items().get(standing.at()) {
@@ -76,16 +78,18 @@ pub(super) fn run<T: Terminal>(
 fn taken<T: Terminal>(
     enabled: bool,
     renderer: &mut Renderer<T>,
+    conversation: &mut Conversation,
     terms: &Terms,
 ) -> Result<(), Fatal> {
-    let control = terms.settings.sandbox().enablement();
-    if let Err(problem) = choose(
-        &control,
-        enabled,
-        || verify(terms),
-        || remember::sandboxing(&terms.choosing, enabled).map_err(|problem| problem.to_string()),
-    ) {
-        return say(renderer, &format!("sandbox unchanged: {problem}"));
+    match terms.perform(conversation, Command::Sandbox { enabled }) {
+        Performed::Sandbox {
+            unchanged: None, ..
+        } => {}
+        Performed::Sandbox {
+            unchanged: Some(problem),
+            ..
+        } => return say(renderer, &format!("sandbox unchanged: {problem}")),
+        other => return say(renderer, &astray(&other)),
     }
     let state = if enabled { "enabled" } else { "disabled" };
     say(
@@ -94,46 +98,6 @@ fn taken<T: Terminal>(
             "sandbox {state} for new commands and MCP processes; active commands keep their original policy"
         ),
     )?;
-    Ok(())
-}
-
-fn choose(
-    control: &SandboxEnablement,
-    enabled: bool,
-    verify: impl FnOnce() -> Result<(), String>,
-    save: impl FnOnce() -> Result<(), String>,
-) -> Result<(), String> {
-    if !enabled && control.required() {
-        return Err("project configuration requires confinement".into());
-    }
-    if enabled {
-        verify()?;
-    }
-    save()?;
-    control
-        .set_enabled(enabled)
-        .map_err(|problem| problem.to_string())
-}
-
-fn verify(terms: &Terms) -> Result<(), String> {
-    let policy = terms
-        .settings
-        .sandbox()
-        .enforcing_policy(&terms.workspace)
-        .map_err(|problem| problem.to_string())?;
-    let service = LocalSandbox::new();
-    // Preparation checks exact backend capability and filesystem policy. It
-    // does not materialize or start a user command; dropping releases admission.
-    let prepared = service
-        .prepare(SandboxRequest::new(
-            SandboxId::new(),
-            Ancestry::new(),
-            ToolId::new("sandbox-inspection"),
-            policy,
-            SandboxManifest::empty(),
-        ))
-        .map_err(|problem| problem.to_string())?;
-    drop(prepared);
     Ok(())
 }
 
@@ -317,23 +281,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn an_unavailable_backend_cannot_change_the_choice() {
-        let control = SandboxEnablement::new(false, false);
-        assert!(
-            choose(
-                &control,
-                true,
-                || Err("native boundary unavailable".into()),
-                || panic!("an unavailable boundary cannot be saved")
-            )
-            .is_err()
-        );
-        assert!(!control.enabled());
-        choose(&control, true, || Ok(()), || Ok(())).unwrap();
-        assert!(control.enabled());
-    }
-
-    #[test]
     fn an_unsaved_choice_preserves_the_effective_policy() {
         let sample = crate::cli::sample::Sample::new("sandbox-unwritable-choice");
         let mut terms = crate::cli::converse::tests::plain();
@@ -344,35 +291,14 @@ mod tests {
         std::fs::create_dir(&terms.choosing).expect("a directory cannot be replaced as a file");
         let mut renderer = Renderer::new(crucible_tui::Recording::new(80, 24));
 
-        taken(false, &mut renderer, &terms).expect("report the persistence failure");
+        let mut conversation = crate::cli::converse::tests::silent();
+
+        taken(false, &mut renderer, &mut conversation, &terms)
+            .expect("report the persistence failure");
 
         assert!(terms.settings.sandbox().enabled());
         assert!(renderer.terminal().written().contains("sandbox unchanged"));
         assert!(terms.choosing.is_dir());
-    }
-
-    #[test]
-    fn a_project_requirement_survives_interactive_disabling() {
-        let control = SandboxEnablement::new(true, true);
-        assert!(
-            choose(
-                &control,
-                false,
-                || panic!("disabling must not probe"),
-                || panic!("a required boundary cannot be disabled")
-            )
-            .is_err()
-        );
-        assert!(control.enabled());
-        let optional = SandboxEnablement::new(true, false);
-        choose(
-            &optional,
-            false,
-            || panic!("disabling needs no enforcing backend"),
-            || Ok(()),
-        )
-        .unwrap();
-        assert!(!optional.enabled());
     }
 }
 
