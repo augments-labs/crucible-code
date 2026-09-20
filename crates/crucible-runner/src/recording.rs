@@ -117,7 +117,9 @@ impl Recording {
     /// The same session picked up again, and the transcript a later run would
     /// be asked with.
     ///
-    /// Nothing but the log's own vintage is read off the store's own fields:
+    /// Which session it is and whose carry over as they stand, the way a log
+    /// keeps its name across a reopen. Of what a later run is asked with,
+    /// nothing but the log's own vintage is read off the store's own fields:
     /// the transcript is rebuilt from the records, the way a durable store
     /// rebuilds one from its file, so a recording that wrote the wrong line
     /// answers the wrong transcript here rather than passing on what it
