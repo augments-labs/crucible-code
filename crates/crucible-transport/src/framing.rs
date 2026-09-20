@@ -239,6 +239,16 @@ impl<R: BufRead> Frames<R> {
 /// let mut written = Written::new(Vec::<u8>::new());
 /// written.stream_mut();
 /// ```
+///
+/// The same value sending a frame, which compiles. Any compile error passes
+/// the example above, so this is the one that fails where a name in it moved:
+///
+/// ```
+/// use crucible_transport::Written;
+///
+/// let mut written = Written::new(Vec::<u8>::new());
+/// let _ = written.send("a frame");
+/// ```
 #[derive(Debug)]
 pub struct Written<W> {
     /// Where the bytes go.

@@ -107,6 +107,17 @@ impl<'a> AgentContext<'a> {
 ///
 /// let _ = Decision::Rejected(Rejection::new("somebody-else", "no"));
 /// ```
+///
+/// The same names with the refusal kept out of the decision, which compiles:
+/// were one of them to move, this is the example that would say so, where the
+/// one above would go on failing for a reason nobody meant.
+///
+/// ```
+/// use crucible_agents::{Decision, Rejection};
+///
+/// let _ = Decision::Rejected("no".into());
+/// let _ = Rejection::new("somebody-else", "no");
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rejection {
     guard: Box<str>,
@@ -201,6 +212,19 @@ impl Undecided {
 ///
 /// fn checking(_context: &AgentContext<'_>) -> Result<Decision, Undecided> {
 ///     Err(GuardrailError::undecided("somebody-else", "its list is missing"))
+/// }
+/// ```
+///
+/// The same check answering with what it may, which compiles, so that a name
+/// that moved fails here rather than leaving the example above failing for a
+/// reason nobody meant:
+///
+/// ```
+/// use crucible_agents::{AgentContext, Decision, GuardrailError, Undecided};
+///
+/// fn checking(_context: &AgentContext<'_>) -> Result<Decision, Undecided> {
+///     let _ = GuardrailError::undecided("somebody-else", "its list is missing");
+///     Err(Undecided::because("its list is missing"))
 /// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
