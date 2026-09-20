@@ -29,7 +29,7 @@ use crucible_runner::{EventEnvelope, Tools};
 use crucible_session::Session;
 use crucible_tui::{Editor, Recording, Renderer};
 
-use super::Client;
+use super::{Client, Witness};
 use crate::cli::converse::tests::{opening, paired, plain, scripted};
 use crate::cli::converse::{Terms, converse};
 use crate::cli::fake::{Script, changing};
@@ -61,13 +61,28 @@ pub(crate) enum Noted {
 }
 
 impl Client {
-    /// Notes what `request` was answered with.
-    pub(crate) fn answered(
-        &self,
-        request: &Request,
-        conversation: &Conversation,
-        outcome: Outcome,
-    ) {
+    /// A client whose crossings are noted, beside where they are noted.
+    pub(crate) fn noting() -> (Self, Journal) {
+        let journal = Journal::default();
+        let client = Self {
+            witness: Some(Arc::new(journal.clone())),
+            ..Self::default()
+        };
+
+        (client, journal)
+    }
+}
+
+/// `terms` asked through a client whose crossings are noted, beside where.
+fn noting(mut terms: Terms) -> (Terms, Journal) {
+    let (client, journal) = Client::noting();
+    terms.client = client;
+
+    (terms, journal)
+}
+
+impl Witness for Journal {
+    fn answered(&self, request: &Request, conversation: &Conversation, outcome: Outcome) {
         self.note(Noted::Answered {
             asked: request.command().clone(),
             outcome,
@@ -75,36 +90,19 @@ impl Client {
         });
     }
 
-    /// Notes a pending action the terminal was put.
-    pub(crate) fn put(&self, pending: &Pending) {
-        self.note(Noted::Put(pending.clone()));
-    }
-
-    /// Notes what the terminal said about a pending action.
-    pub(crate) fn decided(&self, decision: &Decision) {
-        self.note(Noted::Decided(decision.clone()));
-    }
-
-    /// Notes what `request`, which needs no conversation, was answered with.
-    pub(crate) fn apart(&self, request: &Request, outcome: Outcome) {
+    fn apart(&self, request: &Request, outcome: Outcome) {
         self.note(Noted::Apart {
             asked: request.command().clone(),
             outcome,
         });
     }
 
-    /// Everything noted so far, in the order it happened.
-    pub(crate) fn noted(&self) -> Vec<Noted> {
-        self.noted
-            .lock()
-            .map(|noted| noted.clone())
-            .unwrap_or_default()
+    fn put(&self, pending: &Pending) {
+        self.note(Noted::Put(pending.clone()));
     }
 
-    fn note(&self, noted: Noted) {
-        if let Ok(mut held) = self.noted.lock() {
-            held.push(noted);
-        }
+    fn decided(&self, decision: &Decision) {
+        self.note(Noted::Decided(decision.clone()));
     }
 }
 
@@ -197,26 +195,31 @@ fn asking(session: Session, rounds: Vec<Vec<Delta>>, tool: Counting) -> Conversa
 }
 
 /// The whole loop over `typed`, and everything it asked of the application.
-fn at_the_terminal(terms: &Terms, conversation: Conversation, typed: &str) -> Vec<Noted> {
+fn at_the_terminal(
+    (terms, journal): &(Terms, Journal),
+    conversation: Conversation,
+    typed: &str,
+) -> Vec<Noted> {
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(typed.as_bytes().to_vec());
 
     converse(conversation, &mut renderer, terms, &opening(), &mut input)
         .expect("the loop to finish");
 
-    terms.client.noted()
+    journal.noted()
 }
 
-/// Everything a client with no terminal asked and was answered, in order.
+/// Everything one client asked and was answered, in order: the terminal's as
+/// its witness, and a client with no terminal's as what it writes down itself.
 #[derive(Debug, Clone, Default)]
-struct Journal(Arc<Mutex<Vec<Noted>>>);
+pub(crate) struct Journal(Arc<Mutex<Vec<Noted>>>);
 
 impl Journal {
     fn note(&self, noted: Noted) {
         self.0.lock().expect("the journal").push(noted);
     }
 
-    fn noted(&self) -> Vec<Noted> {
+    pub(crate) fn noted(&self) -> Vec<Noted> {
         self.0.lock().expect("the journal").clone()
     }
 }
@@ -482,7 +485,7 @@ fn ruled(typed: &str, ruling: Ruling) -> ((Vec<Noted>, usize), (Vec<Noted>, usiz
         pressing: Box::new(|| ()),
     };
 
-    let terms = plain();
+    let terms = noting(plain());
     let ran = Arc::new(AtomicUsize::new(0));
     let conversation = asking(Session::nowhere(), rounds(), counting(&ran));
     let terminal = renumbered(at_the_terminal(&terms, conversation, typed));
@@ -569,8 +572,8 @@ fn a_turn_interrupted_from_either_side_stops_at_the_same_place() {
         pressing,
     };
 
-    let terms = plain();
-    let (keys, cancel) = (terms.client.clone(), terms.cancel.clone());
+    let terms = noting(plain());
+    let (keys, cancel) = (terms.0.client.clone(), terms.0.cancel.clone());
     let ran = Arc::new(AtomicUsize::new(0));
     let pressing: Pressing = Box::new(move || keys.interrupt(&cancel));
     let conversation = asking(Session::nowhere(), rounds(), reading(&ran, pressing));
@@ -635,7 +638,7 @@ fn a_session_picked_up_from_either_side_is_carried_on_from_the_same_place() {
 
     let typed_under = Sample::new("client-resume-typed");
     let earlier = recorded(&typed_under);
-    let terms = under(&typed_under);
+    let terms = noting(under(&typed_under));
     let conversation = asking(Session::nowhere(), rounds(), quiet());
     let terminal = at_the_terminal(
         &terms,
