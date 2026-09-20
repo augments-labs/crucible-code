@@ -239,9 +239,10 @@ impl Runner {
         for message in self.state.transcript.messages() {
             self.state.load.recounted(message);
         }
-        self.state
-            .load
-            .requesting(self.agent.instructions(), &self.state.tools.advertised());
+        self.state.load.requesting(
+            self.agent.instructions(),
+            &super::advertising(&self.agent, &self.state.tools),
+        );
 
         // Turns kept whole rather than messages, because that is the shape a
         // reader thinks in: the recap stands in for the front, and what is left
@@ -833,9 +834,10 @@ impl Runner {
         for message in self.state.transcript.messages() {
             self.state.load.recounted(message);
         }
-        self.state
-            .load
-            .requesting(self.agent.instructions(), &self.state.tools.advertised());
+        self.state.load.requesting(
+            self.agent.instructions(),
+            &super::advertising(&self.agent, &self.state.tools),
+        );
         true
     }
 }

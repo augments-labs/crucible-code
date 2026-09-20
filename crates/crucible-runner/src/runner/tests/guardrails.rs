@@ -500,6 +500,33 @@ fn an_agent_offered_only_some_tools_says_so_before_it_has_taken_a_turn() {
 }
 
 #[test]
+fn an_agent_offered_only_some_tools_is_counted_as_carrying_only_those() {
+    // What the next request would carry is read before anybody has typed
+    // anything: it is the figure under the box, and the one a session picked up
+    // is asked about. A definition declaring one tool out of two sends one
+    // schema, so it is counted exactly as a session wired with that one tool
+    // is, and not as though the whole roster were going out.
+    let narrowed = Scripted::under(
+        Script::new(vec![answering("unused")]),
+        tools([Fixed::new("read"), Fixed::new("write")]),
+        agent("test")
+            .offering(Availability::Named(Box::new(["read".into()])))
+            .build(),
+    );
+    let wired_with_one = Scripted::under(
+        Script::new(vec![answering("unused")]),
+        tools([Fixed::new("read")]),
+        agent("test").build(),
+    );
+
+    assert_eq!(
+        narrowed.runner.carrying(),
+        wired_with_one.runner.carrying(),
+        "a session was counted as carrying tools its definition never declared"
+    );
+}
+
+#[test]
 fn two_agents_run_beside_each_other_under_their_own_definitions() {
     // Two runs, two definitions, one process. Nothing either does reaches the
     // other: not the instructions each is asked under, not the model each is
