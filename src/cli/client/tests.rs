@@ -15,10 +15,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 
 use crucible_app::Conversation;
-use crucible_app::client::{self, Front, Minting, Shown, snapshot};
+use crucible_app::client::{self, Front, Shown, snapshot};
 use crucible_client_api::{
-    Capabilities, Command, Correlation, Decision, ErrorCode, Lasting, Outcome, Pending, Prompt,
-    Refusal, Request, Response, ResumeOutcome, Ruling, Snapshot, Stop, TurnOutcome,
+    Capabilities, Command, Correlation, Decision, ErrorCode, Lasting, Outcome, Pending, PendingId,
+    Prompt, Refusal, Request, Response, ResumeOutcome, Ruling, Snapshot, Stop, TurnOutcome,
 };
 use crucible_core::{
     Approved, Aside, Cancel, Delta, DescribeTool, Message, Mode, Permission, Rules, Sensitivity,
@@ -71,7 +71,7 @@ impl Client {
         self.note(Noted::Answered {
             asked: request.command().clone(),
             outcome,
-            standing: snapshot(conversation, None),
+            standing: snapshot(conversation),
         });
     }
 
@@ -255,7 +255,7 @@ fn received(request: &Request, outcome: Outcome) -> Outcome {
 
 /// Where `conversation` stands, as a client reads it.
 fn standing(conversation: &Conversation) -> Snapshot {
-    let bytes = snapshot(conversation, None)
+    let bytes = snapshot(conversation)
         .encode()
         .expect("a snapshot fits its frame");
 
@@ -296,7 +296,6 @@ struct Driving<'a> {
     wire: Wire,
     journal: Journal,
     cancel: Cancel,
-    minting: Minting,
 }
 
 impl<'a> Driving<'a> {
@@ -308,7 +307,6 @@ impl<'a> Driving<'a> {
             wire: Wire::default(),
             journal: Journal::default(),
             cancel: Cancel::new(),
-            minting: Minting::new(),
         }
     }
 
@@ -344,13 +342,7 @@ impl<'a> Driving<'a> {
                 let run = conversation
                     .runner()
                     .starting(&events, &self.cancel, &steer, &aside);
-                let ended = client::turn(
-                    conversation,
-                    &request,
-                    Box::default(),
-                    (&mut front, &self.minting),
-                    &run,
-                );
+                let ended = client::turn(conversation, &request, Box::default(), &mut front, &run);
                 drop(reported);
 
                 ended.outcome()
@@ -424,6 +416,62 @@ fn outcomes(noted: &[Noted]) -> Vec<Outcome> {
         .collect()
 }
 
+/// `noted` with every pending identity renamed by the order it first appeared
+/// in, for holding two runs beside each other. The application names pending
+/// actions from one count for the whole process, so two runs never show the
+/// same numbers; what they have to agree on is which decision named which
+/// action.
+fn renumbered(noted: Vec<Noted>) -> Vec<Noted> {
+    let mut met: Vec<PendingId> = Vec::new();
+    let mut ordinal = |id: PendingId| {
+        let at = met.iter().position(|seen| *seen == id).unwrap_or_else(|| {
+            met.push(id);
+            met.len() - 1
+        });
+        PendingId::new(u64::try_from(at).map_or(u64::MAX, |at| at + 1))
+    };
+
+    noted
+        .into_iter()
+        .map(|noted| match noted {
+            Noted::Put(Pending::Permission {
+                id,
+                tool,
+                effect,
+                subject,
+            }) => Noted::Put(Pending::Permission {
+                id: ordinal(id),
+                tool,
+                effect,
+                subject,
+            }),
+            Noted::Put(Pending::Questions { id, questions }) => Noted::Put(Pending::Questions {
+                id: ordinal(id),
+                questions,
+            }),
+            Noted::Decided(Decision::Ruled {
+                id,
+                ruling,
+                lasting,
+            }) => Noted::Decided(Decision::Ruled {
+                id: ordinal(id),
+                ruling,
+                lasting,
+            }),
+            Noted::Decided(Decision::Answered { id, answers }) => {
+                Noted::Decided(Decision::Answered {
+                    id: ordinal(id),
+                    answers,
+                })
+            }
+            Noted::Decided(Decision::Declined { id }) => {
+                Noted::Decided(Decision::Declined { id: ordinal(id) })
+            }
+            other @ (Noted::Answered { .. } | Noted::Apart { .. }) => other,
+        })
+        .collect()
+}
+
 /// One permission question answered `typed` at the terminal and `ruling` on
 /// the wire: what each side noted, and how often each let the tool run.
 fn ruled(typed: &str, ruling: Ruling) -> ((Vec<Noted>, usize), (Vec<Noted>, usize)) {
@@ -437,7 +485,7 @@ fn ruled(typed: &str, ruling: Ruling) -> ((Vec<Noted>, usize), (Vec<Noted>, usiz
     let terms = plain();
     let ran = Arc::new(AtomicUsize::new(0));
     let conversation = asking(Session::nowhere(), rounds(), counting(&ran));
-    let terminal = at_the_terminal(&terms, conversation, typed);
+    let terminal = renumbered(at_the_terminal(&terms, conversation, typed));
     let terminal = (terminal, ran.load(Ordering::Relaxed));
 
     let host = plain();
@@ -448,7 +496,10 @@ fn ruled(typed: &str, ruling: Ruling) -> ((Vec<Noted>, usize), (Vec<Noted>, usiz
 
     (
         terminal,
-        (driving.journal.noted(), ran.load(Ordering::Relaxed)),
+        (
+            renumbered(driving.journal.noted()),
+            ran.load(Ordering::Relaxed),
+        ),
     )
 }
 

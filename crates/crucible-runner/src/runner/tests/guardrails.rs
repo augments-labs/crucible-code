@@ -764,3 +764,16 @@ fn two_definitions_running_at_once_keep_their_own_state_and_cancellation() {
         "one run's transcript holds what was said to the other"
     );
 }
+
+#[test]
+fn a_committed_decision_never_shows_the_words_it_was_reached_about() {
+    // The words are the reader's prompt, kept so that a retry can tell the same
+    // invocation from another. The transcript redacts them once they are a
+    // message, and a run's state written into a log line does the same.
+    let mut state = RunState::new(None);
+    state.commit("asked-debug-canary", Decision::Allowed);
+
+    let shown = format!("{state:?}");
+    assert!(!shown.contains("asked-debug-canary"), "{shown}");
+    assert!(shown.contains("asked: \"[redacted]\""), "{shown}");
+}

@@ -227,8 +227,7 @@ impl AgentBuilder {
     /// The only way a caller's text reaches the field, so the difference
     /// between no instructions and empty ones cannot be lost by a caller that
     /// had no reason to know there was one. A struct literal would be the
-    /// second way, and every field but the id is private so that there is no
-    /// second way.
+    /// second way, and every field is private so that there is no second way.
     ///
     /// The error code below is what this fails with today, not something the
     /// harness checks: `compile_fail` accepts any compile error, so a rename

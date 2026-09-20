@@ -12,7 +12,7 @@ use std::sync::mpsc;
 
 use crucible_agents::{AgentBuilder, Model};
 use crucible_app::Conversation;
-use crucible_app::client::{self, Ended, Front, Minting, Performed, Shown};
+use crucible_app::client::{self, Ended, Front, Performed, Shown};
 use crucible_client_api::{
     Capabilities, ClearOutcome, Command, Correlation, Decision, ErrorCode, Lasting, Mode, Outcome,
     Palette, Pending, PendingId, Progress, Prompt, Refusal, Request, Response, ResumeOutcome,
@@ -143,6 +143,8 @@ enum Saying {
     Fitting(Ruling),
     /// A yes that names some other action.
     Elsewhere,
+    /// A yes that names this action, whichever is pending.
+    Naming(PendingId),
     /// Nothing, ever.
     Gone,
 }
@@ -173,6 +175,7 @@ impl Front for Remote {
         let (id, ruling) = match self.script.next()? {
             Saying::Fitting(ruling) => (pending.id(), ruling),
             Saying::Elsewhere => (PendingId::new(pending.id().number() + 40), Ruling::Allow),
+            Saying::Naming(id) => (id, Ruling::Allow),
             Saying::Gone => return None,
         };
         let sent = self
@@ -201,7 +204,6 @@ fn turned(
     conversation: &mut Conversation,
     request: &Request,
     remote: &mut Remote,
-    minting: &Minting,
 ) -> Result<(Response, Vec<Progress>), Failed> {
     let (events, reported) = mpsc::channel::<EventEnvelope>();
     let (cancel, steer, aside) = (Cancel::new(), Steer::new(), Aside::new());
@@ -209,13 +211,7 @@ fn turned(
         let run = conversation
             .runner()
             .starting(&events, &cancel, &steer, &aside);
-        client::turn(
-            conversation,
-            request,
-            Box::default(),
-            (remote, minting),
-            &run,
-        )
+        client::turn(conversation, request, Box::default(), remote, &run)
     };
     drop(events);
 
@@ -241,12 +237,7 @@ fn a_prompt_sent_as_bytes_is_answered_and_its_progress_streams_apart_from_where_
     let mut wire = Wire::default();
     let request = wire.sent(prompt("hi")?)?;
 
-    let (response, streamed) = turned(
-        &mut conversation,
-        &request,
-        &mut Remote::new(Vec::new()),
-        &Minting::new(),
-    )?;
+    let (response, streamed) = turned(&mut conversation, &request, &mut Remote::new(Vec::new()))?;
 
     assert_eq!(response.correlation, Some(request.correlation()));
     assert_eq!(
@@ -268,7 +259,7 @@ fn a_prompt_sent_as_bytes_is_answered_and_its_progress_streams_apart_from_where_
         "{streamed:?}"
     );
 
-    let standing = client::snapshot(&conversation, None);
+    let standing = client::snapshot(&conversation);
     assert_eq!(Snapshot::decode(&standing.encode()?)?, standing);
     assert_eq!(standing.turns, 1);
     assert_eq!(standing.pending, None);
@@ -289,7 +280,7 @@ fn a_yes_on_the_wire_runs_the_tool_once_and_a_no_never() -> Result<(), Failed> {
         let mut remote = Remote::new(vec![Saying::Fitting(ruling)]);
         let request = Wire::default().sent(prompt("change it")?)?;
 
-        let (response, _) = turned(&mut conversation, &request, &mut remote, &Minting::new())?;
+        let (response, _) = turned(&mut conversation, &request, &mut remote)?;
 
         // A no ends the turn, as it does at the terminal; what a client is
         // told is the sentence, under the one code a failed turn has.
@@ -318,6 +309,50 @@ fn a_yes_on_the_wire_runs_the_tool_once_and_a_no_never() -> Result<(), Failed> {
 }
 
 #[test]
+fn a_yes_composed_for_one_turn_settles_nothing_in_the_next() -> Result<(), Failed> {
+    let tree = Tree::new("client-two-turns")?;
+    let script = Script::new(vec![calling(), saying("once"), calling(), saying("twice")]);
+    let (mut conversation, ran) = asking(&tree, script)?;
+    let mut wire = Wire::default();
+
+    let mut first = Remote::new(vec![Saying::Fitting(Ruling::Allow)]);
+    let request = wire.sent(prompt("change it")?)?;
+    turned(&mut conversation, &request, &mut first)?;
+    assert_eq!(ran.load(Ordering::Relaxed), 1);
+    let earlier = first
+        .put
+        .first()
+        .map(Pending::id)
+        .ok_or("nothing was put")?;
+
+    // The yes that let turn one's call, word for word, and then nobody.
+    let mut second = Remote::new(vec![Saying::Naming(earlier), Saying::Gone]);
+    let request = wire.sent(prompt("and again")?)?;
+    turned(&mut conversation, &request, &mut second)?;
+
+    assert_eq!(
+        ran.load(Ordering::Relaxed),
+        1,
+        "turn one's yes let turn two's call"
+    );
+    let later = second
+        .put
+        .first()
+        .map(Pending::id)
+        .ok_or("nothing was put")?;
+    assert_ne!(earlier, later, "two turns showed one identity");
+    assert_eq!(
+        second
+            .refused
+            .iter()
+            .map(|refusal| refusal.code())
+            .collect::<Vec<_>>(),
+        [ErrorCode::StaleDecision]
+    );
+    Ok(())
+}
+
+#[test]
 fn a_yes_naming_another_action_never_runs_the_tool_however_it_is_worded() -> Result<(), Failed> {
     let tree = Tree::new("client-stale")?;
     let script = Script::new(vec![calling(), saying("after")]);
@@ -327,7 +362,7 @@ fn a_yes_naming_another_action_never_runs_the_tool_however_it_is_worded() -> Res
     let mut remote = Remote::new(vec![Saying::Elsewhere, Saying::Gone]);
     let request = Wire::default().sent(prompt("change it")?)?;
 
-    let (response, _) = turned(&mut conversation, &request, &mut remote, &Minting::new())?;
+    let (response, _) = turned(&mut conversation, &request, &mut remote)?;
 
     assert_eq!(ran.load(Ordering::Relaxed), 0);
     assert_eq!(
@@ -403,18 +438,13 @@ fn the_shipped_commands_are_carried_out_from_bytes_and_answered_in_bytes() -> Re
 
     let first = conversation.session().id().cloned();
     let request = Wire(500).sent(prompt("hi")?)?;
-    turned(
-        &mut conversation,
-        &request,
-        &mut Remote::new(Vec::new()),
-        &Minting::new(),
-    )?;
+    turned(&mut conversation, &request, &mut Remote::new(Vec::new()))?;
     let (_, outcome) = answered(&mut conversation, Command::Clear)?;
     assert!(
         matches!(outcome, Outcome::Cleared(ClearOutcome::Started { .. })),
         "{outcome:?}"
     );
-    assert_eq!(client::snapshot(&conversation, None).turns, 0);
+    assert_eq!(client::snapshot(&conversation).turns, 0);
 
     let first = first.ok_or("the first session had no identity")?;
     let (_, outcome) = answered(&mut conversation, Command::Resume(first.clone()))?;
@@ -422,7 +452,7 @@ fn the_shipped_commands_are_carried_out_from_bytes_and_answered_in_bytes() -> Re
         matches!(outcome, Outcome::Resumed(ResumeOutcome::Picked { .. })),
         "{outcome:?}"
     );
-    let resumed = client::snapshot(&conversation, None);
+    let resumed = client::snapshot(&conversation);
     assert_eq!(resumed.session, Some(first.clone()));
     assert_eq!(resumed.turns, 1);
     let (_, outcome) = answered(&mut conversation, Command::Resume(first))?;
@@ -432,7 +462,7 @@ fn the_shipped_commands_are_carried_out_from_bytes_and_answered_in_bytes() -> Re
     assert_eq!(outcome, Outcome::Mode(Mode::AllowEdits));
     let (_, outcome) = answered(&mut conversation, Command::CycleMode)?;
     assert_eq!(outcome, Outcome::Mode(Mode::FullAccess));
-    assert_eq!(client::snapshot(&conversation, None).mode, Mode::FullAccess);
+    assert_eq!(client::snapshot(&conversation).mode, Mode::FullAccess);
 
     let (_, outcome) = answered(
         &mut conversation,
@@ -467,7 +497,7 @@ fn what_cannot_be_carried_out_is_refused_by_code_and_changes_nothing() -> Result
         sessions: &sessions,
         workspace: &workspace,
     };
-    let before = client::snapshot(&conversation, None);
+    let before = client::snapshot(&conversation);
     let nobody = crucible_client_api::Name::new("nobody-by-this-name")?;
     let mut wire = Wire::default();
 
@@ -495,7 +525,7 @@ fn what_cannot_be_carried_out_is_refused_by_code_and_changes_nothing() -> Result
         );
     }
 
-    assert_eq!(client::snapshot(&conversation, None), before);
+    assert_eq!(client::snapshot(&conversation), before);
     assert!(standing.reached().is_empty());
     Ok(())
 }

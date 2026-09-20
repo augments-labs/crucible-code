@@ -188,7 +188,23 @@ pub fn keep(request: &Request, desk: &Desk<'_>) -> Performed {
             }
             Theme::Syntax(name) => remember::syntax(desk.switching.choosing, name.as_str()),
         }),
-        _ => Performed::Refused(ErrorCode::Busy.into()),
+        Command::Prompt(_)
+        | Command::Compact
+        | Command::Cancel
+        | Command::Decide(_)
+        | Command::Clear
+        | Command::Resume(_)
+        | Command::SelectModel { .. }
+        | Command::SetEffort(_)
+        | Command::SetMode(_)
+        | Command::CycleMode
+        | Command::Login { .. }
+        | Command::Logout { .. }
+        | Command::InspectCache
+        | Command::CleanCache
+        | Command::Sandbox { .. }
+        | Command::Help
+        | Command::Exit => Performed::Refused(ErrorCode::Busy.into()),
     }
 }
 

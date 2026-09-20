@@ -8,7 +8,7 @@
 
 use crucible_client_api as api;
 use crucible_client_api::{
-    Capabilities, Capability, Name, Pending, Problem, Progress, Snapshot, Stop, Text,
+    Capabilities, Capability, Name, Problem, Progress, Snapshot, Stop, Text,
 };
 use crucible_models::Effort;
 use crucible_runner::Event;
@@ -18,14 +18,17 @@ use crucible_types::StopReason;
 use crate::Conversation;
 use crate::switching::Retained;
 
-/// Where `conversation` stands, and what it is `pending` on.
+/// Where `conversation` stands.
 ///
 /// Read off the conversation itself, so it is the same whatever progress a
-/// client did or did not see go by. Called by a consumer with no terminal —
+/// client did or did not see go by. It is pending on nothing: a turn that is
+/// waiting on an answer has the conversation, so whoever can read one here is
+/// reading a conversation no turn holds, and no caller's word is taken for
+/// what it waits on. Called by a consumer with no terminal —
 /// today the one the headless tests drive; the terminal draws its status from
 /// the conversation directly and does not ask for one.
 #[must_use]
-pub fn snapshot(conversation: &Conversation, pending: Option<Pending>) -> Snapshot {
+pub fn snapshot(conversation: &Conversation) -> Snapshot {
     let runner = conversation.runner();
     let transcript = runner.transcript();
 
@@ -39,7 +42,7 @@ pub fn snapshot(conversation: &Conversation, pending: Option<Pending>) -> Snapsh
         turns: count(transcript.turns()),
         carrying: runner.carrying(),
         left: runner.left(),
-        pending,
+        pending: None,
     }
 }
 

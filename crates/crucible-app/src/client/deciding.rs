@@ -4,7 +4,11 @@
 //! call may run, and when a model puts questions to the person. Either way the
 //! stop is given an identity minted here, put to the [`Front`] as a
 //! [`Pending`], and held until a [`Decision`] naming that identity and
-//! answering that kind of question comes back. A decision naming any other
+//! answering that kind of question comes back. The count identities come from
+//! is this module's and the process's: no caller holds it, makes one or hands
+//! one in, so there is no second count to start again at one, and a decision
+//! composed for an earlier turn's action names nothing in a later turn, in
+//! this conversation or another. A decision naming any other
 //! identity is stale; one answering the other kind of question is wrong; both
 //! are refused by name and the action stays exactly as pending as it was — for
 //! [`TRIES`] such decisions. After that the front end is told the action is
@@ -41,7 +45,6 @@
 //! let verdict: Verdict = Ruling::Allow.into();
 //! ```
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crucible_client_api::bounds::ITEMS;
@@ -52,26 +55,18 @@ use crucible_client_api::{
 use crucible_tools::{Ask, Remember, Sensitivity, Verdict};
 use crucible_types::{Answered, Question, ToolCall};
 
-/// Where pending identities come from: one counter for as long as the host
-/// runs, so an identity is never given out twice.
+/// How many pending identities this process has given out.
 ///
-/// Cloned freely; every clone counts on the same counter. That is what makes
-/// the identity of an action from an earlier turn, or of one already settled,
-/// name nothing afterwards.
-#[derive(Debug, Clone, Default)]
-pub struct Minting(Arc<AtomicU64>);
+/// One count for as long as the host runs, private to this module, so an
+/// identity is never given out twice whoever asks for the turn and however
+/// many conversations the host holds. That is what makes the identity of an
+/// action from an earlier turn, or of one already settled, name nothing
+/// afterwards.
+static MINTED: AtomicU64 = AtomicU64::new(0);
 
-impl Minting {
-    /// A counter nothing has been minted from.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// The next identity.
-    fn next(&self) -> PendingId {
-        PendingId::new(self.0.fetch_add(1, Ordering::Relaxed).saturating_add(1))
-    }
+/// The next identity.
+fn mint() -> PendingId {
+    PendingId::new(MINTED.fetch_add(1, Ordering::Relaxed).saturating_add(1))
 }
 
 /// What a pending action is about, as the host holds it.
@@ -172,7 +167,6 @@ const DENIED: (Verdict, Remember) = (Verdict::Deny, Remember::Never);
 /// The permission engine's asking, put through a [`Front`].
 pub struct Deciding<'a> {
     front: &'a mut dyn Front,
-    minting: &'a Minting,
     capabilities: Capabilities,
 }
 
@@ -186,10 +180,9 @@ impl std::fmt::Debug for Deciding<'_> {
 
 impl<'a> Deciding<'a> {
     /// Asks `front`, for a client that said it has `capabilities`.
-    pub fn new(front: &'a mut dyn Front, minting: &'a Minting, capabilities: Capabilities) -> Self {
+    pub fn new(front: &'a mut dyn Front, capabilities: Capabilities) -> Self {
         Self {
             front,
-            minting,
             capabilities,
         }
     }
@@ -204,7 +197,7 @@ impl Ask for Deciding<'_> {
         }
 
         let pending = Pending::Permission {
-            id: self.minting.next(),
+            id: mint(),
             tool: Text::cut(&call.name),
             effect: effect(sensitivity),
             subject: Text::cut(&sensitivity.to_string()),
@@ -236,15 +229,17 @@ impl Ask for Deciding<'_> {
 ///
 /// What was chosen and the note beside it come back whole: a decision carries
 /// them as [`Said`], which refuses what it cannot hold, so nothing a tool acts
-/// on was shortened on the way. The questions themselves go out cut for a
-/// reader, and the answers offered beyond [`ITEMS`] are not put.
+/// on was shortened on the way. What a question asks and what an answer means
+/// go out cut for a reader; the answers themselves go out whole or not at all.
 ///
 /// More than [`ITEMS`] questions are declined without being put, and the asker
 /// hears "nobody is there": one pending action holds no more, and half of them
-/// answered is not an answer. The question tool refuses a call that long before
-/// it asks anything, so this is the floor under an asker that does not.
+/// answered is not an answer. So is a question offering more than [`ITEMS`]
+/// answers, or an answer whose name would be cut: an answer left out cannot be
+/// chosen, and a name that was cut is not the one the asker reads back. The
+/// question tool refuses a call that long before it asks anything, so this is
+/// the floor under an asker that does not.
 pub fn questions(
-    minting: &Minting,
     capabilities: Capabilities,
     front: &mut dyn Front,
     asked: &[Question],
@@ -256,8 +251,8 @@ pub fn questions(
     }
 
     let pending = Pending::Questions {
-        id: minting.next(),
-        questions: asked.iter().map(put).collect(),
+        id: mint(),
+        questions: asked.iter().map(put).collect::<Option<_>>()?,
     };
 
     let mut tries = 0;
@@ -285,21 +280,29 @@ pub fn questions(
     }
 }
 
-/// One question, as it is put to a client.
-fn put(question: &Question) -> Asked {
-    Asked {
+/// One question, as it is put to a client, or `None` where it cannot be put
+/// whole: more answers than a list here holds, or an answer's name longer than
+/// the words here carry.
+fn put(question: &Question) -> Option<Asked> {
+    if question.answers().len() > ITEMS {
+        return None;
+    }
+
+    Some(Asked {
         heading: Text::cut(question.heading()),
         asks: Text::cut(question.question()),
         several: question.takes_several(),
         choices: question
             .answers()
-            .take(ITEMS)
-            .map(|answer| Choice {
-                name: Text::cut(answer.answer()),
-                says: Text::cut(answer.says()),
+            .map(|answer| {
+                let name = Text::cut(answer.answer());
+                (!name.truncated()).then(|| Choice {
+                    name,
+                    says: Text::cut(answer.says()),
+                })
             })
-            .collect(),
-    }
+            .collect::<Option<_>>()?,
+    })
 }
 
 /// The kind of thing a call would do, as a client is told it.

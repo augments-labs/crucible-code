@@ -16,6 +16,8 @@
 //! permission memory and the policy. Those are services and settings a run is
 //! given rather than things it accumulates, and they stay on the runner.
 
+use std::fmt;
+
 use crucible_agents::Decision;
 use crucible_core::{PromptCacheAttempt, PromptCacheScopeDigest, ToolSnapshot, Transcript, TurnId};
 
@@ -144,11 +146,21 @@ impl RunState {
 }
 
 /// One committed input decision, and the words it was reached about.
-#[derive(Debug)]
+///
+/// `Debug` redacts the words, which are the reader's prompt.
 pub(super) struct Checked {
     /// Exactly what was asked, so that different words are a different
     /// invocation rather than one this decision covers.
     asked: Box<str>,
     /// What the checks made of it.
     decision: Decision,
+}
+
+impl fmt::Debug for Checked {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Checked")
+            .field("asked", &"[redacted]")
+            .field("decision", &self.decision)
+            .finish()
+    }
 }

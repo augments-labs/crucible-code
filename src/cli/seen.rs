@@ -30,7 +30,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crucible_app::Conversation;
-use crucible_app::client::{self, Ended, Front, Minting, Shown};
+use crucible_app::client::{self, Ended, Front, Shown};
 use crucible_client_api::bounds::SAID_BYTES;
 use crucible_client_api::{
     Capabilities, Command, Decision, Lasting, Pending, Picked, Refusal, Ruling, Said,
@@ -134,24 +134,22 @@ impl Post for Relay {
 pub(crate) struct Asking {
     to: SyncSender<Seen>,
     answers: Receiver<Answer>,
-    minting: Minting,
     client: Client,
 }
 
 impl Asking {
     /// Takes the two ends it needs — where questions go, where answers arrive
-    /// — and what a request is made with: the count `putting` names pending
-    /// actions from, and the client that numbers requests.
-    pub(crate) fn new(
+    /// — and what a request is made with: the client that numbers requests.
+    /// What a pending action is named from is the application's and is not
+    /// handed in.
+    pub(crate) const fn new(
         to: SyncSender<Seen>,
         answers: Receiver<Answer>,
-        putting: &Putting,
         client: Client,
     ) -> Self {
         Self {
             to,
             answers,
-            minting: putting.minting.clone(),
             client,
         }
     }
@@ -166,8 +164,7 @@ impl Asking {
         run: &RunContext<'_>,
     ) -> Ended {
         let request = self.client.asking(command);
-        let minting = self.minting.clone();
-        let ended = client::turn(conversation, &request, attached, (self, &minting), run);
+        let ended = client::turn(conversation, &request, attached, self, run);
 
         #[cfg(test)]
         self.client
@@ -339,7 +336,7 @@ mod tests {
     /// What the permission engine hears when it asks through `asking`, the way
     /// a turn does.
     fn asked(asking: &mut Asking) -> Answer {
-        Deciding::new(asking, &Minting::new(), Capabilities::every()).ask(&call(), &running())
+        Deciding::new(asking, Capabilities::every()).ask(&call(), &running())
     }
 
     fn call() -> ToolCall {
@@ -378,7 +375,7 @@ mod tests {
     fn a_question_waits_for_the_answer_it_is_given() {
         let (to, seen) = sync_channel(2);
         let (reply, answers) = channel();
-        let mut asking = Asking::new(to, answers, &Putting::new(), Client::new());
+        let mut asking = Asking::new(to, answers, Client::new());
 
         let waiting = std::thread::spawn(move || asked(&mut asking));
 
@@ -395,7 +392,7 @@ mod tests {
         let (to, seen) = sync_channel(2);
         let (reply, answers) = channel::<Answer>();
         let client = Client::new();
-        let mut asking = Asking::new(to, answers, &Putting::new(), client.clone());
+        let mut asking = Asking::new(to, answers, client.clone());
         drop(reply);
 
         let answer = asked(&mut asking);
@@ -417,7 +414,7 @@ mod tests {
         let (to, seen) = sync_channel(2);
         let (_reply, answers) = channel::<Answer>();
         let client = Client::new();
-        let mut asking = Asking::new(to, answers, &Putting::new(), client.clone());
+        let mut asking = Asking::new(to, answers, client.clone());
         drop(seen);
 
         assert_eq!(asked(&mut asking), (Verdict::Deny, Remember::Never));
@@ -658,9 +655,6 @@ struct Ends {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Putting {
     ends: Arc<Mutex<Option<Ends>>>,
-    /// What every pending action of this process is named from, a permission
-    /// question as much as these: one count, so no name is given out twice.
-    minting: Minting,
 }
 
 impl Putting {
@@ -698,7 +692,7 @@ impl Put for Putting {
         let held = self.ends.lock().ok()?;
         let mut ends = held.as_ref()?;
 
-        client::questions(&self.minting, Capabilities::every(), &mut ends, questions)
+        client::questions(Capabilities::every(), &mut ends, questions)
     }
 }
 

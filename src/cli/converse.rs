@@ -1226,7 +1226,7 @@ fn take<T: Terminal>(
     let (answering, hear) = Answering::new(&terms.putting, &post);
     let mut seen = Inbox::new(seen);
 
-    let asking = Asking::new(post.clone(), hear, &terms.putting, terms.client.clone());
+    let asking = Asking::new(post.clone(), hear, terms.client.clone());
     let relay = Relay::new(post, terms.putting.clone());
     let running = terms.cancel.clone();
 

@@ -2,9 +2,10 @@
 //!
 //! A listing of what is installed and what could not be read, written from a
 //! sweep that has already happened. [`installed`] makes that sweep and reads
-//! the home configuration; nothing here starts anything: the flag exists so that somebody can see what crucible found
-//! *before* deciding whether any of it should ever run, and a listing that had
-//! to run an extension to describe it would be the opposite of that.
+//! the home configuration; nothing here starts anything: the flag exists so
+//! that somebody can see what crucible found *before* deciding whether any of
+//! it should ever run, and a listing that had to run an extension to describe
+//! it would be the opposite of that.
 //!
 //! The whole answer is built as one string and written once, because it goes to
 //! standard output for a person or a pipe rather than to the renderer — by the

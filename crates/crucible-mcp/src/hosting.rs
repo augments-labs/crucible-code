@@ -105,7 +105,9 @@ const WITHIN: char = '/';
 ///
 /// Inert: building one starts nothing, opens nothing and reaches nothing. It is
 /// the selection, and [`Hosting`] is the only thing that acts on it.
-#[derive(Debug)]
+///
+/// `Debug` says which server and how many arguments, never what they say: an
+/// argument is where a server is handed a token or a connection string.
 pub struct Chosen {
     /// What the tools it offers are named under, which is what the user typed.
     name: Box<str>,
@@ -127,6 +129,16 @@ pub struct Chosen {
     /// the selection could only be right about one of them.
     policy: SandboxPolicy,
     enablement: Option<Arc<SandboxEnablement>>,
+}
+
+impl std::fmt::Debug for Chosen {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Chosen")
+            .field("name", &self.name)
+            .field("program", &self.program)
+            .field("arguments", &self.arguments.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl Chosen {

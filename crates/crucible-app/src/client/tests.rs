@@ -7,6 +7,7 @@
 
 use std::collections::VecDeque;
 
+use crucible_client_api::bounds::{ITEMS, TEXT_BYTES};
 use crucible_client_api::{
     Capabilities, Capability, Decision, ErrorCode, Lasting, Pending, PendingId, Picked, Progress,
     Refusal, Ruling, Said,
@@ -14,7 +15,7 @@ use crucible_client_api::{
 use crucible_tools::{Ask, Remember, Sensitivity, Target, Verdict};
 use crucible_types::{Answer, Question, ToolArgs, ToolCall, ToolId};
 
-use super::deciding::{Deciding, Front, Minting, Shown, questions};
+use super::deciding::{Deciding, Front, Shown, questions};
 use super::reading::progress;
 
 /// What a scripted front end says next about whatever it is put.
@@ -99,8 +100,8 @@ fn changing() -> Sensitivity {
 }
 
 /// What the engine is handed when `front` is asked about one call.
-fn asked(front: &mut Scripted, minting: &Minting, has: Capabilities) -> (Verdict, Remember) {
-    Deciding::new(front, minting, has).ask(&call(), &changing())
+fn asked(front: &mut Scripted, has: Capabilities) -> (Verdict, Remember) {
+    Deciding::new(front, has).ask(&call(), &changing())
 }
 
 fn one_question() -> Vec<Question> {
@@ -113,23 +114,21 @@ fn one_question() -> Vec<Question> {
 
 #[test]
 fn a_ruling_that_fits_is_the_verdict_and_lasts_only_as_long_as_it_said() {
-    let minting = Minting::new();
-
     let mut once = Scripted::saying([Reply::Fitting(Ruling::Allow, Lasting::Once)]);
     assert_eq!(
-        asked(&mut once, &minting, Capabilities::every()),
+        asked(&mut once, Capabilities::every()),
         (Verdict::Allow, Remember::Never)
     );
 
     let mut session = Scripted::saying([Reply::Fitting(Ruling::Allow, Lasting::Session)]);
     assert_eq!(
-        asked(&mut session, &minting, Capabilities::every()),
+        asked(&mut session, Capabilities::every()),
         (Verdict::Allow, Remember::Session)
     );
 
     let mut no = Scripted::saying([Reply::Fitting(Ruling::Deny, Lasting::Session)]);
     assert_eq!(
-        asked(&mut no, &minting, Capabilities::every()),
+        asked(&mut no, Capabilities::every()),
         (Verdict::Deny, Remember::Session)
     );
     assert!(once.refused.is_empty() && session.refused.is_empty() && no.refused.is_empty());
@@ -137,10 +136,9 @@ fn a_ruling_that_fits_is_the_verdict_and_lasts_only_as_long_as_it_said() {
 
 #[test]
 fn a_yes_naming_another_action_settles_nothing_and_the_action_stays_pending() {
-    let minting = Minting::new();
     let mut front = Scripted::saying([Reply::Naming(9_000, Ruling::Allow)]);
 
-    let handed = asked(&mut front, &minting, Capabilities::every());
+    let handed = asked(&mut front, Capabilities::every());
 
     assert_eq!(handed, (Verdict::Deny, Remember::Never));
     assert_eq!(front.refused, [ErrorCode::StaleDecision]);
@@ -152,19 +150,15 @@ fn a_yes_naming_another_action_settles_nothing_and_the_action_stays_pending() {
 fn a_yes_naming_an_action_already_settled_names_nothing_afterwards() {
     // The first call is allowed for real. Its identity is then replayed at the
     // second call, which is what a client holding an old yes would send.
-    let minting = Minting::new();
     let mut first = Scripted::saying([Reply::Fitting(Ruling::Allow, Lasting::Once)]);
-    assert_eq!(
-        asked(&mut first, &minting, Capabilities::every()).0,
-        Verdict::Allow
-    );
+    assert_eq!(asked(&mut first, Capabilities::every()).0, Verdict::Allow);
     let settled = first.put.first().map(Pending::id).expect("one was put");
 
     let mut second = Scripted::saying([
         Reply::Naming(settled.number(), Ruling::Allow),
         Reply::Naming(settled.number(), Ruling::Allow),
     ]);
-    let handed = asked(&mut second, &minting, Capabilities::every());
+    let handed = asked(&mut second, Capabilities::every());
 
     assert_eq!(handed, (Verdict::Deny, Remember::Never));
     assert_eq!(
@@ -176,10 +170,9 @@ fn a_yes_naming_an_action_already_settled_names_nothing_afterwards() {
 
 #[test]
 fn an_answer_to_the_other_kind_of_question_settles_no_permission() {
-    let minting = Minting::new();
     let mut front = Scripted::saying([Reply::Answers(1), Reply::Declining]);
 
-    let handed = asked(&mut front, &minting, Capabilities::every());
+    let handed = asked(&mut front, Capabilities::every());
 
     assert_eq!(handed, (Verdict::Deny, Remember::Never));
     assert_eq!(
@@ -190,13 +183,12 @@ fn an_answer_to_the_other_kind_of_question_settles_no_permission() {
 
 #[test]
 fn a_client_that_never_said_it_answers_permissions_is_not_asked_and_the_call_is_denied() {
-    let minting = Minting::new();
     let mut front = Scripted::saying([Reply::Fitting(Ruling::Allow, Lasting::Session)]);
     let without = Capabilities::none()
         .with(Capability::Questions)
         .with(Capability::Progress);
 
-    let handed = asked(&mut front, &minting, without);
+    let handed = asked(&mut front, without);
 
     assert_eq!(handed, (Verdict::Deny, Remember::Never));
     assert!(front.put.is_empty(), "the yes it had ready was never heard");
@@ -204,14 +196,13 @@ fn a_client_that_never_said_it_answers_permissions_is_not_asked_and_the_call_is_
 
 #[test]
 fn a_refused_decision_leaves_the_action_for_the_one_that_fits() {
-    let minting = Minting::new();
     let mut front = Scripted::saying([
         Reply::Naming(0, Ruling::Allow),
         Reply::Declining,
         Reply::Fitting(Ruling::Allow, Lasting::Once),
     ]);
 
-    let handed = asked(&mut front, &minting, Capabilities::every());
+    let handed = asked(&mut front, Capabilities::every());
 
     assert_eq!(handed, (Verdict::Allow, Remember::Never));
     assert_eq!(
@@ -222,16 +213,14 @@ fn a_refused_decision_leaves_the_action_for_the_one_that_fits() {
 
 #[test]
 fn questions_are_settled_only_by_one_answer_each_under_their_own_identity() {
-    let minting = Minting::new();
     let asking = one_question();
 
     let mut ruled = Scripted::saying([Reply::Fitting(Ruling::Allow, Lasting::Once)]);
-    assert!(questions(&minting, Capabilities::every(), &mut ruled, &asking).is_none());
+    assert!(questions(Capabilities::every(), &mut ruled, &asking).is_none());
     assert_eq!(ruled.refused, [ErrorCode::WrongDecision]);
 
     let mut short = Scripted::saying([Reply::Answers(2), Reply::Answers(1)]);
-    let given =
-        questions(&minting, Capabilities::every(), &mut short, &asking).expect("the second fits");
+    let given = questions(Capabilities::every(), &mut short, &asking).expect("the second fits");
     assert_eq!(short.refused, [ErrorCode::InvalidArgument]);
     assert_eq!(given.len(), 1);
     let answer = given.first().expect("one answer");
@@ -239,24 +228,49 @@ fn questions_are_settled_only_by_one_answer_each_under_their_own_identity() {
     assert_eq!(answer.note(), "a note");
 
     let mut declined = Scripted::saying([Reply::Declining]);
-    assert!(questions(&minting, Capabilities::every(), &mut declined, &asking).is_none());
+    assert!(questions(Capabilities::every(), &mut declined, &asking).is_none());
     assert!(declined.refused.is_empty());
 
     let mut unheard = Scripted::saying([Reply::Answers(1)]);
     let without = Capabilities::none().with(Capability::Permissions);
-    assert!(questions(&minting, without, &mut unheard, &asking).is_none());
+    assert!(questions(without, &mut unheard, &asking).is_none());
     assert!(unheard.put.is_empty());
 }
 
 #[test]
+fn a_question_that_cannot_be_put_whole_is_not_put_short() {
+    // An answer that was not offered cannot be chosen, and a name that was cut
+    // is not the name the asker reads back: either way what was shown is not
+    // the question, so nobody is asked it.
+    let many = (0..=ITEMS).map(|number| Answer::new(format!("answer {number}")));
+    let crowded = vec![Question::new("Colour", "Which colour?", many)];
+    let mut front = Scripted::saying([Reply::Answers(1)]);
+    assert!(questions(Capabilities::every(), &mut front, &crowded).is_none());
+    assert!(front.put.is_empty(), "put with answers left out");
+
+    let long = "n".repeat(TEXT_BYTES + 1);
+    let named = vec![Question::new(
+        "Colour",
+        "Which colour?",
+        [Answer::new(long), Answer::new("no")],
+    )];
+    let mut front = Scripted::saying([Reply::Answers(1)]);
+    assert!(questions(Capabilities::every(), &mut front, &named).is_none());
+    assert!(front.put.is_empty(), "put with an answer's name cut");
+
+    let full = (0..ITEMS).map(|number| Answer::new(format!("answer {number}")));
+    let fitting = vec![Question::new("Colour", "Which colour?", full)];
+    let mut front = Scripted::saying([Reply::Answers(1)]);
+    assert!(questions(Capabilities::every(), &mut front, &fitting).is_some());
+}
+
+#[test]
 fn an_identity_is_never_minted_twice() {
-    let minting = Minting::new();
-    let other = minting.clone();
     let mut front = Scripted::default();
 
-    asked(&mut front, &minting, Capabilities::every());
-    asked(&mut front, &other, Capabilities::every());
-    questions(&minting, Capabilities::every(), &mut front, &one_question());
+    asked(&mut front, Capabilities::every());
+    asked(&mut front, Capabilities::every());
+    questions(Capabilities::every(), &mut front, &one_question());
 
     let mut ids: Vec<u64> = front.put.iter().map(|put| put.id().number()).collect();
     assert_eq!(ids.len(), 3);
@@ -295,22 +309,14 @@ impl Front for Stubborn {
 
 #[test]
 fn a_front_end_that_never_fits_its_answer_is_asked_a_few_times_and_then_no_more() {
-    let minting = Minting::new();
-
     let mut permission = Stubborn::default();
-    let handed =
-        Deciding::new(&mut permission, &minting, Capabilities::every()).ask(&call(), &changing());
+    let handed = Deciding::new(&mut permission, Capabilities::every()).ask(&call(), &changing());
     assert_eq!(handed, (Verdict::Deny, Remember::Never));
     assert!(permission.puts <= 8, "put {} times", permission.puts);
     assert_eq!(permission.refused.last(), Some(&"abandoned"));
 
     let mut asking = Stubborn::default();
-    let given = questions(
-        &minting,
-        Capabilities::every(),
-        &mut asking,
-        &one_question(),
-    );
+    let given = questions(Capabilities::every(), &mut asking, &one_question());
     assert!(given.is_none());
     assert!(asking.puts <= 8, "put {} times", asking.puts);
     assert_eq!(asking.refused.last(), Some(&"abandoned"));

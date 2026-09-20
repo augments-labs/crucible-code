@@ -9,7 +9,7 @@ use crucible_runner::{RunContext, TurnError, Turned};
 use crucible_runtime::Cancel;
 use crucible_types::{Attachment, Compacting, Spend};
 
-use super::deciding::{Deciding, Front, Minting};
+use super::deciding::{Deciding, Front};
 use super::reading;
 use crate::Conversation;
 
@@ -33,18 +33,19 @@ pub enum Ended {
 /// before this is called.
 ///
 /// Every permission question the turn raises is put to `front` under an
-/// identity from `minting`, and settled only by a decision that names it.
+/// identity the application mints, which no caller supplies or can start
+/// again, and settled only by a decision that names it.
 /// What the turn reports on the way goes to `run`, as it always has.
 pub fn turn(
     conversation: &mut Conversation,
     request: &Request,
     attached: Box<[Attachment]>,
-    (front, minting): (&mut dyn Front, &Minting),
+    front: &mut dyn Front,
     run: &RunContext<'_>,
 ) -> Ended {
     match request.command() {
         Command::Prompt(prompt) => {
-            let mut ask = Deciding::new(front, minting, request.capabilities());
+            let mut ask = Deciding::new(front, request.capabilities());
             Ended::Turn(conversation.turn(prompt.as_str(), attached, &mut ask, run))
         }
         Command::Compact => {
@@ -53,7 +54,22 @@ pub fn turn(
             let mut spent = Spend::NONE;
             Ended::Room(conversation.compact(Compacting::Asked, run, &mut spent))
         }
-        _ => Ended::Refused(ErrorCode::Busy.into()),
+        Command::Theme(_)
+        | Command::Cancel
+        | Command::Decide(_)
+        | Command::Clear
+        | Command::Resume(_)
+        | Command::SelectModel { .. }
+        | Command::SetEffort(_)
+        | Command::SetMode(_)
+        | Command::CycleMode
+        | Command::Login { .. }
+        | Command::Logout { .. }
+        | Command::InspectCache
+        | Command::CleanCache
+        | Command::Sandbox { .. }
+        | Command::Help
+        | Command::Exit => Ended::Refused(ErrorCode::Busy.into()),
     }
 }
 

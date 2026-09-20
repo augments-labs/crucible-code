@@ -1747,3 +1747,24 @@ fn a_ceiling_of_one_restart_is_spent_once_and_the_next_ending_is_the_last() {
     );
     hosting.dispose(&context).expect("nothing left to stop");
 }
+
+#[test]
+fn a_selection_never_shows_the_arguments_its_server_is_started_with() {
+    // An argument is where a server is handed a token or a connection string,
+    // so a selection written into a log line says how many there are and not
+    // what they say.
+    let canary = "--token=canary-7f3a";
+    let chosen = Chosen::new(
+        "docs",
+        PROGRAM,
+        [std::ffi::OsString::from(canary), "--quiet".into()],
+        policy(),
+    );
+
+    let shown = format!("{chosen:?}");
+
+    assert!(!shown.contains("canary"), "{shown}");
+    assert!(!shown.contains("--quiet"), "{shown}");
+    assert!(shown.contains("docs"), "{shown}");
+    assert!(shown.contains("arguments: 2"), "{shown}");
+}

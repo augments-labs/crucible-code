@@ -17,6 +17,8 @@
 //! They stay where they are, at the tool level, judging one call's arguments
 //! and one call's result.
 
+use std::fmt;
+
 use crucible_types::{AgentId, RunId};
 
 /// What one check is told about the invocation it is judging.
@@ -34,11 +36,24 @@ use crucible_types::{AgentId, RunId};
 ///     let _ = context.session();
 /// }
 /// ```
-#[derive(Debug, Clone, Copy)]
+///
+/// `Debug` names the run and the agent and redacts the words, which are the
+/// reader's prompt.
+#[derive(Clone, Copy)]
 pub struct AgentContext<'a> {
     run: RunId,
     agent: &'a AgentId,
     said: &'a str,
+}
+
+impl fmt::Debug for AgentContext<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AgentContext")
+            .field("run", &self.run)
+            .field("agent", &self.agent)
+            .field("said", &"[redacted]")
+            .finish()
+    }
 }
 
 impl<'a> AgentContext<'a> {
@@ -215,4 +230,23 @@ pub trait OutputGuardrail: std::fmt::Debug + Send + Sync {
         context: &AgentContext<'_>,
         candidate: &str,
     ) -> Result<Decision, GuardrailError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn what_a_check_is_told_never_shows_the_words_it_is_judging() {
+        // The words are the reader's prompt, which the transcript redacts once
+        // they are a message. A check that logs what it was handed is not where
+        // they stop being theirs.
+        let agent = AgentId::new("coding");
+        let context = AgentContext::new(RunId::new(), &agent, "said-debug-canary");
+
+        let shown = format!("{context:?}");
+        assert!(!shown.contains("said-debug-canary"), "{shown}");
+        assert!(shown.contains("redacted"), "{shown}");
+        assert!(shown.contains("coding"), "{shown}");
+    }
 }

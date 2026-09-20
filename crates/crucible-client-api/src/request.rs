@@ -221,9 +221,12 @@ impl Request {
     /// # Errors
     ///
     /// [`Refused`], carrying the code and the request's identity where the
-    /// frame held one. A frame refused while it was being read — too long, too
-    /// many entries, nested too deep, a key said twice, not JSON — was never
-    /// read as far as an identity, and carries none.
+    /// frame held one. A frame refused while it was being read was never read
+    /// as far as an identity, and carries none: [`ErrorCode::TooLarge`] for one
+    /// that is too long, holds too many entries in one list or object, holds
+    /// more values in all than [`VALUES`](crate::bounds::VALUES) or nests too
+    /// deep, and [`ErrorCode::Malformed`] for a key said twice or what is not
+    /// JSON.
     pub fn decode(bytes: &[u8]) -> Result<Self, Refused> {
         let unpaired = |refusal| Refused {
             correlation: None,

@@ -24,10 +24,10 @@ change in any release with no deprecation period.
   session, and a prompt, `/clear`, `/resume`, a model, provider or effort
   switch, and what `/login` and `/logout` do to the session are all driven
   through it with no terminal, which leaves the command line argument parsing
-  and drawing. No library name moved; what
-  was the binary's private wiring is imported from `crucible_app`, never
-  through `crucible-core`. A prompt or an answer a guardrail refuses now prints
-  the guardrail and its reason instead of returning a silent prompt.
+  and drawing. No library name moved; what was the binary's private wiring is
+  imported from `crucible_app`, never through `crucible-core`. A prompt or an
+  answer a guardrail refuses now prints the guardrail and its reason instead of
+  returning a silent prompt.
 - **The runner records through a storage contract rather than a session.**
   `crucible-runner` no longer depends on `crucible-session`: `Runner::new`,
   `Runner::with_toolset` and `Runner::pick_up` take an `Arc<dyn JournalStore>`,
