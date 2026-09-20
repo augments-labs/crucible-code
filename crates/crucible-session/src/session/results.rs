@@ -24,6 +24,15 @@ use sha2::{Digest as _, Sha256};
 use super::{privacy, wire};
 
 const RECEIPT_DOMAIN: &[u8] = b"crucible:session-call-result:v1\0";
+/// The revision a record says it is written in.
+///
+/// A receipt is taken over the result as the session log spells it, and a
+/// reader spells what it read again before comparing. So a field that spelling
+/// gains is a field an older build drops and then refuses the record for,
+/// under this same number: a result saying which vendor answered it is one
+/// such, written since the number was last looked at. No call that defers its
+/// result says so today. The first that does is a format change, and this
+/// number and what an older build makes of the record are decided then.
 const RESULT_VERSION: u32 = 1;
 const MAX_RESULT_FILES: usize = 4_096;
 
