@@ -1,6 +1,8 @@
-use crucible_core::{
-    ApiKey, Delta, Header, HeaderKey, Message, PricingDate, PromptCacheMechanism,
-    PromptCacheRetentionClass, PromptCacheSupport, StopReason, Transcript,
+use crucible_credentials::{ApiKey, Header, HeaderKey};
+use crucible_models::Delta;
+use crucible_types::{
+    Message, PricingDate, PromptCacheMechanism, PromptCacheRetentionClass, PromptCacheSupport,
+    StopReason, Transcript,
 };
 
 use super::stream::tests::{ANSWER, deltas};
@@ -32,7 +34,7 @@ fn asking(text: &str) -> Request<'static> {
         .expect("valid fixture transcript");
 
     Request {
-        purpose: crucible_core::RequestPurpose::Turn,
+        purpose: crucible_models::RequestPurpose::Turn,
         model: "kimi-test",
         transcript: Box::leak(Box::new(transcript)),
         tools: &[],

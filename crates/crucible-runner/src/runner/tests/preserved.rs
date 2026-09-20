@@ -37,7 +37,7 @@ fn a_steered_line_is_recorded_at_the_top_of_the_pass_it_joins() {
     steering.turn("first").expect("a turn");
 
     assert_eq!(
-        shape(steering.runner.transcript()),
+        shape(steering.runner.state.transcript()),
         ["user", "user", "agent", "results", "agent"],
     );
     assert!(!steering.steer.any(), "the queue was not drained");
@@ -94,7 +94,7 @@ fn a_line_typed_while_a_call_is_out_lands_after_the_answer_it_waited_for() {
     steering.turn("first").expect("a turn");
 
     assert_eq!(
-        shape(steering.runner.transcript()),
+        shape(steering.runner.state.transcript()),
         ["user", "agent", "results", "user", "agent"],
     );
     assert!(!steering.steer.any(), "the queue was not drained");
@@ -120,7 +120,7 @@ fn a_line_typed_while_the_answer_arrives_still_waits_for_the_call_it_interrupted
     steering.turn("first").expect("a turn");
 
     assert_eq!(
-        shape(steering.runner.transcript()),
+        shape(steering.runner.state.transcript()),
         ["user", "agent", "results", "user", "agent"],
     );
     assert!(!steering.steer.any(), "the queue was not drained");
@@ -145,7 +145,7 @@ fn a_turn_stopped_in_a_tool_pass_still_records_what_its_calls_answered() {
 
     assert_eq!(stop, StopReason::Cancelled);
     assert_eq!(
-        shape(scripted.runner.transcript()),
+        shape(scripted.runner.state.transcript()),
         ["user", "agent", "results"],
     );
 }

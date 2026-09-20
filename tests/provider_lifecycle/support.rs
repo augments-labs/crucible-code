@@ -9,15 +9,16 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use crucible_context::ContextInputs;
 use crucible_core::{
-    AgentId, ApiKey, Approved, Aside, Ask, Cancel, DescribeTool, Effort, EventEnvelope, Header,
-    HeaderKey, Host, Post, Provider, Remember, Sensitivity, SessionId, Steer, StopReason, Summary,
-    Tool, ToolArgs, ToolCall, ToolContext, ToolError, ToolOutput, TurnError, Verdict, Workspace,
+    AgentId, ApiKey, Approved, Aside, Ask, Cancel, DescribeTool, Effort, Header, HeaderKey, Host,
+    JournalStore, Provider, Remember, Sensitivity, SessionId, Steer, StopReason, Summary, Tool,
+    ToolArgs, ToolCall, ToolContext, ToolError, ToolOutput, Verdict, Workspace,
 };
 use crucible_provider::{Anthropic, Endpoint, Google, Https, OpenAi};
-use crucible_runner::{
-    AgentSpec, Compaction, ContextInputs, Model, RunPolicy, Runner, Session, Tools,
-};
+use crucible_runner::{Agent, Compaction, Model, RunPolicy, Runner, Tools};
+use crucible_runner::{EventEnvelope, Post, TurnError};
+use crucible_session::Session;
 use serde_json::{Value, json};
 
 pub(crate) const MODELS: [&str; 6] = [
@@ -74,6 +75,23 @@ impl Sample {
         format!("{:?}", self.events.lock().expect("valid fixture"))
     }
     pub(crate) fn runner(&self, model: &str, vendor: &Vendor, session: Session) -> Runner {
+        self.recording(model, vendor, Arc::new(session))
+    }
+    /// The same runner, over a session the caller keeps a share of.
+    ///
+    /// The runner is handed a storage contract and never learns what is behind
+    /// it, so a test that wants to end the recording itself, or read the file
+    /// the records landed in, has to hold the session too.
+    pub(crate) fn recording(&self, model: &str, vendor: &Vendor, session: Arc<Session>) -> Runner {
+        self.recording_through(model, vendor, session)
+    }
+    /// The same runner, over whatever stands behind the storage contract.
+    pub(crate) fn recording_through(
+        &self,
+        model: &str,
+        vendor: &Vendor,
+        session: Arc<dyn JournalStore>,
+    ) -> Runner {
         let mut tools = Tools::new();
         tools
             .add_builtin(Count(self.executed.clone(), self.padding))
@@ -81,7 +99,7 @@ impl Sample {
         Runner::new(
             provider(model, vendor.endpoint.clone(), KEY),
             tools,
-            AgentSpec::new(
+            Agent::new(
                 AgentId::new("fixture"),
                 Model {
                     name: model.into(),
@@ -168,6 +186,12 @@ pub(crate) fn try_turn(
     let aside = Aside::new();
     let context = run.starting(sample, &cancel, &steer, &aside);
     run.turn(prompt, Box::new([]), &mut Permit(sample), &context)
+        .map(|turned| {
+            turned
+                .result()
+                .expect("a fixture no guardrail refuses")
+                .stop()
+        })
 }
 pub(crate) fn turn(run: &mut Runner, prompt: &str, sample: &Sample) -> StopReason {
     try_turn(run, prompt, sample).expect("valid fixture")

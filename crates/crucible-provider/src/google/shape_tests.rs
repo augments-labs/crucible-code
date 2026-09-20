@@ -2,9 +2,10 @@
 
 use super::{PROTOCOL, body, wire};
 use crate::{sse::SseEvent, stream::Wire};
-use crucible_core::{
-    Continuation, ContinuationData, ContinuationPart, ContinuationScope, Message, Request,
-    RequestPurpose, StopReason, Transcript,
+use crucible_models::{Request, RequestPurpose};
+use crucible_types::{
+    Continuation, ContinuationData, ContinuationPart, ContinuationScope, Message, StopReason,
+    Transcript,
 };
 use serde_json::{Value, json};
 

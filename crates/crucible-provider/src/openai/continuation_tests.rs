@@ -2,9 +2,10 @@
 
 use super::*;
 use crate::transport::Replay;
-use crucible_core::{
-    ApiKey, Continuation, Delta, Effort, Header, HeaderKey, Message, RecordedToolOutput,
-    RequestPurpose, ToolArgs, ToolCall, ToolId, ToolResult, Transcript,
+use crucible_credentials::{ApiKey, Header, HeaderKey};
+use crucible_models::{Delta, Effort, RequestPurpose};
+use crucible_types::{
+    Continuation, Message, RecordedToolOutput, ToolArgs, ToolCall, ToolId, ToolResult, Transcript,
 };
 use serde_json::{Value, json};
 use std::fmt::Write as _;
@@ -531,7 +532,7 @@ fn astra_transient_stream_errors_keep_retry_classification_without_private_prose
 
 #[test]
 fn astra_replay_rejects_invalid_native_headers_before_sending() {
-    use crucible_core::{ContinuationData, ContinuationPart};
+    use crucible_types::{ContinuationData, ContinuationPart};
     let (provider, replay) = provider(VENDOR, &sse(&events(&output(), true)));
     let mut history = Transcript::new();
     history.push(Message::said("read a")).unwrap();
@@ -593,13 +594,13 @@ fn astra_explicit_cache_uses_a_supported_input_block_without_mutating_native_ite
     history.push(Message::said("continue")).unwrap();
     let request = crate::fake::cached(
         request(Box::leak(Box::new(history))),
-        crucible_core::PromptCacheMechanism::ExplicitBreakpoints,
+        crucible_types::PromptCacheMechanism::ExplicitBreakpoints,
         PromptCacheRetentionClass::Ephemeral,
         false,
     );
     assert_eq!(
         provider.prompt_cache_encoding(&request),
-        crucible_core::PromptCacheEncoding::BreakpointsEncoded(1)
+        crucible_types::PromptCacheEncoding::BreakpointsEncoded(1)
     );
     provider.stream(request, &Cancel::new()).unwrap();
     let body: Value = serde_json::from_str(&replay.sent().body).unwrap();
@@ -636,13 +637,13 @@ fn astra_recap_reports_only_the_explicit_marker_it_actually_writes() {
             purpose: RequestPurpose::Recap,
             ..request(Box::leak(Box::new(history)))
         },
-        crucible_core::PromptCacheMechanism::ExplicitBreakpoints,
+        crucible_types::PromptCacheMechanism::ExplicitBreakpoints,
         PromptCacheRetentionClass::Ephemeral,
         false,
     );
     assert_eq!(
         provider.prompt_cache_encoding(&request),
-        crucible_core::PromptCacheEncoding::BreakpointsEncoded(1)
+        crucible_types::PromptCacheEncoding::BreakpointsEncoded(1)
     );
     provider.stream(request, &Cancel::new()).unwrap();
     let body: Value = serde_json::from_str(&replay.sent().body).unwrap();

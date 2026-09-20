@@ -10,9 +10,9 @@
 //! the same thing while still needing a fallback for the types this does not
 //! know.
 
-use crucible_core::{
-    Delta, InputTokenUsage, ProviderError, ProviderNumericDetail, ProviderUsage, StopReason,
-    ToolId, UsageError,
+use crucible_models::{Delta, ProviderError};
+use crucible_types::{
+    InputTokenUsage, ProviderNumericDetail, ProviderUsage, StopReason, ToolId, UsageError,
 };
 use serde_json::Value;
 
@@ -33,8 +33,8 @@ pub(super) struct Messages {
 impl Messages {
     pub(super) fn for_request(
         model: &str,
-        scope: crucible_core::ContinuationScope,
-        effort: Option<crucible_core::Effort>,
+        scope: crucible_types::ContinuationScope,
+        effort: Option<crucible_models::Effort>,
     ) -> Result<Self, ProviderError> {
         Ok(Self {
             blocks: if model == super::FABLE_51 {

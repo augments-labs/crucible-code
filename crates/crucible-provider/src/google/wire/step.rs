@@ -5,9 +5,10 @@
 //! fragments stay private until the complete object is validated at step stop.
 
 use super::protocol;
-use crucible_core::{
+use crucible_models::{Delta, ProviderError};
+use crucible_types::{
     CONTINUATION_BYTES, CONTINUATION_PARTS, Continuation, ContinuationData, ContinuationPart,
-    Delta, ProviderError, TOOL_ARGUMENT_BYTES, TOOL_CALL_ID_BYTES, TOOL_NAME_BYTES, ToolId,
+    TOOL_ARGUMENT_BYTES, TOOL_CALL_ID_BYTES, TOOL_NAME_BYTES, ToolId,
 };
 use serde_json::{Map, Value, json};
 use std::io;

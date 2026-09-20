@@ -2,7 +2,7 @@
 
 use crucible_runtime::Cancel;
 use crucible_tools::{Fetch, Host, Page, Search, SearchResponse, SearchResult, SourceError, Tool};
-use crucible_types::ToolArgs;
+use crucible_types::{ResultProvenance, ToolArgs};
 
 use super::*;
 use crate::sample;
@@ -52,6 +52,67 @@ impl Search for GroundedAnswers {
             self.results.clone(),
             self.suggestions,
         ))
+    }
+}
+
+/// A grounded search whose vendor keeps what it answers to its own models.
+struct Kept;
+
+impl Search for Kept {
+    fn name(&self) -> &'static str {
+        "google"
+    }
+
+    fn reaches(&self) -> Host {
+        Host::Named {
+            sent: "https://generativelanguage.googleapis.com".into(),
+            host: "generativelanguage.googleapis.com".into(),
+        }
+    }
+
+    fn restricts(&self) -> Option<&'static str> {
+        Some("[cleared — kept to the vendor that answered it]")
+    }
+
+    fn search(&self, _query: &str, _cancel: &Cancel) -> Result<SearchResponse, SourceError> {
+        Ok(SearchResponse::grounded(
+            "an answer",
+            vec![SearchResult {
+                title: "A page".into(),
+                url: "https://example.com".into(),
+                extract: "what it says".into(),
+            }],
+            "",
+        ))
+    }
+}
+
+/// A source whose terms are longer than a result can carry, and which says
+/// whether it was asked anything anyway.
+struct Oversized {
+    notice: &'static str,
+    asked: std::sync::atomic::AtomicBool,
+}
+
+impl Search for Oversized {
+    fn name(&self) -> &'static str {
+        "oversized"
+    }
+
+    fn reaches(&self) -> Host {
+        Host::Named {
+            sent: "https://search.example/".into(),
+            host: "search.example".into(),
+        }
+    }
+
+    fn restricts(&self) -> Option<&'static str> {
+        Some(self.notice)
+    }
+
+    fn search(&self, _query: &str, _cancel: &Cancel) -> Result<SearchResponse, SourceError> {
+        self.asked.store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok(SearchResponse::results(Vec::new()))
     }
 }
 
@@ -419,5 +480,68 @@ fn web_calls_volunteer_for_lookup_grouping() {
         fetching("https://example.com", None, "page")
             .looking(&ToolArgs::new(r#"{"url":"https://example.com"}"#))
             .is_some()
+    );
+}
+
+#[test]
+fn a_search_result_says_which_vendor_answered_it_and_what_its_terms_keep() {
+    // The tool is the one place that knows a result came from a source rather
+    // than from this machine, so it is where the result has to say so. A vendor
+    // with no term is still named: an answer an older build wrote says nothing,
+    // and nothing is how that answer is told apart from this one.
+    let kept = WebSearch::new(Arc::new(Kept));
+    let output = kept
+        .run(
+            sample::allowed(&kept, r#"{"query":"rust"}"#),
+            &crate::sample::context(),
+        )
+        .expect("a source that answers");
+    assert_eq!(
+        output.provenance(),
+        &ResultProvenance::answered(
+            "google",
+            Some("[cleared — kept to the vendor that answered it]")
+        )
+        .expect("a bounded term")
+    );
+
+    let open = WebSearch::new(Arc::new(Answers(Vec::new())));
+    let output = open
+        .run(
+            sample::allowed(&open, r#"{"query":"rust"}"#),
+            &crate::sample::context(),
+        )
+        .expect("a source that answers");
+    assert_eq!(
+        output.into_recorded().provenance(),
+        &ResultProvenance::answered("fake", None).expect("a bounded vendor")
+    );
+}
+
+#[test]
+fn a_source_whose_terms_do_not_fit_a_result_is_never_asked() {
+    // Its answer would leave here saying less than the vendor's terms require,
+    // so the call fails before anything reaches the source.
+    let notice: &'static str = Box::leak(
+        "n".repeat(crucible_types::RESULT_NOTICE_BYTES + 1)
+            .into_boxed_str(),
+    );
+    let source = Arc::new(Oversized {
+        notice,
+        asked: std::sync::atomic::AtomicBool::new(false),
+    });
+    let tool = WebSearch::new(Arc::clone(&source) as Arc<dyn Search>);
+    let output = tool
+        .run(
+            sample::allowed(&tool, r#"{"query":"rust"}"#),
+            &crate::sample::context(),
+        )
+        .expect("a refusal is an answer, not an error");
+
+    assert!(output.is_failed(), "{}", output.text());
+    assert!(output.text().contains("do not fit"), "{}", output.text());
+    assert!(
+        !source.asked.load(std::sync::atomic::Ordering::SeqCst),
+        "the source was asked although its terms could not be carried"
     );
 }

@@ -2,9 +2,10 @@
 
 use super::*;
 use crate::transport::Replay;
-use crucible_core::{
-    ApiKey, Delta, Effort, Header, HeaderKey, Message, PromptCacheEncoding, PromptCacheMechanism,
-    PromptCacheSupport, RequestPurpose, Transcript,
+use crucible_credentials::{ApiKey, Header, HeaderKey};
+use crucible_models::{Delta, Effort, RequestPurpose};
+use crucible_types::{
+    Message, PromptCacheEncoding, PromptCacheMechanism, PromptCacheSupport, Transcript,
 };
 use serde_json::{Value, json};
 use std::sync::Arc;

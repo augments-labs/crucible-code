@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "3"
 
 [workspace.package]
-version = "0.41.1"
+version = "0.42.0"
 edition = "2024"
 rust-version = "1.97.1"
 license = "MIT"
@@ -35,14 +35,19 @@ arboard = { version = "=3.6.1", features = ["wayland-data-control"] }
 image = { version = "=0.25.10", default-features = false, features = ["png"] }
 # This workspace's own crates. Path dependencies, released together, so there is
 # no version to pin and no third party whose publish could move them.
+crucible-agents = { path = "crates/crucible-agents" }
+crucible-app = { path = "crates/crucible-app" }
 crucible-attachments = { path = "crates/crucible-attachments" }
 crucible-auth = { path = "crates/crucible-auth" }
 crucible-builtins = { path = "crates/crucible-builtins" }
+crucible-client-api = { path = "crates/crucible-client-api" }
 crucible-config = { path = "crates/crucible-config" }
+crucible-context = { path = "crates/crucible-context" }
 crucible-core = { path = "crates/crucible-core" }
 crucible-credentials = { path = "crates/crucible-credentials" }
 crucible-extension = { path = "crates/crucible-extension" }
 crucible-mcp = { path = "crates/crucible-mcp" }
+crucible-models = { path = "crates/crucible-models" }
 crucible-privacy = { path = "crates/crucible-privacy" }
 crucible-provider = { path = "crates/crucible-provider" }
 crucible-registry = { path = "crates/crucible-registry" }
@@ -59,6 +64,7 @@ crucible-sandbox-local = { path = "crates/crucible-sandbox-local" }
 crucible-session = { path = "crates/crucible-session" }
 crucible-storage = { path = "crates/crucible-storage" }
 crucible-tools = { path = "crates/crucible-tools" }
+crucible-transport = { path = "crates/crucible-transport" }
 crucible-tui = { path = "crates/crucible-tui" }
 crucible-types = { path = "crates/crucible-types" }
 crucible-workspace = { path = "crates/crucible-workspace" }
@@ -74,7 +80,7 @@ tokio = { version = "=1.53.1", default-features = false }
 
 # Argument parsing. `derive` keeps the CLI surface declared next to the type it
 # produces rather than in a builder chain that drifts from it.
-clap = { version = "=4.6.6", features = ["derive"] }
+clap = { version = "=4.6.7", features = ["derive"] }
 
 # Error enums. Every module owns its error type; `thiserror` writes the
 # `Display` and `source` impls for it without erasing the type the way a
@@ -163,7 +169,7 @@ http = "=1.5.0"
 # file behind `Transport`. Default features minus `gzip`: a response here is an
 # event stream that is read as it arrives, and compressing one buys nothing for
 # the `flate2` it costs.
-ureq = { version = "=3.4.1", default-features = false, features = ["rustls"] }
+ureq = { version = "=3.4.2", default-features = false, features = ["rustls"] }
 
 # JWT claims are base64url without padding. OpenAI subscription login needs the
 # selected ChatGPT account id from that bounded claim set; this decoder is
@@ -185,7 +191,7 @@ getrandom = "=0.4.3"
 # one process. The version and variant bit layout, the monotonic tie-break
 # counter, and the timestamp recovery are format machinery this crate owns;
 # `std` cannot mint one and hand-rolling it would be a second partial codec.
-uuid = { version = "=1.26.0", features = ["v7"] }
+uuid = { version = "=1.26.1", features = ["v7"] }
 
 # Browser OAuth uses RFC 7636 S256. Prompt-cache scope identity also needs a
 # one-way digest of credential-owned material so an API key can keep the same
@@ -215,6 +221,14 @@ grep-regex = "=0.1.14"
 # shapes differ per provider and are read once at the boundary, while context
 # snapshots are already values rather than mirror structs.
 serde_json = "=1.0.151"
+
+# The traits `serde_json`'s reader drives, without serde's derive. A frame from
+# a client is hostile input, and the only way to stop reading one at the entry,
+# level or value that goes over its bound, or at a key said twice — rather
+# than after the whole tree is in memory — is to hand the reader a visitor that
+# counts. `serde_json` does not re-export the traits a visitor implements.
+# Already in the graph as its dependency, at this version.
+serde_core = "=1.0.229"
 
 # Display width. A terminal wraps by columns, not by characters: CJK takes two
 # and a combining mark takes none, so counting `char`s puts the cursor somewhere
@@ -250,6 +264,18 @@ seccompiler = { version = "=0.5.0", default-features = false }
 # Supplies kernel syscall numbers seccompiler does not name on every supported
 # Linux architecture; the workspace already locks this exact libc.
 libc = "=0.2.189"
+
+# Being told to stop from outside. A closed window or a `kill` arrives as a
+# signal, and `std` has no way to hear one: without a handler the process ends
+# where it stands, with the log writer unjoined and the answer on screen never
+# written down. Installing a handler is `sigaction` through `libc`, which is
+# `unsafe` and which this workspace denies; this is the safe wrapper, and all
+# it is asked for is its flag module — a handler that stores one atomic and
+# returns, which is the whole of what may be done in a signal context — and the
+# call that afterwards ends the process the way the signal would have. Unix
+# only. Already in the tree under `crossterm` at this version with more turned
+# on than this, so nothing new is compiled.
+signal-hook = { version = "=0.3.18", default-features = false }
 
 # Windows has no file mode, so the 0600 a session log is held at has to be
 # written as a DACL instead: one entry, for the account crucible is running as,
@@ -368,13 +394,6 @@ authors.workspace = true
 # somebody who only wanted to start crucible.
 default-run = "crucible"
 
-# `crucible-session` is a dev-only feature edge: tests import the same crate
-# through `crucible-runner`'s deliberate re-export, while this declaration turns
-# on `proof` for the package graph. A source-name scanner cannot see a feature
-# activation as use, so this is the one explicit cargo-machete exception.
-[package.metadata.cargo-machete]
-ignored = ["crucible-session"]
-
 # One shipped binary. The short `cru` name is a symlink created by the
 # installer, not a second target — a second `[[bin]]` would compile and ship
 # the same code twice. Auxiliary binaries under `src/bin/` are bench probes and
@@ -389,23 +408,20 @@ path = "src/main.rs"
 # drawn here or nowhere.
 [dependencies]
 arboard.workspace = true
+# The composition root: every concrete provider, tool, server and session a run
+# is assembled from, and the conversation the command line then drives. The
+# command line adapts it to a terminal and adds nothing to it.
+crucible-app.workspace = true
+# The requests the terminal makes of the application, which are the ones any
+# front end makes: the command line is one client of that contract.
+crucible-client-api.workspace = true
 clap.workspace = true
 crucible-attachments.workspace = true
 crucible-auth.workspace = true
 crucible-builtins.workspace = true
 crucible-config.workspace = true
+crucible-context.workspace = true
 crucible-core.workspace = true
-# The restart budget an ended program is started again under, and the question
-# of whether starting it again is safe at all. Taken here because composition is
-# where a hosted server's process ends and something has to decide what happens
-# next; the rule itself belongs beside every other program crucible supervises
-# rather than being written a second time for this one.
-crucible-extension.workspace = true
-# The one crate that speaks the Model Context Protocol. Only the binary may
-# take it: a library crate depending on it would put somebody else's server
-# behind a trait the runner drives, and the repository gate refuses that edge.
-# Composition is where a hosted server becomes a tool, so it is taken here.
-crucible-mcp.workspace = true
 crucible-privacy.workspace = true
 crucible-provider.workspace = true
 crucible-runner.workspace = true
@@ -418,6 +434,10 @@ crucible-sandbox-broker.workspace = true
 # confinement to every tool that runs a command, so no tool has to name an
 # operating system.
 crucible-sandbox-local.workspace = true
+# The file a persistent prompt-cache resource is remembered in. Composition
+# hands the store to the runner, which keeps records through the contract and
+# never names the file.
+crucible-session.workspace = true
 crucible-tui.workspace = true
 image.workspace = true
 # The hash an attachment is recorded under, taken here because this is where a
@@ -438,6 +458,12 @@ thiserror.workspace = true
 # dev-dependencies for a build, so this turns the feature on for `cargo test`
 # and for nothing that ships.
 [dev-dependencies]
+# Named by the integration tests alone, which drive the seams these two own from
+# outside: what an extension sweep finds, and what hosting a server comes to.
+# The shipped command line reaches both through the application crate and names
+# neither, which the repository gate holds it to.
+crucible-extension.workspace = true
+crucible-mcp.workspace = true
 crucible-session = { workspace = true, features = ["proof"] }
 insta.workspace = true
 
@@ -453,6 +479,13 @@ insta.workspace = true
 # crucible itself.
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix = { workspace = true, features = ["param", "pipe", "pty", "termios"] }
+
+# What hears a hang-up or a termination while a turn is running, so the turn is
+# stopped and written down instead of lost. Signals are the Unix spelling of
+# that; a closing console on Windows is a different mechanism this does not
+# reach.
+[target.'cfg(unix)'.dependencies]
+signal-hook.workspace = true
 
 [lints]
 workspace = true

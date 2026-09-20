@@ -12,10 +12,11 @@
 //! knows which commands exist — and saying it in two places is how the two come
 //! to disagree.
 
-use crucible_core::{
-    Cancel, CredentialScopeId, DeltaStream, Modalities, Modality, PromptCacheCapabilities,
-    PromptCacheRoute, Provider, ProviderError, Request,
+use crucible_models::{
+    DeltaStream, PromptCacheCapabilities, PromptCacheRoute, Provider, ProviderError, Request,
 };
+use crucible_runtime::Cancel;
+use crucible_types::{CredentialScopeId, Modalities, Modality};
 
 /// What this provider is called, in the session log and in the status line.
 ///
@@ -46,6 +47,12 @@ impl Provider for Unavailable {
         NAME
     }
 
+    /// Nothing is sent anywhere through this provider; every turn is refused
+    /// here.
+    fn reaches_a_model(&self) -> bool {
+        false
+    }
+
     fn spells(&self) -> Modalities {
         // No protocol at all, so nothing beyond the text of a turn it will
         // refuse anyway.
@@ -55,12 +62,12 @@ impl Provider for Unavailable {
     fn prompt_cache_capabilities(&self, _model: &str) -> PromptCacheCapabilities {
         PromptCacheCapabilities::unsupported(
             "unavailable-v1",
-            crucible_core::PromptCacheProvenance::new(
+            crucible_models::PromptCacheProvenance::new(
                 "https://github.com/augments-labs/crucible-code",
                 "2026-08-31",
                 "unavailable-v1",
             ),
-            crucible_core::StatefulTransportCapability::Unsupported,
+            crucible_models::StatefulTransportCapability::Unsupported,
         )
     }
 
@@ -76,8 +83,8 @@ impl Provider for Unavailable {
         }
     }
 
-    fn prompt_cache_encoding(&self, _request: &Request<'_>) -> crucible_core::PromptCacheEncoding {
-        crucible_core::PromptCacheEncoding::NoControlIntended
+    fn prompt_cache_encoding(&self, _request: &Request<'_>) -> crucible_types::PromptCacheEncoding {
+        crucible_types::PromptCacheEncoding::NoControlIntended
     }
 
     fn stream(
@@ -91,7 +98,7 @@ impl Provider for Unavailable {
 
 #[cfg(test)]
 mod tests {
-    use crucible_core::{Message, Transcript};
+    use crucible_types::{Message, Transcript};
 
     use super::*;
 
@@ -102,7 +109,7 @@ mod tests {
             .expect("valid fixture transcript");
 
         Request {
-            purpose: crucible_core::RequestPurpose::Turn,
+            purpose: crucible_models::RequestPurpose::Turn,
             model: "",
             transcript: Box::leak(Box::new(transcript)),
             tools: &[],
@@ -129,6 +136,14 @@ mod tests {
         // key never wrote to one, and a log saying otherwise is a record of a
         // request that was never made.
         assert_eq!(Unavailable::new("nothing is set up").name(), "none");
+    }
+
+    #[test]
+    fn a_turn_that_went_nowhere_reached_no_model() {
+        // What lets a vendor's restricted results stay in a session picked up
+        // where nothing is set up: nothing here is sent anywhere, so there is
+        // nobody to keep them from.
+        assert!(!Unavailable::new("nothing is set up").reaches_a_model());
     }
 
     /// A provider that speaks no protocol still spells text: what it refuses is

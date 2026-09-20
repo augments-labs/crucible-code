@@ -19,18 +19,24 @@
 //! same answer every time this directory is opened and asking it once a session
 //! is asking it for ever.
 
+use crucible_app::Conversation;
+use crucible_app::client::Performed;
+use crucible_app::switching::Switched;
+use crucible_client_api::{Command, Name};
 use crucible_core::Effort;
-use crucible_runner::Runner;
 use crucible_tui::{
     Editor, Glyphs, Offered, Pane, Panel, Renderer, Row, Serving, Shelf, Slot, Stocked, Terminal,
     clip, fold,
 };
 
+use crate::cli::Fatal;
 use crate::cli::choice::Choice;
+use crate::cli::client::astray;
 use crate::cli::converse::picking::{self, Shelved, Standing, Taken};
-use crate::cli::{Fatal, Model, NO_MODEL_CHOSEN, Served, offered, remember, served};
+use crucible_app::providers::{Model, NO_MODEL_CHOSEN, Served, offered};
+use crucible_app::startup::served;
 
-use super::{Terms, about, say};
+use super::{Asked, Terms, about, say};
 
 mod narrowing;
 
@@ -123,19 +129,24 @@ impl Selected {
 pub(super) fn run<T: Terminal>(
     said: &str,
     renderer: &mut Renderer<T>,
-    runner: &mut Runner,
+    conversation: &mut Conversation,
     terms: &Terms,
     keys: bool,
 ) -> Result<(), Fatal> {
     if !said.is_empty() {
-        return named(said, renderer, runner, terms);
+        return named(said, renderer, conversation, terms);
     }
 
     if keys {
+        let runner = conversation.runner();
         let track = Track::Offered(runner.effort());
-        match stood(renderer, terms, runner.model(), track, &mut |_| Ok(()))? {
+        let current = Asked {
+            provider: conversation.serving(),
+            model: runner.model(),
+        };
+        match stood(renderer, terms, current, track, &mut |_| Ok(()))? {
             Shelved::Took(selected, rung) => {
-                return applied(selected, rung, renderer, runner, terms);
+                return applied(selected, rung, renderer, conversation, terms);
             }
             // Escape asked for the screen that was there before the shelf. A
             // listing under it would be the same question put a second time.
@@ -144,20 +155,20 @@ pub(super) fn run<T: Terminal>(
         }
     }
 
-    listed(renderer, runner, terms)
+    listed(renderer, conversation, terms)
 }
 
 /// The shelf, stood while a turn runs behind it.
 ///
-/// The runner is on the worker, so which model is in force is handed in by name
-/// rather than read off it, and the drain is run once a pass so the turn goes
+/// The runner is on the worker, so who is answering and for which model are
+/// handed in by name rather than read off it, and the drain is run once a pass so the turn goes
 /// on rendering under the shelf. What comes back is the pick, not applied — the
 /// runner cannot be reached mid-turn, so it is held for the turn the loop
 /// starts next, and the strip of rungs is drawn empty for the same reason.
 pub(super) fn picked_while<T: Terminal>(
     renderer: &mut Renderer<T>,
     terms: &Terms,
-    current: &str,
+    current: Asked<'_>,
     while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
 ) -> Result<Taken<Selected>, Fatal> {
     Ok(
@@ -218,7 +229,7 @@ pub(super) fn confirmed<T: Terminal>(
 fn named<T: Terminal>(
     said: &str,
     renderer: &mut Renderer<T>,
-    runner: &mut Runner,
+    conversation: &mut Conversation,
     terms: &Terms,
 ) -> Result<(), Fatal> {
     let Some(choice) = Choice::parse(said) else {
@@ -233,7 +244,7 @@ fn named<T: Terminal>(
             Ok(provider) => provider,
             Err(problem) => return say(renderer, &format!("! {problem}")),
         }
-    } else if let Some(provider) = terms.provider.get() {
+    } else if let Some(provider) = conversation.serving() {
         match served(&providers, provider) {
             Ok(provider) => provider,
             Err(problem) => return say(renderer, &format!("! {problem}")),
@@ -263,7 +274,7 @@ fn named<T: Terminal>(
     // Dropped for the same reason `apply` drops it: `/model provider/name`
     // names one thing and takes it or says why not, and there is no second half
     // waiting behind this one.
-    taken(provider, (&model, None), renderer, runner, terms).map(drop)
+    taken(provider, (&model, None), renderer, conversation, terms).map(drop)
 }
 
 /// The keys, under the panes they work on, long and short.
@@ -301,7 +312,7 @@ fn keys(glyphs: Glyphs) -> (String, String) {
 fn stood<T: Terminal>(
     renderer: &mut Renderer<T>,
     terms: &Terms,
-    current: &str,
+    current: Asked<'_>,
     track: Track,
     while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
 ) -> Result<Shelved<Selected>, Fatal> {
@@ -317,10 +328,10 @@ fn stood<T: Terminal>(
     // name with nothing saying what it is the name of. The rung rides with it:
     // both are what the next turn would be asked under, and the shelf below
     // offers to change either.
-    let asked = match current {
+    let asked = match current.model {
         "" => NOTHING_ASKED.to_owned(),
         name => {
-            let slug = format!("{}/{name}", terms.provider.get().unwrap_or("unselected"));
+            let slug = format!("{}/{name}", current.provider.unwrap_or("unselected"));
             match track {
                 Track::Offered(Some(effort)) => {
                     format!("{slug} {} {}", glyphs.dot(), effort.as_str())
@@ -342,7 +353,7 @@ fn stood<T: Terminal>(
     let at = all
         .iter()
         .position(|one| {
-            Some(one.provider.name) == terms.provider.get() && one.model.name == current
+            Some(one.provider.name) == current.provider && one.model.name == current.model
         })
         .unwrap_or(0);
     let rung = match track {
@@ -412,7 +423,7 @@ fn stood<T: Terminal>(
                 .models
                 .iter()
                 .map(|one| {
-                    let window = crate::cli::startup::window(
+                    let window = crucible_app::startup::window(
                         &providers,
                         one.provider,
                         one.model.name,
@@ -442,8 +453,8 @@ fn stood<T: Terminal>(
                     } else {
                         ""
                     },
-                    now: Some(one.provider.name) == terms.provider.get()
-                        && one.model.name == current,
+                    now: Some(one.provider.name) == current.provider
+                        && one.model.name == current.model,
                 })
                 .collect();
 
@@ -494,7 +505,7 @@ fn applied<T: Terminal>(
     selected: Selected,
     rung: Option<usize>,
     renderer: &mut Renderer<T>,
-    runner: &mut Runner,
+    conversation: &mut Conversation,
     terms: &Terms,
 ) -> Result<(), Fatal> {
     let effort = rung.and_then(|at| selected.model.rungs.get(at).copied());
@@ -506,7 +517,7 @@ fn applied<T: Terminal>(
         selected.provider,
         (selected.model.name, effort),
         renderer,
-        runner,
+        conversation,
         terms,
     )? {
         return Ok(());
@@ -520,7 +531,7 @@ fn applied<T: Terminal>(
     // With no keyboard asked for, because the rung is already chosen: what it
     // does with a word is take it, write it down and say so, which is the whole
     // of what is owed here.
-    super::effort::run(effort.as_str(), renderer, runner, terms, false)
+    super::effort::run(effort.as_str(), renderer, conversation, terms, false)
 }
 
 /// Asks it from the next turn on, and writes it down for the next run.
@@ -538,7 +549,7 @@ fn applied<T: Terminal>(
 /// the worker is applied at the next turn's start through here.
 pub(super) fn apply<T: Terminal>(
     renderer: &mut Renderer<T>,
-    runner: &mut Runner,
+    conversation: &mut Conversation,
     terms: &Terms,
     selected: Served,
     name: &str,
@@ -546,7 +557,7 @@ pub(super) fn apply<T: Terminal>(
     // The answer is dropped rather than passed on: there is no rung behind this
     // caller to stop, and the line saying what went wrong has already been
     // drawn by the time it comes back.
-    taken(selected, (name, None), renderer, runner, terms).map(drop)
+    taken(selected, (name, None), renderer, conversation, terms).map(drop)
 }
 
 /// Whether the model is the one the next turn will be asked for.
@@ -562,55 +573,54 @@ fn taken<T: Terminal>(
     selected: Served,
     (name, effort): (&str, Option<Effort>),
     renderer: &mut Renderer<T>,
-    runner: &mut Runner,
+    conversation: &mut Conversation,
     terms: &Terms,
 ) -> Result<bool, Fatal> {
     let provider = selected.name;
-    // Validate before retiring a cache or replacing the provider. The picker
-    // may supply a compatible rung together with the model; a typed model name
-    // cannot silently carry xhigh/max into Gemini's narrower ladder.
-    let catalogue = terms.providers.snapshot();
-    if provider == "google"
-        && let Some(effort) = effort.or(runner.effort())
-        && !crate::cli::rungs(&catalogue, provider, name).contains(&effort)
-    {
-        say(
-            renderer,
-            &format!(
-                "! {name} does not support {} effort; choose a supported rung in /model or change /effort before switching",
-                effort.as_str()
-            ),
-        )?;
-        return Ok(false);
-    }
-    let provider_changed = terms.provider.get() != Some(provider);
-    if provider_changed {
-        let set = match (terms.serving)(selected, &terms.logins.read()) {
-            Ok(set) => set,
-            Err(problem) => return refused(renderer, &problem).map(|()| false),
-        };
-        if !super::cache::retire(renderer, runner)? {
+    // What is checked, reached, retired and written, and in which order, is
+    // the conversation's. What is here is what each way it can end is said as.
+    let asked = match (Name::new(provider), Name::new(name)) {
+        (Ok(provider), Ok(model)) => Command::SelectModel {
+            provider,
+            model,
+            effort: effort.map(crucible_app::client::rung),
+        },
+        // A word no front end may name a model by: empty, or longer than any
+        // vendor's. Said rather than sent, and nothing is applied.
+        (Err(refusal), _) | (_, Err(refusal)) => {
+            return say(renderer, &format!("! {refusal}")).map(|()| false);
+        }
+    };
+    let switched = match terms.perform(conversation, asked) {
+        Performed::Model(switched) => switched,
+        other => return say(renderer, &astray(&other)).map(|()| false),
+    };
+    let unwritten = match switched {
+        // The picker may supply a compatible rung together with the model; a
+        // typed model name cannot silently carry xhigh/max into Gemini's
+        // narrower ladder.
+        Switched::Unsupported(effort) => {
+            say(
+                renderer,
+                &format!(
+                    "! {name} does not support {} effort; choose a supported rung in /model or change /effort before switching",
+                    effort.as_str()
+                ),
+            )?;
             return Ok(false);
         }
-        runner.serve(set.provider);
-        terms.provider.set(Some(provider));
-    } else if runner.model() != name && !super::cache::retire(renderer, runner)? {
-        return Ok(false);
-    }
-    // One generation, read once: the ceiling, the window and what the model
-    // reads are three answers about the same model, and three separate reads
-    // could take them from three different generations of the registry.
-    runner.ask(
-        name,
-        crate::cli::startup::ceiling(&catalogue, provider, name),
-        Some(crate::cli::startup::window(
-            &catalogue,
-            selected,
-            name,
-            &terms.settings,
-        )),
-        crate::cli::startup::accepts(&catalogue, provider, name),
-    );
+        Switched::Unreachable(problem) => return refused(renderer, &problem).map(|()| false),
+        Switched::CacheHeld(problem) => {
+            return super::cache::held(renderer, &problem).map(|()| false);
+        }
+        Switched::Taken {
+            retained,
+            unwritten,
+        } => {
+            super::cache::retained(renderer, retained)?;
+            unwritten
+        }
+    };
 
     // The word may have come off the line and was never shape-checked — anything
     // at all can follow `/model ` — so it goes out the way arrived text goes out.
@@ -620,14 +630,7 @@ fn taken<T: Terminal>(
     // went is not news: it is the same file every time, chosen by crucible
     // rather than by the reader, and naming it on every model is a session
     // reading its own bookkeeping out loud.
-    //
-    // The provider first, because it is the half a machine holding two keys
-    // needs — a model written under a provider says what to ask that provider
-    // for and never which provider to ask, so writing only that would leave the
-    // next run here asking the same question this command just answered.
-    let written = remember::asking(&terms.choosing, provider)
-        .and_then(|()| remember::choosing(&terms.choosing, provider, name));
-    let Err(problem) = written else {
+    let Some(problem) = unwritten else {
         return Ok(true);
     };
 
@@ -651,7 +654,10 @@ fn taken<T: Terminal>(
 /// is one that did not. Wrapped rather than clipped -- a provider's name and the
 /// two ways out of this are the whole sentence, and half of it is advice to
 /// nowhere.
-fn refused<T: Terminal>(renderer: &mut Renderer<T>, problem: &Fatal) -> Result<(), Fatal> {
+fn refused<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    problem: &dyn std::fmt::Display,
+) -> Result<(), Fatal> {
     let rows: Vec<Row> = fold(&format!("! {problem}"), renderer.columns())
         .into_iter()
         .map(|row| Row::new().then(Slot::Trouble, row))
@@ -663,16 +669,16 @@ fn refused<T: Terminal>(renderer: &mut Renderer<T>, problem: &Fatal) -> Result<(
 /// What is being asked now, and the lines that would ask for something else.
 fn listed<T: Terminal>(
     renderer: &mut Renderer<T>,
-    runner: &Runner,
+    conversation: &Conversation,
     terms: &Terms,
 ) -> Result<(), Fatal> {
     // Read out of a configuration file or off the command line either way, so
     // it goes out the way arrived text goes out.
-    match runner.model() {
+    match conversation.runner().model() {
         "" => renderer.commit(NO_MODEL_CHOSEN)?,
         name => renderer.commit(&format!(
             "{}/{name}",
-            terms.provider.get().unwrap_or("unselected")
+            conversation.serving().unwrap_or("unselected")
         ))?,
     }
 
@@ -697,255 +703,4 @@ fn listed<T: Terminal>(
 }
 
 #[cfg(test)]
-mod tests {
-    use crucible_core::AgentId;
-    use crucible_runner::{AgentSpec, Model as RunnerModel, Session, Tools};
-    use crucible_tui::{Glyphs, Recording, Renderer};
-
-    use crate::cli::converse::tests::plain;
-    use crate::cli::fake::Script;
-    use crate::cli::sample::Sample;
-
-    use crate::cli::Providers;
-
-    use super::{Effort, Selected, applied, keys, offered, taken};
-
-    /// The built-in providers, as one generation the rows are read off.
-    fn catalogue() -> Providers {
-        crate::cli::providers()
-            .expect("the built-in providers register")
-            .snapshot()
-    }
-
-    #[test]
-    fn the_keys_under_the_panes_come_out_of_the_glyph_set() {
-        // The row naming the keys is the whole of what teaches somebody
-        // standing at the shelf how to walk it and how to leave it. A terminal
-        // without the arrows draws four hollow squares on the one row that
-        // exists to be read by somebody who does not yet know.
-        assert_eq!(
-            keys(Glyphs::Unicode),
-            (
-                "tab pane \u{b7} \u{2191}\u{2193} model \u{b7} \u{2190}\u{2192} effort \u{b7} enter takes both \u{b7} esc to cancel"
-                    .to_owned(),
-                "tab \u{b7} \u{2191}\u{2193} \u{b7} \u{2190}\u{2192} \u{b7} enter \u{b7} esc".to_owned(),
-            )
-        );
-        assert_eq!(
-            keys(Glyphs::Ascii),
-            (
-                "tab pane - ^v model - <> effort - enter takes both - esc to cancel".to_owned(),
-                "tab - ^v - <> - enter - esc".to_owned(),
-            )
-        );
-    }
-
-    /// A runner asking for `old` and nothing else, to take a row against.
-    fn asking() -> crucible_runner::Runner {
-        crucible_runner::Runner::new(
-            Box::new(Script::new(Vec::new())),
-            Tools::new(),
-            AgentSpec::new(
-                AgentId::new("test"),
-                RunnerModel {
-                    name: "old".into(),
-                    max_tokens: 17,
-                    window: Some(99),
-                    accepts: None,
-                    effort: None,
-                },
-            ),
-            crucible_runner::ContextInputs::new(std::env::temp_dir()),
-            Session::nowhere(),
-        )
-    }
-
-    /// A runner with nothing to ask, as a run with no credential anywhere gets.
-    fn unasked() -> crucible_runner::Runner {
-        crucible_runner::Runner::new(
-            Box::new(Script::new(Vec::new())),
-            Tools::new(),
-            AgentSpec::new(
-                AgentId::new("test"),
-                RunnerModel {
-                    name: "".into(),
-                    max_tokens: 17,
-                    window: None,
-                    accepts: None,
-                    effort: None,
-                },
-            ),
-            crucible_runner::ContextInputs::new(std::env::temp_dir()),
-            Session::nowhere(),
-        )
-    }
-
-    /// The row for one model of one provider, by both names.
-    fn row(provider: &str, model: &str) -> Selected {
-        let provider = offered(&catalogue())
-            .find(|one| one.name == provider)
-            .expect("a served provider");
-        let model = provider
-            .models
-            .iter()
-            .find(|one| one.name == model)
-            .copied()
-            .expect("a served model");
-
-        Selected { provider, model }
-    }
-
-    #[test]
-    fn a_row_whose_provider_cannot_be_reached_takes_nothing_and_says_it_once() {
-        // One sentence, and the one that names what is actually missing. Going
-        // on to the rung reaches `/effort`, which finds no provider set and
-        // says the session has no model at all -- a second warning, about a
-        // different missing thing, printed under the first and contradicting
-        // the model still in force.
-        // The machine the reader is on: no key for anything, so no provider was
-        // resolved and no model was ever asked for.
-        let terms = plain();
-        terms.provider.set(None);
-        let mut runner = unasked();
-        let mut renderer = Renderer::new(Recording::new(80, 24));
-
-        applied(
-            row("moonshot", "k3"),
-            Some(0),
-            &mut renderer,
-            &mut runner,
-            &terms,
-        )
-        .expect("the row to be answered");
-
-        let written = renderer.terminal().written().to_string();
-        assert!(written.contains("! "), "{written}");
-        assert!(!written.contains("No model selected"), "{written}");
-        assert!(!written.contains("No models available"), "{written}");
-        assert!(runner.model().is_empty(), "{}", runner.model());
-    }
-
-    #[test]
-    fn taking_a_row_asks_for_the_model_and_then_the_rung_marked_under_it() {
-        // Both halves, in that order. A rung is asked of a model, so a shelf
-        // that applied the rung first would be asking it of the model being
-        // left behind.
-        let terms = plain();
-        let mut runner = asking();
-        let mut renderer = Renderer::new(Recording::new(80, 24));
-        let selected = row("anthropic", "claude-sonnet-5");
-        let at = selected
-            .model
-            .rungs
-            .iter()
-            .position(|rung| *rung == Effort::Xhigh)
-            .expect("a model that serves xhigh");
-
-        applied(selected, Some(at), &mut renderer, &mut runner, &terms)
-            .expect("the row to be taken");
-
-        assert_eq!(runner.model(), "claude-sonnet-5");
-        assert_eq!(runner.effort(), Some(Effort::Xhigh));
-    }
-
-    #[test]
-    fn google_model_switch_requires_an_explicit_compatible_effort() {
-        let mut terms = plain();
-        terms.serving = Box::new(|_, _| {
-            Ok(crate::cli::Resolved {
-                provider: Box::new(Script::new(Vec::new())),
-                source: crate::cli::CredentialSource::StoredKey,
-            })
-        });
-        let mut runner = asking();
-        runner.think(Effort::Max);
-        let mut renderer = Renderer::new(Recording::new(100, 24));
-        let google = row("google", "gemini-3.8-flash");
-        super::run(
-            "google/gemini-3.8-flash",
-            &mut renderer,
-            &mut runner,
-            &terms,
-            false,
-        )
-        .unwrap();
-        assert_eq!(
-            runner.model(),
-            "old",
-            "an incompatible inherited rung must not silently cross providers"
-        );
-        assert_eq!(runner.effort(), Some(Effort::Max));
-        assert_eq!(terms.provider.get(), Some("anthropic"));
-        assert!(renderer.terminal().written().contains("effort"));
-        applied(google, Some(2), &mut renderer, &mut runner, &terms).unwrap();
-        assert_eq!(runner.model(), "gemini-3.8-flash");
-        assert_eq!(runner.effort(), Some(Effort::High));
-        assert_eq!(terms.provider.get(), Some("google"));
-        super::super::effort::run("xhigh", &mut renderer, &mut runner, &terms, false).unwrap();
-        assert_eq!(
-            runner.effort(),
-            Some(Effort::High),
-            "an unsupported typed rung must leave the selected rung unchanged"
-        );
-    }
-
-    #[test]
-    fn taking_a_model_that_serves_no_rung_leaves_the_rung_exactly_as_it_was() {
-        // Not an error and nothing said about it. The row carried `no rung`
-        // and the strip carried the same sentence, so a session that took it
-        // has already been told.
-        let terms = plain();
-        let mut runner = asking();
-        runner.think(Effort::High);
-        let mut renderer = Renderer::new(Recording::new(80, 24));
-        let selected = row("anthropic", "claude-haiku-4-5");
-        assert!(selected.model.rungs.is_empty());
-
-        applied(selected, None, &mut renderer, &mut runner, &terms).expect("the row to be taken");
-
-        assert_eq!(runner.model(), "claude-haiku-4-5");
-        assert_eq!(runner.effort(), Some(Effort::High));
-    }
-
-    #[test]
-    fn taking_a_model_replaces_name_output_and_startup_resolved_window_together() {
-        let sample = Sample::new("model-runtime-limits");
-        let mut terms = plain();
-        terms.settings = sample.settings(
-            r#"{"providers":{"anthropic":{"contextWindow":{"claude-haiku-4-5":345678}}}}"#,
-        );
-        let mut runner = crucible_runner::Runner::new(
-            Box::new(Script::new(Vec::new())),
-            Tools::new(),
-            AgentSpec::new(
-                AgentId::new("test"),
-                RunnerModel {
-                    name: "old".into(),
-                    max_tokens: 17,
-                    window: Some(99),
-                    accepts: None,
-                    effort: None,
-                },
-            ),
-            crucible_runner::ContextInputs::new(std::env::temp_dir()),
-            Session::nowhere(),
-        );
-        let mut renderer = Renderer::new(Recording::new(80, 24));
-        let anthropic = offered(&catalogue())
-            .find(|provider| provider.name == "anthropic")
-            .expect("anthropic is served");
-
-        taken(
-            anthropic,
-            ("claude-haiku-4-5", None),
-            &mut renderer,
-            &mut runner,
-            &terms,
-        )
-        .expect("the model to be taken");
-
-        assert_eq!(runner.model(), "claude-haiku-4-5");
-        assert_eq!(runner.maximum_output(), 16_000);
-        assert_eq!(runner.context_window(), Some(345_678));
-    }
-}
+mod tests;

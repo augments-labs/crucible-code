@@ -1,7 +1,8 @@
 use crucible_tui::{Glyphs, Recording, Renderer};
 
 use super::*;
-use crate::cli::converse::tests::plain;
+use crate::cli::converse::tests::{keeping, plain};
+use crate::cli::sample::Sample;
 
 /// A window tall enough to hold every theme this program offers at once.
 const ROOMY: usize = 200;
@@ -24,7 +25,8 @@ fn every_answer_the_document_accepts_is_offered_and_no_other() {
 #[test]
 fn a_theme_named_on_the_line_is_taken_without_a_panel() {
     let mut renderer = Renderer::new(Recording::new(80, 24));
-    let terms = terms();
+    let sample = Sample::new("theme-named");
+    let terms = keeping(&sample);
 
     run("light", &mut renderer, &terms, false).expect("the theme to be taken");
 
@@ -152,7 +154,8 @@ fn a_preview_is_the_table_the_mark_is_standing_on() {
 #[test]
 fn taking_a_theme_leaves_the_session_drawing_in_it() {
     let mut renderer = Renderer::new(Recording::new(80, 24));
-    let terms = terms();
+    let sample = Sample::new("theme-taken");
+    let terms = keeping(&sample);
 
     taken(
         ThemeChoice::ColourblindDark,

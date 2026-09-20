@@ -13,7 +13,14 @@ authors.workspace = true
 # An attached file reaches all three of these protocols as base64 text, so the
 # codec is what the crate needs rather than a picture format.
 base64.workspace = true
+# The web adapters here answer the web tools' source contract, which this crate
+# reaches through core's re-export until those adapters sit beside the tools.
+# Every other name is taken from the crate that owns it.
 crucible-core.workspace = true
+crucible-credentials.workspace = true
+crucible-models.workspace = true
+crucible-runtime.workspace = true
+crucible-types.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 ureq.workspace = true

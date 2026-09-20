@@ -6,7 +6,9 @@
 //! Below it sit the crates that now own the shared values, registries,
 //! credential contracts, storage contracts, path proofs, attachment ingress,
 //! what a confined process may observe or change, the controls a turn is
-//! steered and stopped by, and what a tool is and what may run one.
+//! steered and stopped by, what a tool is and what may run one, what a
+//! model is asked and answers with, the words a request is built from, and the
+//! bounded frames crucible exchanges with a program it started.
 //! This crate re-exports their names under the paths it published them at, so a
 //! consumer keeps one import while ownership moves out; new code names the
 //! owning crate. `crucible-attachments` is re-exported only as far as the names
@@ -20,30 +22,34 @@
 //!
 //! - **Closed sets are enums.** Events and errors are owned here, so adding a
 //!   variant breaks every `match` and forces each site to decide.
-//! - **Open sets are traits.** `Provider` is implemented in the crates above, so
-//!   adding one must never edit this crate.
+//! - **Open sets are traits.** `Provider` is owned by `crucible-models` and
+//!   implemented in the crates above, so adding one must never edit this crate.
 //!
 //! Authentication is a separate axis from the wire protocol: a `Provider`
 //! receives an already-resolved `Credential` and never learns what kind it is.
 
-mod compaction;
-mod context;
-mod event;
-mod extension;
 mod interruption;
 mod journal;
-mod model;
-mod prompt;
-mod prompt_cache;
-mod provider;
-mod sandbox;
-mod version;
 
-pub use compaction::{Compacted, Compacting, RECAP, Room};
-pub use context::{ContextSection, capture, seen};
 pub use crucible_attachments::{AttachmentError, CEILING, KINDS, Kind, kind};
+pub use crucible_context::{
+    ContextSection, EnvironmentSection, Identity, ModelSection, PermissionsSection, Room, Skill,
+    SkillsSection, SystemPrompt, ToolsSection, WorkspaceSection, capture, seen,
+};
 pub use crucible_credentials::{
     ApiKey, Credential, CredentialError, Header, HeaderKey, Outgoing, Redactions,
+};
+pub use crucible_models::{
+    Attached, Content, Delta, DeltaStream, Effort, EffortError, MAX_PROMPT_CACHE_BOUNDARIES,
+    MAX_PROMPT_CACHE_MECHANISMS, MODEL_NAME_BYTES, ModelCapabilities, ModelError, ModelLimits,
+    PriceRate, PricingQuery, PromptCacheAttempt, PromptCacheBoundary, PromptCacheBoundaryPoint,
+    PromptCacheCapabilities, PromptCacheContent, PromptCacheContentSet, PromptCacheIdentity,
+    PromptCacheKey, PromptCacheMechanismCapability, PromptCachePlan, PromptCachePreparationError,
+    PromptCachePricing, PromptCacheProjection, PromptCacheProjectionError, PromptCacheProvenance,
+    PromptCacheRates, PromptCacheRequest, PromptCacheResourceCreate, PromptCacheResourceCreated,
+    PromptCacheResourceDeadline, PromptCacheResourceLifecycle, PromptCacheResourceReference,
+    PromptCacheResourceRemote, PromptCacheRoute, PromptCacheSelection, Provider, ProviderError,
+    ProviderLimit, Request, RequestPurpose, StatefulTransportCapability, UsageRate, select_pricing,
 };
 pub use crucible_registry::{
     Collision, Provenance, ProvenanceError, REGISTRY_BYTES, REGISTRY_ENTRIES, Registered, Registry,
@@ -77,6 +83,7 @@ pub use crucible_sandbox::{
     SandboxRootInspection, SandboxService, SandboxSession, SandboxSpeech, SandboxUnreadablePattern,
     SandboxUsage, SandboxViolation,
 };
+pub use crucible_storage::PromptCacheResourceStore;
 pub use crucible_storage::{
     ActionId, ActionResolution, ApprovalDecision, CallResultKey, CallResultReceipt,
     CallResultStoreError, CheckpointId, CompactionRecord, CustomEntry, CustomProjector,
@@ -85,7 +92,7 @@ pub use crucible_storage::{
     MAX_CHECKPOINT_WORD_BYTES, MAX_CUSTOM_DATA_BYTES, MAX_HUMAN_INPUT_BYTES,
     MAX_JOURNAL_WORD_BYTES, MAX_PENDING_ACTIONS, PendingAction, PendingActions, PendingApproval,
     PendingExternalTool, PendingHumanInput, RecoveryAction, ResolutionChange, ResumeDigest,
-    ResumeScope, ResumedAction, SessionStore, ToolEffect,
+    ResumeScope, ResumedAction, SessionOwner, SessionStore, ToolEffect,
 };
 pub use crucible_tools::{
     Account, Approved, ArgumentTransform, Ask, CallResultAcceptance, Command, DescribeTool,
@@ -98,6 +105,9 @@ pub use crucible_tools::{
     ToolError, ToolExecutionMode, ToolGeneration, ToolHooks, ToolOutcome, ToolOutput,
     ToolProvenance, ToolReceipt, ToolResourceKey, ToolSnapshot, ToolSourceKind, ToolSourceReceipt,
     Toolset, ToolsetContext, ToolsetError, Unwatched, Verdict, Watch, Wrote, narrowest,
+};
+pub use crucible_transport::{
+    FRAME_BYTES, Finish, FrameError, Frames, Heard, Muttered, Said, Written,
 };
 pub use crucible_types::{
     AgentId, CredentialScopeId, IdError, Modalities, Modality, ModalityError, ProviderAttemptId,
@@ -112,21 +122,29 @@ pub use crucible_types::{
     ContinuationPart, ContinuationScope, Diff, Fragment, Line, ProviderContinuation, Seen,
 };
 pub use crucible_types::{
+    Calibration, Carried, CostAmount, InputTokenUsage, MAX_PROMPT_CACHE_HANDLE_BYTES,
+    MAX_PROMPT_CACHE_NAMESPACE_BYTES, MAX_PROMPT_CACHE_RESOURCE_WORD_BYTES,
+    MAX_PROMPT_CACHE_RESOURCES, MAX_PROMPT_CACHE_RETENTION_SECONDS,
+    MAX_PROVIDER_USAGE_DETAIL_LABEL_BYTES, MAX_PROVIDER_USAGE_DETAILS, PricingCurrency,
+    PricingDate, PricingError, PricingUnit, PromptCacheCapabilityWordError, PromptCacheEligibility,
+    PromptCacheEncoding, PromptCacheFact, PromptCacheFingerprint, PromptCacheIneligibleReason,
+    PromptCacheIsolation, PromptCacheMechanism, PromptCacheMechanisms, PromptCacheMode,
+    PromptCacheNamespace, PromptCacheOutcome, PromptCachePersistentMode, PromptCachePlanned,
+    PromptCachePolicy, PromptCachePolicyConflict, PromptCachePolicyDigest, PromptCachePolicyError,
+    PromptCachePolicySource, PromptCachePolicySources, PromptCachePolicyVersion,
+    PromptCacheRequestDisposition, PromptCacheRequestFact, PromptCacheResourceBinding,
+    PromptCacheResourceError, PromptCacheResourceFact, PromptCacheResourceHandle,
+    PromptCacheResourceId, PromptCacheResourceOperation, PromptCacheResourceOwner,
+    PromptCacheResourceRecord, PromptCacheResourceState, PromptCacheResourceWordError,
+    PromptCacheRetention, PromptCacheRetentionClass, PromptCacheScopeDigest, PromptCacheSelected,
+    PromptCacheSupport, PromptCacheUsageFact, PromptCacheUsageReporting, ProviderNumericDetail,
+    ProviderUsage, Spend, UsageCost, UsageError,
+};
+pub use crucible_types::{
     Changed, TOOL_RESULT_BYTES, TOOL_RESULT_MIN_BYTES, ToolArgs, ToolCall, ToolOutputRetention,
 };
+pub use crucible_types::{Compacted, Compacting, RECAP, Tone, ToneError, later};
 pub use crucible_workspace::{PathError, WalkFiles, Workspace, WorkspacePath, written};
-pub use event::{Event, EventEnvelope, Post, Reporter, TurnError};
-pub use extension::{
-    EXTENSION_ID_BYTES, EXTENSION_MANIFEST_BYTES, EXTENSION_REQUESTS, EXTENSION_TEXT_BYTES,
-    ExtensionCapability, ExtensionContribution, ExtensionError, ExtensionIdentity,
-    ExtensionManifest, ExtensionProtocol, ExtensionRequests, ExtensionUnhosted,
-    calls::{Asked, CallError, EXTENSION_CALLS, Serving},
-    conversation::{Broken, Conversation, Next},
-    speaking::{Asking, Over, Speaking, Turn},
-    spoken::{CallId, EXTENSION_SAID_BYTES, Malformed, Outcome, Spoken, SpokenError, Trouble},
-    trust::{ExtensionDecision, ExtensionTrusted, ExtensionUntrusted},
-    wire::{FRAME_BYTES, FrameError, Frames, Written},
-};
 pub use interruption::{
     CacheCheckpoint, CheckpointStore, ExecutionCheckpoint, ResumeEvidence, ValidatedResume,
 };
@@ -134,55 +152,3 @@ pub use journal::{
     JournalStore, MAX_RUN_HISTORY_BYTES, MAX_RUN_ITEM_BYTES, MAX_RUN_ITEM_RETAINED_BYTES,
     MAX_RUN_ITEMS, RunHistory, RunItem,
 };
-pub use model::{MODEL_NAME_BYTES, ModelCapabilities, ModelError, ModelLimits};
-pub use prompt::{
-    EnvironmentSection, Identity, ModelSection, PermissionsSection, Skill, SkillsSection,
-    SystemPrompt, Tone, ToneError, ToolsSection, WorkspaceSection,
-};
-pub use prompt_cache::{
-    CostAmount, PriceRate, PricingCurrency, PricingDate, PricingError, PricingQuery, PricingUnit,
-    PromptCachePricing, PromptCacheRates, UsageCost, UsageRate, select_pricing,
-};
-pub use prompt_cache::{
-    InputTokenUsage, MAX_PROVIDER_USAGE_DETAIL_LABEL_BYTES, MAX_PROVIDER_USAGE_DETAILS,
-    ProviderNumericDetail, ProviderUsage, UsageError,
-};
-pub use prompt_cache::{
-    MAX_PROMPT_CACHE_BOUNDARIES, PromptCacheBoundaryPoint, PromptCacheContentSet,
-    PromptCacheProjection, PromptCacheProjectionError,
-};
-pub use prompt_cache::{
-    MAX_PROMPT_CACHE_HANDLE_BYTES, MAX_PROMPT_CACHE_RESOURCE_WORD_BYTES,
-    MAX_PROMPT_CACHE_RESOURCES, PromptCachePolicyDigest, PromptCacheResourceBinding,
-    PromptCacheResourceCreate, PromptCacheResourceCreated, PromptCacheResourceDeadline,
-    PromptCacheResourceError, PromptCacheResourceFact, PromptCacheResourceHandle,
-    PromptCacheResourceId, PromptCacheResourceLifecycle, PromptCacheResourceOperation,
-    PromptCacheResourceOwner, PromptCacheResourceRecord, PromptCacheResourceReference,
-    PromptCacheResourceRemote, PromptCacheResourceState, PromptCacheResourceStore,
-    PromptCacheResourceWordError,
-};
-pub use prompt_cache::{
-    MAX_PROMPT_CACHE_MECHANISMS, PromptCacheBoundary, PromptCacheCapabilities,
-    PromptCacheCapabilityWordError, PromptCacheContent, PromptCacheMechanism,
-    PromptCacheMechanismCapability, PromptCacheProvenance, PromptCacheRetentionClass,
-    PromptCacheSupport, PromptCacheUsageReporting, StatefulTransportCapability,
-};
-pub use prompt_cache::{
-    MAX_PROMPT_CACHE_NAMESPACE_BYTES, MAX_PROMPT_CACHE_RETENTION_SECONDS, PromptCacheIsolation,
-    PromptCacheMechanisms, PromptCacheMode, PromptCacheNamespace, PromptCachePersistentMode,
-    PromptCachePolicy, PromptCachePolicyConflict, PromptCachePolicyError, PromptCachePolicySource,
-    PromptCachePolicySources, PromptCachePolicyVersion, PromptCacheRetention,
-};
-pub use prompt_cache::{
-    PromptCacheAttempt, PromptCacheEligibility, PromptCacheEncoding, PromptCacheFact,
-    PromptCacheFingerprint, PromptCacheIdentity, PromptCacheIneligibleReason, PromptCacheKey,
-    PromptCacheOutcome, PromptCachePlan, PromptCachePlanned, PromptCachePreparationError,
-    PromptCacheRequest, PromptCacheRequestDisposition, PromptCacheRequestFact, PromptCacheRoute,
-    PromptCacheScopeDigest, PromptCacheSelected, PromptCacheSelection, PromptCacheUsageFact,
-};
-pub use provider::{
-    Attached, Calibration, Carried, Content, Delta, DeltaStream, Effort, EffortError, Provider,
-    ProviderError, ProviderLimit, Request, RequestPurpose, Spend,
-};
-pub use sandbox::{Finish, Heard, Muttered, Said};
-pub use version::later;

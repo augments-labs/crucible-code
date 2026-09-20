@@ -3,7 +3,9 @@
 //! Separate from the stream next door only because it reached the per-file cap.
 //! Everything here is about `Stream` and the queue under it.
 
-use crucible_core::{Cancel, Delta, DeltaStream, ProviderError, StopReason, ToolId};
+use crucible_models::{Delta, DeltaStream, ProviderError};
+use crucible_runtime::Cancel;
+use crucible_types::{StopReason, ToolId};
 
 use super::*;
 use crate::fake::inclusive_usage;
@@ -42,7 +44,7 @@ fn reading(body: &str, cancel: &Cancel) -> Stream {
     Stream::new(
         Box::new(std::io::Cursor::new(body.to_owned().into_bytes())),
         cancel.clone(),
-        crucible_core::Redactions::default(),
+        crucible_credentials::Redactions::default(),
     )
 }
 
@@ -310,7 +312,7 @@ fn a_cancel_raised_while_nothing_is_arriving_stops_the_stream() {
     let mut stream = Stream::new(
         Box::new(silent),
         cancel,
-        crucible_core::Redactions::default(),
+        crucible_credentials::Redactions::default(),
     );
 
     assert_eq!(stream.next().unwrap().unwrap(), Delta::Text("Hel".into()));
@@ -332,7 +334,7 @@ fn a_response_that_pauses_while_the_model_thinks_is_not_a_failed_turn() {
     let mut stream = Stream::new(
         Box::new(Paused::dawdling(ANSWER, 5)),
         Cancel::new(),
-        crucible_core::Redactions::default(),
+        crucible_credentials::Redactions::default(),
     );
 
     assert_eq!(

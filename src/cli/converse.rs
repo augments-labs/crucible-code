@@ -19,6 +19,14 @@
 //! session with no terminal at either end holds nothing at all and reads whole
 //! lines, which is the path every test drives.
 //!
+//! A turn can also be told to stop from outside the keyboard: a closed window
+//! or a `kill` is noted by [`super::ending`] while a turn runs, and this loop
+//! reads the note on the same round it reads keys. It stops the turn the way
+//! Esc would, and hands back [`Fatal::Ended`] the way a terminal that failed
+//! is handed back. Every turn that ends in an error has its session finished
+//! here, before the error leaves, so what was said is on the disk whoever else
+//! still holds the session.
+//!
 //! The session log is append-only and written as the turn goes, so `--continue`
 //! picks the session up from wherever it stopped.
 //!
@@ -31,16 +39,23 @@ use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::io::BufRead;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::mpsc::{RecvTimeoutError, sync_channel};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crucible_app::Conversation;
+use crucible_app::client::Ended;
+use crucible_app::providers::{Served, Serving, unasked};
+use crucible_app::subscription::Subscriptions;
 use crucible_auth::Store;
 use crucible_builtins::{Background, Ledger, Plan};
+use crucible_client_api::{Command, Prompt, Refusal};
 use crucible_core::{
-    Attachment, Cancel, Compacting, Event, Mode, Revealed, Room, SessionId, Spend, Workspace,
+    Attachment, Cancel, Compacting, Mode, Revealed, Room, SessionId, Spend, Workspace,
 };
-use crucible_runner::Runner;
+use crucible_runner::{Event, Runner, Turned};
+use crucible_session::Session;
 use crucible_tui::{
     Editor, Pasting, Raw, Renderer, Reporting, Screen, Sending, Spelling, Terminal, TerminalError,
 };
@@ -50,9 +65,7 @@ use super::gathering::Gathering;
 use super::kept::Kept;
 use super::seen::{Asking, CAPACITY, Inbox, Putting, Relay, Seen};
 use super::style::Style;
-use super::subscription::Subscriptions;
-use super::unasked;
-use super::{Fatal, Served, Serving, standing};
+use super::{Fatal, standing};
 use answering::{Answering, Answers, asked, cramped, read, verdict};
 use command::Ran;
 use expanding::Standing;
@@ -133,6 +146,9 @@ pub(crate) struct Terms {
     pub(crate) reading: RefCell<Option<String>>,
     /// What stops a turn.
     pub(crate) cancel: Cancel,
+    /// What the process has been told from outside it, which stops a turn too
+    /// and then the run.
+    pub(crate) ending: super::ending::Ending,
     /// What a line typed while a turn runs is pushed into, and the turn draws
     /// from between one pass and the next. Held for the session the way the
     /// cancel is: it is made once beside it, and the turn's thread and the loop
@@ -167,6 +183,8 @@ pub(crate) struct Terms {
     /// the tool that was built with it, and the loop holds the other end. What
     /// it lends changes every turn; what holds it does not.
     pub(crate) putting: Putting,
+    /// The requests this front end makes of the application, numbered.
+    pub(crate) client: super::client::Client,
     /// The plan the agent is working to, which is what stands above the box.
     ///
     /// Held for the same reason the ledger is, and emptied by the same command:
@@ -182,14 +200,6 @@ pub(crate) struct Terms {
     /// `/clear` leaves it alone where it empties the record and the plan. What
     /// ends these is the run ending.
     pub(crate) leaving: Background,
-    /// Which provider this session is set up to ask, where a key was found for
-    /// one. `/model` writes its answer under this name, and where there is none
-    /// there is no name to write it under.
-    ///
-    /// A cell because `/login` fills it in. Every command is handed these terms
-    /// by reference, and taking them mutably for the one that changes this
-    /// would put a `&mut` through every arm that does not.
-    pub(crate) provider: Cell<Option<&'static str>>,
     /// A model picked mid-turn, held for the turn the loop starts next.
     ///
     /// The runner is on the worker for the running turn's length, so a pick
@@ -254,7 +264,7 @@ pub(crate) struct Terms {
     /// A registry for the reason the commands are: the built-ins at startup,
     /// and whatever is committed beside them later. Each reader takes its own
     /// snapshot, so a provider it names is one that was in force when it asked.
-    pub(crate) providers: crucible_core::Registry<crate::cli::Arm>,
+    pub(crate) providers: crucible_core::Registry<crucible_app::providers::Arm>,
 }
 
 impl Terms {
@@ -265,6 +275,24 @@ impl Terms {
     /// than whatever was in force when the session opened.
     pub(crate) fn style(&self) -> Style {
         self.style.get()
+    }
+
+    /// What a change of who is asked is decided from, read against one
+    /// generation of the providers.
+    ///
+    /// The generation is the caller's, so that the rows it draws and the
+    /// switch it asks for are read against the same one.
+    pub(crate) fn switching<'a>(
+        &'a self,
+        providers: &'a crucible_app::providers::Providers,
+    ) -> crucible_app::switching::Switching<'a> {
+        crucible_app::switching::Switching {
+            providers,
+            settings: &self.settings,
+            serving: &self.serving,
+            logins: &self.logins,
+            choosing: &self.choosing,
+        }
     }
 }
 
@@ -320,7 +348,7 @@ impl Parting {
 /// can drive the loop: the deadlock this file has to avoid is one that only
 /// shows up when a whole turn runs, and a hardwired stdin makes that unrunnable.
 pub(crate) fn converse<T: Terminal>(
-    mut runner: Runner,
+    mut conversation: Conversation,
     renderer: &mut Renderer<T>,
     terms: &Terms,
     opening: &draw::opening::Standing,
@@ -408,7 +436,7 @@ pub(crate) fn converse<T: Terminal>(
     // every frame until the first prompt goes.
     opening.commit(renderer)?;
 
-    attaching::refresh_store(&mut held, &runner);
+    attaching::refresh_store(&mut held, importing(conversation.session()));
 
     // The session already has model context and recorded display history.
     // Put that history onto the newly opened screen before asking what to do
@@ -420,16 +448,22 @@ pub(crate) fn converse<T: Terminal>(
     // Taken from the session here and dropped at the end of the walk: it is the
     // room a pruning gave back, and holding it for the length of the run would
     // be this screen undoing what that pruning was run to do.
-    let pruned = runner.take_pruned();
-    let against = replaying::Replay::of(&runner, terms, &pruned);
-    replaying::replayed(renderer, &against, &mut held.kept)?;
+    let pruned = conversation.session().take_pruned();
+    let against = replaying::Replay::of(conversation.runner(), terms, &pruned);
+    replaying::replayed(renderer, &against, conversation.session(), &mut held.kept)?;
     drop(pruned);
 
     // Answered rather than acted on. Making room is a request, and a request is
     // run the one way this file runs one — on a worker, with the box live under
     // it — which is the loop below. Carried in as a value so that the panel
     // above the loop and the command inside it reach the same code.
-    let mut making = resuming::asked(renderer, &mut runner, terms, keys)?;
+    let mut making = resuming::asked(
+        renderer,
+        conversation.runner(),
+        conversation.session(),
+        terms,
+        keys,
+    )?;
 
     loop {
         // Read here rather than before the loop, because one command changes
@@ -491,8 +525,8 @@ pub(crate) fn converse<T: Terminal>(
         // a prompt about a session that has had room made: sending it first
         // would spend the whole window this is here to free.
         if let Some(why) = making.take() {
-            let (back, leaving) = ran(runner, renderer, terms, Work::Room(why), &mut held)?;
-            runner = back;
+            let (back, leaving) = ran(conversation, renderer, terms, Work::Room(why), &mut held)?;
+            conversation = back;
 
             if leaving {
                 break;
@@ -508,9 +542,10 @@ pub(crate) fn converse<T: Terminal>(
         if let Some(said) = batched(&mut held.queued, &terms.steer) {
             draw::queued(renderer, &said, style)?;
 
+            let imported = attaching::imported(&held);
             let attached = attaching::beside(
                 renderer,
-                &runner,
+                attaching::Asking::of(conversation.runner(), imported.as_deref()),
                 &terms.workspace,
                 attaching::Sent {
                     prompt: &said,
@@ -519,8 +554,8 @@ pub(crate) fn converse<T: Terminal>(
                 style,
             )?;
             let work = Work::Turn(said, attached);
-            let (back, leaving) = ran(runner, renderer, terms, work, &mut held)?;
-            runner = back;
+            let (back, leaving) = ran(conversation, renderer, terms, work, &mut held)?;
+            conversation = back;
 
             // Left after the trouble `ran` says rather than instead of it: a
             // log that stopped recording is worth hearing about on the way out
@@ -534,7 +569,12 @@ pub(crate) fn converse<T: Terminal>(
         let commands = terms.commands.snapshot();
         let between = typing::Between {
             commands: &commands,
-            runner: &mut runner,
+            conversation: &mut conversation,
+            terms,
+            attachment_store: held
+                .attachment_store
+                .as_ref()
+                .map(|(path, id)| (path.as_path(), id)),
             editor: &mut held.editor,
             planning: &mut held.planning,
             recalling: &mut held.recalling,
@@ -564,10 +604,12 @@ pub(crate) fn converse<T: Terminal>(
             // Taken above, by the state that holds what it stands over.
             Asked::Expand | Asked::Clicked(_) => continue,
 
-            Asked::Untyped => match unboxed(renderer, &runner, style, held.answers.input)? {
-                Some(said) => (said, true),
-                None => break,
-            },
+            Asked::Untyped => {
+                match unboxed(renderer, conversation.runner(), style, held.answers.input)? {
+                    Some(said) => (said, true),
+                    None => break,
+                }
+            }
         };
 
         // Before the turn, because a command is not one: it is answered here,
@@ -575,8 +617,8 @@ pub(crate) fn converse<T: Terminal>(
         // the transcript either — what the model is told about a session is
         // what was said to it, and `/help` was not.
         if local && let Some(wanted) = command::wanted(&terms.commands.snapshot(), &prompt) {
-            let ran = command::run(wanted, renderer, &mut runner, &mut held, terms)?;
-            attaching::refresh_store(&mut held, &runner);
+            let ran = command::run(wanted, renderer, &mut conversation, &mut held, terms)?;
+            attaching::refresh_store(&mut held, importing(conversation.session()));
             match ran {
                 Ran::Again => continue,
                 Ran::Leave => break,
@@ -597,8 +639,8 @@ pub(crate) fn converse<T: Terminal>(
         // that was never typed. `/model` is what changes this answer, so it is
         // said again here rather than only under the welcome the session opened
         // with — by now that has scrolled away.
-        if runner.model().is_empty() {
-            let said = unasked(terms.provider.get());
+        if conversation.runner().model().is_empty() {
+            let said = unasked(conversation.serving());
 
             // Down a pipe there is nobody to type `/model`, so carrying on
             // reads every remaining line and answers none of them — and ends
@@ -612,9 +654,10 @@ pub(crate) fn converse<T: Terminal>(
             continue;
         }
 
+        let imported = attaching::imported(&held);
         let attached = attaching::beside(
             renderer,
-            &runner,
+            attaching::Asking::of(conversation.runner(), imported.as_deref()),
             &terms.workspace,
             attaching::Sent {
                 prompt: &prompt,
@@ -623,18 +666,22 @@ pub(crate) fn converse<T: Terminal>(
             terms.style(),
         )?;
         let work = Work::Turn(prompt, attached);
-        let (back, leaving) = ran(runner, renderer, terms, work, &mut held)?;
-        runner = back;
+        let (back, leaving) = ran(conversation, renderer, terms, work, &mut held)?;
+        conversation = back;
 
         if leaving {
             break;
         }
     }
 
-    // Read before the drain below, which consumes the session. A session that
-    // recorded nothing has no name and no file, and that is the same answer as
-    // a session nothing was hidden from: there is nowhere to send the reader.
-    let session = runner.into_session();
+    // Read before the drain below. A session that recorded nothing has no name
+    // and no file, and that is the same answer as a session nothing was hidden
+    // from: there is nowhere to send the reader.
+    //
+    // The conversation's, because `/clear` and `/resume` put a different
+    // session there and closed the one they replaced: this is whichever one
+    // the loop ended on.
+    let session = Arc::clone(conversation.session());
     let written = session.id().is_some().then(|| session.path().to_path_buf());
 
     // The writer thread is usually still holding the last turn when the loop
@@ -663,6 +710,16 @@ pub(crate) fn converse<T: Terminal>(
     Ok(Parting::of(borrowed, written, problem.as_deref()))
 }
 
+/// Where `session` keeps the copies of what is attached to it: beside its log,
+/// under its name. `None` for a session that records nothing, which has
+/// neither.
+fn importing(session: &Session) -> Option<(PathBuf, SessionId)> {
+    session
+        .id()
+        .cloned()
+        .map(|id| (session.path().to_owned(), id))
+}
+
 /// Says once that the session log stopped recording.
 ///
 /// Once per session rather than once per turn: the log does not start working
@@ -671,10 +728,10 @@ pub(crate) fn converse<T: Terminal>(
 /// passed rather than read back off anything.
 fn troubled<T: Terminal>(
     renderer: &mut Renderer<T>,
-    runner: &Runner,
+    session: &Session,
     told: &mut bool,
 ) -> Result<(), Fatal> {
-    if !*told && let Some(problem) = runner.session().trouble() {
+    if !*told && let Some(problem) = session.trouble() {
         draw::trouble(renderer, &problem)?;
         *told = true;
     }
@@ -725,24 +782,25 @@ fn unboxed<T: Terminal>(
 /// something pressed while it ran ends the session. `true` is the session
 /// leaving.
 fn ran<T: Terminal>(
-    mut runner: Runner,
+    mut conversation: Conversation,
     renderer: &mut Renderer<T>,
     terms: &Terms,
     work: Work,
     held: &mut Held<'_>,
-) -> Result<(Runner, bool), Fatal> {
+) -> Result<(Conversation, bool), Fatal> {
     // A model picked mid-turn is applied now, before the turn starts: the
     // runner is this side's again, and the pick was made for the request about
     // to go out rather than for the one already answered.
     if let Some((provider, name)) = terms.pending_model.take() {
-        command::apply_model(renderer, &mut runner, terms, provider, &name)?;
+        command::apply_model(renderer, &mut conversation, terms, provider, &name)?;
     }
 
     // A mode stepped to mid-turn is put on the runner now, before the turn
     // starts: the runner is this side's again, and the step was made for the
     // requests about to go out rather than for the one already decided.
     if let Some(mode) = terms.pending_mode.take() {
-        runner.switch(mode);
+        let asked = Command::SetMode(crucible_app::client::mode(mode));
+        terms.perform(&mut conversation, asked);
     }
 
     // Only a line somebody typed has a reply to hang under it, which is why
@@ -750,19 +808,25 @@ fn ran<T: Terminal>(
     // filled, or because a resumed session was picked up as notes, was nobody's
     // command and has no line above it to hang from.
     let command = matches!(work, Work::Room(Compacting::Asked)).then(|| renderer.lines());
-    let took = take(runner, renderer, terms, work, held)?;
+    let took = take(conversation, renderer, terms, work, held)?;
     let style = terms.style();
 
-    troubled(renderer, &took.runner, &mut held.told)?;
+    troubled(renderer, took.conversation.session(), &mut held.told)?;
 
     // Neither of the two that changed nothing posted anything, because neither
     // took anything: a compaction reports what it replaced, and these replaced
     // nothing. So this is the only place either can be said, and a command that
     // appears to run and changes nothing is one somebody types again.
-    match took.did {
+    //
+    // A refused turn is the third: a prompt a guardrail turned away before any
+    // request was made posted no event at all, so without this the reader is
+    // handed a fresh prompt and no word on why nothing answered.
+    match &took.did {
         Did::Reported => {}
+        Did::Refused(turned) => draw::refused(renderer, turned)?,
         Did::Nothing => draw::unmade(renderer)?,
         Did::Stopped => draw::stopped(renderer)?,
+        Did::Unsent(refusal) => renderer.commit(&format!("! {refusal}"))?,
     }
 
     // And only the two one-line replies are a reply. A compaction that ran
@@ -774,7 +838,7 @@ fn ran<T: Terminal>(
     }
 
     Ok((
-        took.runner,
+        took.conversation,
         matches!(took.meanwhile, typing::Meanwhile::Leaving),
     ))
 }
@@ -816,6 +880,9 @@ struct Turn<'a, 'h> {
     leaving: &'a mut Option<Instant>,
     /// The terms every turn is taken on.
     terms: &'a Terms,
+    /// Which provider is answering, by its name in the registry, as it stood
+    /// when the turn began: the conversation that knows is on the worker.
+    serving: Option<&'static str>,
 }
 
 impl Turn<'_, '_> {
@@ -838,6 +905,19 @@ impl Turn<'_, '_> {
     ///
     /// `false` where the worker has closed the channel and the turn is over.
     fn drain<T: Terminal>(&mut self, renderer: &mut Renderer<T>) -> bool {
+        // Read once a pass, which is what a signal noted while this turn runs
+        // is waiting for. It ends the turn by the road a terminal that stopped
+        // taking writes ends it — nothing more is drawn, the turn is asked to
+        // stop, and this loop goes on draining it until the worker has written
+        // down what it had. It outranks a terminal failure already held: a
+        // window that closed fails the next write as well, and of the two it is
+        // the hang-up that says how the process should be seen to have ended.
+        if !matches!(self.drawn, Err(Fatal::Ended(_)))
+            && let Some(told) = self.terms.ending.told()
+        {
+            *self.drawn = stop_if_failed(Err(Fatal::Ended(told)), &self.terms.cancel);
+        }
+
         match self.seen.recv_timeout(TICK) {
             Ok(one) => {
                 // Before it is drawn, because drawing consumes it. The row
@@ -1081,6 +1161,10 @@ impl Turn<'_, '_> {
         renderer: &mut Renderer<T>,
         command: &command::Owned,
     ) -> Result<(), Fatal> {
+        // A panel waits on the keyboard with no clock, and the pass that would
+        // read a noted signal is run from inside that wait.
+        let _unclocked = self.terms.ending.unclocked()?;
+
         match command.class() {
             command::MidTurn::Live => self.live(renderer, command),
             command::MidTurn::Deferred => self.deferred(renderer, command),
@@ -1143,8 +1227,12 @@ impl Turn<'_, '_> {
             return Ok(());
         }
 
-        let current = self.says.model.clone();
-        let picked = command::deferred(renderer, self.terms, &current, command, &mut |renderer| {
+        let model = self.says.model.clone();
+        let current = command::Asked {
+            provider: self.serving,
+            model: &model,
+        };
+        let picked = command::deferred(renderer, self.terms, current, command, &mut |renderer| {
             self.drain(renderer);
             Ok(())
         })?;
@@ -1156,7 +1244,7 @@ impl Turn<'_, '_> {
 }
 
 fn take<T: Terminal>(
-    runner: Runner,
+    conversation: Conversation,
     renderer: &mut Renderer<T>,
     terms: &Terms,
     work: Work,
@@ -1166,7 +1254,7 @@ fn take<T: Terminal>(
     let (answering, hear) = Answering::new(&terms.putting, &post);
     let mut seen = Inbox::new(seen);
 
-    let asking = Asking::new(post.clone(), hear);
+    let asking = Asking::new(post.clone(), hear, terms.client.clone());
     let relay = Relay::new(post, terms.putting.clone());
     let running = terms.cancel.clone();
 
@@ -1185,7 +1273,8 @@ fn take<T: Terminal>(
     // The model beside it for the same two reasons: the row says it, and only
     // `/model` and `/effort` change it — neither of which can be run while the
     // turn they would change is the one running.
-    let mut says = typing::under(&runner);
+    let mut says = typing::under(conversation.runner());
+    let serving = conversation.serving();
 
     // And what ended while nothing was running goes into the aside rather than
     // into what is above, which is the one place a fact like this can be put
@@ -1205,6 +1294,11 @@ fn take<T: Terminal>(
     // flag it finds raised.
     terms.cancel.reset();
 
+    // From here until the turn has been written down, a hang-up or a
+    // termination is noted for the loop below rather than obeyed where it
+    // lands: obeyed, it would take the answer on screen with it.
+    let heeding = terms.ending.turn();
+
     // Started before the worker rather than on the first thing it reports, so
     // that what the clock measures is what somebody is waiting for. A turn that
     // spends its first ten seconds connecting has spent them.
@@ -1216,9 +1310,9 @@ fn take<T: Terminal>(
     // panel naming what is coming is right on the frame it first appears in.
     turning.queueing(held.queued.waiting_all(), renderer.columns(), terms.style());
 
-    attaching::refresh_store(held, &runner);
+    attaching::refresh_store(held, importing(conversation.session()));
     let working = sent(
-        runner,
+        conversation,
         work,
         asking,
         relay,
@@ -1268,6 +1362,7 @@ fn take<T: Terminal>(
         meanwhile: &mut meanwhile,
         leaving: &mut leaving,
         terms,
+        serving,
     };
     while turn.step(renderer) {}
 
@@ -1281,9 +1376,17 @@ fn take<T: Terminal>(
             .map_err(Fatal::from);
     }
 
-    let (runner, did) = working.join().map_err(|_| Fatal::Lost)?;
+    let (conversation, did) = working.join().map_err(|_| Fatal::Lost)?;
+
+    // Written down before the signal it was held back from is let through,
+    // and a turn that failed written down whoever else holds the session:
+    // [`Stretch::over`] says why, and in which order.
+    let drawn = heeding.over(drawn, || {
+        let _ = conversation.session().finish();
+    });
+
     drawn.map(|()| Took {
-        runner,
+        conversation,
         meanwhile,
         did,
     })
@@ -1300,14 +1403,14 @@ fn take<T: Terminal>(
 // made on the far side. The lint counts to five; what has to travel is seven.
 #[allow(clippy::too_many_arguments)]
 fn sent(
-    mut runner: Runner,
+    mut conversation: Conversation,
     work: Work,
     mut asking: Asking,
     relay: Relay,
     running: Cancel,
     steer: crucible_core::Steer,
     aside: crucible_core::Aside,
-) -> Result<thread::JoinHandle<(Runner, Did)>, Fatal> {
+) -> Result<thread::JoinHandle<(Conversation, Did)>, Fatal> {
     thread::Builder::new()
         .name("turn".to_owned())
         .spawn(move || {
@@ -1317,38 +1420,57 @@ fn sent(
             // post: a `TurnError` is handed back rather than reported, and a
             // failure stamped with a run of its own would say the turn that
             // failed was somebody else's.
-            let run = runner.starting(&relay, &running, &steer, &aside);
+            let run = conversation
+                .runner()
+                .starting(&relay, &running, &steer, &aside);
             let reporting = run.reporting();
 
-            let did = match work {
-                Work::Turn(prompt, attached) => {
-                    if let Err(problem) = runner.turn(&prompt, attached, &mut asking, &run) {
-                        reporting.post(Event::Failed { error: problem });
+            // What somebody asked for is asked of the application as the
+            // command it is. Room made because the window filled, or because
+            // a session was picked up as notes, is the host's own doing and
+            // no client's to ask for.
+            //
+            // A turn and a compaction are the same shape, and that is the
+            // whole of why this is one function: one request, answered over
+            // seconds, reporting as it goes. Everything the loop that draws
+            // does for a turn — the bar, the clock, the box taking the next
+            // prompt, the key that stops it — is what a reader waiting on a
+            // compaction needs, and none of it is about a turn.
+            let ended = match work {
+                Work::Turn(prompt, attached) => match Prompt::new(&prompt) {
+                    Ok(prompt) => {
+                        let asked = Command::Prompt(prompt);
+                        asking.turn(&mut conversation, asked, attached, &run)
                     }
-                    Did::Reported
+                    Err(refusal) => Ended::Refused(refusal),
+                },
+                Work::Room(Compacting::Asked) => {
+                    asking.turn(&mut conversation, Command::Compact, Box::default(), &run)
                 }
-
-                // The same shape, and that is the whole of why this is one
-                // function: making room is one request, answered over seconds,
-                // reporting as it goes. Everything the loop that draws does for
-                // a turn — the bar, the clock, the box taking the next prompt,
-                // the key that stops it — is what a reader waiting on a
-                // compaction needs, and none of it is about a turn.
                 // No turn is running, so the reading starts at nothing and
                 // what it comes to is the recap request's own cost — posted
                 // on the way, which is all the row above the box asks.
-                Work::Room(why) => match runner.compact(why, &run, &mut Spend::default()) {
-                    Ok(Room::Made(_)) => Did::Reported,
-                    Ok(Room::Nothing) => Did::Nothing,
-                    Ok(Room::Stopped) => Did::Stopped,
-                    Err(problem) => {
-                        reporting.post(Event::Failed { error: problem });
-                        Did::Reported
-                    }
-                },
+                Work::Room(why) => {
+                    Ended::Room(conversation.compact(why, &run, &mut Spend::default()))
+                }
             };
 
-            (runner, did)
+            // What a turn came to is read rather than dropped: one that ran
+            // reported itself as it went, and one a guardrail refused may
+            // have reported nothing at all.
+            let did = match ended {
+                Ended::Turn(Ok(Turned::Ran(_))) | Ended::Room(Ok(Room::Made(_))) => Did::Reported,
+                Ended::Turn(Ok(refused)) => Did::Refused(refused),
+                Ended::Room(Ok(Room::Nothing)) => Did::Nothing,
+                Ended::Room(Ok(Room::Stopped)) => Did::Stopped,
+                Ended::Turn(Err(problem)) | Ended::Room(Err(problem)) => {
+                    reporting.post(Event::Failed { error: problem });
+                    Did::Reported
+                }
+                Ended::Refused(refusal) => Did::Unsent(refusal),
+            };
+
+            (conversation, did)
         })
         .map_err(Fatal::Worker)
 }
@@ -1371,6 +1493,10 @@ enum Work {
 enum Did {
     /// It happened, and everything about it was reported as it happened.
     Reported,
+    /// A guardrail turned the turn away, or could not decide about it. Carried
+    /// back whole because the refusal may be the only thing the turn produced:
+    /// a prompt refused before any request was made posts no event.
+    Refused(Turned),
     /// Room was asked for and there was none to make — a session with nothing
     /// behind the turns it keeps whole. Nothing was spent and nothing was
     /// posted, so this is the only place it can be said, and a command that
@@ -1383,12 +1509,15 @@ enum Did {
     /// knows they did. Nothing was posted for this either — a compaction
     /// reports what it took, and this one took nothing.
     Stopped,
+    /// The application would not take it: a prompt longer than any front end
+    /// may send. Nothing ran and nothing was posted.
+    Unsent(Refusal),
 }
 
 /// A turn, and what the keyboard asked for while it ran.
 struct Took {
-    /// The runner, back from the worker that held it for the turn.
-    runner: Runner,
+    /// The conversation, back from the worker that held it for the turn.
+    conversation: Conversation,
     /// Whether anything pressed during the turn ends the session with it.
     meanwhile: typing::Meanwhile,
     /// What the worker found to do.
@@ -1791,7 +1920,11 @@ fn shown<T: Terminal>(
             // both names can arrive with a checkout, whatever an ignore rule
             // says. Until policy has a per-workspace store outside the checkout,
             // the prompt offers only answers this process can honour.
-            let answer = asked(renderer, &call, &sensitivity, &mut held.answers, style);
+            // The question stands until somebody decides, with no clock on
+            // it, so nothing would read a signal noted while it stood.
+            let answer = terms.ending.unclocked().and_then(|_unclocked| {
+                asked(renderer, &call, &sensitivity, &mut held.answers, style)
+            });
             let answer = match answer {
                 Ok(answer) => answer,
                 Err(problem) => {
@@ -1818,6 +1951,12 @@ fn shown<T: Terminal>(
                 let _ = give.send(None);
                 return Ok(());
             }
+
+            // The same wait as a permission question's, for as long as the
+            // panel stands — the cramped reading below included.
+            let unclocked = terms.ending.unclocked().inspect_err(|_| {
+                let _ = give.send(None);
+            })?;
 
             let given = putting::put(renderer, style, &questions);
             let given = match given {
@@ -1847,6 +1986,7 @@ fn shown<T: Terminal>(
                 },
             };
 
+            drop(unclocked);
             let _ = give.send(given);
         }
     }
@@ -1855,4 +1995,4 @@ fn shown<T: Terminal>(
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

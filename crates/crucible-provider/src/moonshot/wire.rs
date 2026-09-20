@@ -13,9 +13,9 @@
 //! Events are unnamed — the SSE `event:` line is never sent — so what an event
 //! is is decided by what its payload holds rather than by a word beside it.
 
-use crucible_core::{
-    Delta, InputTokenUsage, ProviderError, ProviderNumericDetail, ProviderUsage, StopReason,
-    ToolId, UsageError,
+use crucible_models::{Delta, ProviderError};
+use crucible_types::{
+    InputTokenUsage, ProviderNumericDetail, ProviderUsage, StopReason, ToolId, UsageError,
 };
 use serde_json::Value;
 

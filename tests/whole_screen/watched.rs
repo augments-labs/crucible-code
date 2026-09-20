@@ -34,7 +34,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read as _, Write as _};
 use std::os::unix::ffi::OsStrExt as _;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
@@ -727,6 +727,76 @@ impl Watched {
         termios::tcsetwinsize(&self.terminal, size(columns, rows)).expect("a new window size");
         self.screen.resize(columns as usize, rows as usize);
         self.settle(&format!("the window became {columns}x{rows}"), None);
+    }
+
+    /// Sends crucible `signal`, reads the terminal until crucible has let go
+    /// of it, and says how the process ended and what it wrote on the way.
+    ///
+    /// By name through `kill`, for the reason the child is started through
+    /// `setsid`: raising a signal at another process is a call this workspace
+    /// does not write by hand. `setsid` became crucible rather than starting
+    /// it, so the process the signal reaches is the one being watched.
+    ///
+    /// Nothing here waits on a clock to decide the process is gone. The reader
+    /// thread's channel closes when the last handle on the far side of the pair
+    /// does, which is the process ending; [`CEILING`] only bounds a case that
+    /// never gets there.
+    ///
+    /// What it wrote is handed back as it was written, because the screen
+    /// keeps text and drops the modes a terminal is put in — and whether those
+    /// were handed back is the thing a process ending has to be asked.
+    pub(crate) fn ends_on(&mut self, signal: &str) -> (ExitStatus, String) {
+        let sent = Command::new("kill")
+            .args(["-s", signal, &self.child.id().to_string()])
+            .status()
+            .expect("kill is on the path");
+        assert!(sent.success(), "{signal} never reached crucible");
+
+        let deadline = Instant::now() + CEILING;
+        let mut wrote = Vec::new();
+        loop {
+            match self.bytes.recv_timeout(QUIET) {
+                Ok(bytes) => {
+                    wrote.extend_from_slice(&bytes);
+                    self.feed(&bytes);
+                }
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
+            assert!(
+                Instant::now() < deadline,
+                "crucible outlived {signal} by {CEILING:?}\n{}",
+                self.picture()
+            );
+        }
+
+        let ended = self.child.wait().expect("crucible ended");
+        (ended, String::from_utf8_lossy(&wrote).into_owned())
+    }
+
+    /// Every session log this run left behind, one after another.
+    ///
+    /// Read after the process is gone, which is the only moment the question
+    /// these logs answer can be asked: what is on the disk once nothing is left
+    /// to put more there.
+    pub(crate) fn recorded(&self) -> String {
+        fn gather(directory: &Path, into: &mut String) {
+            let Ok(entries) = fs::read_dir(directory) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    gather(&path, into);
+                } else if path.extension().is_some_and(|kind| kind == "jsonl") {
+                    into.push_str(&fs::read_to_string(&path).unwrap_or_default());
+                }
+            }
+        }
+
+        let mut logs = String::new();
+        gather(&self.home().join("sessions"), &mut logs);
+        logs
     }
 
     /// The screen, ready to be compared against the one checked in beside it.

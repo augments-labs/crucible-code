@@ -484,13 +484,24 @@ mod tests {
 
     use super::*;
 
-    /// A directory this test owns, emptied first so a rerun starts clean.
-    fn base(name: &str) -> std::path::PathBuf {
-        let base =
-            std::env::temp_dir().join(format!("crucible-attach-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&base);
-        std::fs::create_dir_all(&base).expect("a writable temporary directory");
-        base
+    /// A directory this test owns, emptied first so a rerun starts clean and
+    /// removed when the test is over.
+    struct Scratch(std::path::PathBuf);
+
+    impl Scratch {
+        fn new(name: &str) -> Self {
+            let base =
+                std::env::temp_dir().join(format!("crucible-attach-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&base);
+            std::fs::create_dir_all(&base).expect("a writable temporary directory");
+            Self(base)
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
     }
 
     #[test]
@@ -498,8 +509,8 @@ mod tests {
         // The size comes from the descriptor, so this holds without the test
         // ever writing four megabytes: the file is that large and no page of
         // it is touched, by the check or by the assertion.
-        let base = base("over");
-        let at = base.join("huge.png");
+        let base = Scratch::new("over");
+        let at = base.0.join("huge.png");
         let file = File::create(&at).expect("a writable temporary directory");
         file.set_len(CEILING as u64 + 1).expect("a sparse file");
         drop(file);
@@ -548,8 +559,8 @@ mod tests {
 
     #[test]
     fn the_digest_travels_with_the_bytes_it_was_taken_over() {
-        let base = base("digest");
-        let at = base.join("shot.png");
+        let base = Scratch::new("digest");
+        let at = base.0.join("shot.png");
         std::fs::write(&at, [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a])
             .expect("a writable temporary directory");
 
@@ -578,8 +589,8 @@ mod tests {
         // are written against. Without this, either `>` may become `>=` and
         // nothing goes red: the file below is 64 bytes, and every other case is
         // far enough from the edge to survive the wrong comparison.
-        let base = base("edge");
-        let at = base.join("exact.png");
+        let base = Scratch::new("edge");
+        let at = base.0.join("exact.png");
         let file = File::create(&at).expect("a writable temporary directory");
         file.set_len(CEILING as u64).expect("a sparse file");
         drop(file);
@@ -592,8 +603,8 @@ mod tests {
 
     #[test]
     fn a_file_under_the_ceiling_is_carried_whole() {
-        let base = base("under");
-        let at = base.join("edge.png");
+        let base = Scratch::new("under");
+        let at = base.0.join("edge.png");
         std::fs::write(&at, vec![7; 64]).expect("a writable temporary directory");
 
         let mut file = opened(&at).expect("a regular file opens");
@@ -604,9 +615,9 @@ mod tests {
 
     #[test]
     fn a_directory_is_not_a_file_to_attach() {
-        let base = base("directory");
+        let base = Scratch::new("directory");
 
-        let refused = opened(&base).expect_err("a directory is not attachable");
+        let refused = opened(&base.0).expect_err("a directory is not attachable");
 
         // Unix opens a directory and the kind check is what refuses it; Windows
         // refuses the open itself, without the flag that would let a directory
@@ -621,8 +632,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_pipe_is_refused_without_waiting_for_a_writer() {
-        let base = base("pipe");
-        let at = base.join("waiting.png");
+        let base = Scratch::new("pipe");
+        let at = base.0.join("waiting.png");
         let made = std::process::Command::new("mkfifo")
             .arg(&at)
             .status()
@@ -637,14 +648,14 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_pipe_the_workspace_proved_is_refused_as_not_a_file() {
-        let base = base("reached-pipe");
-        let at = base.join("waiting.png");
+        let base = Scratch::new("reached-pipe");
+        let at = base.0.join("waiting.png");
         let made = std::process::Command::new("mkfifo")
             .arg(&at)
             .status()
             .expect("mkfifo runs");
         assert!(made.success());
-        let workspace = Workspace::open(&base).expect("a directory opens as a workspace");
+        let workspace = Workspace::open(&base.0).expect("a directory opens as a workspace");
         let proven = workspace
             .existing("waiting.png")
             .expect("it is there, and inside");
@@ -662,8 +673,8 @@ mod tests {
         // `Attachment` hand-writes its `Debug` to keep the path and the hash
         // out of a panic payload. These hold the file itself and the same
         // digest, so deriving one here would put back what that removed.
-        let base = base("debug");
-        let at = base.join("private.png");
+        let base = Scratch::new("debug");
+        let at = base.0.join("private.png");
         std::fs::write(&at, [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a])
             .expect("a writable temporary directory");
 

@@ -4,7 +4,7 @@ use super::*;
 
 /// The built-in providers, as one generation to read the store against.
 fn catalogue() -> Providers {
-    crate::cli::providers()
+    crucible_app::providers::providers()
         .expect("the built-in providers register")
         .snapshot()
 }

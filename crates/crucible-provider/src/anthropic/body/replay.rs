@@ -5,9 +5,10 @@
 
 use crate::anthropic::continuation::{PROTOCOL, identity, private, problem};
 use crate::json::{Array, Object};
-use crucible_core::{
+use crucible_models::ProviderError;
+use crucible_types::{
     ContinuationPart, ContinuationScope, PromptCacheRetentionClass, ProviderContinuation,
-    ProviderError, TOOL_CALL_ID_BYTES, TOOL_NAME_BYTES, ToolCall,
+    TOOL_CALL_ID_BYTES, TOOL_NAME_BYTES, ToolCall,
 };
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;

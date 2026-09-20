@@ -13,9 +13,10 @@
 //! which is the whole argument for a ladder over a list.
 //!
 //! Typed choices normally go to the vendor even when the offer is stale.
-//! Google's Interactions encoder only supports low/medium/high, so a known
-//! Google model also rejects incompatible typed choices here before they can
-//! replace a working setting. The encoder checks every request independently.
+//! Google's Interactions encoder only supports low/medium/high, so for a known
+//! Google model the conversation refuses an incompatible typed choice before
+//! it can replace a working setting, and the refusal is what is said here. The
+//! encoder checks every request independently.
 //!
 //! Which is why the ladder is stood over a model by name, and why a session
 //! with no model chosen is sent to `/model` instead of being asked this. A rung
@@ -26,12 +27,18 @@
 //! the same reason: how hard to think is the same answer every time this
 //! machine is used, and asking it once a session is asking it for ever.
 
+use crucible_app::Conversation;
+use crucible_app::client::Performed;
+use crucible_client_api::Command;
 use crucible_core::{Effort, EffortError};
 use crucible_runner::Runner;
 use crucible_tui::{Glyphs, Ladder, Renderer, Row, Slot, Terminal, clip, fold};
 
+use crate::cli::Fatal;
+use crate::cli::client::astray;
 use crate::cli::converse::picking::{self, Taken};
-use crate::cli::{Fatal, remember, rungs, unasked};
+use crucible_app::providers::{rungs, unasked};
+use crucible_app::switching::Rung;
 
 use super::{Terms, say};
 
@@ -91,7 +98,7 @@ const OPENS_ON: Effort = Effort::High;
 pub(super) fn run<T: Terminal>(
     said: &str,
     renderer: &mut Renderer<T>,
-    runner: &mut Runner,
+    conversation: &mut Conversation,
     terms: &Terms,
     keys: bool,
 ) -> Result<(), Fatal> {
@@ -99,40 +106,37 @@ pub(super) fn run<T: Terminal>(
     // there has to be one. Without a provider there is nobody to write it under
     // either, and the two want different sentences: one says set a key, the
     // other says the key is fine and pick a model.
-    let named = terms.provider.get();
-    let Some(provider) = named.filter(|_| !runner.model().is_empty()) else {
+    let named = conversation.serving();
+    let Some(provider) = named.filter(|_| !conversation.runner().model().is_empty()) else {
         return renderer.commit(unasked(named)).map_err(Fatal::from);
     };
 
     // Every rung for a model this build has not heard of, which is why this is
     // read before the word typed after the command rather than instead of it:
     // unknown names still go to the vendor. Gemini's known narrow ladder is
-    // also checked for typed choices so an invalid word cannot poison later
-    // requests or the persisted setting.
-    let rungs = rungs(&terms.providers.snapshot(), provider, runner.model());
+    // the one a typed word is held to, by the conversation taking it, so an
+    // invalid word cannot poison later requests or the persisted setting.
+    let rungs = rungs(
+        &terms.providers.snapshot(),
+        provider,
+        conversation.runner().model(),
+    );
 
     if !said.is_empty() {
         return match said.parse() {
-            Ok(effort) if provider == "google" && !rungs.contains(&effort) => say(
-                renderer,
-                &format!(
-                    "! {} does not support {} effort; use low, medium or high",
-                    runner.model(),
-                    effort.as_str()
-                ),
-            ),
-            Ok(effort) => taken(effort, provider, renderer, runner, terms),
+            Ok(effort) => taken(effort, renderer, conversation, terms),
             Err(refused) => mistyped(&refused, renderer, &rungs),
         };
     }
 
+    let runner = conversation.runner();
     if rungs.is_empty() {
         return say(renderer, &format!("{} {NO_RUNG}", runner.model()));
     }
 
     if keys {
         match chosen(renderer, runner, terms, &rungs)? {
-            Taken::Took(effort) => return taken(effort, provider, renderer, runner, terms),
+            Taken::Took(effort) => return taken(effort, renderer, conversation, terms),
             // Escape asked for the screen that was there before the panel. A
             // listing under it would be the same question put a second time.
             Taken::Left => return say(renderer, LEFT),
@@ -179,20 +183,39 @@ fn chosen<T: Terminal>(
 /// choice made through `/model`.
 fn taken<T: Terminal>(
     effort: Effort,
-    provider: &str,
     renderer: &mut Renderer<T>,
-    runner: &mut Runner,
+    conversation: &mut Conversation,
     terms: &Terms,
 ) -> Result<(), Fatal> {
-    runner.think(effort);
-
-    let said = match remember::thinking(&terms.choosing, provider, effort) {
+    let asked = Command::SetEffort(crucible_app::client::rung(effort));
+    let rung = match terms.perform(conversation, asked) {
+        Performed::Effort(rung) => rung,
+        other => return say(renderer, &astray(&other)),
+    };
+    let said = match rung {
+        Rung::Unasked => {
+            return renderer
+                .commit(unasked(conversation.serving()))
+                .map_err(Fatal::from);
+        }
+        Rung::Unsupported => {
+            return say(
+                renderer,
+                &format!(
+                    "! {} does not support {} effort; use low, medium or high",
+                    conversation.runner().model(),
+                    effort.as_str()
+                ),
+            );
+        }
         // Where it went is not news. It is the same file every time, chosen by
         // crucible rather than by the reader, and naming it on every rung is a
         // session reading its own bookkeeping out loud. What the reader asked
         // for is the rung, so the rung is the answer.
-        Ok(()) => format!("{} effort", effort.as_str()),
-        Err(problem) => {
+        Rung::Taken { unwritten: None } => format!("{} effort", effort.as_str()),
+        Rung::Taken {
+            unwritten: Some(problem),
+        } => {
             renderer.commit(&format!("! {problem}"))?;
             format!("{} effort, this session only", effort.as_str())
         }

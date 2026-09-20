@@ -8,8 +8,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use crucible_auth::{Store, StoredCredentials};
-use crucible_config::{Extensions, Home, Settings};
-use crucible_core::{Ask, Mode, Remember, Sensitivity, Settled, ToolCall, Verdict, Workspace};
+use crucible_config::{Home, Settings};
+use crucible_core::Workspace;
 
 /// The key [`Sample::stored`] writes down.
 ///
@@ -72,11 +72,6 @@ impl Sample {
         self.base.join("home/config.json")
     }
 
-    /// The disposable user-home root handed to state stores.
-    pub(super) fn home(&self) -> PathBuf {
-        self.base.join("home")
-    }
-
     /// The store this tree holds, having been told `provider`'s key.
     ///
     /// Written through [`Store::keep`] and read back through [`Store::read`],
@@ -88,54 +83,6 @@ impl Sample {
         store.keep(provider, WRITTEN).expect("a writable home");
 
         store.read()
-    }
-
-    /// The store this tree holds, with a completed subscription login for
-    /// `provider`.
-    ///
-    /// Written as a file at this wiring test boundary because the auth crate
-    /// deliberately exposes no token constructor. The value is inert and far
-    /// from expiry; tests can therefore prove endpoint and precedence wiring
-    /// without a network request or a readable credential API.
-    pub(super) fn subscribed(&self, provider: &str) -> StoredCredentials {
-        let home = self.base.join("home");
-        fs::create_dir_all(&home).expect("a temporary home");
-        let details = if provider == "moonshot" {
-            r#"{"device_id":"01234567-89ab-4cde-8fab-0123456789ab","expires_in":"3600"}"#
-        } else {
-            r#"{"account_id":"test-account"}"#
-        };
-        fs::write(
-            home.join("auth.json"),
-            format!(
-                r#"{{"version":2,"keys":{{}},"subscriptions":{{"{provider}":{{"access_token":"test-access","refresh_token":"test-refresh","details":{details},"expires_at":18446744073709551615,"refreshed_at":1}}}},"identities":{{}}}}"#
-            ),
-        )
-        .expect("a writable store");
-
-        self.store().read()
-    }
-
-    /// Writes one extension's manifest into this tree's home directory.
-    ///
-    /// A real file in a real directory, because discovery's whole job is what
-    /// is on disk and where: a fixture that handed the listing a manifest it
-    /// had built in memory would be testing the fixture's answer to the
-    /// question the sweep exists to ask.
-    pub(super) fn installed(&self, directory: &str, manifest: &str) {
-        let at = self.base.join("home").join("extensions").join(directory);
-        fs::create_dir_all(&at).expect("a temporary directory");
-        fs::write(at.join("manifest.json"), manifest).expect("a temporary directory");
-    }
-
-    /// What a sweep of this tree's home directory finds.
-    pub(super) fn discovered(&self) -> Extensions {
-        Extensions::discover(&self.found())
-    }
-
-    /// What this tree's home file decided, and nothing the checkout said.
-    pub(super) fn decided(&self) -> Settings {
-        Settings::read_home(&self.found()).expect("a readable home file")
     }
 
     /// This tree's home directory as crucible would find it, rather than
@@ -164,36 +111,6 @@ impl Sample {
 
     fn read(&self) -> Settings {
         Settings::read(&self.found(), &self.root()).expect("a document this test wrote")
-    }
-
-    /// What the permission engine makes of one call, with this tree's files
-    /// read from the start again.
-    ///
-    /// The question a rule written down has to answer is not what the text of
-    /// the file says but what the next crucible to start does with it, and
-    /// starting is what reads these files. Nobody is here to be asked, so a
-    /// call that still reaches the user comes back refused — which is how a
-    /// rule that landed is told from one that did not.
-    pub(super) fn settles(&self, call: &ToolCall, sensitivity: &Sensitivity) -> Settled {
-        struct Nobody;
-
-        impl Ask for Nobody {
-            fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
-                (Verdict::Deny, Remember::Never)
-            }
-        }
-
-        // Pointed at a directory that does not exist, so nothing configured on
-        // the machine running this test can allow anything.
-        let home = Home::find(&|name: &str| {
-            (name == crucible_config::HOME).then(|| OsString::from(self.base.join("home")))
-        })
-        .expect("an absolute path was given");
-
-        Settings::read(&home, &self.root())
-            .expect("a file crucible wrote")
-            .permission(Mode::Ask)
-            .decide(call, sensitivity, &mut Nobody)
     }
 }
 

@@ -23,11 +23,15 @@ mod body;
 mod stream;
 mod wire;
 
-use crucible_core::{
-    Cancel, Credential, CredentialScopeId, DeltaStream, Modalities, Modality, Outgoing,
-    PromptCacheCapabilities, PromptCacheContent, PromptCacheMechanismCapability,
-    PromptCacheProvenance, PromptCacheRetentionClass, PromptCacheRoute, PromptCacheUsageReporting,
-    Provider, ProviderError, Request, StatefulTransportCapability,
+use crucible_credentials::{Credential, Outgoing};
+use crucible_models::{
+    DeltaStream, PromptCacheCapabilities, PromptCacheContent, PromptCacheMechanismCapability,
+    PromptCacheProvenance, PromptCacheRoute, Provider, ProviderError, Request,
+    StatefulTransportCapability,
+};
+use crucible_runtime::Cancel;
+use crucible_types::{
+    CredentialScopeId, Modalities, Modality, PromptCacheRetentionClass, PromptCacheUsageReporting,
 };
 
 use crate::endpoint::Endpoint;
@@ -181,7 +185,7 @@ impl Provider for Moonshot {
         }
     }
 
-    fn prompt_cache_encoding(&self, request: &Request<'_>) -> crucible_core::PromptCacheEncoding {
+    fn prompt_cache_encoding(&self, request: &Request<'_>) -> crucible_types::PromptCacheEncoding {
         body::prompt_cache_encoding(request)
     }
 

@@ -195,9 +195,7 @@ fn publication_lease_is_exclusive_and_released_with_its_descriptor() {
         .expect("first lease");
     assert!(Lease::try_acquire_in(&state).expect("lock state").is_none());
     drop(first);
-    Lease::try_acquire_in(&state)
-        .expect("lock state")
-        .expect("lease after descriptor close");
+    lease_after_transient_holders(&state, "lease after descriptor close");
 }
 
 #[test]
@@ -727,7 +725,7 @@ fn a_stale_journal_lock_lent_to_a_departing_child_is_recovered_not_skipped() {
         lock_after_transient_holder(&journal).expect("journal lock"),
         "the stale journal lock outlived the transient-holder budget"
     );
-    let mut child = lend_to_departing_child(&journal);
+    let mut child = lend_to_departing_child(&journal, "0.05");
     drop(journal);
 
     reconcile_stale_transactions(&base).expect("pre-release recovery");
@@ -783,11 +781,10 @@ fn taking_the_publication_lock_keeps_its_file_from_ageing() {
         .set_times(FileTimes::new().set_modified(long_ago))
         .expect("an old lock");
 
-    drop(
-        Lease::try_acquire_in(&state)
-            .expect("lock state")
-            .expect("a lease that takes the lock again"),
-    );
+    drop(lease_after_transient_holders(
+        &state,
+        "a lease that takes the lock again",
+    ));
 
     let modified = std::fs::metadata(&lock)
         .expect("the lock")
@@ -806,22 +803,37 @@ fn a_publication_lease_lent_to_a_departing_child_is_free_once_the_child_is_gone(
     let first = Lease::try_acquire_in(&state)
         .expect("lock state")
         .expect("first lease");
-    let mut child = lend_to_departing_child(first.lock());
+    // Kept past the transient-holder budget, so the lease taken below is one
+    // the child's exit freed and not one a short wait would have found anyway.
+    let mut child = lend_to_departing_child(first.lock(), "0.5");
     drop(first);
+    assert!(
+        Lease::try_acquire_in(&state).expect("lock state").is_none(),
+        "the lease was free while a child still held its descriptor"
+    );
 
     child.wait().expect("departing child");
-    Lease::try_acquire_in(&state)
-        .expect("lock state")
-        .expect("lease once the departing child is gone");
+    lease_after_transient_holders(&state, "lease once the departing child is gone");
 }
 
-/// Hands a copy of `held` to a child that keeps it open briefly, as a forked
-/// child does between `fork` and `exec` while it still carries the parent's
-/// descriptor table.
-fn lend_to_departing_child(held: &File) -> std::process::Child {
+/// Takes the lock in `state` again once this test has let it go.
+///
+/// A child another test is spawning may still hold, between fork and exec, a
+/// copy of the descriptor this test just closed, so the lock is taken across
+/// the same transient-holder budget the recovery allows.
+fn lease_after_transient_holders(state: &Path, expected: &str) -> Lease {
+    Lease::acquire_in(state, TRANSIENT_LOCK_PAUSE * TRANSIENT_LOCK_RETRIES)
+        .expect("lock state")
+        .expect(expected)
+}
+
+/// Hands a copy of `held` to a child that keeps it open for `seconds`, as a
+/// forked child does between `fork` and `exec` while it still carries the
+/// parent's descriptor table.
+fn lend_to_departing_child(held: &File, seconds: &str) -> std::process::Child {
     let copy = held.try_clone().expect("descriptor copy");
     std::process::Command::new("sleep")
-        .arg("0.05")
+        .arg(seconds)
         .stdin(std::process::Stdio::from(copy))
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -848,4 +860,133 @@ fn clearing_a_stage_before_its_journal_leaves_only_the_journal() {
 
     clear_stage_before_journal(&sample.root().join("absent"))
         .expect("an absent stage is already clear");
+}
+
+#[test]
+fn a_panic_under_the_state_coordination_leaves_it_usable() {
+    // A test that panics while the coordination's lock is held would otherwise
+    // leave every later lease refused, which reads exactly as the refusal the
+    // coordination exists to stop.
+    let poisoning = std::thread::spawn(|| {
+        let _held = TEST_STATE_USE.0.lock();
+        panic!("a test panicking under the state coordination's lock");
+    });
+    assert!(poisoning.join().is_err(), "the fixture did not panic");
+
+    // Asked from a thread of its own: a hold left held after the panic would
+    // keep the change waiting for ever, and the test says so rather than hang
+    // the run.
+    let (done, finished) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        drop(TestStateChange::read());
+        drop(TestStateChange::change());
+        done.send(())
+            .expect("the test is told the coordination answered");
+    });
+    finished
+        .recv_timeout(std::time::Duration::from_secs(30))
+        .expect("a reading and then a change, after the panic");
+}
+
+#[test]
+fn a_change_waits_for_a_reading_under_way() {
+    // A lease part-way through reading this user's state directory would be
+    // refused by a change made now, for a change that is not its own.
+    let reading = TestStateChange::read();
+    let (asking, asked) = std::sync::mpsc::channel();
+    let (holding, held) = std::sync::mpsc::channel();
+    let changer = std::thread::spawn(move || {
+        asking
+            .send(())
+            .expect("the test is told the change is asked for");
+        let change = TestStateChange::change();
+        holding
+            .send(())
+            .expect("the test is told the change is held");
+        drop(change);
+    });
+    asked.recv().expect("the change is asked for");
+    assert!(
+        held.recv_timeout(std::time::Duration::from_millis(200))
+            .is_err(),
+        "a change was taken while a reading was under way"
+    );
+    drop(reading);
+    held.recv_timeout(std::time::Duration::from_secs(30))
+        .expect("the change, once the reading ended");
+    changer.join().expect("the changing thread");
+}
+
+#[test]
+fn a_change_waits_for_another_change() {
+    // Two tests changing this user's state directory at once would each put back
+    // what the other changed while the other still relied on it.
+    let first = TestStateChange::change();
+    let (asking, asked) = std::sync::mpsc::channel();
+    let (holding, held) = std::sync::mpsc::channel();
+    let changer = std::thread::spawn(move || {
+        asking
+            .send(())
+            .expect("the test is told the second change is asked for");
+        let second = TestStateChange::change();
+        holding
+            .send(())
+            .expect("the test is told the second change is held");
+        drop(second);
+    });
+    asked.recv().expect("the second change is asked for");
+    assert!(
+        held.recv_timeout(std::time::Duration::from_millis(200))
+            .is_err(),
+        "a second change was taken while the first still stood"
+    );
+    drop(first);
+    held.recv_timeout(std::time::Duration::from_secs(30))
+        .expect("the second change, once the first ended");
+    changer.join().expect("the changing thread");
+}
+
+#[test]
+fn a_change_asked_for_again_by_its_holder_is_taken_at_once() {
+    // A test holding the change that reaches code asking for it again would
+    // otherwise wait on itself for ever, and letting go of that second hold must
+    // not let go of the change the first still holds.
+    let (taken, told) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let holder = std::thread::spawn(move || {
+        let change = TestStateChange::change();
+        let again = TestStateChange::change();
+        drop(again);
+        taken
+            .send(())
+            .expect("the test is told the change was taken twice");
+        released.recv().expect("the test lets the first hold go");
+        drop(change);
+    });
+    told.recv_timeout(std::time::Duration::from_secs(30))
+        .expect("the change asked for again by the thread holding it");
+
+    let (asking, asked) = std::sync::mpsc::channel();
+    let (holding, held) = std::sync::mpsc::channel();
+    let contender = std::thread::spawn(move || {
+        asking
+            .send(())
+            .expect("the test is told the change is asked for");
+        let change = TestStateChange::change();
+        holding
+            .send(())
+            .expect("the test is told the change is held");
+        drop(change);
+    });
+    asked.recv().expect("the change is asked for");
+    assert!(
+        held.recv_timeout(std::time::Duration::from_millis(200))
+            .is_err(),
+        "letting go of the second hold let go of the change"
+    );
+    release.send(()).expect("the first hold is let go");
+    held.recv_timeout(std::time::Duration::from_secs(30))
+        .expect("the change, once its holder let it go");
+    holder.join().expect("the holding thread");
+    contender.join().expect("the contending thread");
 }

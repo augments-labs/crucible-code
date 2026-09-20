@@ -8,7 +8,7 @@
 use std::time::SystemTime;
 
 use crucible_core::Workspace;
-use crucible_runner::Recorded;
+use crucible_session::Recorded;
 use crucible_tui::{Notice, Recent, Renderer, Row, Slot, Terminal, TerminalError, Welcome, fold};
 
 use crate::cli::release::Newer;
@@ -223,9 +223,9 @@ mod tests {
     use std::path::PathBuf;
 
     use crucible_core::Message;
-    use crucible_runner::Session;
+    use crucible_session::Session;
 
-    use crate::cli::NOTHING_TO_ASK;
+    use crucible_app::providers::NOTHING_TO_ASK;
     use crucible_tui::Recording;
 
     use super::*;
@@ -348,7 +348,7 @@ mod tests {
         // Dropping is what waits for the queue, so the file is whole after it.
         drop(session);
 
-        let sessions = crucible_runner::recent(&scratch.logs(), &workspace, Welcome::WANTED);
+        let sessions = crucible_session::recent(&scratch.logs(), &workspace, Welcome::WANTED);
         assert_eq!(sessions.len(), 1, "the session that was just recorded");
 
         let screen = drawn(80, true, &workspace, &sessions);

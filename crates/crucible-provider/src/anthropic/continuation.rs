@@ -5,10 +5,11 @@
 //! stop reason is the sole point at which continuation is offered to the runner.
 
 use crate::sse::SseEvent;
-use crucible_core::{
+use crucible_models::{Delta, ProviderError};
+use crucible_types::{
     CONTINUATION_BYTES, CONTINUATION_PARTS, Continuation, ContinuationData, ContinuationPart,
-    ContinuationScope, Delta, ProviderError, StopReason, TOOL_ARGUMENT_BYTES, TOOL_CALL_ID_BYTES,
-    TOOL_NAME_BYTES, ToolId,
+    ContinuationScope, StopReason, TOOL_ARGUMENT_BYTES, TOOL_CALL_ID_BYTES, TOOL_NAME_BYTES,
+    ToolId,
 };
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
@@ -54,11 +55,11 @@ impl Blocks {
     pub(super) fn new(
         model: &str,
         scope: ContinuationScope,
-        effort: Option<crucible_core::Effort>,
+        effort: Option<crucible_models::Effort>,
     ) -> Result<Self, ProviderError> {
         let mut state = Continuation::new(PROTOCOL, model, scope)
             .map_err(|_| problem("invalid continuation identity"))?;
-        state.push(ContinuationPart::Opaque(ContinuationData::new(&serde_json::json!({"request_effort":effort.map(crucible_core::Effort::as_str)}).to_string()).map_err(|_| problem("invalid request effort"))?))
+        state.push(ContinuationPart::Opaque(ContinuationData::new(&serde_json::json!({"request_effort":effort.map(crucible_models::Effort::as_str)}).to_string()).map_err(|_| problem("invalid request effort"))?))
             .map_err(|_| problem("invalid request effort"))?;
         Ok(Self {
             state: Some(state),

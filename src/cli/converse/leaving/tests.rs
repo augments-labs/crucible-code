@@ -6,9 +6,11 @@
 
 use crucible_builtins::{Background, Bash};
 use crucible_core::{
-    Ancestry, Ask, CallResultKey, CallResultReceipt, CallResultStoreError, Cancel, DescribeTool,
-    InvocationId, JournalStore, Mode, Permission, Remember, Rules, RunItem, Sensitivity, Settled,
-    Tool, ToolArgs, ToolCall, ToolContext, ToolId, ToolResult, Unwatched, Verdict,
+    Ancestry, Ask, Calibration, CallResultKey, CallResultReceipt, CallResultStoreError, Cancel,
+    Compacted, ContextError, ContextPatch, ContextSnapshot, DescribeTool, InvocationId,
+    JournalStore, Message, Mode, Permission, Remember, Rules, RunItem, Sensitivity, SessionId,
+    SessionOwner, SessionStore, Settled, Tool, ToolArgs, ToolCall, ToolContext, ToolId, ToolResult,
+    Unwatched, Verdict,
 };
 use crucible_sandbox_local::LocalSandbox;
 use sha2::{Digest, Sha256};
@@ -146,6 +148,43 @@ struct Nobody;
 struct Journal;
 
 static JOURNAL: Journal = Journal;
+
+/// Nothing model-visible is recorded here: what a detached command needs is a
+/// receipt for its start result, and a journal that answered a context back
+/// would be describing a session these tests never had.
+impl SessionStore for Journal {
+    fn session_id(&self) -> Option<SessionId> {
+        None
+    }
+
+    fn owner(&self) -> Option<SessionOwner> {
+        None
+    }
+
+    fn append_message(&self, _message: &Message) {}
+
+    fn context_snapshot(&self) -> Option<ContextSnapshot> {
+        None
+    }
+
+    fn contextual(&self, _patch: &ContextPatch) -> Result<(), ContextError> {
+        Ok(())
+    }
+
+    fn compacted(&self, _replaced: usize, _recap: &str) {}
+
+    fn display_compacted(&self, _compacted: Compacted, _pruned: bool) {}
+
+    fn pruned(&self, _freed: usize, _results: &[ToolId]) {}
+
+    fn restricted(&self, _freed: usize, _results: &[ToolId], _notice: &str) {}
+
+    fn measured(&self, _calibration: &Calibration) {}
+
+    fn calibrated(&self) -> Option<Calibration> {
+        None
+    }
+}
 
 impl JournalStore for Journal {
     fn append_run_item(&self, _item: &RunItem) {}

@@ -16,6 +16,10 @@ crucible-core.workspace = true
 # synced, then renamed over it. That durable replacement is the privacy
 # crate's, already reviewed for the configuration and auth stores.
 crucible-privacy.workspace = true
+# The contract a persistent prompt-cache resource is remembered under, and the
+# record it keeps; the file that keeps it is this crate's.
+crucible-storage.workspace = true
+crucible-types.workspace = true
 # A session log is JSON, one object per line, read back by a build that may
 # not be the one that wrote it. Hand-rolling that parser would be a second
 # place for a malformed line to become a panic.

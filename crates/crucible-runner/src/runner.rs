@@ -15,7 +15,7 @@
 //!
 //! The loop's own body lives in [`passes`], because it lasts one turn and this
 //! does not. What stays here is the session it is taken against — the provider,
-//! the transcript, what the user has already allowed, the log — together with
+//! the transcript, what the user has already allowed, the store — together with
 //! the one request, the recap and the retry that a pass reaches for. A caller
 //! never sees the split: [`Runner::turn`] is still the whole of the way in.
 //!
@@ -29,26 +29,27 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crucible_core::{
     Ancestry, Aside, Ask, Attachment, Cancel, Compacting, Content, ContextSection, Delta,
-    DeltaStream, Effort, Event, JournalStore, Looking, Message, Modalities, Mode, Permission,
-    PermissionsSection, Post, PromptCacheAttempt, PromptCacheEncoding, PromptCacheFact,
-    PromptCacheOutcome, PromptCachePlanned, PromptCachePreparationError,
-    PromptCacheRequestDisposition, PromptCacheRequestFact, PromptCacheResourceError,
-    PromptCacheResourceRecord, PromptCacheRetentionClass, PromptCacheScopeDigest,
-    PromptCacheUsageFact, PromptCacheUsageReporting, Provider, ProviderError, ProviderUsage,
-    Reporter, Request, Room, RunItem, SandboxAuditRegistry, SessionStore, Spend, Steer, StopReason,
-    Summary, ToolCall, ToolEntry, ToolError, ToolGeneration, ToolSchema, ToolSnapshot, Toolset,
-    ToolsetContext, Transcript, TurnError, TurnId, UsageCost,
+    DeltaStream, Effort, JournalStore, Looking, Message, Modalities, Mode, Permission,
+    PermissionsSection, PromptCacheAttempt, PromptCacheEncoding, PromptCacheFact,
+    PromptCacheOutcome, PromptCachePreparationError, PromptCacheRequestDisposition,
+    PromptCacheRequestFact, PromptCacheResourceError, PromptCacheResourceRecord,
+    PromptCacheRetentionClass, PromptCacheUsageFact, PromptCacheUsageReporting, Provider,
+    ProviderError, ProviderUsage, Request, Room, RunItem, SandboxAuditRegistry, Spend, Steer,
+    StopReason, Summary, ToolCall, ToolEntry, ToolError, ToolGeneration, ToolSchema, ToolSnapshot,
+    Toolset, ToolsetContext, Transcript, TurnId, UsageCost,
 };
 
-use crucible_session::{Pruned, Session};
+use crucible_context::ContextInputs;
 
-use crate::agent::AgentSpec;
+use crucible_agents::{Agent, AgentContext, Decision, GuardrailError, Model, Rejection};
+
 use crate::context::RunContext;
-use crate::outcome::RunResult;
+use crate::outcome::{RunResult, Turned};
 use crate::policy::{Compaction, RunPolicy};
 use crate::prompt_cache::{self, ScopeInputs};
 use crate::tools::Tools;
 
+use crate::{Event, Post, Reporter, TurnError};
 mod answer;
 mod assembly;
 pub mod attachments;
@@ -56,13 +57,15 @@ mod cleanup;
 mod compaction;
 mod load;
 mod passes;
+mod state;
 mod work;
 
 use answer::Answer;
-pub use assembly::ContextInputs;
 pub use cleanup::PromptCacheCleanup;
 use load::{Counting, Load};
 use passes::AgentLoop;
+use state::Judged;
+pub use state::RunState;
 use work::{Went, Work};
 
 /// How many compactions one turn may run without getting anywhere.
@@ -130,60 +133,56 @@ impl TurnBounds {
     }
 }
 
-/// Which model to ask, and how.
-///
-/// Model selection only. Stable operator instructions live on
-/// [`crate::AgentSpec::instructions`]; the model name and effort are assembled
-/// separately as typed context on every provider pass.
-#[derive(Debug, Clone)]
-pub struct Model {
-    /// The model's name, as the provider spells it.
-    pub name: Box<str>,
-    /// Ceiling on one response.
-    pub max_tokens: u32,
-    /// How much this model accepts at once, in tokens, where anybody knows.
-    ///
-    /// `None` is not a large window — it is no answer, and a session runs
-    /// without a proactive bound rather than against a number this loop made
-    /// up. The wiring above resolves it; this crate is handed the result.
-    pub window: Option<u32>,
-    /// What this model reads, where anybody knows.
-    ///
-    /// The model's half of what may be attached, and only that half: what a
-    /// provider can put in a request is the provider's own answer, asked of it
-    /// here rather than resolved above, because what a module can write today
-    /// and what a vendor's table says are two facts that diverge.
-    ///
-    /// `None` is no answer rather than a permissive one. An attachment nothing
-    /// can say this model reads is stood down and carries a line saying so —
-    /// the alternative is bytes labelled with a shape the request has no word
-    /// for, which is a wrong request rather than a refused one.
-    pub accepts: Option<Modalities>,
-    /// How hard to think, where somebody said. `None` leaves it to the vendor.
-    pub effort: Option<Effort>,
-}
-
 /// Drives turns to completion.
 ///
-/// Holds what outlives a turn: the provider, the tools, the session's
-/// permission memory, the transcript, and the log it is written to.
+/// Holds three kinds of thing, and holds them apart. The *definition* is what
+/// the agent is — shared, never written to, and replaced whole when a session
+/// is asked to change model, effort or instructions, so that a request already
+/// out and a run beside this one keep the one they started under. The *state*
+/// is what this run has accumulated: the transcript, the turn count, the load,
+/// the roster in force. Everything else is a *service or a setting* the run was
+/// given — the provider, the toolset source, the permission memory, the log,
+/// the policy — which is neither a fact about the agent nor something the run
+/// builds up.
 #[derive(Debug)]
 pub struct Runner {
     provider: Box<dyn Provider>,
     toolset: Arc<dyn Toolset>,
-    tools: ToolSnapshot,
-    spec: AgentSpec,
+    /// The definition in force. Shared rather than owned, so that replacing it
+    /// cannot reach a request already out under the last one.
+    agent: Arc<Agent>,
+    /// What this run has accumulated, and no other run has.
+    state: RunState,
     context: ContextInputs,
     permission: Permission,
-    transcript: Transcript,
-    session: Session,
-    turn: TurnId,
+    /// Where the turn is recorded, as a contract rather than a file.
+    ///
+    /// Shared rather than owned: whoever opened the store still holds it —
+    /// closing it, browsing it and reporting on it are theirs — and this crate
+    /// writes to it without ever learning what it writes to.
+    store: Arc<dyn JournalStore>,
     policy: RunPolicy,
-    load: Load,
     prompt_cache_store: Option<Box<dyn crucible_core::PromptCacheResourceStore>>,
-    prompt_cache_attempt: Option<PromptCacheAttempt>,
-    prompt_cache_owner_scope: Option<PromptCacheScopeDigest>,
     sandbox_audits: SandboxAuditRegistry,
+}
+
+/// What `agent` would be advertised out of `tools`, between turns.
+///
+/// A pass narrows the roster it admits and leaves it behind narrowed, so after
+/// the first one this hands the roster straight back. Before it, the run is
+/// still holding everything it was wired with, and both things read here
+/// between turns — the names under the box and the size of the request the
+/// next turn would send — are about what the definition declares rather than
+/// about what the wiring installed.
+///
+/// A function over the two fields rather than a method, so a caller can hold
+/// the load it is about to write while it asks.
+fn advertising<'a>(agent: &Agent, tools: &'a ToolSnapshot) -> Vec<ToolSchema<'a>> {
+    tools
+        .advertised()
+        .into_iter()
+        .filter(|schema| agent.availability().offers(schema.name))
+        .collect()
 }
 
 struct Tooling {
@@ -197,9 +196,9 @@ impl Runner {
     pub fn new(
         provider: Box<dyn Provider>,
         tools: Tools,
-        spec: AgentSpec,
+        agent: Agent,
         context: ContextInputs,
-        session: Session,
+        store: Arc<dyn JournalStore>,
     ) -> Self {
         let snapshot = tools.snapshot().unwrap_or_default();
         Self::from_parts(
@@ -208,9 +207,9 @@ impl Runner {
                 source: Arc::new(tools),
                 snapshot,
             },
-            spec,
+            agent,
             context,
-            session,
+            store,
         )
     }
 
@@ -223,9 +222,9 @@ impl Runner {
     pub fn with_toolset<T>(
         provider: Box<dyn Provider>,
         toolset: T,
-        spec: AgentSpec,
+        agent: Agent,
         context: ContextInputs,
-        session: Session,
+        store: Arc<dyn JournalStore>,
     ) -> Self
     where
         T: Toolset + 'static,
@@ -236,18 +235,18 @@ impl Runner {
                 source: Arc::new(toolset),
                 snapshot: ToolSnapshot::empty(),
             },
-            spec,
+            agent,
             context,
-            session,
+            store,
         )
     }
 
     fn from_parts(
         provider: Box<dyn Provider>,
         tooling: Tooling,
-        spec: AgentSpec,
+        agent: Agent,
         context: ContextInputs,
-        session: Session,
+        store: Arc<dyn JournalStore>,
     ) -> Self {
         let Tooling {
             source: toolset,
@@ -256,23 +255,22 @@ impl Runner {
         let mut runner = Self {
             provider,
             toolset,
-            tools,
-            spec,
+            // The window the definition names is what this run starts out
+            // believing. What a provider goes on to report is this run's own
+            // evidence, so it is corrected here and never written back.
+            state: RunState::offering(agent.model().window, tools),
+            agent: Arc::new(agent),
             context,
             permission: Permission::new(),
-            transcript: Transcript::new(),
-            session,
-            turn: TurnId::FIRST,
+            store,
             policy: RunPolicy::default(),
-            load: Load::default(),
             prompt_cache_store: None,
-            prompt_cache_attempt: None,
-            prompt_cache_owner_scope: None,
             sandbox_audits: SandboxAuditRegistry::new(),
         };
-        runner
-            .load
-            .requesting(runner.spec.instructions(), &runner.tools.advertised());
+        runner.state.load.requesting(
+            runner.agent.instructions(),
+            &advertising(&runner.agent, &runner.state.tools),
+        );
         runner
     }
 
@@ -319,7 +317,7 @@ impl Runner {
     /// Latest complete prompt-cache state known for one provider send.
     #[must_use]
     pub const fn prompt_cache_attempt(&self) -> Option<&PromptCacheAttempt> {
-        self.prompt_cache_attempt.as_ref()
+        self.state.prompt_cache_attempt.as_ref()
     }
 
     /// Effective cache policy applied to the next provider attempt.
@@ -332,7 +330,7 @@ impl Runner {
     #[must_use]
     pub fn prompt_cache_capabilities(&self) -> crucible_core::PromptCacheCapabilities {
         self.provider
-            .prompt_cache_capabilities(&self.spec.model.name)
+            .prompt_cache_capabilities(&self.agent.model().name)
     }
 
     /// Bounded private resource metadata for user-facing redacted inspection.
@@ -357,10 +355,43 @@ impl Runner {
     /// they asked it not to be.
     #[must_use]
     pub fn resuming(mut self, transcript: Transcript) -> Self {
-        self.turn = Self::counting(&transcript);
-        self.transcript = transcript;
-        self.recount();
+        self.state.forget_checked();
+        self.state.turn = Self::counting(&transcript);
+        self.state.transcript = transcript;
+        let reading = self.admit_restricted();
+        self.recount(reading);
         self
+    }
+
+    /// Takes out of a transcript just read back what this run's vendor may not
+    /// be sent, and hands back the reading the log kept where it still covers
+    /// what is left.
+    ///
+    /// Nobody is being left: the run may have started on another vendor than the
+    /// one the results came from, and no switch is ever observed to say so. What
+    /// the results record about who answered them is the whole of the decision.
+    /// The reading is `None` once anything was taken out: it measured a request
+    /// that carried it, and replaying the clearing's line drops it for the same
+    /// reason.
+    fn admit_restricted(&mut self) -> Option<crucible_types::Calibration> {
+        let clearing = self.untransferable(0, self.provider.as_ref(), None);
+        // As though a report had measured every message: the recount each
+        // caller runs next rebuilds the load from the transcript either way.
+        self.clear_untransferable(&clearing, self.state.transcript.messages().len());
+        if clearing.is_empty() {
+            self.store.calibrated()
+        } else {
+            None
+        }
+    }
+
+    /// Takes out of the message just recorded what this run's vendor may not be
+    /// sent.
+    fn admit_recorded(&mut self) {
+        let recorded = self.state.transcript.messages().len().saturating_sub(1);
+        let clearing = self.untransferable(recorded, self.provider.as_ref(), None);
+        // No report has measured the message just recorded, which is the last.
+        self.clear_untransferable(&clearing, recorded);
     }
 
     /// Measures a transcript this runner did not build a message at a time.
@@ -374,56 +405,61 @@ impl Runner {
     /// say what they cost. Where the session picked up brought a reading back
     /// with it, that estimate is superseded by it and the session comes back
     /// knowing how much of the window it has left — which is the whole of why
-    /// a log records one.
-    fn recount(&mut self) {
-        self.load.replaced();
-        for message in self.transcript.messages() {
-            self.load.recounted(message);
+    /// a log records one. The reading is handed in rather than read here: one
+    /// taken before a clearing measured a request this run will never send, so
+    /// a caller that just took results out hands in none, as replaying the
+    /// clearing's line does.
+    fn recount(&mut self, reading: Option<crucible_types::Calibration>) {
+        self.state.load.replaced();
+        for message in self.state.transcript.messages() {
+            self.state.load.recounted(message);
         }
-        self.load
-            .requesting(self.spec.instructions(), &self.tools.advertised());
+        self.state.load.requesting(
+            self.agent.instructions(),
+            &advertising(&self.agent, &self.state.tools),
+        );
 
         // After the fixed content of this run's request is known, and never
         // before: what the log remembers is taken only where it still covers
         // the request this run would send.
-        if let Some(calibration) = self.session.calibrated() {
-            self.load.measured(calibration);
+        if let Some(calibration) = reading {
+            self.state.load.measured(calibration);
         }
-        self.load.resumed();
+        self.state.load.resumed();
     }
 
-    /// Puts this runner on a different session, and hands back the one it was
-    /// recording to.
+    /// Puts this runner on a different session.
     ///
-    /// What `/resume` runs, and the reason it hands the old session back rather
-    /// than dropping it: closing one properly means consuming it — see
-    /// [`Session::finish`] — and the first write that failed is worth saying
-    /// before the session it failed in is out of sight.
+    /// What `/resume` runs. The store handed in is the one the caller opened
+    /// and still holds: nothing is handed back, because closing the store this
+    /// runner was writing to was never this crate's to do, and the caller that
+    /// opened it is the one that reports what its last write came to.
     ///
     /// Everything about the session that was answered is answered again. The
-    /// transcript, the log and the turn count come from the session picked up;
-    /// what was allowed for the rest of the *last* session is forgotten, since
-    /// that scope was the thing just left behind. The mode is not an answer of
-    /// that kind — it is where this process is being run, it is on screen at
+    /// transcript, the store and the turn count come from the session picked
+    /// up; what was allowed for the rest of the *last* session is forgotten,
+    /// since that scope was the thing just left behind — and so is any input
+    /// decision committed there, for the same reason. The mode is not an answer
+    /// of that kind — it is where this process is being run, it is on screen at
     /// all times, and a session that quietly moved it would be the one place
     /// the row under the box could be wrong.
-    pub fn pick_up(&mut self, session: Session, transcript: Transcript) -> Session {
+    pub fn pick_up(&mut self, store: Arc<dyn JournalStore>, transcript: Transcript) {
         self.permission.forget();
-        self.turn = Self::counting(&transcript);
-        self.transcript = transcript;
+        self.state.forget_checked();
+        self.state.turn = Self::counting(&transcript);
+        self.state.transcript = transcript;
 
         // Before the recount rather than after it: what the session picked up
         // remembers about its own load is part of what is being recounted.
-        let left = std::mem::replace(&mut self.session, session);
-        self.recount();
-
-        left
+        self.store = store;
+        let reading = self.admit_restricted();
+        self.recount(reading);
     }
 
     /// The transcript so far.
     #[must_use]
     pub fn transcript(&self) -> &Transcript {
-        &self.transcript
+        &self.state.transcript
     }
 
     /// What a call is about, in the words of the tool that owns its arguments.
@@ -457,7 +493,8 @@ impl Runner {
     /// closed -- a deferred tool the model looked up last time, say. Owned
     /// rather than borrowed because the second answer is minted by the source.
     fn describing(&self, name: &str) -> Option<ToolEntry> {
-        self.tools
+        self.state
+            .tools
             .find(name)
             .cloned()
             .or_else(|| self.toolset.registered(name))
@@ -488,7 +525,7 @@ impl Runner {
     /// never asks, because a turn already running has nobody to ask.
     #[must_use]
     pub fn carrying(&self) -> u64 {
-        self.load.tokens()
+        self.state.load.tokens()
     }
 
     /// How much usable room remains before compaction, where a window is known.
@@ -510,9 +547,9 @@ impl Runner {
     /// back less of the window than its session does came to be told the
     /// window was full.
     fn left_under(&self, compaction: Compaction) -> Option<u8> {
-        self.load.left(
-            self.spec.model.window,
-            self.reserve(compaction, self.spec.model.window),
+        self.state.load.left(
+            self.state.window,
+            self.reserve(compaction, self.state.window),
         )
     }
 
@@ -533,7 +570,7 @@ impl Runner {
     /// the window.
     fn reserve(&self, compaction: Compaction, window: Option<u32>) -> u64 {
         if compaction.automatic {
-            load::reserve(self.spec.model.max_tokens, window, compaction.reserve)
+            load::reserve(self.agent.model().max_tokens, window, compaction.reserve)
         } else {
             0
         }
@@ -558,23 +595,7 @@ impl Runner {
     /// context once per pass so a changing fact does not rewrite this prefix.
     #[must_use]
     pub fn instructions(&self) -> Option<&str> {
-        self.spec.instructions()
-    }
-
-    /// Where the session is being recorded.
-    #[must_use]
-    pub fn session(&self) -> &Session {
-        &self.session
-    }
-
-    /// What the results a pruning cleared said, before it cleared them.
-    ///
-    /// Straight through to the session, and taken from it rather than borrowed:
-    /// [`Session::take_pruned`] says why. Here rather than reached through
-    /// [`Runner::session`] because that hands back a shared borrow, and this is
-    /// the one thing about a session that leaves it.
-    pub fn take_pruned(&mut self) -> Pruned {
-        self.session.take_pruned()
+        self.agent.instructions()
     }
 
     /// The permission mode this session is in, which the prompt shows at all
@@ -609,7 +630,7 @@ impl Runner {
     /// this crate is handed a name and does not decide which names are real.
     #[must_use]
     pub fn model(&self) -> &str {
-        &self.spec.model.name
+        &self.agent.model().name
     }
 
     /// The tools this session is advertising, by name.
@@ -617,10 +638,15 @@ impl Runner {
     /// Read from the exact immutable generation last admitted. The typed tools
     /// context section reports changes from that same generation; this accessor
     /// remains the between-turn view used by the terminal.
+    ///
+    /// Held to what the definition declares here rather than at the roster this
+    /// is read from, because a session that has not taken a turn yet is holding
+    /// the whole roster it was wired with: narrowing it in place would mean a
+    /// definition deciding what a *run* admitted, and it is the pass that owns
+    /// that. What the reader is shown is the same either way.
     #[must_use]
     pub fn offering(&self) -> Vec<String> {
-        self.tools
-            .advertised()
+        advertising(&self.agent, &self.state.tools)
             .into_iter()
             .map(|schema| schema.name.to_owned())
             .collect()
@@ -629,13 +655,13 @@ impl Runner {
     /// The maximum output carried with the next provider request.
     #[must_use]
     pub fn maximum_output(&self) -> u32 {
-        self.spec.model.max_tokens
+        self.agent.model().max_tokens
     }
 
     /// The context window used for proactive compaction, where known.
     #[must_use]
     pub fn context_window(&self) -> Option<u32> {
-        self.spec.model.window
+        self.state.window
     }
 
     /// What the model in force reads, where the caller said.
@@ -650,7 +676,7 @@ impl Runner {
     /// rather than a second lookup that could disagree with it.
     #[must_use]
     pub fn reads(&self) -> Option<Modalities> {
-        self.spec.model.accepts
+        self.agent.model().accepts
     }
 
     /// The provider this runner is asking, for the questions only it can answer.
@@ -697,11 +723,19 @@ impl Runner {
         window: Option<u32>,
         accepts: Option<Modalities>,
     ) {
-        self.spec.model.name = model.into();
-        self.spec.model.max_tokens = max_tokens;
-        self.spec.model.window = window;
-        self.spec.model.accepts = accepts;
-        self.load.reestimated();
+        // A definition is not written to. The session selects another built
+        // from this one under the same identity, so a request already out and
+        // a run beside this one keep asking the model they started under.
+        let aimed = Model {
+            name: model.into(),
+            max_tokens,
+            window,
+            accepts,
+            effort: self.agent.model().effort,
+        };
+        self.agent = Arc::new(self.agent.aimed(aimed));
+        self.state.window = window;
+        self.state.load.reestimated();
     }
 
     /// Stands the session under different operator instructions from the next
@@ -716,12 +750,14 @@ impl Runner {
     ///
     /// The empty string is nothing said, not a system field holding nothing.
     /// That reading belongs to the field rather than to this method — it is
-    /// [`AgentSpec::told`] that applies it — and it is the reading a prompt key
+    /// [`Agent::telling`] that applies it — and it is the reading a prompt key
     /// written empty already gets in the documents this text is built from.
     pub fn telling(&mut self, system: &str) {
-        self.spec.told(system);
-        self.load
-            .requesting(self.spec.instructions(), &self.tools.advertised());
+        self.agent = Arc::new(self.agent.telling(system));
+        self.state.load.requesting(
+            self.agent.instructions(),
+            &advertising(&self.agent, &self.state.tools),
+        );
     }
 
     /// Writes to a different vendor from the next turn on.
@@ -740,76 +776,97 @@ impl Runner {
     /// Reachable between turns, where [`Runner::ask`] is and for the same
     /// reason: a turn owns the runner while it runs.
     pub fn serve(&mut self, provider: Box<dyn Provider>) {
-        // Asked of the vendor being left, and before it is replaced: a
-        // restriction on where results may go belongs to whoever produced
-        // them, and by the next line there is nobody left to ask. Staying with
-        // the same vendor moves nothing anywhere, so nothing is cleared.
-        let restriction = self
-            .provider
-            .restricts_results()
-            .filter(|_| self.provider.name() != provider.name());
+        // Decided before the swap and against both vendors: a result recorded
+        // before results said who answered them is judged by what the vendor
+        // being left restricts, and by the next line there is nobody left to
+        // ask. Staying with the same vendor moves nothing anywhere.
+        let clearing = self.untransferable(0, provider.as_ref(), Some(self.provider.as_ref()));
 
         self.provider = provider;
-        if let Some(notice) = restriction {
-            self.restrict_results(notice);
-        }
+        // As though a report had measured every message: the estimate is taken
+        // again from the byte total below, and that total follows every message.
+        self.clear_untransferable(&clearing, self.state.transcript.messages().len());
         // Cached-token and tokenizer semantics belong to the provider that
         // reported them. Keep the transcript, but not that provider's exact
         // reading of it.
-        self.load.reestimated();
+        self.state.load.reestimated();
     }
 
-    /// Takes the results a vendor restricts out of what the next one is sent,
+    /// The results from message `from` on that the next request may not carry to
+    /// `recipient`, each with the sentence to leave in its place.
+    ///
+    /// What may go where is decided by the result's own provenance, through
+    /// `crucible_models::transfer`, never from a vendor's or a tool's name here.
+    fn untransferable(
+        &self,
+        from: usize,
+        recipient: &dyn Provider,
+        leaving: Option<&dyn Provider>,
+    ) -> Vec<(crucible_core::ToolId, Box<str>)> {
+        let mut clearing = Vec::new();
+        for message in self.state.transcript.messages().iter().skip(from) {
+            if let crucible_core::Message::ToolResults(results) = message {
+                for result in results {
+                    if let crucible_models::Transfer::Clear(notice) =
+                        crucible_models::transfer(result.output.provenance(), recipient, leaving)
+                    {
+                        clearing.push((result.id.clone(), notice.into()));
+                    }
+                }
+            }
+        }
+        clearing
+    }
+
+    /// Takes the results a vendor restricts out of what is sent from here on,
     /// and records that it happened.
     ///
     /// The results stay in the log holding what they held — the log is the
     /// record of the session, and a user reading their own history is not the
     /// third party the term is about. What the line buys is the session coming
     /// back the same way: without it the transcript loses them and the log does
-    /// not, so the next resume reads them back and sends them on, undoing the
-    /// switch with nothing to notice it.
+    /// not, so the next resume reads them back and sends them on.
     ///
-    /// Which results, today, is every search result in the transcript rather
-    /// than only the ones this vendor answered — a transcript records what was
-    /// called, not who answered it. That is wider than the term requires and it
-    /// is the behaviour being preserved rather than introduced; narrowing it
-    /// needs per-result provenance the session has never recorded.
-    fn restrict_results(&mut self, notice: &str) {
-        let mut searched = Vec::new();
-        for message in self.transcript.messages() {
-            if let crucible_core::Message::Agent { calls, .. } = message {
-                for call in calls {
-                    if &*call.name == "web_search" {
-                        searched.push(call.id.clone());
-                    }
-                }
-            }
-        }
-
-        // Down to the ones still holding what they answered with. A session
-        // moved twice would otherwise clear a notice with itself, report the
-        // notice's own length as freed, and write a second line saying results
-        // were taken away that had already gone.
-        let mut clearing = Vec::new();
-        for message in self.transcript.messages() {
-            if let crucible_core::Message::ToolResults(results) = message {
-                for result in results {
-                    if searched.contains(&result.id) && result.output.text() != notice {
-                        clearing.push(result.id.clone());
-                    }
-                }
-            }
-        }
-
+    /// One line per sentence, since a line carries one. Clearing takes the
+    /// provenance with the content, so a result is never cleared twice.
+    ///
+    /// No report has measured any message from `unmeasured` on; what the
+    /// clearing then does to the load is [`load::Load::rewritten`]'s to say.
+    fn clear_untransferable(
+        &mut self,
+        clearing: &[(crucible_core::ToolId, Box<str>)],
+        unmeasured: usize,
+    ) {
         if clearing.is_empty() {
             return;
         }
+        // Weighed a message at a time on both sides, because a clearing reaches
+        // every result with a named id wherever it stands; and only here, so a
+        // pass that clears nothing walks nothing.
+        let before = load::Load::weights(self.state.transcript.messages());
+        let mut notices: Vec<&str> = Vec::new();
+        for (_, notice) in clearing {
+            if !notices.contains(&&**notice) {
+                notices.push(notice);
+            }
+        }
 
-        // The transcript first and the line after it, the way a pruning is
-        // written and for the same reason: a crash between the two must not
-        // leave a log claiming a clearing that the transcript never made.
-        let freed = self.transcript.clear_tool_outputs(&clearing, notice);
-        self.session.restricted(freed, &clearing, notice);
+        for notice in notices {
+            let results: Vec<crucible_core::ToolId> = clearing
+                .iter()
+                .filter(|(_, left)| **left == *notice)
+                .map(|(id, _)| id.clone())
+                .collect();
+
+            // The transcript first and the line after it, the way a pruning is
+            // written and for the same reason: a crash between the two must not
+            // leave a log claiming a clearing that the transcript never made.
+            let freed = self.state.transcript.clear_tool_outputs(&results, notice);
+            self.store.restricted(freed, &results, notice);
+        }
+        self.state
+            .load
+            .rewritten(&before, self.state.transcript.messages(), unmeasured);
     }
 
     /// How hard this session is asking the model to think.
@@ -818,8 +875,8 @@ impl Runner {
     /// field left off the request altogether, and what a vendor does with a
     /// request that does not carry one is the vendor's own default per model.
     #[must_use]
-    pub const fn effort(&self) -> Option<Effort> {
-        self.spec.model.effort
+    pub fn effort(&self) -> Option<Effort> {
+        self.agent.model().effort
     }
 
     /// Asks for a different rung from the next turn on.
@@ -831,17 +888,12 @@ impl Runner {
     ///
     /// Reachable between turns, where [`Runner::ask`] is and for the same
     /// reason: a turn owns the runner while it runs.
-    pub const fn think(&mut self, effort: Effort) {
-        self.spec.model.effort = Some(effort);
-    }
-
-    /// Hands the session out, for the caller that is finished driving turns.
-    ///
-    /// The loop ends owning the runner, and closing a session properly means
-    /// consuming it — see [`Session::finish`].
-    #[must_use]
-    pub fn into_session(self) -> Session {
-        self.session
+    pub fn think(&mut self, effort: Effort) {
+        let harder = Model {
+            effort: Some(effort),
+            ..self.agent.model().clone()
+        };
+        self.agent = Arc::new(self.agent.aimed(harder));
     }
 
     /// Appends a message to the transcript.
@@ -850,7 +902,8 @@ impl Runner {
     /// that could be made separately would eventually be made separately, and
     /// a log that is missing one message is a session that cannot be continued.
     fn record(&mut self, ancestry: Ancestry, message: Message) -> Result<(), TurnError> {
-        self.transcript
+        self.state
+            .transcript
             .check_continuation(&message)
             .map_err(|_| ProviderError::Protocol {
                 provider: self.provider.name(),
@@ -859,17 +912,18 @@ impl Runner {
         let settles_call_results = matches!(&message, Message::ToolResults(_));
         match RunItem::message(ancestry, message.clone()) {
             Ok(item) => {
-                SessionStore::append_message(&self.session, &message);
-                JournalStore::append_run_item(&self.session, &item);
+                self.store.append_message(&message);
+                self.store.append_run_item(&item);
             }
             // The provider and tool admission boundaries already enforce
             // these bounds. Preserve the conversation if an internal caller
             // ever violates that contract, while its missing companion record
             // makes the defect visible instead of writing unsafe metadata.
-            Err(_) => SessionStore::append_message(&self.session, &message),
+            Err(_) => self.store.append_message(&message),
         }
-        self.load.recorded(&message);
-        self.transcript
+        self.state.load.recorded(&message);
+        self.state
+            .transcript
             .push(message)
             .map_err(|_| ProviderError::Protocol {
                 provider: self.provider.name(),
@@ -879,17 +933,23 @@ impl Runner {
         // After the message and not beside it: what this says covers the
         // transcript including what was just appended, and a reader that found
         // it in the other order would have it covering one message less.
-        if let Some(calibration) = self.load.calibrated() {
-            self.session.measured(&calibration);
+        if let Some(calibration) = self.state.load.calibrated() {
+            self.store.measured(&calibration);
         }
         if settles_call_results {
-            JournalStore::settle_call_results(&self.session);
+            self.store.settle_call_results();
+            // After the results line, so the log reads what was answered and
+            // then what was taken out of it. The search source was chosen when
+            // the run started, so a session that moved away from its vendor
+            // still searches through that vendor, and the next request of this
+            // turn is built from what was just recorded.
+            self.admit_recorded();
         }
         Ok(())
     }
 
     fn flush_sandbox_audits(&self, events: Reporter<'_>) -> Result<(), ToolError> {
-        work::report_sandbox_registry(&self.sandbox_audits, events, &self.session)
+        work::report_sandbox_registry(&self.sandbox_audits, events, &*self.store)
     }
 
     /// Writes one normalized cache fact to the durable framework journal and
@@ -899,10 +959,8 @@ impl Runner {
     }
 
     fn report_prompt_cache_to(&self, events: &Reporter<'_>, fact: PromptCacheFact) {
-        JournalStore::append_run_item(
-            &self.session,
-            &RunItem::provider_attempt(events.ancestry(), fact.clone()),
-        );
+        self.store
+            .append_run_item(&RunItem::provider_attempt(events.ancestry(), fact.clone()));
         events.post(Event::PromptCache { fact });
     }
 
@@ -976,7 +1034,32 @@ impl Runner {
         attachments: Box<[Attachment]>,
         ask: &mut dyn Ask,
         run: &RunContext<'_>,
-    ) -> Result<StopReason, TurnError> {
+    ) -> Result<Turned, TurnError> {
+        let turned = self.invoking(prompt, attachments, ask, run);
+
+        // The invocation ends where the caller gets an answer it can act on,
+        // and what the input checks made of these words ends with it. A
+        // [`TurnError`] is not that: the turn did not finish, the caller may
+        // try the same words again, and the decision committed for them still
+        // covers the attempt.
+        if turned.is_ok() {
+            self.state.forget_checked();
+        }
+        turned
+    }
+
+    /// The turn itself, for [`Runner::turn`] to end the invocation around.
+    ///
+    /// # Errors
+    ///
+    /// [`TurnError`], exactly as [`Runner::turn`] describes.
+    fn invoking(
+        &mut self,
+        prompt: &str,
+        attachments: Box<[Attachment]>,
+        ask: &mut dyn Ask,
+        run: &RunContext<'_>,
+    ) -> Result<Turned, TurnError> {
         // Whatever the caller handed in, held to what this session allows.
         // See [`RunContext::held_to`]: the session's policy is the ceiling,
         // and a context that asks for more gets the session's figure.
@@ -995,20 +1078,47 @@ impl Runner {
         // whether the turn gets to take it. One expression rather than two, so
         // that the turn which runs and the turn which is stopped on the way in
         // cannot come to disagree about what the next one is called.
-        let turn = if self.transcript.is_empty() {
-            self.turn
+        let turn = if self.state.transcript.is_empty() {
+            self.state.turn
         } else {
-            self.turn.next()
+            self.state.turn.next()
         };
 
         let events = run.reporting();
 
         if run.cancel().requested() {
-            return Ok(Self::stopped(turn, &events));
+            return Ok(Turned::Ran(RunResult::new(
+                run.run(),
+                Self::stopped(turn, &events),
+                Spend::NONE,
+            )));
         }
 
-        self.turn = turn;
-        events.post(Event::TurnStarted { turn: self.turn });
+        // Before the first request of this invocation, and before the turn is
+        // announced. A refusal here is a turn that never happened: nothing is
+        // recorded, nothing is sent, and no pair of events tells the reader a
+        // turn began. A check reaching no decision is not a refusal and does
+        // not say the prompt was rejected, because it did not say that.
+        match self.checking_input(prompt, run) {
+            Ok(Judged::Allowed) => {}
+            Ok(Judged::Rejected(rejection)) => {
+                return Ok(Turned::Rejected {
+                    rejection,
+                    stop: None,
+                });
+            }
+            Err(problem) => {
+                return Ok(Turned::Undecided {
+                    problem,
+                    stop: None,
+                });
+            }
+        }
+
+        self.state.turn = turn;
+        events.post(Event::TurnStarted {
+            turn: self.state.turn,
+        });
         self.record(
             run.ancestry(),
             Message::User {
@@ -1021,14 +1131,130 @@ impl Runner {
         // that a turn cannot acquire a second way to finish without one. The
         // reason is what tells a truncated answer from a complete one, and it
         // has to reach the thread that draws — a return value never does.
-        let exchanged = self.exchange(ask, run);
-        let stop = exchanged?.stop();
-        events.post(Event::TurnFinished {
-            turn: self.turn,
-            stop,
-        });
+        let turned = self.exchange(ask, run)?;
+        if let Some(stop) = turned.stop() {
+            events.post(Event::TurnFinished {
+                turn: self.state.turn,
+                stop,
+            });
+        }
 
-        Ok(stop)
+        Ok(turned)
+    }
+
+    /// What this invocation's input checks make of `prompt`.
+    ///
+    /// The first check that refuses is the answer: the rest have nothing left
+    /// to decide, and asking them anyway would run whatever a check does for a
+    /// living against words already on their way back to the caller.
+    ///
+    /// A session that declared none returns without copying the prompt or
+    /// committing anything, which is every session that ships today and is the
+    /// reason this costs one branch there rather than a prompt-sized write.
+    ///
+    /// The decision is committed for the length of one invocation. An
+    /// invocation retried after it failed asks the same words again and is
+    /// answered from what was committed rather than by running the checks a
+    /// second time, so a check that has since changed its mind cannot overturn
+    /// an invocation already under way; once the turn hands an answer back, the
+    /// commit is dropped and the same words typed again are checked afresh. A
+    /// check that could not decide commits nothing: `?` leaves before the
+    /// commit, and the next attempt is a fresh one rather than one bound to a
+    /// non-answer.
+    ///
+    /// # Errors
+    ///
+    /// [`GuardrailError`] where a check ran and could not reach a decision.
+    fn checking_input(
+        &mut self,
+        prompt: &str,
+        run: &RunContext<'_>,
+    ) -> Result<Judged, GuardrailError> {
+        if self.agent.input_guardrails().is_empty() {
+            return Ok(Judged::Allowed);
+        }
+        if let Some(committed) = self.state.checked(prompt) {
+            return Ok(committed.clone());
+        }
+
+        // The definition the checks are read off is held for the length of the
+        // pass, so a check cannot be handed a list that something replaced
+        // while it was being walked.
+        let agent = Arc::clone(&self.agent);
+        let context = AgentContext::new(run.run(), agent.id(), prompt);
+        let mut decision = Judged::Allowed;
+        for guard in agent.input_guardrails() {
+            // The name is the one the check was declared under, never taken
+            // from what it answered, whether it refused or could not say.
+            match guard
+                .check()
+                .checking(&context)
+                .map_err(|unsure| GuardrailError::undecided(guard.name(), unsure.problem()))?
+            {
+                Decision::Allowed => {}
+                Decision::Rejected(why) => {
+                    decision = Judged::Rejected(Rejection::new(guard.name(), &why));
+                    break;
+                }
+            }
+        }
+
+        self.state.commit(prompt, decision.clone());
+        Ok(decision)
+    }
+
+    /// What this agent's output checks make of `candidate`.
+    ///
+    /// Asked of the final candidate answer, before it is accepted and before
+    /// it is written down. What streamed to the reader while it arrived is
+    /// provisional and says so; what the transcript carries into the next
+    /// request is not.
+    ///
+    /// Nothing is committed and nothing is retried: a check refuses a
+    /// particular answer, and asking the model again for a different one is a
+    /// decision for whoever asked the turn.
+    ///
+    /// # Errors
+    ///
+    /// [`GuardrailError`] where a check ran and could not reach a decision.
+    fn vouching(&self, candidate: &str, run: &RunContext<'_>) -> Result<Judged, GuardrailError> {
+        if self.agent.output_guardrails().is_empty() {
+            return Ok(Judged::Allowed);
+        }
+
+        let context = AgentContext::new(run.run(), self.agent.id(), self.said());
+        for guard in self.agent.output_guardrails() {
+            match guard
+                .check()
+                .checking(&context, candidate)
+                .map_err(|unsure| GuardrailError::undecided(guard.name(), unsure.problem()))?
+            {
+                Decision::Allowed => {}
+                Decision::Rejected(why) => {
+                    return Ok(Judged::Rejected(Rejection::new(guard.name(), &why)));
+                }
+            }
+        }
+        Ok(Judged::Allowed)
+    }
+
+    /// The last thing the caller said, which is what an invocation is about.
+    ///
+    /// Read back from the transcript rather than kept a second time beside it.
+    /// A line typed while the turn ran is the caller speaking too, and a check
+    /// that was shown the opening prompt after the reader had moved past it
+    /// would be judging an invocation nobody is still taking.
+    fn said(&self) -> &str {
+        self.state
+            .transcript
+            .messages()
+            .iter()
+            .rev()
+            .find_map(|message| match message {
+                Message::User { text, .. } => Some(&**text),
+                _ => None,
+            })
+            .unwrap_or("")
     }
 
     /// Ends a turn the user stopped before it began, and says so twice.
@@ -1066,11 +1292,7 @@ impl Runner {
     /// policy rather than printing megabytes to get there.
     ///
     /// The permission prompt stays outside it, because asking is `&mut`.
-    fn exchange(
-        &mut self,
-        ask: &mut dyn Ask,
-        run: &RunContext<'_>,
-    ) -> Result<RunResult, TurnError> {
+    fn exchange(&mut self, ask: &mut dyn Ask, run: &RunContext<'_>) -> Result<Turned, TurnError> {
         // Not held to the session here. [`Runner::turn`] does it, and is the
         // only caller that ships; a test reaching this directly is asking for
         // the run exactly as it wrote it. A second entry that reaches a
@@ -1095,14 +1317,14 @@ impl Runner {
                 // figure, so only a turn that ended says what it spent.
                 let mut counting = Counting {
                     spent: Spend::NONE,
-                    load: self.load,
-                    window: self.spec.model.window,
-                    reserve: self.reserve(run.policy().compaction, self.spec.model.window),
+                    load: self.state.load,
+                    window: self.state.window,
+                    reserve: self.reserve(run.policy().compaction, self.state.window),
                 };
 
                 AgentLoop::new(self, run, ask, &toolsets)
                     .drive(&mut counting)
-                    .map(|stop| RunResult::new(run.run(), stop, counting.spent))
+                    .map(|ending| ending.turned(run.run(), counting.spent))
             }
             Err(problem) => Err(problem),
         };
@@ -1258,8 +1480,8 @@ impl Runner {
     /// and a protocol module with no word for one leave nothing between them,
     /// and a set with nothing in it is the honest answer to that.
     fn carries(&self) -> Modalities {
-        self.spec
-            .model
+        self.agent
+            .model()
             .accepts
             .unwrap_or_else(Modalities::empty)
             .intersection(self.provider.spells())
@@ -1278,7 +1500,7 @@ impl Runner {
         // Both locals are the request's whole hold on the bytes: `resolved`
         // owns them, `attached` is what the provider borrows, and the pass
         // returning drops the pair. Nothing read here survives one request.
-        let resolved = attachments::resolve(&self.transcript, self.carries());
+        let resolved = attachments::resolve(&self.state.transcript, self.carries());
         let attached = resolved.attached();
         // What the ceiling let through, not what the transcript refers to. An
         // entry the pass aged out is a sentence by the time it gets here, and
@@ -1293,14 +1515,14 @@ impl Runner {
         // fact about the request rather than about the turn, and a retry sends
         // a second one — a reader watching that answer arrive is owed the same
         // sentence about it.
-        let aged = resolved.aged(&self.transcript);
+        let aged = resolved.aged(&self.state.transcript);
         if !aged.is_empty() {
             listening.run.reporting().post(Event::Aged { files: aged });
         }
         // Beside it rather than folded into it: a file the model does not read
         // stayed behind for a reason the reader answers differently, and a row
         // that said one thing about both would be wrong about one of them.
-        let unread = resolved.unread(&self.transcript);
+        let unread = resolved.unread(&self.state.transcript);
         if !unread.is_empty() {
             listening
                 .run
@@ -1316,47 +1538,45 @@ impl Runner {
             // the whole runner would falsely make those owners overlap.
             let request = Request {
                 purpose: crucible_core::RequestPurpose::Turn,
-                model: &self.spec.model.name,
-                transcript: &self.transcript,
+                model: &self.agent.model().name,
+                transcript: &self.state.transcript,
                 tools: listening.advertised,
-                max_tokens: self.spec.model.max_tokens,
-                system: self.spec.instructions(),
-                effort: self.spec.model.effort,
+                max_tokens: self.agent.model().max_tokens,
+                system: self.agent.instructions(),
+                effort: self.agent.model().effort,
                 attached: &attached,
                 prompt_cache: None,
             };
             let capabilities = self
                 .provider
-                .prompt_cache_capabilities(&self.spec.model.name);
+                .prompt_cache_capabilities(&self.agent.model().name);
             let model_revision = capabilities.model_revision();
             let route = self.provider.prompt_cache_route();
             let authority = PermissionsSection::new(&self.permission)
                 .snapshot()
                 .to_string();
             let workspace = self.context.workspace().to_string_lossy();
-            let user = self
-                .session
-                .path()
-                .parent()
-                .unwrap_or_else(|| std::path::Path::new(""))
-                .to_string_lossy();
+            let user = self.store.owner();
+            let session = self.store.session_id();
             let scope = ScopeInputs {
                 route,
                 policy: listening.run.policy().prompt_cache,
-                model: &self.spec.model.name,
+                model: &self.agent.model().name,
                 model_revision,
-                max_tokens: self.spec.model.max_tokens,
-                effort: self.spec.model.effort,
+                max_tokens: self.agent.model().max_tokens,
+                effort: self.agent.model().effort,
                 run: listening.run.run(),
-                session: self.session.id().map(crucible_core::SessionId::as_str),
+                session: session.as_ref().map(crucible_core::SessionId::as_str),
                 workspace: workspace.as_bytes(),
-                user: user.as_bytes(),
+                user: user
+                    .as_ref()
+                    .map_or(&[], crucible_core::SessionOwner::as_bytes),
                 trust: b"local-workspace-authority-v1",
                 authority: authority.as_bytes(),
-                instructions: self.spec.instructions().unwrap_or_default().as_bytes(),
+                instructions: self.agent.instructions().unwrap_or_default().as_bytes(),
                 tool_generation: listening.generation.context_id(),
             };
-            self.prompt_cache_owner_scope = Some(prompt_cache::owner_scope(&scope));
+            self.state.prompt_cache_owner_scope = Some(prompt_cache::owner_scope(&scope));
             let mut resource_facts = Vec::new();
             let prepared = match (
                 self.provider.prompt_cache_resources(),
@@ -1382,7 +1602,7 @@ impl Runner {
             }
             let prepared = prepared?;
             let mut cache = prepared.request();
-            self.prompt_cache_attempt = Some(PromptCacheAttempt {
+            self.state.prompt_cache_attempt = Some(PromptCacheAttempt {
                 id: cache.attempt,
                 capabilities: cache.capabilities.clone(),
                 policy: cache.policy,
@@ -1395,13 +1615,14 @@ impl Runner {
             });
             self.report_prompt_cache(
                 listening.run,
-                PromptCacheFact::Planned(Box::new(PromptCachePlanned::from_request(&cache))),
+                PromptCacheFact::Planned(Box::new(cache.planned())),
             );
             let mut encoding = self.provider.prompt_cache_encoding(&Request {
                 prompt_cache: Some(&cache),
                 ..request
             });
             if let Some(attempt) = self
+                .state
                 .prompt_cache_attempt
                 .as_mut()
                 .filter(|attempt| attempt.id == cache.attempt)
@@ -1422,13 +1643,14 @@ impl Runner {
                     .ok_or(PromptCachePreparationError::Encoding(reason))?;
                 self.report_prompt_cache(
                     listening.run,
-                    PromptCacheFact::Planned(Box::new(PromptCachePlanned::from_request(&cache))),
+                    PromptCacheFact::Planned(Box::new(cache.planned())),
                 );
                 encoding = self.provider.prompt_cache_encoding(&Request {
                     prompt_cache: Some(&cache),
                     ..request
                 });
                 if let Some(attempt) = self
+                    .state
                     .prompt_cache_attempt
                     .as_mut()
                     .filter(|attempt| attempt.id == cache.attempt)
@@ -1448,6 +1670,7 @@ impl Runner {
             let streamed = self.provider.stream(request, listening.run.cancel());
             let disposition = request_disposition(&streamed);
             if let Some(attempt) = self
+                .state
                 .prompt_cache_attempt
                 .as_mut()
                 .filter(|attempt| attempt.id == cache.attempt)
@@ -1558,12 +1781,13 @@ impl Runner {
                     Self::output_grew(&events, counting, bytes);
                 }
                 Delta::Continuation(state) => {
-                    answer.continuing(state, self.transcript.continuation_room())?;
+                    answer.continuing(state, self.state.transcript.continuation_room())?;
                 }
                 Delta::Progress => answer.progressed()?,
                 Delta::Usage(usage) => {
                     let usage = merge_usage(
-                        self.prompt_cache_attempt
+                        self.state
+                            .prompt_cache_attempt
                             .as_ref()
                             .filter(|cache| cache.id == cache_observation.attempt)
                             .and_then(|cache| cache.usage.as_ref()),
@@ -1591,7 +1815,7 @@ impl Runner {
                     let cost = self
                         .provider
                         .prompt_cache_pricing(
-                            &self.spec.model.name,
+                            &self.agent.model().name,
                             cache_observation.model_revision,
                             usage.input.total,
                             cache_observation.retention,
@@ -1603,6 +1827,7 @@ impl Runner {
                         .unwrap_or(UsageCost::UNKNOWN);
                     let outcome = usage.input.outcome(cache_observation.reporting);
                     if let Some(cache) = self
+                        .state
                         .prompt_cache_attempt
                         .as_mut()
                         .filter(|cache| cache.id == cache_observation.attempt)

@@ -22,13 +22,13 @@
       "id": "CASE-TURN-TOOL-GENERATION",
       "family": "turn",
       "obligation": "The prompt names the tool generation it snapshotted, not whatever the roster holds now.",
-      "package": "crucible-core",
+      "package": "crucible-context",
       "target": {
         "kind": "lib",
-        "name": "crucible_core"
+        "name": "crucible_context"
       },
       "case": "prompt::tests::the_tools_section_reports_the_exact_generation_it_snapshotted",
-      "source": "crates/crucible-core/src/prompt/tests.rs",
+      "source": "crates/crucible-context/src/prompt/tests.rs",
       "body_sha256": "11480b81ac57894d2c05dc3818afb83e363ae9540e4ded2d5c669c8b08401209",
       "platforms": [
         "linux",
@@ -507,14 +507,14 @@
       "id": "CASE-CREDENTIAL-EXTENSION-VOICE",
       "family": "credentials",
       "obligation": "An extension's own words cannot be printed as Crucible's.",
-      "package": "crucible-core",
+      "package": "crucible-extension",
       "target": {
         "kind": "doc",
-        "name": "crucible_core"
+        "name": "crucible_extension"
       },
-      "case": "extension::spoken::Trouble",
-      "source": "crates/crucible-core/src/extension/spoken.rs",
-      "body_sha256": "e10befd4b781aa3f68cda4b8a0d820083ba8cc5b1b4820720a46e3d9d1f7cdb8",
+      "case": "spoken::Trouble",
+      "source": "crates/crucible-extension/src/spoken.rs",
+      "body_sha256": "947193f188ca983339b12d5a65c5f30dbf4fbb78be00832e2303488692d8ef3a",
       "platforms": [
         "linux",
         "macos",
@@ -717,14 +717,14 @@
       "id": "CASE-AGENT-DEFINITION-WIRED",
       "family": "agents",
       "obligation": "The shipped agent stands under the definition the wiring asked for.",
-      "package": "crucible-code",
+      "package": "crucible-app",
       "target": {
-        "kind": "bin",
-        "name": "crucible"
+        "kind": "lib",
+        "name": "crucible_app"
       },
-      "case": "cli::startup::tests::the_agent_is_named_coding_and_stands_under_what_the_wiring_asked",
-      "source": "src/cli/startup/tests.rs",
-      "body_sha256": "0712adfdb19f5e90142bfbd644b619de380a176f2bf031ab2c1290cf91a6bc7b",
+      "case": "startup::tests::the_agent_is_named_coding_and_stands_under_what_the_wiring_asked",
+      "source": "crates/crucible-app/src/startup/tests.rs",
+      "body_sha256": "bcf08b741cce4780f950228a07d8e49920c820345d3f12a092aedd92f37ab11e",
       "platforms": [
         "linux",
         "macos",
@@ -735,14 +735,14 @@
       "id": "CASE-AGENT-INSTRUCTIONS-ONE-WAY",
       "family": "agents",
       "obligation": "An agent's instructions reach the definition only through the call that keeps the difference between none and empty.",
-      "package": "crucible-runner",
+      "package": "crucible-agents",
       "target": {
         "kind": "doc",
-        "name": "crucible_runner"
+        "name": "crucible_agents"
       },
-      "case": "agent::AgentSpec::told",
-      "source": "crates/crucible-runner/src/agent.rs",
-      "body_sha256": "d7aab4e4a6994d0d81617ce1b2d8a044f9164fc8055028e5aa230f6a1c5ccb93",
+      "case": "agent::AgentBuilder::telling",
+      "source": "crates/crucible-agents/src/agent.rs",
+      "body_sha256": "5bd114dacc295a94c0ce3252fb48adf3c6010adc271cba74f8afec894c4c8eff",
       "platforms": [
         "linux",
         "macos",
@@ -880,7 +880,7 @@
       },
       "case": "the_installed_extension_sweep_answers_what_it_read_and_refused",
       "source": "tests/differential.rs",
-      "body_sha256": "fe2818a391c3f1070fe52d87049c2588bc76ae0d309bcb0270a751f3d68c62ba",
+      "body_sha256": "767c561b9d6f4de9c61c890d66e98b8894afecf91980f8088bf625c0e93c7102",
       "platforms": [
         "linux",
         "macos",
@@ -898,7 +898,7 @@
       },
       "case": "a_session_writes_down_the_same_record_of_the_same_turn",
       "source": "tests/differential.rs",
-      "body_sha256": "9aa857afa0cfe6809aa36e9b8f08e15cc0d789ea737a519c5ed46b06460f335f",
+      "body_sha256": "4b831b8572907d4ec05d52a07a4ca42c20af0316655462e8a9a63de9af244c20",
       "platforms": [
         "linux",
         "macos",
@@ -953,6 +953,24 @@
       "case": "settings::mcp::tests::printing_the_settings_shows_nothing_of_a_variable_written_under_a_server",
       "source": "crates/crucible-config/src/settings/mcp/tests.rs",
       "body_sha256": "6812bbcc77ff2702318c69fd77681875485fd55d5af3d99b797521f11e80093c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-AUTHORITY-PROVENANCE-UNFORGED",
+      "family": "authority",
+      "obligation": "Code outside the crate cannot build a vendor's provenance for a result except through the bounded constructor, so no restriction sentence or vendor name past its bound reaches a transcript or a log.",
+      "package": "crucible-types",
+      "target": {
+        "kind": "doc",
+        "name": "crucible_types"
+      },
+      "case": "output::AnsweredBy",
+      "source": "crates/crucible-types/src/output.rs",
+      "body_sha256": "eb66239b42daaf8c832a5cd2b7ffd450bb4f3cd36f72108250c473f7da407f8d",
       "platforms": [
         "linux",
         "macos",

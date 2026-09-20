@@ -5,8 +5,9 @@ use std::path::Path;
 
 use crucible_core::{
     Attachment, Change, Command, Diff, Line, Modality, ProviderError, Question, Summary, Target,
-    ToolArgs, ToolId, TurnError, TurnId, Workspace, written,
+    ToolArgs, ToolId, TurnId, Workspace, written,
 };
+use crucible_runner::TurnError;
 use crucible_tui::{Picture, Recording, Size};
 
 use super::*;
@@ -1019,7 +1020,7 @@ fn transcript(turn: Vec<Beat>) -> String {
 
     for beat in turn {
         match beat {
-            Beat::Draw(drawing) => event(&mut renderer, drawing, &here(), style, &mut kept),
+            Beat::Draw(drawing) => event(&mut renderer, *drawing, &here(), style, &mut kept),
             Beat::Answered(said) => returned(&mut renderer, said, style),
         }
         .expect("the turn to draw");
@@ -1031,19 +1032,27 @@ fn transcript(turn: Vec<Beat>) -> String {
 /// One step of a turn, as the loop above `draw` performs it.
 enum Beat {
     /// An event, drawn where it arrived.
-    Draw(Event),
+    ///
+    /// Boxed because an event can carry a whole tool result and the other beat
+    /// carries a word, which is the difference `large_enum_variant` measures.
+    Draw(Box<Event>),
     /// A tool answered, so the line that was live commits.
     Answered(&'static str),
 }
 
+/// A beat drawing `event`.
+fn beat(event: Event) -> Beat {
+    Beat::Draw(Box::new(event))
+}
+
 fn delta(text: &str) -> Beat {
-    Beat::Draw(Event::Delta { text: text.into() })
+    beat(Event::Delta { text: text.into() })
 }
 
 fn answered(said: &'static str, text: &str) -> [Beat; 2] {
     [
         Beat::Answered(said),
-        Beat::Draw(Event::ToolFinished {
+        beat(Event::ToolFinished {
             call: ToolId::new("a"),
             output: ToolOutput::ok(text),
             receipt: None,
@@ -1058,7 +1067,7 @@ fn a_turn_is_a_column_of_blocks_with_one_blank_row_between_them() {
     // what separates two blocks is a row of nothing. A result hangs directly
     // under the call it answers, because the two are one block.
     let mut turn = vec![
-        Beat::Draw(Event::TurnStarted {
+        beat(Event::TurnStarted {
             turn: TurnId::FIRST,
         }),
         delta("Looking at both.\n"),
@@ -1066,7 +1075,7 @@ fn a_turn_is_a_column_of_blocks_with_one_blank_row_between_them() {
     turn.extend(answered("Read(src/main.rs)", "128 lines"));
     turn.extend(answered("Read(src/lib.rs)", "60 lines"));
     turn.push(delta("Neither imports the other.\n"));
-    turn.push(Beat::Draw(Event::TurnFinished {
+    turn.push(beat(Event::TurnFinished {
         turn: TurnId::FIRST,
         stop: StopReason::Yielded,
     }));
@@ -1095,7 +1104,7 @@ fn an_answer_arriving_in_pieces_is_one_block() {
         delta("Two plus "),
         delta("two is "),
         delta("four."),
-        Beat::Draw(Event::TurnFinished {
+        beat(Event::TurnFinished {
             turn: TurnId::FIRST,
             stop: StopReason::Yielded,
         }),
@@ -1808,4 +1817,60 @@ fn a_line_that_merely_opens_with_a_bracket_is_the_line_it_always_was() {
             "{text:?}"
         );
     }
+}
+
+/// What a reader is shown for a turn that ended as `turned`, on one row.
+fn refusal(turned: &Turned) -> String {
+    let mut renderer = Renderer::new(Recording::new(WIDE, 24));
+    refused(&mut renderer, turned).expect("the terminal to be written");
+    renderer.terminal().written().to_string()
+}
+
+#[test]
+fn an_answer_a_guardrail_refused_says_the_answer_was_what_it_refused() {
+    // The stop beside the rejection is the whole difference between "nothing
+    // was asked" and "an answer was made and thrown away", and a reader told
+    // the first about the second goes looking for a prompt that was fine.
+    let written = refusal(&Turned::Rejected {
+        rejection: crucible_runner::Rejection::new("no-secrets", "the answer quotes a key"),
+        stop: Some(crucible_core::StopReason::Yielded),
+    });
+
+    assert!(
+        written.contains("the guardrail `no-secrets` refused the answer: the answer quotes a key"),
+        "{written}"
+    );
+    assert!(!written.contains("nothing was asked"), "{written}");
+}
+
+#[test]
+fn a_guardrail_that_could_not_decide_about_a_prompt_says_nothing_was_asked() {
+    let written = refusal(&Turned::Undecided {
+        problem: crucible_runner::GuardrailError::undecided("no-secrets", "its list is missing"),
+        stop: None,
+    });
+
+    assert!(
+        written.contains(
+            "the guardrail `no-secrets` could not decide: its list is missing, and nothing was asked"
+        ),
+        "{written}"
+    );
+}
+
+#[test]
+fn a_guardrail_that_could_not_decide_about_an_answer_says_the_answer_is_not_accepted() {
+    let written = refusal(&Turned::Undecided {
+        problem: crucible_runner::GuardrailError::undecided("no-secrets", "its list is missing"),
+        stop: Some(crucible_core::StopReason::Yielded),
+    });
+
+    assert!(
+        written.contains(
+            "the guardrail `no-secrets` could not decide: its list is missing, so the answer is \
+             not one it accepted"
+        ),
+        "{written}"
+    );
+    assert!(!written.contains("nothing was asked"), "{written}");
 }

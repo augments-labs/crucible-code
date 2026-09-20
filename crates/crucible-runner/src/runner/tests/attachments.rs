@@ -132,7 +132,9 @@ fn a_picture_a_model_does_not_read_is_named_as_the_request_goes() {
         Tools::new(),
         Verdict::Allow,
     );
-    scripted.runner.spec.model.accepts = Some(Modalities::empty().insert(Modality::Text));
+    scripted
+        .runner
+        .reaimed(|model| model.accepts = Some(Modalities::empty().insert(Modality::Text)));
 
     let one = file(&under, "chart.png", &[3; 64]);
     let named = one.path.clone();

@@ -1,0 +1,28 @@
+[package]
+name = "crucible-context"
+description = "The words a request is built from: context sections, system-prompt rendering and compaction inputs."
+publish.workspace = true
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# Assembly reads the tool snapshot and permission memory it projects, and the
+# model effort it names; it never runs a tool or sends a request. `serde_json`
+# is the shape section state is compared and patched in, owned by the context
+# facts in `crucible-types`.
+[dependencies]
+crucible-models.workspace = true
+crucible-tools.workspace = true
+crucible-types.workspace = true
+serde_json.workspace = true
+
+# The prompt tests build a real workspace to prove what a permissions section
+# may and may not say about it.
+[dev-dependencies]
+crucible-workspace.workspace = true
+
+[lints]
+workspace = true

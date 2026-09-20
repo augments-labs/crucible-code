@@ -1,20 +1,27 @@
 //! `/cache`: redacted inspection and explicit persistent-resource cleanup.
 
-use crucible_core::Cancel;
-use crucible_runner::Runner;
+use crucible_app::Conversation;
+use crucible_app::client::Performed;
+use crucible_app::switching::Retained;
+use crucible_client_api::Command;
+use crucible_core::PromptCacheResourceError;
 use crucible_tui::{Renderer, Terminal};
 
 use crate::cli::Fatal;
+use crate::cli::client::astray;
+
+use super::Terms;
 
 /// Shows cache state, or performs one explicit bounded cleanup pass.
 pub(super) fn run<T: Terminal>(
     said: &str,
     renderer: &mut Renderer<T>,
-    runner: &mut Runner,
+    conversation: &mut Conversation,
+    terms: &Terms,
 ) -> Result<(), Fatal> {
     match said {
-        "" | "inspect" => inspect(renderer, runner),
-        "cleanup" => cleanup(renderer, runner),
+        "" | "inspect" => inspect(renderer, conversation, terms),
+        "cleanup" => cleanup(renderer, conversation, terms),
         _ => {
             renderer.commit("! /cache accepts only `inspect` or `cleanup`")?;
             Ok(())
@@ -22,7 +29,12 @@ pub(super) fn run<T: Terminal>(
     }
 }
 
-fn inspect<T: Terminal>(renderer: &mut Renderer<T>, runner: &mut Runner) -> Result<(), Fatal> {
+fn inspect<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    conversation: &mut Conversation,
+    terms: &Terms,
+) -> Result<(), Fatal> {
+    let runner = conversation.runner();
     let policy = runner.prompt_cache_policy();
     renderer.commit(&format!(
         "cache policy: mode={}, isolation={}, retention={}, persistent={}",
@@ -90,7 +102,11 @@ fn inspect<T: Terminal>(renderer: &mut Renderer<T>, runner: &mut Runner) -> Resu
             .commit("last attempt: none yet; predicted eligibility and wire outcome are unknown")?;
     }
 
-    match runner.prompt_cache_resources() {
+    let listed = match terms.perform(conversation, Command::InspectCache) {
+        Performed::Cache(listed) => listed,
+        other => return Ok(renderer.commit(&astray(&other))?),
+    };
+    match listed {
         Ok(resources) if resources.is_empty() => {
             renderer.commit("persistent resources: none")?;
         }
@@ -117,8 +133,16 @@ fn inspect<T: Terminal>(renderer: &mut Renderer<T>, runner: &mut Runner) -> Resu
     Ok(())
 }
 
-fn cleanup<T: Terminal>(renderer: &mut Renderer<T>, runner: &mut Runner) -> Result<(), Fatal> {
-    match runner.clean_prompt_cache(&Cancel::new()) {
+fn cleanup<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    conversation: &mut Conversation,
+    terms: &Terms,
+) -> Result<(), Fatal> {
+    let cleaned = match terms.perform(conversation, Command::CleanCache) {
+        Performed::Cleaned(cleaned) => cleaned,
+        other => return Ok(renderer.commit(&astray(&other))?),
+    };
+    match cleaned {
         Ok(result) => renderer.commit(&format!(
             "cache cleanup: inspected {}, deleted {}, ambiguous {}, orphaned {}",
             result.inspected, result.deleted, result.ambiguous, result.orphaned,
@@ -128,26 +152,29 @@ fn cleanup<T: Terminal>(renderer: &mut Renderer<T>, runner: &mut Runner) -> Resu
     Ok(())
 }
 
-/// Retires this session's exclusive persistent resources before an identity switch.
-pub(super) fn retire<T: Terminal>(
+/// Says what a retirement ahead of an identity switch left behind, where it
+/// left anything. Which resources are retired, and when, is the
+/// conversation's; this is only the sentence.
+pub(super) fn retained<T: Terminal>(
     renderer: &mut Renderer<T>,
-    runner: &mut Runner,
-) -> Result<bool, Fatal> {
-    match runner.retire_prompt_cache(&Cancel::new()) {
-        Ok(result) => {
-            if result.ambiguous > 0 || result.orphaned > 0 {
-                renderer.commit(&format!(
-                    "! cache retirement retained {} ambiguous and {} orphaned resource(s)",
-                    result.ambiguous, result.orphaned,
-                ))?;
-            }
-            Ok(true)
-        }
-        Err(problem) => {
-            renderer.commit(&format!("! cache retirement: {problem}"))?;
-            Ok(false)
-        }
+    retained: Retained,
+) -> Result<(), Fatal> {
+    if retained.any() {
+        renderer.commit(&format!(
+            "! cache retirement retained {} ambiguous and {} orphaned resource(s)",
+            retained.ambiguous, retained.orphaned,
+        ))?;
     }
+    Ok(())
+}
+
+/// Says that an identity switch stopped because the cache could not be retired.
+pub(super) fn held<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    problem: &PromptCacheResourceError,
+) -> Result<(), Fatal> {
+    renderer.commit(&format!("! cache retirement: {problem}"))?;
+    Ok(())
 }
 
 fn number(value: Option<u64>) -> String {

@@ -8,9 +8,8 @@ mod usage;
 
 use super::protocol;
 use crate::{sse::SseEvent, stream::Wire};
-use crucible_core::{
-    CONTINUATION_PARTS, Continuation, ContinuationScope, Delta, ProviderError, StopReason,
-};
+use crucible_models::{Delta, ProviderError};
+use crucible_types::{CONTINUATION_PARTS, Continuation, ContinuationScope, StopReason};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use step::{Budget, Step};

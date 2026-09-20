@@ -6,9 +6,10 @@
 
 use super::*;
 use crucible_builtins::{WebFetch, WebSearch};
+use crucible_context::ContextInputs;
 use crucible_core::{AgentId, ApiKey, ContinuationPart, Effort, Header, HeaderKey};
 use crucible_provider::{Endpoint, GoogleWeb, Https};
-use crucible_runner::{AgentSpec, Compaction, ContextInputs, Model, RunPolicy, Runner, Tools};
+use crucible_runner::{Agent, Compaction, Model, RunPolicy, Runner, Tools};
 use serde_json::{Value, json};
 use std::fmt::Write as _;
 use std::sync::Arc;
@@ -43,7 +44,7 @@ fn web_runner(
     Runner::new(
         provider(model, vendor.endpoint.clone(), key),
         tools,
-        AgentSpec::new(
+        Agent::new(
             AgentId::new("web-fixture"),
             Model {
                 name: model.into(),
@@ -54,7 +55,7 @@ fn web_runner(
             },
         ),
         ContextInputs::new(sample.workspace().root()),
-        session,
+        Arc::new(session),
     )
     .under(RunPolicy {
         compaction: Compaction {

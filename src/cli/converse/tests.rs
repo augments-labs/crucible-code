@@ -10,9 +10,11 @@ use std::time::{Duration, Instant};
 
 use crucible_auth::Store;
 use crucible_core::{
-    AgentId, Compacting, Delta, Event, Mode, Permission, Revealed, Rules, StopReason, ToolId,
+    AgentId, Compacting, Delta, Mode, Permission, Revealed, Rules, StopReason, ToolId,
 };
-use crucible_runner::{AgentSpec, Model, Session, Tools};
+use crucible_runner::Event;
+use crucible_runner::{Agent, Model, Tools};
+use crucible_session::Session;
 use crucible_tui::{Picture, Recording, Size, Terminal, TerminalError};
 
 use std::sync::mpsc::channel;
@@ -28,14 +30,14 @@ use crate::cli::sample::Sample;
 /// What it says is not what any of these tests is about, but the loop takes one
 /// and draws it, so they hand it a real one rather than a shape that only
 /// exists here.
-pub(super) fn opening() -> draw::opening::Standing {
+pub(crate) fn opening() -> draw::opening::Standing {
     let workspace =
         crucible_core::Workspace::open(std::env::temp_dir()).expect("a temporary directory");
 
     draw::opening::Standing::new(
         &draw::Opening {
             model: Some("script"),
-            unasked: crate::cli::NOTHING_TO_ASK,
+            unasked: crucible_app::providers::NOTHING_TO_ASK,
             trouble: None,
             workspace: &workspace,
             sessions: &[],
@@ -58,25 +60,32 @@ fn typed(text: &str) -> Editor {
 /// The terms a test runs under when neither the style nor cancelling is what
 /// it is watching.
 ///
-pub(super) fn plain() -> Terms {
-    let unwritten = std::env::temp_dir().join(format!("crucible-unwritten-{}", std::process::id()));
+/// Every path in them is below a tree that cannot be created, because what it
+/// stands under is a file: the binary running the test. A test whose command
+/// keeps its choice is refused where it would have written, and fails saying
+/// so, rather than making a tree nothing owns and leaving it in the temporary
+/// directory for good. That test takes [`keeping`] instead.
+pub(crate) fn plain() -> Terms {
+    let unwritten = std::env::current_exe()
+        .expect("the test binary's own path")
+        .join("crucible-unwritten");
 
     Terms {
         style: Cell::new(Style::plain()),
         chosen: Cell::new(None),
         reading: std::cell::RefCell::default(),
         cancel: Cancel::new(),
+        ending: crate::cli::ending::Ending::deaf(),
         steer: crucible_core::Steer::new(),
         aside: crucible_core::Aside::new(),
         ledger: Ledger::new(),
         revealed: Revealed::new(),
         plan: Plan::new(),
         putting: crate::cli::seen::Putting::new(),
+        client: crate::cli::client::Client::new(),
         leaving: crucible_builtins::Background::new(),
-        // A provider, so `/model` has a name to write its answer under, and a
-        // file inside the same absent tree so nothing a test types reaches a
-        // configuration anybody keeps.
-        provider: Cell::new(Some("anthropic")),
+        // A file inside the same absent tree, so nothing a test types reaches
+        // a configuration anybody keeps.
         pending_model: Cell::new(None),
         pending_mode: Cell::new(None),
         settings: crucible_config::Settings::default(),
@@ -86,14 +95,14 @@ pub(super) fn plain() -> Terms {
         // watched, and a loop these terms drive must not write a key into
         // whatever home the machine running the suite has.
         logins: Store::in_home(&unwritten),
-        subscriptions: crate::cli::subscription::Subscriptions::production(),
+        subscriptions: crucible_app::subscription::Subscriptions::production(),
 
         // Unreachable from here and truthful about it: `/login` asks for a key
         // from a keyboard, and a loop driven off a pipe has none. What a key
         // given at one sets a session up with is proved where there is a
         // terminal to type it into.
         serving: Box::new(|named, _| {
-            Err(Fatal::Provider {
+            Err(crucible_app::AppError::Provider {
                 named: named.name.into(),
                 has: named.name.into(),
             })
@@ -107,7 +116,18 @@ pub(super) fn plain() -> Terms {
         sending: crucible_tui::Sending::default(),
         commands: crate::cli::converse::command::builtins(&std::sync::Arc::default())
             .expect("the built-in commands register"),
-        providers: crate::cli::providers().expect("the built-in providers register"),
+        providers: crucible_app::providers::providers().expect("the built-in providers register"),
+    }
+}
+
+/// [`plain`], for a test that takes a `/model`, a `/effort` or a `/theme`.
+///
+/// Each of those writes the choice down, so the file it is written to is one
+/// inside `sample`, which removes it when the test is over.
+pub(crate) fn keeping(sample: &Sample) -> Terms {
+    Terms {
+        choosing: sample.user_file(),
+        ..plain()
     }
 }
 
@@ -120,12 +140,25 @@ fn conversing(rounds: Vec<Vec<Delta>>, offered: Tools, typed: &str) -> String {
     over(Script::new(rounds), offered, typed).0
 }
 
-/// A runner that answers from `script` and records nothing.
-fn scripted(script: Script, offered: Tools) -> Runner {
+/// A conversation whose runner records into the session it answers for,
+/// asking the provider [`plain`]'s terms are written for.
+///
+/// The runner is built from the session handed to `build`, which is the only
+/// way a conversation comes by one: the two cannot disagree about where a turn
+/// is written.
+pub(crate) fn paired(
+    session: Arc<Session>,
+    build: impl FnOnce(Arc<Session>) -> Runner,
+) -> Conversation {
+    Conversation::recording(session, Some("anthropic"), build)
+}
+
+/// A runner that answers from `script` and records into `session`.
+pub(crate) fn scripted(script: Script, offered: Tools, session: Arc<Session>) -> Runner {
     Runner::new(
         Box::new(script),
         offered,
-        AgentSpec::new(
+        Agent::new(
             AgentId::new("test"),
             Model {
                 name: "script".into(),
@@ -135,21 +168,38 @@ fn scripted(script: Script, offered: Tools) -> Runner {
                 effort: None,
             },
         ),
-        crucible_runner::ContextInputs::new(std::env::temp_dir()),
-        Session::nowhere(),
+        crucible_context::ContextInputs::new(std::env::temp_dir()),
+        session,
     )
+}
+
+/// A conversation that answers nothing and records nowhere, for a command
+/// that asks the application about something other than the conversation.
+pub(crate) fn silent() -> Conversation {
+    paired(Arc::new(Session::nowhere()), |session| {
+        scripted(Script::new(Vec::new()), Tools::new(), session)
+    })
 }
 
 /// The whole loop over one script: what the terminal ended up with, and how
 /// many requests the script was given.
 fn over(script: Script, offered: Tools, typed: &str) -> (String, usize) {
     let asked = script.asked();
-    let runner = scripted(script, offered);
+    let conversation = paired(Arc::new(Session::nowhere()), |session| {
+        scripted(script, offered, session)
+    });
 
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(typed.as_bytes().to_vec());
 
-    converse(runner, &mut renderer, &plain(), &opening(), &mut input).expect("the loop to finish");
+    converse(
+        conversation,
+        &mut renderer,
+        &plain(),
+        &opening(),
+        &mut input,
+    )
+    .expect("the loop to finish");
 
     (
         renderer.terminal().written().to_string(),
@@ -210,7 +260,11 @@ fn an_explicit_compaction_holds_completion_after_its_worker_disconnects() {
         &opening,
     );
     let mut turning = Turning::started(None);
-    let mut says = typing::under(&scripted(Script::new(Vec::new()), Tools::new()));
+    let mut says = typing::under(&scripted(
+        Script::new(Vec::new()),
+        Tools::new(),
+        Arc::new(Session::nowhere()),
+    ));
     let (reply, _) = channel();
     let (give, _) = channel();
     let answering = Answering { reply, give };
@@ -230,6 +284,7 @@ fn an_explicit_compaction_holds_completion_after_its_worker_disconnects() {
         meanwhile: &mut meanwhile,
         leaving: &mut leaving,
         terms: &terms,
+        serving: Some("anthropic"),
     };
 
     while turn.step(&mut renderer) {}
@@ -257,35 +312,39 @@ fn a_theme_taken_mid_session_is_what_the_rows_after_it_are_drawn_in() {
     // the one thing this suite cannot reach: drawing it needs raw mode, which
     // reaches the controlling terminal. So the property is pinned on a row the
     // same captured style fed — the one that says no model has been chosen.
+    let sample = Sample::new("theme-mid-session");
     let terms = Terms {
         style: Cell::new(Style::coloured()),
-        ..plain()
+        ..keeping(&sample)
     };
     let was = terms.style();
 
     // No model, so a line that is not a command reaches `draw::unconfigured`,
     // which is drawn from the style the loop is holding.
-    let runner = Runner::new(
-        Box::new(Script::new(vec![])),
-        Tools::new(),
-        AgentSpec::new(
-            AgentId::new("test"),
-            Model {
-                name: "".into(),
-                max_tokens: 64,
-                window: None,
-                accepts: None,
-                effort: None,
-            },
-        ),
-        crucible_runner::ContextInputs::new(std::env::temp_dir()),
-        Session::nowhere(),
-    );
+    let conversation = paired(Arc::new(Session::nowhere()), |session| {
+        Runner::new(
+            Box::new(Script::new(vec![])),
+            Tools::new(),
+            Agent::new(
+                AgentId::new("test"),
+                Model {
+                    name: "".into(),
+                    max_tokens: 64,
+                    window: None,
+                    accepts: None,
+                    effort: None,
+                },
+            ),
+            crucible_context::ContextInputs::new(std::env::temp_dir()),
+            session,
+        )
+    });
 
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(b"/theme colourblind-dark\nhello\n".to_vec());
 
-    converse(runner, &mut renderer, &terms, &opening(), &mut input).expect("the loop to finish");
+    converse(conversation, &mut renderer, &terms, &opening(), &mut input)
+        .expect("the loop to finish");
 
     let worn = |style: Style| {
         style
@@ -315,11 +374,24 @@ fn a_window_the_user_resized_wraps_the_turns_that_follow_it() {
     // workspace forbids, so a prompt is the only moment the loop can notice
     // one. Unnoticed, the width read at startup is the width every turn is
     // wrapped to for the rest of the session.
-    let runner = scripted(Script::new(vec![saying("abcdefghijkl")]), Tools::new());
+    let conversation = paired(Arc::new(Session::nowhere()), |session| {
+        scripted(
+            Script::new(vec![saying("abcdefghijkl")]),
+            Tools::new(),
+            session,
+        )
+    });
     let mut renderer = Renderer::new(Narrowing::new());
     let mut input = Cursor::new(b"go\n".to_vec());
 
-    converse(runner, &mut renderer, &plain(), &opening(), &mut input).expect("the loop to finish");
+    converse(
+        conversation,
+        &mut renderer,
+        &plain(),
+        &opening(),
+        &mut input,
+    )
+    .expect("the loop to finish");
 
     let shown = Picture::of(renderer.terminal().written(), NARROW, 24);
     let said = shown.said();
@@ -598,6 +670,81 @@ fn a_provider_that_fails_says_so_instead_of_ending_the_session() {
     assert_eq!(asked, 2, "a failed turn does not end the session");
 }
 
+/// Refuses every prompt, by name and for a reason a reader can act on.
+#[derive(Debug)]
+struct Refusing;
+
+impl crucible_runner::InputGuardrail for Refusing {
+    fn name(&self) -> &'static str {
+        "no-secrets"
+    }
+
+    fn checking(
+        &self,
+        _context: &crucible_runner::AgentContext<'_>,
+    ) -> Result<crucible_runner::Decision, crucible_runner::Undecided> {
+        Ok(crucible_runner::Decision::rejected(
+            "the prompt carries a credential",
+        ))
+    }
+}
+
+#[test]
+fn a_turn_a_guardrail_refused_says_so_instead_of_returning_a_silent_prompt() {
+    // A refusal on the way in is a turn that never happened: the runner posts
+    // no event for it and hands the rejection back as the turn's value. If the
+    // loop drops that value the reader gets the prompt back with nothing said,
+    // and retypes the thing that was just refused.
+    let script = Script::new(vec![saying("never asked")]);
+    let asked = script.asked();
+    let conversation = paired(Arc::new(Session::nowhere()), |session| {
+        Runner::new(
+            Box::new(script),
+            Tools::new(),
+            crucible_runner::AgentBuilder::new(
+                AgentId::new("test"),
+                Model {
+                    name: "script".into(),
+                    max_tokens: 64,
+                    window: None,
+                    accepts: None,
+                    effort: None,
+                },
+            )
+            .checking_input(Arc::new(Refusing))
+            .expect("a name no other check has")
+            .build(),
+            crucible_context::ContextInputs::new(std::env::temp_dir()),
+            session,
+        )
+    });
+
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let mut input = Cursor::new(b"go\n".to_vec());
+    converse(
+        conversation,
+        &mut renderer,
+        &plain(),
+        &opening(),
+        &mut input,
+    )
+    .expect("the loop to finish");
+    // Read off the rows rather than the bytes: the sentence is longer than the
+    // window is wide, and where it folds is the fold's business.
+    let written = renderer.terminal().picture().said().join(" ");
+
+    assert!(written.contains("no-secrets"), "{written}");
+    assert!(
+        written.contains("the prompt carries a credential"),
+        "{written}"
+    );
+    assert_eq!(
+        asked.load(std::sync::atomic::Ordering::Relaxed),
+        0,
+        "a refused prompt reaches no provider"
+    );
+}
+
 #[test]
 fn a_log_that_failed_with_the_last_line_still_queued_is_reported_before_the_prompt_goes_away() {
     // The writer thread runs behind the loop, so the poll after a turn sees
@@ -610,30 +757,39 @@ fn a_log_that_failed_with_the_last_line_still_queued_is_reported_before_the_prom
     // turn, so the in-loop poll never runs at all, and the only path that can
     // still say anything is the drain after it. A test that let the poll run
     // would pass with the report after the loop deleted.
-    let session = Session::onto("/nowhere".into(), Failing);
+    let session = Arc::new(Session::onto("/nowhere".into(), Failing));
     session.append(&crucible_core::Message::said("queued"));
 
-    let runner = Runner::new(
-        Box::new(Script::new(vec![])),
-        Tools::new(),
-        AgentSpec::new(
-            AgentId::new("test"),
-            Model {
-                name: "script".into(),
-                max_tokens: 64,
-                window: None,
-                accepts: None,
-                effort: None,
-            },
-        ),
-        crucible_runner::ContextInputs::new(std::env::temp_dir()),
-        session,
-    );
+    let conversation = paired(Arc::clone(&session), |session| {
+        Runner::new(
+            Box::new(Script::new(vec![])),
+            Tools::new(),
+            Agent::new(
+                AgentId::new("test"),
+                Model {
+                    name: "script".into(),
+                    max_tokens: 64,
+                    window: None,
+                    accepts: None,
+                    effort: None,
+                },
+            ),
+            crucible_context::ContextInputs::new(std::env::temp_dir()),
+            session,
+        )
+    });
 
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(Vec::new());
 
-    converse(runner, &mut renderer, &plain(), &opening(), &mut input).expect("the loop to finish");
+    converse(
+        conversation,
+        &mut renderer,
+        &plain(),
+        &opening(),
+        &mut input,
+    )
+    .expect("the loop to finish");
 
     let written = renderer.terminal().written();
     assert!(
@@ -649,27 +805,33 @@ fn a_terminal_that_fails_mid_turn_leaves_the_turn_recorded_all_the_same() {
     // holds it. Returning the moment a write failed would drop the join handle
     // and leave that thread running with the process on its way out, so the
     // turn on screen when the window closed is the turn missing from the log.
+    //
+    // The session is handed over whole, with no handle kept back here, so the
+    // `Drop` that waits has run by the time the log is read. The test below
+    // keeps a handle back, and is about the wait that does not need the drop.
     let kept = Arc::new(Mutex::new(Vec::new()));
-    let session = Session::onto("/nowhere".into(), Kept(Arc::clone(&kept)));
+    let session = Arc::new(Session::onto("/nowhere".into(), Kept(Arc::clone(&kept))));
 
     let provider = Script::new(vec![saying("what the model said")]);
     let started = provider.asked();
-    let runner = Runner::new(
-        Box::new(provider),
-        Tools::new(),
-        AgentSpec::new(
-            AgentId::new("test"),
-            Model {
-                name: "script".into(),
-                max_tokens: 64,
-                window: None,
-                accepts: None,
-                effort: None,
-            },
-        ),
-        crucible_runner::ContextInputs::new(std::env::temp_dir()),
-        session,
-    );
+    let conversation = paired(session, |session| {
+        Runner::new(
+            Box::new(provider),
+            Tools::new(),
+            Agent::new(
+                AgentId::new("test"),
+                Model {
+                    name: "script".into(),
+                    max_tokens: 64,
+                    window: None,
+                    accepts: None,
+                    effort: None,
+                },
+            ),
+            crucible_context::ContextInputs::new(std::env::temp_dir()),
+            session,
+        )
+    });
 
     // Three writes come before the turn: the row at the top of the window, the
     // opening written down once the first prompt has been read, and the prompt
@@ -682,8 +844,14 @@ fn a_terminal_that_fails_mid_turn_leaves_the_turn_recorded_all_the_same() {
     });
     let mut input = Cursor::new(b"go\n".to_vec());
 
-    let problem = converse(runner, &mut renderer, &plain(), &opening(), &mut input)
-        .expect_err("the terminal to fail");
+    let problem = converse(
+        conversation,
+        &mut renderer,
+        &plain(),
+        &opening(),
+        &mut input,
+    )
+    .expect_err("the terminal to fail");
 
     assert!(matches!(problem, Fatal::Terminal(_)), "{problem:?}");
     assert_eq!(started.load(Ordering::Acquire), 1, "the turn never began");
@@ -696,24 +864,119 @@ fn a_terminal_that_fails_mid_turn_leaves_the_turn_recorded_all_the_same() {
 }
 
 #[test]
+fn a_turn_that_failed_is_on_the_disk_whoever_else_still_holds_the_session() {
+    // The same closing window as above, with the one thing that test is
+    // careful not to do: a handle on the session kept back. Nothing about who
+    // holds a session may decide whether a turn reaches its log — a process
+    // on its way out does not always unwind as far as the last holder, and a
+    // turn that is only written once everybody has let go is one that is
+    // written if nothing goes wrong a second time.
+    //
+    // The log is a slow one so that the question has one answer. A writer that
+    // keeps up hides a turn nobody waited for; one that is behind shows it,
+    // and how far behind only decides how plainly this fails without the wait
+    // — with it, the log is read after everything queued has landed, however
+    // slow the disk.
+    let kept = Arc::new(Mutex::new(Vec::new()));
+    let session = Arc::new(Session::onto(
+        "/nowhere".into(),
+        Behind(Kept(Arc::clone(&kept))),
+    ));
+    let held_back = Arc::clone(&session);
+
+    let provider = Script::new(vec![saying("what the model said")]);
+    let started = provider.asked();
+    let conversation = paired(session, |session| scripted(provider, Tools::new(), session));
+
+    let mut renderer = Renderer::new(BreakingWhenStarted {
+        inner: Recording::new(80, 24),
+        left: 3,
+        started: Arc::clone(&started),
+    });
+    let mut input = Cursor::new(b"go\n".to_vec());
+
+    let problem = converse(
+        conversation,
+        &mut renderer,
+        &plain(),
+        &opening(),
+        &mut input,
+    )
+    .expect_err("the terminal to fail");
+    assert!(matches!(problem, Fatal::Terminal(_)), "{problem:?}");
+
+    // Read with the handle still alive, which is the whole of the case.
+    let written = String::from_utf8(kept.lock().expect("a lock").clone()).expect("a log of text");
+    assert!(
+        written.contains("what the model said"),
+        "the turn was left waiting on a holder: {written:?}"
+    );
+    drop(held_back);
+}
+
+#[test]
+fn a_turn_told_to_end_from_outside_is_stopped_written_down_and_handed_back_as_that() {
+    // What a hang-up or a termination comes to once it has been noted, driven
+    // without sending one: the note is left the way the handler leaves it, at
+    // the moment the provider has the request. The loop has to read it on a
+    // pass of its own — nothing here draws, fails or presses a key to prompt
+    // it — stop the turn, and come back saying which signal it was, so the
+    // caller can obey it once the session is put away.
+    let kept = Arc::new(Mutex::new(Vec::new()));
+    let session = Arc::new(Session::onto("/nowhere".into(), Kept(Arc::clone(&kept))));
+    let held_back = Arc::clone(&session);
+
+    let provider = Script::new(vec![saying("what the model said")]);
+    let started = provider.asked();
+    let conversation = paired(session, |session| scripted(provider, Tools::new(), session));
+
+    let terms = plain();
+    let mut renderer = Renderer::new(ToldWhenStarted {
+        inner: Recording::new(80, 24),
+        left: 3,
+        started: Arc::clone(&started),
+        ending: terms.ending.clone(),
+    });
+    let mut input = Cursor::new(b"go\n".to_vec());
+
+    let problem = converse(conversation, &mut renderer, &terms, &opening(), &mut input)
+        .expect_err("the turn to be ended");
+
+    assert!(matches!(problem, Fatal::Ended(_)), "{problem:?}");
+    assert!(terms.cancel.requested(), "the turn was never asked to stop");
+
+    // The prompt at the least, and with a handle still held: how much of the
+    // answer the worker had heard when it was stopped is its own to say, and
+    // is proved where a real signal meets a real stream.
+    let written = String::from_utf8(kept.lock().expect("a lock").clone()).expect("a log of text");
+    assert!(
+        written.contains(r#"{"user":"go"#),
+        "the turn never reached the log: {written:?}"
+    );
+    drop(held_back);
+}
+
+#[test]
 fn a_terminal_failure_cancels_a_provider_that_would_otherwise_stay_live() {
     let (provider, escaped) = Stalling::new();
-    let runner = Runner::new(
-        Box::new(provider),
-        Tools::new(),
-        AgentSpec::new(
-            AgentId::new("test"),
-            Model {
-                name: "stalling".into(),
-                max_tokens: 64,
-                window: None,
-                accepts: None,
-                effort: None,
-            },
-        ),
-        crucible_runner::ContextInputs::new(std::env::temp_dir()),
-        Session::nowhere(),
-    );
+    let conversation = paired(Arc::new(Session::nowhere()), |session| {
+        Runner::new(
+            Box::new(provider),
+            Tools::new(),
+            Agent::new(
+                AgentId::new("test"),
+                Model {
+                    name: "stalling".into(),
+                    max_tokens: 64,
+                    window: None,
+                    accepts: None,
+                    effort: None,
+                },
+            ),
+            crucible_context::ContextInputs::new(std::env::temp_dir()),
+            session,
+        )
+    });
     let terms = plain();
     let cancellation = terms.cancel.clone();
     let mut renderer = Renderer::new(Breaking {
@@ -722,7 +985,7 @@ fn a_terminal_failure_cancels_a_provider_that_would_otherwise_stay_live() {
     });
     let mut input = Cursor::new(b"go\n".to_vec());
 
-    let problem = converse(runner, &mut renderer, &terms, &opening(), &mut input)
+    let problem = converse(conversation, &mut renderer, &terms, &opening(), &mut input)
         .expect_err("the terminal to fail");
 
     assert!(matches!(problem, Fatal::Terminal(_)), "{problem:?}");
@@ -740,11 +1003,20 @@ fn a_piped_run_ends_the_row_its_prompt_was_left_on() {
     // the whole window again. Down a pipe there is no frame and no screen to
     // give back: what crucible wrote is the last thing in the file, and a row
     // left unended is one the next thing written lands on.
-    let runner = scripted(Script::new(vec![]), Tools::new());
+    let conversation = paired(Arc::new(Session::nowhere()), |session| {
+        scripted(Script::new(vec![]), Tools::new(), session)
+    });
     let mut renderer = Renderer::new(Recording::redirected(80, 24));
     let mut input = Cursor::new(Vec::new());
 
-    converse(runner, &mut renderer, &plain(), &opening(), &mut input).expect("the loop to finish");
+    converse(
+        conversation,
+        &mut renderer,
+        &plain(),
+        &opening(),
+        &mut input,
+    )
+    .expect("the loop to finish");
 
     let written = renderer.terminal().written();
     assert!(written.ends_with('\n'), "{written:?}");
@@ -756,12 +1028,21 @@ fn the_prompt_line_names_the_mode_in_force() {
     // announces itself with a question, so the prompt line is the only place a
     // session that never asks says what it is. Written before the read, which
     // is why empty input still shows it once.
-    let runner = scripted(Script::new(vec![]), Tools::new())
-        .permitting(Permission::with(Mode::FullAccess, Rules::new()));
+    let conversation = paired(Arc::new(Session::nowhere()), |session| {
+        scripted(Script::new(vec![]), Tools::new(), session)
+            .permitting(Permission::with(Mode::FullAccess, Rules::new()))
+    });
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(Vec::new());
 
-    converse(runner, &mut renderer, &plain(), &opening(), &mut input).expect("the loop to finish");
+    converse(
+        conversation,
+        &mut renderer,
+        &plain(),
+        &opening(),
+        &mut input,
+    )
+    .expect("the loop to finish");
 
     let written = renderer.terminal().written();
     assert!(written.contains("fullAccess › "), "{written}");
@@ -777,8 +1058,10 @@ fn the_mark_a_piped_line_is_typed_after_comes_out_of_the_glyph_set() {
         (crucible_tui::Glyphs::Unicode, "fullAccess › "),
         (crucible_tui::Glyphs::Ascii, "fullAccess > "),
     ] {
-        let runner = scripted(Script::new(vec![]), Tools::new())
-            .permitting(Permission::with(Mode::FullAccess, Rules::new()));
+        let conversation = paired(Arc::new(Session::nowhere()), |session| {
+            scripted(Script::new(vec![]), Tools::new(), session)
+                .permitting(Permission::with(Mode::FullAccess, Rules::new()))
+        });
         let mut renderer = Renderer::new(Recording::new(80, 24));
         let mut input = Cursor::new(Vec::new());
         let terms = Terms {
@@ -786,7 +1069,7 @@ fn the_mark_a_piped_line_is_typed_after_comes_out_of_the_glyph_set() {
             ..plain()
         };
 
-        converse(runner, &mut renderer, &terms, &opening(), &mut input)
+        converse(conversation, &mut renderer, &terms, &opening(), &mut input)
             .expect("the loop to finish");
 
         let written = renderer.terminal().written();
@@ -806,12 +1089,21 @@ fn the_box_and_the_mode_stand_under_a_turn_that_is_still_being_written() {
     // The cursor comes back into the box rather than onto the answer, because
     // the box is what takes typing while the turn runs — two rows up from the
     // last of the four, and at the column the line starts on.
-    let runner = scripted(Script::new(vec![saying("hello")]), Tools::new())
-        .permitting(Permission::with(Mode::FullAccess, Rules::new()));
+    let conversation = paired(Arc::new(Session::nowhere()), |session| {
+        scripted(Script::new(vec![saying("hello")]), Tools::new(), session)
+            .permitting(Permission::with(Mode::FullAccess, Rules::new()))
+    });
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(b"go\n".to_vec());
 
-    converse(runner, &mut renderer, &plain(), &opening(), &mut input).expect("the loop to finish");
+    converse(
+        conversation,
+        &mut renderer,
+        &plain(),
+        &opening(),
+        &mut input,
+    )
+    .expect("the loop to finish");
 
     let shown = moment(renderer.terminal().written(), "thinking");
     let rows = shown.rows();
@@ -888,12 +1180,15 @@ fn moment(written: &str, said: &str) -> Picture {
 /// The whole loop under terms of the test's own: what an answer leaves behind
 /// depends on where those terms point.
 fn answering(terms: &Terms, rounds: Vec<Vec<Delta>>, offered: Tools, typed: &str) -> String {
-    let runner = scripted(Script::new(rounds), offered);
+    let conversation = paired(Arc::new(Session::nowhere()), |session| {
+        scripted(Script::new(rounds), offered, session)
+    });
 
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(typed.as_bytes().to_vec());
 
-    converse(runner, &mut renderer, terms, &opening(), &mut input).expect("the loop to finish");
+    converse(conversation, &mut renderer, terms, &opening(), &mut input)
+        .expect("the loop to finish");
 
     renderer.terminal().written().to_string()
 }
@@ -947,11 +1242,18 @@ fn a_turn_that_asks_a_loop_with_nobody_at_it_is_told_so_and_carries_on() {
         Delta::Stopped(StopReason::WantsTools),
     ];
 
-    let runner = scripted(Script::new(vec![asking, saying("carried on")]), offered);
+    let conversation = paired(Arc::new(Session::nowhere()), |session| {
+        scripted(
+            Script::new(vec![asking, saying("carried on")]),
+            offered,
+            session,
+        )
+    });
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(b"go\n".to_vec());
 
-    converse(runner, &mut renderer, &terms, &opening(), &mut input).expect("the loop to finish");
+    converse(conversation, &mut renderer, &terms, &opening(), &mut input)
+        .expect("the loop to finish");
 
     let written = renderer.terminal().written().to_string();
     assert!(written.contains("carried on"), "{written}");
@@ -976,13 +1278,22 @@ mod question;
 
 /// The whole loop in one mode, over the tools given.
 fn deciding(mode: Mode, offered: Tools, rounds: Vec<Vec<Delta>>, typed: &str) -> String {
-    let runner =
-        scripted(Script::new(rounds), offered).permitting(Permission::with(mode, Rules::new()));
+    let conversation = paired(Arc::new(Session::nowhere()), |session| {
+        scripted(Script::new(rounds), offered, session)
+            .permitting(Permission::with(mode, Rules::new()))
+    });
 
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(typed.as_bytes().to_vec());
 
-    converse(runner, &mut renderer, &plain(), &opening(), &mut input).expect("the loop to finish");
+    converse(
+        conversation,
+        &mut renderer,
+        &plain(),
+        &opening(),
+        &mut input,
+    )
+    .expect("the loop to finish");
 
     renderer.terminal().written().to_string()
 }
@@ -1221,6 +1532,45 @@ impl Terminal for BreakingWhenStarted {
     }
 }
 
+/// A window that stays open, and a signal noted once the provider has the
+/// request.
+///
+/// The same boundary [`BreakingWhenStarted`] waits on and for the same reason:
+/// a note left before the worker has recorded the prompt would race it.
+struct ToldWhenStarted {
+    inner: Recording,
+    left: usize,
+    started: Arc<AtomicUsize>,
+    ending: crate::cli::ending::Ending,
+}
+
+impl Terminal for ToldWhenStarted {
+    fn size(&self) -> Result<Size, TerminalError> {
+        self.inner.size()
+    }
+
+    fn write(&mut self, text: &str) -> Result<(), TerminalError> {
+        if self.left == 0 {
+            let until = Instant::now() + Duration::from_secs(2);
+            while self.started.load(Ordering::Acquire) == 0 && Instant::now() < until {
+                std::thread::park_timeout(Duration::from_millis(1));
+            }
+            self.ending.tell(15);
+        }
+
+        self.left = self.left.saturating_sub(1);
+        self.inner.write(text)
+    }
+
+    fn flush(&mut self) -> Result<(), TerminalError> {
+        self.inner.flush()
+    }
+
+    fn is_terminal(&self) -> bool {
+        self.inner.is_terminal()
+    }
+}
+
 /// A log that fails every write, the way a full disk does.
 pub(super) struct Failing;
 
@@ -1255,6 +1605,21 @@ impl io::Write for Kept {
     }
 }
 
+/// A log whose writer is always behind: every write takes a while to land.
+#[derive(Debug)]
+struct Behind(Kept);
+
+impl io::Write for Behind {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        std::thread::sleep(Duration::from_millis(10));
+        self.0.write(bytes)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.0.flush()
+    }
+}
+
 #[test]
 fn a_huge_line_without_a_newline_is_refused_before_it_is_retained() {
     let bytes = vec![b'x'; QUEUED_BYTES + 1];
@@ -1274,28 +1639,36 @@ fn a_prompt_that_cannot_be_answered_down_a_pipe_fails_rather_than_ending_quietly
     // would end `Ok`, which is the one thing a script looks at. `echo ... |
     // crucible` reporting success while answering nothing is the "it does
     // nothing" report arriving as a zero exit.
-    let runner = Runner::new(
-        Box::new(Script::new(Vec::new())),
-        Tools::new(),
-        AgentSpec::new(
-            AgentId::new("test"),
-            Model {
-                name: String::new().into(),
-                max_tokens: 64,
-                window: None,
-                accepts: None,
-                effort: None,
-            },
-        ),
-        crucible_runner::ContextInputs::new(std::env::temp_dir()),
-        Session::nowhere(),
-    );
+    let conversation = paired(Arc::new(Session::nowhere()), |session| {
+        Runner::new(
+            Box::new(Script::new(Vec::new())),
+            Tools::new(),
+            Agent::new(
+                AgentId::new("test"),
+                Model {
+                    name: String::new().into(),
+                    max_tokens: 64,
+                    window: None,
+                    accepts: None,
+                    effort: None,
+                },
+            ),
+            crucible_context::ContextInputs::new(std::env::temp_dir()),
+            session,
+        )
+    });
 
     let mut renderer = Renderer::new(Recording::redirected(80, 24));
     let mut input = Cursor::new(b"what is 2+2\n".to_vec());
 
-    let problem = converse(runner, &mut renderer, &plain(), &opening(), &mut input)
-        .expect_err("a run that answered nothing to fail");
+    let problem = converse(
+        conversation,
+        &mut renderer,
+        &plain(),
+        &opening(),
+        &mut input,
+    )
+    .expect_err("a run that answered nothing to fail");
 
     assert!(matches!(problem, Fatal::Unanswerable(_)), "{problem:?}");
 }

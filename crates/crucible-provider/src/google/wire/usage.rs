@@ -2,7 +2,8 @@
 //! include tool/internal prompts, so retain that total only as a numeric detail.
 
 use super::protocol;
-use crucible_core::{Delta, InputTokenUsage, ProviderError, ProviderNumericDetail, ProviderUsage};
+use crucible_models::{Delta, ProviderError};
+use crucible_types::{InputTokenUsage, ProviderNumericDetail, ProviderUsage};
 use serde_json::Value;
 
 pub(super) fn reported(payload: &Value) -> Result<Option<Delta>, ProviderError> {

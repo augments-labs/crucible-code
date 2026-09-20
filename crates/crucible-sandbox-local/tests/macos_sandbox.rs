@@ -455,7 +455,11 @@ fn the_pre_seatbelt_launcher_closes_inherited_descriptors() {
     let flags = rustix::io::fcntl_getfd(&listener).expect("descriptor flags");
     rustix::io::fcntl_setfd(&listener, rustix::io::FdFlags::empty())
         .expect("make descriptor inheritable");
-    let script = "if (eval \": <&$1\") 2>/dev/null; then exit 71; fi";
+    // The redirection sits on a subshell, which the shell forks and redirects
+    // without saving anything. On a builtin, bash 3.2 first parks its own
+    // standard input on the lowest free descriptor from 10 up, so a listener
+    // numbered 10 tested as open precisely because the launcher had closed it.
+    let script = "if (eval \"(:) <&$1\") 2>/dev/null; then exit 71; fi";
     let started = start(
         fixture.request("macos-descriptors"),
         command(
@@ -471,7 +475,11 @@ fn the_pre_seatbelt_launcher_closes_inherited_descriptors() {
     rustix::io::fcntl_setfd(&listener, flags).expect("restore descriptor flags");
     let (status, _, errors) = finish(started);
 
-    assert!(status.success(), "{}", String::from_utf8_lossy(&errors));
+    assert!(
+        status.success(),
+        "descriptor {descriptor}: {status:?}: {}",
+        String::from_utf8_lossy(&errors)
+    );
 }
 
 #[test]

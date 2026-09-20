@@ -1,0 +1,71 @@
+[package]
+name = "crucible-app"
+description = "The composition root: what a run is assembled from, and the conversation it owns."
+publish.workspace = true
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+# The credential store `/login` writes and startup reads.
+crucible-auth.workspace = true
+# The built-in tools every run is assembled with.
+crucible-builtins.workspace = true
+# The files a run is configured by, and the splice a remembered choice is
+# written with.
+crucible-config.workspace = true
+# What a front end may ask and be answered with, in values that can leave the
+# process; `client` carries them out and translates what came of them.
+crucible-client-api.workspace = true
+# What the system prompt is built from.
+crucible-context.workspace = true
+# The credential a provider is given, and the header it signs with.
+crucible-credentials.workspace = true
+# Extension discovery: the programs a run may host, read at startup and listed
+# for `--extensions`.
+crucible-extension.workspace = true
+# The one crate that speaks the Model Context Protocol. Composition is where a
+# hosted server becomes a tool, so it is taken here and nowhere below.
+crucible-mcp.workspace = true
+# The provider contract and what a model is described by.
+crucible-models.workspace = true
+# The owner-only boundary the user configuration is held behind before it is
+# read.
+crucible-privacy.workspace = true
+# Every provider this build serves: the one place a name becomes a type.
+crucible-provider.workspace = true
+# The bounded registry the providers are held in.
+crucible-registry.workspace = true
+# The runner a conversation drives, and the events it reports.
+crucible-runner.workspace = true
+# The cancellation a cache retirement is bounded by.
+crucible-runtime.workspace = true
+# What a confined process may observe or change.
+crucible-sandbox.workspace = true
+# The confinement this machine can enforce, handed to every tool that runs a
+# command so that no tool has to name an operating system.
+crucible-sandbox-local.workspace = true
+# The session a conversation records to, and the file a persistent
+# prompt-cache resource is remembered in.
+crucible-session.workspace = true
+# What a tool is, and the question a tool may put to whoever is running.
+crucible-tools.workspace = true
+# Shared identifiers, messages and the transcript.
+crucible-types.workspace = true
+# The directory a run works in, and the proofs a path is under it.
+crucible-workspace.workspace = true
+# A hosted tool's schema is a JSON document, read once for the sentence it
+# describes itself with; this is the parser the configuration crate compiles.
+serde_json.workspace = true
+# `AppError`, which the command line turns into the sentence a user reads.
+thiserror.workspace = true
+
+[dev-dependencies]
+# The guardrail a headless turn is refused by.
+crucible-agents.workspace = true
+
+[lints]
+workspace = true

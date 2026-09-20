@@ -19,13 +19,64 @@
 //! Nothing here decides anything the runner did not already decide. This is
 //! where the loop lives now, not a second opinion about how a turn should go.
 
+use crucible_agents::{GuardrailError, Rejection};
 use crucible_core::{
-    Ask, Compacting, Event, Message, ProviderError, StopReason, ToolsetContext, TurnError,
+    Ask, Compacting, Message, ProviderContinuation, ProviderError, RunId, Spend, StopReason,
+    ToolCall, ToolsetContext,
 };
 
 use crate::context::RunContext;
+use crate::outcome::{RunResult, Turned};
 
-use super::{After, Counting, Listening, Runner, TurnBounds, Went, Work};
+use super::{After, Counting, Judged, Listening, Runner, TurnBounds, Went, Work};
+
+use crate::{Event, TurnError};
+/// How one run's passes ended.
+///
+/// The loop's own word for it, because the value a caller gets back carries a
+/// figure the loop does not hold: what the turn spent lives on the totals
+/// [`Runner::exchange`] owns, and threading it back through every one of the
+/// ways out of here would mean writing it at each of them. This says which
+/// ending was reached; the caller turns that into the [`Turned`] it hands out.
+#[derive(Debug)]
+pub(super) enum Ending {
+    /// The model's answer was accepted, and this is how it ended.
+    Stopped(StopReason),
+
+    /// An output check refused the final candidate.
+    Rejected {
+        /// Which check refused, and what it said about why.
+        rejection: Rejection,
+        /// How the model's own answer ended, which is a separate fact from
+        /// whether the answer was accepted.
+        stop: StopReason,
+    },
+
+    /// An output check ran and could not reach a decision.
+    Undecided {
+        /// What the check said about why not.
+        problem: GuardrailError,
+        /// How the model's own answer ended.
+        stop: StopReason,
+    },
+}
+
+impl Ending {
+    /// The same ending, as the value a caller of a turn is handed.
+    pub(super) fn turned(self, run: RunId, spent: Spend) -> Turned {
+        match self {
+            Self::Stopped(stop) => Turned::Ran(RunResult::new(run, stop, spent)),
+            Self::Rejected { rejection, stop } => Turned::Rejected {
+                rejection,
+                stop: Some(stop),
+            },
+            Self::Undecided { problem, stop } => Turned::Undecided {
+                problem,
+                stop: Some(stop),
+            },
+        }
+    }
+}
 
 /// One run's worth of passes over one runner.
 pub(super) struct AgentLoop<'a> {
@@ -59,6 +110,86 @@ impl<'a> AgentLoop<'a> {
         }
     }
 
+    /// What arrived while the pass before this one was running.
+    ///
+    /// A line typed while the turn ran is worked in here, between one pass and
+    /// the next: recorded as a prompt the same way the turn's own first one
+    /// was, so the request that follows carries it and the agent adjusts course
+    /// rather than finishing a plan the reader moved past. Called at the top of
+    /// a pass so a burst typed in one arrives together, and so it cannot land
+    /// while a tool call is out.
+    ///
+    /// What happened while it ran goes in the same place for the same reason: a
+    /// command the agent was told not to poll for has exited, and the pass that
+    /// follows is the first one that can do anything about it. No `Steered`
+    /// goes with it — the reader did not type it, and an event saying they did
+    /// would put a sentence in the panel that nobody wrote. The line above it
+    /// is already on their screen.
+    fn interjected(&mut self, counting: &Counting) -> Result<(), TurnError> {
+        let run = self.run;
+        let events = run.reporting();
+        for line in run.steer().take() {
+            events.post(Event::Steered { line: line.clone() });
+            self.runner.record(run.ancestry(), Message::said(line))?;
+            events.post(Event::Carried {
+                left: self
+                    .runner
+                    .state
+                    .load
+                    .left(counting.window, counting.reserve),
+            });
+        }
+        for note in run.aside().take() {
+            self.runner.record(run.ancestry(), Message::said(note))?;
+            events.post(Event::Carried {
+                left: self
+                    .runner
+                    .state
+                    .load
+                    .left(counting.window, counting.reserve),
+            });
+        }
+        Ok(())
+    }
+
+    /// The last answer of a turn: judged, then written down, then the ending.
+    ///
+    /// Calls the model did not finish asking for go no further. A call is
+    /// written to the transcript only once it has a result, and these will
+    /// never get one. The reason is written down with them: it is what the
+    /// session log carries into a replay and what the providers send back to
+    /// the model, and both of those outlive the notice the user read while it
+    /// happened.
+    ///
+    /// The candidate is judged before it is accepted and before any of it is
+    /// written down. A refused answer leaves no trace for the next request to
+    /// carry: the deltas the reader watched arrive were provisional, and this
+    /// is where that stops being true for everything else.
+    fn ending(
+        &mut self,
+        text: Box<str>,
+        continuation: Option<ProviderContinuation>,
+        calls: &[ToolCall],
+        stop: StopReason,
+    ) -> Result<Ending, TurnError> {
+        match self.runner.vouching(&text, self.run) {
+            Ok(Judged::Allowed) => {}
+            Ok(Judged::Rejected(rejection)) => return Ok(Ending::Rejected { rejection, stop }),
+            Err(problem) => return Ok(Ending::Undecided { problem, stop }),
+        }
+
+        self.runner.record(
+            self.run.ancestry(),
+            Message::Agent {
+                continuation: if calls.is_empty() { continuation } else { None },
+                text,
+                calls: Vec::new(),
+                stop: Some(stop),
+            },
+        )?;
+        Ok(Ending::Stopped(stop))
+    }
+
     /// Takes passes until the turn ends, and says how it ended.
     ///
     /// The totals are the caller's, not this loop's. Every way out of here is
@@ -75,12 +206,10 @@ impl<'a> AgentLoop<'a> {
     /// None of the four is a failure, and all four end a turn the way one
     /// does, which is why they leave through here rather than through
     /// [`StopReason`].
-    pub(super) fn drive(&mut self, counting: &mut Counting) -> Result<StopReason, TurnError> {
+    pub(super) fn drive(&mut self, counting: &mut Counting) -> Result<Ending, TurnError> {
         let run = self.run;
         let events = run.reporting();
         let cancel = run.cancel();
-        let steer = run.steer();
-        let aside = run.aside();
         let tool_output_maximum = run.policy().bounds.tool_output_bytes;
 
         let mut bounds = TurnBounds::default();
@@ -89,32 +218,7 @@ impl<'a> AgentLoop<'a> {
         loop {
             self.runner.flush_sandbox_audits(events)?;
 
-            // A line typed while the turn ran is worked in here, between one
-            // pass and the next: recorded as a prompt the same way the turn's
-            // own first one was, so the request below carries it and the agent
-            // adjusts course rather than finishing a plan the reader moved past.
-            // Checked at the top so a burst typed in a pass arrives together,
-            // and so it cannot land while a tool call is out.
-            for line in steer.take() {
-                events.post(Event::Steered { line: line.clone() });
-                self.runner.record(run.ancestry(), Message::said(line))?;
-                events.post(Event::Carried {
-                    left: self.runner.load.left(counting.window, counting.reserve),
-                });
-            }
-
-            // And what happened while it ran, in the same place for the same
-            // reason: a command the agent was told not to poll for has exited,
-            // and the pass that follows is the first one that can do anything
-            // about it. No `Steered` goes with it — the reader did not type it,
-            // and an event saying they did would put a sentence in the panel
-            // that nobody wrote. The line above it is already on their screen.
-            for note in aside.take() {
-                self.runner.record(run.ancestry(), Message::said(note))?;
-                events.post(Event::Carried {
-                    left: self.runner.load.left(counting.window, counting.reserve),
-                });
-            }
+            self.interjected(counting)?;
 
             // Read once per pass: `tool_search` can reveal a schema mid-turn.
             // The exact set measured here is handed to the request below, so an
@@ -129,7 +233,18 @@ impl<'a> AgentLoop<'a> {
                 tools.map_err(TurnError::from),
                 self.runner.flush_sandbox_audits(events),
             )?;
-            self.runner.tools = tools.clone();
+            // Narrowed to what this agent declares, against the exact
+            // generation the pass admitted rather than a later one. The
+            // request advertises this and a call is admitted through this, so
+            // the roster the model was shown and the roster it is held to
+            // cannot come apart.
+            let tools = self
+                .runner
+                .agent
+                .availability()
+                .narrowing(&tools)
+                .map_err(TurnError::from)?;
+            self.runner.state.tools = tools.clone();
             let advertised = tools.advertised();
 
             // Once, against this exact immutable generation and after any
@@ -141,10 +256,10 @@ impl<'a> AgentLoop<'a> {
             // Recording is what measures the transcript, and it happens on the
             // runner rather than here; reading it back at the top of each pass
             // is what makes the check below see the results of the last one.
-            counting.load = self.runner.load;
+            counting.load = self.runner.state.load;
             counting
                 .load
-                .requesting(self.runner.spec.instructions(), &advertised);
+                .requesting(self.runner.agent.instructions(), &advertised);
 
             // Worked out per pass rather than once, because what it is measured
             // against can be corrected mid-turn: a window learned from a
@@ -185,20 +300,20 @@ impl<'a> AgentLoop<'a> {
                     // the complete-active-pass recap before any request is safe.
                     After::Carry => continue,
                     After::Stuck => return Err(TurnError::NoRoom),
-                    After::Stopped => return Ok(StopReason::Cancelled),
+                    After::Stopped => return Ok(Ending::Stopped(StopReason::Cancelled)),
                 }
             }
 
             // The other half of the reactive rail. One vendor says the request
             // did not fit inside a response it went on to stream; the others
             // refuse it outright, and the remedy is the same either way.
-            // Compaction replaced `self.load`; refresh the request estimate
+            // Compaction replaced `self.state.load`; refresh the request estimate
             // before sending rather than carrying the pre-compaction count into
             // the response that calibrates it.
-            counting.load = self.runner.load;
+            counting.load = self.runner.state.load;
             counting
                 .load
-                .requesting(self.runner.spec.instructions(), &advertised);
+                .requesting(self.runner.agent.instructions(), &advertised);
 
             let heard = match self.runner.listen(
                 &bounds,
@@ -219,7 +334,7 @@ impl<'a> AgentLoop<'a> {
                         &mut counting.spent,
                     )? {
                         After::Carry => continue,
-                        After::Stopped => return Ok(StopReason::Cancelled),
+                        After::Stopped => return Ok(Ending::Stopped(StopReason::Cancelled)),
                         After::Stuck => {
                             return Err(TurnError::Provider(ProviderError::WindowExceeded {
                                 provider,
@@ -234,8 +349,8 @@ impl<'a> AgentLoop<'a> {
             // And what the response reported goes the other way: the counts a
             // provider sends are read here and belong to the session, as does a
             // window it proved larger than anybody had written down.
-            self.runner.load = counting.load;
-            self.runner.spec.model.window = counting.window;
+            self.runner.state.load = counting.load;
+            self.runner.state.window = counting.window;
 
             // The provider read the request and could not fit it. Making room
             // and asking the same question again is the whole remedy, and it is
@@ -261,7 +376,7 @@ impl<'a> AgentLoop<'a> {
                     )?;
                 }
                 if !run.policy().compaction.automatic {
-                    return Ok(said);
+                    return Ok(Ending::Stopped(said));
                 }
                 match self.runner.made_room(
                     Compacting::Refused,
@@ -271,7 +386,7 @@ impl<'a> AgentLoop<'a> {
                 )? {
                     After::Carry => continue,
                     After::Stuck => return Err(TurnError::NoRoom),
-                    After::Stopped => return Ok(StopReason::Cancelled),
+                    After::Stopped => return Ok(Ending::Stopped(StopReason::Cancelled)),
                 }
             }
             bounds.heard(&answer);
@@ -279,24 +394,7 @@ impl<'a> AgentLoop<'a> {
             let (text, calls) = answer.finish();
 
             if let Some(stop) = Runner::over(said, &calls) {
-                // Calls the model did not finish asking for go no further. A
-                // call is written to the transcript only once it has a result,
-                // and these will never get one.
-                //
-                // The reason is written down with them. It is what the session
-                // log carries into a replay and what the providers send back to
-                // the model, and both of those outlive the notice the user read
-                // while it happened.
-                self.runner.record(
-                    run.ancestry(),
-                    Message::Agent {
-                        continuation: if calls.is_empty() { continuation } else { None },
-                        text,
-                        calls: Vec::new(),
-                        stop: Some(stop),
-                    },
-                )?;
-                return Ok(stop);
+                return self.ending(text, continuation, &calls, stop);
             }
 
             for call in &calls {
@@ -341,7 +439,7 @@ impl<'a> AgentLoop<'a> {
                 events,
                 cancel,
                 ancestry: run.ancestry(),
-                journal: &self.runner.session,
+                journal: &*self.runner.store,
                 audits: &self.runner.sandbox_audits,
                 concurrency: run.policy().tools.maximum_concurrency(),
             }
@@ -352,12 +450,16 @@ impl<'a> AgentLoop<'a> {
             self.runner
                 .record(run.ancestry(), Message::ToolResults(results))?;
             events.post(Event::Carried {
-                left: self.runner.load.left(counting.window, counting.reserve),
+                left: self
+                    .runner
+                    .state
+                    .load
+                    .left(counting.window, counting.reserve),
             });
 
             match went {
                 Went::On => {}
-                Went::Stopped(stop) => return Ok(stop),
+                Went::Stopped(stop) => return Ok(Ending::Stopped(stop)),
                 Went::Refused(name) => return Err(TurnError::Refused(name)),
                 Went::OutputLimit => {
                     return Err(TurnError::ToolOutputBytes {

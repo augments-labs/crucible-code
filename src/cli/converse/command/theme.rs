@@ -28,9 +28,10 @@ use crucible_config::ThemeChoice;
 use crucible_tui::{Glyphs, Offered, Panel, Renderer, Row, Slot, Terminal};
 
 use crate::cli::Fatal;
+use crate::cli::client::unwritten;
 use crate::cli::converse::region::{self, Ended, Moved, step};
-use crate::cli::remember;
 use crate::cli::style::Style;
+use crucible_client_api::{Name, Theme};
 use crucible_tui::{Key, Pressed};
 use crucible_tui::{clip, fold};
 
@@ -564,11 +565,11 @@ fn taken<T: Terminal>(
     renderer.wears(now.palette());
     renderer.commit(name)?;
 
-    let Err(problem) = remember::drawing(&terms.choosing, name) else {
+    let Some(problem) = unwritten(terms, name.parse().map(Theme::Drawing)) else {
         return Ok(());
     };
 
-    renderer.commit(&format!("! {problem}"))?;
+    renderer.commit(&problem)?;
 
     // Wrapped rather than clipped, for the reason `/model` wraps the same
     // sentence: short as the row is, a narrow enough window would still cut it,
@@ -598,11 +599,11 @@ fn reading<T: Terminal>(
     renderer.wears(now.palette());
     renderer.commit(named)?;
 
-    let Err(problem) = remember::syntax(&terms.choosing, named) else {
+    let Some(problem) = unwritten(terms, Name::new(named).map(Theme::Syntax)) else {
         return Ok(());
     };
 
-    renderer.commit(&format!("! {problem}"))?;
+    renderer.commit(&problem)?;
 
     let rows: Vec<Row> = fold("read this way for this session only", renderer.columns())
         .into_iter()

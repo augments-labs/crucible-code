@@ -51,7 +51,7 @@ fn accounting_after_a_recap_stop_is_read_before_committing_the_notes() {
     let _ = scripted.spent();
     assert!(matches!(scripted.compacting().unwrap(), Room::Made(_)));
     assert_eq!(scripted.spent(), [17, 17]);
-    assert!(conversation(scripted.runner.transcript()).iter().any(
+    assert!(conversation(scripted.runner.state.transcript()).iter().any(
         |message| matches!(message, Message::User { text, .. } if text.contains("notes to self"))
     ));
 }
@@ -74,12 +74,12 @@ fn substantive_content_after_a_recap_stop_never_replaces_the_history() {
         let mut scripted = Scripted::within(script, 200_000, keeping_one());
         scripted.turn("first").unwrap();
         scripted.turn("second").unwrap();
-        let before = conversation(scripted.runner.transcript());
+        let before = conversation(scripted.runner.state.transcript());
         assert!(matches!(
             scripted.compacting(),
             Err(TurnError::RecapIncomplete)
         ));
-        assert_eq!(conversation(scripted.runner.transcript()), before);
+        assert_eq!(conversation(scripted.runner.state.transcript()), before);
     }
 }
 
@@ -138,7 +138,7 @@ fn the_structured_recap_uses_its_configured_ceiling_capped_by_the_model() {
     let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
     scripted.runner.policy.compaction = keeping_one();
     scripted.runner.policy.compaction.recap_tokens = 10_240;
-    scripted.runner.spec.model.max_tokens = 12_000;
+    scripted.runner.reaimed(|model| model.max_tokens = 12_000);
     scripted.turn("first").expect("a turn to compact from");
     scripted.turn("second").expect("a middle to replace");
 
@@ -157,7 +157,7 @@ fn the_structured_recap_uses_its_configured_ceiling_capped_by_the_model() {
     let mut capped = Scripted::new(script, Tools::new(), Verdict::Allow);
     capped.runner.policy.compaction = keeping_one();
     capped.runner.policy.compaction.recap_tokens = 10_240;
-    capped.runner.spec.model.max_tokens = 8_000;
+    capped.runner.reaimed(|model| model.max_tokens = 8_000);
     capped.turn("first").expect("a turn to compact from");
     capped.turn("second").expect("a middle to replace");
     capped.compacting().expect("a model-capped recap");
@@ -182,14 +182,14 @@ fn a_recap_cut_off_at_its_token_ceiling_replaces_nothing() {
     scripted.runner.policy.compaction = keeping_one();
     scripted.turn("first").expect("a turn to compact from");
     scripted.turn("second").expect("a middle to replace");
-    let before = conversation(scripted.runner.transcript());
+    let before = conversation(scripted.runner.state.transcript());
 
     let problem = scripted
         .compacting()
         .expect_err("a truncated recap must not replace context");
 
     assert!(matches!(problem, TurnError::RecapIncomplete));
-    assert_eq!(conversation(scripted.runner.transcript()), before);
+    assert_eq!(conversation(scripted.runner.state.transcript()), before);
 }
 
 #[test]
@@ -203,14 +203,17 @@ fn a_cleanly_stopped_but_malformed_recap_replaces_nothing() {
     scripted.runner.policy.compaction = keeping_one();
     scripted.turn("first").expect("a turn to compact from");
     scripted.turn("second").expect("a middle to replace");
-    let before = scripted.runner.transcript().messages().to_vec();
+    let before = scripted.runner.state.transcript().messages().to_vec();
 
     let problem = scripted
         .compacting()
         .expect_err("a malformed recap must not replace context");
 
     assert!(matches!(problem, TurnError::RecapIncomplete));
-    assert_eq!(scripted.runner.transcript().messages(), before.as_slice());
+    assert_eq!(
+        scripted.runner.state.transcript().messages(),
+        before.as_slice()
+    );
 }
 
 #[test]
@@ -225,14 +228,17 @@ fn a_recap_past_the_response_ceiling_replaces_nothing() {
     scripted.runner.policy.compaction = keeping_one();
     scripted.turn("first").expect("a turn to compact from");
     scripted.turn("second").expect("a middle to replace");
-    let before = scripted.runner.transcript().messages().to_vec();
+    let before = scripted.runner.state.transcript().messages().to_vec();
 
     let problem = scripted
         .compacting()
         .expect_err("an unbounded recap must not replace context");
 
     assert!(matches!(problem, TurnError::RecapIncomplete), "{problem:?}");
-    assert_eq!(scripted.runner.transcript().messages(), before.as_slice());
+    assert_eq!(
+        scripted.runner.state.transcript().messages(),
+        before.as_slice()
+    );
 }
 
 #[test]
@@ -262,7 +268,7 @@ fn a_recap_stopped_part_way_replaces_nothing() {
     let mut scripted = Scripted::within(script, 10_000, keeping_one());
     scripted.turn("first").expect("a turn to compact from");
     scripted.turn("second").expect("a middle to replace");
-    let before = conversation(scripted.runner.transcript());
+    let before = conversation(scripted.runner.state.transcript());
 
     let made = scripted
         .compacting()
@@ -270,7 +276,7 @@ fn a_recap_stopped_part_way_replaces_nothing() {
 
     assert_eq!(made, Room::Stopped, "a stopped recap made room");
     assert_eq!(
-        conversation(scripted.runner.transcript()),
+        conversation(scripted.runner.state.transcript()),
         before,
         "a stopped recap changed the transcript"
     );
@@ -282,14 +288,14 @@ fn a_recap_cancelled_before_its_stream_exists_is_still_a_clean_stop() {
     let mut scripted = Scripted::within(script, 10_000, keeping_one());
     scripted.turn("first").expect("a turn to compact from");
     scripted.turn("second").expect("a middle to replace");
-    let before = conversation(scripted.runner.transcript());
+    let before = conversation(scripted.runner.state.transcript());
 
     let made = scripted
         .compacting()
         .expect("a pre-stream cancellation is a stopped recap, not a provider failure");
 
     assert_eq!(made, Room::Stopped);
-    assert_eq!(conversation(scripted.runner.transcript()), before);
+    assert_eq!(conversation(scripted.runner.state.transcript()), before);
 }
 
 #[test]
@@ -326,7 +332,7 @@ fn a_recap_whose_connection_broke_says_so_and_replaces_nothing() {
         })
         .expect("valid fixture transcript");
     scripted.runner = scripted.runner.resuming(earlier);
-    let before = scripted.runner.transcript().messages().to_vec();
+    let before = scripted.runner.state.transcript().messages().to_vec();
 
     let problem = scripted
         .compacting()
@@ -339,7 +345,10 @@ fn a_recap_whose_connection_broke_says_so_and_replaces_nothing() {
         ),
         "{problem:?}"
     );
-    assert_eq!(scripted.runner.transcript().messages(), before.as_slice());
+    assert_eq!(
+        scripted.runner.state.transcript().messages(),
+        before.as_slice()
+    );
 }
 
 #[test]
@@ -478,7 +487,7 @@ fn an_answer_cut_off_by_the_window_is_recorded_when_room_is_not_made() {
 
     assert_eq!(stop, StopReason::WindowExceeded);
     assert_eq!(
-        conversation(scripted.runner.transcript()),
+        conversation(scripted.runner.state.transcript()),
         [
             Message::said("go"),
             Message::Agent {
@@ -544,18 +553,17 @@ fn a_full_window_prunes_tool_output_from_the_active_turn_and_carries_on() {
         saying("carried on"),
     ]);
     let output = "x".repeat(90_000);
-    let sample = Sample::new("runner-active-prune-history");
-    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
+    let store = Recording::started("making room");
     let mut scripted = Scripted::recording(
         script,
         tools([Fixed::new("read").answering(&output)]),
         Verdict::Allow,
-        session,
+        Arc::clone(&store),
     );
     // Three individually bounded results still outweigh this window. The
     // third therefore has to trigger active-turn pruning even though no one
     // result may exceed the shared result ceiling.
-    scripted.runner.spec.model.window = Some(25_000);
+    scripted.runner.state.window = Some(25_000);
     scripted.runner.policy.compaction = Compaction {
         reserve: Some(1),
         ..Compaction::default()
@@ -626,14 +634,21 @@ fn a_full_window_prunes_tool_output_from_the_active_turn_and_carries_on() {
         "the newest result was pruned: {sizes:?}"
     );
 
-    let path = scripted.runner.session().path().to_path_buf();
     drop(scripted);
-    let log = std::fs::read_to_string(path).expect("the session log");
     assert_eq!(
-        log.lines()
-            .filter(|line| line.starts_with("{\"results\":"))
-            .map(|line| line.matches("tool result was 90002 encoded bytes").count())
-            .sum::<usize>(),
+        store
+            .said()
+            .iter()
+            .filter_map(|message| match message {
+                Message::ToolResults(results) => Some(results),
+                _ => None,
+            })
+            .flatten()
+            .filter(|result| result
+                .output
+                .text()
+                .contains("tool result was 90002 encoded bytes"))
+            .count(),
         3,
         "the durable provider transcript lost its model-visible elision accounting"
     );
@@ -662,11 +677,14 @@ fn a_full_window_recaps_a_complete_active_turn_when_pruning_cannot_help() {
         recap("notes to self"),
         saying("carried on"),
     ]);
-    let sample = Sample::new("runner-active-recap-history");
-    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
-    let mut scripted =
-        Scripted::recording(script, tools([Fixed::new("read")]), Verdict::Allow, session);
-    scripted.runner.spec.model.window = Some(30_000);
+    let store = Recording::started("making room");
+    let mut scripted = Scripted::recording(
+        script,
+        tools([Fixed::new("read")]),
+        Verdict::Allow,
+        Arc::clone(&store),
+    );
+    scripted.runner.state.window = Some(30_000);
     scripted.runner.policy.compaction = Compaction {
         reserve: Some(14_000),
         ..Compaction::default()
@@ -679,26 +697,33 @@ fn a_full_window_recaps_a_complete_active_turn_when_pruning_cannot_help() {
     assert_eq!(stop, StopReason::Yielded);
     assert!(scripted.said().contains("carried on"));
     assert!(
-        scripted.runner.transcript().messages().iter().any(
+        scripted.runner.state.transcript().messages().iter().any(
             |message| matches!(message, Message::User { text: said, .. } if said.contains("notes to self"))
         ),
         "the active turn did not become a recap"
     );
     assert!(
-        !scripted.runner.transcript().messages().iter().any(
+        !scripted.runner.state.transcript().messages().iter().any(
             |message| matches!(message, Message::Agent { text, .. } if text.as_ref() == original)
         ),
         "the model-facing transcript still carried the recapped active prose"
     );
 
-    let path = scripted.runner.session().path().to_path_buf();
     drop(scripted);
-    let log = std::fs::read_to_string(path).expect("the session log");
+    let recorded = store.said();
     assert!(
-        log.contains(&original),
-        "active-turn compaction dropped the original pass from the durable log"
+        recorded.iter().any(
+            |message| matches!(message, Message::Agent { text, .. } if text.as_ref() == original)
+        ),
+        "active-turn compaction dropped the original pass from the durable record"
     );
-    assert!(log.contains("notes to self"), "the recap was not logged");
+    assert!(
+        store.kept().iter().any(|one| matches!(
+            one,
+            Kept::Compacted { recap, .. } if recap.contains("notes to self")
+        )),
+        "the recap was not recorded"
+    );
 }
 
 #[test]
@@ -762,7 +787,7 @@ fn the_recap_stands_where_the_messages_it_replaced_were() {
     scripted.turn("go").expect("a turn");
 
     assert!(
-        scripted.runner.transcript().messages().iter().any(
+        scripted.runner.state.transcript().messages().iter().any(
             |message| matches!(message, Message::User { text: said, .. } if said.contains("notes to self"))
         ),
         "the recap is not standing in the transcript"
@@ -791,7 +816,7 @@ fn a_window_the_provider_disproves_stops_being_claimed_at_all() {
     // exactly the size of the thing that just fitted would pin the reading at
     // nothing all over again.
     assert_eq!(
-        scripted.runner.spec.model.window, None,
+        scripted.runner.state.window, None,
         "a figure the provider disproved is still being claimed"
     );
     assert_eq!(
@@ -815,7 +840,7 @@ fn a_request_smaller_than_the_window_says_nothing_about_how_much_larger_it_is() 
     let mut scripted = Scripted::within(script, 200_000, Compaction::default());
     scripted.turn("go").expect("a turn");
 
-    assert_eq!(scripted.runner.spec.model.window, Some(200_000));
+    assert_eq!(scripted.runner.state.window, Some(200_000));
 }
 
 #[test]
@@ -846,13 +871,12 @@ fn a_compaction_clears_the_bulk_of_old_tool_output_before_the_recap() {
     // One tool, and every call to it produces a ninety-thousand-byte source.
     // The invocation pipeline bounds each encoded result before compaction
     // sees it; clearing then tells the bounded copies apart by age.
-    let sample = Sample::new("runner-prune-recap-display");
-    let session = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();
+    let store = Recording::started("making room");
     let mut scripted = Scripted::recording(
         script,
         tools([Fixed::new("read").answering(&"x".repeat(90_000))]),
         Verdict::Allow,
-        session,
+        Arc::clone(&store),
     );
     // Keep the three recent read turns whole — about thirty thousand tokens at
     // the uncalibrated three bytes to the token — so their results survive the
@@ -888,20 +912,12 @@ fn a_compaction_clears_the_bulk_of_old_tool_output_before_the_recap() {
         compacted.replaced > 0,
         "the operation must both prune and recap"
     );
-    let notices = scripted
-        .runner
-        .session()
-        .display_history()
-        .unwrap()
-        .unwrap()
-        .collect::<std::io::Result<Vec<_>>>()
-        .unwrap()
+    let notices = store
+        .kept()
         .into_iter()
-        .filter(|item| {
-            matches!(
-                item,
-                crate::DisplayItem::Compacted(_) | crate::DisplayItem::LegacyCompacted { .. }
-            )
+        .filter_map(|one| match one {
+            Kept::Shown { compacted, pruned } => Some((compacted, pruned)),
+            _ => None,
         })
         .collect::<Vec<_>>();
     assert_eq!(
@@ -909,8 +925,22 @@ fn a_compaction_clears_the_bulk_of_old_tool_output_before_the_recap() {
         1,
         "one live completion must restore one notice"
     );
+    assert_eq!(
+        notices.first(),
+        Some(&(compacted, true)),
+        "the notice was not joined to the clearing of this same operation"
+    );
+    let freed: Vec<usize> = store
+        .kept()
+        .into_iter()
+        .filter_map(|one| match one {
+            Kept::Pruned { freed, .. } => Some(freed),
+            _ => None,
+        })
+        .collect();
     assert!(
-        matches!(notices.first(), Some(crate::DisplayItem::Compacted(recorded)) if *recorded == compacted)
+        freed.iter().all(|freed| *freed > 0),
+        "a clearing that took real results away was recorded as freeing nothing: {freed:?}"
     );
 
     let cleared: Vec<usize> = scripted
@@ -985,7 +1015,7 @@ fn a_turn_that_outweighs_the_budget_is_not_kept_whole_for_being_recent() {
 
     scripted.compacting().expect("a recap");
 
-    let standing = scripted.runner.transcript().messages();
+    let standing = scripted.runner.state.transcript().messages();
 
     // The big turn is gone: nothing standing still carries its six thousand
     // bytes. Under a count of turns it would have been the most recent but one
@@ -1226,7 +1256,7 @@ fn the_room_a_compaction_reports_is_read_off_the_run_that_asked() {
 
     assert_eq!(
         reported,
-        scripted.runner.load.left(Some(200_000), 100_000),
+        scripted.runner.state.load.left(Some(200_000), 100_000),
         "the room reported was not measured against the run's own reserve"
     );
     assert_ne!(
@@ -1255,7 +1285,7 @@ fn a_recap_is_held_to_the_output_ceiling_the_session_set() {
     let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
     scripted.runner.policy.compaction = keeping_one();
     scripted.runner.policy.compaction.recap_tokens = 256;
-    scripted.runner.spec.model.max_tokens = 12_000;
+    scripted.runner.reaimed(|model| model.max_tokens = 12_000);
     scripted.turn("first").expect("a turn to compact from");
     scripted.turn("second").expect("a middle to replace");
 
@@ -1341,7 +1371,7 @@ fn a_recap_is_held_to_the_output_ceiling_the_run_asked_for() {
     let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
     scripted.runner.policy.compaction = keeping_one();
     scripted.runner.policy.compaction.recap_tokens = 10_240;
-    scripted.runner.spec.model.max_tokens = 12_000;
+    scripted.runner.reaimed(|model| model.max_tokens = 12_000);
     scripted.turn("first").expect("a turn to compact from");
     scripted.turn("second").expect("a middle to replace");
 
@@ -1448,7 +1478,7 @@ fn a_run_that_declined_to_make_room_keeps_the_answer_the_window_cut() {
         "the cut answer was answered by making room and asking again"
     );
     assert_eq!(
-        conversation(scripted.runner.transcript()),
+        conversation(scripted.runner.state.transcript()),
         [
             Message::said("go"),
             Message::Agent {
@@ -1607,15 +1637,13 @@ fn the_room_a_prune_reports_is_read_off_the_run_that_asked() {
         saying("carried on"),
     ]);
     let output = "x".repeat(90_000);
-    let sample = Sample::new("runner-active-prune-run-room");
-    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
     let mut scripted = Scripted::recording(
         script,
         tools([Fixed::new("read").answering(&output)]),
         Verdict::Allow,
-        session,
+        Recording::started("making room"),
     );
-    scripted.runner.spec.model.window = Some(80_000);
+    scripted.runner.state.window = Some(80_000);
     scripted.runner.policy.compaction = Compaction {
         reserve: Some(1),
         ..Compaction::default()

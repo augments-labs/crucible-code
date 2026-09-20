@@ -43,7 +43,7 @@ use crucible_builtins::{
     AskUser, Bash, Edit, Glob, Grep, Held, Ledger, Plan, Read, TodoWrite, ToolSearch, WebFetch,
     WebSearch, Write,
 };
-use crucible_config::{Extensions, HOME, Home, Settings};
+use crucible_config::{HOME, Home, Settings};
 use crucible_core::{
     Ancestry, Calibration, Carried, ContextSnapshot, Fragment, RunId, RunItem, Spend,
 };
@@ -57,6 +57,7 @@ use crucible_core::{
     RequestPurpose, SearchResponse, SourceError, StopReason, ToolArgs, ToolCall, ToolId,
     ToolProvenance, ToolResult, ToolSchema, Transcript, Workspace,
 };
+use crucible_extension::Extensions;
 use crucible_provider::{Anthropic, Google, Moonshot, OpenAi, Response, Transport, TransportError};
 use crucible_session::Session;
 
@@ -693,7 +694,7 @@ fn the_installed_extension_sweep_answers_what_it_read_and_refused() {
     // Not a half-installed extension, and must stay out of both lists.
     wrote(root, "home/extensions/README.md", "not an extension\n");
 
-    let found = Extensions::discover(&homed(&root.join("home")));
+    let found = Extensions::discover(homed(&root.join("home")).path());
 
     let mut rendered = String::new();
     let _ = writeln!(rendered, "at        {}", found.at().display());
@@ -721,7 +722,7 @@ fn the_installed_extension_sweep_answers_what_it_read_and_refused() {
             "{ not json\n",
         );
     }
-    let swept = Extensions::discover(&homed(&crowded.path().join("home")));
+    let swept = Extensions::discover(homed(&crowded.path().join("home")).path());
     let _ = writeln!(rendered, "=== sixty-five installed directories ===");
     let _ = writeln!(rendered, "stopped   {}", swept.stopped());
     let _ = writeln!(rendered, "found     {}", swept.found().len());
@@ -1283,7 +1284,7 @@ fn a_session_writes_down_the_same_record_of_the_same_turn() {
     // between two correct runs for no reason a reader could use.
     let kept = Kept::default();
     let path = PathBuf::from("/nowhere/01900000-0000-7000-8000-0000000000aa.jsonl");
-    let mut session = Session::onto(path, kept.clone());
+    let session = Session::onto(path, kept.clone());
 
     // The conversation, one message of each kind the log has a shape for.
     for message in spoken().messages() {

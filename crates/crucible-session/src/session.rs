@@ -21,13 +21,13 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr as _;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{SyncSender, sync_channel};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 
 use crucible_core::{
     Attachment, Calibration, CallResultKey, CallResultReceipt, CallResultStoreError, ContextError,
     ContextPatch, ContextSnapshot, JournalStore, Message, RecordedToolOutput, RunItem, SessionId,
-    SessionStore, ToolResult, Transcript, Workspace,
+    SessionOwner, SessionStore, ToolResult, Transcript, Workspace,
 };
 
 mod beside;
@@ -212,7 +212,10 @@ pub struct Session {
     ///
     /// `None` is the compatibility state for a pre-context session that has
     /// not yet written its first patch. It means unknown, not empty.
-    context: Option<ContextSnapshot>,
+    ///
+    /// Behind a lock because a turn advances it from the thread it runs on
+    /// while the session is shared with whatever draws it.
+    context: Mutex<Option<ContextSnapshot>>,
     /// How many conversation messages this session holds, kept as they are
     /// appended.
     ///
@@ -227,7 +230,10 @@ pub struct Session {
     /// that produced them restricts where they may be sent. Empty in a session
     /// that was started rather than continued, and in one whose log never
     /// cleared anything.
-    pruned: Pruned,
+    ///
+    /// Behind a lock for the reason [`Session::context`] is: it is taken once,
+    /// from a shared session.
+    pruned: Mutex<Pruned>,
     /// Serializes create-once result inserts so an idempotent retry cannot
     /// observe the first writer's not-yet-synced file.
     result_lock: Mutex<()>,
@@ -440,8 +446,8 @@ impl Session {
         let mut session = Self::writing(path.to_owned(), file);
         session.claim = held;
         session.calibration = calibration;
-        session.context = context;
-        session.pruned = pruned;
+        session.context = Mutex::new(context);
+        session.pruned = Mutex::new(pruned);
         // What a continue replays is what the session now holds, except typed
         // context records are harness state rather than messages somebody
         // said: a stale or legacy index count is repaired from here when the
@@ -467,9 +473,9 @@ impl Session {
             writer: None,
             claim: None,
             calibration: None,
-            context: Some(ContextSnapshot::new()),
+            context: Mutex::new(Some(ContextSnapshot::new())),
             messages: AtomicUsize::new(0),
-            pruned: Pruned::default(),
+            pruned: Mutex::new(Pruned::default()),
             result_lock: Mutex::new(()),
             trouble: Trouble::default(),
         }
@@ -484,9 +490,9 @@ impl Session {
     /// the replay and never again, so it takes them and drops them there.
     ///
     /// Empty in a session that was started rather than continued, and in one
-    /// whose log never cleared anything.
-    pub fn take_pruned(&mut self) -> Pruned {
-        std::mem::take(&mut self.pruned)
+    /// whose log never cleared anything, and empty ever after here.
+    pub fn take_pruned(&self) -> Pruned {
+        std::mem::take(&mut *self.pruned.lock().unwrap_or_else(PoisonError::into_inner))
     }
 
     /// Which file this session is being written to.
@@ -556,13 +562,15 @@ impl Session {
     ///
     /// [`ContextError`] if a caller supplied a persisted-style patch that
     /// cannot produce a valid snapshot.
-    pub fn contextual(&mut self, patch: &ContextPatch) -> Result<(), ContextError> {
-        let prior = self.context.clone().unwrap_or_default();
-        let current = patch.apply(&prior)?;
+    pub fn contextual(&self, patch: &ContextPatch) -> Result<(), ContextError> {
+        // Held across the write, so two passes cannot interleave a patch with
+        // the state the next one is applied to.
+        let mut held = self.context.lock().unwrap_or_else(PoisonError::into_inner);
+        let current = patch.apply(&held.clone().unwrap_or_default())?;
         if let Some(to) = &self.to {
             drop(to.send(LogRequest::Line(wire::contextual(patch).into())));
         }
-        self.context = Some(current);
+        *held = Some(current);
         Ok(())
     }
 
@@ -571,8 +579,11 @@ impl Session {
     /// `None` means a pre-context session whose model-visible fragments have
     /// unknown vintage. It must never be read as a known empty snapshot.
     #[must_use]
-    pub const fn context_snapshot(&self) -> Option<&ContextSnapshot> {
-        self.context.as_ref()
+    pub fn context_snapshot(&self) -> Option<ContextSnapshot> {
+        self.context
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// Streams the original conversation for display, without applying model
@@ -715,14 +726,21 @@ impl Session {
     /// [`Session::trouble`] can only report what the writer thread has already
     /// reached. When a loop ends, the last turn is usually still in the queue —
     /// so the failure worth reporting most is the one nothing has had a chance
-    /// to see. Dropping the sender and joining here is what turns that into an
-    /// answer, and [`Drop`] alone would do the same draining with nobody left
-    /// to tell.
+    /// to see. Waiting here for everything already queued to reach the sink is
+    /// what turns that into an answer.
+    ///
+    /// Takes a shared session rather than consuming one, because the
+    /// application and the turn it is driving hold the same session: what ends
+    /// is the *recording*, and the thread that owns the handle is still joined
+    /// by [`Drop`] when the last holder lets go. Asking twice is allowed and
+    /// answers the same thing.
     #[must_use]
-    pub fn finish(mut self) -> Option<Box<str>> {
-        self.to = None;
-        if let Some(writer) = self.writer.take() {
-            drop(writer.join());
+    pub fn finish(&self) -> Option<Box<str>> {
+        if let Some(to) = &self.to {
+            let (done, waiting) = sync_channel(1);
+            if to.send(LogRequest::Barrier(done)).is_ok() {
+                let _ = waiting.recv();
+            }
         }
 
         self.trouble()
@@ -767,9 +785,9 @@ impl Session {
             writer: Some(writer),
             claim: None,
             calibration: None,
-            context: Some(ContextSnapshot::new()),
+            context: Mutex::new(Some(ContextSnapshot::new())),
             messages: AtomicUsize::new(0),
-            pruned: Pruned::default(),
+            pruned: Mutex::new(Pruned::default()),
             result_lock: Mutex::new(()),
             trouble,
         }
@@ -874,8 +892,55 @@ impl Drop for Session {
 }
 
 impl SessionStore for Session {
+    fn session_id(&self) -> Option<SessionId> {
+        self.id.clone()
+    }
+
+    /// The directory this session's log sits in.
+    ///
+    /// One reader's sessions share it and another reader's do not, which is
+    /// exactly the separation the caller compares for.
+    ///
+    /// A log with no directory above it is nobody's rather than the owner of
+    /// an empty name.
+    fn owner(&self) -> Option<SessionOwner> {
+        SessionOwner::new(&self.path.parent()?.to_string_lossy())
+    }
+
     fn append_message(&self, message: &Message) {
         self.append(message);
+    }
+
+    fn context_snapshot(&self) -> Option<ContextSnapshot> {
+        self.context_snapshot()
+    }
+
+    fn contextual(&self, patch: &ContextPatch) -> Result<(), ContextError> {
+        self.contextual(patch)
+    }
+
+    fn compacted(&self, replaced: usize, recap: &str) {
+        self.compacted(replaced, recap);
+    }
+
+    fn display_compacted(&self, compacted: crucible_core::Compacted, pruned: bool) {
+        self.display_compacted(compacted, pruned);
+    }
+
+    fn pruned(&self, freed: usize, results: &[crucible_core::ToolId]) {
+        self.pruned(freed, results);
+    }
+
+    fn restricted(&self, freed: usize, results: &[crucible_core::ToolId], notice: &str) {
+        self.restricted(freed, results, notice);
+    }
+
+    fn measured(&self, calibration: &Calibration) {
+        self.measured(calibration);
+    }
+
+    fn calibrated(&self) -> Option<Calibration> {
+        self.calibrated()
     }
 }
 

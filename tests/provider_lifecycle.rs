@@ -13,8 +13,13 @@ mod support;
 #[path = "provider_lifecycle/google_web.rs"]
 mod google_web;
 
+#[path = "provider_lifecycle/settling.rs"]
+mod settling;
+
+use std::sync::Arc;
+
 use crucible_core::{Compacting, Message, Room, Spend, StopReason, Transcript};
-use crucible_runner::Session;
+use crucible_session::Session;
 use support::*;
 
 #[test]
@@ -91,7 +96,7 @@ fn every_new_model_replays_two_tool_passes_after_restart_and_compaction() {
         assert!(history.messages().iter().any(|message| matches!(message, Message::User { text, .. } if text.contains("fixture checkpoint"))));
         let mut run = sample.runner(model, &vendor, session).resuming(history);
         let empty = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();
-        drop(run.pick_up(empty, Transcript::new()));
+        run.pick_up(Arc::new(empty), Transcript::new());
         assert_eq!(
             turn(&mut run, "fresh session", &sample),
             StopReason::Yielded
@@ -547,5 +552,101 @@ fn pruning_native_tool_results_survives_restart_without_reexecution() {
         }
         assert_eq!(sample.executed(), ["1", "2", "3"]);
         assert_eq!(sample.approved(), 3);
+    }
+}
+
+#[test]
+fn a_turn_recorded_through_the_store_contract_replays_as_the_session_wrote_it() {
+    // The runner records through a storage contract and never learns what is
+    // behind it, so nothing it can see says the records became the bytes a
+    // session writes and replays. This holds both sides: a real log under a
+    // temporary directory, driven only through the contract the runner was
+    // handed, ended, and then read back the way a pick-up reads one. The
+    // transcript the run finished with and the transcript the file replays
+    // have to be the same turn, and the results have to sit after the answer
+    // that called for them — the order the settle is recorded in.
+    for model in MODELS {
+        let sample = Sample::new();
+        let vendor = Vendor::new(
+            model,
+            [
+                response(model, Some(1), "calling the tool"),
+                response(model, None, "done"),
+            ],
+        );
+        let session = Arc::new(
+            Session::start(&sample.logs(), &sample.workspace(), None).expect("valid fixture"),
+        );
+        let mut run = sample.recording(model, &vendor, Arc::clone(&session));
+        assert_eq!(turn(&mut run, "use a tool", &sample), StopReason::Yielded);
+        let ended = run.transcript().clone();
+
+        // The run lets go of its share, the recording is ended, and then the
+        // last holder lets go of the file: what is read below is what reached
+        // the sink rather than whatever was still queued behind it.
+        drop(run);
+        drop(session.finish());
+        drop(session);
+        let (_reopened, replayed) =
+            Session::resume(&sample.logs(), &sample.workspace()).expect("the log just written");
+
+        assert_eq!(
+            replayed.messages(),
+            ended.messages(),
+            "{model}: the log replays a different turn than the run held"
+        );
+        let called = replayed
+            .messages()
+            .iter()
+            .position(
+                |message| matches!(message, Message::Agent { calls, .. } if !calls.is_empty()),
+            )
+            .expect("the answer that called the tool");
+        let results = replayed
+            .messages()
+            .iter()
+            .position(|message| matches!(message, Message::ToolResults(_)))
+            .expect("the results that answer carried");
+        assert!(
+            called < results,
+            "{model}: the results were written down before the answer that called for them"
+        );
+    }
+}
+
+#[test]
+fn a_result_accepted_beside_the_log_is_let_go_only_once_the_log_holds_the_answer() {
+    // An accepted result is kept beside the log until the turn writes it down,
+    // and the runner is what says when that has happened. Said too early, the
+    // copy is removed while the file still ends at the call, and a process that
+    // stopped there would replay a call nothing answered. The runner only sees
+    // a contract, so this stands between it and a real log and reads the file
+    // at the moment of each settle.
+    for model in MODELS {
+        let sample = Sample::new();
+        let vendor = Vendor::new(
+            model,
+            [
+                response(model, Some(1), "calling the tool"),
+                response(model, None, "done"),
+            ],
+        );
+        let session = Arc::new(
+            Session::start(&sample.logs(), &sample.workspace(), None).expect("valid fixture"),
+        );
+        let watched = settling::Watched::over(Arc::clone(&session));
+        let mut run = sample.recording_through(model, &vendor, Arc::clone(&watched) as _);
+
+        assert_eq!(turn(&mut run, "use a tool", &sample), StopReason::Yielded);
+
+        assert_eq!(
+            watched.settles(),
+            [settling::Settle {
+                waiting: true,
+                written: true,
+                cleared: true,
+            }],
+            "{model}: the accepted result was let go before the log held its answer"
+        );
     }
 }

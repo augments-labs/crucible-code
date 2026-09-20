@@ -18,10 +18,11 @@
 
 use std::fmt;
 
-use crucible_core::{Ancestry, Aside, Cancel, Post, Reporter, RunId, Steer};
+use crucible_core::{Ancestry, Aside, Cancel, RunId, Steer};
 
 use crate::policy::RunPolicy;
 
+use crate::{Post, Reporter};
 /// One run, and the services it runs against.
 ///
 /// A caller reaches one through [`Runner::starting`], and what it reaches is a
@@ -247,10 +248,9 @@ mod tests {
     use super::*;
 
     use std::sync::mpsc::channel;
-
-    use crucible_core::{Event, EventEnvelope};
-
     use std::time::Duration;
+
+    use crate::{Event, EventEnvelope};
 
     use crate::policy::{Bounds, Compaction, Retry};
 

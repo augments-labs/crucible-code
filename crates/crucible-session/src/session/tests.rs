@@ -12,6 +12,7 @@ use crucible_core::{
     RecordedToolOutput, RunItem, SessionId, Spend, StopReason, ToolArgs, ToolCall, ToolId,
     ToolResult, Transcript,
 };
+use crucible_types::ResultProvenance;
 use serde_json::Value;
 
 use super::claim::{Claimed, claim};
@@ -361,13 +362,13 @@ fn a_fresh_session_starts_with_a_known_empty_context_snapshot() {
     let sample = Sample::new("fresh-context-snapshot");
     let session = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();
 
-    assert_eq!(session.context_snapshot(), Some(&ContextSnapshot::new()));
+    assert_eq!(session.context_snapshot(), Some(ContextSnapshot::new()));
 }
 
 #[test]
 fn context_is_recorded_as_ordered_patches_and_reconstructed_on_resume() {
     let sample = Sample::new("context-patch-replay");
-    let mut session = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();
     let path = session.path().to_owned();
     let first = ContextPatch::from_value(serde_json::json!({
         "workspace": { "root": "/work" },
@@ -818,7 +819,7 @@ fn a_compacted_session_replays_as_the_notes_and_what_they_did_not_replace() {
 #[test]
 fn compaction_replay_drops_context_from_the_tail_but_keeps_its_typed_snapshot() {
     let sample = Sample::new("session-compacted-context");
-    let mut session = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();
     let patch = ContextPatch::from_value(serde_json::json!({
         "model": { "model": "kept-model" }
     }))
@@ -843,7 +844,7 @@ fn compaction_replay_drops_context_from_the_tail_but_keeps_its_typed_snapshot() 
         "typed context must not survive independently in the retained tail"
     );
     assert_eq!(
-        resumed.context_snapshot().map(ContextSnapshot::value),
+        resumed.context_snapshot().map(|snapshot| snapshot.value()),
         Some(serde_json::json!({
             "model": { "model": "kept-model" }
         }))
@@ -970,6 +971,73 @@ fn a_restricted_result_is_cleared_again_when_the_session_is_continued() {
         only_result(&transcript).output.text(),
         "[cleared — restricted]",
         "the continued session did not put back what the run left in its place"
+    );
+}
+
+#[test]
+fn a_result_keeps_who_answered_it_across_the_log() {
+    // What a result's vendor restricts has to come back with the result, or a
+    // session picked up by a run serving another vendor has nothing to decide
+    // with.
+    let sample = Sample::new("session-answered-by");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
+    let provenance = ResultProvenance::answered("google", Some("[cleared — restricted]"))
+        .expect("a bounded term");
+
+    session.append(&calling("a", "web_search", r#"{"query":"rust"}"#));
+    session.append(&answered(
+        "a",
+        RecordedToolOutput::ok("grounded results canary").answered_by(provenance.clone()),
+    ));
+    drop(session);
+
+    let (_, transcript) =
+        Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
+
+    assert_eq!(only_result(&transcript).output.provenance(), &provenance);
+}
+
+#[test]
+fn a_search_result_an_older_build_wrote_comes_back_unrecorded() {
+    // An older build wrote search results without saying who answered them. The
+    // result a search call left is read back as unrecorded, which is what lets
+    // the rule that build applied to every search result keep applying; a result
+    // any other call left says nothing, as it did.
+    let sample = Sample::new("session-unrecorded-search");
+    let id = "0198abcd-0000-7000-8000-000000000002";
+    sample.plant(
+        id,
+        &[
+            sample.header(13, id),
+            wire::line(&calling("a", "web_search", r#"{"query":"rust"}"#)),
+            wire::line(&answered(
+                "a",
+                RecordedToolOutput::ok("older search results"),
+            )),
+            wire::line(&calling("b", "read", r#"{"path":"main.rs"}"#)),
+            wire::line(&answered("b", RecordedToolOutput::ok("fn main() {}"))),
+        ],
+    );
+
+    let (_, transcript) =
+        Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
+
+    let results: Vec<_> = transcript
+        .messages()
+        .iter()
+        .filter_map(|message| match message {
+            Message::ToolResults(results) => results.first(),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(results.len(), 2, "both results came back");
+    assert_eq!(
+        results.first().map(|result| result.output.provenance()),
+        Some(&ResultProvenance::Unrecorded)
+    );
+    assert_eq!(
+        results.get(1).map(|result| result.output.provenance()),
+        Some(&ResultProvenance::Unstated)
     );
 }
 
@@ -1440,4 +1508,29 @@ fn a_log_that_never_recorded_a_reading_is_still_a_session_to_continue() {
 
     assert_eq!(transcript.messages(), messages.as_slice());
     assert_eq!(session.calibrated(), None);
+}
+
+#[test]
+fn sessions_kept_in_one_place_answer_one_owner_and_another_place_another() {
+    // The owner is what a reader above compares before offering one store's
+    // records under another's identity, so it has to name somebody: an owner
+    // that could be empty would make every store with nothing to say the same
+    // principal as any other.
+    use crucible_core::SessionStore;
+
+    let here = Sample::new("owner-here");
+    let there = Sample::new("owner-there");
+    let first = Session::start(&here.logs(), &here.workspace(), None).expect("a new session");
+    let second = Session::start(&here.logs(), &here.workspace(), None).expect("a new session");
+    let other = Session::start(&there.logs(), &there.workspace(), None).expect("a new session");
+
+    let owner = SessionStore::owner(&first).expect("a session on disk is somebody's");
+    assert!(!owner.as_bytes().is_empty());
+    assert_eq!(Some(&owner), SessionStore::owner(&second).as_ref());
+    assert_ne!(Some(&owner), SessionStore::owner(&other).as_ref());
+    assert_eq!(
+        crucible_core::SessionOwner::new(""),
+        None,
+        "nobody was accepted as an owner"
+    );
 }

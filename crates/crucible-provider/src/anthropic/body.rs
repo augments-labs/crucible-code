@@ -12,10 +12,10 @@
 mod effort;
 mod replay;
 
-use crucible_core::{
-    Attached, Content, ContinuationScope, Message, Modality, PromptCacheBoundary,
-    PromptCacheEncoding, PromptCacheIneligibleReason, PromptCacheMechanism,
-    PromptCacheRetentionClass, ProviderError, Request, StopReason, ToolResult, ToolSchema,
+use crucible_models::{Attached, Content, PromptCacheBoundary, ProviderError, Request};
+use crucible_types::{
+    ContinuationScope, Message, Modality, PromptCacheEncoding, PromptCacheIneligibleReason,
+    PromptCacheMechanism, PromptCacheRetentionClass, StopReason, ToolResult, ToolSchema,
 };
 use serde_json::Value;
 #[cfg(test)]
@@ -31,7 +31,7 @@ pub(super) fn serialize(
     let automatic = automatic_retention(request);
     let explicit = explicit_placement(request);
     let mut efforts = scope
-        .filter(|_| request.purpose == crucible_core::RequestPurpose::Turn)
+        .filter(|_| request.purpose == crucible_models::RequestPurpose::Turn)
         .map(|scope| effort::Efforts::new(request, scope))
         .transpose()?;
     let initial_effort = efforts
@@ -140,7 +140,7 @@ fn automatic_retention(request: &Request<'_>) -> Option<PromptCacheRetentionClas
         .selection
         .selected()
         .filter(|selected| selected.mechanism() == PromptCacheMechanism::AutomaticPrefix)
-        .map(crucible_core::PromptCacheSelected::retention)
+        .map(crucible_types::PromptCacheSelected::retention)
 }
 
 /// One explicit marker at the latest provider-visible legal stable boundary.
@@ -235,7 +235,7 @@ fn write_messages(
             Some(ExplicitPlacement::Message(target, retention)) if target == nth => Some(retention),
             _ => None,
         };
-        let mut neutral = request.purpose == crucible_core::RequestPurpose::Recap
+        let mut neutral = request.purpose == crucible_models::RequestPurpose::Recap
             || (scope.is_none() && history.neutral(message));
         if !neutral && let Some(scope) = scope {
             if !matches!(message, Message::ToolResults(_)) {
@@ -559,13 +559,15 @@ fn write_tool(
 
 #[cfg(test)]
 mod tests {
-    fn serialize(request: &crucible_core::Request<'_>) -> String {
+    fn serialize(request: &crucible_models::Request<'_>) -> String {
         super::serialize(request, None).expect("valid legacy request")
     }
 
-    use crucible_core::{
-        Attached, Change, Changed, Content, Diff, Effort, Fragment, Line, Modality,
-        RecordedToolOutput, ToolArgs, ToolCall, ToolId, ToolOutput, Transcript,
+    use crucible_core::ToolOutput;
+    use crucible_models::{Attached, Content, Effort};
+    use crucible_types::{
+        Change, Changed, Diff, Fragment, Line, Modality, RecordedToolOutput, ToolArgs, ToolCall,
+        ToolId, Transcript,
     };
 
     use super::*;
@@ -577,7 +579,7 @@ mod tests {
     #[test]
     fn recap_is_fresh_visible_text_without_executable_history() {
         let mut request = request(crate::fake::recap_history());
-        request.purpose = crucible_core::RequestPurpose::Recap;
+        request.purpose = crucible_models::RequestPurpose::Recap;
         let body = build(&request);
         let messages = body.get("messages").unwrap().as_array().unwrap();
         assert!(
@@ -603,7 +605,7 @@ mod tests {
 
     fn request(transcript: Transcript) -> Request<'static> {
         Request {
-            purpose: crucible_core::RequestPurpose::Turn,
+            purpose: crucible_models::RequestPurpose::Turn,
             model: "claude-test",
             transcript: Box::leak(Box::new(transcript)),
             tools: &[],

@@ -77,7 +77,7 @@ fn a_turn_stopped_at_its_ceiling_still_answered_every_call_it_recorded() {
 
     scripted.turn("go").expect_err("a turn over its ceiling");
 
-    let recorded = scripted.runner.transcript();
+    let recorded = scripted.runner.state.transcript();
     let asked: usize = recorded
         .messages()
         .iter()

@@ -79,6 +79,17 @@ a permission question into one. See
 If nothing was ever recorded for this directory, crucible says so and stops
 rather than silently starting a new session.
 
+Closing the terminal window, or sending crucible a `kill`, while an answer is
+arriving does not lose it. On Linux and macOS the hang-up or termination stops
+the turn first, the way Escape would: what the model had said so far is written
+to the log, the terminal is handed back, and then the process ends by that
+signal. `--continue` picks the session up with that much of the answer in it.
+Between turns there is nothing in flight and the signal ends crucible at once,
+as it does while a permission question is waiting for a key. A `kill -9` cannot
+be caught by anything, and on Windows a closing console window is not caught
+either; both end the process where it stands, which is the case the next
+paragraph is about.
+
 A log the process was killed part-way through writing costs the line it was on
 and nothing more — the turns before it are still a transcript, and `--continue`
 hands them back. The half-written line is dropped from the file as the session
@@ -112,7 +123,10 @@ failed, incomplete or cancelled stream cannot commit it. Format 13 adds a line
 saying that tool results were cleared because the vendor that produced them
 restricts where they may be sent, and the sentence left in their place; a
 session that never left such a vendor never carries one. Older Crucible builds
-cannot resume format 12 or 13 logs.
+cannot resume format 12 or 13 logs. A search result may also record which vendor's
+search answered it and, where that vendor restricts where it may be sent, the sentence
+to leave in its place. The field is optional within format 13, so builds that read
+format 13 without knowing it, such as 0.41.0, ignore it and still resume these logs.
 
 Continuation is bound to its producing protocol, model compatibility, credential
 and recipient. A changed key, endpoint or incompatible provider receives visible
@@ -233,8 +247,9 @@ them.
 How much of the window is left comes back with it. A log records what each
 request carried, so a session picked up says so straight away rather than
 waiting for its next answer to measure it — unless it is picked up under
-different instructions or a different set of tools, where the reading is about
-a request this run would not send and the row waits, as it always did.
+different instructions or a different set of tools, or picking it up took out
+results the provider now in use may not be sent, where the reading is about a
+request this run would not send and the row waits, as it always did.
 
 The visible conversation comes from the original log, independently of the
 compacted context sent to the model. Earlier prompts, answers and tool results

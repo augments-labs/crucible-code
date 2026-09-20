@@ -1,7 +1,7 @@
 //! Independent wire fixtures assert semantic order, not network arrival order.
 
 use super::*;
-use crucible_core::{ContinuationPart, StopReason};
+use crucible_types::{ContinuationPart, StopReason};
 use serde_json::{Value, json};
 
 fn parser() -> Interactions {
@@ -233,7 +233,7 @@ fn google_usage_adds_disjoint_thought_once_and_keeps_unknown_fields_unknown() {
 
 #[test]
 fn function_arguments_share_one_exact_response_budget() {
-    use crucible_core::TOOL_ARGUMENT_BYTES;
+    use crucible_types::TOOL_ARGUMENT_BYTES;
 
     for streamed in [false, true] {
         for excess in [0, 1] {

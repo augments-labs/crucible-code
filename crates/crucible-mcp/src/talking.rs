@@ -24,8 +24,9 @@
 //! a clock alone.
 
 use std::io::{self, BufRead, Write};
+use std::time::Duration;
 
-use crucible_core::{FrameError, Frames, Written};
+use crucible_transport::{FrameError, Frames, Said, Written};
 use serde_json::Value;
 
 use crate::wire::{Call, Garbled, Heard, Reply, Sent};
@@ -178,6 +179,17 @@ pub struct Talking<R, W> {
     next: u64,
 }
 
+impl<O: crucible_sandbox::SandboxOutput> Talking<crucible_transport::Heard<O>, Said> {
+    /// Waits a different silence out from here on, in both directions.
+    ///
+    /// Both halves in one call, because half an exchange is not a thing to be
+    /// patient about on its own.
+    pub const fn patient_for(&mut self, patience: Duration) {
+        self.heard.stream_mut().patient_for(patience);
+        self.said.patient_for(patience);
+    }
+}
+
 impl<R: BufRead, W: Write> Talking<R, W> {
     /// Speaks over `from` and `to`.
     #[must_use]
@@ -189,9 +201,12 @@ impl<R: BufRead, W: Write> Talking<R, W> {
         }
     }
 
-    /// The two streams this runs over, for what only they can be asked.
-    pub const fn streams_mut(&mut self) -> (&mut R, &mut W) {
-        (self.heard.stream_mut(), self.said.stream_mut())
+    /// The stream the server is heard over, for what only it can be asked.
+    ///
+    /// Only the reading half: what is said goes out as frames and no other
+    /// way, so the writing half is never lent.
+    pub const fn heard_mut(&mut self) -> &mut R {
+        self.heard.stream_mut()
     }
 
     /// Asks the server something and waits for its answer.

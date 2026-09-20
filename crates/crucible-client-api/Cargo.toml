@@ -1,0 +1,30 @@
+[package]
+name = "crucible-client-api"
+description = "The versioned commands, outcomes, snapshots and progress a front end exchanges with the application."
+publish.workspace = true
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# `crucible-types` for the validated session identity a resume names; nothing
+# else of the workspace, so that what a client may say never grows by an engine
+# type becoming reachable from here.
+#
+# `serde_json` reads and writes the one representation a request, a response and
+# a progress note travel in. Used without `derive`, like everywhere else in the
+# workspace: every field that crosses is written down by hand in the module
+# that owns it, so a domain type changing shape cannot change the protocol.
+#
+# `serde_core` for the visitor a frame is read through, which is what lets the
+# item, nesting, value-count and repeated-key refusals happen while the bytes
+# are read.
+[dependencies]
+crucible-types.workspace = true
+serde_core.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

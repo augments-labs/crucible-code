@@ -5,8 +5,11 @@
 //! being run in — so [`super::ask`] is exercised only where it declines to, and
 //! everything after that point is called directly.
 
+use std::sync::Arc;
+
 use crucible_core::{AgentId, Aside, Mode, Permission, Rules, ToolArgs};
-use crucible_runner::{AgentSpec, Model, Session, Tools};
+use crucible_runner::{Agent, Model, Tools};
+use crucible_session::Session;
 use crucible_tui::{Aimed, Key, Recording};
 
 use super::drawing::writing;
@@ -46,7 +49,7 @@ fn engine(mode: Mode) -> Runner {
     Runner::new(
         Box::new(Script::new(vec![])),
         Tools::new(),
-        AgentSpec::new(
+        Agent::new(
             AgentId::new("test"),
             Model {
                 name: "script".into(),
@@ -56,8 +59,8 @@ fn engine(mode: Mode) -> Runner {
                 effort: None,
             },
         ),
-        crucible_runner::ContextInputs::new(std::env::temp_dir()),
-        Session::nowhere(),
+        crucible_context::ContextInputs::new(std::env::temp_dir()),
+        Arc::new(Session::nowhere()),
     )
     .permitting(Permission::with(mode, Rules::new()))
 }
@@ -243,7 +246,11 @@ fn a_run_with_nothing_to_type_into_says_so_rather_than_reading_keys() {
     // `crucible < script.txt` and every redirected run, and the caller reads a
     // line for itself when it gets this back.
     let mut renderer = drawing();
-    let mut runner = engine(Mode::Ask);
+    let mut conversation = crucible_app::Conversation::recording(
+        Arc::new(Session::nowhere()),
+        Some("anthropic"),
+        |_| engine(Mode::Ask),
+    );
     let mut editor = crucible_tui::Editor::new();
 
     let asked = ask(
@@ -251,7 +258,9 @@ fn a_run_with_nothing_to_type_into_says_so_rather_than_reading_keys() {
         Style::plain(),
         Between {
             commands: &commands(),
-            runner: &mut runner,
+            conversation: &mut conversation,
+            terms: &crate::cli::converse::tests::plain(),
+            attachment_store: None,
             editor: &mut editor,
             planning: &mut nothing(),
             recalling: &mut unwalked(),
@@ -271,7 +280,7 @@ fn a_run_with_nothing_to_type_into_says_so_rather_than_reading_keys() {
     assert_eq!(renderer.terminal().written(), "");
 
     // And nothing was stepped on the way out of a call that read no key.
-    assert_eq!(runner.mode(), Mode::Ask);
+    assert_eq!(conversation.runner().mode(), Mode::Ask);
 }
 
 #[test]
@@ -968,7 +977,7 @@ fn a_running_turn_moves_its_latest_window_reading_into_the_prompt_border() {
     let renderer = roomy();
     let editor = typed("next");
     let mut turning = Turning::started(None);
-    turning.saw(&crucible_core::Event::Carried { left: Some(61) });
+    turning.saw(&crucible_runner::Event::Carried { left: Some(61) });
     let planning = nothing();
     let mut says = settled(Mode::Ask);
     says.left = Some(88);

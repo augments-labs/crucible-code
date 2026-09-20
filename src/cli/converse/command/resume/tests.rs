@@ -11,6 +11,7 @@
 //! rename writes down, and what the marked row's meta line says.
 
 use std::cell::Cell;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crucible_auth::Store;
@@ -19,9 +20,11 @@ use crucible_core::{
     AgentId, Cancel, Message, RecordedToolOutput, Revealed, SessionId, StopReason, ToolArgs,
     ToolCall, ToolId, ToolResult,
 };
-use crucible_runner::{AgentSpec, Model, Runner, Tools};
+use crucible_runner::{Agent, Model, Runner, Tools};
+use crucible_session::Session;
 use crucible_tui::{Recording, Renderer, Row};
 
+use crate::cli::converse::tests::paired;
 use crate::cli::converse::{Answers, Held};
 use crate::cli::draw::opening::{Opening, Standing};
 use crate::cli::fake::Script;
@@ -70,12 +73,17 @@ fn named(session: &Session) -> String {
         .to_owned()
 }
 
+/// A conversation that answers nothing, recording to `session`.
+fn over(session: &Arc<Session>) -> Conversation {
+    paired(Arc::clone(session), |session| runner(&session))
+}
+
 /// A runner that answers nothing, recording to `session`.
-fn over(session: Session) -> Runner {
+fn runner(session: &Arc<Session>) -> Runner {
     Runner::new(
         Box::new(Script::new(Vec::new())),
         Tools::new(),
-        AgentSpec::new(
+        Agent::new(
             AgentId::new("test"),
             Model {
                 name: "script".into(),
@@ -85,8 +93,8 @@ fn over(session: Session) -> Runner {
                 effort: None,
             },
         ),
-        crucible_runner::ContextInputs::new(std::env::temp_dir()),
-        session,
+        crucible_context::ContextInputs::new(std::env::temp_dir()),
+        session.clone(),
     )
 }
 
@@ -96,25 +104,26 @@ fn terms(sample: &Sample) -> Terms {
         chosen: Cell::new(None),
         reading: std::cell::RefCell::default(),
         cancel: Cancel::new(),
+        ending: crate::cli::ending::Ending::deaf(),
         steer: crucible_core::Steer::new(),
         aside: crucible_core::Aside::new(),
         ledger: Ledger::new(),
         revealed: Revealed::new(),
         plan: Plan::new(),
         putting: crate::cli::seen::Putting::new(),
+        client: crate::cli::client::Client::new(),
         leaving: crucible_builtins::Background::new(),
-        provider: std::cell::Cell::new(Some("anthropic")),
         pending_model: std::cell::Cell::new(None),
         pending_mode: std::cell::Cell::new(None),
         settings: crucible_config::Settings::default(),
         choosing: sample.root().join("unwritten-home.json"),
         logins: Store::in_home(&sample.root()),
-        subscriptions: crate::cli::subscription::Subscriptions::production(),
+        subscriptions: crucible_app::subscription::Subscriptions::production(),
 
         // `/resume` never reaches it, and these terms have no provider to build
         // one from either — the loop they drive answers from a script.
         serving: Box::new(|named, _| {
-            Err(Fatal::Provider {
+            Err(crucible_app::AppError::Provider {
                 named: named.name.into(),
                 has: named.name.into(),
             })
@@ -124,7 +133,7 @@ fn terms(sample: &Sample) -> Terms {
         sending: crucible_tui::Sending::default(),
         commands: crate::cli::converse::command::builtins(&std::sync::Arc::default())
             .expect("the built-in commands register"),
-        providers: crate::cli::providers().expect("the built-in providers register"),
+        providers: crucible_app::providers::providers().expect("the built-in providers register"),
     }
 }
 
@@ -175,31 +184,35 @@ fn lent<'a>(input: &'a mut dyn std::io::BufRead, opening: &'a Standing) -> Held<
     )
 }
 
-/// Runs `/resume {said}` against `runner`, and says what the window ends up
-/// showing — one row a line, the blank ones left out.
-fn resuming(said: &str, sample: &Sample, runner: &mut Runner) -> String {
+/// Runs `/resume {said}` against `conversation`, and says what the window ends up
+/// showing — one row a line, the blank ones left out — beside the session the
+/// loop holds afterwards.
+fn resuming(
+    said: &str,
+    sample: &Sample,
+    conversation: &mut Conversation,
+) -> (String, Arc<Session>) {
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = std::io::empty();
     let opening = standing(sample);
+    let mut held = lent(&mut input, &opening);
 
-    run(
-        said,
-        &mut renderer,
-        runner,
-        &mut lent(&mut input, &opening),
-        &terms(sample),
+    run(said, &mut renderer, conversation, &mut held, &terms(sample))
+        .expect("the terminal to be written");
+
+    (
+        renderer.terminal().picture().said().join("\n"),
+        Arc::clone(conversation.session()),
     )
-    .expect("the terminal to be written");
-
-    renderer.terminal().picture().said().join("\n")
 }
 
 #[test]
 fn a_directory_nothing_was_recorded_in_says_so() {
     let sample = Sample::new("resume-empty");
-    let mut runner = over(Session::nowhere());
+    let session = Arc::new(Session::nowhere());
+    let mut conversation = over(&session);
 
-    let written = resuming("", &sample, &mut runner);
+    let (written, _) = resuming("", &sample, &mut conversation);
 
     assert!(written.contains(NEVER), "{written}");
 }
@@ -216,9 +229,10 @@ fn the_list_names_each_session_by_its_id() {
     let two = recorded(&sample, "another question");
     let second = named(&two);
     drop(two);
-    let mut runner = over(Session::nowhere());
+    let session = Arc::new(Session::nowhere());
+    let mut conversation = over(&session);
 
-    let written = resuming("", &sample, &mut runner);
+    let (written, _) = resuming("", &sample, &mut conversation);
     let rows: Vec<&str> = written
         .lines()
         .filter(|row| row.contains("question"))
@@ -244,11 +258,12 @@ fn an_id_that_names_nothing_says_so_and_shows_the_list_again() {
     // nothing the reader can act on differently.
     let sample = Sample::new("resume-unknown");
     drop(recorded(&sample, "the only question"));
-    let mut runner = over(Session::nowhere());
+    let session = Arc::new(Session::nowhere());
+    let mut conversation = over(&session);
 
     let absent = SessionId::new();
     for said in ["the second one", absent.as_str()] {
-        let written = resuming(said, &sample, &mut runner);
+        let (written, _) = resuming(said, &sample, &mut conversation);
 
         assert!(
             written.contains(&format!("! no session {said} in this workspace")),
@@ -266,12 +281,13 @@ fn picking_one_up_makes_it_the_session_being_recorded_to() {
     let path = earlier.path().to_owned();
     drop(earlier);
 
-    let mut runner = over(Session::nowhere());
-    let written = resuming(&id, &sample, &mut runner);
+    let session = Arc::new(Session::nowhere());
+    let mut conversation = over(&session);
+    let (written, now) = resuming(&id, &sample, &mut conversation);
 
-    assert_eq!(runner.session().path(), path);
+    assert_eq!(now.path(), path);
     assert_eq!(
-        runner.transcript().len(),
+        conversation.runner().transcript().len(),
         2,
         "the prompt and the answer came back: {written}"
     );
@@ -296,16 +312,17 @@ fn the_session_already_open_is_refused_as_the_one_being_used() {
         Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
     let id = named(&open);
     let path = open.path().to_owned();
-    let mut runner = over(open).resuming(transcript);
+    let open = Arc::new(open);
+    let mut conversation = paired(open, |open| runner(&open).resuming(transcript));
 
-    let written = resuming(&id, &sample, &mut runner);
+    let (written, now) = resuming(&id, &sample, &mut conversation);
 
     assert!(
         written.contains("this is the session you are in"),
         "{written}"
     );
     assert!(!written.contains("another crucible"), "{written}");
-    assert_eq!(runner.session().path(), path, "{written}");
+    assert_eq!(now.path(), path, "{written}");
 }
 
 #[test]
@@ -318,15 +335,16 @@ fn what_was_being_recorded_to_is_closed_and_stays_readable() {
     let id = named(&wanted);
     drop(wanted);
 
-    let leaving = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
+    let leaving =
+        Arc::new(Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session"));
     let left = leaving.path().to_owned();
-    let mut runner = over(leaving);
+    let mut conversation = over(&leaving);
 
-    runner.session().append(&Message::said("said in passing"));
+    leaving.append(&Message::said("said in passing"));
 
-    let written = resuming(&id, &sample, &mut runner);
+    let (written, now) = resuming(&id, &sample, &mut conversation);
 
-    assert_ne!(runner.session().path(), left, "{written}");
+    assert_ne!(now.path(), left, "{written}");
 
     let recovered = std::fs::read_to_string(&left).expect("the log it was recording to");
     assert!(recovered.contains("said in passing"), "{recovered}");
@@ -342,7 +360,8 @@ fn the_transcript_a_session_replaces_is_not_left_standing_above_it() {
     let id = named(&earlier);
     drop(earlier);
 
-    let mut runner = over(Session::nowhere());
+    let session = Arc::new(Session::nowhere());
+    let mut conversation = over(&session);
     let mut renderer = Renderer::new(Recording::new(80, 24));
     renderer
         .present(&[Row::new().then(Slot::Plain, "said in the session being left")])
@@ -353,7 +372,7 @@ fn the_transcript_a_session_replaces_is_not_left_standing_above_it() {
     run(
         &id,
         &mut renderer,
-        &mut runner,
+        &mut conversation,
         &mut lent(&mut input, &opening),
         &terms(&sample),
     )
@@ -378,15 +397,22 @@ fn an_image_pasted_in_the_session_being_left_is_not_attached_after_it() {
     let id = named(&earlier);
     drop(earlier);
 
-    let mut runner = over(Session::nowhere());
+    let session = Arc::new(Session::nowhere());
+    let mut conversation = over(&session);
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = std::io::empty();
     let opening = standing(&sample);
     let mut held = lent(&mut input, &opening);
     held.images.push("a-picture.png".into());
 
-    run(&id, &mut renderer, &mut runner, &mut held, &terms(&sample))
-        .expect("the terminal to be written");
+    run(
+        &id,
+        &mut renderer,
+        &mut conversation,
+        &mut held,
+        &terms(&sample),
+    )
+    .expect("the terminal to be written");
 
     assert!(held.images.is_empty());
 }
@@ -419,7 +445,8 @@ fn the_plan_that_comes_back_is_the_one_the_session_picked_up_wrote() {
     }]));
     drop(planned);
 
-    let mut runner = over(Session::nowhere());
+    let session = Arc::new(Session::nowhere());
+    let mut conversation = over(&session);
     let terms = terms(&sample);
     terms.plan.replay(&crucible_core::ToolArgs::new(
         r#"{"tasks":[{"task":"Work of the session being left","state":"doing"}]}"#,
@@ -431,7 +458,7 @@ fn the_plan_that_comes_back_is_the_one_the_session_picked_up_wrote() {
     run(
         &id,
         &mut renderer,
-        &mut runner,
+        &mut conversation,
         &mut lent(&mut input, &opening),
         &terms,
     )
@@ -455,7 +482,8 @@ fn the_tools_looked_up_by_the_session_being_left_are_forgotten() {
     let id = named(&earlier);
     drop(earlier);
 
-    let mut runner = over(Session::nowhere());
+    let session = Arc::new(Session::nowhere());
+    let mut conversation = over(&session);
     let terms = terms(&sample);
     terms.revealed.reveal("web_search");
     assert!(terms.revealed.holds("web_search"));
@@ -466,7 +494,7 @@ fn the_tools_looked_up_by_the_session_being_left_are_forgotten() {
     run(
         &id,
         &mut renderer,
-        &mut runner,
+        &mut conversation,
         &mut lent(&mut input, &opening),
         &terms,
     )
@@ -484,7 +512,8 @@ fn what_was_held_behind_rows_that_have_gone_is_dropped_with_them() {
     let id = named(&earlier);
     drop(earlier);
 
-    let mut runner = over(Session::nowhere());
+    let session = Arc::new(Session::nowhere());
+    let mut conversation = over(&session);
     let mut renderer = Renderer::new(Recording::new(80, 24));
 
     let call = ToolId::new("a call of the session being left");
@@ -495,8 +524,14 @@ fn what_was_held_behind_rows_that_have_gone_is_dropped_with_them() {
     held.kept.finished(&call, "line\nline\nline".into(), 0);
     assert!(!held.kept.is_empty());
 
-    run(&id, &mut renderer, &mut runner, &mut held, &terms(&sample))
-        .expect("the terminal to be written");
+    run(
+        &id,
+        &mut renderer,
+        &mut conversation,
+        &mut held,
+        &terms(&sample),
+    )
+    .expect("the terminal to be written");
 
     // The session picked up made no calls of its own, so anything left here is
     // the old session's.
@@ -559,7 +594,7 @@ fn the_preview_holds_the_work_a_session_did_and_not_only_what_was_said() {
     drop(session);
 
     let held = glimpse(&sample.logs(), &sample.workspace(), &id).expect("a finished log");
-    let runner = over(recorded(&sample, "another session entirely"));
+    let runner = runner(&Arc::new(recorded(&sample, "another session entirely")));
     let against = replaying::Replay {
         runner: &runner,
         pruned: &Pruned::default(),
@@ -595,7 +630,7 @@ fn a_preview_is_drawn_for_the_pane_the_window_leaves_it() {
     drop(session);
 
     let held = glimpse(&sample.logs(), &sample.workspace(), &id).expect("a finished log");
-    let runner = over(recorded(&sample, "another session entirely"));
+    let runner = runner(&Arc::new(recorded(&sample, "another session entirely")));
 
     for columns in [Picker::FOLDS_AT, 100, 160] {
         let room = Picker::previewing(columns).expect("a window this wide keeps the pane");

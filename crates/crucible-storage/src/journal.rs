@@ -362,9 +362,3 @@ pub trait CustomProjector {
     /// Returns a provider-visible message, or leaves this custom entry private.
     fn project(&self, entry: &CustomEntry) -> Option<Message>;
 }
-
-/// The conversation-writing seam used by a runner.
-pub trait SessionStore: Send + Sync {
-    /// Appends one closed conversation message.
-    fn append_message(&self, message: &Message);
-}

@@ -24,7 +24,7 @@ use crucible_tools::{
     Approved, DescribeTool, Fetch, Host, Looking, Search, Sensitivity, Summary, Tool, ToolContext,
     ToolEffect, ToolError, ToolOutput,
 };
-use crucible_types::ToolArgs;
+use crucible_types::{ResultProvenance, ToolArgs};
 
 #[cfg(test)]
 mod tests;
@@ -175,6 +175,29 @@ impl Tool for WebSearch {
     }
 
     fn run(&self, approved: Approved, context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
+        // Settled before the source is asked, so a source whose terms cannot be
+        // carried by a result is never asked: its answer would leave here saying
+        // less than the vendor's terms require.
+        let Ok(provenance) =
+            ResultProvenance::answered(self.source.name(), self.source.restricts())
+        else {
+            return Ok(ToolOutput::failed(format!(
+                "{SEARCH}: the search source's terms do not fit what a result can carry"
+            )));
+        };
+
+        self.answer(&approved, context)
+            .map(|output| output.answered_by(provenance))
+    }
+}
+
+impl WebSearch {
+    /// What the source answered, before it is marked with who answered it.
+    fn answer(
+        &self,
+        approved: &Approved,
+        context: &ToolContext<'_>,
+    ) -> Result<ToolOutput, ToolError> {
         let args = Args::parse(SEARCH, approved.args())?;
         let query = args.text(QUERY)?;
         let limit = args.count(LIMIT, RESULTS)?.min(CEILING);

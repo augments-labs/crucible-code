@@ -12,9 +12,10 @@
 //! *text* rather than as an object, and how hard to think is a field beside
 //! `model` rather than an object of its own.
 
-use crucible_core::{
-    Attached, Content, Message, Modality, PromptCacheEncoding, PromptCacheIneligibleReason,
-    PromptCacheMechanism, Request, StopReason, ToolCall, ToolResult, ToolSchema,
+use crucible_models::{Attached, Content, Request};
+use crucible_types::{
+    Message, Modality, PromptCacheEncoding, PromptCacheIneligibleReason, PromptCacheMechanism,
+    StopReason, ToolCall, ToolResult, ToolSchema,
 };
 #[cfg(test)]
 use serde_json::{Value, json};
@@ -117,7 +118,7 @@ fn write_messages(messages: &mut Array<'_>, request: &Request<'_>) {
     }
 
     for (nth, message) in request.transcript.messages().iter().enumerate() {
-        if history.neutral(message) || request.purpose == crucible_core::RequestPurpose::Recap {
+        if history.neutral(message) || request.purpose == crucible_models::RequestPurpose::Recap {
             messages.object(|item| {
                 item.text("role", "user");
                 item.text_with("content", |write| crate::history::visible(message, write));
