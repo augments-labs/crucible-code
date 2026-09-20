@@ -20,8 +20,9 @@
 //!
 //! Two kinds of type live here, and the split is deliberate:
 //!
-//! - **Closed sets are enums.** Events and errors are owned here, so adding a
-//!   variant breaks every `match` and forces each site to decide.
+//! - **Closed sets are enums.** `RunItem` is owned here, and the runner's
+//!   events and errors by `crucible-runner`, so adding a variant breaks every
+//!   `match` and forces each site to decide.
 //! - **Open sets are traits.** `Provider` is owned by `crucible-models` and
 //!   implemented in the crates above, so adding one must never edit this crate.
 //!
