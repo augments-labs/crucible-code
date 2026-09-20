@@ -43,7 +43,15 @@ pub(super) fn refresh_store(held: &mut Held<'_>, store: Option<(PathBuf, Session
 pub(super) fn imported(held: &Held<'_>) -> Option<PathBuf> {
     held.attachment_store
         .as_ref()
-        .map(|(path, id)| path.with_file_name("attachments").join(id.as_str()))
+        .map(|(path, id)| copies(path, id))
+}
+
+/// The directory one session's imported copies are kept in, given its log.
+///
+/// Spelled once, because the turn that reads an import back and the paste that
+/// wrote it have to mean the same directory.
+fn copies(log: &Path, id: &SessionId) -> PathBuf {
+    log.with_file_name("attachments").join(id.as_str())
 }
 
 /// What a prompt turned out to be carrying.
@@ -244,7 +252,7 @@ pub(super) fn clipboard(
     }
 
     let hash = <[u8; 32]>::from(Sha256::digest(&bytes));
-    let directory = path.with_file_name("attachments").join(id.as_str());
+    let directory = copies(path, id);
     let path = import(&directory, "png", hash, &bytes)
         .map_err(|problem| format!("the clipboard image could not be imported: {problem}"))?;
 
