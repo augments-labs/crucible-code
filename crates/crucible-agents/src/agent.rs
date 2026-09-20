@@ -234,8 +234,8 @@ impl AgentBuilder {
     ///
     /// The error code below is what this fails with today, not something the
     /// harness checks: `compile_fail` accepts any compile error, so a rename
-    /// anywhere in the snippet would keep it green for the wrong reason. Both
-    /// snippets in this crate are kept to the one call that must not compile.
+    /// anywhere in the snippet would keep it green for the wrong reason. Every
+    /// such snippet in this crate is kept to the one thing that must not compile.
     ///
     /// ```compile_fail,E0451
     /// use crucible_agents::{Agent, AgentBuilder};
