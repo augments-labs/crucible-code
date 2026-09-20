@@ -16,6 +16,13 @@ pub struct Version(u16);
 
 impl Version {
     /// The one revision this build speaks.
+    ///
+    /// It moves whenever a frame changes in a way a build speaking the old
+    /// number would refuse or misread: a field added that must be there, one
+    /// renamed, moved or taken away. No release speaks this contract yet, which
+    /// is the only reason its frames have changed under the number 1; a test
+    /// holds the number and what the frames are made of together, so that after
+    /// the first release one cannot move without the other being looked at.
     pub const CURRENT: Self = Self(1);
 
     /// The revision numbered `number`, spoken or not.

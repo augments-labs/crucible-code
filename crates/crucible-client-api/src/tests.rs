@@ -1467,3 +1467,59 @@ fn a_snapshot_says_no_percentage_over_a_hundred_and_no_model_by_saying_none() {
     let frame = named.encode().unwrap();
     assert_eq!(Snapshot::decode(&frame).map_err(Refusal::code), Ok(named));
 }
+
+/// Every place a field sits in `value`, as the names on the way down to it.
+fn places(value: &Value, under: &str, found: &mut BTreeSet<String>) {
+    match value {
+        Value::Object(map) => {
+            for (key, inner) in map {
+                let here = format!("{under}/{key}");
+                places(inner, &here, found);
+                found.insert(here);
+            }
+        }
+        Value::Array(items) => {
+            let here = format!("{under}[]");
+            for inner in items {
+                places(inner, &here, found);
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+    }
+}
+
+#[test]
+fn the_version_moves_with_what_a_frame_is_made_of() {
+    // What each kind of frame is made of, from the same specimens that hold
+    // every arm: one line a kind, the places its fields sit, in order.
+    let mut kinds = std::collections::BTreeMap::<String, BTreeSet<String>>::new();
+    for specimen in specimens() {
+        let value: Value = serde_json::from_slice(&specimen.frame).unwrap();
+        places(&value, "", kinds.entry(specimen.what).or_default());
+    }
+    let made_of: Vec<String> = kinds
+        .iter()
+        .map(|(kind, found)| {
+            let found: Vec<&str> = found.iter().map(String::as_str).collect();
+            format!("{kind}: {}", found.join(" "))
+        })
+        .collect();
+    let made_of = made_of.join("\n");
+
+    // Written out here so that the number cannot change with the toolchain.
+    let digest = made_of
+        .bytes()
+        .fold(0xcbf2_9ce4_8422_2325_u64, |sum, byte| {
+            (sum ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
+        });
+
+    // The two are pinned together because nothing else holds them together: a
+    // field added, renamed or taken away under the same number is a build that
+    // says it speaks a revision and refuses its frames as malformed.
+    assert_eq!(
+        (Version::CURRENT.number(), digest),
+        (1, 17_913_927_481_741_580_016),
+        "what a frame is made of moved. Once a release speaks this contract, \
+         move Version::CURRENT with it; then write the pair here.\n{made_of}"
+    );
+}
