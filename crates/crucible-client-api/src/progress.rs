@@ -12,12 +12,18 @@
 //! grow, and a client that did not ask for
 //! [`Capability::Progress`](crate::Capability::Progress) is handed none, so
 //! nothing a client needs in order to be correct is carried here.
+//!
+//! Each report is a frame of its own and says which [`Version`] it is written
+//! in: a client reading a stream from a host that speaks another is refused by
+//! name at the first report, rather than shown what the fields it recognised
+//! happened to say.
 
 use serde_json::Value;
 
 use crate::bounds::Text;
 use crate::error::{ErrorCode, Refusal};
 use crate::outcome::{Problem, Stop};
+use crate::request::Version;
 use crate::wire::{Fields, Writing, frame, parsed};
 
 /// One thing a running turn reported.
@@ -112,7 +118,9 @@ impl Progress {
     /// The value this travels as.
     #[must_use]
     pub fn written(&self) -> Value {
-        let object = Writing::new().with("progress", self.kind());
+        let object = Writing::new()
+            .with("version", Version::CURRENT.number())
+            .with("progress", self.kind());
         match self {
             Self::Started { turn } => object.with("turn", *turn),
             Self::Delta { text } => object.text("text", text),
@@ -153,9 +161,13 @@ impl Progress {
     ///
     /// # Errors
     ///
-    /// [`Refusal`] for anything but one whole, bounded progress report.
+    /// [`Refusal`] for anything but one whole, bounded progress report in a
+    /// version this build speaks.
     pub fn decode(bytes: &[u8]) -> Result<Self, Refusal> {
         let mut fields = Fields::of(parsed(bytes)?)?;
+        if fields.number("version")? != u64::from(Version::CURRENT.number()) {
+            return Err(ErrorCode::UnsupportedVersion.into());
+        }
         let progress = match fields.string("progress")?.as_str() {
             "started" => Self::Started {
                 turn: fields.number("turn")?,

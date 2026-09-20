@@ -8,7 +8,7 @@
 
 use crucible_client_api as api;
 use crucible_client_api::{
-    Capabilities, Capability, Name, Problem, Progress, Snapshot, Stop, Text,
+    Capabilities, Capability, Name, Percent, Problem, Progress, Snapshot, Stop, Text,
 };
 use crucible_models::Effort;
 use crucible_runner::Event;
@@ -24,9 +24,9 @@ use crate::switching::Retained;
 /// client did or did not see go by. It is pending on nothing: a turn that is
 /// waiting on an answer has the conversation, so whoever can read one here is
 /// reading a conversation no turn holds, and no caller's word is taken for
-/// what it waits on. Called by a consumer with no terminal —
-/// today the one the headless tests drive; the terminal draws its status from
-/// the conversation directly and does not ask for one.
+/// what it waits on. Called by a consumer with no terminal — today the one the
+/// headless tests drive; the terminal draws its status from the conversation
+/// directly and does not ask for one.
 #[must_use]
 pub fn snapshot(conversation: &Conversation) -> Snapshot {
     let runner = conversation.runner();
@@ -35,13 +35,15 @@ pub fn snapshot(conversation: &Conversation) -> Snapshot {
     Snapshot {
         session: conversation.session().id().cloned(),
         provider: conversation.serving().and_then(|name| Name::new(name).ok()),
-        model: Text::cut(runner.model()),
+        model: Some(runner.model())
+            .filter(|model| !model.is_empty())
+            .map(Text::cut),
         effort: runner.effort().map(rung),
         mode: mode_out(runner.mode()),
         messages: count(transcript.len()),
         turns: count(transcript.turns()),
         carrying: runner.carrying(),
-        left: runner.left(),
+        left: runner.left().and_then(Percent::new),
         pending: None,
     }
 }
