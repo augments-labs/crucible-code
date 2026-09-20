@@ -13,6 +13,9 @@ mod support;
 #[path = "provider_lifecycle/google_web.rs"]
 mod google_web;
 
+#[path = "provider_lifecycle/settling.rs"]
+mod settling;
+
 use std::sync::Arc;
 
 use crucible_core::{Compacting, Message, Room, Spend, StopReason, Transcript};
@@ -607,6 +610,43 @@ fn a_turn_recorded_through_the_store_contract_replays_as_the_session_wrote_it() 
         assert!(
             called < results,
             "{model}: the results were written down before the answer that called for them"
+        );
+    }
+}
+
+#[test]
+fn a_result_accepted_beside_the_log_is_let_go_only_once_the_log_holds_the_answer() {
+    // An accepted result is kept beside the log until the turn writes it down,
+    // and the runner is what says when that has happened. Said too early, the
+    // copy is removed while the file still ends at the call, and a process that
+    // stopped there would replay a call nothing answered. The runner only sees
+    // a contract, so this stands between it and a real log and reads the file
+    // at the moment of each settle.
+    for model in MODELS {
+        let sample = Sample::new();
+        let vendor = Vendor::new(
+            model,
+            [
+                response(model, Some(1), "calling the tool"),
+                response(model, None, "done"),
+            ],
+        );
+        let session = Arc::new(
+            Session::start(&sample.logs(), &sample.workspace(), None).expect("valid fixture"),
+        );
+        let watched = settling::Watched::over(Arc::clone(&session));
+        let mut run = sample.recording_through(model, &vendor, Arc::clone(&watched) as _);
+
+        assert_eq!(turn(&mut run, "use a tool", &sample), StopReason::Yielded);
+
+        assert_eq!(
+            watched.settles(),
+            [settling::Settle {
+                waiting: true,
+                written: true,
+                cleared: true,
+            }],
+            "{model}: the accepted result was let go before the log held its answer"
         );
     }
 }
