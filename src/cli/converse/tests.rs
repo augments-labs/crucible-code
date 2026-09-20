@@ -75,6 +75,7 @@ pub(crate) fn plain() -> Terms {
         chosen: Cell::new(None),
         reading: std::cell::RefCell::default(),
         cancel: Cancel::new(),
+        ending: crate::cli::ending::Ending::deaf(),
         steer: crucible_core::Steer::new(),
         aside: crucible_core::Aside::new(),
         ledger: Ledger::new(),
@@ -913,6 +914,48 @@ fn a_turn_that_failed_is_on_the_disk_whoever_else_still_holds_the_session() {
 }
 
 #[test]
+fn a_turn_told_to_end_from_outside_is_stopped_written_down_and_handed_back_as_that() {
+    // What a hang-up or a termination comes to once it has been noted, driven
+    // without sending one: the note is left the way the handler leaves it, at
+    // the moment the provider has the request. The loop has to read it on a
+    // pass of its own — nothing here draws, fails or presses a key to prompt
+    // it — stop the turn, and come back saying which signal it was, so the
+    // caller can obey it once the session is put away.
+    let kept = Arc::new(Mutex::new(Vec::new()));
+    let session = Arc::new(Session::onto("/nowhere".into(), Kept(Arc::clone(&kept))));
+    let held_back = Arc::clone(&session);
+
+    let provider = Script::new(vec![saying("what the model said")]);
+    let started = provider.asked();
+    let conversation = paired(session, |session| scripted(provider, Tools::new(), session));
+
+    let terms = plain();
+    let mut renderer = Renderer::new(ToldWhenStarted {
+        inner: Recording::new(80, 24),
+        left: 3,
+        started: Arc::clone(&started),
+        ending: terms.ending.clone(),
+    });
+    let mut input = Cursor::new(b"go\n".to_vec());
+
+    let problem = converse(conversation, &mut renderer, &terms, &opening(), &mut input)
+        .expect_err("the turn to be ended");
+
+    assert!(matches!(problem, Fatal::Ended(_)), "{problem:?}");
+    assert!(terms.cancel.requested(), "the turn was never asked to stop");
+
+    // The prompt at the least, and with a handle still held: how much of the
+    // answer the worker had heard when it was stopped is its own to say, and
+    // is proved where a real signal meets a real stream.
+    let written = String::from_utf8(kept.lock().expect("a lock").clone()).expect("a log of text");
+    assert!(
+        written.contains(r#"{"user":"go"#),
+        "the turn never reached the log: {written:?}"
+    );
+    drop(held_back);
+}
+
+#[test]
 fn a_terminal_failure_cancels_a_provider_that_would_otherwise_stay_live() {
     let (provider, escaped) = Stalling::new();
     let conversation = paired(Arc::new(Session::nowhere()), |session| {
@@ -1476,6 +1519,45 @@ impl Terminal for BreakingWhenStarted {
         }
 
         self.left -= 1;
+        self.inner.write(text)
+    }
+
+    fn flush(&mut self) -> Result<(), TerminalError> {
+        self.inner.flush()
+    }
+
+    fn is_terminal(&self) -> bool {
+        self.inner.is_terminal()
+    }
+}
+
+/// A window that stays open, and a signal noted once the provider has the
+/// request.
+///
+/// The same boundary [`BreakingWhenStarted`] waits on and for the same reason:
+/// a note left before the worker has recorded the prompt would race it.
+struct ToldWhenStarted {
+    inner: Recording,
+    left: usize,
+    started: Arc<AtomicUsize>,
+    ending: crate::cli::ending::Ending,
+}
+
+impl Terminal for ToldWhenStarted {
+    fn size(&self) -> Result<Size, TerminalError> {
+        self.inner.size()
+    }
+
+    fn write(&mut self, text: &str) -> Result<(), TerminalError> {
+        if self.left == 0 {
+            let until = Instant::now() + Duration::from_secs(2);
+            while self.started.load(Ordering::Acquire) == 0 && Instant::now() < until {
+                std::thread::park_timeout(Duration::from_millis(1));
+            }
+            self.ending.tell(15);
+        }
+
+        self.left = self.left.saturating_sub(1);
         self.inner.write(text)
     }
 
