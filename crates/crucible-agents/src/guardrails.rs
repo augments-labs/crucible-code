@@ -159,10 +159,47 @@ impl Decision {
     }
 }
 
+/// What a check says when it ran and could not decide: its reason, and nothing
+/// else.
+///
+/// There is no name on it, for the reason a [`Decision`] has none: which check
+/// could not say is read off the check that was asked, so one check cannot put
+/// its non-answer under another's name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Undecided(Box<str>);
+
+impl Undecided {
+    /// Could not decide, for the reason a reader is shown.
+    #[must_use]
+    pub fn because(problem: &str) -> Self {
+        Self(problem.into())
+    }
+
+    /// What the check said about why not.
+    #[must_use]
+    pub fn problem(&self) -> &str {
+        &self.0
+    }
+}
+
 /// Why a check could not reach a decision.
 ///
 /// Distinct from a refusal in the type, because they are distinct outcomes for
 /// the run: a refusal is an answer, and this is the absence of one.
+///
+/// A check does not make one. It answers with an [`Undecided`], and whoever
+/// asked it writes this under the name of the check that was asked. The error
+/// code below is what a check handing one back fails with today, rather than
+/// something the harness checks: it pins that what a check fails with has no
+/// room for a name.
+///
+/// ```compile_fail,E0308
+/// use crucible_agents::{AgentContext, Decision, GuardrailError, Undecided};
+///
+/// fn checking(_context: &AgentContext<'_>) -> Result<Decision, Undecided> {
+///     Err(GuardrailError::undecided("somebody-else", "its list is missing"))
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum GuardrailError {
     /// The guardrail ran and could not say.
@@ -176,7 +213,11 @@ pub enum GuardrailError {
 }
 
 impl GuardrailError {
-    /// A guardrail that ran and could not say, for the reason given.
+    /// `guard` ran and could not say, for the reason given.
+    ///
+    /// Public because the runner is what asks a check and lives in another
+    /// crate. No check can hand one back, so the name is whatever the caller
+    /// that asked knows the check to be called.
     #[must_use]
     pub fn undecided(guard: &str, problem: &str) -> Self {
         Self::Undecided {
@@ -193,7 +234,7 @@ impl GuardrailError {
 /// anything a caller cannot already build.
 ///
 /// ```
-/// use crucible_agents::{AgentContext, Decision, GuardrailError, InputGuardrail};
+/// use crucible_agents::{AgentContext, Decision, InputGuardrail, Undecided};
 ///
 /// /// Refuses anything that reads like a credential being pasted in.
 /// #[derive(Debug)]
@@ -204,7 +245,7 @@ impl GuardrailError {
 ///         "no-secrets"
 ///     }
 ///
-///     fn checking(&self, context: &AgentContext<'_>) -> Result<Decision, GuardrailError> {
+///     fn checking(&self, context: &AgentContext<'_>) -> Result<Decision, Undecided> {
 ///         if context.said().contains("api-key:") {
 ///             return Ok(Decision::rejected("the prompt carries a credential"));
 ///         }
@@ -214,7 +255,8 @@ impl GuardrailError {
 /// ```
 pub trait InputGuardrail: std::fmt::Debug + Send + Sync {
     /// What this guardrail is called, in a refusal a reader sees. A refusal it
-    /// makes is written under this name by whoever asked it.
+    /// makes, or a decision it could not reach, is written under this name by
+    /// whoever asked it.
     fn name(&self) -> &str;
 
     /// Judges what the caller asked.
@@ -226,9 +268,9 @@ pub trait InputGuardrail: std::fmt::Debug + Send + Sync {
     ///
     /// # Errors
     ///
-    /// [`GuardrailError`] where the check ran and could not decide. That is not
-    /// a refusal: a run ends differently for each.
-    fn checking(&self, context: &AgentContext<'_>) -> Result<Decision, GuardrailError>;
+    /// [`Undecided`] where the check ran and could not decide. That is not a
+    /// refusal: a run ends differently for each.
+    fn checking(&self, context: &AgentContext<'_>) -> Result<Decision, Undecided>;
 }
 
 /// A check on the final candidate answer, run before it is accepted.
@@ -248,12 +290,8 @@ pub trait OutputGuardrail: std::fmt::Debug + Send + Sync {
     ///
     /// # Errors
     ///
-    /// [`GuardrailError`] where the check ran and could not decide.
-    fn checking(
-        &self,
-        context: &AgentContext<'_>,
-        candidate: &str,
-    ) -> Result<Decision, GuardrailError>;
+    /// [`Undecided`] where the check ran and could not decide.
+    fn checking(&self, context: &AgentContext<'_>, candidate: &str) -> Result<Decision, Undecided>;
 }
 
 #[cfg(test)]

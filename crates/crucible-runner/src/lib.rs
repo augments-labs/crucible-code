@@ -42,7 +42,7 @@ mod tools;
 pub use context::RunContext;
 pub use crucible_agents::{
     Agent, AgentBuilder, AgentContext, Availability, Decision, GuardrailError, InputGuardrail,
-    Model, OutputGuardrail, Rejection,
+    Model, OutputGuardrail, Rejection, Undecided,
 };
 pub use events::{Event, EventEnvelope, Post, Reporter, TurnError};
 pub use outcome::{RunResult, RunStatus, Turned};

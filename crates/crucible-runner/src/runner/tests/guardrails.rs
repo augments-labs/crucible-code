@@ -3,7 +3,7 @@
 
 use crucible_agents::{
     AgentBuilder, AgentContext, Availability, Decision, GuardrailError, InputGuardrail,
-    OutputGuardrail,
+    OutputGuardrail, Undecided,
 };
 
 use super::*;
@@ -48,11 +48,7 @@ impl Check {
         )
     }
 
-    fn answering(
-        &self,
-        context: &AgentContext<'_>,
-        said: &str,
-    ) -> Result<Decision, GuardrailError> {
+    fn answering(&self, context: &AgentContext<'_>, said: &str) -> Result<Decision, Undecided> {
         self.saw.lock().unwrap().push(Saw {
             agent: context.agent().as_str().to_owned(),
             said: said.to_owned(),
@@ -60,7 +56,7 @@ impl Check {
         match self.answer {
             Answer::Allow => Ok(Decision::Allowed),
             Answer::Refuse(why) => Ok(Decision::rejected(why)),
-            Answer::Cannot(why) => Err(GuardrailError::undecided(self.name, why)),
+            Answer::Cannot(why) => Err(Undecided::because(why)),
         }
     }
 }
@@ -70,7 +66,7 @@ impl InputGuardrail for Check {
         self.name
     }
 
-    fn checking(&self, context: &AgentContext<'_>) -> Result<Decision, GuardrailError> {
+    fn checking(&self, context: &AgentContext<'_>) -> Result<Decision, Undecided> {
         self.answering(context, context.said())
     }
 }
@@ -80,11 +76,7 @@ impl OutputGuardrail for Check {
         self.name
     }
 
-    fn checking(
-        &self,
-        context: &AgentContext<'_>,
-        candidate: &str,
-    ) -> Result<Decision, GuardrailError> {
+    fn checking(&self, context: &AgentContext<'_>, candidate: &str) -> Result<Decision, Undecided> {
         self.answering(context, candidate)
     }
 }
@@ -814,7 +806,7 @@ impl InputGuardrail for Borrowing {
         "borrowing"
     }
 
-    fn checking(&self, _context: &AgentContext<'_>) -> Result<Decision, GuardrailError> {
+    fn checking(&self, _context: &AgentContext<'_>) -> Result<Decision, Undecided> {
         Ok(Decision::rejected("no-secrets says no"))
     }
 }
@@ -835,5 +827,38 @@ fn a_refusal_names_the_check_that_made_it_whatever_the_check_says() {
         matches!(&turned, Turned::Rejected { rejection, .. }
             if rejection.guard() == "borrowing" && rejection.why() == "no-secrets says no"),
         "a refusal was put under a name the check that made it does not have: {turned:?}"
+    );
+}
+
+/// A check that could not decide, and has only a reason to say so with.
+#[derive(Debug)]
+struct Shrugging;
+
+impl InputGuardrail for Shrugging {
+    fn name(&self) -> &'static str {
+        "shrugging"
+    }
+
+    fn checking(&self, _context: &AgentContext<'_>) -> Result<Decision, Undecided> {
+        Err(Undecided::because("no-secrets is away"))
+    }
+}
+
+#[test]
+fn a_check_that_could_not_decide_is_named_by_who_asked_it_whatever_it_says() {
+    let mut scripted = Scripted::under(
+        Script::new(vec![answering("unused")]),
+        Tools::new(),
+        agent("test").checking_input(Arc::new(Shrugging)).build(),
+    );
+
+    let turned = scripted
+        .turned("go")
+        .expect("an undecided check is not a failure");
+
+    assert!(
+        matches!(&turned, Turned::Undecided { problem: GuardrailError::Undecided { guard, problem }, .. }
+            if &**guard == "shrugging" && &**problem == "no-secrets is away"),
+        "a check that could not decide was put under a name it does not have: {turned:?}"
     );
 }

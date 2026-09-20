@@ -1184,10 +1184,13 @@ impl Runner {
         let context = AgentContext::new(run.run(), agent.id(), prompt);
         let mut decision = Judged::Allowed;
         for guard in agent.input_guardrails() {
-            match guard.checking(&context)? {
+            // The name is read off the check that was asked, never taken from
+            // what it answered, whether it refused or could not say.
+            match guard
+                .checking(&context)
+                .map_err(|unsure| GuardrailError::undecided(guard.name(), unsure.problem()))?
+            {
                 Decision::Allowed => {}
-                // The name is read off the check that was asked, never taken
-                // from what it answered.
                 Decision::Rejected(why) => {
                     decision = Judged::Rejected(Rejection::new(guard.name(), &why));
                     break;
@@ -1220,7 +1223,10 @@ impl Runner {
 
         let context = AgentContext::new(run.run(), self.agent.id(), self.said());
         for guard in self.agent.output_guardrails() {
-            match guard.checking(&context, candidate)? {
+            match guard
+                .checking(&context, candidate)
+                .map_err(|unsure| GuardrailError::undecided(guard.name(), unsure.problem()))?
+            {
                 Decision::Allowed => {}
                 Decision::Rejected(why) => {
                     return Ok(Judged::Rejected(Rejection::new(guard.name(), &why)));
