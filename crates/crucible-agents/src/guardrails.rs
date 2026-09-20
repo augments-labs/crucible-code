@@ -18,6 +18,7 @@
 //! and one call's result.
 
 use std::fmt;
+use std::sync::Arc;
 
 use crucible_types::{AgentId, RunId};
 
@@ -93,8 +94,10 @@ impl<'a> AgentContext<'a> {
 /// a reader: this one is the check working.
 ///
 /// A check does not make one. It answers [`Decision::Rejected`] with its reason
-/// alone, and whoever asked it writes the refusal under the name of the check
-/// that was asked, so a refusal cannot be put under another check's name. The
+/// alone, and whoever asked it writes the refusal under the name the check was
+/// [`Declared`] with. That name was read once, before the check was asked
+/// anything, and no other check on the definition has it, so a refusal cannot
+/// be put under another check's name. The
 /// error code below is what handing a decision a refusal fails with today,
 /// rather than something the harness checks: it pins that a decision has no
 /// room for a name.
@@ -227,6 +230,68 @@ impl GuardrailError {
     }
 }
 
+/// A check, and the name it was declared under.
+///
+/// The name is read off the check once, when a definition takes it, and kept
+/// here. What the check answers to afterwards is not asked again, so a check
+/// cannot be one name while it is declared and another once it has refused.
+/// Only [`AgentBuilder`](crate::AgentBuilder) makes one, and it makes no two
+/// with one name on the same definition.
+#[derive(Debug)]
+pub struct Declared<G: ?Sized> {
+    name: Box<str>,
+    check: Arc<G>,
+}
+
+impl<G: ?Sized> Declared<G> {
+    /// `check`, under the name it answered to when it was declared.
+    pub(crate) fn under(name: Box<str>, check: Arc<G>) -> Self {
+        Self { name, check }
+    }
+
+    /// What the check was called when it was declared.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The check.
+    #[must_use]
+    pub fn check(&self) -> &G {
+        &self.check
+    }
+}
+
+impl<G: ?Sized> Clone for Declared<G> {
+    fn clone(&self) -> Self {
+        Self {
+            name: self.name.clone(),
+            check: Arc::clone(&self.check),
+        }
+    }
+}
+
+/// A check declared under a name another check on the definition already has.
+///
+/// Refused rather than kept, because a refusal is written under its check's
+/// name and two checks with one name would each read as the other.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("a guardrail called `{0}` is already declared")]
+pub struct NameTaken(Box<str>);
+
+impl NameTaken {
+    /// The name that was already declared.
+    pub(crate) fn of(name: &str) -> Self {
+        Self(name.into())
+    }
+
+    /// The name both checks answer to.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.0
+    }
+}
+
 /// A check on what the caller asked, run before any of it reaches a provider.
 ///
 /// Implemented outside this crate as well as in it: the whole surface a custom
@@ -254,9 +319,9 @@ impl GuardrailError {
 /// }
 /// ```
 pub trait InputGuardrail: std::fmt::Debug + Send + Sync {
-    /// What this guardrail is called, in a refusal a reader sees. A refusal it
-    /// makes, or a decision it could not reach, is written under this name by
-    /// whoever asked it.
+    /// What this guardrail is called, in a refusal a reader sees. Read once,
+    /// when the check is declared on a definition: a refusal it makes, or a
+    /// decision it could not reach, is written under what this answered then.
     fn name(&self) -> &str;
 
     /// Judges what the caller asked.
@@ -283,7 +348,8 @@ pub trait InputGuardrail: std::fmt::Debug + Send + Sync {
 /// and not written down as one — a guard that must decide before anybody reads
 /// a word has to buffer behind the output ceilings instead.
 pub trait OutputGuardrail: std::fmt::Debug + Send + Sync {
-    /// What this guardrail is called, in a refusal a reader sees.
+    /// What this guardrail is called, in a refusal a reader sees. Read once,
+    /// when the check is declared on a definition.
     fn name(&self) -> &str;
 
     /// Judges the answer the model finished on.

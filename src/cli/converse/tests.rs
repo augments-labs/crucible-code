@@ -712,6 +712,7 @@ fn a_turn_a_guardrail_refused_says_so_instead_of_returning_a_silent_prompt() {
                 },
             )
             .checking_input(Arc::new(Refusing))
+            .expect("a name no other check has")
             .build(),
             crucible_context::ContextInputs::new(std::env::temp_dir()),
             session,

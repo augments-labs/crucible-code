@@ -1184,9 +1184,10 @@ impl Runner {
         let context = AgentContext::new(run.run(), agent.id(), prompt);
         let mut decision = Judged::Allowed;
         for guard in agent.input_guardrails() {
-            // The name is read off the check that was asked, never taken from
-            // what it answered, whether it refused or could not say.
+            // The name is the one the check was declared under, never taken
+            // from what it answered, whether it refused or could not say.
             match guard
+                .check()
                 .checking(&context)
                 .map_err(|unsure| GuardrailError::undecided(guard.name(), unsure.problem()))?
             {
@@ -1224,6 +1225,7 @@ impl Runner {
         let context = AgentContext::new(run.run(), self.agent.id(), self.said());
         for guard in self.agent.output_guardrails() {
             match guard
+                .check()
                 .checking(&context, candidate)
                 .map_err(|unsure| GuardrailError::undecided(guard.name(), unsure.problem()))?
             {

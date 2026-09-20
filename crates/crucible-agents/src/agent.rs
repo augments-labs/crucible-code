@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crucible_types::AgentId;
 
 use crate::availability::Availability;
-use crate::guardrails::{InputGuardrail, OutputGuardrail};
+use crate::guardrails::{Declared, InputGuardrail, NameTaken, OutputGuardrail};
 use crate::instructions::Instructions;
 use crate::model::Model;
 
@@ -24,7 +24,8 @@ use crate::model::Model;
 /// Clonable, because that is how a session changes what it is asked under: the
 /// definition in force is replaced whole by another built from it, rather than
 /// written to. Cloning one copies two words, a model selection and two lists of
-/// shared handles; the guardrails themselves are never duplicated.
+/// shared handles with the names they were declared under; the guardrails
+/// themselves are never duplicated.
 #[derive(Debug, Clone)]
 pub struct Agent {
     /// What this agent is called where one is selected: a configuration
@@ -72,10 +73,10 @@ pub struct Agent {
     availability: Availability,
 
     /// What the caller's words are held to before any of them are sent.
-    input: Box<[Arc<dyn InputGuardrail>]>,
+    input: Box<[Declared<dyn InputGuardrail>]>,
 
     /// What the model's final answer is held to before it is accepted.
-    output: Box<[Arc<dyn OutputGuardrail>]>,
+    output: Box<[Declared<dyn OutputGuardrail>]>,
 }
 
 impl Agent {
@@ -161,13 +162,13 @@ impl Agent {
     /// The checks the caller's words are held to, in the order they were
     /// declared.
     #[must_use]
-    pub fn input_guardrails(&self) -> &[Arc<dyn InputGuardrail>] {
+    pub fn input_guardrails(&self) -> &[Declared<dyn InputGuardrail>] {
         &self.input
     }
 
     /// The checks the final answer is held to, in the order they were declared.
     #[must_use]
-    pub fn output_guardrails(&self) -> &[Arc<dyn OutputGuardrail>] {
+    pub fn output_guardrails(&self) -> &[Declared<dyn OutputGuardrail>] {
         &self.output
     }
 }
@@ -258,18 +259,46 @@ impl AgentBuilder {
 
     /// Holds what the caller asks to one more check, after the ones already
     /// declared.
-    #[must_use]
-    pub fn checking_input(mut self, guardrail: Arc<dyn InputGuardrail>) -> Self {
-        self.agent.input = appended(std::mem::take(&mut self.agent.input), guardrail);
-        self
+    ///
+    /// The check's name is read here, once, and is what anything it decides is
+    /// written under from then on.
+    ///
+    /// # Errors
+    ///
+    /// [`NameTaken`] where a check on either end of this definition was already
+    /// declared under that name.
+    pub fn checking_input(mut self, guardrail: Arc<dyn InputGuardrail>) -> Result<Self, NameTaken> {
+        let declared = Declared::under(self.free(guardrail.name())?, guardrail);
+        self.agent.input = appended(std::mem::take(&mut self.agent.input), declared);
+        Ok(self)
     }
 
     /// Holds the final answer to one more check, after the ones already
     /// declared.
-    #[must_use]
-    pub fn checking_output(mut self, guardrail: Arc<dyn OutputGuardrail>) -> Self {
-        self.agent.output = appended(std::mem::take(&mut self.agent.output), guardrail);
-        self
+    ///
+    /// The check's name is read here, once, as an input check's is.
+    ///
+    /// # Errors
+    ///
+    /// [`NameTaken`] where a check on either end of this definition was already
+    /// declared under that name.
+    pub fn checking_output(
+        mut self,
+        guardrail: Arc<dyn OutputGuardrail>,
+    ) -> Result<Self, NameTaken> {
+        let declared = Declared::under(self.free(guardrail.name())?, guardrail);
+        self.agent.output = appended(std::mem::take(&mut self.agent.output), declared);
+        Ok(self)
+    }
+
+    /// `name`, kept, where no check on this definition has it yet.
+    fn free(&self, name: &str) -> Result<Box<str>, NameTaken> {
+        let input = self.agent.input.iter().map(Declared::name);
+        let output = self.agent.output.iter().map(Declared::name);
+        if input.chain(output).any(|taken| taken == name) {
+            return Err(NameTaken::of(name));
+        }
+        Ok(name.into())
     }
 
     /// The definition, settled.
@@ -379,5 +408,72 @@ mod tests {
             &*before.model().name,
             "being told something else changed which model answers"
         );
+    }
+
+    /// A check that allows everything, under whatever name it is given.
+    #[derive(Debug)]
+    struct Called(&'static str);
+
+    impl InputGuardrail for Called {
+        fn name(&self) -> &str {
+            self.0
+        }
+
+        fn checking(
+            &self,
+            _context: &crate::AgentContext<'_>,
+        ) -> Result<crate::Decision, crate::Undecided> {
+            Ok(crate::Decision::Allowed)
+        }
+    }
+
+    /// An output check that allows everything, under whatever name it is given.
+    #[derive(Debug)]
+    struct Vouching(&'static str);
+
+    impl OutputGuardrail for Vouching {
+        fn name(&self) -> &str {
+            self.0
+        }
+
+        fn checking(
+            &self,
+            _context: &crate::AgentContext<'_>,
+            _candidate: &str,
+        ) -> Result<crate::Decision, crate::Undecided> {
+            Ok(crate::Decision::Allowed)
+        }
+    }
+
+    #[test]
+    fn a_name_one_check_was_declared_under_is_not_given_to_a_second() {
+        let declaring = || {
+            AgentBuilder::new(AgentId::new("coding"), described().model().clone())
+                .checking_input(Arc::new(Called("no-secrets")))
+                .expect("the first check under a name is taken")
+        };
+
+        // Two checks answering to one name would each read as the other's
+        // refusal, at either end of the invocation.
+        let again = declaring().checking_input(Arc::new(Called("no-secrets")));
+        assert_eq!(again.map(|_| ()), Err(NameTaken::of("no-secrets")));
+        let across = declaring().checking_output(Arc::new(Vouching("no-secrets")));
+        assert_eq!(across.map(|_| ()), Err(NameTaken::of("no-secrets")));
+
+        let agent = declaring()
+            .checking_output(Arc::new(Vouching("no-leaks")))
+            .expect("another name is another check")
+            .build();
+        let input: Vec<&str> = agent
+            .input_guardrails()
+            .iter()
+            .map(Declared::name)
+            .collect();
+        let output: Vec<&str> = agent
+            .output_guardrails()
+            .iter()
+            .map(Declared::name)
+            .collect();
+        assert_eq!((input, output), (vec!["no-secrets"], vec!["no-leaks"]));
     }
 }

@@ -123,7 +123,10 @@ fn a_prompt_an_input_check_refuses_never_reaches_the_provider() {
     let mut scripted = Scripted::under(
         script,
         Tools::new(),
-        agent("test").checking_input(check).build(),
+        agent("test")
+            .checking_input(check)
+            .expect("a name no other check has")
+            .build(),
     );
 
     let turned = scripted
@@ -161,7 +164,10 @@ fn a_turn_refused_on_the_way_in_posts_neither_a_start_nor_an_ending() {
     let mut scripted = Scripted::under(
         Script::new(vec![answering("unused")]),
         Tools::new(),
-        agent("test").checking_input(check).build(),
+        agent("test")
+            .checking_input(check)
+            .expect("a name no other check has")
+            .build(),
     );
 
     drop(scripted.turned("go").expect("a refusal is not a failure"));
@@ -186,7 +192,9 @@ fn a_prompt_every_check_allows_runs_the_turn_as_though_none_were_declared() {
         Tools::new(),
         agent("test")
             .checking_input(first)
+            .expect("a name no other check has")
             .checking_input(second)
+            .expect("a name no other check has")
             .build(),
     );
 
@@ -230,7 +238,10 @@ fn a_check_that_could_not_decide_stops_the_turn_without_refusing_it() {
     let mut scripted = Scripted::under(
         script,
         Tools::new(),
-        agent("test").checking_input(check).build(),
+        agent("test")
+            .checking_input(check)
+            .expect("a name no other check has")
+            .build(),
     );
 
     let turned = scripted
@@ -261,7 +272,10 @@ fn the_same_words_after_a_turn_that_failed_keep_the_decision_that_was_committed(
     let mut scripted = Scripted::under(
         Script::failing(),
         Tools::new(),
-        agent("test").checking_input(check).build(),
+        agent("test")
+            .checking_input(check)
+            .expect("a name no other check has")
+            .build(),
     );
 
     drop(
@@ -293,7 +307,10 @@ fn the_same_words_after_a_completed_turn_are_a_new_invocation() {
     let mut scripted = Scripted::under(
         script,
         Tools::new(),
-        agent("test").checking_input(check).build(),
+        agent("test")
+            .checking_input(check)
+            .expect("a name no other check has")
+            .build(),
     );
 
     drop(scripted.turned("go").expect("the first turn"));
@@ -317,7 +334,10 @@ fn a_session_picked_up_puts_the_same_words_to_the_checks_again() {
     let mut scripted = Scripted::under(
         Script::failing(),
         Tools::new(),
-        agent("test").checking_input(check).build(),
+        agent("test")
+            .checking_input(check)
+            .expect("a name no other check has")
+            .build(),
     );
 
     drop(
@@ -348,7 +368,10 @@ fn different_words_are_a_new_invocation_and_get_their_own_checks() {
     let mut scripted = Scripted::under(
         script,
         Tools::new(),
-        agent("test").checking_input(check).build(),
+        agent("test")
+            .checking_input(check)
+            .expect("a name no other check has")
+            .build(),
     );
 
     drop(scripted.turned("go").expect("the first turn"));
@@ -368,7 +391,10 @@ fn a_turn_the_reader_stopped_is_never_put_to_the_checks() {
     let mut scripted = Scripted::under(
         Script::new(vec![answering("unused")]),
         Tools::new(),
-        agent("test").checking_input(check).build(),
+        agent("test")
+            .checking_input(check)
+            .expect("a name no other check has")
+            .build(),
     );
     scripted.cancel.request();
 
@@ -397,7 +423,10 @@ fn an_answer_an_output_check_refuses_is_neither_recorded_nor_accepted() {
     let mut scripted = Scripted::under(
         script,
         Tools::new(),
-        agent("test").checking_output(check).build(),
+        agent("test")
+            .checking_output(check)
+            .expect("a name no other check has")
+            .build(),
     );
 
     let turned = scripted.turned("go").expect("a refusal is not a failure");
@@ -430,7 +459,10 @@ fn an_answer_no_output_check_refuses_is_recorded_and_the_turn_ends_as_it_did() {
     let mut scripted = Scripted::under(
         script,
         Tools::new(),
-        agent("test").checking_output(check).build(),
+        agent("test")
+            .checking_output(check)
+            .expect("a name no other check has")
+            .build(),
     );
 
     let turned = scripted.turned("go").expect("the turn to finish");
@@ -692,6 +724,7 @@ fn two_definitions_running_at_once_keep_their_own_state_and_cancellation() {
             .telling("You are one.")
             .offering(Availability::Named(Box::new(["gate".into()])))
             .checking_input(watching_one)
+            .expect("a name no other check has")
             .build(),
     );
     let mut two = Scripted::under(
@@ -700,6 +733,7 @@ fn two_definitions_running_at_once_keep_their_own_state_and_cancellation() {
         agent("two")
             .telling("You are two.")
             .checking_input(watching_two)
+            .expect("a name no other check has")
             .build(),
     );
     two.runner.ask("other", 2048, None, Some(READS));
@@ -818,7 +852,10 @@ fn a_refusal_names_the_check_that_made_it_whatever_the_check_says() {
     let mut scripted = Scripted::under(
         Script::new(vec![answering("unused")]),
         Tools::new(),
-        agent("test").checking_input(Arc::new(Borrowing)).build(),
+        agent("test")
+            .checking_input(Arc::new(Borrowing))
+            .expect("a name no other check has")
+            .build(),
     );
 
     let turned = scripted.turned("go").expect("a refusal is not a failure");
@@ -849,7 +886,10 @@ fn a_check_that_could_not_decide_is_named_by_who_asked_it_whatever_it_says() {
     let mut scripted = Scripted::under(
         Script::new(vec![answering("unused")]),
         Tools::new(),
-        agent("test").checking_input(Arc::new(Shrugging)).build(),
+        agent("test")
+            .checking_input(Arc::new(Shrugging))
+            .expect("a name no other check has")
+            .build(),
     );
 
     let turned = scripted
@@ -860,5 +900,48 @@ fn a_check_that_could_not_decide_is_named_by_who_asked_it_whatever_it_says() {
         matches!(&turned, Turned::Undecided { problem: GuardrailError::Undecided { guard, problem }, .. }
             if &**guard == "shrugging" && &**problem == "no-secrets is away"),
         "a check that could not decide was put under a name it does not have: {turned:?}"
+    );
+}
+
+/// A check that starts answering to another check's name once it has been
+/// asked.
+#[derive(Debug, Default)]
+struct Turncoat {
+    asked: std::sync::atomic::AtomicBool,
+}
+
+impl InputGuardrail for Turncoat {
+    fn name(&self) -> &str {
+        if self.asked.load(std::sync::atomic::Ordering::SeqCst) {
+            "no-secrets"
+        } else {
+            "turncoat"
+        }
+    }
+
+    fn checking(&self, _context: &AgentContext<'_>) -> Result<Decision, Undecided> {
+        self.asked.store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok(Decision::rejected("no"))
+    }
+}
+
+#[test]
+fn a_refusal_is_written_under_the_name_its_check_was_declared_with() {
+    // The name is taken once, when the check is declared. One that answers to
+    // another's name after it has been asked is still written under its own.
+    let mut scripted = Scripted::under(
+        Script::new(vec![answering("unused")]),
+        Tools::new(),
+        agent("test")
+            .checking_input(Arc::new(Turncoat::default()))
+            .expect("a name no other check has")
+            .build(),
+    );
+
+    let turned = scripted.turned("go").expect("a refusal is not a failure");
+
+    assert!(
+        matches!(&turned, Turned::Rejected { rejection, .. } if rejection.guard() == "turncoat"),
+        "a check put its refusal under a name it was not declared with: {turned:?}"
     );
 }

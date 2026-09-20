@@ -273,9 +273,9 @@ fn conversing(
     );
     let agent = match guard {
         Guard::Nothing => agent,
-        Guard::Refusing => agent.checking_input(Arc::new(Refusing)),
-        Guard::Unsure => agent.checking_input(Arc::new(Unsure)),
-        Guard::Vetoing => agent.checking_output(Arc::new(Vetoing)),
+        Guard::Refusing => agent.checking_input(Arc::new(Refusing))?,
+        Guard::Unsure => agent.checking_input(Arc::new(Unsure))?,
+        Guard::Vetoing => agent.checking_output(Arc::new(Vetoing))?,
     };
     let work = tree.0.join("work");
 
