@@ -867,6 +867,41 @@ while IFS= read -r line; do
     failed=1
 done < <(grep -rnE --include='*.rs' 'std::net|std::os::unix::net|TcpListener|TcpStream|UdpSocket|UnixListener|UnixStream' "${contract[@]}" 2>/dev/null | cut -d: -f1,2)
 
+# That is a search of the source, and a crate that speaks HTTP needs none of
+# those words written here to be used. So what the contract takes is written
+# down whole, in every dependency table, and Cargo is asked for it rather than
+# the manifest being read: one dependency can be spelled many ways.
+contract_takes='crucible-types
+serde_core
+serde_json'
+if ! contract_taken=$(cargo metadata --no-deps --offline --format-version 1 --color never --manifest-path Cargo.toml 2>/dev/null |
+    python3 -c '
+import json, sys
+for package in json.load(sys.stdin)["packages"]:
+    if package["name"] == "crucible-client-api":
+        print("\n".join(sorted({dependency["name"] for dependency in package["dependencies"]})))
+'); then
+    printf '    FAIL Cargo did not describe the workspace; what the client contract takes was not measured\n'
+    failed=1
+elif ! grep -Fxq 'serde_json' <<<"$contract_taken"; then
+    printf '    FAIL crucible-client-api was not found taking serde_json; this check measured nothing\n'
+    failed=1
+else
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        if ! grep -Fxq "$line" <<<"$contract_takes"; then
+            printf '    FAIL crucible-client-api takes %s; the contract names values, and what carries them is taken by a front end\n' "$line"
+            failed=1
+        fi
+    done <<<"$contract_taken"
+    while IFS= read -r line; do
+        if ! grep -Fxq "$line" <<<"$contract_taken"; then
+            printf '    FAIL crucible-client-api no longer takes %s; take the line out so it stays out\n' "$line"
+            failed=1
+        fi
+    done <<<"$contract_takes"
+fi
+
 # A probe measures one owner and imports it directly: routed through the
 # application it would measure the composition instead, and a budget would move
 # for a reason the probe cannot see. What each probe names is written down
@@ -904,6 +939,67 @@ while IFS= read -r line; do
         failed=1
     fi
 done <<<"$probes"
+
+section "a request read from bytes is decided about first"
+# Five commands change what the session may do or whom it acts as: a permission
+# mode, the sandbox, and an account signed in or out. The application performs
+# them for whoever hands them in, which is safe while every request is built on
+# the host by the front end standing there. `Request::decode` is where one could
+# come from somewhere else, and nothing that ships calls it. A file that starts
+# to is written down here with what it does about each of the five, so that
+# reading requests from outside is a decision taken command by command and not
+# a line added. A row is `file command what-is-done-about-it`.
+request_owner=crates/crucible-client-api/src
+authority='cycle_mode
+login
+logout
+sandbox
+set_mode'
+decided=''
+kinds=$(sed -n '/pub const KINDS: \[/,/\];/p' "$request_owner/command.rs" | grep -oE '"[a-z_]+"' | tr -d '"' | sort)
+# The five were picked out of the eighteen commands there were. One more is one
+# nobody has asked this of.
+if (($(grep -c . <<<"$kinds") != 18)); then
+    printf '    FAIL the client contract no longer has eighteen commands; decide whether the new one changes what a session may do, then write the count here\n'
+    failed=1
+fi
+while IFS= read -r word; do
+    if ! grep -Fxq "$word" <<<"$kinds"; then
+        printf '    FAIL %s is not a command of the client contract; this check measured nothing\n' "$word"
+        failed=1
+    fi
+done <<<"$authority"
+if ! grep -qE 'pub fn decode\(bytes: &\[u8\]\) -> Result<Self, Refused>' "$request_owner/request.rs"; then
+    printf '    FAIL %s/request.rs no longer reads a request with Request::decode; this check measured nothing\n' "$request_owner"
+    failed=1
+fi
+reading=$(grep -rlE --include='*.rs' 'Request::decode' src crates tests 2>/dev/null | grep -v "^$request_owner/" | sort || true)
+if ! grep -qE '(^|/)tests(/|\.rs$)|_tests\.rs$' <<<"$reading"; then
+    printf '    FAIL no test was found reading a request with Request::decode; this check measured nothing\n'
+    failed=1
+fi
+reading=$(grep -vE '(^|/)tests(/|\.rs$)|_tests\.rs$' <<<"$reading" || true)
+while IFS= read -r file; do
+    [[ -z "$file" ]] && continue
+    while IFS= read -r word; do
+        if ! grep -qE "^$file $word [^ ]" <<<"$decided"; then
+            printf '    FAIL %s reads a request from bytes, and nothing is written here about what it does with %s\n' "$file" "$word"
+            failed=1
+        fi
+    done <<<"$authority"
+done <<<"$reading"
+while IFS= read -r row; do
+    [[ -z "$row" ]] && continue
+    file=${row%% *}
+    rest=${row#* }
+    if ! grep -Fxq "$file" <<<"$reading"; then
+        printf '    FAIL %s no longer reads a request from bytes; take its rows out so they stay out\n' "$file"
+        failed=1
+    elif ! grep -Fxq "${rest%% *}" <<<"$authority"; then
+        printf '    FAIL %s is written down about %s, which is not one of the commands this asks about\n' "$file" "${rest%% *}"
+        failed=1
+    fi
+done <<<"$decided"
 
 section "workspace inheritance"
 if ((${#member_manifests[@]} == 0)); then
