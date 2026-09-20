@@ -37,10 +37,12 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crucible_app::Conversation;
+use crucible_app::client::Ended;
 use crucible_app::providers::{Served, Serving, unasked};
 use crucible_app::subscription::Subscriptions;
 use crucible_auth::Store;
 use crucible_builtins::{Background, Ledger, Plan};
+use crucible_client_api::{Command, Prompt, Refusal};
 use crucible_core::{
     Attachment, Cancel, Compacting, Mode, Revealed, Room, SessionId, Spend, Workspace,
 };
@@ -170,6 +172,8 @@ pub(crate) struct Terms {
     /// the tool that was built with it, and the loop holds the other end. What
     /// it lends changes every turn; what holds it does not.
     pub(crate) putting: Putting,
+    /// The requests this front end makes of the application, numbered.
+    pub(crate) client: super::client::Client,
     /// The plan the agent is working to, which is what stands above the box.
     ///
     /// Held for the same reason the ledger is, and emptied by the same command:
@@ -555,6 +559,7 @@ pub(crate) fn converse<T: Terminal>(
         let between = typing::Between {
             commands: &commands,
             conversation: &mut conversation,
+            terms,
             attachment_store: held
                 .attachment_store
                 .as_ref()
@@ -783,7 +788,8 @@ fn ran<T: Terminal>(
     // starts: the runner is this side's again, and the step was made for the
     // requests about to go out rather than for the one already decided.
     if let Some(mode) = terms.pending_mode.take() {
-        conversation.switch(mode);
+        let asked = Command::SetMode(crucible_app::client::mode(mode));
+        terms.perform(&mut conversation, asked);
     }
 
     // Only a line somebody typed has a reply to hang under it, which is why
@@ -809,6 +815,7 @@ fn ran<T: Terminal>(
         Did::Refused(turned) => draw::refused(renderer, turned)?,
         Did::Nothing => draw::unmade(renderer)?,
         Did::Stopped => draw::stopped(renderer)?,
+        Did::Unsent(refusal) => renderer.commit(&format!("! {refusal}"))?,
     }
 
     // And only the two one-line replies are a reply. A compaction that ran
@@ -1219,7 +1226,7 @@ fn take<T: Terminal>(
     let (answering, hear) = Answering::new(&terms.putting, &post);
     let mut seen = Inbox::new(seen);
 
-    let asking = Asking::new(post.clone(), hear);
+    let asking = Asking::new(post.clone(), hear, &terms.putting, terms.client.clone());
     let relay = Relay::new(post, terms.putting.clone());
     let running = terms.cancel.clone();
 
@@ -1377,39 +1384,49 @@ fn sent(
                 .starting(&relay, &running, &steer, &aside);
             let reporting = run.reporting();
 
-            let did = match work {
-                Work::Turn(prompt, attached) => {
-                    // What a turn came to is read rather than dropped: one
-                    // that ran reported itself as it went, and one a guardrail
-                    // refused may have reported nothing at all.
-                    match conversation.turn(&prompt, attached, &mut asking, &run) {
-                        Ok(Turned::Ran(_)) => Did::Reported,
-                        Ok(refused) => Did::Refused(refused),
-                        Err(problem) => {
-                            reporting.post(Event::Failed { error: problem });
-                            Did::Reported
-                        }
+            // What somebody asked for is asked of the application as the
+            // command it is. Room made because the window filled, or because
+            // a session was picked up as notes, is the host's own doing and
+            // no client's to ask for.
+            //
+            // A turn and a compaction are the same shape, and that is the
+            // whole of why this is one function: one request, answered over
+            // seconds, reporting as it goes. Everything the loop that draws
+            // does for a turn — the bar, the clock, the box taking the next
+            // prompt, the key that stops it — is what a reader waiting on a
+            // compaction needs, and none of it is about a turn.
+            let ended = match work {
+                Work::Turn(prompt, attached) => match Prompt::new(&prompt) {
+                    Ok(prompt) => {
+                        let asked = Command::Prompt(prompt);
+                        asking.turn(&mut conversation, asked, attached, &run)
                     }
+                    Err(refusal) => Ended::Refused(refusal),
+                },
+                Work::Room(Compacting::Asked) => {
+                    asking.turn(&mut conversation, Command::Compact, Box::default(), &run)
                 }
-
-                // The same shape, and that is the whole of why this is one
-                // function: making room is one request, answered over seconds,
-                // reporting as it goes. Everything the loop that draws does for
-                // a turn — the bar, the clock, the box taking the next prompt,
-                // the key that stops it — is what a reader waiting on a
-                // compaction needs, and none of it is about a turn.
                 // No turn is running, so the reading starts at nothing and
                 // what it comes to is the recap request's own cost — posted
                 // on the way, which is all the row above the box asks.
-                Work::Room(why) => match conversation.compact(why, &run, &mut Spend::default()) {
-                    Ok(Room::Made(_)) => Did::Reported,
-                    Ok(Room::Nothing) => Did::Nothing,
-                    Ok(Room::Stopped) => Did::Stopped,
-                    Err(problem) => {
-                        reporting.post(Event::Failed { error: problem });
-                        Did::Reported
-                    }
-                },
+                Work::Room(why) => {
+                    Ended::Room(conversation.compact(why, &run, &mut Spend::default()))
+                }
+            };
+
+            // What a turn came to is read rather than dropped: one that ran
+            // reported itself as it went, and one a guardrail refused may
+            // have reported nothing at all.
+            let did = match ended {
+                Ended::Turn(Ok(Turned::Ran(_))) | Ended::Room(Ok(Room::Made(_))) => Did::Reported,
+                Ended::Turn(Ok(refused)) => Did::Refused(refused),
+                Ended::Room(Ok(Room::Nothing)) => Did::Nothing,
+                Ended::Room(Ok(Room::Stopped)) => Did::Stopped,
+                Ended::Turn(Err(problem)) | Ended::Room(Err(problem)) => {
+                    reporting.post(Event::Failed { error: problem });
+                    Did::Reported
+                }
+                Ended::Refused(refusal) => Did::Unsent(refusal),
             };
 
             (conversation, did)
@@ -1451,6 +1468,9 @@ enum Did {
     /// knows they did. Nothing was posted for this either — a compaction
     /// reports what it took, and this one took nothing.
     Stopped,
+    /// The application would not take it: a prompt longer than any front end
+    /// may send. Nothing ran and nothing was posted.
+    Unsent(Refusal),
 }
 
 /// A turn, and what the keyboard asked for while it ran.
@@ -1923,4 +1943,4 @@ fn shown<T: Terminal>(
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

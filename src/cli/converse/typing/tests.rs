@@ -259,6 +259,7 @@ fn a_run_with_nothing_to_type_into_says_so_rather_than_reading_keys() {
         Between {
             commands: &commands(),
             conversation: &mut conversation,
+            terms: &crate::cli::converse::tests::plain(),
             attachment_store: None,
             editor: &mut editor,
             planning: &mut nothing(),

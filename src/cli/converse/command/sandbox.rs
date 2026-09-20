@@ -5,11 +5,15 @@
 //! snapshot, so an already-running background command keeps its original
 //! boundary. Project requirements survive every interactive choice.
 
+use crucible_app::Conversation;
+use crucible_app::client::Performed;
+use crucible_client_api::Command;
 use crucible_core::SandboxService;
 use crucible_sandbox_local::LocalSandbox;
 use crucible_tui::{Key, Offered, Pressed, Renderer, SandboxPanel, SandboxTab, Terminal};
 
 use crate::cli::Fatal;
+use crate::cli::client::astray;
 use crate::cli::converse::region::{self, Ended, Moved};
 
 use super::{Terms, say};
@@ -17,12 +21,12 @@ use super::{Terms, say};
 pub(super) fn run<T: Terminal>(
     rest: &str,
     renderer: &mut Renderer<T>,
-    terms: &Terms,
+    (conversation, terms): (&mut Conversation, &Terms),
     keys: bool,
 ) -> Result<(), Fatal> {
     match rest.trim() {
-        "enable" => return taken(true, renderer, terms),
-        "disable" => return taken(false, renderer, terms),
+        "enable" => return taken(true, renderer, conversation, terms),
+        "disable" => return taken(false, renderer, conversation, terms),
         "" => {}
         _ => {
             return say(
@@ -58,7 +62,7 @@ pub(super) fn run<T: Terminal>(
     )?;
     match ended {
         Ended::Took if standing.tab == SandboxTab::Sandbox && standing.at() < 2 => {
-            taken(standing.at() == 0, renderer, terms)
+            taken(standing.at() == 0, renderer, conversation, terms)
         }
         Ended::Took => {
             if let Some((name, says)) = standing.items().get(standing.at()) {
@@ -74,12 +78,18 @@ pub(super) fn run<T: Terminal>(
 fn taken<T: Terminal>(
     enabled: bool,
     renderer: &mut Renderer<T>,
+    conversation: &mut Conversation,
     terms: &Terms,
 ) -> Result<(), Fatal> {
-    if let Err(problem) =
-        crucible_app::sandbox::choosing(&terms.settings, &terms.workspace, &terms.choosing, enabled)
-    {
-        return say(renderer, &format!("sandbox unchanged: {problem}"));
+    match terms.perform(conversation, Command::Sandbox { enabled }) {
+        Performed::Sandbox {
+            unchanged: None, ..
+        } => {}
+        Performed::Sandbox {
+            unchanged: Some(problem),
+            ..
+        } => return say(renderer, &format!("sandbox unchanged: {problem}")),
+        other => return say(renderer, &astray(&other)),
     }
     let state = if enabled { "enabled" } else { "disabled" };
     say(
@@ -281,7 +291,10 @@ mod tests {
         std::fs::create_dir(&terms.choosing).expect("a directory cannot be replaced as a file");
         let mut renderer = Renderer::new(crucible_tui::Recording::new(80, 24));
 
-        taken(false, &mut renderer, &terms).expect("report the persistence failure");
+        let mut conversation = crate::cli::converse::tests::silent();
+
+        taken(false, &mut renderer, &mut conversation, &terms)
+            .expect("report the persistence failure");
 
         assert!(terms.settings.sandbox().enabled());
         assert!(renderer.terminal().written().contains("sandbox unchanged"));

@@ -10,6 +10,14 @@ change in any release with no deprecation period.
 
 ### Changed
 
+- **What the terminal asks of a session is a contract any front end can
+  speak.** The new `crucible-client-api` crate defines versioned requests,
+  outcomes, snapshots, progress and pending decisions with stated size limits,
+  and `crucible_app::client` carries them out; the terminal now sends typed
+  prompts and commands, permission answers and interrupts through it, so a
+  consumer with no terminal gets the same behavior. Nothing listens on a
+  network, and a name after `/model` that is empty, longer than 256 bytes or
+  holds a control character is now refused with a line instead of being tried.
 - **The application has a crate of its own, and a refused prompt says so.**
   `crucible-app` now assembles a run and owns its conversation:
   `startup::assemble` returns a `Conversation` holding the runner beside its

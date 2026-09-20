@@ -25,7 +25,9 @@
 //! other `!` line in this program already takes.
 
 use crucible_app::Conversation;
+use crucible_app::client::Performed;
 use crucible_app::providers::Served;
+use crucible_client_api as api;
 use crucible_core::{
     Collision, Compacting, Mode, Provenance, Registered, Registry, RegistryError, RegistrySnapshot,
     SourceKind,
@@ -33,6 +35,7 @@ use crucible_core::{
 use crucible_tui::{Glyphs, Key, Listed, Menu, Pressed, Renderer, Row, Slot, Terminal, clip, fold};
 
 use crate::cli::Fatal;
+use crate::cli::client::astray;
 use crate::cli::style::Style;
 
 use super::region::{self, Moved};
@@ -704,7 +707,7 @@ fn answer<T: Terminal>(
         Wanted::Known {
             command: Command::Mode,
             rest,
-        } => moded(rest, renderer, conversation, style)?,
+        } => moded(rest, renderer, conversation, terms)?,
 
         Wanted::Known {
             command: Command::Theme,
@@ -714,7 +717,7 @@ fn answer<T: Terminal>(
         Wanted::Known {
             command: Command::Sandbox,
             rest,
-        } => sandbox::run(rest, renderer, terms, held.answers.keys)?,
+        } => sandbox::run(rest, renderer, (conversation, terms), held.answers.keys)?,
 
         // The one other command that can end in a request: a session picked up
         // is put to the reader before it is carried, and one of the three
@@ -727,7 +730,7 @@ fn answer<T: Terminal>(
         Wanted::Known {
             command: Command::Cache,
             rest,
-        } => cache::run(rest, renderer, conversation)?,
+        } => cache::run(rest, renderer, conversation, terms)?,
 
         Wanted::Known {
             command: Command::Clear,
@@ -755,8 +758,9 @@ fn moded<T: Terminal>(
     said: &str,
     renderer: &mut Renderer<T>,
     conversation: &mut Conversation,
-    style: Style,
+    terms: &Terms,
 ) -> Result<(), Fatal> {
+    let style = terms.style();
     let columns = renderer.columns();
     let ring = Row::new().then(Slot::Quiet, clip(mode::ring(style.glyphs()), columns));
 
@@ -775,8 +779,11 @@ fn moded<T: Terminal>(
         return Ok(());
     };
 
-    conversation.switch(asked);
-    renderer.present(&[sentence(asked, columns)])?;
+    let asking = api::Command::SetMode(crucible_app::client::mode(asked));
+    match terms.perform(conversation, asking) {
+        Performed::Mode(taken) => renderer.present(&[sentence(taken, columns)])?,
+        other => renderer.commit(&astray(&other))?,
+    }
     Ok(())
 }
 

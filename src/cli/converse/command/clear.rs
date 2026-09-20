@@ -3,8 +3,8 @@
 //!
 //! An empty context is what is asked for, and the shortest way to one is a
 //! session that has said nothing yet. So this is [`resume`] with the session
-//! swapped: a fresh log rather than a reopened one, picked up by
-//! [`Conversation::clear`], which is also what drops the permission answers
+//! swapped: a fresh log rather than a reopened one, asked of the application as
+//! the command it is and picked up by [`Conversation::clear`], which is also what drops the permission answers
 //! given for the rest of a session that is now over. The record of what has been read
 //! is emptied here for the same reason, exactly as `/resume` empties it, and so
 //! are the images pasted at the prompt, the plan the panel above the box is
@@ -22,9 +22,12 @@
 //! [`resume`]: super::resume
 
 use crucible_app::Conversation;
+use crucible_app::client::{Cleared, Performed};
+use crucible_client_api::Command;
 use crucible_tui::{Renderer, Row, Slot, Terminal, clip};
 
 use crate::cli::Fatal;
+use crate::cli::client::astray;
 
 use super::super::Held;
 use super::Terms;
@@ -38,39 +41,36 @@ pub(super) fn run<T: Terminal>(
 ) -> Result<(), Fatal> {
     let columns = renderer.columns();
 
-    // A session that has said nothing is already the empty one this would go
-    // and open. Starting a second log here would leave two files for a session
-    // that never happened, and `--continue` offers the newer of them. The
-    // screen is still emptied: whatever a command printed belongs behind the
-    // clear the same as a conversation would.
-    if conversation.runner().transcript().is_empty() {
-        held.kept.forget();
-        held.images.clear();
-        renderer.empties()?;
-        held.opening.commit(renderer)?;
+    let unclosed = match terms.perform(conversation, Command::Clear) {
+        // A session that has said nothing is already the empty one this would
+        // go and open. Starting a second log here would leave two files for a
+        // session that never happened, and `--continue` offers the newer of
+        // them. The screen is still emptied: whatever a command printed
+        // belongs behind the clear the same as a conversation would.
+        Performed::Cleared(Cleared::Nothing) => {
+            held.kept.forget();
+            held.images.clear();
+            renderer.empties()?;
+            held.opening.commit(renderer)?;
 
-        let rows = [Row::new().then(Slot::Quiet, clip("nothing had been said", columns))];
-        return Ok(renderer.present(&rows)?);
-    }
-
-    // Read again rather than carried from startup, because a conversation can
-    // outlive a checkout: the session starting now records where the user is
-    // now.
-    let branch = crucible_app::branching::current(terms.workspace.root());
-    let left = match conversation.clear(&terms.sessions, &terms.workspace, branch.as_deref()) {
-        Ok(left) => left,
+            let rows = [Row::new().then(Slot::Quiet, clip("nothing had been said", columns))];
+            return Ok(renderer.present(&rows)?);
+        }
+        Performed::Cleared(Cleared::Started { unclosed }) => unclosed,
         // A path is in every one of these, so it is committed rather than
         // presented — the same as `/resume`'s. Nothing else changes: the
         // session in hand is still being recorded, and the loop carries on
         // with it.
-        Err(problem) => return Ok(renderer.commit(&format!("! {problem}"))?),
+        Performed::Cleared(Cleared::Failed(problem)) => {
+            return Ok(renderer.commit(&format!("! {problem}"))?);
+        }
+        other => return Ok(renderer.commit(&astray(&other))?),
     };
 
     // The conversation swapped its session and handed the runner the same one,
     // and everything this loop reads of a session it reads off the
-    // conversation. The one being left is kept here rather than dropped: it is
-    // still this loop's to close, and closing it is what says its log stopped
-    // being written to.
+    // conversation. The one being left was closed on the way, and what closing
+    // it said about its log came back to be said below.
     // The files remembered were read by a session this is no longer in, and
     // `write` replaces a file on the strength of that record. Emptying it costs
     // a read; leaving it standing would cost the file.
@@ -98,7 +98,7 @@ pub(super) fn run<T: Terminal>(
 
     // The last chance to say that the log of the session being left stopped
     // being written. After this there is no session to say it about.
-    if let Some(problem) = left.finish() {
+    if let Some(problem) = unclosed {
         renderer.commit(&format!("! {problem}"))?;
     }
 

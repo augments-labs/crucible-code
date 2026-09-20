@@ -568,9 +568,15 @@ fi
 # line's to install. `code extension` and `code mcp` are test-only edges: the
 # integration tests drive those two crates, and nothing that ships names them,
 # which the next section holds.
+#
+# `client-api` is what a front end and the application say to each other, so it
+# has one owner below it -- `types`, for the identity a session is resumed by --
+# and two crates above it: `app`, which carries a request out, and the command
+# line, which is one front end. The check after the list holds both ends.
 allowed='code app
 code attachments
 code auth
+code client-api
 code config
 code context
 code core
@@ -587,6 +593,7 @@ code tui
 app agents
 app auth
 app builtins
+app client-api
 app config
 app context
 app credentials
@@ -609,6 +616,7 @@ agents tools
 agents types
 attachments types
 attachments workspace
+client-api types
 auth core
 auth privacy
 config core
@@ -699,6 +707,29 @@ for crate in privacy registry runtime sandbox-broker tui types workspace; do
         failed=1
     fi
 done
+
+# The client contract is what may leave the process, so no engine type may
+# become reachable from it, and nothing the engine is made of may come to depend
+# on how a front end spells a request. The list above already says so; this
+# says it as a rule, so that adding a line there is not all it takes.
+while IFS= read -r edge; do
+    [[ -z "$edge" ]] && continue
+    case "$edge" in
+        'client-api types' | 'app client-api' | 'code client-api') ;;
+        'client-api '*)
+            printf '    FAIL crucible-client-api depends on crucible-%s; it may name crucible-types alone\n' "${edge#client-api }"
+            failed=1
+            ;;
+        *' client-api')
+            printf '    FAIL crucible-%s depends on crucible-client-api; only the application and a front end may\n' "${edge% client-api}"
+            failed=1
+            ;;
+    esac
+done <<<"$edges"
+if ! grep -Fxq 'client-api types' <<<"$edges" || ! grep -Fxq 'app client-api' <<<"$edges"; then
+    printf '    FAIL the client contract is not between the application and crucible-types; this check measured nothing\n'
+    failed=1
+fi
 
 # `builtins sandbox-local` above is a test-support edge, and a test-support edge
 # never justifies a shipped one. A tool names the sandbox service contract;
@@ -818,6 +849,23 @@ while IFS= read -r line; do
         failed=1
     fi
 done <<<"$residue"
+
+# The client contract says what crosses; it does not carry it anywhere. Nothing
+# in the contract or in the module that carries a request out opens a socket or
+# listens on one, so a front end off this machine is a decision about a
+# transport that has not been taken, and cannot be taken by accident here.
+contract=(crates/crucible-client-api/src crates/crucible-app/src/client.rs crates/crucible-app/src/client)
+for owner in "${contract[@]}"; do
+    if [[ ! -e "$owner" ]]; then
+        printf '    FAIL %s is missing; the client contract check measured nothing\n' "$owner"
+        failed=1
+    fi
+done
+while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    printf '    FAIL %s reaches for the network; the client contract names values, not a transport\n' "$line"
+    failed=1
+done < <(grep -rnE --include='*.rs' 'std::net|std::os::unix::net|TcpListener|TcpStream|UdpSocket|UnixListener|UnixStream' "${contract[@]}" 2>/dev/null | cut -d: -f1,2)
 
 # A probe measures one owner and imports it directly: routed through the
 # application it would measure the composition instead, and a budget would move

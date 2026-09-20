@@ -20,7 +20,9 @@
 //! is asking it for ever.
 
 use crucible_app::Conversation;
+use crucible_app::client::Performed;
 use crucible_app::switching::Switched;
+use crucible_client_api::{Command, Name};
 use crucible_core::Effort;
 use crucible_tui::{
     Editor, Glyphs, Offered, Pane, Panel, Renderer, Row, Serving, Shelf, Slot, Stocked, Terminal,
@@ -29,6 +31,7 @@ use crucible_tui::{
 
 use crate::cli::Fatal;
 use crate::cli::choice::Choice;
+use crate::cli::client::astray;
 use crate::cli::converse::picking::{self, Shelved, Standing, Taken};
 use crucible_app::providers::{Model, NO_MODEL_CHOSEN, Served, offered};
 use crucible_app::startup::served;
@@ -576,8 +579,22 @@ fn taken<T: Terminal>(
     let provider = selected.name;
     // What is checked, reached, retired and written, and in which order, is
     // the conversation's. What is here is what each way it can end is said as.
-    let catalogue = terms.providers.snapshot();
-    let switched = conversation.ask_for(selected, name, effort, &terms.switching(&catalogue));
+    let asked = match (Name::new(provider), Name::new(name)) {
+        (Ok(provider), Ok(model)) => Command::SelectModel {
+            provider,
+            model,
+            effort: effort.map(crucible_app::client::rung),
+        },
+        // A word no front end may name a model by: empty, or longer than any
+        // vendor's. Said rather than sent, and nothing is applied.
+        (Err(refusal), _) | (_, Err(refusal)) => {
+            return say(renderer, &format!("! {refusal}")).map(|()| false);
+        }
+    };
+    let switched = match terms.perform(conversation, asked) {
+        Performed::Model(switched) => switched,
+        other => return say(renderer, &astray(&other)).map(|()| false),
+    };
     let unwritten = match switched {
         // The picker may supply a compatible rung together with the model; a
         // typed model name cannot silently carry xhigh/max into Gemini's

@@ -44,6 +44,9 @@ use crucible_types::{
 };
 use crucible_workspace::Workspace;
 
+#[path = "headless/client.rs"]
+mod client;
+
 /// Whatever stopped a test before its assertion.
 type Failed = Box<dyn std::error::Error>;
 

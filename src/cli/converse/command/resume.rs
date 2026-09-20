@@ -33,11 +33,14 @@ use std::str::FromStr as _;
 use std::time::SystemTime;
 
 use crucible_app::Conversation;
+use crucible_app::client::{Performed, Resumed};
+use crucible_client_api::Command;
 use crucible_core::{Compacting, SessionId, Workspace};
-use crucible_session::{Glimpse, Pruned, Recorded, SessionError, glimpse, recent, retitle};
+use crucible_session::{Glimpse, Pruned, Recorded, glimpse, recent, retitle};
 use crucible_tui::{Editor, Glyphs, Kept, Picker, Renderer, Row, Slot, Terminal, clip};
 
 use crate::cli::Fatal;
+use crate::cli::client::astray;
 use crate::cli::draw::when;
 
 use super::super::region::{self, Ended};
@@ -140,23 +143,22 @@ fn picking<T: Terminal>(
 ) -> Result<Option<Compacting>, Fatal> {
     let columns = renderer.columns();
 
-    // Answered before the log is opened. This session's own claim is on that
-    // file, so continuing it would come back as "open in another crucible" —
-    // which names the wrong crucible, and reads as a reason to go and close
-    // something.
-    if conversation.session().id() == Some(id) {
-        let rows = [Row::new().then(Slot::Quiet, clip("this is the session you are in", columns))];
-        renderer.present(&rows)?;
-        return Ok(None);
-    }
-
-    let left = match conversation.resume(&terms.sessions, &terms.workspace, id) {
-        Ok(left) => left,
+    let unclosed = match terms.perform(conversation, Command::Resume(id.clone())) {
+        // Answered before the log is opened. This session's own claim is on
+        // that file, so continuing it would come back as "open in another
+        // crucible" — which names the wrong crucible, and reads as a reason to
+        // go and close something.
+        Performed::Resumed(Resumed::Same) => {
+            let said = clip("this is the session you are in", columns);
+            renderer.present(&[Row::new().then(Slot::Quiet, said)])?;
+            return Ok(None);
+        }
+        Performed::Resumed(Resumed::Picked { unclosed }) => unclosed,
 
         // The one shape of failure the reader can act on from here: the id
         // names nothing recorded in this workspace, so what is recorded is
         // offered instead.
-        Err(SessionError::Unknown { .. }) => {
+        Performed::Resumed(Resumed::Unknown) => {
             renderer.commit(&format!("! no session {} in this workspace", id.as_str()))?;
             return offered(renderer, conversation, held, terms);
         }
@@ -164,16 +166,20 @@ fn picking<T: Terminal>(
         // A path is in every one of these, so it is committed rather than
         // presented. Nothing else changes: the session in hand is still
         // being recorded, and the loop carries on with it.
-        Err(problem) => {
+        Performed::Resumed(Resumed::Failed(problem)) => {
             renderer.commit(&format!("! {problem}"))?;
+            return Ok(None);
+        }
+        other => {
+            renderer.commit(&astray(&other))?;
             return Ok(None);
         }
     };
 
     // The conversation swapped its session and handed the runner the same one,
     // and everything this loop reads of a session it reads off the
-    // conversation. The one being left is kept here rather than dropped: it is
-    // still this loop's to close.
+    // conversation. The one being left was closed on the way, and what closing
+    // it said about its log came back to be said below.
 
     // The files remembered were read by the session just left, and `write`
     // replaces a file on the strength of that record. The session picked up saw
@@ -198,7 +204,7 @@ fn picking<T: Terminal>(
 
     // The last chance to say that the log of the session being left stopped
     // being written. After this there is no session to say it about.
-    if let Some(problem) = left.finish() {
+    if let Some(problem) = unclosed {
         renderer.commit(&format!("! {problem}"))?;
     }
 

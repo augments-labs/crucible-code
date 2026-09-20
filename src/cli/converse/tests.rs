@@ -30,7 +30,7 @@ use crate::cli::sample::Sample;
 /// What it says is not what any of these tests is about, but the loop takes one
 /// and draws it, so they hand it a real one rather than a shape that only
 /// exists here.
-pub(super) fn opening() -> draw::opening::Standing {
+pub(crate) fn opening() -> draw::opening::Standing {
     let workspace =
         crucible_core::Workspace::open(std::env::temp_dir()).expect("a temporary directory");
 
@@ -60,7 +60,7 @@ fn typed(text: &str) -> Editor {
 /// The terms a test runs under when neither the style nor cancelling is what
 /// it is watching.
 ///
-pub(super) fn plain() -> Terms {
+pub(crate) fn plain() -> Terms {
     let unwritten = std::env::temp_dir().join(format!("crucible-unwritten-{}", std::process::id()));
 
     Terms {
@@ -74,6 +74,7 @@ pub(super) fn plain() -> Terms {
         revealed: Revealed::new(),
         plan: Plan::new(),
         putting: crate::cli::seen::Putting::new(),
+        client: crate::cli::client::Client::new(),
         leaving: crucible_builtins::Background::new(),
         // A file inside the same absent tree, so nothing a test types reaches
         // a configuration anybody keeps.
@@ -134,7 +135,7 @@ pub(crate) fn paired(
 }
 
 /// A runner that answers from `script` and records into `session`.
-fn scripted(script: Script, offered: Tools, session: Arc<Session>) -> Runner {
+pub(crate) fn scripted(script: Script, offered: Tools, session: Arc<Session>) -> Runner {
     Runner::new(
         Box::new(script),
         offered,
@@ -151,6 +152,14 @@ fn scripted(script: Script, offered: Tools, session: Arc<Session>) -> Runner {
         crucible_context::ContextInputs::new(std::env::temp_dir()),
         session,
     )
+}
+
+/// A conversation that answers nothing and records nowhere, for a command
+/// that asks the application about something other than the conversation.
+pub(crate) fn silent() -> Conversation {
+    paired(Arc::new(Session::nowhere()), |session| {
+        scripted(Script::new(Vec::new()), Tools::new(), session)
+    })
 }
 
 /// The whole loop over one script: what the terminal ended up with, and how

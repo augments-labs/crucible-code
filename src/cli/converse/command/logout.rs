@@ -14,10 +14,13 @@
 //! signed out while that source is active.
 
 use crucible_app::Conversation;
+use crucible_app::client::Performed;
 use crucible_app::switching::{LoggedOut, Retained};
+use crucible_client_api::Command;
 use crucible_tui::{Offered, Panel, Renderer, Row, Slot, Terminal, clip};
 
 use crate::cli::Fatal;
+use crate::cli::client::astray;
 use crate::cli::converse::picking::{self, Taken};
 use crucible_app::providers::{CredentialSource, Providers, Served, offered};
 use crucible_app::startup::served;
@@ -186,8 +189,12 @@ fn forgetting<T: Terminal>(
     // Retired before it is forgotten, forgotten before anything is set up
     // again: the order is the conversation's. What is here is what each way it
     // can end is said as.
-    let providers = terms.providers.snapshot();
-    let (retained, status) = match conversation.log_out(named, &terms.switching(&providers)) {
+    let asking = |provider| Command::Logout { provider };
+    let logged_out = match terms.perform_naming(conversation, named.name, asking) {
+        Performed::Logout(logged_out) => logged_out,
+        other => return say(renderer, &astray(&other)),
+    };
+    let (retained, status) = match logged_out {
         LoggedOut::CacheHeld(problem) => return super::cache::held(renderer, &problem),
         LoggedOut::Unforgotten { retained, problem } => {
             super::cache::retained(renderer, retained)?;

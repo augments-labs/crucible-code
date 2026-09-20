@@ -1,21 +1,27 @@
 //! `/cache`: redacted inspection and explicit persistent-resource cleanup.
 
 use crucible_app::Conversation;
+use crucible_app::client::Performed;
 use crucible_app::switching::Retained;
-use crucible_core::{Cancel, PromptCacheResourceError};
+use crucible_client_api::Command;
+use crucible_core::PromptCacheResourceError;
 use crucible_tui::{Renderer, Terminal};
 
 use crate::cli::Fatal;
+use crate::cli::client::astray;
+
+use super::Terms;
 
 /// Shows cache state, or performs one explicit bounded cleanup pass.
 pub(super) fn run<T: Terminal>(
     said: &str,
     renderer: &mut Renderer<T>,
     conversation: &mut Conversation,
+    terms: &Terms,
 ) -> Result<(), Fatal> {
     match said {
-        "" | "inspect" => inspect(renderer, conversation),
-        "cleanup" => cleanup(renderer, conversation),
+        "" | "inspect" => inspect(renderer, conversation, terms),
+        "cleanup" => cleanup(renderer, conversation, terms),
         _ => {
             renderer.commit("! /cache accepts only `inspect` or `cleanup`")?;
             Ok(())
@@ -26,6 +32,7 @@ pub(super) fn run<T: Terminal>(
 fn inspect<T: Terminal>(
     renderer: &mut Renderer<T>,
     conversation: &mut Conversation,
+    terms: &Terms,
 ) -> Result<(), Fatal> {
     let runner = conversation.runner();
     let policy = runner.prompt_cache_policy();
@@ -95,7 +102,11 @@ fn inspect<T: Terminal>(
             .commit("last attempt: none yet; predicted eligibility and wire outcome are unknown")?;
     }
 
-    match conversation.prompt_cache_resources() {
+    let listed = match terms.perform(conversation, Command::InspectCache) {
+        Performed::Cache(listed) => listed,
+        other => return Ok(renderer.commit(&astray(&other))?),
+    };
+    match listed {
         Ok(resources) if resources.is_empty() => {
             renderer.commit("persistent resources: none")?;
         }
@@ -125,8 +136,13 @@ fn inspect<T: Terminal>(
 fn cleanup<T: Terminal>(
     renderer: &mut Renderer<T>,
     conversation: &mut Conversation,
+    terms: &Terms,
 ) -> Result<(), Fatal> {
-    match conversation.clean_prompt_cache(&Cancel::new()) {
+    let cleaned = match terms.perform(conversation, Command::CleanCache) {
+        Performed::Cleaned(cleaned) => cleaned,
+        other => return Ok(renderer.commit(&astray(&other))?),
+    };
+    match cleaned {
         Ok(result) => renderer.commit(&format!(
             "cache cleanup: inspected {}, deleted {}, ambiguous {}, orphaned {}",
             result.inspected, result.deleted, result.ambiguous, result.orphaned,

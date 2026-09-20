@@ -24,6 +24,7 @@ Repository skills live in [`.agents/skills/`](.agents/skills/).
 | `crates/crucible-context/` | The words a request is built from, and what a compaction asks for |
 | `crates/crucible-agents/` | What an agent is: what it may reach for, what it is told, and what checks its words |
 | `crates/crucible-core/` | Domain types and extension traits |
+| `crates/crucible-client-api/` | What a front end asks the application and is answered with, in values that can leave the process |
 | `crates/crucible-app/` | What a run is assembled from, and the conversation it then owns |
 | `crates/crucible-auth/` | Credentials and account authorization |
 | `crates/crucible-builtins/` | Built-in tools |
@@ -62,6 +63,14 @@ invariants. Update it when the implementation makes a sentence false.
   passing them downward, and `src/` adapts a terminal to what it hands back.
   `crucible-runner` drives domain traits and must not depend on concrete
   providers, tools or other plugin implementations.
+- A front end reaches a conversation through `crucible_app::client`, with a
+  `crucible-client-api` request: the terminal is one client and a consumer with
+  no terminal is another, and neither can do what the other cannot. Runner
+  events and errors are translated to the contract's bounded values by a match
+  written out in `crucible-app`, never serialized as they stand, and the
+  contract depends on `crucible-types` alone. A decision from a client names a
+  pending action and is held against it; it is never a permission, and cannot
+  construct `Approved`.
 - Parse external text once at its format owner: provider wire objects in
   provider modules, tool arguments in tools, configuration in config and
   session lines in session.

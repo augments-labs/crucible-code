@@ -348,6 +348,7 @@ dependencies = [
  "crucible-agents",
  "crucible-auth",
  "crucible-builtins",
+ "crucible-client-api",
  "crucible-config",
  "crucible-context",
  "crucible-credentials",
@@ -415,6 +416,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "crucible-client-api"
+version = "0.41.1"
+dependencies = [
+ "crucible-types",
+ "serde_core",
+ "serde_json",
+]
+
+[[package]]
 name = "crucible-code"
 version = "0.41.1"
 dependencies = [
@@ -424,6 +434,7 @@ dependencies = [
  "crucible-attachments",
  "crucible-auth",
  "crucible-builtins",
+ "crucible-client-api",
  "crucible-config",
  "crucible-context",
  "crucible-core",

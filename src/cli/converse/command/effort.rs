@@ -28,11 +28,14 @@
 //! machine is used, and asking it once a session is asking it for ever.
 
 use crucible_app::Conversation;
+use crucible_app::client::Performed;
+use crucible_client_api::Command;
 use crucible_core::{Effort, EffortError};
 use crucible_runner::Runner;
 use crucible_tui::{Glyphs, Ladder, Renderer, Row, Slot, Terminal, clip, fold};
 
 use crate::cli::Fatal;
+use crate::cli::client::astray;
 use crate::cli::converse::picking::{self, Taken};
 use crucible_app::providers::{rungs, unasked};
 use crucible_app::switching::Rung;
@@ -184,8 +187,12 @@ fn taken<T: Terminal>(
     conversation: &mut Conversation,
     terms: &Terms,
 ) -> Result<(), Fatal> {
-    let providers = terms.providers.snapshot();
-    let said = match conversation.think(effort, &terms.switching(&providers)) {
+    let asked = Command::SetEffort(crucible_app::client::rung(effort));
+    let rung = match terms.perform(conversation, asked) {
+        Performed::Effort(rung) => rung,
+        other => return say(renderer, &astray(&other)),
+    };
+    let said = match rung {
         Rung::Unasked => {
             return renderer
                 .commit(unasked(conversation.serving()))

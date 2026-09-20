@@ -8,6 +8,11 @@
 //! session it records to, driven by inputs no terminal has to supply and
 //! answering with values no terminal has to draw.
 //!
+//! A front end drives that conversation through [`client`], with the requests
+//! `crucible-client-api` defines: the terminal is one client, a consumer with
+//! no terminal is another, and what either is told is translated there from
+//! the runner's own events and errors rather than serialized from them.
+//!
 //! What it deliberately does not know: how the command line was spelled, which
 //! stays in the binary's own `cli` module with the terminal it adapts to; and
 //! how anything is drawn, which is `crucible-tui`'s. The binary's probes and
@@ -21,6 +26,7 @@
 //! without a key or a home directory anywhere near the test.
 
 pub mod branching;
+pub mod client;
 mod conversation;
 mod error;
 pub mod extensions;

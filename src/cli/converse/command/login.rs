@@ -39,14 +39,17 @@ use std::borrow::Cow;
 use std::time::Duration;
 
 use crucible_app::Conversation;
+use crucible_app::client::Performed;
 use crucible_app::switching::LoggedIn;
 use crucible_auth::{AuthError, LoginAttempt, LoginUpdate};
+use crucible_client_api::Command;
 use crucible_tui::{
     Caret, Glyphs, Key, Offered, Panel, Pressed, Renderer, Row, Slot, Terminal, characters, clip,
     pressed,
 };
 
 use crate::cli::Fatal;
+use crate::cli::client::astray;
 use crate::cli::converse::picking::{self, Picked, Taken};
 use crate::cli::converse::secret::{self, Asked};
 use crucible_app::providers::{Served, offered};
@@ -650,8 +653,12 @@ fn taken<T: Terminal>(
     conversation: &mut Conversation,
     terms: &Terms,
 ) -> Result<(), Fatal> {
-    let providers = terms.providers.snapshot();
-    let unwritten = match conversation.logged_in(named, &terms.switching(&providers)) {
+    let asking = |provider| Command::Login { provider };
+    let logged_in = match terms.perform_naming(conversation, named.name, asking) {
+        Performed::Login(logged_in) => logged_in,
+        other => return say(renderer, &astray(&other)),
+    };
+    let unwritten = match logged_in {
         // Written and unusable, which is exactly what the next run would meet.
         // Said now rather than left for it: a session that looked configured and
         // refused every turn is the state this whole command exists to end.

@@ -34,6 +34,7 @@ use std::time::{Duration, Instant};
 
 use crucible_app::Conversation;
 use crucible_builtins::{Background, Ended};
+use crucible_client_api::Command;
 use crucible_core::{Aside, Cancel, Effort, Mode};
 use crucible_runner::Runner;
 use crucible_tui::{
@@ -313,6 +314,8 @@ pub(crate) struct Between<'a> {
     /// Holds the mode, which is the one thing a key at the prompt changes about
     /// the session rather than about the screen.
     pub(crate) conversation: &'a mut Conversation,
+    /// What a command is asked of the application with.
+    pub(crate) terms: &'a Terms,
     /// Where clipboard images are durably imported, as [`During`] takes it:
     /// the application's session says where that is, because the runner records
     /// into a contract and never learns what is behind it.
@@ -448,6 +451,7 @@ pub(crate) fn ask<T: Terminal>(
     let Between {
         commands,
         conversation,
+        terms,
         attachment_store,
         editor,
         planning,
@@ -652,7 +656,7 @@ pub(crate) fn ask<T: Terminal>(
             // row under the box says which mode that landed in, and the same
             // key is what steps out of it again.
             Pressed::Cycle => {
-                conversation.cycle();
+                terms.perform(conversation, Command::CycleMode);
 
                 says = saying(conversation.runner());
                 true
@@ -1072,7 +1076,7 @@ pub(super) fn during<T: Terminal>(
             }
 
             Meant::Interrupt => {
-                cancel.request();
+                terms.interrupt(cancel);
                 turning.interrupting();
                 moved = true;
             }
@@ -1140,7 +1144,7 @@ pub(super) fn during<T: Terminal>(
                 // reader for.
                 Typed::Interrupted => {
                     if together(offered, Instant::now()) {
-                        cancel.request();
+                        terms.interrupt(cancel);
                         turning.interrupting();
                         return Ok(Meanwhile::Leaving);
                     }

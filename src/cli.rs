@@ -14,6 +14,7 @@
 
 mod browser;
 mod choice;
+mod client;
 mod converse;
 mod counting;
 mod draw;
@@ -552,6 +553,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         revealed: revealed.clone(),
         plan: plan.clone(),
         putting: putting.clone(),
+        client: client::Client::new(),
         leaving: leaving.clone(),
 
         // Nothing is picked mid-turn at startup: the slot is empty until a

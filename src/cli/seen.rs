@@ -1,37 +1,46 @@
 //! One receiver for the two things the drawing thread has to answer.
 //!
 //! A turn runs on its own thread and reports through [`Post`]; it also stops
-//! mid-flight to ask a question through [`Ask`]. The thread that draws is
+//! mid-flight to ask a question through a [`Front`]. The thread that draws is
 //! parked in `recv`, and a channel has no `select`, so both have to arrive on
 //! the same one. That is all [`Seen`] is: the union of what can turn up.
 //!
 //! The alternative — a second thread forwarding events into the first — buys
 //! nothing and adds a hop to every delta.
 //!
-//! An answer carries no name for the question it answers, and does not need
-//! one. [`Asking`] reads from a channel of its own, and [`Ask::ask`] takes
-//! `&mut self` and blocks until the answer arrives — so the value that asked is
-//! the value that reads, and it cannot have a second question outstanding while
-//! it waits. What an identifier would defend against is therefore only a
-//! question answered twice, and the thread that draws answers each exactly
-//! once: on the path that drew it, or on the path that has stopped drawing.
+//! A question is put under the identity the application minted for it, and an
+//! answer goes back as a [`Decision`] naming that identity: this thread is one
+//! front end of [`crucible_app::client`], and is held to what any other is. The
+//! name is stamped where the answer is heard rather than carried through the
+//! thread that draws, and that is sound for a reason particular to this
+//! thread. [`Asking`] reads from a channel of its own, and is put a question
+//! through `&mut self` and blocks until the answer arrives — so the value that
+//! asked is the value that reads, and it cannot have a second question
+//! outstanding while it waits. The thread that draws answers each exactly once:
+//! on the path that drew it, or on the path that has stopped drawing.
 //!
 //! Two turns cannot overlap either, but that is not what this rests on. A
 //! second asker would be a second [`Asking`] with a channel of its own, and
-//! what it would want is not a name for its question: it would want the drawing
-//! thread to learn which channel to answer on, which is the reply end
-//! travelling with the question rather than being held for the turn. One asker
-//! is why it is held for the turn, and an identifier carried today would name a
-//! question nothing is competing with.
+//! what it would want is the drawing thread learning which channel to answer
+//! on, which is the reply end travelling with the question rather than being
+//! held for the turn. One asker is why it is held for the turn.
 
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crucible_core::{
-    Answered, Ask, Put, Question, Remember, Sensitivity, ToolCall, Verdict, Wrote,
+use crucible_app::Conversation;
+use crucible_app::client::{self, Ended, Front, Minting, Shown};
+use crucible_client_api::bounds::SAID_BYTES;
+use crucible_client_api::{
+    Capabilities, Command, Decision, Lasting, Pending, Picked, Refusal, Ruling, Said,
 };
-use crucible_runner::{Event, EventEnvelope, Post};
+use crucible_core::{
+    Answered, Attachment, Put, Question, Remember, Sensitivity, ToolCall, Verdict, Wrote,
+};
+use crucible_runner::{Event, EventEnvelope, Post, RunContext};
+
+use super::client::Client;
 
 /// Events allowed to wait for the terminal.
 ///
@@ -125,40 +134,96 @@ impl Post for Relay {
 pub(crate) struct Asking {
     to: SyncSender<Seen>,
     answers: Receiver<Answer>,
+    minting: Minting,
+    client: Client,
 }
 
 impl Asking {
-    /// Takes the two ends it needs: where questions go, where answers arrive.
-    pub(crate) fn new(to: SyncSender<Seen>, answers: Receiver<Answer>) -> Self {
-        Self { to, answers }
+    /// Takes the two ends it needs — where questions go, where answers arrive
+    /// — and what a request is made with: the count `putting` names pending
+    /// actions from, and the client that numbers requests.
+    pub(crate) fn new(
+        to: SyncSender<Seen>,
+        answers: Receiver<Answer>,
+        putting: &Putting,
+        client: Client,
+    ) -> Self {
+        Self {
+            to,
+            answers,
+            minting: putting.minting.clone(),
+            client,
+        }
+    }
+
+    /// Asks the application for the turn `command` names, answering from the
+    /// drawing thread whatever it stops on.
+    pub(crate) fn turn(
+        &mut self,
+        conversation: &mut Conversation,
+        command: Command,
+        attached: Box<[Attachment]>,
+        run: &RunContext<'_>,
+    ) -> Ended {
+        let request = self.client.asking(command);
+        let minting = self.minting.clone();
+        let ended = client::turn(conversation, &request, attached, (self, &minting), run);
+
+        #[cfg(test)]
+        self.client
+            .answered(&request, conversation, ended.outcome());
+
+        ended
     }
 }
 
-impl Ask for Asking {
+impl Front for Asking {
     /// Blocks the turn until someone answers.
     ///
-    /// Silence is a refusal. A channel that will not carry the question, or
-    /// that closes before an answer comes back, means nobody is left to consent
-    /// — and running a tool nobody agreed to is the one outcome worth avoiding
-    /// more than stopping.
-    fn ask(&mut self, call: &ToolCall, sensitivity: &Sensitivity) -> Answer {
+    /// Silence is a refusal, and the application is what makes it one: a
+    /// channel that will not carry the question, or that closes before an
+    /// answer comes back, means nobody is left to consent — and running a tool
+    /// nobody agreed to is the one outcome worth avoiding more than stopping.
+    fn put(&mut self, pending: &Pending, shown: Shown<'_>) -> Option<Decision> {
+        // A model's questions come through the tool that asks them, which is
+        // lent its own ends; a turn stops here on a call and nothing else.
+        let Shown::Call { call, sensitivity } = shown else {
+            return None;
+        };
+
+        #[cfg(test)]
+        self.client.put(pending);
+
         let question = Seen::Question {
             call: call.clone(),
             sensitivity: sensitivity.clone(),
         };
+        self.to.send(question).ok()?;
+        let (verdict, remember) = self.answers.recv().ok()?;
 
-        if self.to.send(question).is_err() {
-            return refused();
-        }
+        let decision = Decision::Ruled {
+            id: pending.id(),
+            ruling: match verdict {
+                Verdict::Allow => Ruling::Allow,
+                Verdict::Deny => Ruling::Deny,
+            },
+            lasting: match remember {
+                Remember::Never => Lasting::Once,
+                // The prompt offers nothing that outlasts the process, and the
+                // engine keeps the two alike: for the rest of this session.
+                Remember::Session | Remember::Always => Lasting::Session,
+            },
+        };
 
-        self.answers.recv().unwrap_or_else(|_| refused())
+        #[cfg(test)]
+        self.client.decided(&decision);
+
+        Some(decision)
     }
-}
 
-/// What silence means. A duration is still needed alongside it, and the only
-/// honest one is that this answer covers nothing beyond the call it refused.
-fn refused() -> Answer {
-    (Verdict::Deny, Remember::Never)
+    /// Nothing to say: every decision made above names the action it was put
+    /// and rules on it, so the application has none of them to turn away.
+    fn refused(&mut self, _: Refusal) {}
 }
 
 /// The bounded event receiver, merging only adjacent deltas already waiting.
@@ -262,10 +327,20 @@ mod tests {
     use std::sync::mpsc::{channel, sync_channel};
     use std::time::Duration;
 
-    use crucible_core::{Ancestry, Command, ToolArgs, ToolId, TurnId, Wrote};
+    use crucible_app::client::Deciding;
+    use crucible_core::{
+        Ancestry, Answer as Offered, Ask, Command, ToolArgs, ToolId, TurnId, Wrote,
+    };
     use crucible_runner::Reporter;
 
     use super::*;
+    use crate::cli::client::tests::Noted;
+
+    /// What the permission engine hears when it asks through `asking`, the way
+    /// a turn does.
+    fn asked(asking: &mut Asking) -> Answer {
+        Deciding::new(asking, &Minting::new(), Capabilities::every()).ask(&call(), &running())
+    }
 
     fn call() -> ToolCall {
         ToolCall {
@@ -303,14 +378,14 @@ mod tests {
     fn a_question_waits_for_the_answer_it_is_given() {
         let (to, seen) = sync_channel(2);
         let (reply, answers) = channel();
-        let mut asking = Asking::new(to, answers);
+        let mut asking = Asking::new(to, answers, &Putting::new(), Client::new());
 
-        let asked = std::thread::spawn(move || asking.ask(&call(), &running()));
+        let waiting = std::thread::spawn(move || asked(&mut asking));
 
         assert!(matches!(seen.recv().unwrap(), Seen::Question { .. }));
         reply.send((Verdict::Allow, Remember::Session)).unwrap();
 
-        assert_eq!(asked.join().unwrap(), (Verdict::Allow, Remember::Session));
+        assert_eq!(waiting.join().unwrap(), (Verdict::Allow, Remember::Session));
     }
 
     #[test]
@@ -319,26 +394,73 @@ mod tests {
         // that ran on the way out ran without consent.
         let (to, seen) = sync_channel(2);
         let (reply, answers) = channel::<Answer>();
-        let mut asking = Asking::new(to, answers);
+        let client = Client::new();
+        let mut asking = Asking::new(to, answers, &Putting::new(), client.clone());
         drop(reply);
 
-        let answer = asking.ask(&call(), &running());
+        let answer = asked(&mut asking);
 
         assert_eq!(answer, (Verdict::Deny, Remember::Never));
         drop(seen);
+
+        // Accounted for rather than timed: the question was put once, nothing
+        // was decided about it, and the no is the application's own.
+        assert!(
+            matches!(client.noted().as_slice(), [Noted::Put(_)]),
+            "{:?}",
+            client.noted()
+        );
     }
 
     #[test]
     fn a_question_that_cannot_be_delivered_is_a_refusal() {
         let (to, seen) = sync_channel(2);
         let (_reply, answers) = channel::<Answer>();
-        let mut asking = Asking::new(to, answers);
+        let client = Client::new();
+        let mut asking = Asking::new(to, answers, &Putting::new(), client.clone());
         drop(seen);
 
-        assert_eq!(
-            asking.ask(&call(), &running()),
-            (Verdict::Deny, Remember::Never)
+        assert_eq!(asked(&mut asking), (Verdict::Deny, Remember::Never));
+        assert!(
+            matches!(client.noted().as_slice(), [Noted::Put(_)]),
+            "{:?}",
+            client.noted()
         );
+    }
+
+    #[test]
+    fn an_answer_as_long_as_the_panel_lets_one_be_reaches_the_tool_that_asked_whole() {
+        // Longer than any line drawn for a person is cut to, and far shorter
+        // than the panel's own editor stops at: words somebody can paste today.
+        let pasted = "\u{e9}".repeat(40 * 1024);
+        let beside = "n".repeat(20 * 1024);
+        let given = vec![Answered::new([pasted.clone()]).noting(beside.clone())];
+
+        let (to, seen) = sync_channel(CAPACITY);
+        let (reply, answers) = channel::<Given>();
+        let putting = Putting::new();
+        putting.open(to, answers);
+
+        let drawing = std::thread::spawn(move || {
+            let put = seen.recv();
+            assert!(matches!(put, Ok(Seen::Asked { .. })), "{put:?}");
+            reply.send(Some(given)).expect("the tool is waiting");
+        });
+        let question = Question::new(
+            "Words",
+            "What should it say?",
+            [Offered::new("these"), Offered::new("those")],
+        );
+        let heard = putting.put(&[question]).expect("somebody answered");
+        drawing.join().expect("the drawing side ran");
+
+        let answer = heard.first().expect("one answer for one question");
+        let chosen: Vec<&str> = answer.chosen().collect();
+        assert_eq!(chosen.len(), 1);
+        assert_eq!(chosen.first().map(|words| words.len()), Some(pasted.len()));
+        assert!(chosen.first() == Some(&pasted.as_str()), "the words differ");
+        assert_eq!(answer.note().len(), beside.len());
+        assert!(answer.note() == beside, "the note differs");
     }
 
     #[test]
@@ -534,7 +656,12 @@ struct Ends {
 /// the verdict beside it, whose silence has to be a refusal because running a
 /// tool nobody agreed to is worse than stopping. Here nothing runs either way.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct Putting(Arc<Mutex<Option<Ends>>>);
+pub(crate) struct Putting {
+    ends: Arc<Mutex<Option<Ends>>>,
+    /// What every pending action of this process is named from, a permission
+    /// question as much as these: one count, so no name is given out twice.
+    minting: Minting,
+}
 
 impl Putting {
     /// A handle with no turn behind it yet.
@@ -544,7 +671,7 @@ impl Putting {
 
     /// Lends the ends of this turn's channels.
     pub(crate) fn open(&self, to: SyncSender<Seen>, answers: Receiver<Given>) {
-        if let Ok(mut held) = self.0.lock() {
+        if let Ok(mut held) = self.ends.lock() {
             *held = Some(Ends { to, answers });
         }
     }
@@ -553,7 +680,7 @@ impl Putting {
     ///
     /// [`Relay`]'s drop is what calls it, and why is written there.
     pub(crate) fn close(&self) {
-        if let Ok(mut held) = self.0.lock() {
+        if let Ok(mut held) = self.ends.lock() {
             *held = None;
         }
     }
@@ -568,15 +695,58 @@ impl Put for Putting {
     /// what this makes impossible is not something anything does today — it is
     /// something a later change cannot start doing by accident.
     fn put(&self, questions: &[Question]) -> Option<Vec<Answered>> {
-        let held = self.0.lock().ok()?;
-        let ends = held.as_ref()?;
+        let held = self.ends.lock().ok()?;
+        let mut ends = held.as_ref()?;
 
-        ends.to
+        client::questions(&self.minting, Capabilities::every(), &mut ends, questions)
+    }
+}
+
+impl Front for &Ends {
+    fn put(&mut self, pending: &Pending, shown: Shown<'_>) -> Option<Decision> {
+        let Shown::Questions(questions) = shown else {
+            return None;
+        };
+
+        self.to
             .send(Seen::Asked {
                 questions: questions.to_vec(),
             })
             .ok()?;
 
-        ends.answers.recv().ok()?
+        let id = pending.id();
+        let answers = self
+            .answers
+            .recv()
+            .ok()?
+            .and_then(|answered| answered.iter().map(picked).collect());
+        Some(match answers {
+            Some(answers) => Decision::Answered { id, answers },
+            None => Decision::Declined { id },
+        })
     }
+
+    /// Nothing to say, for the reason [`Asking`] has nothing to: what is
+    /// answered above is one answer per question put, or nobody answering.
+    fn refused(&mut self, _: Refusal) {}
+}
+
+/// What a person writes on the panel fits what a decision carries: the panel's
+/// editors stop at the one ceiling, and a decision's words go up to the other.
+const _: () = assert!(crucible_tui::Editor::MAX_BYTES <= SAID_BYTES);
+
+/// One answer, as a decision carries it: every word of it, or no answer.
+///
+/// Nothing is cut here, because the tool that asked acts on what comes back.
+/// `None` is an answer longer than a decision carries, which the assertion
+/// above keeps the panel from producing; the questions are then declined rather
+/// than answered with words nobody wrote.
+fn picked(answered: &Answered) -> Option<Picked> {
+    Some(Picked {
+        chosen: answered
+            .chosen()
+            .map(|words| Said::new(words).ok())
+            .collect::<Option<_>>()?,
+        note: Said::new(answered.note()).ok()?,
+    })
 }

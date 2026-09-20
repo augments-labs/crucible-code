@@ -17,6 +17,9 @@ crucible-builtins.workspace = true
 # The files a run is configured by, and the splice a remembered choice is
 # written with.
 crucible-config.workspace = true
+# What a front end may ask and be answered with, in values that can leave the
+# process; `client` carries them out and translates what came of them.
+crucible-client-api.workspace = true
 # What the system prompt is built from.
 crucible-context.workspace = true
 # The credential a provider is given, and the header it signs with.

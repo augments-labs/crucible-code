@@ -62,6 +62,7 @@ fn terms(sample: &Sample, ledger: &Ledger, plan: &Plan) -> Terms {
         revealed: Revealed::new(),
         plan: plan.clone(),
         putting: crate::cli::seen::Putting::new(),
+        client: crate::cli::client::Client::new(),
         leaving: crucible_builtins::Background::new(),
         pending_model: std::cell::Cell::new(None),
         pending_mode: std::cell::Cell::new(None),

@@ -40,6 +40,7 @@ crucible-app = { path = "crates/crucible-app" }
 crucible-attachments = { path = "crates/crucible-attachments" }
 crucible-auth = { path = "crates/crucible-auth" }
 crucible-builtins = { path = "crates/crucible-builtins" }
+crucible-client-api = { path = "crates/crucible-client-api" }
 crucible-config = { path = "crates/crucible-config" }
 crucible-context = { path = "crates/crucible-context" }
 crucible-core = { path = "crates/crucible-core" }
@@ -399,6 +400,9 @@ arboard.workspace = true
 # is assembled from, and the conversation the command line then drives. The
 # command line adapts it to a terminal and adds nothing to it.
 crucible-app.workspace = true
+# The requests the terminal makes of the application, which are the ones any
+# front end makes: the command line is one client of that contract.
+crucible-client-api.workspace = true
 clap.workspace = true
 crucible-attachments.workspace = true
 crucible-auth.workspace = true
