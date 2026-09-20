@@ -36,20 +36,49 @@ use crucible_types::{
 /// assert_eq!(SessionOwner::new(""), None);
 /// assert_ne!(SessionOwner::new("/home/one/sessions"), SessionOwner::new("/home/two/sessions"));
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct SessionOwner(Box<str>);
+///
+/// Bytes rather than text, because what names an owner need not be text: a
+/// directory's name is whatever the filesystem kept, and two names that are not
+/// text read as the same replacement characters once they are made into it.
+/// An owner named in text is the same owner as one named by that text's bytes.
+///
+/// ```
+/// use crucible_storage::SessionOwner;
+///
+/// assert_eq!(SessionOwner::new("one"), SessionOwner::of_bytes(b"one"));
+/// assert_ne!(SessionOwner::of_bytes(b"\xff"), SessionOwner::of_bytes(b"\xfe"));
+/// ```
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct SessionOwner(Box<[u8]>);
 
 impl SessionOwner {
     /// The owner `named` spells, or `None` where it spells nobody.
     #[must_use]
     pub fn new(named: &str) -> Option<Self> {
+        Self::of_bytes(named.as_bytes())
+    }
+
+    /// The owner `named` spells where that is not known to be text, or `None`
+    /// where it spells nobody.
+    #[must_use]
+    pub fn of_bytes(named: &[u8]) -> Option<Self> {
         (!named.is_empty()).then(|| Self(named.into()))
     }
 
     /// The bytes that tell this owner from another, for a digest to take in.
     #[must_use]
     pub const fn as_bytes(&self) -> &[u8] {
-        self.0.as_bytes()
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for SessionOwner {
+    /// As text, for a person reading a failure; what is not text is replaced,
+    /// so two owners that differ can read alike here and nowhere else.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("SessionOwner")
+            .field(&String::from_utf8_lossy(&self.0))
+            .finish()
     }
 }
 

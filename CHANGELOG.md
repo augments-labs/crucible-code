@@ -17,6 +17,14 @@ change in any release with no deprecation period.
   marked truncated where they were cut; no shipped agent declares a guardrail,
   so only a build that adds one sees any of it.
 
+### Fixed
+
+- **Two session directories whose names are not valid UTF-8 are no longer one
+  owner.** The directory a session is kept in separates one reader's prompt
+  cache resources from another's, and it was compared as text with every
+  invalid byte replaced, so two such directories could share a scope. It is
+  now compared byte for byte; a directory whose name is text is unaffected.
+
 ## [0.42.0] - 2026-09-20
 
 ### Changed

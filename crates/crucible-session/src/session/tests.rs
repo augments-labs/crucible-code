@@ -1534,3 +1534,37 @@ fn sessions_kept_in_one_place_answer_one_owner_and_another_place_another() {
         "nobody was accepted as an owner"
     );
 }
+
+/// Linux alone, because it is where the checks run on a filesystem that keeps
+/// a name that is not text. macOS refuses to make such a directory and other
+/// Unix filesystems keep one; not every Linux mount does either, which is why
+/// a refusal below ends the test rather than failing it.
+#[cfg(target_os = "linux")]
+#[test]
+fn two_places_whose_names_are_not_text_are_two_owners() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    use crucible_core::SessionStore;
+
+    // Spelt as text, with what is not text replaced, both of these are the
+    // same one character, and one reader's cache scope was the other's.
+    let sample = Sample::new("owner-not-text");
+    let one = sample.logs().join(OsStr::from_bytes(b"\xff"));
+    let two = sample.logs().join(OsStr::from_bytes(b"\xfe"));
+
+    // The directory above them is made first, so that what can still refuse
+    // either of these is the name, and a filesystem that will not hold such a
+    // name has no two owners to tell apart.
+    std::fs::create_dir_all(sample.logs()).expect("the logs directory is made");
+    if std::fs::create_dir(&one).is_err() || std::fs::create_dir(&two).is_err() {
+        return;
+    }
+
+    let first = Session::start(&one, &sample.workspace(), None).expect("a new session");
+    let second = Session::start(&two, &sample.workspace(), None).expect("a new session");
+
+    let first = SessionStore::owner(&first).expect("a session on disk is somebody's");
+    let second = SessionStore::owner(&second).expect("a session on disk is somebody's");
+    assert_ne!(first, second, "two directories answered one owner");
+}

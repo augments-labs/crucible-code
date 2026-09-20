@@ -903,8 +903,15 @@ impl SessionStore for Session {
     ///
     /// A log with no directory above it is nobody's rather than the owner of
     /// an empty name.
+    ///
+    /// The directory's name is taken as the bytes it is kept as, which for a
+    /// name that is text are that text's: made into text first, two names that
+    /// are not text would both be replacement characters and one owner. How
+    /// the platform spells what is not text is its own business and may move
+    /// with the toolchain; an owner that moved is a stranger to what the old
+    /// one kept, which costs a cache and offers nobody another's.
     fn owner(&self) -> Option<SessionOwner> {
-        SessionOwner::new(&self.path.parent()?.to_string_lossy())
+        SessionOwner::of_bytes(self.path.parent()?.as_os_str().as_encoded_bytes())
     }
 
     fn append_message(&self, message: &Message) {
