@@ -17,6 +17,9 @@
 //! this process hold, whoever wrote it.
 
 use std::io::{self, BufRead, Write};
+use std::time::Duration;
+
+use crate::Said;
 
 /// The most bytes one frame may carry, not counting the newline that ends it.
 ///
@@ -225,18 +228,34 @@ impl<R: BufRead> Frames<R> {
 /// Nothing is buffered between calls. A program waiting on a request that is
 /// sitting in crucible's buffer is a hang with no error and nothing on screen,
 /// so a frame is on its way out by the time [`send`](Self::send) returns.
+///
+/// [`send`](Self::send) is also the only way anything goes out. The stream is
+/// not lent back, because whatever can borrow it can write to it, and a byte
+/// written beside a frame is a line the far end reads as one nobody checked:
+///
+/// ```compile_fail,E0599
+/// use crucible_transport::Written;
+///
+/// let mut written = Written::new(Vec::<u8>::new());
+/// written.stream_mut();
+/// ```
 #[derive(Debug)]
 pub struct Written<W> {
     /// Where the bytes go.
     to: W,
 }
 
-impl<W: Write> Written<W> {
-    /// The stream underneath, for what only it can be asked.
-    pub const fn stream_mut(&mut self) -> &mut W {
-        &mut self.to
+impl Written<Said> {
+    /// Waits a different time out for one frame from here on.
+    ///
+    /// The one thing a caller has to ask the stream rather than the framing,
+    /// asked by name so that asking it lends nothing that can be written to.
+    pub const fn patient_for(&mut self, patience: Duration) {
+        self.to.patient_for(patience);
     }
+}
 
+impl<W: Write> Written<W> {
     /// Sends frames to `to`.
     #[must_use]
     pub const fn new(to: W) -> Self {

@@ -59,7 +59,9 @@ change in any release with no deprecation period.
   or an MCP roster is made of is now owned by `crucible-extension` and
   `crucible-mcp` and imported from there rather than from `crucible-core` or
   `crucible-config`; `Extensions::discover` takes the home directory as a
-  `&Path`, and `Chosen`'s fields are read through accessors.
+  `&Path`, and `Chosen`'s fields are read through accessors. `Written` no
+  longer lends out the stream it frames for: `stream_mut` is gone, and the one
+  thing it was used for is `Written::patient_for`.
 - **Context and prompt assembly have a crate of their own.** `crucible-context`
   now holds context sections, the order a pass assembles them in, the system
   prompt and what a compaction asks the model for; `Compacted`, `Compacting`,
