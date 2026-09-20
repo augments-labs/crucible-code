@@ -14,9 +14,9 @@ use crucible_agents::{AgentBuilder, Model};
 use crucible_app::Conversation;
 use crucible_app::client::{self, Ended, Front, Performed, Shown};
 use crucible_client_api::{
-    Capabilities, ClearOutcome, Command, Correlation, Decision, ErrorCode, Lasting, Mode, Outcome,
-    Palette, Pending, PendingId, Progress, Prompt, Refusal, Request, Response, ResumeOutcome,
-    Ruling, Snapshot, Stop, Theme, TurnOutcome,
+    Capabilities, ClearOutcome, Command, Correlation, Decision, ErrorCode, Lasting, Mode,
+    ModelOutcome, Name, Outcome, Palette, Pending, PendingId, Progress, Prompt, Refusal, Request,
+    Response, ResumeOutcome, Ruling, Snapshot, Stop, Theme, TurnOutcome,
 };
 use crucible_models::Delta;
 use crucible_runner::{EventEnvelope, Runner, Tools};
@@ -570,6 +570,104 @@ fn the_shipped_commands_are_carried_out_from_bytes_and_answered_in_bytes() -> Re
     let (performed, outcome) = answered(&mut conversation, Command::Exit)?;
     assert!(matches!(performed, Performed::Leaving), "{performed:?}");
     assert_eq!(outcome, Outcome::Leaving);
+    Ok(())
+}
+
+/// A conversation asking `anthropic`, one turn in, keeping its persistent
+/// cache records under the tree's home: what a switch has a cache to retire
+/// for.
+fn cached(tree: &Tree) -> Result<Conversation, Failed> {
+    let mut conversation = super::conversing(
+        tree,
+        Script::named("anthropic"),
+        &super::Guard::Nothing,
+        Some("anthropic"),
+    )?
+    .remembering_caches_in(tree.home()?.path());
+    let request = Wire(700).sent(prompt("hi")?)?;
+    turned(&mut conversation, &request, &mut Remote::new(Vec::new()))?;
+
+    Ok(conversation)
+}
+
+fn haiku() -> Result<Command, Failed> {
+    Ok(Command::SelectModel {
+        provider: Name::new("anthropic")?,
+        model: Name::new("claude-haiku-4-5")?,
+        effort: None,
+    })
+}
+
+#[test]
+fn a_cache_that_cannot_be_retired_holds_the_model_where_it_was() -> Result<(), Failed> {
+    let tree = Tree::new("client-cache-held")?;
+    let mut conversation = cached(&tree)?;
+    // Records nobody can read: whether one of them is this session's cannot
+    // be told, so the cache cannot be said to have been retired.
+    let kept = tree.home()?.path().join("prompt-cache");
+    std::fs::create_dir_all(&kept)?;
+    std::fs::write(kept.join("resources-v1.json"), "not records")?;
+    let standing = Standing::new(&tree, &["anthropic"])?;
+    let (workspace, sessions) = (tree.workspace()?, tree.sessions());
+    let desk = client::Desk {
+        switching: standing.with(),
+        sessions: &sessions,
+        workspace: &workspace,
+        reads,
+    };
+
+    let request = Wire::default().sent(haiku()?)?;
+    let response =
+        received(&client::perform(&mut conversation, &request, &desk).response(&request))?;
+
+    let Outcome::Model(ModelOutcome::CacheHeld(problem)) = &response.outcome else {
+        return Err(format!("{:?}", response.outcome).into());
+    };
+    assert_eq!(problem.code, ErrorCode::Failed);
+    assert_eq!(conversation.runner().model(), "script");
+    assert_eq!(
+        super::written(&tree)?.model("anthropic"),
+        None,
+        "a switch that did not happen is not what the next start reads"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_choice_that_could_not_be_written_down_is_still_taken_and_says_so() -> Result<(), Failed> {
+    let tree = Tree::new("client-unwritten")?;
+    let mut conversation = cached(&tree)?;
+    let standing = Standing::new(&tree, &["anthropic"])?;
+    // A settings file that is not configuration is never written over.
+    let settings = crucible_config::user(&tree.home()?);
+    std::fs::create_dir_all(settings.parent().ok_or("settings with no directory")?)?;
+    std::fs::write(&settings, "model = [")?;
+    let (workspace, sessions) = (tree.workspace()?, tree.sessions());
+    let desk = client::Desk {
+        switching: standing.with(),
+        sessions: &sessions,
+        workspace: &workspace,
+        reads,
+    };
+
+    let request = Wire::default().sent(haiku()?)?;
+    let response =
+        received(&client::perform(&mut conversation, &request, &desk).response(&request))?;
+
+    let Outcome::Model(ModelOutcome::Taken {
+        unwritten: Some(problem),
+        ..
+    }) = &response.outcome
+    else {
+        return Err(format!("{:?}", response.outcome).into());
+    };
+    assert_eq!(problem.code, ErrorCode::Failed);
+    assert_eq!(conversation.runner().model(), "claude-haiku-4-5");
+    assert_eq!(
+        std::fs::read_to_string(&settings)?,
+        "model = [",
+        "what the file said is left as it was"
+    );
     Ok(())
 }
 
