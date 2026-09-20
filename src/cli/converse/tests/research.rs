@@ -74,21 +74,21 @@ fn researching(failed: bool) -> String {
         batch.push(Delta::ToolArgs(args.to_string().into()));
     }
     batch.push(Delta::Stopped(StopReason::WantsTools));
-    let runner = scripted(
-        Script::new(vec![batch, saying("Research finished.")]),
-        tools,
-    )
-    .permitting(crucible_core::Permission::with(
-        crucible_core::Mode::FullAccess,
-        crucible_core::Rules::new(),
-    ));
+    let conversation = paired(Arc::new(Session::nowhere()), |session| {
+        scripted(
+            Script::new(vec![batch, saying("Research finished.")]),
+            tools,
+            session,
+        )
+        .permitting(crucible_core::Permission::with(
+            crucible_core::Mode::FullAccess,
+            crucible_core::Rules::new(),
+        ))
+    });
     let mut renderer = Renderer::new(Recording::new(100, 30));
     let mut input = Cursor::new(b"research\n".to_vec());
     converse(
-        Talking {
-            runner,
-            session: Arc::new(Session::nowhere()),
-        },
+        conversation,
         &mut renderer,
         &plain(),
         &opening(),

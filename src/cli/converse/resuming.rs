@@ -100,7 +100,7 @@ fn worth_asking(carrying: u64, said: Option<u64>) -> bool {
 /// [`Fatal::Terminal`] if the terminal could not be drawn on or read from.
 pub(super) fn asked<T: Terminal>(
     renderer: &mut Renderer<T>,
-    runner: &mut Runner,
+    runner: &Runner,
     session: &Session,
     terms: &Terms,
     keys: bool,
@@ -157,7 +157,7 @@ pub(super) fn asked<T: Terminal>(
 
 /// Writes down that this question is not wanted again.
 fn stop<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms) {
-    if let Err(problem) = crate::cli::remember::unasked(&terms.choosing) {
+    if let Err(problem) = crucible_app::remember::unasked(&terms.choosing) {
         drop(renderer.commit(&format!("! could not write that down: {problem}")));
     }
 }

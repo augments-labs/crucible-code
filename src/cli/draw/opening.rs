@@ -225,7 +225,7 @@ mod tests {
     use crucible_core::Message;
     use crucible_session::Session;
 
-    use crate::cli::NOTHING_TO_ASK;
+    use crucible_app::providers::NOTHING_TO_ASK;
     use crucible_tui::Recording;
 
     use super::*;

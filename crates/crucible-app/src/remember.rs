@@ -14,20 +14,31 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use crucible_config::ConfigError;
-use crucible_core::Effort;
+use crucible_models::Effort;
 
 #[cfg(test)]
-use crucible_core::Minted;
+use crucible_tools::Minted;
 
 /// What can stop a configuration choice from lasting.
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum RememberError {
+pub enum RememberError {
+    /// The file could not be opened, replaced or locked.
     #[error("{file} could not be written: {source}")]
-    Unwritable { file: Box<str>, source: io::Error },
+    Unwritable {
+        /// Which file, as the reader would spell it.
+        file: Box<str>,
+        /// What the platform refused.
+        source: io::Error,
+    },
 
+    /// Another crucible held the file for longer than this one waited.
     #[error("{file} is being changed by another crucible; try again")]
-    Busy { file: Box<str> },
+    Busy {
+        /// Which file, as the reader would spell it.
+        file: Box<str>,
+    },
 
+    /// The file does not say what a configuration file may say.
     #[error(transparent)]
     Unusable(#[from] ConfigError),
 }
@@ -47,26 +58,50 @@ fn allowing(file: &Path, rule: &Minted) -> Result<(), RememberError> {
 ///
 /// Everything already in the file stays where it was, byte for byte. A file
 /// that is not there yet becomes one holding the theme and nothing else.
-pub(crate) fn drawing(file: &Path, theme: &str) -> Result<(), RememberError> {
+///
+/// # Errors
+///
+/// [`RememberError::Busy`] when another crucible holds the file,
+/// [`RememberError::Unwritable`] when it cannot be opened or replaced, and
+/// [`RememberError::Unusable`] when what it already says is not configuration.
+pub fn drawing(file: &Path, theme: &str) -> Result<(), RememberError> {
     answering(file, |text, named| {
         crucible_config::drawing(text, named, theme)
     })
 }
 
 /// Persists the sandbox choice in the user configuration.
-pub(crate) fn sandboxing(file: &Path, enabled: bool) -> Result<(), RememberError> {
+///
+/// # Errors
+///
+/// [`RememberError::Busy`] when another crucible holds the file,
+/// [`RememberError::Unwritable`] when it cannot be opened or replaced, and
+/// [`RememberError::Unusable`] when what it already says is not configuration.
+pub fn sandboxing(file: &Path, enabled: bool) -> Result<(), RememberError> {
     answering(file, |text, named| {
         crucible_config::sandboxing(text, named, enabled)
     })
 }
 
 /// Writes down that picking a session up should stop asking about its size.
-pub(crate) fn unasked(file: &Path) -> Result<(), RememberError> {
+///
+/// # Errors
+///
+/// [`RememberError::Busy`] when another crucible holds the file,
+/// [`RememberError::Unwritable`] when it cannot be opened or replaced, and
+/// [`RememberError::Unusable`] when what it already says is not configuration.
+pub fn unasked(file: &Path) -> Result<(), RememberError> {
     answering(file, crucible_config::unasked)
 }
 
 /// Writes `theme` down as the syntax theme fenced code is read in.
-pub(crate) fn syntax(file: &Path, theme: &str) -> Result<(), RememberError> {
+///
+/// # Errors
+///
+/// [`RememberError::Busy`] when another crucible holds the file,
+/// [`RememberError::Unwritable`] when it cannot be opened or replaced, and
+/// [`RememberError::Unusable`] when what it already says is not configuration.
+pub fn syntax(file: &Path, theme: &str) -> Result<(), RememberError> {
     answering(file, |text, named| {
         crucible_config::reading(text, named, theme)
     })
@@ -76,7 +111,13 @@ pub(crate) fn syntax(file: &Path, theme: &str) -> Result<(), RememberError> {
 ///
 /// Everything already in the file stays where it was, byte for byte. A file
 /// that is not there yet becomes one holding the name and nothing else.
-pub(crate) fn asking(file: &Path, provider: &str) -> Result<(), RememberError> {
+///
+/// # Errors
+///
+/// [`RememberError::Busy`] when another crucible holds the file,
+/// [`RememberError::Unwritable`] when it cannot be opened or replaced, and
+/// [`RememberError::Unusable`] when what it already says is not configuration.
+pub fn asking(file: &Path, provider: &str) -> Result<(), RememberError> {
     answering(file, |text, named| {
         crucible_config::asking(text, named, provider)
     })
@@ -86,7 +127,13 @@ pub(crate) fn asking(file: &Path, provider: &str) -> Result<(), RememberError> {
 ///
 /// Everything already in the file stays where it was, byte for byte. A file
 /// that is not there yet becomes one holding the choice and nothing else.
-pub(crate) fn choosing(file: &Path, provider: &str, model: &str) -> Result<(), RememberError> {
+///
+/// # Errors
+///
+/// [`RememberError::Busy`] when another crucible holds the file,
+/// [`RememberError::Unwritable`] when it cannot be opened or replaced, and
+/// [`RememberError::Unusable`] when what it already says is not configuration.
+pub fn choosing(file: &Path, provider: &str, model: &str) -> Result<(), RememberError> {
     answering(file, |text, named| {
         crucible_config::choosing(text, named, provider, model)
     })
@@ -97,7 +144,13 @@ pub(crate) fn choosing(file: &Path, provider: &str, model: &str) -> Result<(), R
 ///
 /// Everything already in the file stays where it was, byte for byte. A file
 /// that is not there yet becomes one holding the rung and nothing else.
-pub(crate) fn thinking(file: &Path, provider: &str, effort: Effort) -> Result<(), RememberError> {
+///
+/// # Errors
+///
+/// [`RememberError::Busy`] when another crucible holds the file,
+/// [`RememberError::Unwritable`] when it cannot be opened or replaced, and
+/// [`RememberError::Unusable`] when what it already says is not configuration.
+pub fn thinking(file: &Path, provider: &str, effort: Effort) -> Result<(), RememberError> {
     answering(file, |text, named| {
         crucible_config::thinking(text, named, provider, effort)
     })

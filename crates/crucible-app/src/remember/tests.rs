@@ -2,9 +2,10 @@
 
 use std::ffi::OsString;
 
-use crucible_core::{Command, Sensitivity, Settled, ToolArgs, ToolCall, ToolId, narrowest};
+use crucible_tools::{Command, Sensitivity, Settled, narrowest};
+use crucible_types::{ToolArgs, ToolCall, ToolId};
 
-use crate::cli::sample::Sample;
+use crate::sample::Sample;
 
 use super::*;
 

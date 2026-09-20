@@ -2,10 +2,10 @@ use std::collections::HashMap;
 use std::fs;
 use std::time::Duration;
 
-use crucible_core::SandboxFilesystemAccess;
+use crucible_sandbox::SandboxFilesystemAccess;
 
 use super::*;
-use crate::cli::sample::Sample;
+use crate::sample::Sample;
 
 /// The variable an `envFrom` record names in these tests.
 const NAMED: &str = "EXAMPLE_DOCS_TOKEN";
@@ -366,7 +366,7 @@ fn selected_servers_share_the_runs_opt_in_confinement() {
             panic!("one server was named");
         };
         assert_eq!(chosen.effective_policy().enabled(), expected);
-        let confinement = crucible_core::SandboxResourceLimits::confining();
+        let confinement = crucible_sandbox::SandboxResourceLimits::confining();
         assert_eq!(
             chosen.effective_policy().limits().cpu_seconds,
             expected.then_some(confinement.cpu_seconds).flatten()
@@ -397,7 +397,7 @@ fn selected_mcp_hosts_sample_the_shared_choice_for_each_preparation() {
     assert!(!after.enabled());
     assert_eq!(
         during.limits().cpu_seconds,
-        crucible_core::SandboxResourceLimits::confining().cpu_seconds
+        crucible_sandbox::SandboxResourceLimits::confining().cpu_seconds
     );
     assert_eq!(before.limits().cpu_seconds, None);
     assert_eq!(before.filesystem(), during.filesystem());

@@ -7,7 +7,7 @@
 //! checkout was cloned from.
 //!
 //! Read out of the file directly rather than by running `git remote get-url`,
-//! for the reason [`super::branching`] reads `HEAD` itself: this is on the
+//! for the reason [`crucible_app::branching`] reads `HEAD` itself: this is on the
 //! startup path, a child process there is an exec nobody asked for, and a
 //! checkout without git installed still has the file.
 //!

@@ -3,7 +3,7 @@
 use crucible_extension::{ExtensionProtocol, Extensions};
 
 use super::listing;
-use crate::cli::sample::Sample;
+use crate::sample::Sample;
 
 /// The crucible these listings are drawn by.
 ///

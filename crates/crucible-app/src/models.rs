@@ -10,7 +10,7 @@
 //! name that merely resembles one is wrong by a factor nobody would notice until
 //! a session had already thrown half of itself away.
 
-use crucible_core::{Modalities, Modality};
+use crucible_types::{Modalities, Modality};
 
 /// What one model accepts and produces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -29,8 +29,8 @@ use crucible_tui::{Glyphs, Offered, Panel, Renderer, Row, Slot, Terminal};
 
 use crate::cli::Fatal;
 use crate::cli::converse::region::{self, Ended, Moved, step};
-use crate::cli::remember;
 use crate::cli::style::Style;
+use crucible_app::remember;
 use crucible_tui::{Key, Pressed};
 use crucible_tui::{clip, fold};
 

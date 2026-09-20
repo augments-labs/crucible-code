@@ -24,11 +24,12 @@
 //! the path that wraps and drops escape sequences, and it is the one every
 //! other `!` line in this program already takes.
 
+use crucible_app::Conversation;
+use crucible_app::providers::Served;
 use crucible_core::{
     Collision, Compacting, Mode, Provenance, Registered, Registry, RegistryError, RegistrySnapshot,
     SourceKind,
 };
-use crucible_runner::Runner;
 use crucible_tui::{Glyphs, Key, Listed, Menu, Pressed, Renderer, Row, Slot, Terminal, clip, fold};
 
 use crate::cli::Fatal;
@@ -36,7 +37,6 @@ use crate::cli::style::Style;
 
 use super::region::{self, Moved};
 use super::{Held, Terms, mode, picking};
-use crate::cli::Served;
 
 mod cache;
 mod clear;
@@ -457,10 +457,20 @@ pub(super) enum Kept {
     Model(Served, String),
 }
 
+/// Who is answering and for which model, by name: what a panel stood while the
+/// runner is away is told instead of reading it.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Asked<'a> {
+    /// The provider's name in the registry, where one is answering.
+    pub(super) provider: Option<&'static str>,
+    /// The model in force, empty where none is.
+    pub(super) model: &'a str,
+}
+
 pub(super) fn deferred<T: Terminal>(
     renderer: &mut Renderer<T>,
     terms: &Terms,
-    current: &str,
+    current: Asked<'_>,
     wanted: &Owned,
     while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
 ) -> Result<Option<Kept>, Fatal> {
@@ -500,12 +510,12 @@ pub(super) fn deferred<T: Terminal>(
 /// and the pick made over the running turn is the one this turn is asked under.
 pub(super) fn apply_model<T: Terminal>(
     renderer: &mut Renderer<T>,
-    runner: &mut Runner,
+    conversation: &mut Conversation,
     terms: &Terms,
     provider: Served,
     name: &str,
 ) -> Result<(), Fatal> {
-    model::apply(renderer, runner, terms, provider, name)
+    model::apply(renderer, conversation, terms, provider, name)
 }
 
 /// Stands why a command cannot run now over the box until escape closes it.
@@ -614,7 +624,7 @@ pub(super) fn filtering(commands: &Commands, line: &str, glyphs: Glyphs) -> Vec<
 pub(super) fn run<T: Terminal>(
     wanted: Wanted<'_>,
     renderer: &mut Renderer<T>,
-    runner: &mut Runner,
+    conversation: &mut Conversation,
     held: &mut Held<'_>,
     terms: &Terms,
 ) -> Result<Ran, Fatal> {
@@ -631,7 +641,7 @@ pub(super) fn run<T: Terminal>(
     // where the next block starts — the box below is already parted from it,
     // and the next thing said belongs under the pair rather than in it.
     let start = renderer.lines();
-    let making = answer(wanted, renderer, runner, held, terms)?;
+    let making = answer(wanted, renderer, conversation, held, terms)?;
     renderer.subordinate(start, terms.style().glyphs())?;
     renderer.commit("")?;
 
@@ -642,7 +652,7 @@ pub(super) fn run<T: Terminal>(
 fn answer<T: Terminal>(
     wanted: Wanted<'_>,
     renderer: &mut Renderer<T>,
-    runner: &mut Runner,
+    conversation: &mut Conversation,
     held: &mut Held<'_>,
     terms: &Terms,
 ) -> Result<Option<Compacting>, Fatal> {
@@ -674,27 +684,27 @@ fn answer<T: Terminal>(
         Wanted::Known {
             command: Command::Model,
             rest,
-        } => model::run(rest, renderer, runner, terms, held.answers.keys)?,
+        } => model::run(rest, renderer, conversation, terms, held.answers.keys)?,
 
         Wanted::Known {
             command: Command::Effort,
             rest,
-        } => effort::run(rest, renderer, runner, terms, held.answers.keys)?,
+        } => effort::run(rest, renderer, conversation, terms, held.answers.keys)?,
 
         Wanted::Known {
             command: Command::Login,
             rest,
-        } => login::run(rest, renderer, runner, terms, held.answers.keys)?,
+        } => login::run(rest, renderer, conversation, terms, held.answers.keys)?,
 
         Wanted::Known {
             command: Command::Logout,
             rest,
-        } => logout::run(rest, renderer, runner, terms, held.answers.keys)?,
+        } => logout::run(rest, renderer, conversation, terms, held.answers.keys)?,
 
         Wanted::Known {
             command: Command::Mode,
             rest,
-        } => moded(rest, renderer, runner, style)?,
+        } => moded(rest, renderer, conversation, style)?,
 
         Wanted::Known {
             command: Command::Theme,
@@ -712,17 +722,17 @@ fn answer<T: Terminal>(
         Wanted::Known {
             command: Command::Resume,
             rest,
-        } => return resume::run(rest, renderer, runner, held, terms),
+        } => return resume::run(rest, renderer, conversation, held, terms),
 
         Wanted::Known {
             command: Command::Cache,
             rest,
-        } => cache::run(rest, renderer, runner)?,
+        } => cache::run(rest, renderer, conversation)?,
 
         Wanted::Known {
             command: Command::Clear,
             ..
-        } => clear::run(renderer, runner, held, terms)?,
+        } => clear::run(renderer, conversation, held, terms)?,
 
         Wanted::Unknown(word) => {
             renderer.commit(&format!("! no such command: {word}"))?;
@@ -744,14 +754,14 @@ fn answer<T: Terminal>(
 fn moded<T: Terminal>(
     said: &str,
     renderer: &mut Renderer<T>,
-    runner: &mut Runner,
+    conversation: &mut Conversation,
     style: Style,
 ) -> Result<(), Fatal> {
     let columns = renderer.columns();
     let ring = Row::new().then(Slot::Quiet, clip(mode::ring(style.glyphs()), columns));
 
     if said.is_empty() {
-        let rows = [sentence(runner.mode(), columns), ring];
+        let rows = [sentence(conversation.runner().mode(), columns), ring];
         renderer.present(&rows)?;
         return Ok(());
     }
@@ -765,7 +775,7 @@ fn moded<T: Terminal>(
         return Ok(());
     };
 
-    runner.switch(asked);
+    conversation.switch(asked);
     renderer.present(&[sentence(asked, columns)])?;
     Ok(())
 }

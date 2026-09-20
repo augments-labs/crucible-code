@@ -1,4 +1,4 @@
-//! Building the runner the loop drives.
+//! Building the runner a conversation drives.
 //!
 //! Everything the command line and the configuration files decided arrives here
 //! as a [`Startup`], and leaves as a `Runner` holding a provider, its tools, a
@@ -11,6 +11,7 @@
 //! can fail without a key or a home directory anywhere near the test.
 
 use std::ffi::OsString;
+use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -19,14 +20,11 @@ use crucible_builtins::{
     AskUser, Background, Bash, BashOutput, Edit, Glob, Grep, Held, Ledger, Plan, Read, TodoWrite,
     ToolSearch, WebFetch, WebSearch, Write,
 };
-use crucible_config::Settings;
-use crucible_context::ContextInputs;
-use crucible_core::{
-    AgentId, ApiKey, Credential, DescribeTool, Effort, Fetch, Header, HeaderKey, Message,
-    Modalities, Mode, ModelCapabilities, Provider, Revealed, Search, SessionId, Tool, ToolsetError,
-    Transcript, Workspace,
-};
+use crucible_config::{Home, Settings};
+use crucible_context::{ContextInputs, SystemPrompt};
+use crucible_credentials::{ApiKey, Credential, Header, HeaderKey};
 use crucible_mcp::Hosting;
+use crucible_models::{Effort, ModelCapabilities, Provider};
 use crucible_provider::{
     Anthropic, AnthropicWeb, Endpoint, Google, GoogleWeb, Https, Moonshot, MoonshotWeb, OpenAi,
     OpenAiWeb, Unavailable,
@@ -34,12 +32,14 @@ use crucible_provider::{
 use crucible_runner::{Agent, AgentBuilder, Bounds, Compaction, Model, RunPolicy, Runner, Tools};
 use crucible_sandbox_local::LocalSandbox;
 use crucible_session::Session;
+use crucible_tools::{DescribeTool, Fetch, Mode, Put, Revealed, Search, Tool, ToolsetError};
+use crucible_types::{AgentId, Message, Modalities, SessionId, Transcript};
+use crucible_workspace::Workspace;
 
-use super::seen::Putting;
-use super::selecting;
-use super::standing;
-use super::subscription::Subscriptions;
-use super::{Fatal, Providers, Served};
+use crate::providers::{self, Providers, Served};
+use crate::selecting;
+use crate::subscription::Subscriptions;
+use crate::{AppError, Conversation};
 
 /// The most crucible will ask any model to produce in one answer, in tokens.
 ///
@@ -51,7 +51,7 @@ use super::{Fatal, Providers, Served};
 /// the room kept free for the next exchange is worked out from this figure.
 /// Sixteen thousand is a long answer or a large edit, and a fraction of even a
 /// small window.
-pub(super) const CEILING: u32 = 16_000;
+pub const CEILING: u32 = 16_000;
 
 /// And where this build knows nothing about the model at all.
 ///
@@ -59,14 +59,14 @@ pub(super) const CEILING: u32 = 16_000;
 /// asking for a long answer risks a vendor refusing the request outright — and
 /// a conservative ceiling costs a truncated answer at worst, where an optimistic
 /// one costs the turn.
-pub(super) const UNKNOWN_CEILING: u32 = 8192;
+pub const UNKNOWN_CEILING: u32 = 8192;
 
 /// The name the tool that writes the plan is called by.
 ///
 /// Here rather than beside the panel, because this is the file allowed to know
 /// which tool is which: a resumed session is seeded by finding that tool's last
-/// call in the transcript, and the loop that draws the panel never learns there
-/// is a tool behind it at all.
+/// call in the transcript, and a front end that draws the plan never learns
+/// there is a tool behind it at all.
 const PLANNING: &str = "todo_write";
 
 /// Which earlier session, if any, a run picks back up.
@@ -75,7 +75,8 @@ const PLANNING: &str = "todo_write";
 /// `--continue` and `--resume` together: by the time a startup is being built
 /// the three answers are one decision, and an enum is what keeps a fourth
 /// combination from ever being wired.
-pub(super) enum Resuming {
+#[derive(Debug)]
+pub enum Resuming {
     /// Start a new session.
     No,
     /// Carry on the newest session for this directory: `--continue`.
@@ -90,85 +91,106 @@ pub(super) enum Resuming {
 /// only so that a test can supply them: `sessions`, `settings` and `from` each
 /// let a startup be pointed somewhere disposable and failed either way it can
 /// fail, and eight of those in a row is a call nobody can read.
-pub(super) struct Startup<'a> {
+pub struct Startup<'a> {
     /// The generation of the provider registry every name here was read
     /// against, and the one a model's limits are read out of. Taken by the
     /// caller rather than here, so the provider that was resolved and the
     /// record its limits come from are the same generation.
-    pub(super) providers: &'a Providers,
+    pub providers: &'a Providers,
     /// Which provider, after the command line and the files have both spoken.
     /// `None` where this machine holds no usable credential for any of them.
-    pub(super) provider: Option<Served>,
+    pub provider: Option<Served>,
     /// The exact missing-choice sentence the provider that answers nothing
     /// refuses with, resolved once from the same credential set the opening
     /// drew it from.
-    pub(super) unasked: &'static str,
+    pub unasked: &'static str,
     /// Which model of it, resolved the same way. `None` where nothing named
     /// one, which is a session that can do everything but take a turn.
-    pub(super) model: Option<&'a str>,
+    pub model: Option<&'a str>,
     /// How hard to ask it to think, resolved the same way again. `None` sends
     /// no such field at all, which is the vendor's own default for the model.
-    pub(super) effort: Option<Effort>,
+    pub effort: Option<Effort>,
     /// Which earlier session, if any, this run picks back up.
-    pub(super) resuming: Resuming,
+    pub resuming: Resuming,
     /// The mode the permission engine starts in. The caller resolves it once
     /// and gives the same value to the prompt line, which is what keeps the
     /// mode on screen the mode in force.
-    pub(super) mode: Mode,
+    pub mode: Mode,
     /// What the configuration files said.
-    pub(super) settings: &'a Settings,
+    pub settings: &'a Settings,
     /// Where session logs go.
-    pub(super) sessions: &'a Path,
+    pub sessions: &'a Path,
     /// The directory being worked in.
-    pub(super) workspace: &'a Workspace,
-    /// Which files have been read. Made by the caller because the loop holds
-    /// one too, and the commands that leave a session empty it.
-    pub(super) ledger: &'a Ledger,
+    pub workspace: &'a Workspace,
+    /// Which files have been read. Made by the caller because the caller keeps
+    /// a handle on it too: leaving a session for another empties it.
+    pub ledger: &'a Ledger,
     /// Which deferred tools this session has looked up. Held by the caller for
     /// the same reason the ledger is: `/clear` empties it, and a session that
     /// has not looked anything up must not inherit the last one's answers.
-    pub(super) revealed: &'a Revealed,
+    pub revealed: &'a Revealed,
     /// The plan the agent is working to. Made by the caller for the same reason
-    /// the ledger is: the loop draws it above the box, the tool writes into it,
-    /// and `/clear` empties it.
-    pub(super) plan: &'a Plan,
+    /// the ledger is: a front end shows it, the tool writes into it, and
+    /// leaving the session empties it.
+    pub plan: &'a Plan,
     /// Where a command left running is kept. Made by the caller for the reason
     /// the two above are, with one more: it is what ends every one of those
     /// processes when the run is over, so the value that ends them has to outlive
     /// every tool that started one.
-    pub(super) leaving: &'a Background,
-    /// Where a tool's questions reach the thread that draws them. Made by the
-    /// caller for the reason the plan is: the loop holds the other end.
-    pub(super) putting: &'a Putting,
+    pub leaving: &'a Background,
+    /// Where a tool's questions are put. Made by the caller for the reason the
+    /// plan is: whoever answers holds the other end, and nothing here has to
+    /// know whether that is a terminal.
+    pub asking: Arc<dyn Put>,
     /// Which MCP servers written down under `mcp.servers` this run hosts, by
     /// name and in the order the command line gave them. Empty is the ordinary
     /// run: a configuration file lists servers somebody could start, and this
     /// is the moment one of them is chosen.
-    pub(super) hosting: &'a [String],
+    pub hosting: &'a [String],
     /// Whether there is anybody at a keyboard to be asked.
     ///
     /// A redirected run has nobody, and a tool that can only ever answer "there
     /// is no one here" is a schema spent saying so.
-    pub(super) terminal: bool,
+    pub terminal: bool,
     /// Reads the environment. A parameter because the real one cannot be
     /// written from a test: writing to it is `unsafe` in edition 2024, which
     /// this workspace forbids.
-    pub(super) from: &'a dyn Fn(&str) -> Option<String>,
+    pub from: &'a dyn Fn(&str) -> Option<String>,
     /// What `/login` wrote down. Read once by the caller, because the same
     /// answer is what decided which provider this run is for.
-    pub(super) stored: &'a StoredCredentials,
+    pub stored: &'a StoredCredentials,
     /// The subscription logins compiled into this binary, which is what pairs
     /// a stored account credential with the one address its tokens are issued
     /// for.
-    pub(super) subscriptions: &'a Subscriptions,
+    pub subscriptions: &'a Subscriptions,
 }
 
-/// The runner the loop drives, and the session it records into.
+impl fmt::Debug for Startup<'_> {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        out.debug_struct("Startup")
+            .field("provider", &self.provider.map(|one| one.name))
+            .field("model", &self.model)
+            .field("effort", &self.effort)
+            .field("resuming", &self.resuming)
+            .field("mode", &self.mode)
+            .field("hosting", &self.hosting)
+            .field("terminal", &self.terminal)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The conversation the front end drives: the runner, and the session it
+/// records into.
 ///
 /// Both, because the runner writes through a storage contract and never learns
 /// what is behind it: closing the log, browsing it and reporting on it are the
 /// application's, so the application keeps the session it built.
-pub(super) fn assemble(startup: &Startup<'_>) -> Result<(Runner, Arc<Session>), Fatal> {
+///
+/// # Errors
+///
+/// [`AppError`] where no provider, server or session could be set up as
+/// asked; nothing is written to the disk for a startup that fails.
+pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     let Startup {
         settings,
         sessions,
@@ -218,7 +240,7 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<(Runner, Arc<Session>), 
             (session, Some(transcript))
         }
         Resuming::No => {
-            let branch = super::branching::current(workspace.root());
+            let branch = crate::branching::current(workspace.root());
             (
                 Session::start(sessions, workspace, branch.as_deref())?,
                 None,
@@ -228,13 +250,13 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<(Runner, Arc<Session>), 
 
     // Build the registry before the runner, because its exact immutable
     // generation is one of the typed facts the first pass assembles.
-    let sandbox: Arc<dyn crucible_core::SandboxService> = Arc::new(LocalSandbox::new());
+    let sandbox: Arc<dyn crucible_sandbox::SandboxService> = Arc::new(LocalSandbox::new());
     let offering = tools(startup, settings, reaching, Arc::clone(&sandbox))?;
 
     // Operator-authored instructions are the stable request prefix. Everything
     // that can move within the session is read by context assembly instead.
     let name = startup.model.unwrap_or_default();
-    let asked = standing::under(settings);
+    let asked = under(settings);
 
     // Read before the provider is handed over, because which vendor is being
     // written to is what says which model's limits are being asked about.
@@ -247,44 +269,100 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<(Runner, Arc<Session>), 
     // for every run that never asked for one.
     let context = ContextInputs::new(workspace.root());
     let permission = settings.permission(startup.mode);
-    let session = Arc::new(session);
-    let mut runner = if chosen.is_empty() {
-        Runner::new(provider, offering, asking, context, session.clone())
-    } else {
-        Runner::with_toolset(
-            provider,
-            Hosting::new(Arc::new(offering), sandbox, chosen),
-            asking,
-            context,
-            session.clone(),
-        )
-    }
-    .permitting(permission)
-    .under(policy(settings));
-    if let Some(transcript) = earlier {
-        planned(startup.plan, &transcript);
-        runner = runner.resuming(transcript);
-    }
+    let serving = startup.provider.map(|one| one.name);
+    let run_policy = policy(settings);
+    let conversation = Conversation::recording(Arc::new(session), serving, |session| {
+        let runner = if chosen.is_empty() {
+            Runner::new(provider, offering, asking, context, session)
+        } else {
+            Runner::with_toolset(
+                provider,
+                Hosting::new(Arc::new(offering), sandbox, chosen),
+                asking,
+                context,
+                session,
+            )
+        }
+        .permitting(permission)
+        .under(run_policy);
+        match earlier {
+            Some(transcript) => {
+                planned(startup.plan, &transcript);
+                runner.resuming(transcript)
+            }
+            None => runner,
+        }
+    });
 
-    Ok((runner, session))
+    Ok(conversation)
+}
+
+/// Protects the user configuration before any value can be read from it.
+///
+/// Tightens the permission bits of crucible's home directory and the
+/// configuration file in it to owner-only; the file's *contents* are never
+/// written here. A missing file is the ordinary case — nothing has been
+/// configured yet — and anything else the platform refuses ends the run before
+/// a secret a wider audience could read is treated as private.
+///
+/// # Errors
+///
+/// [`AppError::Private`], naming the directory or file the platform would not
+/// narrow.
+pub fn protected(home: &Home) -> Result<(), AppError> {
+    let private = |file: &Path, source| AppError::Private {
+        file: file.display().to_string().into(),
+        source,
+    };
+    crucible_privacy::directory(home.path()).map_err(|source| private(home.path(), source))?;
+
+    let config = crucible_config::user(home);
+    match crucible_privacy::tighten(&config) {
+        Ok(_) => Ok(()),
+        Err(problem) if problem.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(private(&config, source)),
+    }
+}
+
+/// The stable instructions configured for this run.
+///
+/// Session facts do not enter this string. The runner assembles workspace,
+/// permission, skill, tool, environment and model sections once per pass and
+/// retains those fragments in the transcript. Keeping this value to
+/// operator-authored instructions leaves the most stable request content in
+/// the provider's system field and prevents a model or tool change from
+/// rewriting it.
+pub fn under(settings: &Settings) -> String {
+    SystemPrompt {
+        tone: settings.tone(),
+        custom: settings.custom_prompt().map(str::to_owned),
+        append: settings.appended_prompt().map(str::to_owned),
+        ..SystemPrompt::default()
+    }
+    .instructions_text()
 }
 
 /// The session `--resume` named, and everything it already holds.
 ///
-/// A name nothing here answers to gets [`Fatal::NoSession`]'s sentence rather
+/// A name nothing here answers to gets [`AppError::NoSession`]'s sentence rather
 /// than the session crate's: the id came off the command line a moment ago,
 /// and what the user needs to hear is that the address is wrong in this
 /// workspace, not which file was looked for.
-pub(super) fn reopening(
+///
+/// # Errors
+///
+/// [`AppError::NoSession`] when nothing in this workspace answers to the id,
+/// and [`AppError::Session`] when the log it names cannot be read.
+pub fn reopening(
     sessions: &Path,
     workspace: &Workspace,
     id: &SessionId,
-) -> Result<(Session, Transcript), Fatal> {
+) -> Result<(Session, Transcript), AppError> {
     use crucible_session::SessionError;
 
     Session::reopen(sessions, workspace, id).map_err(|problem| match problem {
-        SessionError::Unknown { id, .. } => Fatal::NoSession(id),
-        other => Fatal::Session(other),
+        SessionError::Unknown { id, .. } => AppError::NoSession(id),
+        other => AppError::Session(other),
     })
 }
 
@@ -298,7 +376,7 @@ pub(super) fn reopening(
 /// Nothing is said where there is none, and nothing is said where the call
 /// cannot be read: this is a picture of the work, drawn again from the record,
 /// and a session that is picked up without one opens the way a new session does.
-pub(super) fn planned(plan: &Plan, transcript: &Transcript) {
+pub fn planned(plan: &Plan, transcript: &Transcript) {
     let called = transcript.messages().iter().rev().find_map(|message| {
         let Message::Agent { calls, .. } = message else {
             return None;
@@ -322,27 +400,40 @@ pub(super) fn planned(plan: &Plan, transcript: &Transcript) {
 ///
 /// The entry comes back because the model to fall back on is written beside the
 /// name, and the caller has just proved which name it is.
-pub(super) fn served(providers: &Providers, named: &str) -> Result<Served, Fatal> {
+///
+/// # Errors
+///
+/// [`AppError::Provider`] when no registered provider answers to `named`.
+pub fn served(providers: &Providers, named: &str) -> Result<Served, AppError> {
     providers
         .find(named)
-        .map(|arm| arm.served)
-        .ok_or_else(|| Fatal::Provider {
+        .map(|arm| arm.served())
+        .ok_or_else(|| AppError::Provider {
             named: named.into(),
-            has: super::names(providers).into(),
+            has: providers::names(providers).into(),
         })
 }
 
 /// Credential sources provider construction resolves as one boundary.
 #[derive(Clone, Copy)]
-pub(crate) struct ProviderAuth<'a> {
+pub struct ProviderAuth<'a> {
     /// What the configuration files said.
-    pub(crate) settings: &'a Settings,
+    pub settings: &'a Settings,
     /// Reads the environment.
-    pub(crate) from: &'a dyn Fn(&str) -> Option<String>,
+    pub from: &'a dyn Fn(&str) -> Option<String>,
     /// What `/login` wrote down.
-    pub(crate) stored: &'a StoredCredentials,
+    pub stored: &'a StoredCredentials,
     /// The subscription logins compiled into this binary.
-    pub(crate) subscriptions: &'a Subscriptions,
+    pub subscriptions: &'a Subscriptions,
+}
+
+impl fmt::Debug for ProviderAuth<'_> {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        out.debug_struct("ProviderAuth")
+            .field("settings", &self.settings)
+            .field("stored", &self.stored)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Everything a factory is handed to build one provider or its web sources.
@@ -351,26 +442,37 @@ pub(crate) struct ProviderAuth<'a> {
 /// reads a setting or pairs a name with a variable on its own: the variable is
 /// the configured one or the record's usual name, and the address is the one a
 /// setting moved requests to, already parsed at that boundary.
-pub(crate) struct Wiring<'a> {
+pub struct Wiring<'a> {
     /// The provider's registered name, and the key `/login` wrote it under.
-    pub(crate) named: &'static str,
+    pub named: &'static str,
     /// The environment variable the key is read from.
-    pub(crate) variable: &'a str,
+    pub variable: &'a str,
     /// Where a setting says requests should go, where one does.
-    pub(crate) sending: Option<Endpoint>,
+    pub sending: Option<Endpoint>,
     /// The credential sources, as one boundary.
-    pub(crate) auth: ProviderAuth<'a>,
+    pub auth: ProviderAuth<'a>,
+}
+
+impl fmt::Debug for Wiring<'_> {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        out.debug_struct("Wiring")
+            .field("named", &self.named)
+            .field("variable", &self.variable)
+            .field("sending", &self.sending)
+            .field("auth", &self.auth)
+            .finish()
+    }
 }
 
 /// Builds one provider from its wiring.
 ///
 /// Fails the start where the credential is missing or a subscription cannot be
 /// used at the configured address, with the sentence the vendor's arm owns.
-pub(crate) type Factory = fn(Wiring<'_>) -> Result<Box<dyn Provider>, Fatal>;
+pub type Factory = fn(Wiring<'_>) -> Result<Box<dyn Provider>, AppError>;
 
 /// Builds what answers the two web tools for one provider and model, or
 /// nothing.
-pub(crate) type Reach = fn(Wiring<'_>, &str) -> Reaching;
+pub type Reach = fn(Wiring<'_>, &str) -> Reaching;
 
 /// The provider that serves the chosen model.
 ///
@@ -400,11 +502,16 @@ pub(crate) type Reach = fn(Wiring<'_>, &str) -> Reaching;
 /// from the wiring root for exactly that: a credential written at the prompt is
 /// a provider this run can be handed, and building it anywhere else would put
 /// the names below in a second file.
-pub(super) fn provider(
+///
+/// # Errors
+///
+/// Whatever stops the credential being resolved or the address being used:
+/// [`AppError::Credential`], [`AppError::Address`] and their kin.
+pub fn provider(
     serving: Option<Served>,
     unasked: &'static str,
     auth: ProviderAuth<'_>,
-) -> Result<Box<dyn Provider>, Fatal> {
+) -> Result<Box<dyn Provider>, AppError> {
     let Some(serving) = serving else {
         return Ok(Box::new(Unavailable::new(unasked)));
     };
@@ -413,7 +520,7 @@ pub(super) fn provider(
 }
 
 /// The wiring one record's factories are handed, resolved from the settings.
-fn wiring(serving: Served, auth: ProviderAuth<'_>) -> Result<Wiring<'_>, Fatal> {
+fn wiring(serving: Served, auth: ProviderAuth<'_>) -> Result<Wiring<'_>, AppError> {
     let named = serving.name;
     Ok(Wiring {
         named,
@@ -427,7 +534,12 @@ fn wiring(serving: Served, auth: ProviderAuth<'_>) -> Result<Wiring<'_>, Fatal> 
 ///
 /// Two protocols, one credential kind pointed at different headers.
 /// Authentication is a separate axis, and this is what that buys.
-pub(crate) fn anthropic(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, Fatal> {
+///
+/// # Errors
+///
+/// Whatever stops the credential being resolved or the address being used:
+/// [`AppError::Credential`], [`AppError::Address`] and their kin.
+pub fn anthropic(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
     Ok(Box::new(Anthropic::at(
         wiring.sending.unwrap_or(Anthropic::VENDOR),
         key(
@@ -448,7 +560,12 @@ pub(crate) fn anthropic(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, Fatal> 
 /// which is the plan sold for what crucible does; a key from the open platform
 /// sets `providers.moonshot.baseUrl` to the other address, and that is what the
 /// help text and the docs say.
-pub(crate) fn moonshot(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, Fatal> {
+///
+/// # Errors
+///
+/// Whatever stops the credential being resolved or the address being used:
+/// [`AppError::Credential`], [`AppError::Address`] and their kin.
+pub fn moonshot(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
     let (endpoint, credential) = credential(
         ApiAudience {
             provider: wiring.named,
@@ -466,7 +583,12 @@ pub(crate) fn moonshot(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, Fatal> {
 }
 
 /// Gemini Interactions accepts an API key, never a product subscription login.
-pub(crate) fn google(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, Fatal> {
+///
+/// # Errors
+///
+/// Whatever stops the credential being resolved or the address being used:
+/// [`AppError::Credential`], [`AppError::Address`] and their kin.
+pub fn google(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
     Ok(Box::new(Google::at(
         wiring.sending.unwrap_or(Google::VENDOR),
         key(
@@ -480,7 +602,12 @@ pub(crate) fn google(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, Fatal> {
 }
 
 /// OpenAI's Responses API, with a key or a plan login.
-pub(crate) fn openai(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, Fatal> {
+///
+/// # Errors
+///
+/// Whatever stops the credential being resolved or the address being used:
+/// [`AppError::Credential`], [`AppError::Address`] and their kin.
+pub fn openai(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
     let (endpoint, credential) = credential(
         ApiAudience {
             provider: wiring.named,
@@ -525,7 +652,7 @@ fn credential(
     audience: ApiAudience<'_>,
     sending: Option<Endpoint>,
     auth: ProviderAuth<'_>,
-) -> Result<(Endpoint, Box<dyn Credential>), Fatal> {
+) -> Result<(Endpoint, Box<dyn Credential>), AppError> {
     if sending.is_none()
         && let Some(subscribed) = auth
             .subscriptions
@@ -552,7 +679,7 @@ fn credential(
             {
                 // Reachable only with `sending` set: without an address
                 // configured, the first arm above has already answered.
-                return Err(Fatal::SubscriptionAddress {
+                return Err(AppError::SubscriptionAddress {
                     provider: audience.provider.into(),
                 });
             }
@@ -575,9 +702,18 @@ fn credential(
 /// Nothing here fails the start. A source that cannot be built is a session
 /// without web tools, not a session that refuses to open — the user asked for a
 /// coding agent, and losing search is not losing that.
-pub(crate) struct Reaching {
+pub struct Reaching {
     searching: Option<Arc<dyn Search>>,
     fetching: Option<Arc<dyn Fetch>>,
+}
+
+impl fmt::Debug for Reaching {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        out.debug_struct("Reaching")
+            .field("searching", &self.searching.is_some())
+            .field("fetching", &self.fetching.is_some())
+            .finish()
+    }
 }
 
 impl Reaching {
@@ -620,7 +756,7 @@ fn web(startup: &Startup<'_>, settings: &Settings) -> Reaching {
 }
 
 /// Anthropic's own search and fetch, on the session's model.
-pub(crate) fn anthropic_web(wiring: Wiring<'_>, model: &str) -> Reaching {
+pub fn anthropic_web(wiring: Wiring<'_>, model: &str) -> Reaching {
     let Ok(credential) = key(
         wiring.variable,
         Header::bare("x-api-key"),
@@ -639,7 +775,7 @@ pub(crate) fn anthropic_web(wiring: Wiring<'_>, model: &str) -> Reaching {
 }
 
 /// Gemini search and URL context use the same checked key and recipient as turns.
-pub(crate) fn google_web(wiring: Wiring<'_>, model: &str) -> Reaching {
+pub fn google_web(wiring: Wiring<'_>, model: &str) -> Reaching {
     let Ok(credential) = key(
         wiring.variable,
         Header::bare("x-goog-api-key"),
@@ -676,7 +812,7 @@ pub(crate) fn google_web(wiring: Wiring<'_>, model: &str) -> Reaching {
 /// to carry and billed every search to it — a credential the user did not
 /// choose for this session, at $10 per thousand, silently. Which credential
 /// answers is exactly what decides whether there is a source at all.
-pub(crate) fn openai_web(wiring: Wiring<'_>, model: &str) -> Reaching {
+pub fn openai_web(wiring: Wiring<'_>, model: &str) -> Reaching {
     let Ok((endpoint, credential)) = credential(
         ApiAudience {
             provider: wiring.named,
@@ -706,7 +842,7 @@ pub(crate) fn openai_web(wiring: Wiring<'_>, model: &str) -> Reaching {
 /// They belong to the coding platform, and a key issued against the open
 /// platform is refused by them — so a session whose address was moved
 /// elsewhere gets no web tools rather than two that always fail.
-pub(crate) fn moonshot_web(wiring: Wiring<'_>, _model: &str) -> Reaching {
+pub fn moonshot_web(wiring: Wiring<'_>, _model: &str) -> Reaching {
     let Ok((endpoint, credential)) = credential(
         ApiAudience {
             provider: wiring.named,
@@ -736,11 +872,11 @@ pub(crate) fn moonshot_web(wiring: Wiring<'_>, _model: &str) -> Reaching {
 /// value that cannot be one ends the run — a provider quietly left pointing at
 /// the vendor would be a setting that looks applied and does nothing, and this
 /// particular one is set by somebody who has a reason to not reach the vendor.
-fn sending_to(settings: &Settings, named: &str) -> Result<Option<Endpoint>, Fatal> {
+fn sending_to(settings: &Settings, named: &str) -> Result<Option<Endpoint>, AppError> {
     settings
         .base_url(named)
         .map(|written| {
-            Endpoint::parse(written).map_err(|source| Fatal::Address {
+            Endpoint::parse(written).map_err(|source| AppError::Address {
                 provider: named.into(),
                 source,
             })
@@ -763,7 +899,7 @@ fn key(
     header: Header,
     from: &dyn Fn(&str) -> Option<String>,
     written: Option<ApiKey>,
-) -> Result<Box<dyn Credential>, Fatal> {
+) -> Result<Box<dyn Credential>, AppError> {
     let key = match ApiKey::from_lookup(variable, from) {
         Ok(exported) => exported,
 
@@ -788,8 +924,8 @@ fn tools(
     startup: &Startup<'_>,
     settings: &Settings,
     reaching: Reaching,
-    sandbox: Arc<dyn crucible_core::SandboxService>,
-) -> Result<Tools, super::Fatal> {
+    sandbox: Arc<dyn crucible_sandbox::SandboxService>,
+) -> Result<Tools, AppError> {
     // Read off the wiring rather than taken one by one. Five things a tool is
     // built with is five arguments beside the settings, which is a call nobody
     // can read — and every one of them is already a field of the value that
@@ -799,10 +935,10 @@ fn tools(
         ledger: seen,
         plan,
         leaving,
-        putting,
         terminal,
         ..
     } = *startup;
+    let asking = &startup.asking;
     // Registered and advertised are two different things. Everything the coding
     // loop needs at once is shown; the rest is registered and left out until the
     // model looks it up, because a schema it can see is one it pays for on every
@@ -826,8 +962,8 @@ fn tools(
     // `unsafe` in edition 2024 — and would not want to: what the block is for
     // is what `cargo test` sees, not what this process sees.
     // And the other end of the row under the box. The clone shares one registry
-    // rather than copying it, which is what lets the loop draw what is running and
-    // stop one — and what makes the caller's copy the thing that ends them all.
+    // rather than copying it, which is what lets the caller show what is running
+    // and stop one — and what makes the caller's copy the thing that ends them all.
     tools.add_builtin(
         Bash::new(workspace.clone(), sandbox)
             .under_policy(settings.sandbox().enforcing_policy(workspace)?)
@@ -872,7 +1008,7 @@ fn tools(
     // ask, so the schema would be spent saying there is no one here — the same
     // argument the search below makes about a session that defers nothing.
     if terminal {
-        tools.add_builtin(AskUser::new(Arc::new(putting.clone())))?;
+        tools.add_builtin(AskUser::new(Arc::clone(asking)))?;
     }
 
     // Last, and only where there is anything to find. A search that can only
@@ -930,13 +1066,13 @@ fn about(schema: &str) -> Box<str> {
 /// be named in a file. What is configurable about it — the model, the effort,
 /// the window — is already configurable, and arrives here resolved.
 ///
-/// What a turn is asked under is [`standing::under`], read again before every
+/// What a turn is asked under is [`under`], read again before every
 /// turn because half of it is about the model in force. This is the read that
 /// seeds the definition, not the one any turn goes out under: the first turn
 /// writes its own before it asks.
 ///
-/// An unnamed model is the empty name, which is what the loop reads to find out
-/// that there is nothing to ask yet. It is the same absence [`Startup::model`]
+/// An unnamed model is the empty name, which is what a caller reads off
+/// [`Runner::model`] to find out that there is nothing to ask yet. It is the same absence [`Startup::model`]
 /// carries, spelled the way a `Model` can hold it — the alternative is an
 /// `Option` threaded through every turn to describe a state no turn is taken in.
 ///
@@ -965,8 +1101,8 @@ fn coding(startup: &Startup<'_>, provider: &str, name: &str, asked: &str) -> Age
 /// What the documents together say one run may spend, and what it does when
 /// the window fills.
 ///
-/// Resolved here, whole, so the loop is handed an answer rather than learning
-/// that any of this has a spelling in a file. `keep` is the one figure with a
+/// Resolved here, whole, so the runner is handed an answer rather than
+/// learning that any of this has a spelling in a file. `keep` is the one figure with a
 /// default of crucible's own: a session carried on from needs enough of the
 /// recent turns to say what it is doing and how it got there, which is what
 /// "carry on from here" means, and nothing about a document makes that number.
@@ -1005,16 +1141,11 @@ fn policy(settings: &Settings) -> RunPolicy {
 /// using it is a choice rather than the starting behavior. The record's cap
 /// also covers names released after this build. A provider this build has no
 /// record for never reaches here: the name was refused at the registry.
-pub(super) fn window(
-    providers: &Providers,
-    serving: Served,
-    model: &str,
-    settings: &Settings,
-) -> u32 {
+pub fn window(providers: &Providers, serving: Served, model: &str, settings: &Settings) -> u32 {
     settings
         .context_window(serving.name, model)
         .unwrap_or_else(|| {
-            let native = super::capabilities(providers, serving.name, model)
+            let native = providers::capabilities(providers, serving.name, model)
                 .map_or(serving.window, ModelCapabilities::window);
             native.min(serving.window)
         })
@@ -1022,12 +1153,13 @@ pub(super) fn window(
 
 /// What this model reads, where this build has heard of it.
 ///
-/// The model's half alone. The other half is the provider's, and the loop asks
-/// the provider itself rather than being handed an answer resolved here: what a
+/// The model's half alone. The other half is the provider's, and a caller asks
+/// the provider itself, through `Provider::spells`, rather than being handed an
+/// answer resolved here: what a
 /// wire module can write today and what a vendor's table says are two facts
 /// that drift apart, and only one of them is in this table.
-pub(super) fn accepts(providers: &Providers, provider: &str, model: &str) -> Option<Modalities> {
-    super::capabilities(providers, provider, model).map(ModelCapabilities::accepts)
+pub fn accepts(providers: &Providers, provider: &str, model: &str) -> Option<Modalities> {
+    providers::capabilities(providers, provider, model).map(ModelCapabilities::accepts)
 }
 
 /// How long an answer to ask this model for.
@@ -1037,8 +1169,8 @@ pub(super) fn accepts(providers: &Providers, provider: &str, model: &str) -> Opt
 /// for — a name one word from a listed one is a name nothing is known about,
 /// and borrowing the neighbour's figure is how a request comes to be refused
 /// for a reason nobody can see.
-pub(super) fn ceiling(providers: &Providers, provider: &str, model: &str) -> u32 {
-    super::capabilities(providers, provider, model)
+pub fn ceiling(providers: &Providers, provider: &str, model: &str) -> u32 {
+    providers::capabilities(providers, provider, model)
         .map_or(UNKNOWN_CEILING, |one| one.output().min(CEILING))
 }
 

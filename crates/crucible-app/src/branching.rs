@@ -18,7 +18,7 @@ use std::path::Path;
 /// The branch checked out at `root`, or `None` where there is no branch to
 /// name — no repository, a detached head, or a spelling of `.git` this does
 /// not read.
-pub(crate) fn current(root: &Path) -> Option<String> {
+pub fn current(root: &Path) -> Option<String> {
     let git = root.join(".git");
 
     // In a linked worktree `.git` is a file naming where the real directory

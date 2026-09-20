@@ -1,8 +1,8 @@
 //! What `--extensions` prints.
 //!
 //! A listing of what is installed and what could not be read, written from a
-//! sweep that has already happened. Nothing here reads a file or starts
-//! anything: the flag exists so that somebody can see what crucible found
+//! sweep that has already happened. [`installed`] makes that sweep and reads
+//! the home configuration; nothing here starts anything: the flag exists so that somebody can see what crucible found
 //! *before* deciding whether any of it should ever run, and a listing that had
 //! to run an extension to describe it would be the opposite of that.
 //!
@@ -13,11 +13,31 @@
 use std::fmt::Write as _;
 use std::path::Path;
 
-use crucible_config::Settings;
+use crucible_config::{Home, Settings};
 use crucible_extension::{
     ExtensionDecision, ExtensionManifest, ExtensionProtocol, ExtensionUnhosted, Extensions,
     Installed,
 };
+
+use crate::AppError;
+
+/// What is installed under `home`, swept and listed.
+///
+/// The home file alone, and no workspace. Whether an extension may run is a
+/// decision only the person running crucible makes, so the checkout this
+/// happened to be started in has nothing to contribute and is not opened.
+///
+/// # Errors
+///
+/// The home configuration could not be read.
+pub fn installed(home: &Home, running: &str) -> Result<String, AppError> {
+    let settings = Settings::read_home(home)?;
+    Ok(listing(
+        &Extensions::discover(home.path()),
+        &settings,
+        running,
+    ))
+}
 
 /// The listing, as one block of text ending in a newline.
 ///
@@ -27,7 +47,7 @@ use crucible_extension::{
 ///
 /// `running` is the crucible this is, which decides whether an extension
 /// naming an older one could be hosted at all.
-pub(crate) fn listing(found: &Extensions, settings: &Settings, running: &str) -> String {
+pub fn listing(found: &Extensions, settings: &Settings, running: &str) -> String {
     let mut said = String::new();
     let at = shown(found.at());
 

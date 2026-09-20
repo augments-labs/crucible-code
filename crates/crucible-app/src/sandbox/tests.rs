@@ -1,13 +1,14 @@
 //! What the confinement report says, and what it must never say.
 
-use crucible_core::{
+use crucible_sandbox::{
     SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities,
-    SandboxCapability, SandboxCleanup, SandboxError, SandboxFeature, SandboxId, SandboxInspection,
-    SandboxManifest, SandboxPolicy, SandboxResourceLimits,
+    SandboxCapability, SandboxCleanup, SandboxEnablement, SandboxError, SandboxFeature,
+    SandboxInspection, SandboxManifest, SandboxPolicy, SandboxResourceLimits,
 };
+use crucible_types::SandboxId;
 
-use super::{Probe, report};
-use crate::cli::sample::Sample;
+use super::{Probe, choose, report};
+use crate::sample::Sample;
 
 /// A backend that holds everything a confined report has to rest on.
 ///
@@ -268,4 +269,45 @@ fn disabled_confinement_is_reported_as_an_explicit_choice() {
         given.contains("disabled  sandbox disabled by effective policy"),
         "{given}"
     );
+}
+
+#[test]
+fn an_unavailable_backend_cannot_change_the_choice() {
+    let control = SandboxEnablement::new(false, false);
+    assert!(
+        choose(
+            &control,
+            true,
+            || Err("native boundary unavailable".into()),
+            || panic!("an unavailable boundary cannot be saved")
+        )
+        .is_err()
+    );
+    assert!(!control.enabled());
+    choose(&control, true, || Ok(()), || Ok(())).unwrap();
+    assert!(control.enabled());
+}
+
+#[test]
+fn a_project_requirement_survives_interactive_disabling() {
+    let control = SandboxEnablement::new(true, true);
+    assert!(
+        choose(
+            &control,
+            false,
+            || panic!("disabling must not probe"),
+            || panic!("a required boundary cannot be disabled")
+        )
+        .is_err()
+    );
+    assert!(control.enabled());
+    let optional = SandboxEnablement::new(true, false);
+    choose(
+        &optional,
+        false,
+        || panic!("disabling needs no enforcing backend"),
+        || Ok(()),
+    )
+    .unwrap();
+    assert!(!optional.enabled());
 }

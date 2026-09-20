@@ -8,7 +8,7 @@ Repository skills live in [`.agents/skills/`](.agents/skills/).
 
 | Directory | Purpose |
 | --- | --- |
-| `src/` | CLI and application wiring |
+| `src/` | Argument parsing, terminal adaptation and probes |
 | `crates/crucible-types/` | Shared validated values every crate exchanges |
 | `crates/crucible-registry/` | Bounded, source-aware registries |
 | `crates/crucible-credentials/` | Credential contracts and outgoing redaction |
@@ -24,6 +24,7 @@ Repository skills live in [`.agents/skills/`](.agents/skills/).
 | `crates/crucible-context/` | The words a request is built from, and what a compaction asks for |
 | `crates/crucible-agents/` | What an agent is: what it may reach for, what it is told, and what checks its words |
 | `crates/crucible-core/` | Domain types and extension traits |
+| `crates/crucible-app/` | What a run is assembled from, and the conversation it then owns |
 | `crates/crucible-auth/` | Credentials and account authorization |
 | `crates/crucible-builtins/` | Built-in tools |
 | `crates/crucible-config/` | Configuration and settings |
@@ -57,9 +58,10 @@ invariants. Update it when the implementation makes a sentence false.
   skill loader must not require naming its implementation in `crucible-core`.
   Closed domain states use enums, matched exhaustively where new cases require
   every consumer to decide.
-- `src/` composes concrete implementations into trait objects before passing
-  them downward. `crucible-runner` drives domain traits and must not depend on
-  concrete providers, tools or other plugin implementations.
+- `crucible-app` composes concrete implementations into trait objects before
+  passing them downward, and `src/` adapts a terminal to what it hands back.
+  `crucible-runner` drives domain traits and must not depend on concrete
+  providers, tools or other plugin implementations.
 - Parse external text once at its format owner: provider wire objects in
   provider modules, tool arguments in tools, configuration in config and
   session lines in session.

@@ -2,15 +2,17 @@
 
 use std::cell::RefCell;
 
-use crucible_core::{
-    Aside, Ask, Cancel, Message, Outgoing, Remember, Sensitivity, Steer, ToolCall, Verdict,
-};
+use crucible_credentials::Outgoing;
+use crucible_runtime::{Aside, Cancel, Steer};
+use crucible_tools::{Ask, Put, Remember, Sensitivity, Verdict};
+use crucible_types::{Answered, Message, Question, ToolCall};
 
 use crucible_config::Settings;
+use crucible_context::SystemPrompt;
 
 use super::*;
-use crate::cli::sample::{Sample, WRITTEN};
-use crate::cli::{NO_MODEL_CHOSEN, NOTHING_TO_ASK};
+use crate::providers::{NO_MODEL_CHOSEN, NOTHING_TO_ASK};
+use crate::sample::{Sample, WRITTEN};
 
 struct Nobody;
 
@@ -20,9 +22,15 @@ impl Ask for Nobody {
     }
 }
 
+impl Put for Nobody {
+    fn put(&self, _questions: &[Question]) -> Option<Vec<Answered>> {
+        None
+    }
+}
+
 /// The built-in providers, as one generation to resolve a name against.
 fn catalogue() -> Providers {
-    crate::cli::providers()
+    crate::providers::providers()
         .expect("the built-in providers register")
         .snapshot()
 }
@@ -39,7 +47,7 @@ fn built(
     serving: Option<Served>,
     settings: &Settings,
     from: &dyn Fn(&str) -> Option<String>,
-) -> Result<Box<dyn Provider>, Fatal> {
+) -> Result<Box<dyn Provider>, AppError> {
     let stored = StoredCredentials::default();
     let subscriptions = Subscriptions::production();
     provider(
@@ -142,7 +150,7 @@ fn each_provider_reads_the_key_belonging_to_it() {
     };
     let nothing = Settings::default();
 
-    let keys: Vec<&str> = crate::cli::offered(&catalogue())
+    let keys: Vec<&str> = crate::providers::offered(&catalogue())
         .map(|one| {
             let made = built(Some(one), &nothing, &from).expect("a provider");
 
@@ -326,7 +334,7 @@ fn a_subscription_token_never_follows_a_configured_api_key_address() {
     )
     .expect_err("a subscription sent to an API-key gateway");
 
-    assert!(matches!(problem, Fatal::SubscriptionAddress { .. }));
+    assert!(matches!(problem, AppError::SubscriptionAddress { .. }));
 }
 
 #[test]
@@ -344,7 +352,7 @@ fn an_address_that_would_put_the_key_on_the_wire_stops_the_run() {
     .expect_err("plain http to somewhere else to be refused");
 
     let said = problem.to_string();
-    assert!(matches!(problem, Fatal::Address { .. }), "{problem:?}");
+    assert!(matches!(problem, AppError::Address { .. }), "{problem:?}");
 
     // The dotted path and the value, because whoever reads this has the file
     // open and needs to find the line.
@@ -390,7 +398,7 @@ fn every_name_the_registry_holds_is_one_its_own_record_can_build() {
     // announced its model and then said the provider does not exist. A record
     // carries its own factory, so the two halves cannot be registered apart —
     // this is that walked, name by name.
-    for one in crate::cli::offered(&catalogue()) {
+    for one in crate::providers::offered(&catalogue()) {
         served(&catalogue(), one.name).expect("a check that agrees with the record");
         built(Some(one), &Settings::default(), &|_| {
             Some("a-key".to_owned())
@@ -408,7 +416,7 @@ fn a_name_no_record_was_registered_under_is_refused_and_the_others_are_named() {
     let said = problem.to_string();
 
     assert!(said.contains("ollama"), "{said}");
-    for one in crate::cli::offered(&catalogue()) {
+    for one in crate::providers::offered(&catalogue()) {
         assert!(said.contains(one.name), "{said} omits {}", one.name);
     }
 }
@@ -418,7 +426,7 @@ fn a_provider_taken_out_of_the_registry_stops_being_a_name_this_build_serves() {
     // The generation a name is read against is the one in force, not the list
     // this build was compiled with: a provider deregistered is a provider gone,
     // including from the sentence that says what is left.
-    let registry = crate::cli::providers().expect("the built-in providers register");
+    let registry = crate::providers::providers().expect("the built-in providers register");
     let mut staged = registry.stage();
     staged
         .deregister("anthropic")
@@ -459,7 +467,7 @@ fn a_startup_with_nothing_to_authenticate_with_leaves_no_session_behind() {
         ledger: &Ledger::new(),
         revealed: &Revealed::new(),
         plan: &Plan::new(),
-        putting: &Putting::new(),
+        asking: Arc::new(Nobody),
         hosting: &[],
         terminal: true,
         from: &|_| None,
@@ -469,7 +477,7 @@ fn a_startup_with_nothing_to_authenticate_with_leaves_no_session_behind() {
         panic!("a startup with no key was accepted");
     };
 
-    assert!(matches!(problem, Fatal::Credential(_)), "{problem:?}");
+    assert!(matches!(problem, AppError::Credential(_)), "{problem:?}");
     assert!(
         !logs.exists(),
         "a session was written for a startup that failed"
@@ -483,7 +491,7 @@ fn a_session_with_nothing_chosen_starts_and_asks_for_no_model() {
     let sample = Sample::new("no-model");
     let (logs, workspace) = (sample.logs(), sample.workspace());
 
-    let (runner, _session) = assemble(&Startup {
+    let conversation = assemble(&Startup {
         providers: &catalogue(),
         provider: None,
         unasked: NOTHING_TO_ASK,
@@ -498,7 +506,7 @@ fn a_session_with_nothing_chosen_starts_and_asks_for_no_model() {
         ledger: &Ledger::new(),
         revealed: &Revealed::new(),
         plan: &Plan::new(),
-        putting: &Putting::new(),
+        asking: Arc::new(Nobody),
         hosting: &[],
         terminal: true,
         from: &|_| None,
@@ -507,7 +515,11 @@ fn a_session_with_nothing_chosen_starts_and_asks_for_no_model() {
     })
     .expect("a session with nothing set up still starts");
 
-    assert_eq!(runner.model(), "", "an unnamed model is the empty name");
+    assert_eq!(
+        conversation.runner().model(),
+        "",
+        "an unnamed model is the empty name"
+    );
 }
 
 /// The specification one startup resolves to, for a model of `anthropic`.
@@ -535,7 +547,7 @@ fn specified(model: &str, effort: Option<Effort>, settings: &Settings, told: &st
         ledger: &Ledger::new(),
         revealed: &Revealed::new(),
         plan: &Plan::new(),
-        putting: &Putting::new(),
+        asking: Arc::new(Nobody),
         hosting: &[],
         terminal: true,
         from: &|_| None,
@@ -676,7 +688,7 @@ fn reaching_for(named: &str, model: Option<&'static str>) -> Reaching {
             ledger: &Ledger::new(),
             revealed: &Revealed::new(),
             plan: &Plan::new(),
-            putting: &Putting::new(),
+            asking: Arc::new(Nobody),
             hosting: &[],
             terminal: true,
             from: &|_| Some("sk-test".to_owned()),
@@ -734,7 +746,7 @@ fn google_web_authority_is_api_key_only_and_uses_the_checked_recipient() {
     let reaching = google_web(wiring(serving("google"), auth).unwrap(), "gemini-3.8-flash");
     assert_eq!(
         reaching.searching.unwrap().reaches(),
-        crucible_core::Host::Named {
+        crucible_tools::Host::Named {
             sent: "https://gateway.example/interactions?alt=sse".into(),
             host: "gateway.example".into()
         }
@@ -810,7 +822,7 @@ fn offered(terminal: bool) -> crucible_runner::Tools {
             ledger: &Ledger::new(),
             revealed: &Revealed::new(),
             plan: &Plan::new(),
-            putting: &Putting::new(),
+            asking: Arc::new(Nobody),
             hosting: &[],
             terminal,
             from: &|_| None,
@@ -912,6 +924,17 @@ fn recap_room_defaults_to_ten_k_and_accepts_a_configured_ceiling() {
 }
 
 #[test]
+fn stable_instructions_hold_no_session_fact() {
+    let said = under(&Settings::default());
+
+    assert_eq!(said, SystemPrompt::default().instructions_text());
+    assert!(said.contains("operating inside crucible"), "{said}");
+    assert!(!said.contains("# This session"), "{said}");
+    assert!(!said.contains("workspace root"), "{said}");
+    assert!(!said.contains("Toolset generation"), "{said}");
+}
+
+#[test]
 fn the_agent_is_named_coding_and_stands_under_what_the_wiring_asked() {
     // Two fields the wiring decides and a later registry needs. This pins the
     // stable operator instructions `coding` puts in the definition; the
@@ -930,7 +953,7 @@ fn a_definition_the_wiring_had_nothing_to_say_under_is_told_nothing() {
     // that writes the field: no instructions and empty instructions are two
     // different requests, and a prompt nobody wrote is the first.
     //
-    // Unreachable through the shipped wiring, because `standing::under` always
+    // Unreachable through the shipped wiring, because `under` always
     // names where the work is and so never returns an empty prompt. What this
     // pins is that the composition root reaches the field through the write
     // path that enforces the rule rather than around it — which is what a
@@ -955,7 +978,7 @@ fn a_session_is_assembled_with_stable_instructions_and_workspace_context() {
     let (logs, workspace) = (sample.logs(), sample.workspace());
     let configured = sample.settings(r#"{"compaction":{"spendCeiling":500000}}"#);
 
-    let (mut runner, _session) = assemble(&Startup {
+    let mut conversation = assemble(&Startup {
         providers: &catalogue(),
         provider: None,
         unasked: NOTHING_TO_ASK,
@@ -970,7 +993,7 @@ fn a_session_is_assembled_with_stable_instructions_and_workspace_context() {
         ledger: &Ledger::new(),
         revealed: &Revealed::new(),
         plan: &Plan::new(),
-        putting: &Putting::new(),
+        asking: Arc::new(Nobody),
         hosting: &[],
         terminal: true,
         from: &|_| None,
@@ -978,11 +1001,12 @@ fn a_session_is_assembled_with_stable_instructions_and_workspace_context() {
         subscriptions: &Subscriptions::production(),
     })
     .expect("a session to assemble");
+    let runner = &mut conversation.runner;
 
     let asked = runner
         .instructions()
         .expect("a turn is asked under something");
-    assert_eq!(asked, standing::under(&configured));
+    assert_eq!(asked, under(&configured));
     assert!(!asked.contains(&workspace.root().display().to_string()));
 
     let (events, _seen) = std::sync::mpsc::channel();
@@ -1103,7 +1127,7 @@ fn naming_a_server_nobody_wrote_down_fails_before_a_session_file_exists() {
         ledger: &Ledger::new(),
         revealed: &Revealed::new(),
         plan: &Plan::new(),
-        putting: &Putting::new(),
+        asking: Arc::new(Nobody),
         hosting: &["docs".to_owned()],
         terminal: true,
         from: &|_| None,
@@ -1113,7 +1137,7 @@ fn naming_a_server_nobody_wrote_down_fails_before_a_session_file_exists() {
         panic!("a run naming a server nothing wrote down was accepted");
     };
 
-    assert!(matches!(problem, Fatal::NoServer { .. }), "{problem:?}");
+    assert!(matches!(problem, AppError::NoServer { .. }), "{problem:?}");
     assert!(
         !logs.exists(),
         "a session was written for a run that could not be hosted"
@@ -1152,7 +1176,7 @@ fn a_run_that_named_a_server_reaches_the_runner_as_a_live_toolset() {
             ledger: &Ledger::new(),
             revealed: &Revealed::new(),
             plan: &Plan::new(),
-            putting: &Putting::new(),
+            asking: Arc::new(Nobody),
             hosting,
             terminal: true,
             from: &|name| (name == "PATH").then(|| path.clone()),
@@ -1160,19 +1184,47 @@ fn a_run_that_named_a_server_reaches_the_runner_as_a_live_toolset() {
             subscriptions: &Subscriptions::production(),
         })
         .expect("a run this test wrote the record for")
-        .0
     };
 
     let hosted = starting(&["docs".to_owned()]);
     assert!(
-        hosted.offering().is_empty(),
+        hosted.runner().offering().is_empty(),
         "a live toolset has no generation until the turn that prepares it"
     );
 
     let alone = starting(&[]);
     assert!(
-        alone.offering().contains(&"bash".to_owned()),
+        alone.runner().offering().contains(&"bash".to_owned()),
         "a run that named no server is the built-in roster itself: {:?}",
-        alone.offering()
+        alone.runner().offering()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn existing_user_configuration_is_private_before_settings_can_read_it() {
+    use std::ffi::OsString;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let sample = Sample::new("protect-user-config");
+    let directory = sample.root();
+    let config = directory.join("config.json");
+    fs::write(&config, r#"{"env":{"DEPLOY_TOKEN":"secret"}}"#).expect("a user configuration");
+    fs::set_permissions(&directory, fs::Permissions::from_mode(0o755)).expect("directory mode");
+    fs::set_permissions(&config, fs::Permissions::from_mode(0o644)).expect("file mode");
+    let home =
+        Home::find(&|name| (name == crucible_config::HOME).then(|| OsString::from(&directory)))
+            .expect("an absolute user home");
+
+    protected(&home).expect("the private boundary");
+
+    assert_eq!(
+        fs::metadata(&directory).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+    assert_eq!(
+        fs::metadata(&config).unwrap().permissions().mode() & 0o777,
+        0o600
     );
 }

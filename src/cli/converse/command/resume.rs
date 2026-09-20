@@ -14,7 +14,7 @@
 //! Picking one up leaves nothing behind. The session being left is closed
 //! here, which is the last chance to say that its log stopped being written,
 //! and what it was allowed for the rest of *its* run is forgotten by the
-//! runner — see [`Runner::pick_up`]. The record of what has been read is
+//! runner — see [`Conversation::resume`]. The record of what has been read is
 //! emptied with it, because it answers for the session being left rather than
 //! for this run — and so are the images pasted, the tools looked up and the
 //! plan, which then comes back as the session picked up last wrote it, the
@@ -30,14 +30,11 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr as _;
-use std::sync::Arc;
 use std::time::SystemTime;
 
-use crucible_core::{Compacting, JournalStore, SessionId, Workspace};
-use crucible_runner::Runner;
-use crucible_session::{
-    Glimpse, Pruned, Recorded, Session, SessionError, glimpse, recent, retitle,
-};
+use crucible_app::Conversation;
+use crucible_core::{Compacting, SessionId, Workspace};
+use crucible_session::{Glimpse, Pruned, Recorded, SessionError, glimpse, recent, retitle};
 use crucible_tui::{Editor, Glyphs, Kept, Picker, Renderer, Row, Slot, Terminal, clip};
 
 use crate::cli::Fatal;
@@ -111,13 +108,13 @@ const LEFT: &str = "cancelled, no session picked up";
 pub(super) fn run<T: Terminal>(
     said: &str,
     renderer: &mut Renderer<T>,
-    runner: &mut Runner,
+    conversation: &mut Conversation,
     held: &mut Held<'_>,
     terms: &Terms,
 ) -> Result<Option<Compacting>, Fatal> {
     let said = said.trim();
     if said.is_empty() {
-        return offered(renderer, runner, held, terms);
+        return offered(renderer, conversation, held, terms);
     }
 
     // Anything at all can follow `/resume `, and a word that is not even
@@ -127,17 +124,17 @@ pub(super) fn run<T: Terminal>(
     // differently. What to try instead follows the refusal.
     let Ok(id) = SessionId::from_str(said) else {
         renderer.commit(&format!("! no session {said} in this workspace"))?;
-        return offered(renderer, runner, held, terms);
+        return offered(renderer, conversation, held, terms);
     };
 
-    picking(&id, renderer, runner, held, terms)
+    picking(&id, renderer, conversation, held, terms)
 }
 
 /// Picks the session `id` names back up.
 fn picking<T: Terminal>(
     id: &SessionId,
     renderer: &mut Renderer<T>,
-    runner: &mut Runner,
+    conversation: &mut Conversation,
     held: &mut Held<'_>,
     terms: &Terms,
 ) -> Result<Option<Compacting>, Fatal> {
@@ -147,21 +144,21 @@ fn picking<T: Terminal>(
     // file, so continuing it would come back as "open in another crucible" —
     // which names the wrong crucible, and reads as a reason to go and close
     // something.
-    if held.session.id() == Some(id) {
+    if conversation.session().id() == Some(id) {
         let rows = [Row::new().then(Slot::Quiet, clip("this is the session you are in", columns))];
         renderer.present(&rows)?;
         return Ok(None);
     }
 
-    let (session, transcript) = match Session::reopen(&terms.sessions, &terms.workspace, id) {
-        Ok(picked) => picked,
+    let left = match conversation.resume(&terms.sessions, &terms.workspace, id) {
+        Ok(left) => left,
 
         // The one shape of failure the reader can act on from here: the id
         // names nothing recorded in this workspace, so what is recorded is
         // offered instead.
         Err(SessionError::Unknown { .. }) => {
             renderer.commit(&format!("! no session {} in this workspace", id.as_str()))?;
-            return offered(renderer, runner, held, terms);
+            return offered(renderer, conversation, held, terms);
         }
 
         // A path is in every one of these, so it is committed rather than
@@ -173,13 +170,10 @@ fn picking<T: Terminal>(
         }
     };
 
-    // The application's session is swapped first, and the runner is handed the
-    // same one through the contract it records into. The one being left is kept
-    // here rather than dropped: it is still this loop's to close.
-    let session = Arc::new(session);
-    let onto: Arc<dyn JournalStore> = session.clone();
-    let left = std::mem::replace(&mut held.session, session);
-    runner.pick_up(onto, transcript);
+    // The conversation swapped its session and handed the runner the same one,
+    // and everything this loop reads of a session it reads off the
+    // conversation. The one being left is kept here rather than dropped: it is
+    // still this loop's to close.
 
     // The files remembered were read by the session just left, and `write`
     // replaces a file on the strength of that record. The session picked up saw
@@ -191,7 +185,7 @@ fn picking<T: Terminal>(
     // as the session picked up left it — the same read a `--continue` does, so
     // resuming here or from the command line stands the same plan over the box.
     terms.plan.forget();
-    crate::cli::startup::planned(&terms.plan, runner.transcript());
+    crucible_app::startup::planned(&terms.plan, conversation.runner().transcript());
 
     // The tools looked up belong to the conversation that looked them up. Left
     // standing they would be advertised to a session that never asked.
@@ -227,18 +221,24 @@ fn picking<T: Terminal>(
     // reader scrolling back after a `/resume` finds exactly the screen a
     // launch would have drawn.
     held.opening.commit(renderer)?;
-    let pruned = held.session.take_pruned();
-    let against = replaying::Replay::of(runner, terms, &pruned);
-    super::super::replaying::replayed(renderer, &against, &held.session, &mut held.kept)?;
+    let pruned = conversation.session().take_pruned();
+    let against = replaying::Replay::of(conversation.runner(), terms, &pruned);
+    super::super::replaying::replayed(renderer, &against, conversation.session(), &mut held.kept)?;
     drop(pruned);
-    super::super::resuming::asked(renderer, runner, &held.session, terms, held.answers.keys)
+    super::super::resuming::asked(
+        renderer,
+        conversation.runner(),
+        conversation.session(),
+        terms,
+        held.answers.keys,
+    )
 }
 
 /// Offers what was worked on here: the picker, or the listing for a run that
 /// reads no keys.
 fn offered<T: Terminal>(
     renderer: &mut Renderer<T>,
-    runner: &mut Runner,
+    conversation: &mut Conversation,
     held: &mut Held<'_>,
     terms: &Terms,
 ) -> Result<Option<Compacting>, Fatal> {
@@ -260,7 +260,7 @@ fn offered<T: Terminal>(
         return Ok(None);
     }
 
-    stood(listed, renderer, runner, held, terms)
+    stood(listed, renderer, conversation, held, terms)
 }
 
 /// What the picker keeps between frames, and the frames' own workings beside
@@ -303,7 +303,7 @@ struct Stood {
 fn stood<T: Terminal>(
     listed: Vec<Recorded>,
     renderer: &mut Renderer<T>,
-    runner: &mut Runner,
+    conversation: &mut Conversation,
     held: &mut Held<'_>,
     terms: &Terms,
 ) -> Result<Option<Compacting>, Fatal> {
@@ -341,7 +341,7 @@ fn stood<T: Terminal>(
     // pruning cleared to put back.
     let uncleared = Pruned::default();
     let against = replaying::Replay {
-        runner,
+        runner: conversation.runner(),
         pruned: &uncleared,
         style,
     };
@@ -526,7 +526,7 @@ fn stood<T: Terminal>(
             else {
                 return Ok(None);
             };
-            picking(&id, renderer, runner, held, terms)
+            picking(&id, renderer, conversation, held, terms)
         }
         Ended::Left => {
             super::say(renderer, LEFT)?;

@@ -20,25 +20,26 @@ use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 use crucible_config::{McpServer, SandboxSettings, Settings};
-use crucible_core::{SandboxEnvironment, SandboxPolicy, Workspace};
+use crucible_sandbox::{SandboxEnvironment, SandboxPolicy};
+use crucible_workspace::Workspace;
 
-use crate::cli::Fatal;
+use crate::AppError;
 use crucible_mcp::Chosen;
 
 /// The servers `named` selects, resolved against this machine.
 ///
 /// # Errors
 ///
-/// [`Fatal::NoServer`] where a name has no record, and [`Fatal::Server`] where
+/// [`AppError::NoServer`] where a name has no record, and [`AppError::Server`] where
 /// a record cannot be turned into something startable: a program that is not
 /// on the `PATH`, a variable that is not set, a directory the confinement will
 /// not take.
-pub(crate) fn selected(
+pub fn selected(
     named: &[String],
     settings: &Settings,
     workspace: &Workspace,
     lookup: impl Fn(&str) -> Option<OsString>,
-) -> Result<Vec<Chosen>, Fatal> {
+) -> Result<Vec<Chosen>, AppError> {
     let records = settings.mcp_servers();
     named
         .iter()
@@ -46,7 +47,7 @@ pub(crate) fn selected(
             let record = records
                 .iter()
                 .find(|record| record.name() == name.as_str())
-                .ok_or_else(|| Fatal::NoServer {
+                .ok_or_else(|| AppError::NoServer {
                     named: name.as_str().into(),
                     has: written(&records),
                 })?;
@@ -61,8 +62,8 @@ fn one(
     workspace: &Workspace,
     settings: &SandboxSettings,
     lookup: &impl Fn(&str) -> Option<OsString>,
-) -> Result<Chosen, Fatal> {
-    let refused = |problem: String| Fatal::Server {
+) -> Result<Chosen, AppError> {
+    let refused = |problem: String| AppError::Server {
         server: record.name().into(),
         problem: problem.into(),
     };

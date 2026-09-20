@@ -36,6 +36,7 @@ image = { version = "=0.25.10", default-features = false, features = ["png"] }
 # This workspace's own crates. Path dependencies, released together, so there is
 # no version to pin and no third party whose publish could move them.
 crucible-agents = { path = "crates/crucible-agents" }
+crucible-app = { path = "crates/crucible-app" }
 crucible-attachments = { path = "crates/crucible-attachments" }
 crucible-auth = { path = "crates/crucible-auth" }
 crucible-builtins = { path = "crates/crucible-builtins" }
@@ -386,6 +387,10 @@ path = "src/main.rs"
 # drawn here or nowhere.
 [dependencies]
 arboard.workspace = true
+# The composition root: every concrete provider, tool, server and session a run
+# is assembled from, and the conversation the command line then drives. The
+# command line adapts it to a terminal and adds nothing to it.
+crucible-app.workspace = true
 clap.workspace = true
 crucible-attachments.workspace = true
 crucible-auth.workspace = true
@@ -393,17 +398,6 @@ crucible-builtins.workspace = true
 crucible-config.workspace = true
 crucible-context.workspace = true
 crucible-core.workspace = true
-# The restart budget an ended program is started again under, and the question
-# of whether starting it again is safe at all. Taken here because composition is
-# where a hosted server's process ends and something has to decide what happens
-# next; the rule itself belongs beside every other program crucible supervises
-# rather than being written a second time for this one.
-crucible-extension.workspace = true
-# The one crate that speaks the Model Context Protocol. Only the binary may
-# take it: a library crate depending on it would put somebody else's server
-# behind a trait the runner drives, and the repository gate refuses that edge.
-# Composition is where a hosted server becomes a tool, so it is taken here.
-crucible-mcp.workspace = true
 crucible-privacy.workspace = true
 crucible-provider.workspace = true
 crucible-runner.workspace = true
@@ -440,6 +434,12 @@ thiserror.workspace = true
 # dev-dependencies for a build, so this turns the feature on for `cargo test`
 # and for nothing that ships.
 [dev-dependencies]
+# Named by the integration tests alone, which drive the seams these two own from
+# outside: what an extension sweep finds, and what hosting a server comes to.
+# The shipped command line reaches both through the application crate and names
+# neither, which the repository gate holds it to.
+crucible-extension.workspace = true
+crucible-mcp.workspace = true
 crucible-session = { workspace = true, features = ["proof"] }
 insta.workspace = true
 

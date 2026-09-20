@@ -342,6 +342,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "crucible-app"
+version = "0.41.1"
+dependencies = [
+ "crucible-agents",
+ "crucible-auth",
+ "crucible-builtins",
+ "crucible-config",
+ "crucible-context",
+ "crucible-credentials",
+ "crucible-extension",
+ "crucible-mcp",
+ "crucible-models",
+ "crucible-privacy",
+ "crucible-provider",
+ "crucible-registry",
+ "crucible-runner",
+ "crucible-runtime",
+ "crucible-sandbox",
+ "crucible-sandbox-local",
+ "crucible-session",
+ "crucible-tools",
+ "crucible-types",
+ "crucible-workspace",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "crucible-attachments"
 version = "0.41.1"
 dependencies = [
@@ -392,6 +420,7 @@ version = "0.41.1"
 dependencies = [
  "arboard",
  "clap",
+ "crucible-app",
  "crucible-attachments",
  "crucible-auth",
  "crucible-builtins",

@@ -101,7 +101,7 @@ const OFFERED: &[(&str, &str, Option<&str>, Option<u32>)] = &[
 ];
 
 /// The table this writes.
-const TABLE: &str = "src/cli/models.rs";
+const TABLE: &str = "crates/crucible-app/src/models.rs";
 
 /// Which provider of the database each of crucible's is.
 fn listed(provider: &'static str) -> &'static str {
@@ -311,7 +311,7 @@ fn written(rows: &BTreeMap<(&str, &str), Row>) -> String {
          //! table has no answer here at all, which is deliberate: a window guessed from a\n\
          //! name that merely resembles one is wrong by a factor nobody would notice until\n\
          //! a session had already thrown half of itself away.\n\n\
-         use crucible_core::{Modalities, Modality};\n\n\
+         use crucible_types::{Modalities, Modality};\n\n\
          /// What one model accepts and produces.\n\
          #[derive(Debug, Clone, Copy, PartialEq, Eq)]\n\
          pub(crate) struct Facts {\n\
@@ -348,6 +348,27 @@ fn written(rows: &BTreeMap<(&str, &str), Row>) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn what_is_written_around_the_rows_is_what_the_checked_in_table_has_around_them() {
+        // The rows come from a database that is not checked in, so a refresh is
+        // the only thing that would otherwise show the two had drifted: a field
+        // the table spells one way and this writes another is a refresh that
+        // changes a file nobody meant to change. No rows in, so what comes out
+        // is everything that is not a row.
+        let table = include_str!("../../crates/crucible-app/src/models.rs");
+        let around = written(&BTreeMap::new());
+        let opening = around
+            .strip_suffix("];\n")
+            .expect("a table with no rows still closes");
+
+        assert!(opening.ends_with("&[\n"), "{opening}");
+        assert_eq!(table.get(..opening.len()), Some(opening));
+        assert!(
+            table.ends_with("    },\n];\n"),
+            "the table closes after a row"
+        );
+    }
 
     #[test]
     fn google_models_are_read_from_the_google_database_namespace() {

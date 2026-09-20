@@ -1,26 +1,13 @@
-//! What a turn is asked under, over a workspace and nothing else.
-
-use crucible_config::Settings;
-use crucible_core::SystemPrompt;
+//! What the model is told about commands that ended, and nothing else.
 
 use crucible_builtins::Ended;
+use crucible_config::Settings;
 
-use super::{said, under};
+use super::said;
 
 /// What a run with no configuration file anywhere asks under.
 fn asked() -> String {
-    under(&Settings::default())
-}
-
-#[test]
-fn stable_instructions_hold_no_session_fact() {
-    let said = asked();
-
-    assert_eq!(said, SystemPrompt::default().instructions_text());
-    assert!(said.contains("operating inside crucible"), "{said}");
-    assert!(!said.contains("# This session"), "{said}");
-    assert!(!said.contains("workspace root"), "{said}");
-    assert!(!said.contains("Toolset generation"), "{said}");
+    crucible_app::startup::under(&Settings::default())
 }
 
 #[test]

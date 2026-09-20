@@ -22,12 +22,10 @@ use crate::cli::style::Style;
 use super::Held;
 
 /// Refreshes the durable image store after a command may replace the session.
-pub(super) fn refresh_store(held: &mut Held<'_>) {
-    let store = held
-        .session
-        .id()
-        .cloned()
-        .map(|id: SessionId| (held.session.path().to_owned(), id));
+///
+/// `store` is where the session now in hand keeps imported copies, which the
+/// caller reads off the conversation that owns it.
+pub(super) fn refresh_store(held: &mut Held<'_>, store: Option<(PathBuf, SessionId)>) {
     if held.attachment_store != store {
         // A platform clipboard connection has no session identity itself, but
         // dropping it here prevents a long-lived handle from crossing a session

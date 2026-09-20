@@ -717,13 +717,13 @@
       "id": "CASE-AGENT-DEFINITION-WIRED",
       "family": "agents",
       "obligation": "The shipped agent stands under the definition the wiring asked for.",
-      "package": "crucible-code",
+      "package": "crucible-app",
       "target": {
-        "kind": "bin",
-        "name": "crucible"
+        "kind": "lib",
+        "name": "crucible_app"
       },
-      "case": "cli::startup::tests::the_agent_is_named_coding_and_stands_under_what_the_wiring_asked",
-      "source": "src/cli/startup/tests.rs",
+      "case": "startup::tests::the_agent_is_named_coding_and_stands_under_what_the_wiring_asked",
+      "source": "crates/crucible-app/src/startup/tests.rs",
       "body_sha256": "bcf08b741cce4780f950228a07d8e49920c820345d3f12a092aedd92f37ab11e",
       "platforms": [
         "linux",

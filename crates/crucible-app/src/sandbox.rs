@@ -5,8 +5,9 @@
 //! currently answer from outside crucible — *is the thing that says it confines
 //! actually confining, and what did it settle for where it could not?* — and
 //! that question is only worth asking if it can be asked without starting
-//! anything. So a session is prepared and read; nothing is materialized, no
-//! program is spawned, and the session is dropped where the report is built.
+//! anything. So [`confinement`] prepares a session and reads it; nothing is
+//! materialized, no program is spawned, and the session is dropped where the
+//! report is built.
 //!
 //! Every path in the report is a digest. The record this is written from
 //! redacts them at the source, and that is the right bargain rather than an
@@ -15,15 +16,26 @@
 //!
 //! Built as one string and written once, like the extension listing beside it:
 //! by the time this runs there is no session, no screen and nothing to protect.
+//!
+//! And what `/sandbox enable` and `/sandbox disable` decide, in [`choosing`]:
+//! whether the choice is allowed, whether this machine can enforce it, whether
+//! it could be written down, and only then the switch itself.
 
 use std::fmt::Write as _;
 use std::path::Path;
 use std::time::Duration;
 
-use crucible_core::{
-    SandboxBackendIdentity, SandboxCapabilities, SandboxCapability, SandboxCleanup, SandboxError,
-    SandboxFeature, SandboxInspection, SandboxPlanInspection, SandboxResourceLimits,
+use crucible_config::{Home, Settings};
+use crucible_sandbox::{
+    SandboxBackendIdentity, SandboxCapabilities, SandboxCapability, SandboxCleanup,
+    SandboxEnablement, SandboxError, SandboxFeature, SandboxInspection, SandboxManifest,
+    SandboxPlanInspection, SandboxRequest, SandboxResourceLimits, SandboxService as _,
 };
+use crucible_sandbox_local::LocalSandbox;
+use crucible_types::{Ancestry, SandboxId, ToolId};
+use crucible_workspace::Workspace;
+
+use crate::{AppError, remember};
 
 /// How far the backend got when it was asked about this workspace.
 ///
@@ -32,7 +44,8 @@ use crucible_core::{
 /// says what it can hold, and still will not take this policy is exactly what
 /// somebody reaches for this flag to see. Folding it into either neighbour
 /// would lose the capability matrix that explains it.
-pub(crate) enum Probe<'a> {
+#[derive(Debug)]
+pub enum Probe<'a> {
     /// A session was negotiated, and this is what it settled on.
     Prepared(&'a SandboxInspection),
     /// The backend answered, but would not take this workspace's policy.
@@ -48,13 +61,64 @@ pub(crate) enum Probe<'a> {
     Absent(&'a SandboxError),
 }
 
+/// The confinement a command started in `here` would run under, as a report.
+///
+/// The workspace is opened because the confinement is made out of it: the roots
+/// a command may reach are this checkout's roots, and a report assembled
+/// without one would be describing a sandbox nobody is going to get. Nothing
+/// beyond that is built — no credential is read, no session file is written, no
+/// manifest is materialized and no program is spawned. The sandbox session
+/// exists to be asked what it negotiated and is dropped on the way out.
+///
+/// A backend that will not take this policy is not a failure. It is the
+/// answer, so it is part of the report with everything that explains it;
+/// somebody asking because their commands are being refused would learn nothing
+/// from the same refusal arriving again as an error.
+///
+/// # Errors
+///
+/// The directory cannot be worked in, crucible's files cannot be read, or no
+/// policy can be built for the directory at all.
+pub fn confinement(here: &Path, home: &Home) -> Result<String, AppError> {
+    let workspace = Workspace::open(here)?;
+    let settings = Settings::read(home, workspace.root())?;
+    // Widened the way a run widens it, and for the same reason the run gives:
+    // the extra directories are part of the reach, so a report that left them
+    // out would understate what a command can touch.
+    let workspace = workspace.reaching(settings.extra_directories())?;
+
+    let service = LocalSandbox::new();
+    let probed = service.probe();
+    let policy = settings.sandbox().policy(&workspace)?;
+    let prepared = service.prepare(SandboxRequest::new(
+        SandboxId::new(),
+        Ancestry::new(),
+        // The call this policy would be built for. Nothing is called: the
+        // request needs a name and this is the honest one.
+        ToolId::new("sandbox"),
+        policy,
+        SandboxManifest::empty(),
+    ));
+
+    let probe = match (&prepared, &probed) {
+        (Ok(session), _) => Probe::Prepared(session.inspection()),
+        (Err(why), Ok((backend, capabilities))) => Probe::Refused {
+            backend,
+            capabilities,
+            why,
+        },
+        (Err(_), Err(why)) => Probe::Absent(why),
+    };
+    Ok(report(workspace.root(), settings.sandbox_enabled(), &probe))
+}
+
 /// The report, as one block of text ending in a newline.
 ///
 /// `at` is the workspace root, and it is the one path printed unredacted: it is
 /// the directory the person running this is standing in, so it tells them which
 /// checkout they asked about rather than telling anybody something they did not
 /// already have.
-pub(crate) fn report(at: &Path, enabled: bool, probe: &Probe<'_>) -> String {
+pub fn report(at: &Path, enabled: bool, probe: &Probe<'_>) -> String {
     let mut said = String::new();
     let _ = writeln!(
         said,
@@ -88,6 +152,76 @@ pub(crate) fn report(at: &Path, enabled: bool, probe: &Probe<'_>) -> String {
     }
 
     said
+}
+
+/// Turns confinement on or off for the commands and hosted processes
+/// prepared from here on, and writes the choice down in `file`.
+///
+/// In this order, and stopping at the first that fails: a project that
+/// requires confinement cannot have it turned off; turning it on needs a
+/// backend that can enforce this workspace's policy; the choice is written
+/// down; and only then does the running session change. A choice that could
+/// not be saved is therefore one that was not made, which is what keeps this
+/// run and the next one agreeing about what is confined.
+///
+/// # Errors
+///
+/// The sentence for whichever of those stopped it, ready to follow
+/// "sandbox unchanged:".
+pub fn choosing(
+    settings: &Settings,
+    workspace: &Workspace,
+    file: &Path,
+    enabled: bool,
+) -> Result<(), String> {
+    choose(
+        &settings.sandbox().enablement(),
+        enabled,
+        || enforceable(settings, workspace),
+        || remember::sandboxing(file, enabled).map_err(|problem| problem.to_string()),
+    )
+}
+
+/// The order [`choosing`] decides in, over checks handed in so that each can
+/// be failed without a backend or a disk.
+fn choose(
+    control: &SandboxEnablement,
+    enabled: bool,
+    verify: impl FnOnce() -> Result<(), String>,
+    save: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    if !enabled && control.required() {
+        return Err("project configuration requires confinement".into());
+    }
+    if enabled {
+        verify()?;
+    }
+    save()?;
+    control
+        .set_enabled(enabled)
+        .map_err(|problem| problem.to_string())
+}
+
+/// Whether this machine can enforce the policy `settings` asks for here.
+fn enforceable(settings: &Settings, workspace: &Workspace) -> Result<(), String> {
+    let policy = settings
+        .sandbox()
+        .enforcing_policy(workspace)
+        .map_err(|problem| problem.to_string())?;
+    let service = LocalSandbox::new();
+    // Preparation checks exact backend capability and filesystem policy. It
+    // does not materialize or start a user command; dropping releases admission.
+    let prepared = service
+        .prepare(SandboxRequest::new(
+            SandboxId::new(),
+            Ancestry::new(),
+            ToolId::new("sandbox-inspection"),
+            policy,
+            SandboxManifest::empty(),
+        ))
+        .map_err(|problem| problem.to_string())?;
+    drop(prepared);
+    Ok(())
 }
 
 /// Who is doing the confining, and whether crucible measured it.
@@ -213,8 +347,8 @@ fn plan(said: &mut String, plan: &SandboxPlanInspection, capabilities: &SandboxC
         "  network   {}{}",
         network.as_str(),
         match network {
-            crucible_core::SandboxNetworkInspection::Closed => String::new(),
-            crucible_core::SandboxNetworkInspection::Domains {
+            crucible_sandbox::SandboxNetworkInspection::Closed => String::new(),
+            crucible_sandbox::SandboxNetworkInspection::Domains {
                 allowed,
                 denied,
                 local_binding,

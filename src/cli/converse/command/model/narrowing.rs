@@ -11,7 +11,7 @@
 //! reaching for the same shelf, and nothing on screen says which of the four
 //! they are looking at.
 
-use crate::cli::{Providers, Served, offered};
+use crucible_app::providers::{Providers, Served, offered};
 
 use super::Selected;
 

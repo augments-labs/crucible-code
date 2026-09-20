@@ -246,7 +246,11 @@ fn a_run_with_nothing_to_type_into_says_so_rather_than_reading_keys() {
     // `crucible < script.txt` and every redirected run, and the caller reads a
     // line for itself when it gets this back.
     let mut renderer = drawing();
-    let mut runner = engine(Mode::Ask);
+    let mut conversation = crucible_app::Conversation::recording(
+        Arc::new(Session::nowhere()),
+        Some("anthropic"),
+        |_| engine(Mode::Ask),
+    );
     let mut editor = crucible_tui::Editor::new();
 
     let asked = ask(
@@ -254,7 +258,7 @@ fn a_run_with_nothing_to_type_into_says_so_rather_than_reading_keys() {
         Style::plain(),
         Between {
             commands: &commands(),
-            runner: &mut runner,
+            conversation: &mut conversation,
             attachment_store: None,
             editor: &mut editor,
             planning: &mut nothing(),
@@ -275,7 +279,7 @@ fn a_run_with_nothing_to_type_into_says_so_rather_than_reading_keys() {
     assert_eq!(renderer.terminal().written(), "");
 
     // And nothing was stepped on the way out of a call that read no key.
-    assert_eq!(runner.mode(), Mode::Ask);
+    assert_eq!(conversation.runner().mode(), Mode::Ask);
 }
 
 #[test]

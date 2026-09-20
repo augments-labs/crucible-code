@@ -32,6 +32,7 @@
 use std::borrow::Cow;
 use std::time::{Duration, Instant};
 
+use crucible_app::Conversation;
 use crucible_builtins::{Background, Ended};
 use crucible_core::{Aside, Cancel, Effort, Mode};
 use crucible_runner::Runner;
@@ -311,7 +312,7 @@ pub(crate) struct Between<'a> {
     pub(crate) commands: &'a command::Commands,
     /// Holds the mode, which is the one thing a key at the prompt changes about
     /// the session rather than about the screen.
-    pub(crate) runner: &'a mut Runner,
+    pub(crate) conversation: &'a mut Conversation,
     /// Where clipboard images are durably imported, as [`During`] takes it:
     /// the application's session says where that is, because the runner records
     /// into a contract and never learns what is behind it.
@@ -446,7 +447,7 @@ pub(crate) fn ask<T: Terminal>(
 ) -> Result<Asked, Fatal> {
     let Between {
         commands,
-        runner,
+        conversation,
         attachment_store,
         editor,
         planning,
@@ -470,7 +471,7 @@ pub(crate) fn ask<T: Terminal>(
     // inside one.
     planning.moved();
 
-    let mut says = saying(runner);
+    let mut says = saying(conversation.runner());
     says.running = left.count();
 
     // A local, because where the mark was in it is not worth keeping: a list of
@@ -651,9 +652,9 @@ pub(crate) fn ask<T: Terminal>(
             // row under the box says which mode that landed in, and the same
             // key is what steps out of it again.
             Pressed::Cycle => {
-                runner.cycle();
+                conversation.cycle();
 
-                says = saying(runner);
+                says = saying(conversation.runner());
                 true
             }
 
