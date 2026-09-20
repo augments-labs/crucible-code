@@ -834,6 +834,18 @@ fn words_over_the_ceiling_are_cut_and_say_so() {
 }
 
 #[test]
+fn words_their_owner_already_cut_say_so_under_this_ceiling_too() {
+    // An owner with a lower ceiling hands over words that fit this one, and a
+    // mark inside them is only more words.
+    assert!(Text::cut_again("kept short [cut]", true).truncated());
+    assert!(!Text::cut_again("ends in [cut]", false).truncated());
+    assert_eq!(Text::cut_again("whole", false), Text::cut("whole"));
+
+    let long = "é".repeat(TEXT_BYTES);
+    assert_eq!(Text::cut_again(&long, false), Text::cut(&long));
+}
+
+#[test]
 fn what_a_person_answered_travels_whole_or_is_refused_and_is_never_cut() {
     // Longer than words for a reader may be, and well within what a person can
     // type: every byte of it has to come out the other side.

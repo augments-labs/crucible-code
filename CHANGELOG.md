@@ -8,6 +8,15 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Changed
+
+- **A guardrail's name and reason are kept to a ceiling.** A refusal, a check
+  that could not decide and a refused duplicate name keep at most 256 bytes of
+  the name and 4 KiB of the reason, ending in ` [cut]` where there was more;
+  names are compared as kept. A refusal and an undecided check reach a client
+  marked truncated where they were cut; no shipped agent declares a guardrail,
+  so only a build that adds one sees any of it.
+
 ## [0.42.0] - 2026-09-20
 
 ### Changed

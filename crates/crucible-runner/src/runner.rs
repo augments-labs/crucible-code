@@ -41,7 +41,7 @@ use crucible_core::{
 
 use crucible_context::ContextInputs;
 
-use crucible_agents::{Agent, AgentContext, Decision, GuardrailError, Model, Rejection};
+use crucible_agents::{Agent, AgentContext, Decision, GuardrailError, Model};
 
 use crate::context::RunContext;
 use crate::outcome::{RunResult, Turned};
@@ -1189,11 +1189,11 @@ impl Runner {
             match guard
                 .check()
                 .checking(&context)
-                .map_err(|unsure| GuardrailError::undecided(guard.name(), unsure.problem()))?
+                .map_err(|unsure| guard.unanswered(unsure.problem()))?
             {
                 Decision::Allowed => {}
                 Decision::Rejected(why) => {
-                    decision = Judged::Rejected(Rejection::new(guard.name(), &why));
+                    decision = Judged::Rejected(guard.refused(&why));
                     break;
                 }
             }
@@ -1227,11 +1227,11 @@ impl Runner {
             match guard
                 .check()
                 .checking(&context, candidate)
-                .map_err(|unsure| GuardrailError::undecided(guard.name(), unsure.problem()))?
+                .map_err(|unsure| guard.unanswered(unsure.problem()))?
             {
                 Decision::Allowed => {}
                 Decision::Rejected(why) => {
-                    return Ok(Judged::Rejected(Rejection::new(guard.name(), &why)));
+                    return Ok(Judged::Rejected(guard.refused(&why)));
                 }
             }
         }

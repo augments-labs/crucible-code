@@ -130,14 +130,19 @@ impl Ended {
             }),
             Self::Turn(Ok(Turned::Rejected { rejection, stop })) => {
                 Outcome::Turn(TurnOutcome::Rejected {
-                    guard: Text::cut(rejection.guard()),
-                    why: Text::cut(rejection.why()),
+                    // Both were kept to a ceiling under this one before they
+                    // got here, so whether they are whole is theirs to say.
+                    guard: Text::cut_again(rejection.guard(), rejection.guard_was_cut()),
+                    why: Text::cut_again(rejection.why(), rejection.why_was_cut()),
                     stop: stop.map(reading::stop),
                 })
             }
             Self::Turn(Ok(Turned::Undecided { problem, stop })) => {
                 Outcome::Turn(TurnOutcome::Undecided {
-                    problem: Problem::failed(problem),
+                    problem: Problem {
+                        code: ErrorCode::Failed,
+                        message: Text::cut_again(&problem.to_string(), problem.was_cut()),
+                    },
                     stop: stop.map(reading::stop),
                 })
             }

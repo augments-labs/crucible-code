@@ -22,6 +22,71 @@ use std::sync::Arc;
 
 use crucible_types::{AgentId, RunId};
 
+/// The most bytes of a guardrail's name that are kept.
+///
+/// A name is whatever a check answers to, and a refusal, a check that could
+/// not decide and [`NameTaken`] all carry it to a reader.
+pub const GUARDRAIL_NAME_BYTES: usize = 256;
+
+/// The most bytes of a guardrail's reason that are kept, for a refusal and for
+/// a check that could not decide alike.
+pub const GUARDRAIL_REASON_BYTES: usize = 4 * 1024;
+
+/// What a name or a reason that was cut ends with, inside its ceiling.
+const CUT: &str = " [cut]";
+
+/// Words kept under a ceiling, and whether that cost any of them.
+///
+/// Both a name and a reason are a check's own words and a check is code
+/// somebody wrote, so there is no length they can be relied on to have. They
+/// are drawn for a reader and sent to a client, and what is kept of them is
+/// settled here, before either holds a copy.
+///
+/// A cut is told twice. [`CUT`] is written after the words, so that a reader
+/// of the words alone is told; and the fact is kept beside them, because a
+/// check may end its own words with the mark and the words cannot then say
+/// which it was. Whoever carries them on reports the fact, not the mark.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Kept {
+    words: Box<str>,
+    cut: bool,
+}
+
+impl Kept {
+    /// `words`, whole where they fit under `ceiling` and otherwise cut on a
+    /// character boundary with [`CUT`] written after them, still under it.
+    pub(crate) fn of(words: &str, ceiling: usize) -> Self {
+        if words.len() <= ceiling {
+            return Self {
+                words: words.into(),
+                cut: false,
+            };
+        }
+
+        let mut end = ceiling.saturating_sub(CUT.len());
+        while !words.is_char_boundary(end) {
+            end = end.saturating_sub(1);
+        }
+        let mut cut = String::with_capacity(end.saturating_add(CUT.len()));
+        cut.push_str(words.get(..end).unwrap_or_default());
+        cut.push_str(CUT);
+        Self {
+            words: cut.into(),
+            cut: true,
+        }
+    }
+
+    /// What was kept, mark and all.
+    pub(crate) fn as_str(&self) -> &str {
+        &self.words
+    }
+
+    /// Whether there were more words than these.
+    pub(crate) const fn was_cut(&self) -> bool {
+        self.cut
+    }
+}
+
 /// What one check is told about the invocation it is judging.
 ///
 /// Read-only, borrowed for the length of the check, and narrow on purpose. A
@@ -120,34 +185,52 @@ impl<'a> AgentContext<'a> {
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rejection {
-    guard: Box<str>,
-    why: Box<str>,
+    guard: Kept,
+    why: Kept,
 }
 
 impl Rejection {
-    /// A refusal from `guard`, for the reason a reader is shown.
+    /// A refusal from `guard`, for the reason a reader is shown, each kept to
+    /// its ceiling ([`GUARDRAIL_NAME_BYTES`], [`GUARDRAIL_REASON_BYTES`]) and
+    /// marked where it was cut.
     ///
-    /// Public because the runner is what asks a check and lives in another
-    /// crate. No check can hand one back, so the name is whatever the caller
-    /// that asked knows the check to be called.
+    /// For a caller that has the check's name and not its declaration: no
+    /// check can hand one back, so the name is whatever that caller knows the
+    /// check to be called. A caller holding the [`Declared`] check asks it
+    /// with [`Declared::refused`] instead, as the runner does, because only
+    /// that carries over whether the name was cut when it was declared.
     #[must_use]
     pub fn new(guard: &str, why: &str) -> Self {
         Self {
-            guard: guard.into(),
-            why: why.into(),
+            guard: Kept::of(guard, GUARDRAIL_NAME_BYTES),
+            why: Kept::of(why, GUARDRAIL_REASON_BYTES),
         }
     }
 
     /// Which guardrail refused.
     #[must_use]
     pub fn guard(&self) -> &str {
-        &self.guard
+        self.guard.as_str()
+    }
+
+    /// Whether the guardrail's name was longer than what [`Self::guard`]
+    /// holds. The mark the name ends with says so to a reader; this is what
+    /// says so to whoever sends the name on.
+    #[must_use]
+    pub const fn guard_was_cut(&self) -> bool {
+        self.guard.was_cut()
     }
 
     /// What it said about the refusal.
     #[must_use]
     pub fn why(&self) -> &str {
-        &self.why
+        self.why.as_str()
+    }
+
+    /// Whether it said more than [`Self::why`] holds.
+    #[must_use]
+    pub const fn why_was_cut(&self) -> bool {
+        self.why.was_cut()
     }
 }
 
@@ -227,29 +310,87 @@ impl Undecided {
 ///     Err(Undecided::because("its list is missing"))
 /// }
 /// ```
+///
+/// What the variant holds is an [`Unanswered`], whose fields nobody outside
+/// this module can write, so the only way to one is [`Self::undecided`] or the
+/// check's own [`Declared`], and the ceilings hold for every one there is. The
+/// error code below is the one for writing a field that is not the writer's:
+///
+/// ```compile_fail,E0451
+/// use crucible_agents::{GuardrailError, Unanswered};
+///
+/// let _ = GuardrailError::Undecided(Unanswered {
+///     guard: todo!(),
+///     problem: todo!(),
+/// });
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum GuardrailError {
     /// The guardrail ran and could not say.
-    #[error("the guardrail `{guard}` could not decide: {problem}")]
-    Undecided {
-        /// Which guardrail.
-        guard: Box<str>,
-        /// What it said about why not.
-        problem: Box<str>,
-    },
+    #[error("the guardrail `{}` could not decide: {}", .0.guard(), .0.problem())]
+    Undecided(Unanswered),
+}
+
+/// Which check could not decide, and what it said about why not, each kept to
+/// the ceiling a refusal's are.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unanswered {
+    guard: Kept,
+    problem: Kept,
+}
+
+impl Unanswered {
+    /// Which guardrail.
+    #[must_use]
+    pub fn guard(&self) -> &str {
+        self.guard.as_str()
+    }
+
+    /// Whether the guardrail's name was longer than what [`Self::guard`]
+    /// holds.
+    #[must_use]
+    pub const fn guard_was_cut(&self) -> bool {
+        self.guard.was_cut()
+    }
+
+    /// What it said about why not.
+    #[must_use]
+    pub fn problem(&self) -> &str {
+        self.problem.as_str()
+    }
+
+    /// Whether it said more than [`Self::problem`] holds.
+    #[must_use]
+    pub const fn problem_was_cut(&self) -> bool {
+        self.problem.was_cut()
+    }
 }
 
 impl GuardrailError {
-    /// `guard` ran and could not say, for the reason given.
+    /// `guard` ran and could not say, for the reason given, each kept to the
+    /// ceiling a refusal's are.
     ///
-    /// Public because the runner is what asks a check and lives in another
-    /// crate. No check can hand one back, so the name is whatever the caller
-    /// that asked knows the check to be called.
+    /// For a caller that has the check's name and not its declaration: no
+    /// check can hand one back, so the name is whatever that caller knows the
+    /// check to be called. A caller holding the [`Declared`] check asks it
+    /// with [`Declared::unanswered`] instead, as the runner does, because only
+    /// that carries over whether the name was cut when it was declared.
     #[must_use]
     pub fn undecided(guard: &str, problem: &str) -> Self {
-        Self::Undecided {
-            guard: guard.into(),
-            problem: problem.into(),
+        Self::Undecided(Unanswered {
+            guard: Kept::of(guard, GUARDRAIL_NAME_BYTES),
+            problem: Kept::of(problem, GUARDRAIL_REASON_BYTES),
+        })
+    }
+
+    /// Whether the sentence this reads as is short of words the check or its
+    /// name had: either was cut to its ceiling.
+    #[must_use]
+    pub const fn was_cut(&self) -> bool {
+        match self {
+            Self::Undecided(unanswered) => {
+                unanswered.guard_was_cut() || unanswered.problem_was_cut()
+            }
         }
     }
 }
@@ -263,26 +404,49 @@ impl GuardrailError {
 /// with one name on the same definition.
 #[derive(Debug)]
 pub struct Declared<G: ?Sized> {
-    name: Box<str>,
+    name: Kept,
     check: Arc<G>,
 }
 
 impl<G: ?Sized> Declared<G> {
     /// `check`, under the name it answered to when it was declared.
-    pub(crate) fn under(name: Box<str>, check: Arc<G>) -> Self {
+    pub(crate) fn under(name: Kept, check: Arc<G>) -> Self {
         Self { name, check }
     }
 
-    /// What the check was called when it was declared.
+    /// What the check was called when it was declared, kept to
+    /// [`GUARDRAIL_NAME_BYTES`].
     #[must_use]
     pub fn name(&self) -> &str {
-        &self.name
+        self.name.as_str()
     }
 
     /// The check.
     #[must_use]
     pub fn check(&self) -> &G {
         &self.check
+    }
+
+    /// This check's refusal, for the reason it gave.
+    ///
+    /// Written from here rather than from [`Self::name`], because a name cut
+    /// when it was declared fits its ceiling from then on, and a refusal made
+    /// from the name alone would say it was whole.
+    #[must_use]
+    pub fn refused(&self, why: &str) -> Rejection {
+        Rejection {
+            guard: self.name.clone(),
+            why: Kept::of(why, GUARDRAIL_REASON_BYTES),
+        }
+    }
+
+    /// This check having run and not decided, for the reason it gave.
+    #[must_use]
+    pub fn unanswered(&self, problem: &str) -> GuardrailError {
+        GuardrailError::Undecided(Unanswered {
+            guard: self.name.clone(),
+            problem: Kept::of(problem, GUARDRAIL_REASON_BYTES),
+        })
     }
 }
 
@@ -300,19 +464,26 @@ impl<G: ?Sized> Clone for Declared<G> {
 /// Refused rather than kept, because a refusal is written under its check's
 /// name and two checks with one name would each read as the other.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("a guardrail called `{0}` is already declared")]
-pub struct NameTaken(Box<str>);
+#[error("a guardrail called `{}` is already declared", .0.as_str())]
+pub struct NameTaken(Kept);
 
 impl NameTaken {
-    /// The name that was already declared.
-    pub(crate) fn of(name: &str) -> Self {
-        Self(name.into())
+    /// The name that was already declared, as it was kept.
+    pub(crate) const fn of(name: Kept) -> Self {
+        Self(name)
     }
 
     /// The name both checks answer to.
     #[must_use]
     pub fn name(&self) -> &str {
-        &self.0
+        self.0.as_str()
+    }
+
+    /// Whether the second check's name was longer than what [`Self::name`]
+    /// holds.
+    #[must_use]
+    pub const fn was_cut(&self) -> bool {
+        self.0.was_cut()
     }
 }
 
@@ -400,5 +571,79 @@ mod tests {
         assert!(!shown.contains("said-debug-canary"), "{shown}");
         assert!(shown.contains("redacted"), "{shown}");
         assert!(shown.contains("coding"), "{shown}");
+    }
+
+    /// What `kept` holds of `whole`, which must be as much of it as fits before
+    /// the mark: never a character split, and never fewer characters than the
+    /// ceiling had room for.
+    fn cut_from(kept: &str, whole: &str, ceiling: usize) {
+        assert!(kept.len() <= ceiling, "{} bytes were kept", kept.len());
+        let said = kept.strip_suffix(CUT).expect("a cut read as whole");
+        assert!(
+            whole.starts_with(said),
+            "what was kept is not what was said"
+        );
+        let room = ceiling - CUT.len();
+        assert!(
+            said.len() + '€'.len_utf8() > room,
+            "{} bytes were kept where {room} fitted",
+            said.len()
+        );
+    }
+
+    #[test]
+    fn a_reason_longer_than_the_ceiling_is_cut_and_says_so() {
+        // A check's reason is drawn for a reader and sent to a client, so what
+        // is kept of it is decided where it is first kept. Three bytes to the
+        // character, so that the ceiling less the mark falls inside one.
+        let long = "€".repeat(GUARDRAIL_REASON_BYTES);
+        assert!(!long.is_char_boundary(GUARDRAIL_REASON_BYTES - CUT.len()));
+
+        let refused = Rejection::new("no-secrets", &long);
+        cut_from(refused.why(), &long, GUARDRAIL_REASON_BYTES);
+
+        assert!(refused.why_was_cut() && !refused.guard_was_cut());
+
+        let GuardrailError::Undecided(unanswered) = GuardrailError::undecided("no-secrets", &long);
+        cut_from(unanswered.problem(), &long, GUARDRAIL_REASON_BYTES);
+        assert!(unanswered.problem_was_cut() && !unanswered.guard_was_cut());
+    }
+
+    #[test]
+    fn words_that_end_in_the_mark_are_not_taken_for_cut_ones() {
+        // The mark is a check's to write as well, so it is not what says a
+        // reason was cut to anybody who has to report it.
+        let forged = format!("the list is short{CUT}");
+
+        let refused = Rejection::new("no-secrets", &forged);
+        assert_eq!(refused.why(), forged);
+        assert!(!refused.why_was_cut());
+        assert!(!GuardrailError::undecided("no-secrets", &forged).was_cut());
+    }
+
+    #[test]
+    fn a_reason_that_fits_is_kept_as_it_was_said() {
+        let fits = "r".repeat(GUARDRAIL_REASON_BYTES);
+        assert_eq!(Rejection::new("no-secrets", &fits).why(), fits);
+    }
+
+    #[test]
+    fn a_name_longer_than_the_ceiling_is_cut_wherever_it_is_kept() {
+        let long = "€".repeat(GUARDRAIL_NAME_BYTES);
+        assert!(!long.is_char_boundary(GUARDRAIL_NAME_BYTES - CUT.len()));
+
+        let refused = Rejection::new(&long, "no");
+        cut_from(refused.guard(), &long, GUARDRAIL_NAME_BYTES);
+
+        assert!(refused.guard_was_cut() && !refused.why_was_cut());
+
+        let undecided = GuardrailError::undecided(&long, "no");
+        assert!(undecided.was_cut());
+        let GuardrailError::Undecided(unanswered) = undecided;
+        cut_from(unanswered.guard(), &long, GUARDRAIL_NAME_BYTES);
+
+        let taken = NameTaken::of(Kept::of(&long, GUARDRAIL_NAME_BYTES));
+        cut_from(taken.name(), &long, GUARDRAIL_NAME_BYTES);
+        assert!(taken.was_cut());
     }
 }
