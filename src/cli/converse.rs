@@ -19,6 +19,14 @@
 //! session with no terminal at either end holds nothing at all and reads whole
 //! lines, which is the path every test drives.
 //!
+//! A turn can also be told to stop from outside the keyboard: a closed window
+//! or a `kill` is noted by [`super::ending`] while a turn runs, and this loop
+//! reads the note on the same round it reads keys. It stops the turn the way
+//! Esc would, and hands back [`Fatal::Ended`] the way a terminal that failed
+//! is handed back. Every turn that ends in an error has its session finished
+//! here, before the error leaves, so what was said is on the disk whoever else
+//! still holds the session.
+//!
 //! The session log is append-only and written as the turn goes, so `--continue`
 //! picks the session up from wherever it stopped.
 //!
@@ -138,6 +146,9 @@ pub(crate) struct Terms {
     pub(crate) reading: RefCell<Option<String>>,
     /// What stops a turn.
     pub(crate) cancel: Cancel,
+    /// What the process has been told from outside it, which stops a turn too
+    /// and then the run.
+    pub(crate) ending: super::ending::Ending,
     /// What a line typed while a turn runs is pushed into, and the turn draws
     /// from between one pass and the next. Held for the session the way the
     /// cancel is: it is made once beside it, and the turn's thread and the loop
@@ -894,6 +905,19 @@ impl Turn<'_, '_> {
     ///
     /// `false` where the worker has closed the channel and the turn is over.
     fn drain<T: Terminal>(&mut self, renderer: &mut Renderer<T>) -> bool {
+        // Read once a pass, which is what a signal noted while this turn runs
+        // is waiting for. It ends the turn by the road a terminal that stopped
+        // taking writes ends it — nothing more is drawn, the turn is asked to
+        // stop, and this loop goes on draining it until the worker has written
+        // down what it had. It outranks a terminal failure already held: a
+        // window that closed fails the next write as well, and of the two it is
+        // the hang-up that says how the process should be seen to have ended.
+        if !matches!(self.drawn, Err(Fatal::Ended(_)))
+            && let Some(told) = self.terms.ending.told()
+        {
+            *self.drawn = stop_if_failed(Err(Fatal::Ended(told)), &self.terms.cancel);
+        }
+
         match self.seen.recv_timeout(TICK) {
             Ok(one) => {
                 // Before it is drawn, because drawing consumes it. The row
@@ -1137,6 +1161,10 @@ impl Turn<'_, '_> {
         renderer: &mut Renderer<T>,
         command: &command::Owned,
     ) -> Result<(), Fatal> {
+        // A panel waits on the keyboard with no clock, and the pass that would
+        // read a noted signal is run from inside that wait.
+        let _unclocked = self.terms.ending.unclocked()?;
+
         match command.class() {
             command::MidTurn::Live => self.live(renderer, command),
             command::MidTurn::Deferred => self.deferred(renderer, command),
@@ -1266,6 +1294,11 @@ fn take<T: Terminal>(
     // flag it finds raised.
     terms.cancel.reset();
 
+    // From here until the turn has been written down, a hang-up or a
+    // termination is noted for the loop below rather than obeyed where it
+    // lands: obeyed, it would take the answer on screen with it.
+    let heeding = terms.ending.turn();
+
     // Started before the worker rather than on the first thing it reports, so
     // that what the clock measures is what somebody is waiting for. A turn that
     // spends its first ten seconds connecting has spent them.
@@ -1344,6 +1377,14 @@ fn take<T: Terminal>(
     }
 
     let (conversation, did) = working.join().map_err(|_| Fatal::Lost)?;
+
+    // Written down before the signal it was held back from is let through,
+    // and a turn that failed written down whoever else holds the session:
+    // [`Stretch::over`] says why, and in which order.
+    let drawn = heeding.over(drawn, || {
+        let _ = conversation.session().finish();
+    });
+
     drawn.map(|()| Took {
         conversation,
         meanwhile,
@@ -1879,7 +1920,11 @@ fn shown<T: Terminal>(
             // both names can arrive with a checkout, whatever an ignore rule
             // says. Until policy has a per-workspace store outside the checkout,
             // the prompt offers only answers this process can honour.
-            let answer = asked(renderer, &call, &sensitivity, &mut held.answers, style);
+            // The question stands until somebody decides, with no clock on
+            // it, so nothing would read a signal noted while it stood.
+            let answer = terms.ending.unclocked().and_then(|_unclocked| {
+                asked(renderer, &call, &sensitivity, &mut held.answers, style)
+            });
             let answer = match answer {
                 Ok(answer) => answer,
                 Err(problem) => {
@@ -1906,6 +1951,12 @@ fn shown<T: Terminal>(
                 let _ = give.send(None);
                 return Ok(());
             }
+
+            // The same wait as a permission question's, for as long as the
+            // panel stands — the cramped reading below included.
+            let unclocked = terms.ending.unclocked().inspect_err(|_| {
+                let _ = give.send(None);
+            })?;
 
             let given = putting::put(renderer, style, &questions);
             let given = match given {
@@ -1935,6 +1986,7 @@ fn shown<T: Terminal>(
                 },
             };
 
+            drop(unclocked);
             let _ = give.send(given);
         }
     }

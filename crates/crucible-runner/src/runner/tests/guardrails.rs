@@ -3,7 +3,7 @@
 
 use crucible_agents::{
     AgentBuilder, AgentContext, Availability, Decision, GuardrailError, InputGuardrail,
-    OutputGuardrail, Rejection,
+    OutputGuardrail, Undecided,
 };
 
 use super::*;
@@ -48,19 +48,15 @@ impl Check {
         )
     }
 
-    fn answering(
-        &self,
-        context: &AgentContext<'_>,
-        said: &str,
-    ) -> Result<Decision, GuardrailError> {
+    fn answering(&self, context: &AgentContext<'_>, said: &str) -> Result<Decision, Undecided> {
         self.saw.lock().unwrap().push(Saw {
             agent: context.agent().as_str().to_owned(),
             said: said.to_owned(),
         });
         match self.answer {
             Answer::Allow => Ok(Decision::Allowed),
-            Answer::Refuse(why) => Ok(Decision::Rejected(Rejection::new(self.name, why))),
-            Answer::Cannot(why) => Err(GuardrailError::undecided(self.name, why)),
+            Answer::Refuse(why) => Ok(Decision::rejected(why)),
+            Answer::Cannot(why) => Err(Undecided::because(why)),
         }
     }
 }
@@ -70,7 +66,7 @@ impl InputGuardrail for Check {
         self.name
     }
 
-    fn checking(&self, context: &AgentContext<'_>) -> Result<Decision, GuardrailError> {
+    fn checking(&self, context: &AgentContext<'_>) -> Result<Decision, Undecided> {
         self.answering(context, context.said())
     }
 }
@@ -80,17 +76,13 @@ impl OutputGuardrail for Check {
         self.name
     }
 
-    fn checking(
-        &self,
-        context: &AgentContext<'_>,
-        candidate: &str,
-    ) -> Result<Decision, GuardrailError> {
+    fn checking(&self, context: &AgentContext<'_>, candidate: &str) -> Result<Decision, Undecided> {
         self.answering(context, candidate)
     }
 }
 
 /// A definition called `id`, with whatever the test wants said about it.
-fn agent(id: &str) -> AgentBuilder {
+pub(super) fn agent(id: &str) -> AgentBuilder {
     AgentBuilder::new(
         AgentId::new(id),
         Model {
@@ -104,7 +96,7 @@ fn agent(id: &str) -> AgentBuilder {
 }
 
 /// The tool names one request advertised.
-fn offered(request: &crate::fake::SentRequest) -> Vec<String> {
+pub(super) fn offered(request: &crate::fake::SentRequest) -> Vec<String> {
     request
         .tools
         .iter()
@@ -113,7 +105,7 @@ fn offered(request: &crate::fake::SentRequest) -> Vec<String> {
 }
 
 /// One response that says `text` and yields.
-fn answering(text: &str) -> Vec<Delta> {
+pub(super) fn answering(text: &str) -> Vec<Delta> {
     vec![
         Delta::Text(text.into()),
         Delta::Stopped(StopReason::Yielded),
@@ -131,7 +123,10 @@ fn a_prompt_an_input_check_refuses_never_reaches_the_provider() {
     let mut scripted = Scripted::under(
         script,
         Tools::new(),
-        agent("test").checking_input(check).build(),
+        agent("test")
+            .checking_input(check)
+            .expect("a name no other check has")
+            .build(),
     );
 
     let turned = scripted
@@ -169,7 +164,10 @@ fn a_turn_refused_on_the_way_in_posts_neither_a_start_nor_an_ending() {
     let mut scripted = Scripted::under(
         Script::new(vec![answering("unused")]),
         Tools::new(),
-        agent("test").checking_input(check).build(),
+        agent("test")
+            .checking_input(check)
+            .expect("a name no other check has")
+            .build(),
     );
 
     drop(scripted.turned("go").expect("a refusal is not a failure"));
@@ -194,7 +192,9 @@ fn a_prompt_every_check_allows_runs_the_turn_as_though_none_were_declared() {
         Tools::new(),
         agent("test")
             .checking_input(first)
+            .expect("a name no other check has")
             .checking_input(second)
+            .expect("a name no other check has")
             .build(),
     );
 
@@ -238,7 +238,10 @@ fn a_check_that_could_not_decide_stops_the_turn_without_refusing_it() {
     let mut scripted = Scripted::under(
         script,
         Tools::new(),
-        agent("test").checking_input(check).build(),
+        agent("test")
+            .checking_input(check)
+            .expect("a name no other check has")
+            .build(),
     );
 
     let turned = scripted
@@ -269,7 +272,10 @@ fn the_same_words_after_a_turn_that_failed_keep_the_decision_that_was_committed(
     let mut scripted = Scripted::under(
         Script::failing(),
         Tools::new(),
-        agent("test").checking_input(check).build(),
+        agent("test")
+            .checking_input(check)
+            .expect("a name no other check has")
+            .build(),
     );
 
     drop(
@@ -301,7 +307,10 @@ fn the_same_words_after_a_completed_turn_are_a_new_invocation() {
     let mut scripted = Scripted::under(
         script,
         Tools::new(),
-        agent("test").checking_input(check).build(),
+        agent("test")
+            .checking_input(check)
+            .expect("a name no other check has")
+            .build(),
     );
 
     drop(scripted.turned("go").expect("the first turn"));
@@ -325,7 +334,10 @@ fn a_session_picked_up_puts_the_same_words_to_the_checks_again() {
     let mut scripted = Scripted::under(
         Script::failing(),
         Tools::new(),
-        agent("test").checking_input(check).build(),
+        agent("test")
+            .checking_input(check)
+            .expect("a name no other check has")
+            .build(),
     );
 
     drop(
@@ -356,7 +368,10 @@ fn different_words_are_a_new_invocation_and_get_their_own_checks() {
     let mut scripted = Scripted::under(
         script,
         Tools::new(),
-        agent("test").checking_input(check).build(),
+        agent("test")
+            .checking_input(check)
+            .expect("a name no other check has")
+            .build(),
     );
 
     drop(scripted.turned("go").expect("the first turn"));
@@ -376,7 +391,10 @@ fn a_turn_the_reader_stopped_is_never_put_to_the_checks() {
     let mut scripted = Scripted::under(
         Script::new(vec![answering("unused")]),
         Tools::new(),
-        agent("test").checking_input(check).build(),
+        agent("test")
+            .checking_input(check)
+            .expect("a name no other check has")
+            .build(),
     );
     scripted.cancel.request();
 
@@ -405,7 +423,10 @@ fn an_answer_an_output_check_refuses_is_neither_recorded_nor_accepted() {
     let mut scripted = Scripted::under(
         script,
         Tools::new(),
-        agent("test").checking_output(check).build(),
+        agent("test")
+            .checking_output(check)
+            .expect("a name no other check has")
+            .build(),
     );
 
     let turned = scripted.turned("go").expect("a refusal is not a failure");
@@ -438,7 +459,10 @@ fn an_answer_no_output_check_refuses_is_recorded_and_the_turn_ends_as_it_did() {
     let mut scripted = Scripted::under(
         script,
         Tools::new(),
-        agent("test").checking_output(check).build(),
+        agent("test")
+            .checking_output(check)
+            .expect("a name no other check has")
+            .build(),
     );
 
     let turned = scripted.turned("go").expect("the turn to finish");
@@ -496,6 +520,33 @@ fn an_agent_offered_only_some_tools_says_so_before_it_has_taken_a_turn() {
         scripted.runner.offering(),
         vec!["read".to_owned()],
         "a session advertised a tool its definition never declared"
+    );
+}
+
+#[test]
+fn an_agent_offered_only_some_tools_is_counted_as_carrying_only_those() {
+    // What the next request would carry is read before anybody has typed
+    // anything: it is the figure under the box, and the one a session picked up
+    // is asked about. A definition declaring one tool out of two sends one
+    // schema, so it is counted exactly as a session wired with that one tool
+    // is, and not as though the whole roster were going out.
+    let narrowed = Scripted::under(
+        Script::new(vec![answering("unused")]),
+        tools([Fixed::new("read"), Fixed::new("write")]),
+        agent("test")
+            .offering(Availability::Named(Box::new(["read".into()])))
+            .build(),
+    );
+    let wired_with_one = Scripted::under(
+        Script::new(vec![answering("unused")]),
+        tools([Fixed::new("read")]),
+        agent("test").build(),
+    );
+
+    assert_eq!(
+        narrowed.runner.carrying(),
+        wired_with_one.runner.carrying(),
+        "a session was counted as carrying tools its definition never declared"
     );
 }
 
@@ -586,7 +637,7 @@ fn re_aiming_a_session_leaves_the_definition_a_sibling_holds_alone() {
 /// The one place a turn stops of its own accord for as long as a test needs it
 /// to: while a call is out. Holding a turn there is how the test below gets two
 /// runs genuinely overlapping rather than merely interleaved on one thread.
-struct Gate {
+pub(super) struct Gate {
     /// What it answers to, which is what the definition below declares.
     name: &'static str,
     /// Told once the call is out, so the test knows the turn is under way.
@@ -596,7 +647,7 @@ struct Gate {
 }
 
 impl Gate {
-    fn new(started: Sender<()>, go: Receiver<()>) -> Self {
+    pub(super) fn new(started: Sender<()>, go: Receiver<()>) -> Self {
         Self {
             name: "gate",
             started,
@@ -673,6 +724,7 @@ fn two_definitions_running_at_once_keep_their_own_state_and_cancellation() {
             .telling("You are one.")
             .offering(Availability::Named(Box::new(["gate".into()])))
             .checking_input(watching_one)
+            .expect("a name no other check has")
             .build(),
     );
     let mut two = Scripted::under(
@@ -681,6 +733,7 @@ fn two_definitions_running_at_once_keep_their_own_state_and_cancellation() {
         agent("two")
             .telling("You are two.")
             .checking_input(watching_two)
+            .expect("a name no other check has")
             .build(),
     );
     two.runner.ask("other", 2048, None, Some(READS));
@@ -771,9 +824,124 @@ fn a_committed_decision_never_shows_the_words_it_was_reached_about() {
     // invocation from another. The transcript redacts them once they are a
     // message, and a run's state written into a log line does the same.
     let mut state = RunState::new(None);
-    state.commit("asked-debug-canary", Decision::Allowed);
+    state.commit("asked-debug-canary", Judged::Allowed);
 
     let shown = format!("{state:?}");
     assert!(!shown.contains("asked-debug-canary"), "{shown}");
     assert!(shown.contains("asked: \"[redacted]\""), "{shown}");
+}
+
+/// A check that refuses, and has only a reason to say so with.
+#[derive(Debug)]
+struct Borrowing;
+
+impl InputGuardrail for Borrowing {
+    fn name(&self) -> &'static str {
+        "borrowing"
+    }
+
+    fn checking(&self, _context: &AgentContext<'_>) -> Result<Decision, Undecided> {
+        Ok(Decision::rejected("no-secrets says no"))
+    }
+}
+
+#[test]
+fn a_refusal_names_the_check_that_made_it_whatever_the_check_says() {
+    // A check answers with a reason and nothing else, so the name a reader is
+    // shown is the one the runner read off the check it asked.
+    let mut scripted = Scripted::under(
+        Script::new(vec![answering("unused")]),
+        Tools::new(),
+        agent("test")
+            .checking_input(Arc::new(Borrowing))
+            .expect("a name no other check has")
+            .build(),
+    );
+
+    let turned = scripted.turned("go").expect("a refusal is not a failure");
+
+    assert!(
+        matches!(&turned, Turned::Rejected { rejection, .. }
+            if rejection.guard() == "borrowing" && rejection.why() == "no-secrets says no"),
+        "a refusal was put under a name the check that made it does not have: {turned:?}"
+    );
+}
+
+/// A check that could not decide, and has only a reason to say so with.
+#[derive(Debug)]
+struct Shrugging;
+
+impl InputGuardrail for Shrugging {
+    fn name(&self) -> &'static str {
+        "shrugging"
+    }
+
+    fn checking(&self, _context: &AgentContext<'_>) -> Result<Decision, Undecided> {
+        Err(Undecided::because("no-secrets is away"))
+    }
+}
+
+#[test]
+fn a_check_that_could_not_decide_is_named_by_who_asked_it_whatever_it_says() {
+    let mut scripted = Scripted::under(
+        Script::new(vec![answering("unused")]),
+        Tools::new(),
+        agent("test")
+            .checking_input(Arc::new(Shrugging))
+            .expect("a name no other check has")
+            .build(),
+    );
+
+    let turned = scripted
+        .turned("go")
+        .expect("an undecided check is not a failure");
+
+    assert!(
+        matches!(&turned, Turned::Undecided { problem: GuardrailError::Undecided { guard, problem }, .. }
+            if &**guard == "shrugging" && &**problem == "no-secrets is away"),
+        "a check that could not decide was put under a name it does not have: {turned:?}"
+    );
+}
+
+/// A check that starts answering to another check's name once it has been
+/// asked.
+#[derive(Debug, Default)]
+struct Turncoat {
+    asked: std::sync::atomic::AtomicBool,
+}
+
+impl InputGuardrail for Turncoat {
+    fn name(&self) -> &str {
+        if self.asked.load(std::sync::atomic::Ordering::SeqCst) {
+            "no-secrets"
+        } else {
+            "turncoat"
+        }
+    }
+
+    fn checking(&self, _context: &AgentContext<'_>) -> Result<Decision, Undecided> {
+        self.asked.store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok(Decision::rejected("no"))
+    }
+}
+
+#[test]
+fn a_refusal_is_written_under_the_name_its_check_was_declared_with() {
+    // The name is taken once, when the check is declared. One that answers to
+    // another's name after it has been asked is still written under its own.
+    let mut scripted = Scripted::under(
+        Script::new(vec![answering("unused")]),
+        Tools::new(),
+        agent("test")
+            .checking_input(Arc::new(Turncoat::default()))
+            .expect("a name no other check has")
+            .build(),
+    );
+
+    let turned = scripted.turned("go").expect("a refusal is not a failure");
+
+    assert!(
+        matches!(&turned, Turned::Rejected { rejection, .. } if rejection.guard() == "turncoat"),
+        "a check put its refusal under a name it was not declared with: {turned:?}"
+    );
 }

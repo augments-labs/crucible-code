@@ -127,6 +127,16 @@ impl Vendor {
         Self::serving(vec![asking(tool, input, ONE), holding(text)])
     }
 
+    /// Starts one whose only answer is `text`, with the message left open
+    /// behind it.
+    ///
+    /// For a case about a turn that is ended from outside while its answer is
+    /// on screen and nothing has said the answer is over: what such a turn
+    /// leaves behind is the whole of what the case is asking.
+    pub(crate) fn holding(text: &str) -> Self {
+        Self::serving(vec![holding(text)])
+    }
+
     /// Starts one that asks for each batch of `batches` at once, then answers
     /// `text`.
     ///

@@ -96,9 +96,7 @@ impl Hosted {
     /// moved once the greeting is behind it.
     pub fn patient_for(&mut self, patience: Duration) {
         self.patience = patience;
-        let (heard, said) = self.talking.streams_mut();
-        heard.patient_for(patience);
-        said.patient_for(patience);
+        self.talking.patient_for(patience);
     }
 
     /// Runs one exchange under a token that ends it at the patience however the
@@ -126,11 +124,11 @@ impl Hosted {
         interrupt: Option<&Cancel>,
         work: impl FnOnce(&mut Talking<Heard<Box<dyn SandboxOutput>>, Said>) -> Result<T, E>,
     ) -> Result<T, E> {
-        let (heard, _) = self.talking.streams_mut();
+        let heard = self.talking.heard_mut();
         heard.abandoned_when(interrupt.cloned());
         heard.bounded_until(Instant::now().checked_add(self.patience));
         let done = work(&mut self.talking);
-        let (heard, _) = self.talking.streams_mut();
+        let heard = self.talking.heard_mut();
         heard.abandoned_when(None);
         heard.bounded_until(None);
         done

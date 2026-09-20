@@ -166,9 +166,8 @@ impl Asking {
         let request = self.client.asking(command);
         let ended = client::turn(conversation, &request, attached, self, run);
 
-        #[cfg(test)]
         self.client
-            .answered(&request, conversation, ended.outcome());
+            .answered(&request, conversation, || ended.outcome());
 
         ended
     }
@@ -188,7 +187,6 @@ impl Front for Asking {
             return None;
         };
 
-        #[cfg(test)]
         self.client.put(pending);
 
         let question = Seen::Question {
@@ -212,7 +210,6 @@ impl Front for Asking {
             },
         };
 
-        #[cfg(test)]
         self.client.decided(&decision);
 
         Some(decision)
@@ -221,6 +218,12 @@ impl Front for Asking {
     /// Nothing to say: every decision made above names the action it was put
     /// and rules on it, so the application has none of them to turn away.
     fn refused(&mut self, _: Refusal) {}
+
+    /// The panel is drawn from the call and what it would do, as they stand
+    /// on the host, and never from the cut words a pending action carries.
+    fn draws_whole(&self) -> bool {
+        true
+    }
 }
 
 /// The bounded event receiver, merging only adjacent deltas already waiting.
@@ -391,8 +394,8 @@ mod tests {
         // that ran on the way out ran without consent.
         let (to, seen) = sync_channel(2);
         let (reply, answers) = channel::<Answer>();
-        let client = Client::new();
-        let mut asking = Asking::new(to, answers, client.clone());
+        let (client, journal) = Client::noting();
+        let mut asking = Asking::new(to, answers, client);
         drop(reply);
 
         let answer = asked(&mut asking);
@@ -403,9 +406,9 @@ mod tests {
         // Accounted for rather than timed: the question was put once, nothing
         // was decided about it, and the no is the application's own.
         assert!(
-            matches!(client.noted().as_slice(), [Noted::Put(_)]),
+            matches!(journal.noted().as_slice(), [Noted::Put(_)]),
             "{:?}",
-            client.noted()
+            journal.noted()
         );
     }
 
@@ -413,15 +416,15 @@ mod tests {
     fn a_question_that_cannot_be_delivered_is_a_refusal() {
         let (to, seen) = sync_channel(2);
         let (_reply, answers) = channel::<Answer>();
-        let client = Client::new();
-        let mut asking = Asking::new(to, answers, client.clone());
+        let (client, journal) = Client::noting();
+        let mut asking = Asking::new(to, answers, client);
         drop(seen);
 
         assert_eq!(asked(&mut asking), (Verdict::Deny, Remember::Never));
         assert!(
-            matches!(client.noted().as_slice(), [Noted::Put(_)]),
+            matches!(journal.noted().as_slice(), [Noted::Put(_)]),
             "{:?}",
-            client.noted()
+            journal.noted()
         );
     }
 

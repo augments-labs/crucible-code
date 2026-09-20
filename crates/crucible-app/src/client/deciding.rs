@@ -8,12 +8,19 @@
 //! is this module's and the process's: no caller holds it, makes one or hands
 //! one in, so there is no second count to start again at one, and a decision
 //! composed for an earlier turn's action names nothing in a later turn, in
-//! this conversation or another. A decision naming any other
-//! identity is stale; one answering the other kind of question is wrong; both
-//! are refused by name and the action stays exactly as pending as it was — for
-//! [`TRIES`] such decisions. After that the front end is told the action is
-//! abandoned and it settles as it does where nobody answers, so a front end
-//! that is wrong for ever cannot hold a turn for ever.
+//! this conversation or another. A decision naming any other identity is
+//! stale; one answering the other kind of question is wrong; both are refused
+//! by name and the action stays exactly as pending as it was — for [`TRIES`]
+//! such decisions. After that the front end is told the action is abandoned
+//! and it settles as it does where nobody answers, so a front end that is
+//! wrong for ever cannot hold a turn for ever.
+//!
+//! An action is put only where it can be put whole. Questions with more
+//! answers than a list holds, or an answer whose name would be cut, are
+//! declined without being put; a call whose tool or subject would be cut is
+//! denied without being put, unless the front end says it draws from the
+//! whole value it is lent ([`Front::draws_whole`]). Either way no identity is
+//! spent on an action nobody was shown.
 //!
 //! A decision is never a permission. It is read here, against the action this
 //! module itself put, and what the engine is handed is a
@@ -62,9 +69,15 @@ use crucible_types::{Answered, Question, ToolCall};
 /// many conversations the host holds. That is what makes the identity of an
 /// action from an earlier turn, or of one already settled, name nothing
 /// afterwards.
+///
+/// True of the first `u64::MAX` identities, which is every one a host gives
+/// out: at a million a second that is more than half a million years.
+/// Nothing stops the count there. The addition wraps, so the identity after
+/// `u64::MAX` is `u64::MAX` once more — the saturating step in [`mint`] keeps
+/// it off zero — and the one after that is one again.
 static MINTED: AtomicU64 = AtomicU64::new(0);
 
-/// The next identity.
+/// The next identity: one more than however many were given out before it.
 fn mint() -> PendingId {
     PendingId::new(MINTED.fetch_add(1, Ordering::Relaxed).saturating_add(1))
 }
@@ -97,10 +110,29 @@ pub trait Front {
     /// refused and the same action is put again, [`TRIES`] times at most; the
     /// last of them is followed by [`ErrorCode::Abandoned`] and the action
     /// settles as it does for `None`.
+    ///
+    /// The decision is the one given in answer to this put. A front end that
+    /// carries decisions in from outside the process answers with one that
+    /// arrived after it put this action and discards any that arrived before:
+    /// an identity is the next number from a count and can be guessed, so a
+    /// decision sent ahead of the action it names was composed by somebody who
+    /// had not been shown it.
     fn put(&mut self, pending: &Pending, shown: Shown<'_>) -> Option<Decision>;
 
     /// Says that the decision just given settled nothing, and why.
     fn refused(&mut self, refusal: Refusal);
+
+    /// Whether whoever answers is shown the whole [`Shown`] value, rather than
+    /// the [`Pending`] whose words are cut to the contract's ceilings.
+    ///
+    /// No, unless a front end says otherwise, and then a call whose tool or
+    /// subject would be cut is denied without being put: a yes to half a
+    /// command line is a yes to a line nobody read. A front end standing on
+    /// the host that draws the call itself says yes here and is put every
+    /// call.
+    fn draws_whole(&self) -> bool {
+        false
+    }
 }
 
 /// What a decision that fits its pending action comes to.
@@ -196,11 +228,20 @@ impl Ask for Deciding<'_> {
             return DENIED;
         }
 
+        // Words cut for a reader who has nothing else to read are not the
+        // question, so it is not asked, and the call is refused as it is where
+        // nobody answers. Decided before an identity is minted for it.
+        let tool = Text::cut(&call.name);
+        let subject = Text::cut(&sensitivity.to_string());
+        if (tool.truncated() || subject.truncated()) && !self.front.draws_whole() {
+            return DENIED;
+        }
+
         let pending = Pending::Permission {
             id: mint(),
-            tool: Text::cut(&call.name),
+            tool,
             effect: effect(sensitivity),
-            subject: Text::cut(&sensitivity.to_string()),
+            subject,
         };
         let shown = Shown::Call { call, sensitivity };
 
@@ -250,9 +291,12 @@ pub fn questions(
         return None;
     }
 
+    // Read before an identity is minted, so that questions declined here,
+    // which nobody is put, spend none.
+    let questions = asked.iter().map(put).collect::<Option<_>>()?;
     let pending = Pending::Questions {
         id: mint(),
-        questions: asked.iter().map(put).collect::<Option<_>>()?,
+        questions,
     };
 
     let mut tries = 0;

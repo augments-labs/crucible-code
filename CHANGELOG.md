@@ -59,7 +59,9 @@ change in any release with no deprecation period.
   or an MCP roster is made of is now owned by `crucible-extension` and
   `crucible-mcp` and imported from there rather than from `crucible-core` or
   `crucible-config`; `Extensions::discover` takes the home directory as a
-  `&Path`, and `Chosen`'s fields are read through accessors.
+  `&Path`, and `Chosen`'s fields are read through accessors. `Written` no
+  longer lends out the stream it frames for: `stream_mut` is gone, and the one
+  thing it was used for is `Written::patient_for`.
 - **Context and prompt assembly have a crate of their own.** `crucible-context`
   now holds context sections, the order a pass assembles them in, the system
   prompt and what a compaction asks the model for; `Compacted`, `Compacting`,
@@ -69,6 +71,20 @@ change in any release with no deprecation period.
   `crucible-runner`, and `ContextInputs::dated` takes a `SystemTime`.
 
 ### Fixed
+
+- **Closing the window mid-answer no longer loses the answer.** On Linux and
+  macOS a hang-up or a `kill` that arrives while a turn runs now stops the
+  turn, writes what had been said to the session log, hands the terminal back
+  and only then ends the process by that signal, so `--continue` picks up what
+  you watched arrive; before, the process died where it stood and the log
+  stopped at your prompt. Between turns, and while a question waits for a key,
+  a signal still ends crucible at once, and on Windows a closing console is
+  not yet caught.
+- **An MCP server that will not be restarted is no longer called an
+  extension.** The refusal read "the extension has used all 2 of the restarts it
+  is allowed" about a server nobody had installed as one; it now says "the
+  server". `crucible_transport::NoRestart` prints through `said_of`, which takes
+  the noun from the host, and no longer implements `Display`.
 
 - **A compacted session no longer carries forward files it never touched.**
   The list of files a recap carries forward is read only from the list crucible

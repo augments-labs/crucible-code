@@ -27,7 +27,7 @@ use std::thread::{self, JoinHandle};
 use crucible_core::{
     Attachment, Calibration, CallResultKey, CallResultReceipt, CallResultStoreError, ContextError,
     ContextPatch, ContextSnapshot, JournalStore, Message, RecordedToolOutput, RunItem, SessionId,
-    SessionStore, ToolResult, Transcript, Workspace,
+    SessionOwner, SessionStore, ToolResult, Transcript, Workspace,
 };
 
 mod beside;
@@ -900,13 +900,11 @@ impl SessionStore for Session {
     ///
     /// One reader's sessions share it and another reader's do not, which is
     /// exactly the separation the caller compares for.
-    fn owner(&self) -> Box<str> {
-        self.path
-            .parent()
-            .unwrap_or_else(|| Path::new(""))
-            .to_string_lossy()
-            .into_owned()
-            .into_boxed_str()
+    ///
+    /// A log with no directory above it is nobody's rather than the owner of
+    /// an empty name.
+    fn owner(&self) -> Option<SessionOwner> {
+        SessionOwner::new(&self.path.parent()?.to_string_lossy())
     }
 
     fn append_message(&self, message: &Message) {

@@ -239,9 +239,10 @@ impl Runner {
         for message in self.state.transcript.messages() {
             self.state.load.recounted(message);
         }
-        self.state
-            .load
-            .requesting(self.agent.instructions(), &self.state.tools.advertised());
+        self.state.load.requesting(
+            self.agent.instructions(),
+            &super::advertising(&self.agent, &self.state.tools),
+        );
 
         // Turns kept whole rather than messages, because that is the shape a
         // reader thinks in: the recap stands in for the front, and what is left
@@ -478,7 +479,9 @@ impl Runner {
             run: run.run(),
             session: session.as_ref().map(crucible_core::SessionId::as_str),
             workspace: workspace.as_bytes(),
-            user: user.as_bytes(),
+            user: user
+                .as_ref()
+                .map_or(&[], crucible_core::SessionOwner::as_bytes),
             trust: b"local-workspace-authority-v1",
             authority: authority.as_bytes(),
             // The standalone recap deliberately sends no system prompt or
@@ -831,9 +834,10 @@ impl Runner {
         for message in self.state.transcript.messages() {
             self.state.load.recounted(message);
         }
-        self.state
-            .load
-            .requesting(self.agent.instructions(), &self.state.tools.advertised());
+        self.state.load.requesting(
+            self.agent.instructions(),
+            &super::advertising(&self.agent, &self.state.tools),
+        );
         true
     }
 }

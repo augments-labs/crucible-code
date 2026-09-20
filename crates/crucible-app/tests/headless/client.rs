@@ -14,9 +14,9 @@ use crucible_agents::{AgentBuilder, Model};
 use crucible_app::Conversation;
 use crucible_app::client::{self, Ended, Front, Performed, Shown};
 use crucible_client_api::{
-    Capabilities, ClearOutcome, Command, Correlation, Decision, ErrorCode, Lasting, Mode, Outcome,
-    Palette, Pending, PendingId, Progress, Prompt, Refusal, Request, Response, ResumeOutcome,
-    Ruling, Snapshot, Stop, Theme, TurnOutcome,
+    Capabilities, ClearOutcome, Command, Correlation, Decision, ErrorCode, Lasting, Mode,
+    ModelOutcome, Name, Outcome, Palette, Pending, PendingId, Progress, Prompt, Refusal, Request,
+    Response, ResumeOutcome, Ruling, Snapshot, Stop, Theme, TurnOutcome,
 };
 use crucible_models::Delta;
 use crucible_runner::{EventEnvelope, Runner, Tools};
@@ -114,6 +114,14 @@ fn asking(tree: &Tree, script: Script) -> Result<(Conversation, Arc<AtomicUsize>
     });
 
     Ok((conversation, ran))
+}
+
+/// The one syntax theme the host in these tests reads code in.
+const READ: &str = "a theme this host reads";
+
+/// Whether the host in these tests reads code in `named`.
+fn reads(named: &str) -> bool {
+    named == READ
 }
 
 /// Requests numbered in the order they were made, each one read back off the
@@ -394,6 +402,7 @@ fn a_decision_sent_outside_a_turn_settles_nothing() -> Result<(), Failed> {
         switching: standing.with(),
         sessions: &sessions,
         workspace: &workspace,
+        reads,
     };
     let request = Wire::default().sent(Command::Decide(Decision::Ruled {
         id: PendingId::new(1),
@@ -412,6 +421,84 @@ fn a_decision_sent_outside_a_turn_settles_nothing() -> Result<(), Failed> {
 }
 
 #[test]
+fn a_decision_on_its_own_is_answered_the_same_at_every_door() -> Result<(), Failed> {
+    let tree = Tree::new("client-lone-decision")?;
+    let (mut conversation, ran) = asking(&tree, Script::new(Vec::new()))?;
+    let standing = Standing::new(&tree, &[])?;
+    let workspace = tree.workspace()?;
+    let sessions = tree.sessions();
+    let desk = client::Desk {
+        switching: standing.with(),
+        sessions: &sessions,
+        workspace: &workspace,
+        reads,
+    };
+    let request = Wire::default().sent(Command::Decide(Decision::Ruled {
+        id: PendingId::new(1),
+        ruling: Ruling::Allow,
+        lasting: Lasting::Session,
+    }))?;
+    let stale = Outcome::Refused(ErrorCode::StaleDecision.into());
+
+    // Whichever door it is handed in at, no action is pending there for it to
+    // be about, and a client is told that in one word rather than two.
+    let performed = client::perform(&mut conversation, &request, &desk);
+    assert_eq!(received(&performed.response(&request))?.outcome, stale);
+
+    let kept = client::keep(&request, &desk);
+    assert_eq!(received(&kept.response(&request))?.outcome, stale);
+
+    let mut remote = Remote::new(vec![Saying::Fitting(Ruling::Allow)]);
+    let (response, _) = turned(&mut conversation, &request, &mut remote)?;
+    assert_eq!(response.outcome, stale);
+    assert!(remote.put.is_empty());
+
+    let cancel = Cancel::new();
+    assert_eq!(client::interrupt(&request, &cancel), stale);
+    assert!(!cancel.requested());
+
+    assert_eq!(ran.load(Ordering::Relaxed), 0);
+    Ok(())
+}
+
+#[test]
+fn a_syntax_theme_this_host_does_not_read_is_refused_and_not_written_down() -> Result<(), Failed> {
+    let tree = Tree::new("client-syntax-theme")?;
+    let mut conversation = super::conversation(&tree, Script::new(Vec::new()), false)?;
+    let standing = Standing::new(&tree, &[])?;
+    let workspace = tree.workspace()?;
+    let sessions = tree.sessions();
+    let desk = client::Desk {
+        switching: standing.with(),
+        sessions: &sessions,
+        workspace: &workspace,
+        reads,
+    };
+    let mut wire = Wire::default();
+    let invalid = Outcome::Refused(ErrorCode::InvalidArgument.into());
+
+    let unread = crucible_client_api::Name::new("no theme by this name")?;
+    let request = wire.sent(Command::Theme(Theme::Syntax(unread)))?;
+    let performed = client::perform(&mut conversation, &request, &desk);
+    assert_eq!(received(&performed.response(&request))?.outcome, invalid);
+    let kept = client::keep(&request, &desk);
+    assert_eq!(received(&kept.response(&request))?.outcome, invalid);
+    assert_eq!(super::written(&tree)?.syntax_theme(), None);
+
+    // The one it does read is written down, through either door.
+    let request = wire.sent(Command::Theme(Theme::Syntax(
+        crucible_client_api::Name::new(READ)?,
+    )))?;
+    let kept = client::keep(&request, &desk);
+    assert_eq!(
+        received(&kept.response(&request))?.outcome,
+        Outcome::Theme(crucible_client_api::ThemeOutcome::Remembered)
+    );
+    assert_eq!(super::written(&tree)?.syntax_theme(), Some(READ));
+    Ok(())
+}
+
+#[test]
 fn the_shipped_commands_are_carried_out_from_bytes_and_answered_in_bytes() -> Result<(), Failed> {
     let tree = Tree::new("client-commands")?;
     let mut conversation = super::conversation(&tree, Script::new(vec![saying("one")]), false)?;
@@ -422,6 +509,7 @@ fn the_shipped_commands_are_carried_out_from_bytes_and_answered_in_bytes() -> Re
         switching: standing.with(),
         sessions: &sessions,
         workspace: &workspace,
+        reads,
     };
     let mut wire = Wire::default();
     let mut answered = |conversation: &mut Conversation, command: Command| {
@@ -485,6 +573,104 @@ fn the_shipped_commands_are_carried_out_from_bytes_and_answered_in_bytes() -> Re
     Ok(())
 }
 
+/// A conversation asking `anthropic`, one turn in, keeping its persistent
+/// cache records under the tree's home: what a switch has a cache to retire
+/// for.
+fn cached(tree: &Tree) -> Result<Conversation, Failed> {
+    let mut conversation = super::conversing(
+        tree,
+        Script::named("anthropic"),
+        &super::Guard::Nothing,
+        Some("anthropic"),
+    )?
+    .remembering_caches_in(tree.home()?.path());
+    let request = Wire(700).sent(prompt("hi")?)?;
+    turned(&mut conversation, &request, &mut Remote::new(Vec::new()))?;
+
+    Ok(conversation)
+}
+
+fn haiku() -> Result<Command, Failed> {
+    Ok(Command::SelectModel {
+        provider: Name::new("anthropic")?,
+        model: Name::new("claude-haiku-4-5")?,
+        effort: None,
+    })
+}
+
+#[test]
+fn a_cache_that_cannot_be_retired_holds_the_model_where_it_was() -> Result<(), Failed> {
+    let tree = Tree::new("client-cache-held")?;
+    let mut conversation = cached(&tree)?;
+    // Records nobody can read: whether one of them is this session's cannot
+    // be told, so the cache cannot be said to have been retired.
+    let kept = tree.home()?.path().join("prompt-cache");
+    std::fs::create_dir_all(&kept)?;
+    std::fs::write(kept.join("resources-v1.json"), "not records")?;
+    let standing = Standing::new(&tree, &["anthropic"])?;
+    let (workspace, sessions) = (tree.workspace()?, tree.sessions());
+    let desk = client::Desk {
+        switching: standing.with(),
+        sessions: &sessions,
+        workspace: &workspace,
+        reads,
+    };
+
+    let request = Wire::default().sent(haiku()?)?;
+    let response =
+        received(&client::perform(&mut conversation, &request, &desk).response(&request))?;
+
+    let Outcome::Model(ModelOutcome::CacheHeld(problem)) = &response.outcome else {
+        return Err(format!("{:?}", response.outcome).into());
+    };
+    assert_eq!(problem.code, ErrorCode::Failed);
+    assert_eq!(conversation.runner().model(), "script");
+    assert_eq!(
+        super::written(&tree)?.model("anthropic"),
+        None,
+        "a switch that did not happen is not what the next start reads"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_choice_that_could_not_be_written_down_is_still_taken_and_says_so() -> Result<(), Failed> {
+    let tree = Tree::new("client-unwritten")?;
+    let mut conversation = cached(&tree)?;
+    let standing = Standing::new(&tree, &["anthropic"])?;
+    // A settings file that is not configuration is never written over.
+    let settings = crucible_config::user(&tree.home()?);
+    std::fs::create_dir_all(settings.parent().ok_or("settings with no directory")?)?;
+    std::fs::write(&settings, "model = [")?;
+    let (workspace, sessions) = (tree.workspace()?, tree.sessions());
+    let desk = client::Desk {
+        switching: standing.with(),
+        sessions: &sessions,
+        workspace: &workspace,
+        reads,
+    };
+
+    let request = Wire::default().sent(haiku()?)?;
+    let response =
+        received(&client::perform(&mut conversation, &request, &desk).response(&request))?;
+
+    let Outcome::Model(ModelOutcome::Taken {
+        unwritten: Some(problem),
+        ..
+    }) = &response.outcome
+    else {
+        return Err(format!("{:?}", response.outcome).into());
+    };
+    assert_eq!(problem.code, ErrorCode::Failed);
+    assert_eq!(conversation.runner().model(), "claude-haiku-4-5");
+    assert_eq!(
+        std::fs::read_to_string(&settings)?,
+        "model = [",
+        "what the file said is left as it was"
+    );
+    Ok(())
+}
+
 #[test]
 fn what_cannot_be_carried_out_is_refused_by_code_and_changes_nothing() -> Result<(), Failed> {
     let tree = Tree::new("client-refused")?;
@@ -496,6 +682,7 @@ fn what_cannot_be_carried_out_is_refused_by_code_and_changes_nothing() -> Result
         switching: standing.with(),
         sessions: &sessions,
         workspace: &workspace,
+        reads,
     };
     let before = client::snapshot(&conversation);
     let nobody = crucible_client_api::Name::new("nobody-by-this-name")?;
@@ -556,6 +743,7 @@ fn every_palette_a_client_can_name_is_one_the_settings_file_reads_back() -> Resu
         switching: standing.with(),
         sessions: &sessions,
         workspace: &workspace,
+        reads,
     };
     let mut wire = Wire::default();
     let mut read = Vec::new();

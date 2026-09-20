@@ -867,6 +867,41 @@ while IFS= read -r line; do
     failed=1
 done < <(grep -rnE --include='*.rs' 'std::net|std::os::unix::net|TcpListener|TcpStream|UdpSocket|UnixListener|UnixStream' "${contract[@]}" 2>/dev/null | cut -d: -f1,2)
 
+# That is a search of the source, and a crate that speaks HTTP needs none of
+# those words written here to be used. So what the contract takes is written
+# down whole, in every dependency table, and Cargo is asked for it rather than
+# the manifest being read: one dependency can be spelled many ways.
+contract_takes='crucible-types
+serde_core
+serde_json'
+if ! contract_taken=$(cargo metadata --no-deps --offline --format-version 1 --color never --manifest-path Cargo.toml 2>/dev/null |
+    python3 -c '
+import json, sys
+for package in json.load(sys.stdin)["packages"]:
+    if package["name"] == "crucible-client-api":
+        print("\n".join(sorted({dependency["name"] for dependency in package["dependencies"]})))
+'); then
+    printf '    FAIL Cargo did not describe the workspace; what the client contract takes was not measured\n'
+    failed=1
+elif ! grep -Fxq 'serde_json' <<<"$contract_taken"; then
+    printf '    FAIL crucible-client-api was not found taking serde_json; this check measured nothing\n'
+    failed=1
+else
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        if ! grep -Fxq "$line" <<<"$contract_takes"; then
+            printf '    FAIL crucible-client-api takes %s; the contract names values, and what carries them is taken by a front end\n' "$line"
+            failed=1
+        fi
+    done <<<"$contract_taken"
+    while IFS= read -r line; do
+        if ! grep -Fxq "$line" <<<"$contract_taken"; then
+            printf '    FAIL crucible-client-api no longer takes %s; take the line out so it stays out\n' "$line"
+            failed=1
+        fi
+    done <<<"$contract_takes"
+fi
+
 # A probe measures one owner and imports it directly: routed through the
 # application it would measure the composition instead, and a budget would move
 # for a reason the probe cannot see. What each probe names is written down
@@ -904,6 +939,119 @@ while IFS= read -r line; do
         failed=1
     fi
 done <<<"$probes"
+
+section "a request read from bytes is decided about first"
+# Five commands change what the session may do or whom it acts as: a permission
+# mode, the sandbox, and an account signed in or out. The application performs
+# them for whoever hands them in, which is safe while every request is built on
+# the host by the front end standing there. `Request::decode` is where one could
+# come from somewhere else, and nothing that ships calls it. A file that starts
+# to is written down here with what it does about each of the five, so that
+# reading requests from outside is a decision taken command by command and not
+# a line added. A row is `file command what-is-done-about-it`.
+request_owner=crates/crucible-client-api/src
+authority='cycle_mode
+login
+logout
+sandbox
+set_mode'
+decided=''
+kinds=$(sed -n '/pub const KINDS: \[/,/\];/p' "$request_owner/command.rs" | grep -oE '"[a-z_]+"' | tr -d '"' | sort)
+# The five were picked out of the eighteen commands there were. One more is one
+# nobody has asked this of.
+if (($(grep -c . <<<"$kinds") != 18)); then
+    printf '    FAIL the client contract no longer has the 18 commands the five were picked out of; decide whether the new one changes what a session may do, then move the 18 in this check\n'
+    failed=1
+fi
+while IFS= read -r word; do
+    if ! grep -Fxq "$word" <<<"$kinds"; then
+        printf '    FAIL %s is not a command of the client contract; this check measured nothing\n' "$word"
+        failed=1
+    fi
+done <<<"$authority"
+if ! grep -qE 'pub fn decode\(bytes: &\[u8\]\) -> Result<Self, Refused>' "$request_owner/request.rs"; then
+    printf '    FAIL %s/request.rs no longer reads a request with Request::decode; this check measured nothing\n' "$request_owner"
+    failed=1
+fi
+reading=$(grep -rlE --include='*.rs' 'Request::decode' src crates tests 2>/dev/null | grep -v "^$request_owner/" | sort || true)
+if ! grep -qE '(^|/)tests(/|\.rs$)|_tests\.rs$' <<<"$reading"; then
+    printf '    FAIL no test was found reading a request with Request::decode; this check measured nothing\n'
+    failed=1
+fi
+reading=$(grep -vE '(^|/)tests(/|\.rs$)|_tests\.rs$' <<<"$reading" || true)
+while IFS= read -r file; do
+    [[ -z "$file" ]] && continue
+    while IFS= read -r word; do
+        # A row is looked up as the words it is, never as a pattern: a dot in a
+        # file name would otherwise stand for any character.
+        if ! cut -d' ' -f1,2 <<<"$decided" | grep -Fxq "$file $word"; then
+            printf '    FAIL %s reads a request from bytes, and nothing is written here about what it does with %s\n' "$file" "$word"
+            failed=1
+        fi
+    done <<<"$authority"
+done <<<"$reading"
+while IFS= read -r row; do
+    [[ -z "$row" ]] && continue
+    file=${row%% *}
+    rest=${row#* }
+    if ! grep -Fxq "$file" <<<"$reading"; then
+        printf '    FAIL %s no longer reads a request from bytes; take its rows out so they stay out\n' "$file"
+        failed=1
+    elif ! grep -Fxq "${rest%% *}" <<<"$authority"; then
+        printf '    FAIL %s is written down about %s, which is not one of the commands this asks about\n' "$file" "${rest%% *}"
+        failed=1
+    elif [[ "$rest" != *' '* || -z "${rest#* }" ]]; then
+        printf '    FAIL %s is written down about %s with nothing said about what it does\n' "$file" "${rest%% *}"
+        failed=1
+    fi
+done <<<"$decided"
+# Reading bytes is one way a request arrives from somewhere else. The other is
+# an adapter that reads a format of its own and builds the command: the variants
+# are public, and no `decode` is named on that road. So the files that name one
+# of the five are written down too. They are the terminal, which builds them
+# from keys pressed on the host, and the application, which performs them. A
+# file that joins them is one more place a session's mode, sandbox or account
+# can be changed from, and it is added here by somebody who looked at where its
+# commands come from.
+naming='crates/crucible-app/src/client/performing.rs
+crates/crucible-app/src/client/turning.rs
+src/cli/converse.rs
+src/cli/converse/command.rs
+src/cli/converse/command/login.rs
+src/cli/converse/command/logout.rs
+src/cli/converse/command/sandbox.rs
+src/cli/converse/typing.rs'
+variants=''
+while IFS= read -r word; do
+    variant=$(awk -F_ '{ for (i = 1; i <= NF; i++) printf "%s%s", toupper(substr($i, 1, 1)), substr($i, 2) }' <<<"$word")
+    # The variant is found by the word it is written as, so the two lists
+    # cannot drift apart without this saying so.
+    if ! grep -qE "Self::$variant( \{ \.\. \}|\(_\))? => \"$word\"" "$request_owner/command.rs"; then
+        printf '    FAIL no variant %s is written as %s in %s/command.rs; this check measured nothing\n' "$variant" "$word" "$request_owner"
+        failed=1
+    fi
+    variants+="${variants:+|}$variant"
+done <<<"$authority"
+named=$(grep -rlE --include='*.rs' "(^|[^A-Za-z0-9_])Command::($variants)([^A-Za-z0-9_]|\$)" src crates 2>/dev/null |
+    grep -v "^$request_owner/" | grep -vE '(^|/)tests(/|\.rs$)|_tests\.rs$' |
+    while IFS= read -r file; do
+        # Other enums are called `Command` too; the contract's is the one a
+        # file cannot reach without naming the crate.
+        if grep -q 'crucible_client_api' "$file"; then printf '%s\n' "$file"; fi
+    done | sort || true)
+while IFS= read -r file; do
+    [[ -z "$file" ]] && continue
+    if ! grep -Fxq "$file" <<<"$naming"; then
+        printf '    FAIL %s names a command that changes what a session may do, and is not one of the files known to; find where its commands come from, decide about each of the five if that is outside the host, then add the file here\n' "$file"
+        failed=1
+    fi
+done <<<"$named"
+while IFS= read -r file; do
+    if ! grep -Fxq "$file" <<<"$named"; then
+        printf '    FAIL %s was not found naming one of the five; take it out, or the search measured nothing\n' "$file"
+        failed=1
+    fi
+done <<<"$naming"
 
 section "workspace inheritance"
 if ((${#member_manifests[@]} == 0)); then

@@ -18,8 +18,7 @@ use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
 
 use crucible_agents::{
-    AgentBuilder, AgentContext, Decision, GuardrailError, InputGuardrail, Model, OutputGuardrail,
-    Rejection,
+    AgentBuilder, AgentContext, Decision, InputGuardrail, Model, OutputGuardrail, Undecided,
 };
 use crucible_app::providers::{
     CredentialSource, NO_PROVIDER_CHOSEN, NOTHING_TO_ASK, Providers, Resolved, Served, Serving,
@@ -189,11 +188,8 @@ impl InputGuardrail for Refusing {
         "no-secrets"
     }
 
-    fn checking(&self, _context: &AgentContext<'_>) -> Result<Decision, GuardrailError> {
-        Ok(Decision::Rejected(Rejection::new(
-            self.name(),
-            "the prompt carries a credential",
-        )))
+    fn checking(&self, _context: &AgentContext<'_>) -> Result<Decision, Undecided> {
+        Ok(Decision::rejected("the prompt carries a credential"))
     }
 }
 
@@ -215,11 +211,8 @@ impl InputGuardrail for Unsure {
         "classifier"
     }
 
-    fn checking(&self, _context: &AgentContext<'_>) -> Result<Decision, GuardrailError> {
-        Err(GuardrailError::undecided(
-            self.name(),
-            "its model timed out",
-        ))
+    fn checking(&self, _context: &AgentContext<'_>) -> Result<Decision, Undecided> {
+        Err(Undecided::because("its model timed out"))
     }
 }
 
@@ -236,11 +229,8 @@ impl OutputGuardrail for Vetoing {
         &self,
         _context: &AgentContext<'_>,
         _candidate: &str,
-    ) -> Result<Decision, GuardrailError> {
-        Ok(Decision::Rejected(Rejection::new(
-            self.name(),
-            "the answer repeats a credential",
-        )))
+    ) -> Result<Decision, Undecided> {
+        Ok(Decision::rejected("the answer repeats a credential"))
     }
 }
 
@@ -283,9 +273,9 @@ fn conversing(
     );
     let agent = match guard {
         Guard::Nothing => agent,
-        Guard::Refusing => agent.checking_input(Arc::new(Refusing)),
-        Guard::Unsure => agent.checking_input(Arc::new(Unsure)),
-        Guard::Vetoing => agent.checking_output(Arc::new(Vetoing)),
+        Guard::Refusing => agent.checking_input(Arc::new(Refusing))?,
+        Guard::Unsure => agent.checking_input(Arc::new(Unsure))?,
+        Guard::Vetoing => agent.checking_output(Arc::new(Vetoing))?,
     };
     let work = tree.0.join("work");
 

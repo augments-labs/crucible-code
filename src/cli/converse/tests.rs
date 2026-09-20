@@ -60,17 +60,22 @@ fn typed(text: &str) -> Editor {
 /// The terms a test runs under when neither the style nor cancelling is what
 /// it is watching.
 ///
-/// Every path in them is below a tree that is never created, and nothing owns
-/// it: a test whose command keeps its choice would create it and leave it in
-/// the temporary directory for good, so that test takes [`keeping`] instead.
+/// Every path in them is below a tree that cannot be created, because what it
+/// stands under is a file: the binary running the test. A test whose command
+/// keeps its choice is refused where it would have written, and fails saying
+/// so, rather than making a tree nothing owns and leaving it in the temporary
+/// directory for good. That test takes [`keeping`] instead.
 pub(crate) fn plain() -> Terms {
-    let unwritten = std::env::temp_dir().join(format!("crucible-unwritten-{}", std::process::id()));
+    let unwritten = std::env::current_exe()
+        .expect("the test binary's own path")
+        .join("crucible-unwritten");
 
     Terms {
         style: Cell::new(Style::plain()),
         chosen: Cell::new(None),
         reading: std::cell::RefCell::default(),
         cancel: Cancel::new(),
+        ending: crate::cli::ending::Ending::deaf(),
         steer: crucible_core::Steer::new(),
         aside: crucible_core::Aside::new(),
         ledger: Ledger::new(),
@@ -677,9 +682,9 @@ impl crucible_runner::InputGuardrail for Refusing {
     fn checking(
         &self,
         _context: &crucible_runner::AgentContext<'_>,
-    ) -> Result<crucible_runner::Decision, crucible_runner::GuardrailError> {
-        Ok(crucible_runner::Decision::Rejected(
-            crucible_runner::Rejection::new(self.name(), "the prompt carries a credential"),
+    ) -> Result<crucible_runner::Decision, crucible_runner::Undecided> {
+        Ok(crucible_runner::Decision::rejected(
+            "the prompt carries a credential",
         ))
     }
 }
@@ -707,6 +712,7 @@ fn a_turn_a_guardrail_refused_says_so_instead_of_returning_a_silent_prompt() {
                 },
             )
             .checking_input(Arc::new(Refusing))
+            .expect("a name no other check has")
             .build(),
             crucible_context::ContextInputs::new(std::env::temp_dir()),
             session,
@@ -800,9 +806,9 @@ fn a_terminal_that_fails_mid_turn_leaves_the_turn_recorded_all_the_same() {
     // and leave that thread running with the process on its way out, so the
     // turn on screen when the window closed is the turn missing from the log.
     //
-    // The session is handed over whole, with no handle kept back here: the
-    // `Drop` that waits runs when the last holder lets go, and a holder left
-    // in this test would have the log read while its thread was still writing.
+    // The session is handed over whole, with no handle kept back here, so the
+    // `Drop` that waits has run by the time the log is read. The test below
+    // keeps a handle back, and is about the wait that does not need the drop.
     let kept = Arc::new(Mutex::new(Vec::new()));
     let session = Arc::new(Session::onto("/nowhere".into(), Kept(Arc::clone(&kept))));
 
@@ -855,6 +861,99 @@ fn a_terminal_that_fails_mid_turn_leaves_the_turn_recorded_all_the_same() {
         written.contains("what the model said"),
         "the turn never reached the log: {written:?}"
     );
+}
+
+#[test]
+fn a_turn_that_failed_is_on_the_disk_whoever_else_still_holds_the_session() {
+    // The same closing window as above, with the one thing that test is
+    // careful not to do: a handle on the session kept back. Nothing about who
+    // holds a session may decide whether a turn reaches its log — a process
+    // on its way out does not always unwind as far as the last holder, and a
+    // turn that is only written once everybody has let go is one that is
+    // written if nothing goes wrong a second time.
+    //
+    // The log is a slow one so that the question has one answer. A writer that
+    // keeps up hides a turn nobody waited for; one that is behind shows it,
+    // and how far behind only decides how plainly this fails without the wait
+    // — with it, the log is read after everything queued has landed, however
+    // slow the disk.
+    let kept = Arc::new(Mutex::new(Vec::new()));
+    let session = Arc::new(Session::onto(
+        "/nowhere".into(),
+        Behind(Kept(Arc::clone(&kept))),
+    ));
+    let held_back = Arc::clone(&session);
+
+    let provider = Script::new(vec![saying("what the model said")]);
+    let started = provider.asked();
+    let conversation = paired(session, |session| scripted(provider, Tools::new(), session));
+
+    let mut renderer = Renderer::new(BreakingWhenStarted {
+        inner: Recording::new(80, 24),
+        left: 3,
+        started: Arc::clone(&started),
+    });
+    let mut input = Cursor::new(b"go\n".to_vec());
+
+    let problem = converse(
+        conversation,
+        &mut renderer,
+        &plain(),
+        &opening(),
+        &mut input,
+    )
+    .expect_err("the terminal to fail");
+    assert!(matches!(problem, Fatal::Terminal(_)), "{problem:?}");
+
+    // Read with the handle still alive, which is the whole of the case.
+    let written = String::from_utf8(kept.lock().expect("a lock").clone()).expect("a log of text");
+    assert!(
+        written.contains("what the model said"),
+        "the turn was left waiting on a holder: {written:?}"
+    );
+    drop(held_back);
+}
+
+#[test]
+fn a_turn_told_to_end_from_outside_is_stopped_written_down_and_handed_back_as_that() {
+    // What a hang-up or a termination comes to once it has been noted, driven
+    // without sending one: the note is left the way the handler leaves it, at
+    // the moment the provider has the request. The loop has to read it on a
+    // pass of its own — nothing here draws, fails or presses a key to prompt
+    // it — stop the turn, and come back saying which signal it was, so the
+    // caller can obey it once the session is put away.
+    let kept = Arc::new(Mutex::new(Vec::new()));
+    let session = Arc::new(Session::onto("/nowhere".into(), Kept(Arc::clone(&kept))));
+    let held_back = Arc::clone(&session);
+
+    let provider = Script::new(vec![saying("what the model said")]);
+    let started = provider.asked();
+    let conversation = paired(session, |session| scripted(provider, Tools::new(), session));
+
+    let terms = plain();
+    let mut renderer = Renderer::new(ToldWhenStarted {
+        inner: Recording::new(80, 24),
+        left: 3,
+        started: Arc::clone(&started),
+        ending: terms.ending.clone(),
+    });
+    let mut input = Cursor::new(b"go\n".to_vec());
+
+    let problem = converse(conversation, &mut renderer, &terms, &opening(), &mut input)
+        .expect_err("the turn to be ended");
+
+    assert!(matches!(problem, Fatal::Ended(_)), "{problem:?}");
+    assert!(terms.cancel.requested(), "the turn was never asked to stop");
+
+    // The prompt at the least, and with a handle still held: how much of the
+    // answer the worker had heard when it was stopped is its own to say, and
+    // is proved where a real signal meets a real stream.
+    let written = String::from_utf8(kept.lock().expect("a lock").clone()).expect("a log of text");
+    assert!(
+        written.contains(r#"{"user":"go"#),
+        "the turn never reached the log: {written:?}"
+    );
+    drop(held_back);
 }
 
 #[test]
@@ -1433,6 +1532,45 @@ impl Terminal for BreakingWhenStarted {
     }
 }
 
+/// A window that stays open, and a signal noted once the provider has the
+/// request.
+///
+/// The same boundary [`BreakingWhenStarted`] waits on and for the same reason:
+/// a note left before the worker has recorded the prompt would race it.
+struct ToldWhenStarted {
+    inner: Recording,
+    left: usize,
+    started: Arc<AtomicUsize>,
+    ending: crate::cli::ending::Ending,
+}
+
+impl Terminal for ToldWhenStarted {
+    fn size(&self) -> Result<Size, TerminalError> {
+        self.inner.size()
+    }
+
+    fn write(&mut self, text: &str) -> Result<(), TerminalError> {
+        if self.left == 0 {
+            let until = Instant::now() + Duration::from_secs(2);
+            while self.started.load(Ordering::Acquire) == 0 && Instant::now() < until {
+                std::thread::park_timeout(Duration::from_millis(1));
+            }
+            self.ending.tell(15);
+        }
+
+        self.left = self.left.saturating_sub(1);
+        self.inner.write(text)
+    }
+
+    fn flush(&mut self) -> Result<(), TerminalError> {
+        self.inner.flush()
+    }
+
+    fn is_terminal(&self) -> bool {
+        self.inner.is_terminal()
+    }
+}
+
 /// A log that fails every write, the way a full disk does.
 pub(super) struct Failing;
 
@@ -1464,6 +1602,21 @@ impl io::Write for Kept {
 
     fn flush(&mut self) -> io::Result<()> {
         Ok(())
+    }
+}
+
+/// A log whose writer is always behind: every write takes a while to land.
+#[derive(Debug)]
+struct Behind(Kept);
+
+impl io::Write for Behind {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        std::thread::sleep(Duration::from_millis(10));
+        self.0.write(bytes)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.0.flush()
     }
 }
 

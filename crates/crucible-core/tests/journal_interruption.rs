@@ -10,8 +10,8 @@ use crucible_core::{
     PendingHumanInput, PromptCacheFingerprint, PromptCachePolicyVersion, PromptCacheResourceId,
     PromptCacheScopeDigest, RecordedToolOutput, RecoveryAction, ResumeDigest, ResumeEvidence,
     ResumeScope, RunHistory, RunItem, SandboxAuditRegistry, SandboxFactKind, SandboxId,
-    SandboxLifecycle, SessionId, SessionStore, StopReason, TOOL_CALL_ID_BYTES, TOOL_RESULT_BYTES,
-    ToolArgs, ToolCall, ToolEffect, ToolId, ToolOutcome, ToolResult,
+    SandboxLifecycle, SessionId, SessionOwner, SessionStore, StopReason, TOOL_CALL_ID_BYTES,
+    TOOL_RESULT_BYTES, ToolArgs, ToolCall, ToolEffect, ToolId, ToolOutcome, ToolResult,
 };
 
 struct MemoryOnlyJournal;
@@ -23,8 +23,8 @@ impl SessionStore for MemoryOnlyJournal {
         None
     }
 
-    fn owner(&self) -> Box<str> {
-        "".into()
+    fn owner(&self) -> Option<SessionOwner> {
+        None
     }
 
     fn append_message(&self, _message: &Message) {}

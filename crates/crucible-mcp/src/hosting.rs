@@ -675,7 +675,10 @@ impl Server {
         let Conversation::Active(active) = &mut *live else {
             return Err("the server lifecycle has ended".into());
         };
-        let permitted = active.restarts.again(after).map_err(|no| no.to_string())?;
+        let permitted = active
+            .restarts
+            .again(after)
+            .map_err(|no| no.said_of("the server"))?;
         let previous = std::mem::replace(&mut *live, Conversation::Closed);
         let Conversation::Active(active) = previous else {
             // No other thread can change the state while this lock is held.

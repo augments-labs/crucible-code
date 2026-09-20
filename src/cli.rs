@@ -18,6 +18,7 @@ mod client;
 mod converse;
 mod counting;
 mod draw;
+mod ending;
 #[cfg(test)]
 mod fake;
 mod gathering;
@@ -285,6 +286,15 @@ pub(crate) enum Fatal {
     /// The thread running the turn ended without returning it.
     #[error("the turn ended unexpectedly")]
     Lost,
+
+    /// The process was told to stop from outside while a turn ran, and the
+    /// turn has been ended and written down.
+    ///
+    /// Carried as an error because it leaves by the way a failed terminal
+    /// does, and never printed as one: [`start`] obeys the signal instead,
+    /// once everything this run held has been given back.
+    #[error("the turn was ended from outside")]
+    Ended(ending::Told),
 }
 
 /// Says a failure the command line met on its own way in the application's
@@ -321,6 +331,10 @@ pub(crate) fn start() -> ExitCode {
 
     match done {
         Ok(()) => ExitCode::SUCCESS,
+        // Every guard `run` held has been dropped by now — the screen, the
+        // keys, the title, the log's writer — which is the whole reason the
+        // signal was kept waiting, so this is where it is obeyed.
+        Err(Fatal::Ended(told)) => told.obeyed(),
         Err(problem) => fail(&problem),
     }
 }
@@ -547,6 +561,10 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         providers,
         reading: RefCell::new(settings.syntax_theme().map(str::to_owned)),
         cancel: cancel.clone(),
+        // Installed here, on the way into a session, and not where the
+        // command line is read: a run that prints help, a version or a listing
+        // has nothing a signal could interrupt half-written.
+        ending: ending::Ending::listening(renderer.is_terminal()),
         steer: crucible_core::Steer::new(),
         aside: crucible_core::Aside::new(),
         ledger: ledger.clone(),

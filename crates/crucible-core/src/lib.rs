@@ -92,7 +92,7 @@ pub use crucible_storage::{
     MAX_CHECKPOINT_WORD_BYTES, MAX_CUSTOM_DATA_BYTES, MAX_HUMAN_INPUT_BYTES,
     MAX_JOURNAL_WORD_BYTES, MAX_PENDING_ACTIONS, PendingAction, PendingActions, PendingApproval,
     PendingExternalTool, PendingHumanInput, RecoveryAction, ResolutionChange, ResumeDigest,
-    ResumeScope, ResumedAction, SessionStore, ToolEffect,
+    ResumeScope, ResumedAction, SessionOwner, SessionStore, ToolEffect,
 };
 pub use crucible_tools::{
     Account, Approved, ArgumentTransform, Ask, CallResultAcceptance, Command, DescribeTool,

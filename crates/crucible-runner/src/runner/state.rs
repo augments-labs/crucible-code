@@ -18,7 +18,7 @@
 
 use std::fmt;
 
-use crucible_agents::Decision;
+use crucible_agents::Rejection;
 use crucible_core::{PromptCacheAttempt, PromptCacheScopeDigest, ToolSnapshot, Transcript, TurnId};
 
 use super::load::Load;
@@ -120,7 +120,7 @@ impl RunState {
     /// invocation already under way. Different words are a different invocation,
     /// and so are the same words after the invocation they were checked for has
     /// ended.
-    pub(super) fn checked(&self, asked: &str) -> Option<&Decision> {
+    pub(super) fn checked(&self, asked: &str) -> Option<&Judged> {
         self.checked
             .as_ref()
             .filter(|checked| &*checked.asked == asked)
@@ -128,7 +128,7 @@ impl RunState {
     }
 
     /// Commits what the input checks made of `asked`, for a retry to restore.
-    pub(super) fn commit(&mut self, asked: &str, decision: Decision) {
+    pub(super) fn commit(&mut self, asked: &str, decision: Judged) {
         self.checked = Some(Checked {
             asked: asked.into(),
             decision,
@@ -153,7 +153,20 @@ pub(super) struct Checked {
     /// invocation rather than one this decision covers.
     asked: Box<str>,
     /// What the checks made of it.
-    decision: Decision,
+    decision: Judged,
+}
+
+/// What one pass of checks came to.
+///
+/// A check answers with its reason alone. This is that answer once the runner
+/// has written it under the name of the check it asked, which is the only place
+/// a refusal gets a name from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Judged {
+    /// Every check allowed it, or there were none.
+    Allowed,
+    /// One refused, and the rest were not asked.
+    Rejected(Rejection),
 }
 
 impl fmt::Debug for Checked {

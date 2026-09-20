@@ -20,10 +20,35 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crucible_app::Conversation;
 use crucible_app::client::{Desk, Performed, interrupt, keep, perform};
 use crucible_app::providers::Providers;
-use crucible_client_api::{Capabilities, Command, Correlation, Name, Refusal, Request, Theme};
+use crucible_client_api::{
+    Capabilities, Command, Correlation, Decision, Name, Outcome, Pending, Refusal, Request, Theme,
+};
 use crucible_core::Cancel;
 
 use super::converse::Terms;
+
+/// What is told as requests, answers, pending actions and decisions cross
+/// between this front end and the application.
+///
+/// Nothing that ships listens: a terminal draws what it is answered and keeps
+/// no record of it, so [`Client::new`] holds no witness and every crossing
+/// costs one branch. It is here so that what crosses can be held beside what a
+/// client with no terminal was answered by the code that ships, with nothing
+/// compiled in or out to let it.
+pub(crate) trait Witness: std::fmt::Debug + Send + Sync {
+    /// `request` was answered `outcome`, and `conversation` stands as it does
+    /// once it had been.
+    fn answered(&self, request: &Request, conversation: &Conversation, outcome: Outcome);
+
+    /// `request`, which needs no conversation, was answered `outcome`.
+    fn apart(&self, request: &Request, outcome: Outcome);
+
+    /// A turn stopped on `pending`, and the terminal was put it.
+    fn put(&self, pending: &Pending);
+
+    /// What the terminal said about the action it was put.
+    fn decided(&self, decision: &Decision);
+}
 
 /// The requests this process has made, numbered as they are made.
 ///
@@ -32,10 +57,8 @@ use super::converse::Terms;
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Client {
     sent: Arc<AtomicU64>,
-    /// What the application was asked and answered, for a test to hold beside
-    /// what a client with no terminal was answered.
-    #[cfg(test)]
-    noted: Arc<std::sync::Mutex<Vec<tests::Noted>>>,
+    /// Who is told what crosses, where anybody is.
+    witness: Option<Arc<dyn Witness>>,
 }
 
 impl Client {
@@ -59,10 +82,37 @@ impl Client {
         let request = self.asking(Command::Cancel);
         let heard = interrupt(&request, cancel);
 
-        #[cfg(test)]
-        self.apart(&request, heard);
-        #[cfg(not(test))]
-        drop(heard);
+        if let Some(witness) = &self.witness {
+            witness.apart(&request, heard);
+        }
+    }
+
+    /// Tells whoever is listening what `request` was answered with. The
+    /// outcome is made only where somebody is.
+    pub(crate) fn answered(
+        &self,
+        request: &Request,
+        conversation: &Conversation,
+        outcome: impl FnOnce() -> Outcome,
+    ) {
+        if let Some(witness) = &self.witness {
+            witness.answered(request, conversation, outcome());
+        }
+    }
+
+    /// Tells whoever is listening that the terminal was put `pending`.
+    pub(crate) fn put(&self, pending: &Pending) {
+        if let Some(witness) = &self.witness {
+            witness.put(pending);
+        }
+    }
+
+    /// Tells whoever is listening what the terminal said about a pending
+    /// action.
+    pub(crate) fn decided(&self, decision: &Decision) {
+        if let Some(witness) = &self.witness {
+            witness.decided(decision);
+        }
     }
 }
 
@@ -74,9 +124,8 @@ impl Terms {
         let providers = self.providers.snapshot();
         let performed = perform(conversation, &request, &self.desk(&providers));
 
-        #[cfg(test)]
         self.client
-            .answered(&request, conversation, performed.outcome());
+            .answered(&request, conversation, || performed.outcome());
 
         performed
     }
@@ -105,8 +154,9 @@ impl Terms {
         let providers = self.providers.snapshot();
         let kept = keep(&request, &self.desk(&providers));
 
-        #[cfg(test)]
-        self.client.apart(&request, kept.outcome());
+        if let Some(witness) = &self.client.witness {
+            witness.apart(&request, kept.outcome());
+        }
 
         kept
     }
@@ -123,6 +173,7 @@ impl Terms {
             switching: self.switching(providers),
             sessions: &self.sessions,
             workspace: &self.workspace,
+            reads: |named| crucible_tui::syntax::colours(named).is_some(),
         }
     }
 }

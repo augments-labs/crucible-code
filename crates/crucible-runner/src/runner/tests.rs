@@ -81,6 +81,7 @@ const READS: Modalities = Modalities::empty()
 mod aiming;
 mod attachments;
 mod attribution;
+mod beside;
 mod compaction;
 mod context;
 mod continuation;

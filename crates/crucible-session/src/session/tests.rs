@@ -1509,3 +1509,28 @@ fn a_log_that_never_recorded_a_reading_is_still_a_session_to_continue() {
     assert_eq!(transcript.messages(), messages.as_slice());
     assert_eq!(session.calibrated(), None);
 }
+
+#[test]
+fn sessions_kept_in_one_place_answer_one_owner_and_another_place_another() {
+    // The owner is what a reader above compares before offering one store's
+    // records under another's identity, so it has to name somebody: an owner
+    // that could be empty would make every store with nothing to say the same
+    // principal as any other.
+    use crucible_core::SessionStore;
+
+    let here = Sample::new("owner-here");
+    let there = Sample::new("owner-there");
+    let first = Session::start(&here.logs(), &here.workspace(), None).expect("a new session");
+    let second = Session::start(&here.logs(), &here.workspace(), None).expect("a new session");
+    let other = Session::start(&there.logs(), &there.workspace(), None).expect("a new session");
+
+    let owner = SessionStore::owner(&first).expect("a session on disk is somebody's");
+    assert!(!owner.as_bytes().is_empty());
+    assert_eq!(Some(&owner), SessionStore::owner(&second).as_ref());
+    assert_ne!(Some(&owner), SessionStore::owner(&other).as_ref());
+    assert_eq!(
+        crucible_core::SessionOwner::new(""),
+        None,
+        "nobody was accepted as an owner"
+    );
+}

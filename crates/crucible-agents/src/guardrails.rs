@@ -18,6 +18,7 @@
 //! and one call's result.
 
 use std::fmt;
+use std::sync::Arc;
 
 use crucible_types::{AgentId, RunId};
 
@@ -87,10 +88,36 @@ impl<'a> AgentContext<'a> {
     }
 }
 
-/// Why a guardrail refused.
+/// Which guardrail refused, and why.
 ///
 /// Kept apart from a failure to decide because the two mean opposite things to
 /// a reader: this one is the check working.
+///
+/// A check does not make one. It answers [`Decision::Rejected`] with its reason
+/// alone, and whoever asked it writes the refusal under the name the check was
+/// [`Declared`] with. That name was read once, before the check was asked
+/// anything, and no other check on the definition has it, so a refusal cannot
+/// be put under another check's name. The
+/// error code below is what handing a decision a refusal fails with today,
+/// rather than something the harness checks: it pins that a decision has no
+/// room for a name.
+///
+/// ```compile_fail,E0308
+/// use crucible_agents::{Decision, Rejection};
+///
+/// let _ = Decision::Rejected(Rejection::new("somebody-else", "no"));
+/// ```
+///
+/// The same names with the refusal kept out of the decision, which compiles:
+/// were one of them to move, this is the example that would say so, where the
+/// one above would go on failing for a reason nobody meant.
+///
+/// ```
+/// use crucible_agents::{Decision, Rejection};
+///
+/// let _ = Decision::Rejected("no".into());
+/// let _ = Rejection::new("somebody-else", "no");
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rejection {
     guard: Box<str>,
@@ -99,6 +126,10 @@ pub struct Rejection {
 
 impl Rejection {
     /// A refusal from `guard`, for the reason a reader is shown.
+    ///
+    /// Public because the runner is what asks a check and lives in another
+    /// crate. No check can hand one back, so the name is whatever the caller
+    /// that asked knows the check to be called.
     #[must_use]
     pub fn new(guard: &str, why: &str) -> Self {
         Self {
@@ -129,14 +160,73 @@ impl Rejection {
 pub enum Decision {
     /// Carry on.
     Allowed,
-    /// Do not.
-    Rejected(Rejection),
+    /// Do not, for the reason a reader is shown. Which check said so is not
+    /// the check's to say: it is read off the check that was asked.
+    Rejected(Box<str>),
+}
+
+impl Decision {
+    /// A refusal, for the reason a reader is shown.
+    #[must_use]
+    pub fn rejected(why: &str) -> Self {
+        Self::Rejected(why.into())
+    }
+}
+
+/// What a check says when it ran and could not decide: its reason, and nothing
+/// else.
+///
+/// There is no name on it, for the reason a [`Decision`] has none: which check
+/// could not say is read off the check that was asked, so one check cannot put
+/// its non-answer under another's name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Undecided(Box<str>);
+
+impl Undecided {
+    /// Could not decide, for the reason a reader is shown.
+    #[must_use]
+    pub fn because(problem: &str) -> Self {
+        Self(problem.into())
+    }
+
+    /// What the check said about why not.
+    #[must_use]
+    pub fn problem(&self) -> &str {
+        &self.0
+    }
 }
 
 /// Why a check could not reach a decision.
 ///
 /// Distinct from a refusal in the type, because they are distinct outcomes for
 /// the run: a refusal is an answer, and this is the absence of one.
+///
+/// A check does not make one. It answers with an [`Undecided`], and whoever
+/// asked it writes this under the name of the check that was asked. The error
+/// code below is what a check handing one back fails with today, rather than
+/// something the harness checks: it pins that what a check fails with has no
+/// room for a name.
+///
+/// ```compile_fail,E0308
+/// use crucible_agents::{AgentContext, Decision, GuardrailError, Undecided};
+///
+/// fn checking(_context: &AgentContext<'_>) -> Result<Decision, Undecided> {
+///     Err(GuardrailError::undecided("somebody-else", "its list is missing"))
+/// }
+/// ```
+///
+/// The same check answering with what it may, which compiles, so that a name
+/// that moved fails here rather than leaving the example above failing for a
+/// reason nobody meant:
+///
+/// ```
+/// use crucible_agents::{AgentContext, Decision, GuardrailError, Undecided};
+///
+/// fn checking(_context: &AgentContext<'_>) -> Result<Decision, Undecided> {
+///     let _ = GuardrailError::undecided("somebody-else", "its list is missing");
+///     Err(Undecided::because("its list is missing"))
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum GuardrailError {
     /// The guardrail ran and could not say.
@@ -150,13 +240,79 @@ pub enum GuardrailError {
 }
 
 impl GuardrailError {
-    /// A guardrail that ran and could not say, for the reason given.
+    /// `guard` ran and could not say, for the reason given.
+    ///
+    /// Public because the runner is what asks a check and lives in another
+    /// crate. No check can hand one back, so the name is whatever the caller
+    /// that asked knows the check to be called.
     #[must_use]
     pub fn undecided(guard: &str, problem: &str) -> Self {
         Self::Undecided {
             guard: guard.into(),
             problem: problem.into(),
         }
+    }
+}
+
+/// A check, and the name it was declared under.
+///
+/// The name is read off the check once, when a definition takes it, and kept
+/// here. What the check answers to afterwards is not asked again, so a check
+/// cannot be one name while it is declared and another once it has refused.
+/// Only [`AgentBuilder`](crate::AgentBuilder) makes one, and it makes no two
+/// with one name on the same definition.
+#[derive(Debug)]
+pub struct Declared<G: ?Sized> {
+    name: Box<str>,
+    check: Arc<G>,
+}
+
+impl<G: ?Sized> Declared<G> {
+    /// `check`, under the name it answered to when it was declared.
+    pub(crate) fn under(name: Box<str>, check: Arc<G>) -> Self {
+        Self { name, check }
+    }
+
+    /// What the check was called when it was declared.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The check.
+    #[must_use]
+    pub fn check(&self) -> &G {
+        &self.check
+    }
+}
+
+impl<G: ?Sized> Clone for Declared<G> {
+    fn clone(&self) -> Self {
+        Self {
+            name: self.name.clone(),
+            check: Arc::clone(&self.check),
+        }
+    }
+}
+
+/// A check declared under a name another check on the definition already has.
+///
+/// Refused rather than kept, because a refusal is written under its check's
+/// name and two checks with one name would each read as the other.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("a guardrail called `{0}` is already declared")]
+pub struct NameTaken(Box<str>);
+
+impl NameTaken {
+    /// The name that was already declared.
+    pub(crate) fn of(name: &str) -> Self {
+        Self(name.into())
+    }
+
+    /// The name both checks answer to.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.0
     }
 }
 
@@ -167,7 +323,7 @@ impl GuardrailError {
 /// anything a caller cannot already build.
 ///
 /// ```
-/// use crucible_agents::{AgentContext, Decision, GuardrailError, InputGuardrail, Rejection};
+/// use crucible_agents::{AgentContext, Decision, InputGuardrail, Undecided};
 ///
 /// /// Refuses anything that reads like a credential being pasted in.
 /// #[derive(Debug)]
@@ -178,19 +334,18 @@ impl GuardrailError {
 ///         "no-secrets"
 ///     }
 ///
-///     fn checking(&self, context: &AgentContext<'_>) -> Result<Decision, GuardrailError> {
+///     fn checking(&self, context: &AgentContext<'_>) -> Result<Decision, Undecided> {
 ///         if context.said().contains("api-key:") {
-///             return Ok(Decision::Rejected(Rejection::new(
-///                 self.name(),
-///                 "the prompt carries a credential",
-///             )));
+///             return Ok(Decision::rejected("the prompt carries a credential"));
 ///         }
 ///         Ok(Decision::Allowed)
 ///     }
 /// }
 /// ```
 pub trait InputGuardrail: std::fmt::Debug + Send + Sync {
-    /// What this guardrail is called, in a refusal a reader sees.
+    /// What this guardrail is called, in a refusal a reader sees. Read once,
+    /// when the check is declared on a definition: a refusal it makes, or a
+    /// decision it could not reach, is written under what this answered then.
     fn name(&self) -> &str;
 
     /// Judges what the caller asked.
@@ -202,9 +357,9 @@ pub trait InputGuardrail: std::fmt::Debug + Send + Sync {
     ///
     /// # Errors
     ///
-    /// [`GuardrailError`] where the check ran and could not decide. That is not
-    /// a refusal: a run ends differently for each.
-    fn checking(&self, context: &AgentContext<'_>) -> Result<Decision, GuardrailError>;
+    /// [`Undecided`] where the check ran and could not decide. That is not a
+    /// refusal: a run ends differently for each.
+    fn checking(&self, context: &AgentContext<'_>) -> Result<Decision, Undecided>;
 }
 
 /// A check on the final candidate answer, run before it is accepted.
@@ -217,19 +372,16 @@ pub trait InputGuardrail: std::fmt::Debug + Send + Sync {
 /// and not written down as one — a guard that must decide before anybody reads
 /// a word has to buffer behind the output ceilings instead.
 pub trait OutputGuardrail: std::fmt::Debug + Send + Sync {
-    /// What this guardrail is called, in a refusal a reader sees.
+    /// What this guardrail is called, in a refusal a reader sees. Read once,
+    /// when the check is declared on a definition.
     fn name(&self) -> &str;
 
     /// Judges the answer the model finished on.
     ///
     /// # Errors
     ///
-    /// [`GuardrailError`] where the check ran and could not decide.
-    fn checking(
-        &self,
-        context: &AgentContext<'_>,
-        candidate: &str,
-    ) -> Result<Decision, GuardrailError>;
+    /// [`Undecided`] where the check ran and could not decide.
+    fn checking(&self, context: &AgentContext<'_>, candidate: &str) -> Result<Decision, Undecided>;
 }
 
 #[cfg(test)]

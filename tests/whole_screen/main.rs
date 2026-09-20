@@ -1831,3 +1831,63 @@ fn compact_tool_activity_and_its_group_expand_in_the_real_terminal() {
     assert!(opened.contains("second retained result"), "{opened}");
     insta::assert_snapshot!("compact_tool_group_expanded", opened);
 }
+
+#[test]
+fn a_turn_ended_from_outside_mid_answer_leaves_what_was_said_in_the_log() {
+    use std::os::unix::process::ExitStatusExt as _;
+
+    // Closing the window is a hang-up and `kill` is a termination, and either
+    // arrives while the answer is on screen and nothing has said it is over:
+    // the vendor holds the message open behind its last word, so the turn has
+    // not ended and what was heard is recorded nowhere yet. What the reader
+    // watched arrive has to be what the log holds once the process is gone.
+    for (case, signal, number) in [("hung-up", "HUP", 1), ("terminated", "TERM", 15)] {
+        let vendor = Vendor::holding(HELD_ANSWER);
+        let mut window = Watched::answering(case, 80, 24, &vendor);
+
+        window.types_and_catches("say it\r", HELD_LAST_WORD);
+        let (ended, wrote) = window.ends_on(signal);
+        let recorded = window.recorded();
+
+        assert!(
+            recorded.contains(HELD_ANSWER),
+            "{signal}: the answer on screen never reached the log: {recorded:?}"
+        );
+        // The screen it borrowed is handed back on the way, which is every
+        // guard the session held being dropped rather than abandoned: a shell
+        // left in the alternate screen with the keys still raw is what dying
+        // where it stood looked like from the chair.
+        assert!(
+            wrote.contains("\u{1b}[?1049l"),
+            "{signal}: the screen was never handed back: {wrote:?}"
+        );
+        assert_eq!(
+            ended.signal(),
+            Some(number),
+            "{signal}: crucible did not end the way the signal ends a process: {ended:?}"
+        );
+    }
+}
+
+#[test]
+fn a_termination_sent_while_a_question_stands_is_not_kept_waiting_for_a_key() {
+    use std::os::unix::process::ExitStatusExt as _;
+
+    // The other half of holding a signal back while a turn runs. A permission
+    // question waits on the keyboard with no clock, so a termination that was
+    // only noted there would do nothing until somebody pressed a key — a `kill`
+    // that needs a person. The call has been heard and written down by the time
+    // it is asked about, so there is no answer in flight to protect either.
+    let vendor = Vendor::calling(
+        "edit",
+        r#"{"path":"notes.md","find":"was","replace":"is"}"#,
+        "Never reached.",
+    );
+    let mut window = Watched::answering("terminated-asking", 80, 24, &vendor);
+    std::fs::write(window.workspace().join("notes.md"), "was").expect("a file to ask about");
+
+    window.types_until("change it\r", "Do you want to proceed?");
+    let (ended, _) = window.ends_on("TERM");
+
+    assert_eq!(ended.signal(), Some(15), "{ended:?}");
+}

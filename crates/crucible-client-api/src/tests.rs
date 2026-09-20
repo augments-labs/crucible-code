@@ -425,13 +425,13 @@ fn snapshots() -> Vec<Snapshot> {
         .map(|pending| Snapshot {
             session: pending.as_ref().map(|_| SessionId::new()),
             provider: pending.as_ref().map(|_| name("anthropic")),
-            model: marked(),
+            model: pending.as_ref().and_then(|_| Model::new(MARKER)),
             effort: pending.as_ref().map(|_| Rung::Max),
             mode: Mode::AllowEdits,
             messages: 4,
             turns: 2,
             carrying: 900,
-            left: pending.as_ref().map(|_| 71),
+            left: pending.as_ref().and_then(|_| Percent::new(71)),
             pending,
         })
         .collect()
@@ -717,6 +717,7 @@ fn every_arm_that_crosses_has_a_specimen() {
     for snapshot in snapshots() {
         either("snapshot.session", snapshot.session.is_some());
         either("snapshot.provider", snapshot.provider.is_some());
+        either("snapshot.model", snapshot.model.is_some());
         either("snapshot.effort", snapshot.effort.is_some());
         either("snapshot.left", snapshot.left.is_some());
         either("snapshot.pending", snapshot.pending.is_some());
@@ -727,6 +728,7 @@ fn every_arm_that_crosses_has_a_specimen() {
         "resource.expires_at",
         "snapshot.session",
         "snapshot.provider",
+        "snapshot.model",
         "snapshot.effort",
         "snapshot.left",
         "snapshot.pending",
@@ -1184,13 +1186,13 @@ fn the_fullest_value_that_crosses_is_within_the_value_ceiling() {
     let fullest = Snapshot {
         session: Some(SessionId::new()),
         provider: Some(name("anthropic")),
-        model: marked(),
+        model: Model::new(MARKER),
         effort: Some(Rung::Max),
         mode: Mode::AllowEdits,
         messages: 4,
         turns: 2,
         carrying: 900,
-        left: Some(71),
+        left: Percent::new(71),
         pending: Some(Pending::Questions {
             id: PendingId::new(8),
             questions: vec![asked(); ITEMS],
@@ -1358,4 +1360,166 @@ fn progress_and_a_snapshot_cannot_be_read_as_each_other() {
         assert!(Progress::decode(&frame).is_err());
         assert!(Response::decode(&frame).is_err());
     }
+}
+
+/// `frame` without `field`.
+fn without(mut frame: Value, field: &str) -> Value {
+    frame
+        .as_object_mut()
+        .expect("a frame is an object")
+        .remove(field);
+    frame
+}
+
+#[test]
+fn progress_and_a_snapshot_say_their_version_and_another_is_refused_by_name() {
+    type Reading = fn(&[u8]) -> Result<(), Refusal>;
+    let mut frames: Vec<(Value, Reading)> = Vec::new();
+    for one in progress() {
+        let frame = serde_json::from_slice(&one.encode().unwrap()).unwrap();
+        frames.push((frame, |bytes| Progress::decode(bytes).map(drop)));
+    }
+    for snapshot in snapshots() {
+        let frame = serde_json::from_slice(&snapshot.encode().unwrap()).unwrap();
+        frames.push((frame, |bytes| Snapshot::decode(bytes).map(drop)));
+    }
+
+    for (frame, read) in frames {
+        assert_eq!(
+            frame.get("version"),
+            Some(&json!(Version::CURRENT.number())),
+            "{frame}"
+        );
+
+        for version in [0, 2, 65_536, u64::MAX] {
+            let other = with(frame.clone(), "version", json!(version));
+            assert_eq!(
+                read(&framed(&other)).unwrap_err().code(),
+                ErrorCode::UnsupportedVersion,
+                "version {version}"
+            );
+        }
+
+        // A frame that does not say is not taken for one this build speaks.
+        let silent = without(frame, "version");
+        assert_eq!(
+            read(&framed(&silent)).unwrap_err().code(),
+            ErrorCode::Malformed
+        );
+    }
+}
+
+#[test]
+fn a_snapshot_says_no_percentage_over_a_hundred_and_no_model_by_saying_none() {
+    let standing = |snapshot: &Snapshot| -> Value {
+        serde_json::from_slice(&snapshot.encode().unwrap()).unwrap()
+    };
+    let inside = |mut frame: Value, field: &str, value: Option<Value>| -> Vec<u8> {
+        let fields = frame
+            .get_mut("snapshot")
+            .and_then(Value::as_object_mut)
+            .expect("a snapshot is an object");
+        match value {
+            Some(value) => fields.insert(field.to_owned(), value),
+            None => fields.remove(field),
+        };
+        framed(&frame)
+    };
+    let whole = standing(&snapshots().remove(0));
+
+    assert_eq!(Percent::new(100), Some(Percent::WHOLE));
+    assert_eq!(Percent::new(101), None);
+    assert_eq!(Percent::new(71).map(Percent::get), Some(71));
+
+    for left in [0, 71, 100] {
+        let frame = inside(whole.clone(), "left", Some(json!(left)));
+        assert!(Snapshot::decode(&frame).is_ok(), "{left}");
+    }
+    for left in [101, 255, 256, u64::MAX] {
+        let frame = inside(whole.clone(), "left", Some(json!(left)));
+        assert_eq!(
+            Snapshot::decode(&frame).unwrap_err().code(),
+            ErrorCode::Malformed,
+            "{left}"
+        );
+    }
+
+    // No model is said by leaving the field out, and an empty one is refused
+    // rather than read as a second way to say the same thing.
+    let none = inside(whole.clone(), "model", None);
+    assert!(Snapshot::decode(&none).is_ok());
+    let empty = inside(
+        whole,
+        "model",
+        Some(json!({"text": "", "truncated": false})),
+    );
+    assert_eq!(
+        Snapshot::decode(&empty).unwrap_err().code(),
+        ErrorCode::Malformed
+    );
+
+    // Nor can one be written: there is no model made of no words, so a frame
+    // this crate writes is one it reads.
+    assert_eq!(Model::new(""), None);
+    let mut named = snapshots().remove(0);
+    named.model = Model::new("a-model");
+    assert!(named.model.is_some());
+    let frame = named.encode().unwrap();
+    assert_eq!(Snapshot::decode(&frame).map_err(Refusal::code), Ok(named));
+}
+
+/// Every place a field sits in `value`, as the names on the way down to it.
+fn places(value: &Value, under: &str, found: &mut BTreeSet<String>) {
+    match value {
+        Value::Object(map) => {
+            for (key, inner) in map {
+                let here = format!("{under}/{key}");
+                places(inner, &here, found);
+                found.insert(here);
+            }
+        }
+        Value::Array(items) => {
+            let here = format!("{under}[]");
+            for inner in items {
+                places(inner, &here, found);
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+    }
+}
+
+#[test]
+fn the_version_moves_with_what_a_frame_is_made_of() {
+    // What each kind of frame is made of, from the same specimens that hold
+    // every arm: one line a kind, the places its fields sit, in order.
+    let mut kinds = std::collections::BTreeMap::<String, BTreeSet<String>>::new();
+    for specimen in specimens() {
+        let value: Value = serde_json::from_slice(&specimen.frame).unwrap();
+        places(&value, "", kinds.entry(specimen.what).or_default());
+    }
+    let made_of: Vec<String> = kinds
+        .iter()
+        .map(|(kind, found)| {
+            let found: Vec<&str> = found.iter().map(String::as_str).collect();
+            format!("{kind}: {}", found.join(" "))
+        })
+        .collect();
+    let made_of = made_of.join("\n");
+
+    // Written out here so that the number cannot change with the toolchain.
+    let digest = made_of
+        .bytes()
+        .fold(0xcbf2_9ce4_8422_2325_u64, |sum, byte| {
+            (sum ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
+        });
+
+    // The two are pinned together because nothing else holds them together: a
+    // field added, renamed or taken away under the same number is a build that
+    // says it speaks a revision and refuses its frames as malformed.
+    assert_eq!(
+        (Version::CURRENT.number(), digest),
+        (1, 17_913_927_481_741_580_016),
+        "what a frame is made of moved. Once a release speaks this contract, \
+         move Version::CURRENT with it; then write the pair here.\n{made_of}"
+    );
 }

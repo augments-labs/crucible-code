@@ -12,8 +12,8 @@ use std::time::{Duration, Instant};
 use crucible_context::ContextInputs;
 use crucible_core::{
     AgentId, ApiKey, Approved, Aside, Ask, Cancel, DescribeTool, Effort, Header, HeaderKey, Host,
-    Provider, Remember, Sensitivity, SessionId, Steer, StopReason, Summary, Tool, ToolArgs,
-    ToolCall, ToolContext, ToolError, ToolOutput, Verdict, Workspace,
+    JournalStore, Provider, Remember, Sensitivity, SessionId, Steer, StopReason, Summary, Tool,
+    ToolArgs, ToolCall, ToolContext, ToolError, ToolOutput, Verdict, Workspace,
 };
 use crucible_provider::{Anthropic, Endpoint, Google, Https, OpenAi};
 use crucible_runner::{Agent, Compaction, Model, RunPolicy, Runner, Tools};
@@ -83,6 +83,15 @@ impl Sample {
     /// it, so a test that wants to end the recording itself, or read the file
     /// the records landed in, has to hold the session too.
     pub(crate) fn recording(&self, model: &str, vendor: &Vendor, session: Arc<Session>) -> Runner {
+        self.recording_through(model, vendor, session)
+    }
+    /// The same runner, over whatever stands behind the storage contract.
+    pub(crate) fn recording_through(
+        &self,
+        model: &str,
+        vendor: &Vendor,
+        session: Arc<dyn JournalStore>,
+    ) -> Runner {
         let mut tools = Tools::new();
         tools
             .add_builtin(Count(self.executed.clone(), self.padding))

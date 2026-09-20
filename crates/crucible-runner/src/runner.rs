@@ -41,7 +41,7 @@ use crucible_core::{
 
 use crucible_context::ContextInputs;
 
-use crucible_agents::{Agent, AgentContext, Decision, GuardrailError, Model};
+use crucible_agents::{Agent, AgentContext, Decision, GuardrailError, Model, Rejection};
 
 use crate::context::RunContext;
 use crate::outcome::{RunResult, Turned};
@@ -64,6 +64,7 @@ use answer::Answer;
 pub use cleanup::PromptCacheCleanup;
 use load::{Counting, Load};
 use passes::AgentLoop;
+use state::Judged;
 pub use state::RunState;
 use work::{Went, Work};
 
@@ -165,6 +166,25 @@ pub struct Runner {
     sandbox_audits: SandboxAuditRegistry,
 }
 
+/// What `agent` would be advertised out of `tools`, between turns.
+///
+/// A pass narrows the roster it admits and leaves it behind narrowed, so after
+/// the first one this hands the roster straight back. Before it, the run is
+/// still holding everything it was wired with, and both things read here
+/// between turns — the names under the box and the size of the request the
+/// next turn would send — are about what the definition declares rather than
+/// about what the wiring installed.
+///
+/// A function over the two fields rather than a method, so a caller can hold
+/// the load it is about to write while it asks.
+fn advertising<'a>(agent: &Agent, tools: &'a ToolSnapshot) -> Vec<ToolSchema<'a>> {
+    tools
+        .advertised()
+        .into_iter()
+        .filter(|schema| agent.availability().offers(schema.name))
+        .collect()
+}
+
 struct Tooling {
     source: Arc<dyn Toolset>,
     snapshot: ToolSnapshot,
@@ -249,7 +269,7 @@ impl Runner {
         };
         runner.state.load.requesting(
             runner.agent.instructions(),
-            &runner.state.tools.advertised(),
+            &advertising(&runner.agent, &runner.state.tools),
         );
         runner
     }
@@ -394,9 +414,10 @@ impl Runner {
         for message in self.state.transcript.messages() {
             self.state.load.recounted(message);
         }
-        self.state
-            .load
-            .requesting(self.agent.instructions(), &self.state.tools.advertised());
+        self.state.load.requesting(
+            self.agent.instructions(),
+            &advertising(&self.agent, &self.state.tools),
+        );
 
         // After the fixed content of this run's request is known, and never
         // before: what the log remembers is taken only where it still covers
@@ -625,11 +646,8 @@ impl Runner {
     /// that. What the reader is shown is the same either way.
     #[must_use]
     pub fn offering(&self) -> Vec<String> {
-        self.state
-            .tools
-            .advertised()
+        advertising(&self.agent, &self.state.tools)
             .into_iter()
-            .filter(|schema| self.agent.availability().offers(schema.name))
             .map(|schema| schema.name.to_owned())
             .collect()
     }
@@ -736,9 +754,10 @@ impl Runner {
     /// written empty already gets in the documents this text is built from.
     pub fn telling(&mut self, system: &str) {
         self.agent = Arc::new(self.agent.telling(system));
-        self.state
-            .load
-            .requesting(self.agent.instructions(), &self.state.tools.advertised());
+        self.state.load.requesting(
+            self.agent.instructions(),
+            &advertising(&self.agent, &self.state.tools),
+        );
     }
 
     /// Writes to a different vendor from the next turn on.
@@ -1081,8 +1100,8 @@ impl Runner {
         // turn began. A check reaching no decision is not a refusal and does
         // not say the prompt was rejected, because it did not say that.
         match self.checking_input(prompt, run) {
-            Ok(Decision::Allowed) => {}
-            Ok(Decision::Rejected(rejection)) => {
+            Ok(Judged::Allowed) => {}
+            Ok(Judged::Rejected(rejection)) => {
                 return Ok(Turned::Rejected {
                     rejection,
                     stop: None,
@@ -1150,9 +1169,9 @@ impl Runner {
         &mut self,
         prompt: &str,
         run: &RunContext<'_>,
-    ) -> Result<Decision, GuardrailError> {
+    ) -> Result<Judged, GuardrailError> {
         if self.agent.input_guardrails().is_empty() {
-            return Ok(Decision::Allowed);
+            return Ok(Judged::Allowed);
         }
         if let Some(committed) = self.state.checked(prompt) {
             return Ok(committed.clone());
@@ -1163,12 +1182,18 @@ impl Runner {
         // while it was being walked.
         let agent = Arc::clone(&self.agent);
         let context = AgentContext::new(run.run(), agent.id(), prompt);
-        let mut decision = Decision::Allowed;
+        let mut decision = Judged::Allowed;
         for guard in agent.input_guardrails() {
-            match guard.checking(&context)? {
+            // The name is the one the check was declared under, never taken
+            // from what it answered, whether it refused or could not say.
+            match guard
+                .check()
+                .checking(&context)
+                .map_err(|unsure| GuardrailError::undecided(guard.name(), unsure.problem()))?
+            {
                 Decision::Allowed => {}
-                refused @ Decision::Rejected(_) => {
-                    decision = refused;
+                Decision::Rejected(why) => {
+                    decision = Judged::Rejected(Rejection::new(guard.name(), &why));
                     break;
                 }
             }
@@ -1192,19 +1217,25 @@ impl Runner {
     /// # Errors
     ///
     /// [`GuardrailError`] where a check ran and could not reach a decision.
-    fn vouching(&self, candidate: &str, run: &RunContext<'_>) -> Result<Decision, GuardrailError> {
+    fn vouching(&self, candidate: &str, run: &RunContext<'_>) -> Result<Judged, GuardrailError> {
         if self.agent.output_guardrails().is_empty() {
-            return Ok(Decision::Allowed);
+            return Ok(Judged::Allowed);
         }
 
         let context = AgentContext::new(run.run(), self.agent.id(), self.said());
         for guard in self.agent.output_guardrails() {
-            match guard.checking(&context, candidate)? {
+            match guard
+                .check()
+                .checking(&context, candidate)
+                .map_err(|unsure| GuardrailError::undecided(guard.name(), unsure.problem()))?
+            {
                 Decision::Allowed => {}
-                refused @ Decision::Rejected(_) => return Ok(refused),
+                Decision::Rejected(why) => {
+                    return Ok(Judged::Rejected(Rejection::new(guard.name(), &why)));
+                }
             }
         }
-        Ok(Decision::Allowed)
+        Ok(Judged::Allowed)
     }
 
     /// The last thing the caller said, which is what an invocation is about.
@@ -1537,7 +1568,9 @@ impl Runner {
                 run: listening.run.run(),
                 session: session.as_ref().map(crucible_core::SessionId::as_str),
                 workspace: workspace.as_bytes(),
-                user: user.as_bytes(),
+                user: user
+                    .as_ref()
+                    .map_or(&[], crucible_core::SessionOwner::as_bytes),
                 trust: b"local-workspace-authority-v1",
                 authority: authority.as_bytes(),
                 instructions: self.agent.instructions().unwrap_or_default().as_bytes(),

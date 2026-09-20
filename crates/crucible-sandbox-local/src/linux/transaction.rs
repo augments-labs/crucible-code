@@ -1132,7 +1132,8 @@ impl Lease {
 
     /// Takes the lock in `state` without waiting for it, or `None` while it is
     /// held. Under test it may first wait out a change another test holds on
-    /// this user's state directory; see [`TestStateChange`].
+    /// this user's state directory; see `TestStateChange`, which only a test
+    /// build has.
     ///
     /// Not waited for here, because the one asking polls: a process that has
     /// ended is asked again on the next look, and nothing that asks from the

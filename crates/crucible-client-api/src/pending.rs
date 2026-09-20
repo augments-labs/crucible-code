@@ -21,8 +21,11 @@ use crate::wire::{Fields, Writing};
 
 /// The identity of one pending action, minted by the application.
 ///
-/// Never reused while the host runs, so the identity of an action that was
+/// Not reused while the host runs, so the identity of an action that was
 /// settled, abandoned or belonged to an earlier turn names nothing afterwards.
+/// The application counts them from one in a `u64`, and that is the whole of
+/// the promise: a host would have to put `u64::MAX` actions before a number
+/// came round again, and none runs that long.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PendingId(u64);
 
@@ -119,6 +122,11 @@ pub enum Pending {
         /// The kind of thing it would do.
         effect: Effect,
         /// What exactly it would do that to, as the host would show it.
+        ///
+        /// A [`Text`], so it can say it was cut, and a client that reads one
+        /// which was has not read what it is asked about. The application
+        /// does not put such an action to a client that has only these words
+        /// to go on: the call is denied instead.
         subject: Text,
     },
     /// Questions a model asked of the person.

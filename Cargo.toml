@@ -265,6 +265,18 @@ seccompiler = { version = "=0.5.0", default-features = false }
 # Linux architecture; the workspace already locks this exact libc.
 libc = "=0.2.189"
 
+# Being told to stop from outside. A closed window or a `kill` arrives as a
+# signal, and `std` has no way to hear one: without a handler the process ends
+# where it stands, with the log writer unjoined and the answer on screen never
+# written down. Installing a handler is `sigaction` through `libc`, which is
+# `unsafe` and which this workspace denies; this is the safe wrapper, and all
+# it is asked for is its flag module — a handler that stores one atomic and
+# returns, which is the whole of what may be done in a signal context — and the
+# call that afterwards ends the process the way the signal would have. Unix
+# only. Already in the tree under `crossterm` at this version with more turned
+# on than this, so nothing new is compiled.
+signal-hook = { version = "=0.3.18", default-features = false }
+
 # Windows has no file mode, so the 0600 a session log is held at has to be
 # written as a DACL instead: one entry, for the account crucible is running as,
 # with the inheritance from the user profile switched off. Nothing in `std`
@@ -467,6 +479,13 @@ insta.workspace = true
 # crucible itself.
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix = { workspace = true, features = ["param", "pipe", "pty", "termios"] }
+
+# What hears a hang-up or a termination while a turn is running, so the turn is
+# stopped and written down instead of lost. Signals are the Unix spelling of
+# that; a closing console on Windows is a different mechanism this does not
+# reach.
+[target.'cfg(unix)'.dependencies]
+signal-hook.workspace = true
 
 [lints]
 workspace = true

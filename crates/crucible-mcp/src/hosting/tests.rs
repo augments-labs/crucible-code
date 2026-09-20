@@ -1578,6 +1578,54 @@ fn a_server_selected_with_no_restarts_is_not_started_again_and_the_answer_says_w
 }
 
 #[test]
+fn a_refused_restart_is_said_about_the_server_it_was_refused_to() {
+    // Both refusals the budget can give, read as the model and the person
+    // reading over its shoulder are shown them. The budget is shared with
+    // everything else crucible hosts, and a sentence about some other kind of
+    // program sends whoever reads it looking for something they never set up.
+    let spent = {
+        let mut frames = opening("docs", &json!([offers("search")]));
+        frames.push(produced("never said", false));
+        let sandbox = Pretend::new([Answers::Says(frames)]);
+        (sandbox, chosen("docs"), true)
+    };
+    let unsettled = {
+        let frames = opening("docs", &json!([offers("search")]));
+        let sandbox = Pretend::new([Answers::Says(frames)]);
+        (sandbox, chosen("docs").restarting(3), false)
+    };
+
+    for (sandbox, chosen, departs) in [spent, unsettled] {
+        let hosting = Hosting::new(
+            builtin(&[]),
+            Arc::clone(&sandbox) as Arc<dyn SandboxService>,
+            vec![chosen],
+        );
+        let context = lifecycle();
+        hosting.prepare(&context).expect("the server started");
+        let snapshot = hosting.snapshot(&context).expect("one generation");
+        let entry = snapshot.find("mcp:docs/search").expect("the offered tool");
+        if departs {
+            sandbox.server(0).departs();
+        }
+
+        let said = calls(entry.tool(), "mcp:docs/search", "{}", &Cancel::new())
+            .expect_err("no restart was permitted")
+            .to_string();
+
+        assert!(
+            said.contains("will not be asked again: the server "),
+            "the refusal is not about the server: {said}"
+        );
+        assert!(
+            !said.contains("extension"),
+            "an MCP server was called an extension: {said}"
+        );
+        hosting.dispose(&context).expect("nothing left to stop");
+    }
+}
+
+#[test]
 fn a_restarted_server_offering_the_tool_under_another_schema_is_refused_and_retired() {
     let mut first = opening("docs", &json!([offers("search")]));
     first.push(produced("never said", false));

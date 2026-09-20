@@ -22,7 +22,8 @@
 //! [`bounds::FRAME_BYTES`] is refused by its length, before a parser sees it,
 //! and one with too many entries in a list, nested too deep, made of more
 //! values than [`bounds::VALUES`] or saying a key twice is refused where the
-//! parser meets that; a version this build does not speak, a
+//! parser meets that; a version this build does not speak — in a request, a
+//! response, a snapshot or a progress report, each of which says its own — a
 //! capability it has not heard of and a command it does not ship are each
 //! refused with their own stable code rather than guessed at.
 //!
@@ -49,11 +50,19 @@
 //!   opened — and neither is scrubbed here.
 //! - A [`PendingId`] is the next number from a counter. It is used once and
 //!   names nothing afterwards, which is what settling relies on; it is not a
-//!   secret and must not be treated as one.
+//!   secret and must not be treated as one. A decision is matched to a pending
+//!   action by that number and by the kind of question it answers, and by
+//!   nothing else, so an adapter discards every decision that reaches it
+//!   before it has put the action the decision names: one sent ahead, naming
+//!   the number that comes next, was written by somebody who was never shown
+//!   the action and would otherwise settle it.
 //! - Changing the permission mode, turning the sandbox requirement off, and
 //!   logging in or out are plain commands behind no [`Capability`], because a
 //!   person at the terminal can do all of them. Capabilities say what a client
-//!   can take part in, not what it is allowed to change.
+//!   can take part in, not what it is allowed to change. Nothing that ships
+//!   reads a [`Request`] from bytes, which is the only reason that is safe,
+//!   and the repository's checks fail when something starts to without each
+//!   of those commands having been decided about for it.
 
 pub mod bounds;
 pub mod command;
@@ -76,7 +85,7 @@ pub use outcome::{
 pub use pending::{Asked, Choice, Decision, Effect, Lasting, Pending, PendingId, Picked, Ruling};
 pub use progress::Progress;
 pub use request::{Capabilities, Capability, Correlation, Refused, Request, Version};
-pub use snapshot::Snapshot;
+pub use snapshot::{Model, Percent, Snapshot};
 
 #[cfg(test)]
 mod tests;

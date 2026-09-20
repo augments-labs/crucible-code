@@ -34,7 +34,9 @@ pub enum Ended {
 ///
 /// Every permission question the turn raises is put to `front` under an
 /// identity the application mints, which no caller supplies or can start
-/// again, and settled only by a decision that names it.
+/// again, and settled only by a decision that names it. One handed in here as
+/// a command of its own is about no action — the turn it would have to be
+/// about is not this one — and is refused as stale, as it is at every door.
 /// What the turn reports on the way goes to `run`, as it always has.
 pub fn turn(
     conversation: &mut Conversation,
@@ -54,9 +56,9 @@ pub fn turn(
             let mut spent = Spend::NONE;
             Ended::Room(conversation.compact(Compacting::Asked, run, &mut spent))
         }
+        Command::Decide(_) => Ended::Refused(ErrorCode::StaleDecision.into()),
         Command::Theme(_)
         | Command::Cancel
-        | Command::Decide(_)
         | Command::Clear
         | Command::Resume(_)
         | Command::SelectModel { .. }
@@ -78,12 +80,33 @@ pub fn turn(
 /// The turn ends when it next looks, and says so in its own outcome: this is
 /// the request having been heard and nothing more. No conversation is needed,
 /// which is what lets it be asked while a turn has the conversation.
+///
+/// A decision handed in here is refused as stale rather than as busy: the
+/// turn's pending action is settled through the [`Front`] it was put to, and
+/// this door holds no action for a decision to name.
 pub fn interrupt(request: &Request, cancel: &Cancel) -> Outcome {
-    if matches!(request.command(), Command::Cancel) {
-        cancel.request();
-        Outcome::Cancelling
-    } else {
-        Outcome::Refused(ErrorCode::Busy.into())
+    match request.command() {
+        Command::Cancel => {
+            cancel.request();
+            Outcome::Cancelling
+        }
+        Command::Decide(_) => Outcome::Refused(ErrorCode::StaleDecision.into()),
+        Command::Prompt(_)
+        | Command::Compact
+        | Command::Theme(_)
+        | Command::Clear
+        | Command::Resume(_)
+        | Command::SelectModel { .. }
+        | Command::SetEffort(_)
+        | Command::SetMode(_)
+        | Command::CycleMode
+        | Command::Login { .. }
+        | Command::Logout { .. }
+        | Command::InspectCache
+        | Command::CleanCache
+        | Command::Sandbox { .. }
+        | Command::Help
+        | Command::Exit => Outcome::Refused(ErrorCode::Busy.into()),
     }
 }
 

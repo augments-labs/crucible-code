@@ -22,11 +22,13 @@ use crate::remember::{self, RememberError};
 use crate::switching::{LoggedIn, LoggedOut, Rung, Switched, Switching};
 
 /// What the host lends a command: the registry generation and files a switch
-/// is decided from, where sessions are kept, and the workspace they belong to.
+/// is decided from, where sessions are kept, the workspace they belong to, and
+/// which syntax themes there are.
 ///
 /// Lent by whoever stands on the host and never read out of a request, which
 /// is what keeps a request a set of names: the provider it names is looked up
-/// in this registry, and the session it names under this workspace.
+/// in this registry, the session it names under this workspace, and the syntax
+/// theme it names among the ones this host reads code in.
 #[derive(Debug, Clone, Copy)]
 pub struct Desk<'a> {
     /// What a switch is decided from.
@@ -35,6 +37,11 @@ pub struct Desk<'a> {
     pub sessions: &'a Path,
     /// The workspace a session belongs to.
     pub workspace: &'a Workspace,
+    /// Whether this host reads fenced code in a syntax theme of this name.
+    ///
+    /// Asked before a name a client sent is written down. The themes belong to
+    /// whatever draws, which this crate does not reach, so the host answers.
+    pub reads: fn(&str) -> bool,
 }
 
 /// What came of `/clear`.
@@ -116,7 +123,8 @@ pub enum Performed {
 /// and a decision settles through the [`Front`](super::Front) a stopped turn is
 /// asking, while that turn is stopped. Handed here they are refused by name and
 /// nothing is done: a decision that arrives as a command of its own finds
-/// nothing pending, whatever identity it names, and is refused as stale.
+/// nothing pending, whatever identity it names, and is refused as stale —
+/// here and at every other door, so a client reads one answer to it.
 pub fn perform(conversation: &mut Conversation, request: &Request, desk: &Desk<'_>) -> Performed {
     match request.command() {
         Command::Prompt(_) | Command::Compact | Command::Cancel => {
@@ -180,18 +188,28 @@ pub fn perform(conversation: &mut Conversation, request: &Request, desk: &Desk<'
 /// front end is asked for another look while a turn has the conversation, and
 /// what is written down is the host's file and nothing the turn holds. Any
 /// other command is refused by name and nothing is done.
+///
+/// A syntax theme is a name a client chose, and it is looked up before it is
+/// written: one this host does not read code in is refused as
+/// [`ErrorCode::InvalidArgument`] and the file is left as it was, rather than
+/// made to name a theme the next start cannot find.
 pub fn keep(request: &Request, desk: &Desk<'_>) -> Performed {
     match request.command() {
-        Command::Theme(theme) => Performed::Theme(match theme {
-            Theme::Drawing(palette) => {
-                remember::drawing(desk.switching.choosing, Palette::as_str(*palette))
-            }
-            Theme::Syntax(name) => remember::syntax(desk.switching.choosing, name.as_str()),
-        }),
+        Command::Theme(Theme::Drawing(palette)) => Performed::Theme(remember::drawing(
+            desk.switching.choosing,
+            Palette::as_str(*palette),
+        )),
+        Command::Theme(Theme::Syntax(name)) if !(desk.reads)(name.as_str()) => {
+            Performed::Refused(ErrorCode::InvalidArgument.into())
+        }
+        Command::Theme(Theme::Syntax(name)) => {
+            Performed::Theme(remember::syntax(desk.switching.choosing, name.as_str()))
+        }
+        // No action is pending here either, whatever a turn elsewhere waits on.
+        Command::Decide(_) => Performed::Refused(ErrorCode::StaleDecision.into()),
         Command::Prompt(_)
         | Command::Compact
         | Command::Cancel
-        | Command::Decide(_)
         | Command::Clear
         | Command::Resume(_)
         | Command::SelectModel { .. }

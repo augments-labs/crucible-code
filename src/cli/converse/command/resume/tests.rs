@@ -104,6 +104,7 @@ fn terms(sample: &Sample) -> Terms {
         chosen: Cell::new(None),
         reading: std::cell::RefCell::default(),
         cancel: Cancel::new(),
+        ending: crate::cli::ending::Ending::deaf(),
         steer: crucible_core::Steer::new(),
         aside: crucible_core::Aside::new(),
         ledger: Ledger::new(),
