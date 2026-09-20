@@ -8,6 +8,24 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Changed
+
+- **A guardrail's name and reason are kept to a ceiling.** A refusal, a check
+  that could not decide and a refused duplicate name keep at most 256 bytes of
+  the name and 4 KiB of the reason, ending in ` [cut]` where there was more;
+  names are compared as kept. A refusal and an undecided check reach a client
+  marked truncated where they were cut; no shipped agent declares a guardrail,
+  so only a build that adds one sees any of it.
+
+### Fixed
+
+- **Two session directories, or two workspaces, whose names are not valid
+  UTF-8 are no longer one prompt cache scope.** The directory a session is kept
+  in and the workspace each separate one reader's prompt cache resources from
+  another's, and both were compared as text with every invalid byte replaced,
+  so two such directories could share a scope. They are now compared byte for
+  byte; a directory whose name is text is unaffected.
+
 ## [0.42.0] - 2026-09-20
 
 ### Changed
@@ -35,9 +53,10 @@ change in any release with no deprecation period.
   `crucible-runner` no longer depends on `crucible-session`: `Runner::new`,
   `Runner::with_toolset` and `Runner::pick_up` take an `Arc<dyn JournalStore>`,
   which now requires `crucible_storage::SessionStore`; that trait grew from
-  `append_message` alone to everything the runner records and reads, so an
-  implementation must add those methods. `Event`, `EventEnvelope`, `Post`,
-  `Reporter` and `TurnError` move from `crucible-core` to `crucible-runner`.
+  `append_message` alone to everything the runner records and reads of a
+  conversation, so an implementation must add those methods. `Event`,
+  `EventEnvelope`, `Post`, `Reporter` and `TurnError` move from `crucible-core`
+  to `crucible-runner`.
   The session names the runner used to re-export are imported from
   `crucible-session`, and `Session::finish` now takes a shared session, because
   the application and the runner hold the same one.
@@ -77,14 +96,14 @@ change in any release with no deprecation period.
 
 ### Fixed
 
-- **Closing the window mid-answer no longer loses the answer.** On Linux and
-  macOS a hang-up or a `kill` that arrives while a turn runs now stops the
-  turn, writes what had been said to the session log, hands the terminal back
-  and only then ends the process by that signal, so `--continue` picks up what
-  you watched arrive; before, the process died where it stood and the log
-  stopped at your prompt. Between turns, and while a question waits for a key,
-  a signal still ends crucible at once, and on Windows a closing console is
-  not yet caught.
+- **Closing the window mid-answer no longer loses the answer.** On Linux,
+  macOS and FreeBSD a hang-up or a `kill` that arrives while a turn runs now
+  stops the turn, writes what had been said to the session log, hands the
+  terminal back and only then ends the process by that signal, so `--continue`
+  picks up what you watched arrive; before, the process died where it stood and
+  the log stopped at your prompt. Between turns, and while a question waits
+  for a key, a signal still ends crucible at once, and on Windows a closing
+  console is not yet caught.
 - **An MCP server that will not be restarted is no longer called an
   extension.** The refusal read "the extension has used all 2 of the restarts it
   is allowed" about a server nobody had installed as one; it now says "the

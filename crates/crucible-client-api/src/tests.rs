@@ -834,6 +834,18 @@ fn words_over_the_ceiling_are_cut_and_say_so() {
 }
 
 #[test]
+fn words_their_owner_already_cut_say_so_under_this_ceiling_too() {
+    // An owner with a lower ceiling hands over words that fit this one, and a
+    // mark inside them is only more words.
+    assert!(Text::cut_again("kept short [cut]", true).truncated());
+    assert!(!Text::cut_again("ends in [cut]", false).truncated());
+    assert_eq!(Text::cut_again("whole", false), Text::cut("whole"));
+
+    let long = "é".repeat(TEXT_BYTES);
+    assert_eq!(Text::cut_again(&long, false), Text::cut(&long));
+}
+
+#[test]
 fn what_a_person_answered_travels_whole_or_is_refused_and_is_never_cut() {
     // Longer than words for a reader may be, and well within what a person can
     // type: every byte of it has to come out the other side.
@@ -1516,6 +1528,11 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // The two are pinned together because nothing else holds them together: a
     // field added, renamed or taken away under the same number is a build that
     // says it speaks a revision and refuses its frames as malformed.
+    //
+    // The digest sees that a field is there and where, and nothing else. A
+    // value changing type, a required field becoming optional or the reverse,
+    // and whatever sits inside an array that is empty in every specimen all
+    // leave it as it was; those still need the number moved by hand.
     assert_eq!(
         (Version::CURRENT.number(), digest),
         (1, 17_913_927_481_741_580_016),

@@ -413,3 +413,56 @@ fn a_client_that_never_asked_for_progress_is_handed_none() {
     assert_eq!(progress(without, &retrying), None);
     assert_eq!(progress(Capabilities::none(), &retrying), None);
 }
+
+/// What a client is told of a turn that ended `turned`.
+fn told(turned: crucible_runner::Turned) -> crucible_client_api::TurnOutcome {
+    match super::Ended::Turn(Ok(turned)).outcome() {
+        crucible_client_api::Outcome::Turn(outcome) => outcome,
+        other => panic!("a turn was told as {other:?}"),
+    }
+}
+
+#[test]
+fn words_a_guardrail_ceiling_cut_reach_a_client_said_to_be_cut() {
+    // Both ceilings are under the frame's own, so the frame's cut never
+    // happens to these words and cannot be what says so.
+    let reason = "r".repeat(crucible_agents::GUARDRAIL_REASON_BYTES + 1);
+    let name = "n".repeat(crucible_agents::GUARDRAIL_NAME_BYTES + 1);
+    assert!(reason.len() < TEXT_BYTES);
+
+    let crucible_client_api::TurnOutcome::Rejected { guard, why, .. } =
+        told(crucible_runner::Turned::Rejected {
+            rejection: crucible_runner::Rejection::new(&name, &reason),
+            stop: None,
+        })
+    else {
+        panic!("a refusal was told as something else");
+    };
+    assert!(guard.truncated(), "a cut name was sent as whole");
+    assert!(why.truncated(), "a cut reason was sent as whole");
+
+    let crucible_client_api::TurnOutcome::Rejected { guard, why, .. } =
+        told(crucible_runner::Turned::Rejected {
+            rejection: crucible_runner::Rejection::new("no-secrets", "it ends in [cut]"),
+            stop: None,
+        })
+    else {
+        panic!("a refusal was told as something else");
+    };
+    assert!(
+        !guard.truncated() && !why.truncated(),
+        "whole words were sent as cut"
+    );
+
+    for (name, reason) in [("no-secrets", reason.as_str()), (name.as_str(), "no")] {
+        let crucible_client_api::TurnOutcome::Undecided { problem, .. } =
+            told(crucible_runner::Turned::Undecided {
+                problem: crucible_runner::GuardrailError::undecided(name, reason),
+                stop: None,
+            })
+        else {
+            panic!("a check that could not decide was told as something else");
+        };
+        assert!(problem.message.truncated(), "cut words were sent as whole");
+    }
+}

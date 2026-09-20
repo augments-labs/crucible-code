@@ -83,8 +83,10 @@ jobs:
   # garbage-collects the manifest a digest used to name, so this pin rots on
   # somebody else's schedule rather than on a change here. When it does, every
   # Linux job fails to start with `manifest unknown` before a line of this
-  # workflow runs, and the repair is to resolve the tag again and paste the new
-  # digest below:
+  # workflow runs. `scripts/sh/release-container.sh` asks the registry for the
+  # digest, weekly from `release-canary.yml` and by hand before a tag, so the
+  # rot is met there first. The repair is to resolve the tag again and paste the
+  # new digest below:
   #
   #   curl -s 'https://quay.io/api/v1/repository/centos/centos/tag/?onlyActiveTags=true&specificTag=stream9'
   #

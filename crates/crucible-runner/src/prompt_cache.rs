@@ -6,6 +6,7 @@
 //! authority, instructions, and tool generation. Only the final opaque digest
 //! can leave this boundary as a provider routing key.
 
+use std::path::Path;
 use std::time::Instant;
 
 use crucible_core::{
@@ -32,7 +33,7 @@ pub(super) struct ScopeInputs<'a> {
     pub effort: Option<Effort>,
     pub run: RunId,
     pub session: Option<&'a str>,
-    pub workspace: &'a [u8],
+    pub workspace: &'a Path,
     pub user: &'a [u8],
     pub trust: &'a [u8],
     pub authority: &'a [u8],
@@ -657,7 +658,7 @@ pub(super) fn identity(
                 field(&mut hash, 30, inputs.run.to_string().as_bytes());
             }
         }
-        PromptCacheIsolation::Workspace => field(&mut hash, 32, inputs.workspace),
+        PromptCacheIsolation::Workspace => field(&mut hash, 32, named(inputs.workspace)),
         PromptCacheIsolation::User => field(&mut hash, 33, inputs.user),
     }
 
@@ -686,6 +687,18 @@ pub(super) fn provider_scope(route: PromptCacheRoute<'_>) -> crucible_core::Prom
     crucible_core::PromptCacheScopeDigest::new(hash.finalize().into())
 }
 
+/// What a workspace is told apart by: the bytes of its path as the platform
+/// spells them, which no two paths share.
+///
+/// Not the path made into text, which replaces every byte that is not text
+/// with one character and so gives two such workspaces one scope. A path that
+/// is text has the bytes its text has, so it digests as it always did; one
+/// that is not moves to a scope of its own once, and what it kept under the
+/// old one is still reached by the provider-scope cleanup.
+fn named(path: &Path) -> &[u8] {
+    path.as_os_str().as_encoded_bytes()
+}
+
 /// Exact owner allowed to retire an exclusive persistent resource.
 pub(super) fn owner_scope(inputs: &ScopeInputs<'_>) -> crucible_core::PromptCacheScopeDigest {
     let mut hash = Sha256::new();
@@ -705,7 +718,7 @@ pub(super) fn owner_scope(inputs: &ScopeInputs<'_>) -> crucible_core::PromptCach
                 field(&mut hash, 10, inputs.run.to_string().as_bytes());
             }
         }
-        PromptCacheIsolation::Workspace => field(&mut hash, 12, inputs.workspace),
+        PromptCacheIsolation::Workspace => field(&mut hash, 12, named(inputs.workspace)),
         PromptCacheIsolation::User => field(&mut hash, 13, inputs.user),
     }
     field(&mut hash, 14, inputs.trust);
@@ -827,7 +840,7 @@ mod tests {
             effort: Some(Effort::High),
             run: RunId::new(),
             session,
-            workspace: b"workspace-a",
+            workspace: Path::new("workspace-a"),
             user: b"user-a",
             trust: b"trusted",
             authority: b"authority-a",
@@ -872,6 +885,32 @@ mod tests {
         });
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn workspaces_whose_names_are_not_text_are_told_apart_by_their_bytes() {
+        use std::os::unix::ffi::OsStrExt;
+
+        // Made into text, both names are `/work/` and one replacement
+        // character, and the two workspaces would be one cache scope.
+        let one = Path::new(std::ffi::OsStr::from_bytes(b"/work/\xff"));
+        let another = Path::new(std::ffi::OsStr::from_bytes(b"/work/\xfe"));
+
+        let mut here = inputs(Some("session-a"));
+        here.policy = here.policy.with_isolation(PromptCacheIsolation::Workspace);
+        here.workspace = one;
+        let mut there = here;
+        there.workspace = another;
+
+        let prefix = PromptCacheFingerprint::new([0x42; 32]);
+        assert_ne!(identity(&here, prefix), identity(&there, prefix));
+        assert_ne!(owner_scope(&here), owner_scope(&there));
+
+        // A name that is text is the bytes of its text, as it was when the
+        // path was made into text first, so what it cached is still its own.
+        let text = "/home/somebody/wörk";
+        assert_eq!(named(Path::new(text)), text.as_bytes());
+    }
+
     #[test]
     fn selected_isolation_axis_is_exact_and_a_missing_session_falls_back_to_run() {
         let prefix = PromptCacheFingerprint::new([0x24; 32]);
@@ -890,7 +929,7 @@ mod tests {
         workspace.policy = workspace
             .policy
             .with_isolation(PromptCacheIsolation::Workspace);
-        changed(&workspace, |one| one.workspace = b"workspace-b");
+        changed(&workspace, |one| one.workspace = Path::new("workspace-b"));
 
         let mut user = session;
         user.policy = user.policy.with_isolation(PromptCacheIsolation::User);

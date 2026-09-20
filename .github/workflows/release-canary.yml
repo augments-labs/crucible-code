@@ -23,3 +23,17 @@ jobs:
           persist-credentials: false
       - run: scripts/sh/release-canary.sh
       - uses: ./.github/actions/check-clean-worktree
+
+  # The release workflow's Linux jobs cannot start once the registry has
+  # collected the manifest their pinned digest names, and nothing else runs
+  # that container between releases. Asking for it here finds the rot within a
+  # week instead of on a pushed tag.
+  container:
+    name: Release container digest still resolves
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: scripts/sh/release-container.sh

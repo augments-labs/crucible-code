@@ -31,8 +31,8 @@ mod model;
 pub use agent::{Agent, AgentBuilder};
 pub use availability::Availability;
 pub use guardrails::{
-    AgentContext, Decision, Declared, GuardrailError, InputGuardrail, NameTaken, OutputGuardrail,
-    Rejection, Undecided,
+    AgentContext, Decision, Declared, GUARDRAIL_NAME_BYTES, GUARDRAIL_REASON_BYTES, GuardrailError,
+    InputGuardrail, NameTaken, OutputGuardrail, Rejection, Unanswered, Undecided,
 };
 pub use instructions::Instructions;
 pub use model::Model;
