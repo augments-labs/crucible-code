@@ -35,9 +35,10 @@ change in any release with no deprecation period.
   `crucible-runner` no longer depends on `crucible-session`: `Runner::new`,
   `Runner::with_toolset` and `Runner::pick_up` take an `Arc<dyn JournalStore>`,
   which now requires `crucible_storage::SessionStore`; that trait grew from
-  `append_message` alone to everything the runner records and reads, so an
-  implementation must add those methods. `Event`, `EventEnvelope`, `Post`,
-  `Reporter` and `TurnError` move from `crucible-core` to `crucible-runner`.
+  `append_message` alone to everything the runner records and reads of a
+  conversation, so an implementation must add those methods. `Event`,
+  `EventEnvelope`, `Post`, `Reporter` and `TurnError` move from `crucible-core`
+  to `crucible-runner`.
   The session names the runner used to re-export are imported from
   `crucible-session`, and `Session::finish` now takes a shared session, because
   the application and the runner hold the same one.
