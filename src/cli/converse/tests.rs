@@ -60,11 +60,15 @@ fn typed(text: &str) -> Editor {
 /// The terms a test runs under when neither the style nor cancelling is what
 /// it is watching.
 ///
-/// Every path in them is below a tree that is never created, and nothing owns
-/// it: a test whose command keeps its choice would create it and leave it in
-/// the temporary directory for good, so that test takes [`keeping`] instead.
+/// Every path in them is below a tree that cannot be created, because what it
+/// stands under is a file: the binary running the test. A test whose command
+/// keeps its choice is refused where it would have written, and fails saying
+/// so, rather than making a tree nothing owns and leaving it in the temporary
+/// directory for good. That test takes [`keeping`] instead.
 pub(crate) fn plain() -> Terms {
-    let unwritten = std::env::temp_dir().join(format!("crucible-unwritten-{}", std::process::id()));
+    let unwritten = std::env::current_exe()
+        .expect("the test binary's own path")
+        .join("crucible-unwritten");
 
     Terms {
         style: Cell::new(Style::plain()),
