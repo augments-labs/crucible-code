@@ -85,7 +85,7 @@ pub use outcome::{
 pub use pending::{Asked, Choice, Decision, Effect, Lasting, Pending, PendingId, Picked, Ruling};
 pub use progress::Progress;
 pub use request::{Capabilities, Capability, Correlation, Refused, Request, Version};
-pub use snapshot::{Percent, Snapshot};
+pub use snapshot::{Model, Percent, Snapshot};
 
 #[cfg(test)]
 mod tests;

@@ -53,6 +53,37 @@ impl Percent {
     }
 }
 
+/// The words a model goes by, and so never none of them.
+///
+/// A conversation nothing has chosen a model for says so by having no model,
+/// and empty words would be a second way to say it that a reader has to
+/// remember to check for. One of these is made from words there are, or not at
+/// all, so what is written is what is read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Model(Text);
+
+impl Model {
+    /// `words` as a model, cut as any [`Text`] is, where there are any.
+    #[must_use]
+    pub fn new(words: &str) -> Option<Self> {
+        Self::of(Text::cut(words))
+    }
+
+    /// `text` as a model, where it holds any words.
+    fn of(text: Text) -> Option<Self> {
+        if text.as_str().is_empty() {
+            return None;
+        }
+        Some(Self(text))
+    }
+
+    /// The words, and whether there were more of them.
+    #[must_use]
+    pub const fn text(&self) -> &Text {
+        &self.0
+    }
+}
+
 /// Where a conversation stands.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Snapshot {
@@ -60,9 +91,8 @@ pub struct Snapshot {
     pub session: Option<SessionId>,
     /// The provider being asked, by its registry name, where anybody is.
     pub provider: Option<Name>,
-    /// The model in force, where one is. Never empty words: a conversation
-    /// nothing has chosen a model for says so by having none.
-    pub model: Option<Text>,
+    /// The model in force, where one is.
+    pub model: Option<Model>,
     /// The effort in force, where one was asked for.
     pub effort: Option<Rung>,
     /// The permission mode in force.
@@ -86,7 +116,10 @@ impl Snapshot {
         let standing = Writing::new()
             .maybe("session", self.session.as_ref().map(SessionId::as_str))
             .maybe("provider", self.provider.as_ref().map(Name::as_str))
-            .maybe("model", self.model.as_ref().map(written))
+            .maybe(
+                "model",
+                self.model.as_ref().map(|model| written(model.text())),
+            )
             .maybe("effort", self.effort.map(Rung::as_str))
             .with("mode", self.mode.as_str())
             .with("messages", self.messages)
@@ -142,10 +175,7 @@ impl Snapshot {
                 .maybe("model")
                 .map(text)
                 .transpose()?
-                .map(|model| match model.as_str() {
-                    "" => Err(Refusal::new(ErrorCode::Malformed)),
-                    _ => Ok(model),
-                })
+                .map(|model| Model::of(model).ok_or_else(|| Refusal::new(ErrorCode::Malformed)))
                 .transpose()?,
             effort: fields
                 .maybe("effort")

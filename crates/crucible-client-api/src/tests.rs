@@ -425,7 +425,7 @@ fn snapshots() -> Vec<Snapshot> {
         .map(|pending| Snapshot {
             session: pending.as_ref().map(|_| SessionId::new()),
             provider: pending.as_ref().map(|_| name("anthropic")),
-            model: pending.as_ref().map(|_| marked()),
+            model: pending.as_ref().and_then(|_| Model::new(MARKER)),
             effort: pending.as_ref().map(|_| Rung::Max),
             mode: Mode::AllowEdits,
             messages: 4,
@@ -1186,7 +1186,7 @@ fn the_fullest_value_that_crosses_is_within_the_value_ceiling() {
     let fullest = Snapshot {
         session: Some(SessionId::new()),
         provider: Some(name("anthropic")),
-        model: Some(marked()),
+        model: Model::new(MARKER),
         effort: Some(Rung::Max),
         mode: Mode::AllowEdits,
         messages: 4,
@@ -1457,4 +1457,13 @@ fn a_snapshot_says_no_percentage_over_a_hundred_and_no_model_by_saying_none() {
         Snapshot::decode(&empty).unwrap_err().code(),
         ErrorCode::Malformed
     );
+
+    // Nor can one be written: there is no model made of no words, so a frame
+    // this crate writes is one it reads.
+    assert_eq!(Model::new(""), None);
+    let mut named = snapshots().remove(0);
+    named.model = Model::new("a-model");
+    assert!(named.model.is_some());
+    let frame = named.encode().unwrap();
+    assert_eq!(Snapshot::decode(&frame).map_err(Refusal::code), Ok(named));
 }

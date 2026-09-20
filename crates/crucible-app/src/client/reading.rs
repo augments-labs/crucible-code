@@ -8,7 +8,7 @@
 
 use crucible_client_api as api;
 use crucible_client_api::{
-    Capabilities, Capability, Name, Percent, Problem, Progress, Snapshot, Stop, Text,
+    Capabilities, Capability, Model, Name, Percent, Problem, Progress, Snapshot, Stop, Text,
 };
 use crucible_models::Effort;
 use crucible_runner::Event;
@@ -35,9 +35,7 @@ pub fn snapshot(conversation: &Conversation) -> Snapshot {
     Snapshot {
         session: conversation.session().id().cloned(),
         provider: conversation.serving().and_then(|name| Name::new(name).ok()),
-        model: Some(runner.model())
-            .filter(|model| !model.is_empty())
-            .map(Text::cut),
+        model: Model::new(runner.model()),
         effort: runner.effort().map(rung),
         mode: mode_out(runner.mode()),
         messages: count(transcript.len()),
