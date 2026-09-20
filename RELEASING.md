@@ -107,6 +107,18 @@ same way afterwards.
    ```bash
    CRUCIBLE_SMOKE_KEY=$ANTHROPIC_API_KEY scripts/sh/smoke.sh "$name.tar.gz"
    ```
+6. **The Linux build image still exists.**
+
+   ```bash
+   scripts/sh/release-container.sh
+   ```
+
+   The release workflow builds Linux inside a container pinned by digest, and
+   the registry collects that manifest on its own schedule, so the pin can die
+   with no change here. The script asks the registry for it and exits non-zero
+   when it is gone; `release-canary.yml` runs the same check weekly. Repoint
+   the pin on `dev`, as the comment above `build-linux` describes, before the
+   tag rather than after it.
 
 ## Cutting it
 

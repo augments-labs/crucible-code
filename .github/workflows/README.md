@@ -13,7 +13,7 @@ to `dev` and `main`. It calls focused reusable workflows and exposes
 | `performance.yml` | Blocking startup, typed-tool, memory, search and rendering budgets with a JSON artifact |
 | `build-observations.yml` | Weekly/manual same-runner clean and incremental Cargo comparison; observational only |
 | `provider-canaries.yml` | Weekly/manual non-blocking multi-turn typed-tool and normalized usage/cache canaries |
-| `release-canary.yml` | Weekly/manual install, execute and uninstall check of the newest published release |
+| `release-canary.yml` | Weekly/manual install, execute and uninstall check of the newest published release, and that the release container digest still resolves |
 | `task-campaign.yml` | Manual baseline/candidate coding-task campaign with independent fixture verification |
 | `audit.yml` | Advisories whose answer changes as databases are published |
 | `codeql.yml` | GitHub code scanning |
@@ -78,7 +78,10 @@ of one artifact rather than readings from different machines.
 `release-canary.yml` installs the newest public release into a temporary prefix,
 runs `--version`, uninstalls it with the repository script and proves all owned
 executables are gone. It complements the hermetic archive and rollback matrix;
-public release availability is intentionally not a merge condition.
+public release availability is intentionally not a merge condition. Its second
+job runs `scripts/sh/release-container.sh`, which asks the registry for the
+container digest `release.yml` pins and fails once the registry has collected
+it, so a dead pin is repointed before a tag needs it.
 
 `task-campaign.yml` is manual-only. Supply a provider-qualified model and a
 baseline release version. It runs the versioned suite in
