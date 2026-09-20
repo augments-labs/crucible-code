@@ -60,6 +60,9 @@ fn typed(text: &str) -> Editor {
 /// The terms a test runs under when neither the style nor cancelling is what
 /// it is watching.
 ///
+/// Every path in them is below a tree that is never created, and nothing owns
+/// it: a test whose command keeps its choice would create it and leave it in
+/// the temporary directory for good, so that test takes [`keeping`] instead.
 pub(crate) fn plain() -> Terms {
     let unwritten = std::env::temp_dir().join(format!("crucible-unwritten-{}", std::process::id()));
 
@@ -109,6 +112,17 @@ pub(crate) fn plain() -> Terms {
         commands: crate::cli::converse::command::builtins(&std::sync::Arc::default())
             .expect("the built-in commands register"),
         providers: crucible_app::providers::providers().expect("the built-in providers register"),
+    }
+}
+
+/// [`plain`], for a test that takes a `/model`, a `/effort` or a `/theme`.
+///
+/// Each of those writes the choice down, so the file it is written to is one
+/// inside `sample`, which removes it when the test is over.
+pub(crate) fn keeping(sample: &Sample) -> Terms {
+    Terms {
+        choosing: sample.user_file(),
+        ..plain()
     }
 }
 
@@ -293,9 +307,10 @@ fn a_theme_taken_mid_session_is_what_the_rows_after_it_are_drawn_in() {
     // the one thing this suite cannot reach: drawing it needs raw mode, which
     // reaches the controlling terminal. So the property is pinned on a row the
     // same captured style fed — the one that says no model has been chosen.
+    let sample = Sample::new("theme-mid-session");
     let terms = Terms {
         style: Cell::new(Style::coloured()),
-        ..plain()
+        ..keeping(&sample)
     };
     let was = terms.style();
 
