@@ -91,7 +91,22 @@ pub fn interrupt(request: &Request, cancel: &Cancel) -> Outcome {
             Outcome::Cancelling
         }
         Command::Decide(_) => Outcome::Refused(ErrorCode::StaleDecision.into()),
-        _ => Outcome::Refused(ErrorCode::Busy.into()),
+        Command::Prompt(_)
+        | Command::Compact
+        | Command::Theme(_)
+        | Command::Clear
+        | Command::Resume(_)
+        | Command::SelectModel { .. }
+        | Command::SetEffort(_)
+        | Command::SetMode(_)
+        | Command::CycleMode
+        | Command::Login { .. }
+        | Command::Logout { .. }
+        | Command::InspectCache
+        | Command::CleanCache
+        | Command::Sandbox { .. }
+        | Command::Help
+        | Command::Exit => Outcome::Refused(ErrorCode::Busy.into()),
     }
 }
 
