@@ -1294,9 +1294,9 @@ fn take<T: Terminal>(
     // flag it finds raised.
     terms.cancel.reset();
 
-    // From here until the turn has been written down, a hang-up or a
-    // termination is noted for the loop below rather than obeyed where it
-    // lands: obeyed, it would take the answer on screen with it.
+    // From here until the worker has been joined, a hang-up or a termination
+    // is noted for the loop below rather than obeyed where it lands: obeyed,
+    // it would take the answer on screen with it.
     let heeding = terms.ending.turn();
 
     // Started before the worker rather than on the first thing it reports, so
