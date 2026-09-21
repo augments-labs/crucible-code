@@ -29,7 +29,7 @@ use crucible_models::{
     PromptCacheProvenance, PromptCacheRoute, Provider, ProviderError, Request,
     StatefulTransportCapability,
 };
-use crucible_runtime::Cancel;
+use crucible_runtime::{BoxFuture, Cancel};
 use crucible_types::{
     CredentialScopeId, Modalities, Modality, PromptCacheRetentionClass, PromptCacheUsageReporting,
 };
@@ -189,41 +189,42 @@ impl Provider for Moonshot {
         body::prompt_cache_encoding(request)
     }
 
-    fn stream(
-        &self,
-        request: Request<'_>,
-        cancel: &Cancel,
-    ) -> Result<Box<dyn DeltaStream>, ProviderError> {
-        // Nothing is sent for a turn the user has already abandoned. Once the
-        // request is away, cancelling is the stream's business.
-        if cancel.requested() {
-            return Err(ProviderError::Cancelled(NAME));
-        }
+    fn stream<'a>(
+        &'a self,
+        request: Request<'a>,
+        cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<Box<dyn DeltaStream>, ProviderError>> {
+        Box::pin(async move {
+            // Nothing is sent for a turn the user has already abandoned. Once the
+            // request is away, cancelling is the stream's business.
+            if cancel.requested() {
+                return Err(ProviderError::Cancelled(NAME));
+            }
 
-        let outgoing = self.headers()?;
-        let redactions = outgoing.redactions();
-        let body = body::serialize(&request);
+            let outgoing = self.headers()?;
+            let redactions = outgoing.redactions();
+            let body = body::serialize(&request);
 
-        let response = self
-            .transport
-            .post(self.endpoint.as_str(), outgoing, body, cancel)
-            .map_err(|problem| problem.for_provider(NAME).redacted(&redactions))?;
+            let response = self
+                .transport
+                .post(self.endpoint.as_str(), outgoing, body, cancel)
+                .map_err(|problem| problem.for_provider(NAME).redacted(&redactions))?;
 
-        if response.status != 200 {
-            return Err(refused(
-                NAME,
-                response.status,
-                response.body,
-                &redactions,
-                cancel,
-            ));
-        }
+            if response.status != 200 {
+                return Err(refused(
+                    NAME,
+                    response.status,
+                    response.body,
+                    &redactions,
+                    cancel,
+                ));
+            }
 
-        Ok(Box::new(Stream::new(
-            response.body,
-            cancel.clone(),
-            redactions,
-        )))
+            Ok(
+                Box::new(Stream::new(response.body, cancel.clone(), redactions))
+                    as Box<dyn DeltaStream>,
+            )
+        })
     }
 }
 

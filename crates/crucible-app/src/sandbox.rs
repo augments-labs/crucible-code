@@ -26,10 +26,11 @@ use std::path::Path;
 use std::time::Duration;
 
 use crucible_config::{Home, Settings};
+use crucible_runtime::{Bridge, Unready};
 use crucible_sandbox::{
     SandboxBackendIdentity, SandboxCapabilities, SandboxCapability, SandboxCleanup,
     SandboxEnablement, SandboxError, SandboxFeature, SandboxInspection, SandboxManifest,
-    SandboxPlanInspection, SandboxRequest, SandboxResourceLimits, SandboxService as _,
+    SandboxPlanInspection, SandboxPolicy, SandboxRequest, SandboxResourceLimits, SandboxService,
 };
 use crucible_sandbox_local::LocalSandbox;
 use crucible_types::{Ancestry, SandboxId, ToolId};
@@ -77,8 +78,9 @@ pub enum Probe<'a> {
 ///
 /// # Errors
 ///
-/// The directory cannot be worked in, crucible's files cannot be read, or no
-/// policy can be built for the directory at all.
+/// The directory cannot be worked in, crucible's files cannot be read, no
+/// policy can be built for the directory at all, or the backend would have had
+/// to wait to be asked.
 pub fn confinement(here: &Path, home: &Home) -> Result<String, AppError> {
     let workspace = Workspace::open(here)?;
     let settings = Settings::read(home, workspace.root())?;
@@ -88,9 +90,9 @@ pub fn confinement(here: &Path, home: &Home) -> Result<String, AppError> {
     let workspace = workspace.reaching(settings.extra_directories())?;
 
     let service = LocalSandbox::new();
-    let probed = service.probe();
+    let probed = Bridge::SandboxReport.cross(service.probe())?;
     let policy = settings.sandbox().policy(&workspace)?;
-    let prepared = service.prepare(SandboxRequest::new(
+    let prepared = Bridge::SandboxReport.cross(service.prepare(SandboxRequest::new(
         SandboxId::new(),
         Ancestry::new(),
         // The call this policy would be built for. Nothing is called: the
@@ -98,7 +100,7 @@ pub fn confinement(here: &Path, home: &Home) -> Result<String, AppError> {
         ToolId::new("sandbox"),
         policy,
         SandboxManifest::empty(),
-    ));
+    )))?;
 
     let probe = match (&prepared, &probed) {
         (Ok(session), _) => Probe::Prepared(session.inspection()),
@@ -166,14 +168,16 @@ pub fn report(at: &Path, enabled: bool, probe: &Probe<'_>) -> String {
 ///
 /// # Errors
 ///
-/// The sentence for whichever of those stopped it, ready to follow
-/// "sandbox unchanged:".
+/// Whichever of those stopped it, displayed as a sentence ready to follow
+/// "sandbox unchanged:". A backend that would have had to wait to be asked
+/// stops it at the second, as [`Unchanged::Unready`], before anything is
+/// written down or changed.
 pub fn choosing(
     settings: &Settings,
     workspace: &Workspace,
     file: &Path,
     enabled: bool,
-) -> Result<(), String> {
+) -> Result<(), Unchanged> {
     choose(
         &settings.sandbox().enablement(),
         enabled,
@@ -182,44 +186,68 @@ pub fn choosing(
     )
 }
 
+/// Why [`choosing`] changed nothing.
+///
+/// The checks answer in their own words. A backend that would have had to
+/// wait to be asked keeps its type instead, because that is not an answer about
+/// this machine but about a caller that cannot wait yet.
+#[derive(Debug, thiserror::Error)]
+pub enum Unchanged {
+    /// A check stopped the choice, and this is what it said.
+    #[error("{0}")]
+    Stopped(String),
+
+    /// The backend would have had to wait to say whether it can enforce the
+    /// policy, and the preparation was dropped rather than waited for.
+    #[error(transparent)]
+    Unready(#[from] Unready),
+}
+
 /// The order [`choosing`] decides in, over checks handed in so that each can
 /// be failed without a backend or a disk.
 fn choose(
     control: &SandboxEnablement,
     enabled: bool,
-    verify: impl FnOnce() -> Result<(), String>,
+    verify: impl FnOnce() -> Result<(), Unchanged>,
     save: impl FnOnce() -> Result<(), String>,
-) -> Result<(), String> {
+) -> Result<(), Unchanged> {
     if !enabled && control.required() {
-        return Err("project configuration requires confinement".into());
+        return Err(Unchanged::Stopped(
+            "project configuration requires confinement".into(),
+        ));
     }
     if enabled {
         verify()?;
     }
-    save()?;
+    save().map_err(Unchanged::Stopped)?;
     control
         .set_enabled(enabled)
-        .map_err(|problem| problem.to_string())
+        .map_err(|problem| Unchanged::Stopped(problem.to_string()))
 }
 
 /// Whether this machine can enforce the policy `settings` asks for here.
-fn enforceable(settings: &Settings, workspace: &Workspace) -> Result<(), String> {
+fn enforceable(settings: &Settings, workspace: &Workspace) -> Result<(), Unchanged> {
     let policy = settings
         .sandbox()
         .enforcing_policy(workspace)
-        .map_err(|problem| problem.to_string())?;
-    let service = LocalSandbox::new();
+        .map_err(|problem| Unchanged::Stopped(problem.to_string()))?;
+    admitted(&LocalSandbox::new(), policy)
+}
+
+/// Whether `service` would take `policy`, asked of a service handed in so that
+/// one which would have to wait can stand in for this machine's.
+fn admitted(service: &dyn SandboxService, policy: SandboxPolicy) -> Result<(), Unchanged> {
     // Preparation checks exact backend capability and filesystem policy. It
     // does not materialize or start a user command; dropping releases admission.
-    let prepared = service
-        .prepare(SandboxRequest::new(
+    let prepared = Bridge::SandboxReport
+        .cross(service.prepare(SandboxRequest::new(
             SandboxId::new(),
             Ancestry::new(),
             ToolId::new("sandbox-inspection"),
             policy,
             SandboxManifest::empty(),
-        ))
-        .map_err(|problem| problem.to_string())?;
+        )))?
+        .map_err(|problem| Unchanged::Stopped(problem.to_string()))?;
     drop(prepared);
     Ok(())
 }

@@ -25,6 +25,7 @@ use std::process::ExitStatus;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crucible_runtime::{Bridge, Unready};
 use crucible_sandbox::SandboxProcess;
 
 /// How long the wait for a process to finish sleeps between looks.
@@ -59,13 +60,18 @@ pub enum Finish {
     /// published: most often because a root it wrote into changed while it ran.
     Unpublished(io::Error),
 
-    /// It did not, and stopping it failed.
+    /// It did not, and stopping it failed, or would have had to wait and was
+    /// dropped.
     ///
     /// The sandbox could not confirm scope termination and leader exit: one of
     /// the two endings, with an ending that went wrong, that are somebody's
     /// problem afterwards. It does not say the program is still running — a
     /// program stopped at its publication ceiling reaches this too, and then
-    /// says both what it lost and what could not be confirmed.
+    /// the error's message says what it lost, and its source is the stop that
+    /// could not be confirmed. A stop dropped because it would have had to wait
+    /// is carried as the [`Unready`] it was refused with: `get_ref` on this
+    /// error finds it, or, at the publication ceiling, `get_ref` on the
+    /// `io::Error` that is its source.
     Unreaped(io::Error),
 }
 
@@ -101,26 +107,72 @@ impl Finish {
                 None => break process.ended(),
             }
         };
-        match process.stop() {
+        // A stop that would have had to wait is dropped rather than waited
+        // on, which leaves the process's end as unconfirmed as a stop that
+        // failed.
+        match Bridge::TransportProcess
+            .cross(process.stop())
+            .unwrap_or_else(|unready| Err(io::Error::other(unready)))
+        {
             // It had ended, and the stop below discarded what it wrote. Reported
             // as a clean stop, that reads as though nothing was lost.
-            Ok(()) if unpublished => Self::Unpublished(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "its publication did not finish in time",
-            )),
+            Ok(()) if unpublished => Self::Unpublished(unfinished()),
             Ok(()) => Self::Stopped,
             // Both facts: a caller told only that cleanup is unconfirmed reads
             // it as a process that may still be running, and retires it for
             // that, where what happened is that it ended and lost its writes.
-            Err(source) if unpublished => Self::Unreaped(io::Error::new(
-                source.kind(),
-                format!(
-                    "its publication did not finish in time, and stopping it could not be confirmed: {source}"
-                ),
+            // The stop stays the error's source, recoverable as itself; the
+            // lost publication is said in the message.
+            Err(stop) if unpublished => Self::Unreaped(io::Error::new(
+                stop.kind(),
+                Unconfirmed {
+                    publication: unfinished(),
+                    stop,
+                },
             )),
             Err(source) => Self::Unreaped(source),
         }
     }
+}
+
+/// A process stopped at its publication ceiling whose stop was not confirmed.
+///
+/// Why its end is not known is its source, kept as the error it is, so that a
+/// stop dropped because it would have had to wait is still told apart from one
+/// that failed. What the ceiling cost it is said in its message, and a caller
+/// reaches it nowhere else. A dropped stop's refusal already says that what the
+/// stop began is unconfirmed, so the message gives the refusal as it stands; a
+/// failed stop's words need not say it, so the message says it before them.
+#[derive(Debug, thiserror::Error)]
+struct Unconfirmed {
+    /// What it lost: nothing it wrote was published.
+    publication: io::Error,
+    /// Why its end is not known.
+    #[source]
+    stop: io::Error,
+}
+
+impl std::fmt::Display for Unconfirmed {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self { publication, stop } = self;
+        if matches!(stop.get_ref(), Some(held) if held.is::<Unready>()) {
+            write!(formatter, "{publication}, and {stop}")
+        } else {
+            write!(
+                formatter,
+                "{publication}, and stopping it could not be confirmed: {stop}"
+            )
+        }
+    }
+}
+
+/// What a process that had ended lost when it was stopped at its publication
+/// ceiling.
+fn unfinished() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::TimedOut,
+        "its publication did not finish in time",
+    )
 }
 
 #[cfg(test)]

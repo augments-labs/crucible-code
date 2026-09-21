@@ -14,6 +14,8 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
 #[cfg(target_os = "macos")]
+use crucible_runtime::BoxFuture;
+#[cfg(target_os = "macos")]
 use crucible_sandbox::{
     SandboxBackendIdentity, SandboxCapabilities, SandboxCleanup, SandboxCommand,
     SandboxCommandStage, SandboxError, SandboxFactKind, SandboxFailureKind, SandboxFailurePhase,
@@ -230,139 +232,149 @@ impl SandboxSession for MacSession {
         &self.inspection
     }
 
-    fn materialize(&mut self) -> Result<(), SandboxError> {
-        if !self.materialized {
-            self.materialized = true;
-            self.request.audit().record(
-                self.request.id(),
-                SandboxFactKind::Lifecycle(SandboxLifecycle::Materialized),
-            )?;
-        }
-        Ok(())
+    fn materialize(&mut self) -> BoxFuture<'_, Result<(), SandboxError>> {
+        Box::pin(async move {
+            if !self.materialized {
+                self.materialized = true;
+                self.request.audit().record(
+                    self.request.id(),
+                    SandboxFactKind::Lifecycle(SandboxLifecycle::Materialized),
+                )?;
+            }
+            Ok(())
+        })
     }
 
-    fn stage(
+    fn stage<'a>(
         mut self: Box<Self>,
         command: SandboxCommand,
-    ) -> Result<Box<dyn SandboxLaunch>, SandboxError> {
-        if !self.materialized {
-            self.record_start_failure(SandboxFailureKind::Materialization)?;
-            return Err(materialization(
-                "session was not materialized before start",
-                None,
-            ));
-        }
-        for stage in [
-            SandboxCommandStage::Requested,
-            SandboxCommandStage::Effective,
-        ] {
-            let decision = self.request.policy().commands().evaluate(&command, stage);
-            self.request.audit().record(
-                self.request.id(),
-                SandboxFactKind::Guardrail { stage, decision },
-            )?;
-            if decision != SandboxGuardrailDecision::Allowed {
-                self.record_start_failure(SandboxFailureKind::Guardrail)?;
-                return Err(SandboxError::Guardrail);
+    ) -> BoxFuture<'a, Result<Box<dyn SandboxLaunch>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            if !self.materialized {
+                self.record_start_failure(SandboxFailureKind::Materialization)?;
+                return Err(materialization(
+                    "session was not materialized before start",
+                    None,
+                ));
             }
-        }
-
-        if let Err(problem) = self.profile.validate_network() {
-            self.record_start_failure(problem.failure_kind())?;
-            return Err(problem);
-        }
-        let duration = self.request.policy().limits().command_time;
-        let mut mediator = match self.request.policy().network() {
-            SandboxNetworkPolicy::Domains(policy) if !policy.allowed().is_empty() => {
-                match super::network::Mediator::tcp(policy.clone(), self.request.id(), duration) {
-                    Ok(mediator) => Some(mediator),
-                    Err(source) => {
-                        let problem = SandboxError::Spawn(source);
-                        self.record_start_failure(problem.failure_kind())?;
-                        return Err(problem);
-                    }
+            for stage in [
+                SandboxCommandStage::Requested,
+                SandboxCommandStage::Effective,
+            ] {
+                let decision = self.request.policy().commands().evaluate(&command, stage);
+                self.request.audit().record(
+                    self.request.id(),
+                    SandboxFactKind::Guardrail { stage, decision },
+                )?;
+                if decision != SandboxGuardrailDecision::Allowed {
+                    self.record_start_failure(SandboxFailureKind::Guardrail)?;
+                    return Err(SandboxError::Guardrail);
                 }
             }
-            SandboxNetworkPolicy::Domains(_) | SandboxNetworkPolicy::Closed => None,
-        };
-        let profile = match mediator.as_ref() {
-            Some(network) => self.profile.with_proxy(network.address()),
-            None => Ok(self.profile.clone()),
-        };
-        let profile = match profile {
-            Ok(profile) => profile,
-            Err(problem) => {
+
+            if let Err(problem) = self.profile.validate_network() {
                 self.record_start_failure(problem.failure_kind())?;
                 return Err(problem);
             }
-        };
-        let limits = self.request.policy().limits();
-        if let Err(problem) = validate_launch_arguments(&self.broker, &profile, &command, limits) {
-            self.record_start_failure(problem.failure_kind())?;
-            return Err(problem);
-        }
-        let mut process = Command::new(self.broker.path());
-        process
-            .arg(crucible_sandbox_broker::MACOS_LAUNCH_MODE)
-            .arg("--cpu-seconds")
-            .arg(limits.cpu_seconds.unwrap_or(0).to_string())
-            .arg("--open-files")
-            .arg(limits.open_files.unwrap_or(0).to_string())
-            .arg("--profile")
-            .arg(profile.policy());
-        for definition in profile.definitions() {
-            process.arg("--definition").arg(definition);
-        }
-        let scratch = self.scratch.as_ref().map(Stage::root).ok_or_else(|| {
-            SandboxError::Lifecycle(std::io::Error::other(
-                "sandbox scratch owner is unavailable",
-            ))
-        })?;
-        process
-            .arg("--")
-            .arg(command.program())
-            .args(command.arguments())
-            .current_dir(self.request.policy().working_directory())
-            .env_clear()
-            .envs(command.environment().iter())
-            .env("TMPDIR", scratch);
-        if let Some(network) = mediator.as_ref() {
-            process.envs(network.environment(network.address()));
-        }
-        let reservation = self.reservation.take().ok_or(SandboxError::Concurrency)?;
-        let stage = self.scratch.take().ok_or_else(|| {
-            SandboxError::Lifecycle(std::io::Error::other(
-                "sandbox scratch owner is unavailable",
-            ))
-        })?;
-        let launch = MacLaunch {
-            process: Some(process),
-            profile,
-            plan: Some(super::process::SpawnPlan {
-                network: mediator.take(),
+            let duration = self.request.policy().limits().command_time;
+            let mut mediator = match self.request.policy().network() {
+                SandboxNetworkPolicy::Domains(policy) if !policy.allowed().is_empty() => {
+                    match super::network::Mediator::tcp(policy.clone(), self.request.id(), duration)
+                    {
+                        Ok(mediator) => Some(mediator),
+                        Err(source) => {
+                            let problem = SandboxError::Spawn(source);
+                            self.record_start_failure(problem.failure_kind())?;
+                            return Err(problem);
+                        }
+                    }
+                }
+                SandboxNetworkPolicy::Domains(_) | SandboxNetworkPolicy::Closed => None,
+            };
+            let profile = match mediator.as_ref() {
+                Some(network) => self.profile.with_proxy(network.address()),
+                None => Ok(self.profile.clone()),
+            };
+            let profile = match profile {
+                Ok(profile) => profile,
+                Err(problem) => {
+                    self.record_start_failure(problem.failure_kind())?;
+                    return Err(problem);
+                }
+            };
+            let limits = self.request.policy().limits();
+            if let Err(problem) =
+                validate_launch_arguments(&self.broker, &profile, &command, limits)
+            {
+                self.record_start_failure(problem.failure_kind())?;
+                return Err(problem);
+            }
+            let mut process = Command::new(self.broker.path());
+            process
+                .arg(crucible_sandbox_broker::MACOS_LAUNCH_MODE)
+                .arg("--cpu-seconds")
+                .arg(limits.cpu_seconds.unwrap_or(0).to_string())
+                .arg("--open-files")
+                .arg(limits.open_files.unwrap_or(0).to_string())
+                .arg("--profile")
+                .arg(profile.policy());
+            for definition in profile.definitions() {
+                process.arg("--definition").arg(definition);
+            }
+            let scratch = self.scratch.as_ref().map(Stage::root).ok_or_else(|| {
+                SandboxError::Lifecycle(std::io::Error::other(
+                    "sandbox scratch owner is unavailable",
+                ))
+            })?;
+            process
+                .arg("--")
+                .arg(command.program())
+                .args(command.arguments())
+                .current_dir(self.request.policy().working_directory())
+                .env_clear()
+                .envs(command.environment().iter())
+                .env("TMPDIR", scratch);
+            if let Some(network) = mediator.as_ref() {
+                process.envs(network.environment(network.address()));
+            }
+            let reservation = self.reservation.take().ok_or(SandboxError::Concurrency)?;
+            let stage = self.scratch.take().ok_or_else(|| {
+                SandboxError::Lifecycle(std::io::Error::other(
+                    "sandbox scratch owner is unavailable",
+                ))
+            })?;
+            let launch = MacLaunch {
+                process: Some(process),
+                profile,
+                plan: Some(super::process::SpawnPlan {
+                    network: mediator.take(),
+                    inspection: self.inspection.clone(),
+                    reservation,
+                    stage: Some(stage),
+                    limits,
+                    audit: self.request.audit().clone(),
+                    sandbox: self.request.id(),
+                    audit_started: true,
+                    audit_cleanup: true,
+                    invocation: self.request.invocation_mode(),
+                    call_result_key: self.request.call_result_key(),
+                    canceller: None,
+                    speech: command.speech(),
+                    startup_input: None,
+                }),
                 inspection: self.inspection.clone(),
-                reservation,
-                stage: Some(stage),
-                limits,
                 audit: self.request.audit().clone(),
                 sandbox: self.request.id(),
-                audit_started: true,
-                audit_cleanup: true,
                 invocation: self.request.invocation_mode(),
-                call_result_key: self.request.call_result_key(),
-                canceller: None,
-                speech: command.speech(),
-                startup_input: None,
-            }),
-            inspection: self.inspection.clone(),
-            audit: self.request.audit().clone(),
-            sandbox: self.request.id(),
-            invocation: self.request.invocation_mode(),
-            owner_transferred: false,
-            released: false,
-        };
-        self.transferred = true;
-        Ok(Box::new(launch))
+                owner_transferred: false,
+                released: false,
+            };
+            self.transferred = true;
+            Ok(Box::new(launch) as Box<dyn SandboxLaunch>)
+        })
     }
 }
 
@@ -477,48 +489,55 @@ impl SandboxLaunch for MacLaunch {
         Ok(())
     }
 
-    fn release(mut self: Box<Self>) -> Result<Box<dyn SandboxProcess>, SandboxError> {
-        if self.invocation != SandboxInvocationMode::Foreground && !self.owner_transferred {
-            return Err(SandboxError::Lifecycle(std::io::Error::other(
-                "background sandbox has no application cleanup owner",
-            )));
-        }
-        if let Err(problem) = self.profile.validate_network() {
-            self.audit.record(
-                self.sandbox,
-                SandboxFactKind::Failed {
-                    phase: SandboxFailurePhase::Start,
-                    kind: problem.failure_kind(),
-                },
-            )?;
-            return Err(problem);
-        }
-        let process = self.process.take().ok_or_else(|| {
-            SandboxError::Spawn(std::io::Error::other("macOS command was already released"))
-        })?;
-        let plan = self.plan.take().ok_or_else(|| {
-            SandboxError::Spawn(std::io::Error::other("macOS launch plan is unavailable"))
-        })?;
-        self.released = true;
-        let spawned = super::process::spawn(process, plan);
-        if let Err(problem) = &spawned {
-            let cleanup = if matches!(problem, SandboxError::Lifecycle(_)) {
-                SandboxCleanup::Failed
-            } else {
-                SandboxCleanup::Complete
-            };
-            let _ = self.audit.record(
-                self.sandbox,
-                SandboxFactKind::Failed {
-                    phase: SandboxFailurePhase::Start,
-                    kind: problem.failure_kind(),
-                },
-            );
-            let _ = self
-                .audit
-                .record(self.sandbox, SandboxFactKind::Cleanup(cleanup));
-        }
-        spawned
+    fn release<'a>(
+        mut self: Box<Self>,
+    ) -> BoxFuture<'a, Result<Box<dyn SandboxProcess>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            if self.invocation != SandboxInvocationMode::Foreground && !self.owner_transferred {
+                return Err(SandboxError::Lifecycle(std::io::Error::other(
+                    "background sandbox has no application cleanup owner",
+                )));
+            }
+            if let Err(problem) = self.profile.validate_network() {
+                self.audit.record(
+                    self.sandbox,
+                    SandboxFactKind::Failed {
+                        phase: SandboxFailurePhase::Start,
+                        kind: problem.failure_kind(),
+                    },
+                )?;
+                return Err(problem);
+            }
+            let process = self.process.take().ok_or_else(|| {
+                SandboxError::Spawn(std::io::Error::other("macOS command was already released"))
+            })?;
+            let plan = self.plan.take().ok_or_else(|| {
+                SandboxError::Spawn(std::io::Error::other("macOS launch plan is unavailable"))
+            })?;
+            self.released = true;
+            let spawned = super::process::spawn(process, plan);
+            if let Err(problem) = &spawned {
+                let cleanup = if matches!(problem, SandboxError::Lifecycle(_)) {
+                    SandboxCleanup::Failed
+                } else {
+                    SandboxCleanup::Complete
+                };
+                let _ = self.audit.record(
+                    self.sandbox,
+                    SandboxFactKind::Failed {
+                        phase: SandboxFailurePhase::Start,
+                        kind: problem.failure_kind(),
+                    },
+                );
+                let _ = self
+                    .audit
+                    .record(self.sandbox, SandboxFactKind::Cleanup(cleanup));
+            }
+            spawned
+        })
     }
 }
 

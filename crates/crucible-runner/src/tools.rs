@@ -13,6 +13,7 @@ use crucible_core::{
     RegistrySnapshot, Revealed, Tool, ToolDescriptor, ToolEntry, ToolHooks, ToolProvenance,
     ToolSchema, ToolSnapshot, Toolset, ToolsetContext, ToolsetError,
 };
+use crucible_runtime::BoxFuture;
 
 /// Every tool the model may call.
 ///
@@ -317,20 +318,32 @@ impl Tools {
 }
 
 impl Toolset for Tools {
-    fn prepare(&self, _context: &ToolsetContext) -> Result<(), ToolsetError> {
-        Ok(())
+    fn prepare<'a>(
+        &'a self,
+        _context: &'a ToolsetContext,
+    ) -> BoxFuture<'a, Result<(), ToolsetError>> {
+        Box::pin(async move { Ok(()) })
     }
 
-    fn snapshot(&self, _context: &ToolsetContext) -> Result<ToolSnapshot, ToolsetError> {
-        Self::snapshot(self)
+    fn snapshot<'a>(
+        &'a self,
+        _context: &'a ToolsetContext,
+    ) -> BoxFuture<'a, Result<ToolSnapshot, ToolsetError>> {
+        Box::pin(async move { Self::snapshot(self) })
     }
 
-    fn refresh(&self, _context: &ToolsetContext) -> Result<ToolSnapshot, ToolsetError> {
-        Self::snapshot(self)
+    fn refresh<'a>(
+        &'a self,
+        _context: &'a ToolsetContext,
+    ) -> BoxFuture<'a, Result<ToolSnapshot, ToolsetError>> {
+        Box::pin(async move { Self::snapshot(self) })
     }
 
-    fn dispose(&self, _context: &ToolsetContext) -> Result<(), ToolsetError> {
-        Ok(())
+    fn dispose<'a>(
+        &'a self,
+        _context: &'a ToolsetContext,
+    ) -> BoxFuture<'a, Result<(), ToolsetError>> {
+        Box::pin(async move { Ok(()) })
     }
 
     fn registered(&self, name: &str) -> Option<ToolEntry> {
@@ -362,11 +375,11 @@ mod tests {
             .collect();
         let context = ToolsetContext::new(Ancestry::new(), Cancel::new(), None);
 
-        Toolset::prepare(&tools, &context).unwrap();
-        let before = Toolset::snapshot(&tools, &context).unwrap();
-        let refreshed = Toolset::refresh(&tools, &context).unwrap();
-        Toolset::dispose(&tools, &context).unwrap();
-        Toolset::dispose(&tools, &context).unwrap();
+        crucible_runtime::answered!(Toolset::prepare(&tools, &context)).unwrap();
+        let before = crucible_runtime::answered!(Toolset::snapshot(&tools, &context)).unwrap();
+        let refreshed = crucible_runtime::answered!(Toolset::refresh(&tools, &context)).unwrap();
+        crucible_runtime::answered!(Toolset::dispose(&tools, &context)).unwrap();
+        crucible_runtime::answered!(Toolset::dispose(&tools, &context)).unwrap();
 
         let advertised = |snapshot: &ToolSnapshot| {
             snapshot
@@ -426,7 +439,7 @@ mod tests {
 
         let cancel = Cancel::new();
         let context = ToolContext::new(Ancestry::new(), call.id.clone(), &cancel, None, &Unwatched);
-        let output = entry.tool().run(approved, &context).unwrap();
+        let output = crucible_runtime::answered!(entry.tool().run(approved, &context)).unwrap();
         assert_eq!(output.text(), "done");
     }
 

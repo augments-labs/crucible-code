@@ -5,6 +5,7 @@ use crucible_agents::{
     AgentBuilder, AgentContext, Availability, Decision, GuardrailError, InputGuardrail,
     OutputGuardrail, Undecided,
 };
+use crucible_runtime::BoxFuture;
 
 use super::*;
 
@@ -681,20 +682,22 @@ impl Tool for Gate {
         Summary::new("waiting to be let go")
     }
 
-    fn run(
-        &self,
+    fn run<'a>(
+        &'a self,
         _approved: Approved,
-        _context: &ToolContext<'_>,
-    ) -> Result<ToolOutput, ToolError> {
-        self.started
-            .send(())
-            .expect("the test to be waiting for this call");
-        self.go
-            .lock()
-            .unwrap()
-            .recv()
-            .expect("the test to let this call go");
-        Ok(ToolOutput::ok("let go"))
+        _context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            self.started
+                .send(())
+                .expect("the test to be waiting for this call");
+            self.go
+                .lock()
+                .unwrap()
+                .recv()
+                .expect("the test to let this call go");
+            Ok(ToolOutput::ok("let go"))
+        })
     }
 }
 

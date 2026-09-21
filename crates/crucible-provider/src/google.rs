@@ -31,7 +31,7 @@ const VENDOR: crate::Endpoint = crate::Endpoint::fixed(VENDOR_URL);
 use crate::{Endpoint, Transport};
 use crucible_credentials::Credential;
 use crucible_models::{DeltaStream, Provider, ProviderError, Request};
-use crucible_runtime::Cancel;
+use crucible_runtime::{BoxFuture, Cancel};
 use crucible_types::{ContinuationScope, CredentialScopeId};
 
 /// Google's stateless Interactions API, authenticated by a caller-owned key.
@@ -124,57 +124,64 @@ impl Provider for Google {
     fn prompt_cache_encoding(&self, request: &Request<'_>) -> crucible_types::PromptCacheEncoding {
         cache::encoding(request)
     }
-    fn stream(
-        &self,
-        request: Request<'_>,
-        cancel: &Cancel,
-    ) -> Result<Box<dyn DeltaStream>, ProviderError> {
-        if cancel.requested() {
-            return Err(ProviderError::Cancelled(NAME));
-        }
-        let scope = ContinuationScope::new(self.credential_scope, self.endpoint.as_str());
-        let body = body::serialize(&request, scope)?;
-        let wire = wire::Interactions::new(request.model, scope)?;
-        let mut outgoing = crucible_credentials::Outgoing::new();
-        outgoing.set_header("content-type", "application/json");
-        outgoing.set_header("accept", "text/event-stream");
-        self.credential
-            .authorize(&mut outgoing)
-            .map_err(|source| ProviderError::Credential {
-                provider: NAME,
-                source,
-            })?;
-        let redactions = outgoing.redactions();
-        let response = self
-            .transport
-            .post(self.endpoint.as_str(), outgoing, body, cancel)
-            .map_err(|error| error.for_provider(NAME).redacted(&redactions))?;
-        if response.status != 200 {
-            let error =
-                crate::refusal::refused(NAME, response.status, response.body, &redactions, cancel);
-            // A rejected stateless request can echo its signed history. Keep
-            // bounded reading, cancellation and typed window recovery, but do
-            // not expose Google's arbitrary refusal prose as a diagnostic.
-            return Err(match error {
-                ProviderError::Refused { status, .. } => ProviderError::Refused {
+    fn stream<'a>(
+        &'a self,
+        request: Request<'a>,
+        cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<Box<dyn DeltaStream>, ProviderError>> {
+        Box::pin(async move {
+            if cancel.requested() {
+                return Err(ProviderError::Cancelled(NAME));
+            }
+            let scope = ContinuationScope::new(self.credential_scope, self.endpoint.as_str());
+            let body = body::serialize(&request, scope)?;
+            let wire = wire::Interactions::new(request.model, scope)?;
+            let mut outgoing = crucible_credentials::Outgoing::new();
+            outgoing.set_header("content-type", "application/json");
+            outgoing.set_header("accept", "text/event-stream");
+            self.credential.authorize(&mut outgoing).map_err(|source| {
+                ProviderError::Credential {
                     provider: NAME,
-                    status,
-                    message: match status {
-                        401 | 403 => "check the Google API key and its model access",
-                        404 => "check the Google model name and endpoint",
-                        408 | 429 | 500..=599 => "Google is temporarily unable to serve this request",
-                        _ => "check the Google model and request settings; private response details omitted",
-                    }.into(),
-                },
-                error => error,
-            });
-        }
-        Ok(Box::new(crate::stream::Response::with_wire(
-            response.body,
-            cancel.clone(),
-            redactions,
-            wire,
-        )))
+                    source,
+                }
+            })?;
+            let redactions = outgoing.redactions();
+            let response = self
+                .transport
+                .post(self.endpoint.as_str(), outgoing, body, cancel)
+                .map_err(|error| error.for_provider(NAME).redacted(&redactions))?;
+            if response.status != 200 {
+                let error = crate::refusal::refused(
+                    NAME,
+                    response.status,
+                    response.body,
+                    &redactions,
+                    cancel,
+                );
+                // A rejected stateless request can echo its signed history. Keep
+                // bounded reading, cancellation and typed window recovery, but do
+                // not expose Google's arbitrary refusal prose as a diagnostic.
+                return Err(match error {
+                    ProviderError::Refused { status, .. } => ProviderError::Refused {
+                        provider: NAME,
+                        status,
+                        message: match status {
+                            401 | 403 => "check the Google API key and its model access",
+                            404 => "check the Google model name and endpoint",
+                            408 | 429 | 500..=599 => "Google is temporarily unable to serve this request",
+                            _ => "check the Google model and request settings; private response details omitted",
+                        }.into(),
+                    },
+                    error => error,
+                });
+            }
+            Ok(Box::new(crate::stream::Response::with_wire(
+                response.body,
+                cancel.clone(),
+                redactions,
+                wire,
+            )) as Box<dyn DeltaStream>)
+        })
     }
 }
 

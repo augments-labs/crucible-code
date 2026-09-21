@@ -65,7 +65,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use crucible_runtime::Cancel;
+use crucible_runtime::{BoxFuture, Bridge, Cancel, Unready};
 use crucible_sandbox::{
     SandboxAudit, SandboxCommand, SandboxEnablement, SandboxEnvironment, SandboxManifest,
     SandboxPolicy, SandboxRequest, SandboxService,
@@ -79,6 +79,7 @@ use crucible_transport::{Ambiguity, Finish, Restarts};
 use crucible_types::{Ancestry, SandboxId, ToolArgs, ToolId};
 use serde_json::Value;
 
+use crate::hosted::refused_stop;
 use crate::{Answered, Hosted, Offered, Unanswered, Unstarted};
 
 #[cfg(test)]
@@ -319,6 +320,15 @@ impl StartFailure {
         })
     }
 
+    /// A step dropped because it would have had to wait confirms nothing about
+    /// what it began, so its server is held rather than skipped.
+    fn waited(chosen: &Chosen, refusal: Unready) -> Self {
+        Self::Unreaped(ToolsetError::Unready {
+            id: chosen.name.clone(),
+            refusal,
+        })
+    }
+
     /// Ends the conversation before returning its protocol refusal.
     fn after(chosen: &Chosen, problem: &dyn std::fmt::Display, hosted: Hosted) -> Self {
         match hosted.stop(chosen.grace).finish {
@@ -329,7 +339,14 @@ impl StartFailure {
             ),
             Finish::Unreaped(cleanup) => Self::Unreaped(ToolsetError::Source {
                 id: chosen.name.clone(),
-                problem: format!("{problem}; unconfirmed cleanup: {cleanup}").into(),
+                // A refused stop's words already say that what it began is
+                // unconfirmed; a failed stop's need not, and are led in by it.
+                problem: if refused_stop(&cleanup) {
+                    format!("{problem}; cleanup: {cleanup}")
+                } else {
+                    format!("{problem}; unconfirmed cleanup: {cleanup}")
+                }
+                .into(),
             }),
         }
     }
@@ -362,8 +379,19 @@ fn start(
     )
     .with_audit(audit.clone())
     .map_err(|error| refused(&error))?;
-    let mut session = sandbox.prepare(request).map_err(|e| refused(&e))?;
-    session.materialize().map_err(|e| refused(&e))?;
+    // A step that would have had to wait was dropped, and the sandbox contract
+    // does not say what dropping one of these steps leaves behind: the server is
+    // held as unconfirmed cleanup, carrying the bridge it was refused at, and is
+    // never passed over.
+    let waited = |refusal| StartFailure::waited(chosen, refusal);
+    let mut session = Bridge::McpHosting
+        .cross(sandbox.prepare(request))
+        .map_err(waited)?
+        .map_err(|e| refused(&e))?;
+    Bridge::McpHosting
+        .cross(session.materialize())
+        .map_err(waited)?
+        .map_err(|e| refused(&e))?;
     let command = SandboxCommand::new(
         chosen.program.clone(),
         chosen.arguments.iter().cloned(),
@@ -374,7 +402,10 @@ fn start(
     // and a server whose input crucible let go could be greeted but never
     // asked anything.
     .spoken_to();
-    let process = session.start(command).map_err(|e| refused(&e))?;
+    let process = Bridge::McpHosting
+        .cross(session.start(command))
+        .map_err(waited)?
+        .map_err(|e| refused(&e))?;
 
     let mut hosted = Hosted::over(process, chosen.handshake).map_err(|error| {
         let problem = ToolsetError::Source {
@@ -552,8 +583,8 @@ impl Hosting {
 
     /// The generation this lifecycle publishes, rebuilt only when the built-in
     /// roster has moved under it.
-    fn generation(&self, context: &ToolsetContext) -> Result<ToolSnapshot, ToolsetError> {
-        let builtin = Toolset::snapshot(self.builtin.as_ref(), context)?;
+    async fn generation(&self, context: &ToolsetContext) -> Result<ToolSnapshot, ToolsetError> {
+        let builtin = Toolset::snapshot(self.builtin.as_ref(), context).await?;
         let mut live = self.live.lock().unwrap_or_else(PoisonError::into_inner);
         if live.offered.is_empty() {
             return Ok(builtin);
@@ -754,64 +785,75 @@ fn unconfirmed(name: &str) -> ToolsetError {
 }
 
 impl Toolset for Hosting {
-    fn prepare(&self, context: &ToolsetContext) -> Result<(), ToolsetError> {
-        Toolset::prepare(self.builtin.as_ref(), context)?;
-        let mut live = self.live.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(name) = &live.unreaped_start {
-            return Err(unconfirmed(name));
-        }
-        if let Some(server) = live.servers.iter().find(|server| server.unreaped()) {
-            return Err(server.unconfirmed());
-        }
-        if !live.servers.is_empty() {
-            return Ok(());
-        }
+    fn prepare<'a>(
+        &'a self,
+        context: &'a ToolsetContext,
+    ) -> BoxFuture<'a, Result<(), ToolsetError>> {
+        Box::pin(async move {
+            Toolset::prepare(self.builtin.as_ref(), context).await?;
+            let mut live = self.live.lock().unwrap_or_else(PoisonError::into_inner);
+            if let Some(name) = &live.unreaped_start {
+                return Err(unconfirmed(name));
+            }
+            if let Some(server) = live.servers.iter().find(|server| server.unreaped()) {
+                return Err(server.unconfirmed());
+            }
+            if !live.servers.is_empty() {
+                return Ok(());
+            }
 
-        let mut servers = Vec::with_capacity(self.chosen.len());
-        let mut offered = Vec::new();
-        for chosen in &self.chosen {
-            match self.host(chosen, context) {
-                Ok((server, entries)) => {
-                    servers.push(server);
-                    offered.extend(entries);
-                }
-                // A server nobody said was required is one this run can do
-                // without: its tools are simply not offered, and the turn goes
-                // ahead with the rest. Saying `required` is what turns a
-                // machine that is missing a program into a refused run.
-                Err(StartFailure::Refused(_)) if !chosen.required => {}
-                Err(failure) => {
-                    let problem = match failure {
-                        StartFailure::Refused(problem) => problem,
-                        StartFailure::Unreaped(problem) => {
-                            live.unreaped_start = Some(chosen.name.clone());
-                            problem
-                        }
-                    };
-                    // Stop partial preparation immediately. Retain uncertain
-                    // cleanup so disposal can report it alongside this cause.
-                    for started in servers {
-                        if started.release().is_err() {
-                            live.servers.push(started);
-                        }
+            let mut servers = Vec::with_capacity(self.chosen.len());
+            let mut offered = Vec::new();
+            for chosen in &self.chosen {
+                match self.host(chosen, context) {
+                    Ok((server, entries)) => {
+                        servers.push(server);
+                        offered.extend(entries);
                     }
-                    return Err(problem);
+                    // A server nobody said was required is one this run can do
+                    // without: its tools are simply not offered, and the turn goes
+                    // ahead with the rest. Saying `required` is what turns a
+                    // machine that is missing a program into a refused run.
+                    Err(StartFailure::Refused(_)) if !chosen.required => {}
+                    Err(failure) => {
+                        let problem = match failure {
+                            StartFailure::Refused(problem) => problem,
+                            StartFailure::Unreaped(problem) => {
+                                live.unreaped_start = Some(chosen.name.clone());
+                                problem
+                            }
+                        };
+                        // Stop partial preparation immediately. Retain uncertain
+                        // cleanup so disposal can report it alongside this cause.
+                        for started in servers {
+                            if started.release().is_err() {
+                                live.servers.push(started);
+                            }
+                        }
+                        return Err(problem);
+                    }
                 }
             }
-        }
 
-        live.servers = servers;
-        live.offered = offered;
-        live.merged = None;
-        Ok(())
+            live.servers = servers;
+            live.offered = offered;
+            live.merged = None;
+            Ok(())
+        })
     }
 
-    fn snapshot(&self, context: &ToolsetContext) -> Result<ToolSnapshot, ToolsetError> {
-        self.generation(context)
+    fn snapshot<'a>(
+        &'a self,
+        context: &'a ToolsetContext,
+    ) -> BoxFuture<'a, Result<ToolSnapshot, ToolsetError>> {
+        Box::pin(self.generation(context))
     }
 
-    fn refresh(&self, context: &ToolsetContext) -> Result<ToolSnapshot, ToolsetError> {
-        self.generation(context)
+    fn refresh<'a>(
+        &'a self,
+        context: &'a ToolsetContext,
+    ) -> BoxFuture<'a, Result<ToolSnapshot, ToolsetError>> {
+        Box::pin(self.generation(context))
     }
 
     fn registered(&self, name: &str) -> Option<ToolEntry> {
@@ -824,23 +866,40 @@ impl Toolset for Hosting {
         })
     }
 
-    fn dispose(&self, context: &ToolsetContext) -> Result<(), ToolsetError> {
-        let mut live = self.live.lock().unwrap_or_else(PoisonError::into_inner);
-        live.offered.clear();
-        live.merged = None;
+    fn dispose<'a>(
+        &'a self,
+        context: &'a ToolsetContext,
+    ) -> BoxFuture<'a, Result<(), ToolsetError>> {
+        Box::pin(async move {
+            // The servers are released, and the lock given back, before the
+            // built-in tools are disposed of, so nothing is awaited while it is
+            // held. Releasing a server still waits under it, synchronously and
+            // one server after another: up to its grace, past that up to its
+            // publication ceiling where it has ended, and then, where it has not
+            // finished by then, for the whole of its stop, with each look at its
+            // status able to conclude its ending. `prepare`, `snapshot`,
+            // `refresh`, `Debug`, and `registered` for a name the built-in tools
+            // do not hold take this lock too, and wait behind it.
+            let refused = {
+                let mut live = self.live.lock().unwrap_or_else(PoisonError::into_inner);
+                live.offered.clear();
+                live.merged = None;
 
-        // Every one of them, and the first refusal afterwards: a server that
-        // could not be reaped must not leave the ones after it running.
-        let mut refused = live.unreaped_start.as_deref().map(unconfirmed);
-        for server in &live.servers {
-            if let Err(problem) = server.release() {
-                refused = refused.or(Some(problem));
-            }
-        }
-        live.servers.retain(|server| server.unreaped());
-        drop(live);
-        Toolset::dispose(self.builtin.as_ref(), context)?;
-        refused.map_or(Ok(()), Err)
+                // Every one of them, and the first refusal afterwards: a server
+                // that could not be reaped must not leave the ones after it
+                // running.
+                let mut refused = live.unreaped_start.as_deref().map(unconfirmed);
+                for server in &live.servers {
+                    if let Err(problem) = server.release() {
+                        refused = refused.or(Some(problem));
+                    }
+                }
+                live.servers.retain(|server| server.unreaped());
+                refused
+            };
+            Toolset::dispose(self.builtin.as_ref(), context).await?;
+            refused.map_or(Ok(()), Err)
+        })
     }
 }
 
@@ -877,72 +936,78 @@ impl Tool for Calling {
         Summary::new(self.called.clone())
     }
 
-    fn run(&self, approved: Approved, context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
-        let arguments = arguments(&self.called, approved.args())?;
-        // Asked before anything is sent, because refusing here costs the far
-        // end nothing at all: no process is disturbed and no budget is spent.
-        // Once the frame has gone the answer is the one below, which is more
-        // expensive and less certain.
-        if context.cancel().requested() {
-            return Err(ToolError::Cancelled(self.called.clone()));
-        }
+    fn run<'a>(
+        &'a self,
+        approved: Approved,
+        context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            let arguments = arguments(&self.called, approved.args())?;
+            // Asked before anything is sent, because refusing here costs the far
+            // end nothing at all: no process is disturbed and no budget is spent.
+            // Once the frame has gone the answer is the one below, which is more
+            // expensive and less certain.
+            if context.cancel().requested() {
+                return Err(ToolError::Cancelled(self.called.clone()));
+            }
 
-        let problem = match self.attempt(&arguments, context) {
-            Ok(answered) => return Ok(said(&answered)),
-            // A handle that outlived its lifecycle. Nothing broke and nothing
-            // is running: the turn that read this catalogue is over, and
-            // starting the server again here would give a finished run a
-            // process no disposal will ever reach.
-            Err(Refusal::Gone) => return Err(self.stale()),
-            Err(Refusal::Unanswered(problem)) => problem,
-        };
-        // The server answered, and what it answered with is this crate's
-        // complaint rather than the conversation's. Nothing is stopped and
-        // nothing is spent.
-        if problem.settled() {
-            return Err(self.broke(&problem));
-        }
+            let problem = match self.attempt(&arguments, context) {
+                Ok(answered) => return Ok(said(&answered)),
+                // A handle that outlived its lifecycle. Nothing broke and nothing
+                // is running: the turn that read this catalogue is over, and
+                // starting the server again here would give a finished run a
+                // process no disposal will ever reach.
+                Err(Refusal::Gone) => return Err(self.stale()),
+                Err(Refusal::Unanswered(problem)) => problem,
+            };
+            // The server answered, and what it answered with is this crate's
+            // complaint rather than the conversation's. Nothing is stopped and
+            // nothing is spent.
+            if problem.settled() {
+                return Err(self.broke(&problem));
+            }
 
-        // Everything from here is a conversation that cannot carry another
-        // call. Whether the server may have acted on the one it was given is
-        // what decides both the budget and the words, and only a frame crucible
-        // never let go of can answer no.
-        let after = if problem.outstanding() {
-            Ambiguity::Unsettled
-        } else {
-            Ambiguity::Settled
-        };
-        if let Err(refused) = self.server.restart(after, Some(context.cancel())) {
-            drop(self.server.release());
-            return Err(if problem.interrupted() {
-                // Reported as the interruption it was. The restart was refused
-                // because the call is outstanding, which is that same sentence
-                // twice and is not news to whoever pressed the key.
-                ToolError::Cancelled(self.called.clone())
+            // Everything from here is a conversation that cannot carry another
+            // call. Whether the server may have acted on the one it was given is
+            // what decides both the budget and the words, and only a frame crucible
+            // never let go of can answer no.
+            let after = if problem.outstanding() {
+                Ambiguity::Unsettled
             } else {
-                self.gone(&problem, &refused)
-            });
-        }
+                Ambiguity::Settled
+            };
+            if let Err(refused) = self.server.restart(after, Some(context.cancel())) {
+                drop(self.server.release());
+                return Err(if problem.interrupted() {
+                    // Reported as the interruption it was. The restart was refused
+                    // because the call is outstanding, which is that same sentence
+                    // twice and is not news to whoever pressed the key.
+                    ToolError::Cancelled(self.called.clone())
+                } else {
+                    self.gone(&problem, &refused)
+                });
+            }
 
-        // One retry, and the same reading of its failure: a server that has to
-        // be started again for every call is one this run will not get an
-        // answer out of, and the budget is what stops that being discovered a
-        // call at a time forever.
-        self.attempt(&arguments, context)
-            .map(|answered| said(&answered))
-            .map_err(|again| match again {
-                Refusal::Gone => self.stale(),
-                Refusal::Unanswered(again) => {
-                    if !again.settled() {
-                        drop(self.server.release());
+            // One retry, and the same reading of its failure: a server that has to
+            // be started again for every call is one this run will not get an
+            // answer out of, and the budget is what stops that being discovered a
+            // call at a time forever.
+            self.attempt(&arguments, context)
+                .map(|answered| said(&answered))
+                .map_err(|again| match again {
+                    Refusal::Gone => self.stale(),
+                    Refusal::Unanswered(again) => {
+                        if !again.settled() {
+                            drop(self.server.release());
+                        }
+                        if again.interrupted() {
+                            ToolError::Cancelled(self.called.clone())
+                        } else {
+                            self.broke(&again)
+                        }
                     }
-                    if again.interrupted() {
-                        ToolError::Cancelled(self.called.clone())
-                    } else {
-                        self.broke(&again)
-                    }
-                }
-            })
+                })
+        })
     }
 }
 

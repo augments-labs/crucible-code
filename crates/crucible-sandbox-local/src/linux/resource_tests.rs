@@ -48,20 +48,18 @@ fn a_confined_command_holds_the_process_ceiling_the_broker_owns() {
     // way it owns the core-dump ceiling, so the scope beneath PID 1 is bounded
     // whether or not a caller thought to ask.
     assert_eq!(policy.limits().processes, None);
-    let mut session = service
-        .prepare(SandboxRequest::new(
-            SandboxId::new(),
-            Ancestry::new(),
-            ToolId::new("processes"),
-            policy,
-            SandboxManifest::empty(),
-        ))
-        .expect("prepared sandbox");
-    session.materialize().expect("materialized workspace");
+    let mut session = crucible_runtime::answered!(service.prepare(SandboxRequest::new(
+        SandboxId::new(),
+        Ancestry::new(),
+        ToolId::new("processes"),
+        policy,
+        SandboxManifest::empty(),
+    )))
+    .expect("prepared sandbox");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
 
     let (status, output, errors) = finish(
-        session
-            .start(command("cat /proc/self/limits"))
+        crucible_runtime::answered!(session.start(command("cat /proc/self/limits")))
             .expect("started command"),
     );
 
@@ -104,7 +102,7 @@ fn a_stated_process_ceiling_stops_the_command_forking_past_it() {
     // bound the host's other work.
     if super::probe::process_limit() != SandboxCapability::Enforced {
         assert!(matches!(
-            service.prepare(request),
+            crucible_runtime::answered!(service.prepare(request)),
             Err(SandboxError::Unsupported {
                 feature: SandboxFeature::ProcessLimit
             })
@@ -112,15 +110,15 @@ fn a_stated_process_ceiling_stops_the_command_forking_past_it() {
         return;
     }
 
-    let mut session = service.prepare(request).expect("prepared sandbox");
-    session.materialize().expect("materialized workspace");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request)).expect("prepared sandbox");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
     let (status, output, errors) = finish(
-        session
-            .start(command(
-                "cat /proc/self/limits; i=0; \
+        crucible_runtime::answered!(session.start(command(
+            "cat /proc/self/limits; i=0; \
                  while [ \"$i\" -lt 200 ]; do sleep 1 & i=$((i+1)); done; echo unbounded",
-            ))
-            .expect("started command"),
+        )))
+        .expect("started command"),
     );
 
     let output = String::from_utf8(output).expect("utf8");
@@ -159,12 +157,12 @@ fn requested_open_file_limit_is_hard_before_workload_exec() {
         policy,
         SandboxManifest::empty(),
     );
-    let mut session = service.prepare(request).expect("supported hard limit");
-    session.materialize().expect("materialized workspace");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request)).expect("supported hard limit");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
 
     let (status, output, errors) = finish(
-        session
-            .start(command("ulimit -n"))
+        crucible_runtime::answered!(session.start(command("ulimit -n")))
             .expect("started limited command"),
     );
 
@@ -198,12 +196,12 @@ fn requested_address_space_limit_is_hard_before_workload_exec() {
         policy,
         SandboxManifest::empty(),
     );
-    let mut session = service.prepare(request).expect("supported hard limit");
-    session.materialize().expect("materialized workspace");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request)).expect("supported hard limit");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
 
     let (status, output, errors) = finish(
-        session
-            .start(command("ulimit -v"))
+        crucible_runtime::answered!(session.start(command("ulimit -v")))
             .expect("started limited command"),
     );
 
@@ -237,13 +235,13 @@ fn requested_cpu_limit_terminates_the_workload_scope() {
         policy,
         SandboxManifest::empty(),
     );
-    let mut session = service.prepare(request).expect("supported hard limit");
-    session.materialize().expect("materialized workspace");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request)).expect("supported hard limit");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
     let started = Instant::now();
 
     let (status, _, _) = finish(
-        session
-            .start(command("while :; do :; done"))
+        crucible_runtime::answered!(session.start(command("while :; do :; done")))
             .expect("started limited command"),
     );
 

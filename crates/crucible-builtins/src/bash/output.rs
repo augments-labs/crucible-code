@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crucible_runtime::Cancel;
+use crucible_runtime::{Bridge, Cancel};
 use crucible_sandbox::{SandboxOutput, SandboxProcess, SandboxRead, SandboxViolation};
 use crucible_tools::{ToolError, ToolOutput, Watch, Wrote};
 
@@ -378,9 +378,21 @@ fn reap(
 /// Ends a command's whole process group, whatever the platform calls one.
 ///
 /// Named here rather than in two places because two modules end a command now:
-/// the wait that owns one, and the registry that took one over.
+/// the wait that owns one, and the registry that took one over. Neither can
+/// await: the wait runs on whatever thread runs its call, and the registry on
+/// the drawing thread for its beat and its keys, on the thread handing a
+/// command over, and in destructors. So the stop is crossed rather than
+/// awaited, and a stop that would have had to wait is refused as the failure it
+/// is, which keeps the drawing thread from waiting on a stop that pends. A stop
+/// that does not pend still runs its whole body inside that one poll, on
+/// whichever thread asked. The in-tree stops end the command's group, reap it
+/// within the reap bound, join its supervisor, stop its network proxy where it
+/// has one and clean up its stage, and a projected command's stop also rolls
+/// back what it wrote and had not published. Only the reap is bounded.
 pub(super) fn end(process: &mut (dyn SandboxProcess + 'static)) -> io::Result<()> {
-    process.stop()
+    Bridge::BashSandbox
+        .cross(process.stop())
+        .unwrap_or_else(|unready| Err(io::Error::other(unready)))
 }
 
 /// Everything the wait needs besides the command itself.

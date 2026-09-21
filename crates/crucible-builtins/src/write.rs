@@ -9,6 +9,7 @@
 use std::fs;
 use std::io::Read as _;
 
+use crucible_runtime::BoxFuture;
 use crucible_tools::{
     Approved, DescribeTool, Remembered, Sensitivity, Summary, Tool, ToolContext, ToolError,
     ToolOutput,
@@ -121,105 +122,111 @@ impl Tool for Write {
         summary::remembered(NAME, args, true)
     }
 
-    fn run(&self, approved: Approved, _context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
-        let args = Args::parse(NAME, approved.args())?;
-        let requested = args.text(PATH)?;
-        let content = args.exact(CONTENT)?;
+    fn run<'a>(
+        &'a self,
+        approved: Approved,
+        _context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            let args = Args::parse(NAME, approved.args())?;
+            let requested = args.text(PATH)?;
+            let content = args.exact(CONTENT)?;
 
-        // The parent has to exist before the path can be contained, because
-        // containment is decided on a resolved path and only a directory that
-        // is really there can be resolved. So the directories are made first,
-        // through a parent that has itself been checked.
-        if let Some(problem) = self.prepare(requested) {
-            return Ok(problem);
-        }
+            // The parent has to exist before the path can be contained, because
+            // containment is decided on a resolved path and only a directory that
+            // is really there can be resolved. So the directories are made first,
+            // through a parent that has itself been checked.
+            if let Some(problem) = self.prepare(requested) {
+                return Ok(problem);
+            }
 
-        let path = match self.workspace.creatable(requested) {
-            Ok(path) => path,
-            Err(problem) => return Ok(ToolOutput::failed(problem.to_string())),
-        };
-
-        // What is at the name now, asked about the name itself rather than
-        // through it: `creatable` proved the last component was not a symbolic
-        // link, so one there now arrived since, and `symlink_metadata` is the
-        // question that sees it rather than the far end. All this decides is
-        // which of the two opens the write is — both of them refuse a name that
-        // has become a link, so nothing rests on getting it right.
-        let already = fs::symlink_metadata(&path);
-        if already.as_ref().is_ok_and(fs::Metadata::is_dir) {
-            return Ok(ToolOutput::failed(format!("{requested} is a directory")));
-        }
-
-        let replaced = already.is_ok();
-
-        // Asked before anything is opened, because the answer is about what is
-        // already there rather than about the write. A file the agent has not
-        // read is one it cannot know it is discarding — including one another
-        // program wrote a moment ago, which is the case a model has no way at
-        // all to see.
-        if replaced && !self.seen.holds(path.as_path()) {
-            return Ok(ToolOutput::failed(format!(
-                "{requested} has not been read, so replacing it would discard what is in it: read it first"
-            )));
-        }
-
-        let mut original = if replaced {
-            let file = match path.open_regular_to_change() {
-                Ok(file) => file,
+            let path = match self.workspace.creatable(requested) {
+                Ok(path) => path,
                 Err(problem) => return Ok(ToolOutput::failed(problem.to_string())),
             };
-            Some(file)
-        } else {
-            None
-        };
-        let permissions = original
-            .as_ref()
-            .map(|file| file.metadata().map(|metadata| metadata.permissions()))
-            .transpose()
-            .map_err(|source| ToolError::Io {
-                tool: NAME.into(),
-                problem: format!("could not inspect {requested}").into(),
-                source,
-            })?;
 
-        // What is about to go, read back so that whoever is watching can see
-        // what went. Nothing else will ever hold both versions: the model is
-        // sent a line count, and by the time anything downstream reads that,
-        // the old file is gone.
-        let before = if replaced {
-            original.as_mut().and_then(discarded)
-        } else {
-            Some(String::new())
-        };
+            // What is at the name now, asked about the name itself rather than
+            // through it: `creatable` proved the last component was not a symbolic
+            // link, so one there now arrived since, and `symlink_metadata` is the
+            // question that sees it rather than the far end. All this decides is
+            // which of the two opens the write is — both of them refuse a name that
+            // has become a link, so nothing rests on getting it right.
+            let already = fs::symlink_metadata(&path);
+            if already.as_ref().is_ok_and(fs::Metadata::is_dir) {
+                return Ok(ToolOutput::failed(format!("{requested} is a directory")));
+            }
 
-        // Prepared beside the destination and flushed before the namespace
-        // changes atomically. Unix also flushes the directory; Windows flushes
-        // the renamed file because its handle-relative rename has no
-        // write-through form. A failure before commit leaves the old file
-        // whole, and a file whose identity changed before the final pre-commit
-        // check is refused rather than overwritten.
-        if let Err(problem) =
-            atomic::replace(&path, content.as_bytes(), permissions, original.as_ref())
-        {
-            return Ok(ToolOutput::failed(problem.to_string()));
-        }
+            let replaced = already.is_ok();
 
-        // What the agent just put down it has by definition seen, so the next
-        // call may replace it. Without this a file has to be created and then
-        // read back before it can be corrected, which is a round trip spent
-        // learning what the same turn wrote.
-        self.seen.record(path.as_path());
+            // Asked before anything is opened, because the answer is about what is
+            // already there rather than about the write. A file the agent has not
+            // read is one it cannot know it is discarding — including one another
+            // program wrote a moment ago, which is the case a model has no way at
+            // all to see.
+            if replaced && !self.seen.holds(path.as_path()) {
+                return Ok(ToolOutput::failed(format!(
+                    "{requested} has not been read, so replacing it would discard what is in it: read it first"
+                )));
+            }
 
-        let lines = content.lines().count();
-        let what = if replaced { "replaced" } else { "created" };
-        let answer = ToolOutput::ok(format!("{what} {requested}, {lines} lines"));
+            let mut original = if replaced {
+                let file = match path.open_regular_to_change() {
+                    Ok(file) => file,
+                    Err(problem) => return Ok(ToolOutput::failed(problem.to_string())),
+                };
+                Some(file)
+            } else {
+                None
+            };
+            let permissions = original
+                .as_ref()
+                .map(|file| file.metadata().map(|metadata| metadata.permissions()))
+                .transpose()
+                .map_err(|source| ToolError::Io {
+                    tool: NAME.into(),
+                    problem: format!("could not inspect {requested}").into(),
+                    source,
+                })?;
 
-        // No block rather than a wrong one. A file that could not be read back
-        // is not one that was empty, and a diff drawn from an empty string would
-        // say every line here is new when the truth is that nobody can say.
-        Ok(match before {
-            Some(before) => answer.showing(changed::between(&before, content)),
-            None => answer,
+            // What is about to go, read back so that whoever is watching can see
+            // what went. Nothing else will ever hold both versions: the model is
+            // sent a line count, and by the time anything downstream reads that,
+            // the old file is gone.
+            let before = if replaced {
+                original.as_mut().and_then(discarded)
+            } else {
+                Some(String::new())
+            };
+
+            // Prepared beside the destination and flushed before the namespace
+            // changes atomically. Unix also flushes the directory; Windows flushes
+            // the renamed file because its handle-relative rename has no
+            // write-through form. A failure before commit leaves the old file
+            // whole, and a file whose identity changed before the final pre-commit
+            // check is refused rather than overwritten.
+            if let Err(problem) =
+                atomic::replace(&path, content.as_bytes(), permissions, original.as_ref())
+            {
+                return Ok(ToolOutput::failed(problem.to_string()));
+            }
+
+            // What the agent just put down it has by definition seen, so the next
+            // call may replace it. Without this a file has to be created and then
+            // read back before it can be corrected, which is a round trip spent
+            // learning what the same turn wrote.
+            self.seen.record(path.as_path());
+
+            let lines = content.lines().count();
+            let what = if replaced { "replaced" } else { "created" };
+            let answer = ToolOutput::ok(format!("{what} {requested}, {lines} lines"));
+
+            // No block rather than a wrong one. A file that could not be read back
+            // is not one that was empty, and a diff drawn from an empty string would
+            // say every line here is new when the truth is that nobody can say.
+            Ok(match before {
+                Some(before) => answer.showing(changed::between(&before, content)),
+                None => answer,
+            })
         })
     }
 }

@@ -4,6 +4,7 @@ use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
+use crucible_runtime::BoxFuture;
 use crucible_sandbox::{
     SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities,
     SandboxCapability, SandboxCleanup, SandboxCommand, SandboxCommandStage, SandboxError,
@@ -33,59 +34,68 @@ impl LocalSandbox {
 }
 
 impl SandboxService for LocalSandbox {
-    fn probe(&self) -> Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError> {
-        #[cfg(target_os = "linux")]
-        {
-            super::linux::probe(&[])
-        }
-        #[cfg(target_os = "macos")]
-        {
-            super::macos::probe()
-        }
-        #[cfg(target_os = "windows")]
-        {
-            super::windows::probe()
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-        {
-            Err(SandboxError::BackendUnavailable {
-                reason: "no enforcing local sandbox backend for this operating system".into(),
-            })
-        }
+    fn probe(
+        &self,
+    ) -> BoxFuture<'_, Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>> {
+        Box::pin(async move {
+            #[cfg(target_os = "linux")]
+            {
+                super::linux::probe(&[])
+            }
+            #[cfg(target_os = "macos")]
+            {
+                super::macos::probe()
+            }
+            #[cfg(target_os = "windows")]
+            {
+                super::windows::probe()
+            }
+            #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+            {
+                Err(SandboxError::BackendUnavailable {
+                    reason: "no enforcing local sandbox backend for this operating system".into(),
+                })
+            }
+        })
     }
 
-    fn prepare(&self, request: SandboxRequest) -> Result<Box<dyn SandboxSession>, SandboxError> {
-        let audit = request.audit().clone();
-        let id = request.id();
-        audit.record(
-            id,
-            SandboxFactKind::Lifecycle(SandboxLifecycle::PolicyResolved),
-        )?;
-        let prepared = if request.policy().enabled() {
-            enforcing(request, Arc::clone(&self.active))
-        } else {
-            compatibility(
-                request,
-                Arc::clone(&self.active),
-                "sandbox disabled by effective policy",
-            )
-        };
-        if let Err(problem) = &prepared {
+    fn prepare(
+        &self,
+        request: SandboxRequest,
+    ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
+        Box::pin(async move {
+            let audit = request.audit().clone();
+            let id = request.id();
             audit.record(
                 id,
-                SandboxFactKind::Failed {
-                    phase: SandboxFailurePhase::Prepare,
-                    kind: problem.failure_kind(),
-                },
+                SandboxFactKind::Lifecycle(SandboxLifecycle::PolicyResolved),
             )?;
-            let cleanup = if matches!(problem, SandboxError::Lifecycle(_)) {
-                SandboxCleanup::Failed
+            let prepared = if request.policy().enabled() {
+                enforcing(request, Arc::clone(&self.active))
             } else {
-                SandboxCleanup::Complete
+                compatibility(
+                    request,
+                    Arc::clone(&self.active),
+                    "sandbox disabled by effective policy",
+                )
             };
-            audit.record(id, SandboxFactKind::Cleanup(cleanup))?;
-        }
-        prepared
+            if let Err(problem) = &prepared {
+                audit.record(
+                    id,
+                    SandboxFactKind::Failed {
+                        phase: SandboxFailurePhase::Prepare,
+                        kind: problem.failure_kind(),
+                    },
+                )?;
+                let cleanup = if matches!(problem, SandboxError::Lifecycle(_)) {
+                    SandboxCleanup::Failed
+                } else {
+                    SandboxCleanup::Complete
+                };
+                audit.record(id, SandboxFactKind::Cleanup(cleanup))?;
+            }
+            prepared
+        })
     }
 }
 
@@ -191,82 +201,89 @@ impl SandboxSession for CompatibilitySession {
         &self.inspection
     }
 
-    fn materialize(&mut self) -> Result<(), SandboxError> {
-        if self.materialized {
-            return Ok(());
-        }
-        self.materialized = true;
-        self.request.audit().record(
-            self.request.id(),
-            SandboxFactKind::Lifecycle(SandboxLifecycle::Materialized),
-        )?;
-        Ok(())
-    }
-
-    fn stage(
-        mut self: Box<Self>,
-        command: SandboxCommand,
-    ) -> Result<Box<dyn SandboxLaunch>, SandboxError> {
-        if !self.materialized {
-            return Err(SandboxError::Materialization {
-                problem: "session was not materialized before start".into(),
-                source: None,
-            });
-        }
-        for stage in [
-            SandboxCommandStage::Requested,
-            SandboxCommandStage::Effective,
-        ] {
-            let decision = self.request.policy().commands().evaluate(&command, stage);
+    fn materialize(&mut self) -> BoxFuture<'_, Result<(), SandboxError>> {
+        Box::pin(async move {
+            if self.materialized {
+                return Ok(());
+            }
+            self.materialized = true;
             self.request.audit().record(
                 self.request.id(),
-                SandboxFactKind::Guardrail { stage, decision },
+                SandboxFactKind::Lifecycle(SandboxLifecycle::Materialized),
             )?;
-            if decision != SandboxGuardrailDecision::Allowed {
+            Ok(())
+        })
+    }
+
+    fn stage<'a>(
+        mut self: Box<Self>,
+        command: SandboxCommand,
+    ) -> BoxFuture<'a, Result<Box<dyn SandboxLaunch>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            if !self.materialized {
+                return Err(SandboxError::Materialization {
+                    problem: "session was not materialized before start".into(),
+                    source: None,
+                });
+            }
+            for stage in [
+                SandboxCommandStage::Requested,
+                SandboxCommandStage::Effective,
+            ] {
+                let decision = self.request.policy().commands().evaluate(&command, stage);
                 self.request.audit().record(
                     self.request.id(),
-                    SandboxFactKind::Failed {
-                        phase: SandboxFailurePhase::Start,
-                        kind: crucible_sandbox::SandboxFailureKind::Guardrail,
-                    },
+                    SandboxFactKind::Guardrail { stage, decision },
                 )?;
-                return Err(SandboxError::Guardrail);
+                if decision != SandboxGuardrailDecision::Allowed {
+                    self.request.audit().record(
+                        self.request.id(),
+                        SandboxFactKind::Failed {
+                            phase: SandboxFailurePhase::Start,
+                            kind: crucible_sandbox::SandboxFailureKind::Guardrail,
+                        },
+                    )?;
+                    return Err(SandboxError::Guardrail);
+                }
             }
-        }
-        let mut process = Command::new(command.program());
-        process
-            .args(command.arguments())
-            .current_dir(self.request.policy().working_directory())
-            .env_clear()
-            .envs(command.environment().iter());
-        let reservation = self.reservation.take().ok_or(SandboxError::Concurrency)?;
-        let launch = CompatibilityLaunch {
-            process: Some(process),
-            plan: Some(super::process::SpawnPlan {
-                network: None,
+            let mut process = Command::new(command.program());
+            process
+                .args(command.arguments())
+                .current_dir(self.request.policy().working_directory())
+                .env_clear()
+                .envs(command.environment().iter());
+            let reservation = self.reservation.take().ok_or(SandboxError::Concurrency)?;
+            let launch = CompatibilityLaunch {
+                process: Some(process),
+                plan: Some(super::process::SpawnPlan {
+                    network: None,
+                    inspection: self.inspection.clone(),
+                    reservation,
+                    stage: None,
+                    limits: self.request.policy().limits(),
+                    audit: self.request.audit().clone(),
+                    sandbox: self.request.id(),
+                    audit_started: true,
+                    audit_cleanup: true,
+                    invocation: self.request.invocation_mode(),
+                    call_result_key: self.request.call_result_key(),
+                    canceller: None,
+                    speech: command.speech(),
+                    startup_input: None,
+                }),
                 inspection: self.inspection.clone(),
-                reservation,
-                stage: None,
-                limits: self.request.policy().limits(),
                 audit: self.request.audit().clone(),
                 sandbox: self.request.id(),
-                audit_started: true,
-                audit_cleanup: true,
                 invocation: self.request.invocation_mode(),
-                call_result_key: self.request.call_result_key(),
-                canceller: None,
-                speech: command.speech(),
-                startup_input: None,
-            }),
-            inspection: self.inspection.clone(),
-            audit: self.request.audit().clone(),
-            sandbox: self.request.id(),
-            invocation: self.request.invocation_mode(),
-            owner_transferred: false,
-            released: false,
-        };
-        self.transferred = true;
-        Ok(Box::new(launch))
+                owner_transferred: false,
+                released: false,
+            };
+            self.transferred = true;
+            Ok(Box::new(launch) as Box<dyn SandboxLaunch>)
+        })
     }
 }
 
@@ -302,46 +319,53 @@ impl SandboxLaunch for CompatibilityLaunch {
         Ok(())
     }
 
-    fn release(mut self: Box<Self>) -> Result<Box<dyn SandboxProcess>, SandboxError> {
-        if self.invocation != crucible_sandbox::SandboxInvocationMode::Foreground
-            && !self.owner_transferred
-        {
-            return Err(SandboxError::Lifecycle(std::io::Error::other(
-                "background sandbox has no application cleanup owner",
-            )));
-        }
-        let process = self.process.take().ok_or_else(|| {
-            SandboxError::Spawn(std::io::Error::other(
-                "compatibility command was already released",
-            ))
-        })?;
-        let plan = self.plan.take().ok_or_else(|| {
-            SandboxError::Spawn(std::io::Error::other(
-                "compatibility launch plan is unavailable",
-            ))
-        })?;
-        self.released = true;
-        let spawned = super::process::spawn(process, plan);
-        if let Err(problem) = &spawned {
-            // Spawn returns Lifecycle when cleanup itself was unconfirmed.
-            // Preserve that primary error even if the bounded audit is full.
-            let cleanup = if matches!(problem, SandboxError::Lifecycle(_)) {
-                SandboxCleanup::Failed
-            } else {
-                SandboxCleanup::Complete
-            };
-            let _ = self.audit.record(
-                self.sandbox,
-                SandboxFactKind::Failed {
-                    phase: SandboxFailurePhase::Start,
-                    kind: problem.failure_kind(),
-                },
-            );
-            let _ = self
-                .audit
-                .record(self.sandbox, SandboxFactKind::Cleanup(cleanup));
-        }
-        spawned
+    fn release<'a>(
+        mut self: Box<Self>,
+    ) -> BoxFuture<'a, Result<Box<dyn SandboxProcess>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            if self.invocation != crucible_sandbox::SandboxInvocationMode::Foreground
+                && !self.owner_transferred
+            {
+                return Err(SandboxError::Lifecycle(std::io::Error::other(
+                    "background sandbox has no application cleanup owner",
+                )));
+            }
+            let process = self.process.take().ok_or_else(|| {
+                SandboxError::Spawn(std::io::Error::other(
+                    "compatibility command was already released",
+                ))
+            })?;
+            let plan = self.plan.take().ok_or_else(|| {
+                SandboxError::Spawn(std::io::Error::other(
+                    "compatibility launch plan is unavailable",
+                ))
+            })?;
+            self.released = true;
+            let spawned = super::process::spawn(process, plan);
+            if let Err(problem) = &spawned {
+                // Spawn returns Lifecycle when cleanup itself was unconfirmed.
+                // Preserve that primary error even if the bounded audit is full.
+                let cleanup = if matches!(problem, SandboxError::Lifecycle(_)) {
+                    SandboxCleanup::Failed
+                } else {
+                    SandboxCleanup::Complete
+                };
+                let _ = self.audit.record(
+                    self.sandbox,
+                    SandboxFactKind::Failed {
+                        phase: SandboxFailurePhase::Start,
+                        kind: problem.failure_kind(),
+                    },
+                );
+                let _ = self
+                    .audit
+                    .record(self.sandbox, SandboxFactKind::Cleanup(cleanup));
+            }
+            spawned
+        })
     }
 }
 
@@ -411,7 +435,8 @@ mod tests {
             owner_transferred: false,
             released: false,
         };
-        let result = crucible_sandbox::SandboxLaunch::release(Box::new(launch));
+        let result =
+            crucible_runtime::answered!(crucible_sandbox::SandboxLaunch::release(Box::new(launch)));
         let facts = audit.records().map_err(std::io::Error::other)?;
         assert!(
             facts.iter().any(|record| matches!(
@@ -483,8 +508,8 @@ mod tests {
         .with_audit(audit.clone())
         .expect("matching audit attribution");
         let service = LocalSandbox::new();
-        let mut session = service.prepare(request).expect("session");
-        session.materialize().expect("materialized");
+        let mut session = crucible_runtime::answered!(service.prepare(request)).expect("session");
+        crucible_runtime::answered!(session.materialize()).expect("materialized");
         let command = SandboxCommand::new(
             "/bin/sh",
             [OsString::from("-c"), OsString::from(script)],
@@ -493,7 +518,7 @@ mod tests {
         .expect("command");
 
         assert!(matches!(
-            session.start(command),
+            crucible_runtime::answered!(session.start(command)),
             Err(SandboxError::Guardrail)
         ));
         assert!(!sample.root().join("blocked.txt").exists());
@@ -538,22 +563,22 @@ mod tests {
         .with_audit(audit.clone())
         .expect("matching audit attribution");
         let service = LocalSandbox::new();
-        let mut session = service.prepare(request).expect("session");
-        session.materialize().expect("materialized");
+        let mut session = crucible_runtime::answered!(service.prepare(request)).expect("session");
+        crucible_runtime::answered!(session.materialize()).expect("materialized");
         let command = SandboxCommand::new(
             "/bin/sh",
             [OsString::from("-c"), OsString::from("exit 0")],
             SandboxEnvironment::empty(),
         )
         .expect("command");
-        let mut process = session.start(command).expect("process");
+        let mut process = crucible_runtime::answered!(session.start(command)).expect("process");
         let deadline = Instant::now() + Duration::from_secs(2);
         while process.try_wait().expect("wait").is_none() {
             assert!(Instant::now() < deadline, "command did not finish");
             thread::sleep(Duration::from_millis(5));
         }
-        process.stop().expect("cleanup");
-        process.stop().expect("idempotent cleanup");
+        crucible_runtime::answered!(process.stop()).expect("cleanup");
+        crucible_runtime::answered!(process.stop()).expect("idempotent cleanup");
 
         let facts = audit.records().expect("facts");
         assert_eq!(facts.len(), 10, "{facts:#?}");
@@ -623,8 +648,8 @@ mod tests {
             SandboxManifest::empty(),
         );
         let service = LocalSandbox::new();
-        let mut session = service.prepare(request).expect("session");
-        session.materialize().expect("materialized");
+        let mut session = crucible_runtime::answered!(service.prepare(request)).expect("session");
+        crucible_runtime::answered!(session.materialize()).expect("materialized");
         let command = SandboxCommand::new(
             "/bin/sh",
             [OsString::from("-c"), OsString::from(requested)],
@@ -638,7 +663,7 @@ mod tests {
         .expect("transformation");
 
         assert!(matches!(
-            session.start(command),
+            crucible_runtime::answered!(session.start(command)),
             Err(SandboxError::Guardrail)
         ));
         assert!(!sample.root().join("requested.txt").exists());
@@ -670,19 +695,19 @@ mod tests {
         .with_audit(audit.clone())
         .expect("matching audit attribution");
         let service = LocalSandbox::new();
-        let mut session = service.prepare(request).expect("session");
-        session.materialize().expect("materialized");
+        let mut session = crucible_runtime::answered!(service.prepare(request)).expect("session");
+        crucible_runtime::answered!(session.materialize()).expect("materialized");
         let command = SandboxCommand::new(
             "/bin/sh",
             [OsString::from("-c"), OsString::from("sleep 5")],
             SandboxEnvironment::empty(),
         )
         .expect("command");
-        let mut process = session.start(command).expect("process");
+        let mut process = crucible_runtime::answered!(session.start(command)).expect("process");
         thread::sleep(Duration::from_millis(250));
         let status = process.try_wait().expect("wait");
         let violation = process.violation();
-        process.stop().expect("cleanup");
+        crucible_runtime::answered!(process.stop()).expect("cleanup");
 
         assert!(status.is_some(), "command survived its service deadline");
         assert_eq!(
@@ -739,8 +764,8 @@ mod tests {
             SandboxManifest::empty(),
         );
         let service = LocalSandbox::new();
-        let mut session = service.prepare(request).expect("session");
-        session.materialize().expect("materialized");
+        let mut session = crucible_runtime::answered!(service.prepare(request)).expect("session");
+        crucible_runtime::answered!(session.materialize()).expect("materialized");
         let command = SandboxCommand::new(
             "/bin/sh",
             [
@@ -750,7 +775,7 @@ mod tests {
             SandboxEnvironment::empty(),
         )
         .expect("command");
-        let mut process = session.start(command).expect("process");
+        let mut process = crucible_runtime::answered!(session.start(command)).expect("process");
         let mut output = process.take_stdout().expect("stdout");
         let mut retained = Vec::new();
         let deadline = Instant::now() + Duration::from_secs(2);
@@ -773,7 +798,7 @@ mod tests {
             thread::sleep(Duration::from_millis(10));
         }
         let usage = process.usage();
-        process.stop().expect("cleanup");
+        crucible_runtime::answered!(process.stop()).expect("cleanup");
 
         assert!(retained.len() <= 32, "retained {} bytes", retained.len());
         assert!(
@@ -803,8 +828,8 @@ mod tests {
             SandboxManifest::empty(),
         );
         let service = LocalSandbox::new();
-        let mut session = service.prepare(request).expect("session");
-        session.materialize().expect("materialized");
+        let mut session = crucible_runtime::answered!(service.prepare(request)).expect("session");
+        crucible_runtime::answered!(session.materialize()).expect("materialized");
         let command = SandboxCommand::new(
             "/bin/sh",
             [
@@ -814,7 +839,7 @@ mod tests {
             SandboxEnvironment::empty(),
         )
         .expect("command");
-        let mut process = session.start(command).expect("process");
+        let mut process = crucible_runtime::answered!(session.start(command)).expect("process");
         let mut stdout = process.take_stdout();
         let mut stderr = process.take_stderr();
         let mut retained = 0_usize;
@@ -848,7 +873,7 @@ mod tests {
             process.violation(),
             Some(crucible_sandbox::SandboxViolation::Output)
         );
-        process.stop().expect("cleanup");
+        crucible_runtime::answered!(process.stop()).expect("cleanup");
     }
 
     /// Runs a command writing 24 bytes to each stream under `ceiling`, drains
@@ -866,18 +891,17 @@ mod tests {
             .with_limits(limits)
             .expect("limits");
         let service = LocalSandbox::new();
-        let mut session = service
-            .prepare(SandboxRequest::new(
-                SandboxId::new(),
-                Ancestry::new(),
-                ToolId::new("counted-output"),
-                policy,
-                SandboxManifest::empty(),
-            ))
-            .expect("session");
-        session.materialize().expect("materialized");
-        let mut process = session
-            .start(
+        let mut session = crucible_runtime::answered!(service.prepare(SandboxRequest::new(
+            SandboxId::new(),
+            Ancestry::new(),
+            ToolId::new("counted-output"),
+            policy,
+            SandboxManifest::empty(),
+        )))
+        .expect("session");
+        crucible_runtime::answered!(session.materialize()).expect("materialized");
+        let mut process = crucible_runtime::answered!(
+            session.start(
                 SandboxCommand::new(
                     "/bin/sh",
                     [
@@ -888,7 +912,8 @@ mod tests {
                 )
                 .expect("command"),
             )
-            .expect("process");
+        )
+        .expect("process");
         let mut streams = [process.take_stdout(), process.take_stderr()];
         let mut finished = [false, false];
         let mut retained = 0_usize;
@@ -940,7 +965,7 @@ mod tests {
             process.usage().output_bytes,
             "the count moved when it was read"
         );
-        process.stop().expect("cleanup");
+        crucible_runtime::answered!(process.stop()).expect("cleanup");
         (retained, usage)
     }
 
@@ -974,8 +999,8 @@ mod tests {
             SandboxManifest::empty(),
         );
         let service = LocalSandbox::new();
-        let mut session = service.prepare(request).expect("session");
-        session.materialize().expect("materialized");
+        let mut session = crucible_runtime::answered!(service.prepare(request)).expect("session");
+        crucible_runtime::answered!(session.materialize()).expect("materialized");
         let command = SandboxCommand::new(
             "/bin/sh",
             [
@@ -985,7 +1010,7 @@ mod tests {
             SandboxEnvironment::empty(),
         )
         .expect("command");
-        let mut process = session.start(command).expect("process");
+        let mut process = crucible_runtime::answered!(session.start(command)).expect("process");
         let deadline = Instant::now() + Duration::from_secs(2);
         while process.try_wait().expect("wait").is_none() {
             assert!(Instant::now() < deadline, "leader did not exit");
@@ -993,8 +1018,8 @@ mod tests {
         }
         let pid = read_pid(&sample.root().join("descendant.pid"));
         assert_no_live_process(pid, deadline);
-        process.stop().expect("first cleanup");
-        process.stop().expect("idempotent cleanup");
+        crucible_runtime::answered!(process.stop()).expect("first cleanup");
+        crucible_runtime::answered!(process.stop()).expect("idempotent cleanup");
     }
 
     #[cfg(target_os = "linux")]

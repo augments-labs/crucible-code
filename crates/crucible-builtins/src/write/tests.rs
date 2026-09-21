@@ -18,8 +18,7 @@ fn write(sample: &Sample, args: &str) -> ToolOutput {
 /// A call against a record somebody else has already told about a file.
 fn writing(sample: &Sample, args: &str, seen: &Ledger) -> ToolOutput {
     let tool = Write::new(sample.workspace(), seen.clone());
-    tool.run(allowed(&tool, args), &crate::sample::context())
-        .unwrap()
+    crucible_runtime::answered!(tool.run(allowed(&tool, args), &crate::sample::context())).unwrap()
 }
 
 /// Says a file was read, the way `read` does when it shows one.
@@ -81,12 +80,11 @@ fn a_file_the_read_tool_showed_may_be_replaced() {
     let seen = crate::Ledger::new();
 
     let reader = crate::Read::new(sample.workspace(), seen.clone());
-    let shown = reader
-        .run(
-            allowed(&reader, r#"{"path":"one.txt"}"#),
-            &crate::sample::context(),
-        )
-        .unwrap();
+    let shown = crucible_runtime::answered!(reader.run(
+        allowed(&reader, r#"{"path":"one.txt"}"#),
+        &crate::sample::context(),
+    ))
+    .unwrap();
     assert!(!shown.is_failed(), "{}", shown.text());
 
     let output = writing(&sample, r#"{"path":"one.txt","content":"new\n"}"#, &seen);
@@ -213,15 +211,14 @@ fn a_file_is_written_into_a_directory_the_workspace_reaches() {
     let beside = sample.beside("notes");
 
     let tool = Write::new(sample.reaching(&beside), Ledger::new());
-    let output = tool
-        .run(
-            allowed(
-                &tool,
-                &format!(r#"{{"path":"{beside}/todo.md","content":"buy milk\n"}}"#),
-            ),
-            &crate::sample::context(),
-        )
-        .unwrap();
+    let output = crucible_runtime::answered!(tool.run(
+        allowed(
+            &tool,
+            &format!(r#"{{"path":"{beside}/todo.md","content":"buy milk\n"}}"#),
+        ),
+        &crate::sample::context(),
+    ))
+    .unwrap();
 
     assert!(!output.is_failed(), "{}", output.text());
     assert_eq!(
@@ -323,9 +320,9 @@ fn a_link_planted_while_the_question_was_on_screen_is_still_refused() {
     );
     symlink(&outside, sample.root().join("notes.txt"));
 
-    let output = tool
-        .run(allowed(&tool, args), &crate::sample::context())
-        .unwrap();
+    let output =
+        crucible_runtime::answered!(tool.run(allowed(&tool, args), &crate::sample::context()))
+            .unwrap();
 
     assert!(output.is_failed(), "{}", output.text());
     assert_eq!(fs::read_to_string(&outside).unwrap(), "original\n");
@@ -347,12 +344,11 @@ fn a_call_with_no_content_says_what_is_missing() {
     let sample = Sample::new("write-nocontent");
 
     let tool = Write::new(sample.workspace(), Ledger::new());
-    let problem = tool
-        .run(
-            allowed(&tool, r#"{"path":"one.txt"}"#),
-            &crate::sample::context(),
-        )
-        .unwrap_err();
+    let problem = crucible_runtime::answered!(tool.run(
+        allowed(&tool, r#"{"path":"one.txt"}"#),
+        &crate::sample::context(),
+    ))
+    .unwrap_err();
 
     assert_eq!(problem.to_string(), "write: content is required");
 }

@@ -1,13 +1,15 @@
 //! What the confinement report says, and what it must never say.
 
+use crucible_runtime::{BoxFuture, Bridge};
 use crucible_sandbox::{
     SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities,
     SandboxCapability, SandboxCleanup, SandboxEnablement, SandboxError, SandboxFeature,
-    SandboxInspection, SandboxManifest, SandboxPolicy, SandboxResourceLimits,
+    SandboxInspection, SandboxManifest, SandboxPolicy, SandboxRequest, SandboxResourceLimits,
+    SandboxService, SandboxSession,
 };
 use crucible_types::SandboxId;
 
-use super::{Probe, choose, report};
+use super::{Probe, Unchanged, admitted, choose, report};
 use crate::sample::Sample;
 
 /// A backend that holds everything a confined report has to rest on.
@@ -278,7 +280,7 @@ fn an_unavailable_backend_cannot_change_the_choice() {
         choose(
             &control,
             true,
-            || Err("native boundary unavailable".into()),
+            || Err(Unchanged::Stopped("native boundary unavailable".into())),
             || panic!("an unavailable boundary cannot be saved")
         )
         .is_err()
@@ -310,4 +312,42 @@ fn a_project_requirement_survives_interactive_disabling() {
     )
     .unwrap();
     assert!(!optional.enabled());
+}
+
+/// A backend that would have to wait for every answer it is asked for.
+struct Waiting;
+
+impl SandboxService for Waiting {
+    fn probe(
+        &self,
+    ) -> BoxFuture<'_, Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>> {
+        Box::pin(std::future::pending())
+    }
+
+    fn prepare(
+        &self,
+        _request: SandboxRequest,
+    ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
+        Box::pin(std::future::pending())
+    }
+}
+
+#[test]
+fn a_backend_that_would_wait_is_told_apart_from_one_that_refused() {
+    let sample = Sample::new("sandbox-choice-waiting");
+    let policy = SandboxPolicy::standard(&sample.workspace()).expect("policy");
+
+    let answered = admitted(&Waiting, policy);
+    assert!(
+        matches!(
+            &answered,
+            Err(Unchanged::Unready(unready)) if unready.bridge() == Bridge::SandboxReport
+        ),
+        "{answered:?}"
+    );
+    // Said as the bridge says it, which is what followed "sandbox unchanged:".
+    let said = Bridge::SandboxReport
+        .cross(std::future::pending::<()>())
+        .expect_err("a pending future waits");
+    assert_eq!(answered.expect_err("refused").to_string(), said.to_string());
 }

@@ -26,6 +26,7 @@
 use std::fmt::Write as _;
 use std::sync::LazyLock;
 
+use crucible_runtime::BoxFuture;
 use crucible_tools::{
     Approved, DescribeTool, Revealed, Sensitivity, Summary, Target, Tool, ToolContext, ToolEffect,
     ToolError, ToolOutput,
@@ -137,46 +138,52 @@ impl Tool for ToolSearch {
         summary::field(NAME, args, QUERY)
     }
 
-    fn run(&self, approved: Approved, _context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
-        let args = Args::parse(NAME, approved.args())?;
-        let query = args.text(QUERY)?;
+    fn run<'a>(
+        &'a self,
+        approved: Approved,
+        _context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            let args = Args::parse(NAME, approved.args())?;
+            let query = args.text(QUERY)?;
 
-        let mut ranked: Vec<(u8, &Held)> = self
-            .held
-            .iter()
-            .filter_map(|held| score(query, held).map(|score| (score, held)))
-            .collect();
+            let mut ranked: Vec<(u8, &Held)> = self
+                .held
+                .iter()
+                .filter_map(|held| score(query, held).map(|score| (score, held)))
+                .collect();
 
-        // Best first, and ties in the order they were registered — which is the
-        // order the wiring thought sensible, and is at least an answer that does
-        // not move between two identical searches.
-        ranked.sort_by(|(one, _), (two, _)| two.cmp(one));
-        let found: Vec<&Held> = ranked
-            .into_iter()
-            .take(MOST)
-            .map(|(_, held)| held)
-            .collect();
+            // Best first, and ties in the order they were registered — which is the
+            // order the wiring thought sensible, and is at least an answer that does
+            // not move between two identical searches.
+            ranked.sort_by(|(one, _), (two, _)| two.cmp(one));
+            let found: Vec<&Held> = ranked
+                .into_iter()
+                .take(MOST)
+                .map(|(_, held)| held)
+                .collect();
 
-        if found.is_empty() {
-            return Ok(ToolOutput::ok(format!(
-                "Nothing held back matches {query}. Everything else you can \
-                 call is already in your tool list."
-            )));
-        }
+            if found.is_empty() {
+                return Ok(ToolOutput::ok(format!(
+                    "Nothing held back matches {query}. Everything else you can \
+                     call is already in your tool list."
+                )));
+            }
 
-        let mut said = String::new();
-        for held in &found {
-            self.revealed.reveal(&held.name);
-            let _ = writeln!(said, "{}: {}", held.name, held.about);
-        }
+            let mut said = String::new();
+            for held in &found {
+                self.revealed.reveal(&held.name);
+                let _ = writeln!(said, "{}: {}", held.name, held.about);
+            }
 
-        said.push_str(if found.len() == 1 {
-            "\nIt is in your tool list from your next message onward."
-        } else {
-            "\nThey are in your tool list from your next message onward."
-        });
+            said.push_str(if found.len() == 1 {
+                "\nIt is in your tool list from your next message onward."
+            } else {
+                "\nThey are in your tool list from your next message onward."
+            });
 
-        Ok(ToolOutput::ok(said))
+            Ok(ToolOutput::ok(said))
+        })
     }
 }
 

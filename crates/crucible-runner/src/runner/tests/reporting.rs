@@ -146,25 +146,27 @@ impl Tool for Logged {
         Summary::new("")
     }
 
-    fn run(
-        &self,
+    fn run<'a>(
+        &'a self,
         _approved: Approved,
-        _context: &ToolContext<'_>,
-    ) -> Result<ToolOutput, ToolError> {
-        let named = self
-            .store
-            .said()
-            .iter()
-            .filter_map(|message| match message {
-                Message::Agent { calls, .. } => Some(calls.clone()),
-                _ => None,
-            })
-            .flatten()
-            .map(|call| call.name.into_string())
-            .collect::<Vec<_>>()
-            .join(",");
+        _context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            let named = self
+                .store
+                .said()
+                .iter()
+                .filter_map(|message| match message {
+                    Message::Agent { calls, .. } => Some(calls.clone()),
+                    _ => None,
+                })
+                .flatten()
+                .map(|call| call.name.into_string())
+                .collect::<Vec<_>>()
+                .join(",");
 
-        Ok(ToolOutput::ok(named))
+            Ok(ToolOutput::ok(named))
+        })
     }
 }
 

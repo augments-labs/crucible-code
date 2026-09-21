@@ -16,7 +16,9 @@ crucible-transport.workspace = true
 # What a confined process is, so a server can be hosted over one without this
 # crate knowing which backend confined it.
 crucible-sandbox.workspace = true
-# The cancellation a caller raises to stop waiting on a server mid-exchange.
+# The cancellation a caller raises to stop waiting on a server mid-exchange,
+# the future a hosted toolset and its tools hand back, and the bridge starting a
+# server crosses while hosting is synchronous.
 crucible-runtime.workspace = true
 # What a tool and a toolset are, so a server's catalogue can be published as a
 # generation the runner drives beside the built-in roster.
@@ -27,6 +29,10 @@ crucible-types.workspace = true
 serde_json.workspace = true
 # Typed errors a caller can match on and hold with `#[from]`.
 thiserror.workspace = true
+
+# `answered!`, which the tests ask a hosting's future once with.
+[dev-dependencies]
+crucible-runtime = { workspace = true, features = ["proof"] }
 
 [lints]
 workspace = true

@@ -51,7 +51,7 @@ fn reading(body: &str, cancel: &Cancel) -> Stream {
 /// Every delta a response produces.
 pub(in crate::openai) fn deltas(stream: &mut dyn DeltaStream) -> Vec<Delta> {
     let mut out = Vec::new();
-    while let Some(delta) = stream.next() {
+    while let Some(delta) = crucible_runtime::answered!(stream.next()) {
         out.push(delta.unwrap());
     }
     out
@@ -136,27 +136,29 @@ fn arguments_for_a_call_the_response_no_longer_has_open_are_refused() {
     let mut stream = reading(body, &Cancel::new());
 
     assert_eq!(
-        stream.next().unwrap().unwrap(),
+        crucible_runtime::answered!(stream.next()).unwrap().unwrap(),
         Delta::ToolStarted {
             id: ToolId::new("call_1"),
             name: "read".into(),
         }
     );
     assert_eq!(
-        stream.next().unwrap().unwrap(),
+        crucible_runtime::answered!(stream.next()).unwrap().unwrap(),
         Delta::ToolStarted {
             id: ToolId::new("call_2"),
             name: "glob".into(),
         }
     );
 
-    let problem = stream.next().unwrap().unwrap_err();
+    let problem = crucible_runtime::answered!(stream.next())
+        .unwrap()
+        .unwrap_err();
 
     assert!(
         matches!(problem, ProviderError::Protocol { .. }),
         "a fragment was assembled onto the wrong call instead of refused: {problem:?}"
     );
-    assert!(stream.next().is_none());
+    assert!(crucible_runtime::answered!(stream.next()).is_none());
 }
 
 #[test]
@@ -190,21 +192,21 @@ fn an_event_worth_several_deltas_is_delivered_one_at_a_time() {
     let mut stream = reading(body, &Cancel::new());
 
     assert_eq!(
-        stream.next().unwrap().unwrap(),
+        crucible_runtime::answered!(stream.next()).unwrap().unwrap(),
         Delta::ToolStarted {
             id: ToolId::new("call_1"),
             name: "clock".into(),
         }
     );
     assert_eq!(
-        stream.next().unwrap().unwrap(),
+        crucible_runtime::answered!(stream.next()).unwrap().unwrap(),
         Delta::ToolArgs("{}".into())
     );
     assert_eq!(
-        stream.next().unwrap().unwrap(),
+        crucible_runtime::answered!(stream.next()).unwrap().unwrap(),
         Delta::Stopped(StopReason::WantsTools)
     );
-    assert!(stream.next().is_none());
+    assert!(crucible_runtime::answered!(stream.next()).is_none());
 }
 
 #[test]
@@ -215,15 +217,20 @@ fn a_failure_reported_mid_stream_stops_the_stream() {
     );
     let mut stream = reading(body, &Cancel::new());
 
-    assert_eq!(stream.next().unwrap().unwrap(), Delta::Text("Hel".into()));
-    let problem = stream.next().unwrap().unwrap_err();
+    assert_eq!(
+        crucible_runtime::answered!(stream.next()).unwrap().unwrap(),
+        Delta::Text("Hel".into())
+    );
+    let problem = crucible_runtime::answered!(stream.next())
+        .unwrap()
+        .unwrap_err();
 
     assert_eq!(
         problem.to_string(),
         "openai: server_error: The server had an error"
     );
     assert!(
-        stream.next().is_none(),
+        crucible_runtime::answered!(stream.next()).is_none(),
         "the stream continued past a failure"
     );
 }
@@ -235,14 +242,19 @@ fn a_response_that_stops_arriving_is_a_failure_and_not_a_finished_turn() {
     let body = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hel\"}\n\n";
     let mut stream = reading(body, &Cancel::new());
 
-    assert_eq!(stream.next().unwrap().unwrap(), Delta::Text("Hel".into()));
-    let problem = stream.next().unwrap().unwrap_err();
+    assert_eq!(
+        crucible_runtime::answered!(stream.next()).unwrap().unwrap(),
+        Delta::Text("Hel".into())
+    );
+    let problem = crucible_runtime::answered!(stream.next())
+        .unwrap()
+        .unwrap_err();
 
     assert!(
         matches!(problem, ProviderError::Transport { .. }),
         "expected a truncated response to be reported, got {problem:?}"
     );
-    assert!(stream.next().is_none());
+    assert!(crucible_runtime::answered!(stream.next()).is_none());
 }
 
 #[test]
@@ -251,7 +263,7 @@ fn a_complete_response_ends_without_inventing_a_failure() {
 
     deltas(&mut stream);
 
-    assert!(stream.next().is_none());
+    assert!(crucible_runtime::answered!(stream.next()).is_none());
 }
 
 #[test]
@@ -260,14 +272,20 @@ fn cancelling_mid_answer_stops_the_stream_rather_than_failing_it() {
     let cancel = Cancel::new();
     let mut stream = reading(ANSWER, &cancel);
 
-    assert_eq!(stream.next().unwrap().unwrap(), Delta::Text("Hello".into()));
+    assert_eq!(
+        crucible_runtime::answered!(stream.next()).unwrap().unwrap(),
+        Delta::Text("Hello".into())
+    );
     cancel.request();
 
     assert_eq!(
-        stream.next().unwrap().unwrap(),
+        crucible_runtime::answered!(stream.next()).unwrap().unwrap(),
         Delta::Stopped(StopReason::Cancelled)
     );
-    assert!(stream.next().is_none(), "the stream continued after a stop");
+    assert!(
+        crucible_runtime::answered!(stream.next()).is_none(),
+        "the stream continued after a stop"
+    );
 }
 
 #[test]
@@ -279,7 +297,7 @@ fn a_call_cancelled_between_its_name_and_its_arguments_is_not_left_half_open() {
     let mut stream = reading(CALLED, &cancel);
 
     assert_eq!(
-        stream.next().unwrap().unwrap(),
+        crucible_runtime::answered!(stream.next()).unwrap().unwrap(),
         Delta::ToolStarted {
             id: ToolId::new("call_1"),
             name: "read".into(),
@@ -288,10 +306,10 @@ fn a_call_cancelled_between_its_name_and_its_arguments_is_not_left_half_open() {
     cancel.request();
 
     assert_eq!(
-        stream.next().unwrap().unwrap(),
+        crucible_runtime::answered!(stream.next()).unwrap().unwrap(),
         Delta::Stopped(StopReason::Cancelled)
     );
-    assert!(stream.next().is_none());
+    assert!(crucible_runtime::answered!(stream.next()).is_none());
 }
 
 #[test]
@@ -315,14 +333,17 @@ fn a_cancel_raised_while_nothing_is_arriving_stops_the_stream() {
         crucible_credentials::Redactions::default(),
     );
 
-    assert_eq!(stream.next().unwrap().unwrap(), Delta::Text("Hel".into()));
+    assert_eq!(
+        crucible_runtime::answered!(stream.next()).unwrap().unwrap(),
+        Delta::Text("Hel".into())
+    );
 
     assert_eq!(
-        stream.next().unwrap().unwrap(),
+        crucible_runtime::answered!(stream.next()).unwrap().unwrap(),
         Delta::Stopped(StopReason::Cancelled),
         "the stream waited out a silent provider with a cancel raised"
     );
-    assert!(stream.next().is_none());
+    assert!(crucible_runtime::answered!(stream.next()).is_none());
 }
 
 #[test]

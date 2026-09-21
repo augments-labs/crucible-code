@@ -1,4 +1,21 @@
 //! Host-owned sandbox lifecycle and process interfaces.
+//!
+//! Every step that waits on the machine — probing a backend, preparing,
+//! materializing, staging, releasing, stopping, and beginning and completing a
+//! background result's acceptance — hands back a [`BoxFuture`]. One that
+//! consumes its session or launch owns it for as long as it runs, and one that
+//! borrows a process holds it until it answers. What reads a state the backend
+//! already holds (an inspection, a usage snapshot) and what reads a pipe
+//! without waiting stay synchronous, and so do a status look and handing a
+//! launch to another owner. A status look never waits on the command or on
+//! another command's publication. The first [`SandboxProcess::try_wait`]
+//! after the command ends completes that ending on the calling thread: it
+//! reaps the command, unless an earlier look has, and on a backend that
+//! publishes, publishes or discards what the command wrote, unless another
+//! command is publishing, which leaves that publication to a later
+//! `try_wait`. [`SandboxProcess::ended`] need not complete it: it may reap and
+//! publish nothing, leaving what the command wrote to `try_wait`. The default
+//! `ended` asks `try_wait`, and so completes the ending as that does.
 
 use std::ffi::{OsStr, OsString};
 use std::io;
@@ -6,6 +23,7 @@ use std::path::{Component, Path, PathBuf};
 use std::process::ExitStatus;
 use std::time::Duration;
 
+use crucible_runtime::BoxFuture;
 use crucible_storage::{CallResultKey, CallResultReceipt};
 use crucible_types::{Ancestry, SandboxId, ToolId};
 use sha2::{Digest as _, Sha256};
@@ -1409,8 +1427,10 @@ pub trait SandboxProcess: Send {
     ///
     /// # Errors
     ///
-    /// The backend could not confirm scope termination or reap the leader.
-    fn stop(&mut self) -> io::Result<()>;
+    /// The backend could not confirm scope termination or reap the leader. A
+    /// step of the stop that would have had to wait and was dropped is one way
+    /// that happens, and leaves the same uncertainty.
+    fn stop(&mut self) -> BoxFuture<'_, io::Result<()>>;
 
     /// Redacted inspection snapshot.
     fn inspection(&self) -> &SandboxInspection;
@@ -1428,10 +1448,13 @@ pub trait SandboxProcess: Send {
     ///
     /// Foreground processes, a mismatched result identity, and duplicate
     /// transitions are refused.
-    fn begin_background_acceptance(&mut self, _key: CallResultKey) -> Result<(), SandboxError> {
-        Err(SandboxError::Lifecycle(io::Error::other(
-            "sandbox process does not support background result intent",
-        )))
+    fn begin_background_acceptance(
+        &mut self,
+        _key: CallResultKey,
+    ) -> BoxFuture<'_, Result<(), SandboxError>> {
+        Box::pin(std::future::ready(Err(SandboxError::Lifecycle(
+            io::Error::other("sandbox process does not support background result intent"),
+        ))))
     }
 
     /// Binds the protected result-store receipt into the begun transition.
@@ -1442,10 +1465,10 @@ pub trait SandboxProcess: Send {
     fn complete_background_acceptance(
         &mut self,
         _receipt: CallResultReceipt,
-    ) -> Result<(), SandboxError> {
-        Err(SandboxError::Lifecycle(io::Error::other(
-            "sandbox process does not support background result completion",
-        )))
+    ) -> BoxFuture<'_, Result<(), SandboxError>> {
+        Box::pin(std::future::ready(Err(SandboxError::Lifecycle(
+            io::Error::other("sandbox process does not support background result completion"),
+        ))))
     }
 }
 
@@ -1471,7 +1494,9 @@ pub trait SandboxLaunch: Send {
     /// # Errors
     ///
     /// A failed or ambiguous release is contained and never retried.
-    fn release(self: Box<Self>) -> Result<Box<dyn SandboxProcess>, SandboxError>;
+    fn release<'a>(self: Box<Self>) -> BoxFuture<'a, Result<Box<dyn SandboxProcess>, SandboxError>>
+    where
+        Self: 'a;
 }
 
 /// A prepared session. Dropping one must clean any completed staging.
@@ -1484,28 +1509,33 @@ pub trait SandboxSession: Send {
     /// # Errors
     ///
     /// No command may start after a partial or failed materialization.
-    fn materialize(&mut self) -> Result<(), SandboxError>;
+    fn materialize(&mut self) -> BoxFuture<'_, Result<(), SandboxError>>;
 
     /// Stages one governed command without allowing untrusted code to run.
     ///
     /// # Errors
     ///
     /// Refusal or launch failure occurs before the release boundary.
-    fn stage(
+    fn stage<'a>(
         self: Box<Self>,
         command: SandboxCommand,
-    ) -> Result<Box<dyn SandboxLaunch>, SandboxError>;
+    ) -> BoxFuture<'a, Result<Box<dyn SandboxLaunch>, SandboxError>>
+    where
+        Self: 'a;
 
     /// Stages and immediately releases one foreground command.
     ///
     /// # Errors
     ///
     /// Preparation or release failed and the complete owned scope was cleaned.
-    fn start(
+    fn start<'a>(
         self: Box<Self>,
         command: SandboxCommand,
-    ) -> Result<Box<dyn SandboxProcess>, SandboxError> {
-        self.stage(command)?.release()
+    ) -> BoxFuture<'a, Result<Box<dyn SandboxProcess>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move { self.stage(command).await?.release().await })
     }
 }
 
@@ -1516,7 +1546,9 @@ pub trait SandboxService: Send + Sync {
     /// # Errors
     ///
     /// Unavailable or unsuitable backends return a typed diagnostic.
-    fn probe(&self) -> Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>;
+    fn probe(
+        &self,
+    ) -> BoxFuture<'_, Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>>;
 
     /// Negotiates and prepares one session before side effects.
     ///
@@ -1524,7 +1556,10 @@ pub trait SandboxService: Send + Sync {
     ///
     /// Unsupported required features and backend failures are refused before
     /// materialization or spawn.
-    fn prepare(&self, request: SandboxRequest) -> Result<Box<dyn SandboxSession>, SandboxError>;
+    fn prepare(
+        &self,
+        request: SandboxRequest,
+    ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>>;
 }
 
 impl std::fmt::Debug for dyn SandboxService {
@@ -1603,7 +1638,12 @@ pub enum SandboxError {
     /// The enforcing command could not start.
     #[error("sandbox launch failed")]
     Spawn(#[source] io::Error),
-    /// A running process could not be controlled or reaped.
+    /// A running process could not be controlled or reaped, or a step that
+    /// would have had to wait was dropped before it answered.
+    ///
+    /// A dropped step leaves whatever it began unconfirmed, and its error holds
+    /// the [`Unready`](crucible_runtime::Unready) it was refused with, which
+    /// `get_ref` finds.
     #[error("sandbox lifecycle failed")]
     Lifecycle(#[source] io::Error),
 }

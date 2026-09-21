@@ -67,19 +67,21 @@ impl SandboxProcess for Process {
         self.observed.ended.load(Ordering::Relaxed) || self.observed.exited.load(Ordering::Relaxed)
     }
 
-    fn stop(&mut self) -> io::Result<()> {
-        self.observed.stops.fetch_add(1, Ordering::Relaxed);
-        if !self.observed.exited.load(Ordering::Relaxed) {
-            self.observed.stopped_early.store(true, Ordering::Relaxed);
-        }
-        if self.observed.cleanup_allowed.load(Ordering::Relaxed) {
-            // A stop that confirms the scope ended has reaped the leader, so a
-            // look after it answers, the way the real one does.
-            self.observed.exited.store(true, Ordering::Relaxed);
-            Ok(())
-        } else {
-            Err(io::Error::other("synthetic cleanup failure"))
-        }
+    fn stop(&mut self) -> BoxFuture<'_, io::Result<()>> {
+        Box::pin(async move {
+            self.observed.stops.fetch_add(1, Ordering::Relaxed);
+            if !self.observed.exited.load(Ordering::Relaxed) {
+                self.observed.stopped_early.store(true, Ordering::Relaxed);
+            }
+            if self.observed.cleanup_allowed.load(Ordering::Relaxed) {
+                // A stop that confirms the scope ended has reaped the leader, so a
+                // look after it answers, the way the real one does.
+                self.observed.exited.store(true, Ordering::Relaxed);
+                Ok(())
+            } else {
+                Err(io::Error::other("synthetic cleanup failure"))
+            }
+        })
     }
 
     fn inspection(&self) -> &SandboxInspection {

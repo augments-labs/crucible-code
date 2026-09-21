@@ -5,6 +5,7 @@
 //! that the change reaches the wire, and that it reaches the *next* request
 //! rather than the one already sent.
 
+use crucible_runtime::BoxFuture;
 use crucible_types::{RecordedToolOutput, ResultProvenance, ToolCall};
 
 use super::*;
@@ -283,7 +284,7 @@ fn a_result_cleared_as_it_is_recorded_is_not_in_the_bytes_the_next_report_calibr
 }
 
 /// Who answered a search through the vendor a session left, and what it keeps.
-fn left_behind() -> ResultProvenance {
+pub(super) fn left_behind() -> ResultProvenance {
     ResultProvenance::answered("restricting", Some(RESTRICTED)).expect("a bounded term")
 }
 
@@ -735,14 +736,16 @@ impl Provider for Elsewhere {
         crucible_core::PromptCacheEncoding::NoControlIntended
     }
 
-    fn stream(
-        &self,
-        _request: Request<'_>,
-        _cancel: &Cancel,
-    ) -> Result<Box<dyn DeltaStream>, ProviderError> {
-        Err(ProviderError::Transport {
-            provider: ELSEWHERE,
-            problem: "nothing is there".into(),
+    fn stream<'a>(
+        &'a self,
+        _request: Request<'a>,
+        _cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<Box<dyn DeltaStream>, ProviderError>> {
+        Box::pin(async move {
+            Err(ProviderError::Transport {
+                provider: ELSEWHERE,
+                problem: "nothing is there".into(),
+            })
         })
     }
 }

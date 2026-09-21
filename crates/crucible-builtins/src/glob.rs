@@ -4,6 +4,7 @@ use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::time::SystemTime;
 
+use crucible_runtime::BoxFuture;
 use crucible_tools::{
     Approved, DescribeTool, Looking, Sensitivity, Summary, Tool, ToolContext, ToolEffect,
     ToolError, ToolOutput,
@@ -282,75 +283,81 @@ impl Tool for Glob {
         Some(Looking::Directory)
     }
 
-    fn run(&self, approved: Approved, context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
-        let args = Args::parse(NAME, approved.args())?;
-        let pattern = args.text(PATTERN)?;
-        let limit = args.count(LIMIT, PATHS)?.min(CEILING);
-        let sort = match args.choice(SORT, PATH, &[PATH, MODIFIED])? {
-            MODIFIED => Sort::Modified,
-            _ => Sort::Path,
-        };
+    fn run<'a>(
+        &'a self,
+        approved: Approved,
+        context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            let args = Args::parse(NAME, approved.args())?;
+            let pattern = args.text(PATTERN)?;
+            let limit = args.count(LIMIT, PATHS)?.min(CEILING);
+            let sort = match args.choice(SORT, PATH, &[PATH, MODIFIED])? {
+                MODIFIED => Sort::Modified,
+                _ => Sort::Path,
+            };
 
-        // `literal_separator` is what makes `*` stop at a directory boundary,
-        // so `src/*.rs` means the files in `src` and `**/*.rs` means the ones
-        // below it. Without it the two patterns mean the same thing.
-        let glob = GlobBuilder::new(pattern)
-            .literal_separator(true)
-            .build()
-            .map(|glob| glob.compile_matcher());
-        let Ok(glob) = glob else {
-            return Ok(ToolOutput::failed(format!("{pattern} is not a valid glob")));
-        };
+            // `literal_separator` is what makes `*` stop at a directory boundary,
+            // so `src/*.rs` means the files in `src` and `**/*.rs` means the ones
+            // below it. Without it the two patterns mean the same thing.
+            let glob = GlobBuilder::new(pattern)
+                .literal_separator(true)
+                .build()
+                .map(|glob| glob.compile_matcher());
+            let Ok(glob) = glob else {
+                return Ok(ToolOutput::failed(format!("{pattern} is not a valid glob")));
+            };
 
-        let requested = args.optional_text(PATH)?.unwrap_or(".");
-        // A directory outside the workspace is listed only on the say-so the
-        // `Approved` in hand carries.
-        let from = match crate::target::opened(&self.workspace, &approved, requested) {
-            Ok(path) => path,
-            Err(problem) => return Ok(ToolOutput::failed(problem)),
-        };
+            let requested = args.optional_text(PATH)?.unwrap_or(".");
+            // A directory outside the workspace is listed only on the say-so the
+            // `Approved` in hand carries.
+            let from = match crate::target::opened(&self.workspace, &approved, requested) {
+                Ok(path) => path,
+                Err(problem) => return Ok(ToolOutput::failed(problem)),
+            };
 
-        // The walk runs to the end even once `limit` paths are in hand, which
-        // is deliberate and is the one cost this bound does not remove. The
-        // answer is the lowest paths in the tree rather than the first ones
-        // reached, so a walk that stopped early would answer with whichever
-        // files the directory order happened to reach first — and could not say
-        // how many more there were, only that there were some. The walk is the
-        // one `grep` runs and the ignore rules are what bound it.
-        //
-        // Which is exactly why the user has to be able to stop it: running to
-        // the end is a promise about the answer, not about how long a tree may
-        // take. A stopped walk keeps what it had and says what that cost.
-        let mut found = Found::new(limit);
-        for entry in crate::tree::walk(from.as_path())
-            .build()
-            .filter_map(Result::ok)
-            .filter(|entry| entry.file_type().is_some_and(|kind| kind.is_file()))
-            // A listing is decided about the directory, so a rule about a file
-            // under it is honoured here — where the file is reached. `grep`
-            // does the same, which is what keeps the two from disagreeing
-            // about what is in the workspace.
-            .filter(|entry| !approved.denies(&self.workspace, &from, entry.path()))
-        {
-            if context.cancel().requested() {
-                found.stopped = true;
-                break;
+            // The walk runs to the end even once `limit` paths are in hand, which
+            // is deliberate and is the one cost this bound does not remove. The
+            // answer is the lowest paths in the tree rather than the first ones
+            // reached, so a walk that stopped early would answer with whichever
+            // files the directory order happened to reach first — and could not say
+            // how many more there were, only that there were some. The walk is the
+            // one `grep` runs and the ignore rules are what bound it.
+            //
+            // Which is exactly why the user has to be able to stop it: running to
+            // the end is a promise about the answer, not about how long a tree may
+            // take. A stopped walk keeps what it had and says what that cost.
+            let mut found = Found::new(limit);
+            for entry in crate::tree::walk(from.as_path())
+                .build()
+                .filter_map(Result::ok)
+                .filter(|entry| entry.file_type().is_some_and(|kind| kind.is_file()))
+                // A listing is decided about the directory, so a rule about a file
+                // under it is honoured here — where the file is reached. `grep`
+                // does the same, which is what keeps the two from disagreeing
+                // about what is in the workspace.
+                .filter(|entry| !approved.denies(&self.workspace, &from, entry.path()))
+            {
+                if context.cancel().requested() {
+                    found.stopped = true;
+                    break;
+                }
+
+                // Matched against the name it will be reported under, which is the
+                // one `grep` reports too. Dropping every entry that would not strip
+                // to a relative path answered "no path matched" for a directory the
+                // workspace was widened to reach and `grep` searched happily.
+                let shown = crate::tree::named(&self.workspace, entry.path());
+                if glob.is_match(&shown) {
+                    found.keep(Ranked {
+                        age: Reverse(sort.aged(&entry)),
+                        path: shown,
+                    });
+                }
             }
 
-            // Matched against the name it will be reported under, which is the
-            // one `grep` reports too. Dropping every entry that would not strip
-            // to a relative path answered "no path matched" for a directory the
-            // workspace was widened to reach and `grep` searched happily.
-            let shown = crate::tree::named(&self.workspace, entry.path());
-            if glob.is_match(&shown) {
-                found.keep(Ranked {
-                    age: Reverse(sort.aged(&entry)),
-                    path: shown,
-                });
-            }
-        }
-
-        Ok(report(found, pattern, sort))
+            Ok(report(found, pattern, sort))
+        })
     }
 }
 
@@ -420,7 +427,7 @@ mod tests {
 
     fn glob(sample: &Sample, args: &str) -> ToolOutput {
         let tool = Glob::new(sample.workspace());
-        tool.run(allowed(&tool, args), &crate::sample::context())
+        crucible_runtime::answered!(tool.run(allowed(&tool, args), &crate::sample::context()))
             .unwrap()
     }
 
@@ -646,12 +653,11 @@ mod tests {
         let sample = tree("glob-sort-unknown");
         let tool = Glob::new(sample.workspace());
 
-        let problem = tool
-            .run(
-                allowed(&tool, r#"{"pattern":"**/*","sort":"size"}"#),
-                &crate::sample::context(),
-            )
-            .unwrap_err();
+        let problem = crucible_runtime::answered!(tool.run(
+            allowed(&tool, r#"{"pattern":"**/*","sort":"size"}"#),
+            &crate::sample::context(),
+        ))
+        .unwrap_err();
 
         assert_eq!(
             problem.to_string(),
@@ -750,12 +756,11 @@ mod tests {
         cancel.request();
 
         let tool = Glob::new(sample.workspace());
-        let output = tool
-            .run(
-                allowed(&tool, r#"{"pattern":"**/*.rs"}"#),
-                &crate::sample::cancelled_by(&cancel),
-            )
-            .unwrap();
+        let output = crucible_runtime::answered!(tool.run(
+            allowed(&tool, r#"{"pattern":"**/*.rs"}"#),
+            &crate::sample::cancelled_by(&cancel),
+        ))
+        .unwrap();
 
         assert!(output.is_failed());
         assert!(
@@ -837,16 +842,15 @@ mod tests {
         sample.write("private/key.rs", "");
 
         let tool = Glob::new(sample.workspace());
-        let output = tool
-            .run(
-                under(
-                    &tool,
-                    r#"{"pattern":"**/*.rs"}"#,
-                    &[(Disposition::Deny, "glob(private/**)")],
-                ),
-                &crate::sample::context(),
-            )
-            .unwrap();
+        let output = crucible_runtime::answered!(tool.run(
+            under(
+                &tool,
+                r#"{"pattern":"**/*.rs"}"#,
+                &[(Disposition::Deny, "glob(private/**)")],
+            ),
+            &crate::sample::context(),
+        ))
+        .unwrap();
 
         assert!(!output.text().contains("private/"), "{}", output.text());
         assert!(output.text().contains("src/main.rs"), "{}", output.text());
@@ -865,26 +869,24 @@ mod tests {
 
         let workspace = sample.reaching(&beside);
         let listing = Glob::new(workspace.clone());
-        let listed = listing
-            .run(
-                allowed(
-                    &listing,
-                    &format!(r#"{{"pattern":"**/*.md","path":"{beside}"}}"#),
-                ),
-                &crate::sample::context(),
-            )
-            .unwrap();
+        let listed = crucible_runtime::answered!(listing.run(
+            allowed(
+                &listing,
+                &format!(r#"{{"pattern":"**/*.md","path":"{beside}"}}"#),
+            ),
+            &crate::sample::context(),
+        ))
+        .unwrap();
 
         let search = crate::Grep::new(workspace);
-        let searched = search
-            .run(
-                allowed(
-                    &search,
-                    &format!(r#"{{"pattern":"needle","path":"{beside}"}}"#),
-                ),
-                &crate::sample::context(),
-            )
-            .unwrap();
+        let searched = crucible_runtime::answered!(search.run(
+            allowed(
+                &search,
+                &format!(r#"{{"pattern":"needle","path":"{beside}"}}"#),
+            ),
+            &crate::sample::context(),
+        ))
+        .unwrap();
 
         assert!(!listed.is_failed(), "{}", listed.text());
         let named = listed.text().trim_end();

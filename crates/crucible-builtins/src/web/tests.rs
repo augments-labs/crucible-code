@@ -195,12 +195,11 @@ fn fetching(url: &str, title: Option<&str>, text: &str) -> WebFetch {
 #[test]
 fn a_result_carries_its_title_its_address_and_its_extract() {
     let tool = searching(vec![result("Serde", "https://serde.rs", "A framework.")]);
-    let output = tool
-        .run(
-            sample::allowed(&tool, r#"{"query":"serde"}"#),
-            &crate::sample::context(),
-        )
-        .expect("a source that answers");
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"query":"serde"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source that answers");
 
     let said = output.text();
     assert!(said.contains("Serde"), "{said}");
@@ -214,12 +213,11 @@ fn a_search_that_found_nothing_says_so_rather_than_answering_with_nothing() {
     // An empty answer and a failed one are different facts, and a model that
     // cannot tell them apart searches again for something that is not there.
     let tool = searching(Vec::new());
-    let output = tool
-        .run(
-            sample::allowed(&tool, r#"{"query":"nothing"}"#),
-            &crate::sample::context(),
-        )
-        .expect("a source that answers");
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"query":"nothing"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source that answers");
 
     assert!(!output.is_failed());
     assert!(output.text().contains("No results"), "{}", output.text());
@@ -231,12 +229,11 @@ fn a_limit_keeps_that_many_and_counts_what_it_left() {
         .map(|at| result(&format!("Page {at}"), "https://example.com", "..."))
         .collect();
     let tool = searching(many);
-    let output = tool
-        .run(
-            sample::allowed(&tool, r#"{"query":"x","limit":2}"#),
-            &crate::sample::context(),
-        )
-        .expect("a source that answers");
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"query":"x","limit":2}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source that answers");
 
     let said = output.text();
     assert!(said.contains("Page 0") && said.contains("Page 1"), "{said}");
@@ -315,12 +312,11 @@ fn a_redirect_to_another_host_does_not_come_back_under_the_first_one_s_verdict()
     // with its content would let one allowed host carry any other.
     let tool = fetching("https://evil.example/landed", None, "a page nobody allowed");
 
-    let output = tool
-        .run(
-            sample::allowed(&tool, r#"{"url":"https://docs.rs/serde"}"#),
-            &crate::sample::context(),
-        )
-        .expect("a source that answers");
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"url":"https://docs.rs/serde"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source that answers");
 
     assert!(output.is_failed());
     assert!(
@@ -335,12 +331,11 @@ fn a_redirect_to_another_host_does_not_come_back_under_the_first_one_s_verdict()
 fn a_redirect_inside_one_host_is_still_that_host_and_comes_back() {
     let tool = fetching("https://docs.rs/serde/latest/", Some("Serde"), "the body");
 
-    let output = tool
-        .run(
-            sample::allowed(&tool, r#"{"url":"https://docs.rs/serde"}"#),
-            &crate::sample::context(),
-        )
-        .expect("a source that answers");
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"url":"https://docs.rs/serde"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source that answers");
 
     assert!(!output.is_failed(), "{}", output.text());
     assert!(output.text().contains("the body"), "{}", output.text());
@@ -352,12 +347,11 @@ fn a_page_says_where_it_actually_came_from() {
     // depends on where it ended up, a redirect being the case that matters.
     let tool = fetching("https://example.com/moved-here", Some("Moved"), "the body");
 
-    let output = tool
-        .run(
-            sample::allowed(&tool, r#"{"url":"https://example.com/asked-for"}"#),
-            &crate::sample::context(),
-        )
-        .expect("a source that answers");
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"url":"https://example.com/asked-for"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source that answers");
 
     let said = output.text();
     assert!(said.contains("https://example.com/moved-here"), "{said}");
@@ -369,12 +363,11 @@ fn a_source_that_could_not_answer_is_a_failed_result_and_not_a_broken_tool() {
     // The turn carries on and the model is told, the same as a file that is not
     // there. A source being down is not a breakdown of the mechanism.
     let tool = WebSearch::new(Arc::new(Breaks(false)));
-    let output = tool
-        .run(
-            sample::allowed(&tool, r#"{"query":"x"}"#),
-            &crate::sample::context(),
-        )
-        .expect("a source failure to reach the model rather than the runner");
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"query":"x"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source failure to reach the model rather than the runner");
 
     assert!(output.is_failed());
     assert_eq!(output.text(), "web source error: fake: HTTP 503: busy\n");
@@ -383,12 +376,11 @@ fn a_source_that_could_not_answer_is_a_failed_result_and_not_a_broken_tool() {
 #[test]
 fn a_cancelled_search_ends_the_call_rather_than_answering_it() {
     let tool = WebSearch::new(Arc::new(Breaks(true)));
-    let problem = tool
-        .run(
-            sample::allowed(&tool, r#"{"query":"x"}"#),
-            &crate::sample::context(),
-        )
-        .expect_err("cancellation not to come back as an answer");
+    let problem = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"query":"x"}"#),
+        &crate::sample::context(),
+    ))
+    .expect_err("cancellation not to come back as an answer");
 
     assert!(matches!(problem, ToolError::Cancelled(ref tool) if &**tool == "web_search"));
 }
@@ -402,12 +394,11 @@ fn a_page_over_the_bound_comes_back_cut_rather_than_empty() {
     let long = "a line of some length that repeats\n".repeat(2_000);
     let tool = fetching("https://example.com/long", Some("Long"), &long);
 
-    let output = tool
-        .run(
-            sample::allowed(&tool, r#"{"url":"https://example.com/long"}"#),
-            &crate::sample::context(),
-        )
-        .expect("a source that answers");
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"url":"https://example.com/long"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source that answers");
 
     let said = output.text();
     assert!(!output.is_failed(), "{said}");
@@ -435,12 +426,11 @@ fn a_grounded_search_shows_answer_citations_and_suggestions_together() {
         suggestions: "- [learn rust](https://www.google.com/search?q=learn+rust)",
     });
     let tool = WebSearch::new(source);
-    let output = tool
-        .run(
-            sample::allowed(&tool, r#"{"query":"rust language"}"#),
-            &crate::sample::context(),
-        )
-        .expect("a source that answers");
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"query":"rust language"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source that answers");
 
     assert!(!output.is_failed());
     let said = output.text();
@@ -490,12 +480,11 @@ fn a_search_result_says_which_vendor_answered_it_and_what_its_terms_keep() {
     // with no term is still named: an answer an older build wrote says nothing,
     // and nothing is how that answer is told apart from this one.
     let kept = WebSearch::new(Arc::new(Kept));
-    let output = kept
-        .run(
-            sample::allowed(&kept, r#"{"query":"rust"}"#),
-            &crate::sample::context(),
-        )
-        .expect("a source that answers");
+    let output = crucible_runtime::answered!(kept.run(
+        sample::allowed(&kept, r#"{"query":"rust"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source that answers");
     assert_eq!(
         output.provenance(),
         &ResultProvenance::answered(
@@ -506,12 +495,11 @@ fn a_search_result_says_which_vendor_answered_it_and_what_its_terms_keep() {
     );
 
     let open = WebSearch::new(Arc::new(Answers(Vec::new())));
-    let output = open
-        .run(
-            sample::allowed(&open, r#"{"query":"rust"}"#),
-            &crate::sample::context(),
-        )
-        .expect("a source that answers");
+    let output = crucible_runtime::answered!(open.run(
+        sample::allowed(&open, r#"{"query":"rust"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source that answers");
     assert_eq!(
         output.into_recorded().provenance(),
         &ResultProvenance::answered("fake", None).expect("a bounded vendor")
@@ -531,12 +519,11 @@ fn a_source_whose_terms_do_not_fit_a_result_is_never_asked() {
         asked: std::sync::atomic::AtomicBool::new(false),
     });
     let tool = WebSearch::new(Arc::clone(&source) as Arc<dyn Search>);
-    let output = tool
-        .run(
-            sample::allowed(&tool, r#"{"query":"rust"}"#),
-            &crate::sample::context(),
-        )
-        .expect("a refusal is an answer, not an error");
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"query":"rust"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a refusal is an answer, not an error");
 
     assert!(output.is_failed(), "{}", output.text());
     assert!(output.text().contains("do not fit"), "{}", output.text());

@@ -21,6 +21,7 @@ use crucible_core::{
     ContextPatch, ContextSnapshot, JournalStore, Message, RunItem, SessionId, SessionOwner,
     SessionStore, ToolId, ToolResult, Transcript,
 };
+use crucible_runtime::BoxFuture;
 
 /// Domain separator for the receipt this store answers with.
 const RECEIPT_DOMAIN: &[u8] = b"crucible:in-memory-call-result:v1\0";
@@ -252,8 +253,10 @@ impl SessionStore for Recording {
         self.owner.clone()
     }
 
-    fn append_message(&self, message: &Message) {
-        self.record(Kept::Said(message.clone()));
+    fn append_message<'a>(&'a self, message: &'a Message) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            self.record(Kept::Said(message.clone()));
+        })
     }
 
     fn context_snapshot(&self) -> Option<ContextSnapshot> {
@@ -263,43 +266,63 @@ impl SessionStore for Recording {
             .clone()
     }
 
-    fn contextual(&self, patch: &ContextPatch) -> Result<(), ContextError> {
-        let mut held = self.context.lock().unwrap_or_else(PoisonError::into_inner);
-        let advanced = patch.apply(&held.clone().unwrap_or_default())?;
-        *held = Some(advanced);
-        drop(held);
-        self.record(Kept::Contextual(patch.clone()));
-        Ok(())
+    fn contextual<'a>(
+        &'a self,
+        patch: &'a ContextPatch,
+    ) -> BoxFuture<'a, Result<(), ContextError>> {
+        Box::pin(async move {
+            let mut held = self.context.lock().unwrap_or_else(PoisonError::into_inner);
+            let advanced = patch.apply(&held.clone().unwrap_or_default())?;
+            *held = Some(advanced);
+            drop(held);
+            self.record(Kept::Contextual(patch.clone()));
+            Ok(())
+        })
     }
 
-    fn compacted(&self, replaced: usize, recap: &str) {
-        self.record(Kept::Compacted {
-            replaced,
-            recap: recap.into(),
-        });
+    fn compacted<'a>(&'a self, replaced: usize, recap: &'a str) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            self.record(Kept::Compacted {
+                replaced,
+                recap: recap.into(),
+            });
+        })
     }
 
-    fn display_compacted(&self, compacted: Compacted, pruned: bool) {
-        self.record(Kept::Shown { compacted, pruned });
+    fn display_compacted(&self, compacted: Compacted, pruned: bool) -> BoxFuture<'_, ()> {
+        Box::pin(async move {
+            self.record(Kept::Shown { compacted, pruned });
+        })
     }
 
-    fn pruned(&self, freed: usize, results: &[ToolId]) {
-        self.record(Kept::Pruned {
-            freed,
-            results: results.to_vec(),
-        });
+    fn pruned<'a>(&'a self, freed: usize, results: &'a [ToolId]) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            self.record(Kept::Pruned {
+                freed,
+                results: results.to_vec(),
+            });
+        })
     }
 
-    fn restricted(&self, freed: usize, results: &[ToolId], notice: &str) {
-        self.record(Kept::Restricted {
-            freed,
-            results: results.to_vec(),
-            notice: notice.into(),
-        });
+    fn restricted<'a>(
+        &'a self,
+        freed: usize,
+        results: &'a [ToolId],
+        notice: &'a str,
+    ) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            self.record(Kept::Restricted {
+                freed,
+                results: results.to_vec(),
+                notice: notice.into(),
+            });
+        })
     }
 
-    fn measured(&self, calibration: &Calibration) {
-        self.record(Kept::Measured(*calibration));
+    fn measured<'a>(&'a self, calibration: &'a Calibration) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            self.record(Kept::Measured(*calibration));
+        })
     }
 
     fn calibrated(&self) -> Option<Calibration> {

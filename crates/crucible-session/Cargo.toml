@@ -16,6 +16,8 @@ crucible-core.workspace = true
 # synced, then renamed over it. That durable replacement is the privacy
 # crate's, already reviewed for the configuration and auth stores.
 crucible-privacy.workspace = true
+# The future a store's waiting methods hand back.
+crucible-runtime.workspace = true
 # The contract a persistent prompt-cache resource is remembered under, and the
 # record it keeps; the file that keeps it is this crate's.
 crucible-storage.workspace = true
@@ -34,6 +36,10 @@ thiserror.workspace = true
 # with a file mode and needs nothing.
 [target.'cfg(windows)'.dependencies]
 windows-sys.workspace = true
+
+# `answered!`, which the tests ask a store's future once with.
+[dev-dependencies]
+crucible-runtime = { workspace = true, features = ["proof"] }
 
 # A log that has stopped working cannot be made from outside this crate: every
 # public way in ends at a real file, and a real file on a real disk does not

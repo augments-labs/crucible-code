@@ -26,7 +26,7 @@ use crucible_models::{
     PromptCacheMechanismCapability, PromptCachePricing, PromptCacheProvenance, PromptCacheRates,
     PromptCacheRoute, Provider, ProviderError, Request, StatefulTransportCapability, UsageRate,
 };
-use crucible_runtime::Cancel;
+use crucible_runtime::{BoxFuture, Cancel};
 use crucible_types::{
     CredentialScopeId, Modalities, Modality, PricingCurrency, PricingDate, PricingError,
     PricingUnit, PromptCacheRetentionClass, PromptCacheUsageReporting,
@@ -325,43 +325,47 @@ impl Provider for Anthropic {
         body::prompt_cache_encoding(request)
     }
 
-    fn stream(
-        &self,
-        request: Request<'_>,
-        cancel: &Cancel,
-    ) -> Result<Box<dyn DeltaStream>, ProviderError> {
-        // Nothing is sent for a turn the user has already abandoned. Once the
-        // request is away, cancelling is the stream's business.
-        if cancel.requested() {
-            return Err(ProviderError::Cancelled(NAME));
-        }
+    fn stream<'a>(
+        &'a self,
+        request: Request<'a>,
+        cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<Box<dyn DeltaStream>, ProviderError>> {
+        Box::pin(async move {
+            // Nothing is sent for a turn the user has already abandoned. Once the
+            // request is away, cancelling is the stream's business.
+            if cancel.requested() {
+                return Err(ProviderError::Cancelled(NAME));
+            }
 
-        let outgoing = self.headers(request.model)?;
-        let redactions = outgoing.redactions();
-        let scope =
-            crucible_types::ContinuationScope::new(self.credential_scope, self.endpoint.as_str());
-        let body = body::serialize(&request, (request.model == FABLE_51).then_some(scope))?;
+            let outgoing = self.headers(request.model)?;
+            let redactions = outgoing.redactions();
+            let scope = crucible_types::ContinuationScope::new(
+                self.credential_scope,
+                self.endpoint.as_str(),
+            );
+            let body = body::serialize(&request, (request.model == FABLE_51).then_some(scope))?;
 
-        let response = self
-            .transport
-            .post(self.endpoint.as_str(), outgoing, body, cancel)
-            .map_err(|problem| problem.for_provider(NAME).redacted(&redactions))?;
+            let response = self
+                .transport
+                .post(self.endpoint.as_str(), outgoing, body, cancel)
+                .map_err(|problem| problem.for_provider(NAME).redacted(&redactions))?;
 
-        if response.status != 200 {
-            let error = refused(NAME, response.status, response.body, &redactions, cancel);
-            return Err(if request.model == FABLE_51 {
-                diagnostics::refusal(error)
-            } else {
-                error
-            });
-        }
+            if response.status != 200 {
+                let error = refused(NAME, response.status, response.body, &redactions, cancel);
+                return Err(if request.model == FABLE_51 {
+                    diagnostics::refusal(error)
+                } else {
+                    error
+                });
+            }
 
-        Ok(Box::new(Stream::with_wire(
-            response.body,
-            cancel.clone(),
-            redactions,
-            wire::Messages::for_request(request.model, scope, request.effort)?,
-        )))
+            Ok(Box::new(Stream::with_wire(
+                response.body,
+                cancel.clone(),
+                redactions,
+                wire::Messages::for_request(request.model, scope, request.effort)?,
+            )) as Box<dyn DeltaStream>)
+        })
     }
 }
 
@@ -408,22 +412,21 @@ mod tests {
             Some(Effort::Xhigh),
             Some(Effort::Max),
         ] {
-            provider
-                .stream(
-                    Request {
-                        model: "claude-fable-5-1",
-                        purpose: RequestPurpose::Turn,
-                        transcript: &transcript,
-                        tools: &[],
-                        max_tokens: 8192,
-                        system: None,
-                        effort,
-                        attached: &[],
-                        prompt_cache: None,
-                    },
-                    &Cancel::new(),
-                )
-                .unwrap();
+            crucible_runtime::answered!(provider.stream(
+                Request {
+                    model: "claude-fable-5-1",
+                    purpose: RequestPurpose::Turn,
+                    transcript: &transcript,
+                    tools: &[],
+                    max_tokens: 8192,
+                    system: None,
+                    effort,
+                    attached: &[],
+                    prompt_cache: None,
+                },
+                &Cancel::new(),
+            ))
+            .unwrap();
             let sent = replay.sent();
             assert_eq!(sent.url, "https://api.anthropic.com/v1/messages");
             let body: Value = serde_json::from_str(&sent.body).unwrap();
@@ -554,7 +557,7 @@ mod tests {
             Box::new(std::sync::Arc::clone(&replay)),
         );
 
-        provider.stream(asking("hello"), &Cancel::new()).unwrap();
+        crucible_runtime::answered!(provider.stream(asking("hello"), &Cancel::new())).unwrap();
 
         assert_eq!(replay.sent().url, "http://localhost:8080/v1");
     }
@@ -589,7 +592,7 @@ mod tests {
     fn a_request_carries_the_version_and_asks_for_a_stream() {
         let (anthropic, replay) = provider(200, ANSWER);
 
-        anthropic.stream(asking("hello"), &Cancel::new()).unwrap();
+        crucible_runtime::answered!(anthropic.stream(asking("hello"), &Cancel::new())).unwrap();
 
         let sent = replay.sent();
         assert_eq!(sent.url, Anthropic::VENDOR.as_str());
@@ -603,7 +606,7 @@ mod tests {
         // The provider names the header and the prefix; it never sees the key.
         let (anthropic, replay) = provider(200, ANSWER);
 
-        anthropic.stream(asking("hello"), &Cancel::new()).unwrap();
+        crucible_runtime::answered!(anthropic.stream(asking("hello"), &Cancel::new())).unwrap();
 
         assert_eq!(header(&replay.sent(), "x-api-key"), SECRET);
     }
@@ -625,7 +628,8 @@ mod tests {
         // reaches the caller as deltas, with nothing in between to arrange it.
         let (anthropic, _) = provider(200, ANSWER);
 
-        let mut stream = anthropic.stream(asking("hello"), &Cancel::new()).unwrap();
+        let mut stream =
+            crucible_runtime::answered!(anthropic.stream(asking("hello"), &Cancel::new())).unwrap();
 
         assert_eq!(
             deltas(stream.as_mut()),
@@ -644,9 +648,9 @@ mod tests {
             r#"{"type":"error","error":{"type":"not_found_error","message":"model: claude-nope"}}"#;
         let (anthropic, _) = provider(404, said);
 
-        let problem = anthropic
-            .stream(asking("hello"), &Cancel::new())
-            .unwrap_err();
+        let problem =
+            crucible_runtime::answered!(anthropic.stream(asking("hello"), &Cancel::new()))
+                .unwrap_err();
 
         assert_eq!(
             problem.to_string(),
@@ -660,9 +664,9 @@ mod tests {
         // is the only clue the user gets.
         let (anthropic, _) = provider(502, "  upstream connect error  ");
 
-        let problem = anthropic
-            .stream(asking("hello"), &Cancel::new())
-            .unwrap_err();
+        let problem =
+            crucible_runtime::answered!(anthropic.stream(asking("hello"), &Cancel::new()))
+                .unwrap_err();
 
         assert_eq!(
             problem.to_string(),
@@ -677,9 +681,9 @@ mod tests {
         );
         let (anthropic, _) = provider(401, &said);
 
-        let problem = anthropic
-            .stream(asking("hello"), &Cancel::new())
-            .unwrap_err();
+        let problem =
+            crucible_runtime::answered!(anthropic.stream(asking("hello"), &Cancel::new()))
+                .unwrap_err();
         let displayed = problem.to_string();
         let debugged = format!("{problem:?}");
 
@@ -695,8 +699,11 @@ mod tests {
         );
         let (anthropic, _) = provider(200, &body);
 
-        let mut stream = anthropic.stream(asking("hello"), &Cancel::new()).unwrap();
-        let problem = stream.next().unwrap().unwrap_err();
+        let mut stream =
+            crucible_runtime::answered!(anthropic.stream(asking("hello"), &Cancel::new())).unwrap();
+        let problem = crucible_runtime::answered!(stream.next())
+            .unwrap()
+            .unwrap_err();
         let displayed = problem.to_string();
         let debugged = format!("{problem:?}");
 
@@ -711,7 +718,8 @@ mod tests {
         let cancel = Cancel::new();
         cancel.request();
 
-        let problem = anthropic.stream(asking("hello"), &cancel).unwrap_err();
+        let problem =
+            crucible_runtime::answered!(anthropic.stream(asking("hello"), &cancel)).unwrap_err();
 
         assert!(matches!(problem, ProviderError::Cancelled(_)));
         assert!(

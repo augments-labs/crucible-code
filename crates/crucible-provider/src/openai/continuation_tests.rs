@@ -81,12 +81,12 @@ fn request(transcript: &Transcript) -> Request<'_> {
 }
 
 fn answer(provider: &OpenAi, request: Request<'_>) -> Message {
-    let mut stream = provider.stream(request, &Cancel::new()).unwrap();
+    let mut stream = crucible_runtime::answered!(provider.stream(request, &Cancel::new())).unwrap();
     let mut text = String::new();
     let mut calls: Vec<ToolCall> = Vec::new();
     let mut pending: Option<Continuation> = None;
     let mut stop = None;
-    while let Some(delta) = stream.next() {
+    while let Some(delta) = crucible_runtime::answered!(stream.next()) {
         match delta.unwrap() {
             Delta::Text(more) => text.push_str(&more),
             Delta::ToolStarted { id, name } => calls.push(ToolCall {
@@ -153,15 +153,14 @@ fn native_history_is_descriptive_when_switching_to_a_legacy_protocol_reader() {
                 transport,
             )),
         };
-        target
-            .stream(
-                Request {
-                    model,
-                    ..request(&history)
-                },
-                &Cancel::new(),
-            )
-            .unwrap();
+        crucible_runtime::answered!(target.stream(
+            Request {
+                model,
+                ..request(&history)
+            },
+            &Cancel::new(),
+        ))
+        .unwrap();
         let sent = replay.sent();
         assert!(!sent.body.contains("private"));
         let body: Value = serde_json::from_str(&sent.body).unwrap();
@@ -205,11 +204,11 @@ fn astra_known_usage_fields_reject_malformed_shapes_before_retaining_state() {
             .insert("usage".into(), usage);
         let (provider, _) = provider(VENDOR, &sse(&fixture));
         let transcript = Transcript::new();
-        let mut stream = provider
-            .stream(request(&transcript), &Cancel::new())
-            .unwrap();
+        let mut stream =
+            crucible_runtime::answered!(provider.stream(request(&transcript), &Cancel::new()))
+                .unwrap();
         let mut error = None;
-        while let Some(delta) = stream.next() {
+        while let Some(delta) = crucible_runtime::answered!(stream.next()) {
             match delta {
                 Err(problem) => {
                     error = Some(problem);
@@ -267,15 +266,14 @@ fn astra_effort_changes_preserve_the_request_prefix_and_replay_update_positions(
             Some(&json!({"role":"user","content":"harder"}))
         );
         transcript.push(answered()).unwrap();
-        provider
-            .stream(
-                Request {
-                    effort: Some(Effort::High),
-                    ..request(&transcript)
-                },
-                &Cancel::new(),
-            )
-            .unwrap();
+        crucible_runtime::answered!(provider.stream(
+            Request {
+                effort: Some(Effort::High),
+                ..request(&transcript)
+            },
+            &Cancel::new(),
+        ))
+        .unwrap();
         let second: Value = serde_json::from_str(&replay.sent().body).unwrap();
         assert_eq!(
             second.pointer("/reasoning/effort"),
@@ -323,9 +321,7 @@ fn astra_effort_reset_on_resume_keeps_default_absent_and_native_history_intact()
     transcript
         .push(Message::said("resumed with no configured effort"))
         .unwrap();
-    provider
-        .stream(request(&transcript), &Cancel::new())
-        .unwrap();
+    crucible_runtime::answered!(provider.stream(request(&transcript), &Cancel::new())).unwrap();
     let sent: Value = serde_json::from_str(&replay.sent().body).unwrap();
     assert!(sent.get("reasoning").is_none());
     let items = sent.get("input").unwrap().as_array().unwrap();
@@ -351,9 +347,7 @@ fn astra_replays_complete_reasoning_phase_annotations_and_native_calls_on_both_r
             .push(answer(&provider, request(&transcript)))
             .unwrap();
         transcript.push(answered()).unwrap();
-        provider
-            .stream(request(&transcript), &Cancel::new())
-            .unwrap();
+        crucible_runtime::answered!(provider.stream(request(&transcript), &Cancel::new())).unwrap();
         let sent: Value = serde_json::from_str(&replay.sent().body).unwrap();
         let input = sent.get("input").unwrap().as_array().unwrap();
         assert_eq!(input.get(1..1 + expected.len()), Some(expected.as_slice()));
@@ -374,9 +368,7 @@ fn astra_retained_tail_keeps_native_items_but_recap_and_foreign_scope_are_only_v
         .unwrap();
     transcript.push(answered()).unwrap();
     transcript.compacted(1, "recap");
-    provider
-        .stream(request(&transcript), &Cancel::new())
-        .unwrap();
+    crucible_runtime::answered!(provider.stream(request(&transcript), &Cancel::new())).unwrap();
     let sent: Value = serde_json::from_str(&replay.sent().body).unwrap();
     assert_eq!(
         sent.get("input")
@@ -386,15 +378,14 @@ fn astra_retained_tail_keeps_native_items_but_recap_and_foreign_scope_are_only_v
             .get(2..2 + expected.len()),
         Some(expected.as_slice())
     );
-    provider
-        .stream(
-            Request {
-                purpose: RequestPurpose::Recap,
-                ..request(&transcript)
-            },
-            &Cancel::new(),
-        )
-        .unwrap();
+    crucible_runtime::answered!(provider.stream(
+        Request {
+            purpose: RequestPurpose::Recap,
+            ..request(&transcript)
+        },
+        &Cancel::new(),
+    ))
+    .unwrap();
     let sent = replay.sent();
     assert!(!sent.body.contains("private"));
     assert!(!sent.body.contains("encrypted_content"));
@@ -409,9 +400,7 @@ fn astra_retained_tail_keeps_native_items_but_recap_and_foreign_scope_are_only_v
             .all(|item| item.get("role") == Some(&json!("user")))
     );
     let (foreign, foreign_replay) = self::provider(SUBSCRIPTION, "");
-    foreign
-        .stream(request(&transcript), &Cancel::new())
-        .unwrap();
+    crucible_runtime::answered!(foreign.stream(request(&transcript), &Cancel::new())).unwrap();
     let sent = foreign_replay.sent();
     assert!(!sent.body.contains("private"));
     let value: Value = serde_json::from_str(&sent.body).unwrap();
@@ -446,11 +435,10 @@ fn astra_contradictory_text_done_cannot_be_silently_replaced_by_a_later_item() {
     fixture.insert(4,json!({"type":"response.output_text.done","output_index":1,"content_index":0,"item_id":"msg-before","text":"contradictory"}));
     let (provider, _) = provider(VENDOR, &sse(&fixture));
     let transcript = Transcript::new();
-    let mut stream = provider
-        .stream(request(&transcript), &Cancel::new())
-        .unwrap();
+    let mut stream =
+        crucible_runtime::answered!(provider.stream(request(&transcript), &Cancel::new())).unwrap();
     let mut error = None;
-    while let Some(delta) = stream.next() {
+    while let Some(delta) = crucible_runtime::answered!(stream.next()) {
         if let Err(problem) = delta {
             error = Some(problem);
         }
@@ -467,8 +455,7 @@ fn astra_http_refusals_do_not_echo_encrypted_request_state() {
     let credential = HeaderKey::new(ApiKey::new("synthetic-astra-key"), Header::bearer());
     let provider = OpenAi::at(VENDOR, Box::new(credential), Box::new(replay));
     let transcript = Transcript::new();
-    let error = provider
-        .stream(request(&transcript), &Cancel::new())
+    let error = crucible_runtime::answered!(provider.stream(request(&transcript), &Cancel::new()))
         .unwrap_err();
     assert!(!format!("{error:?} {error}").contains("private-encrypted-canary"));
 }
@@ -476,10 +463,9 @@ fn astra_http_refusals_do_not_echo_encrypted_request_state() {
 fn failed_stream(events: &[Value]) -> Option<ProviderError> {
     let (provider, _) = provider(VENDOR, &sse(events));
     let transcript = Transcript::new();
-    let mut stream = provider
-        .stream(request(&transcript), &Cancel::new())
-        .unwrap();
-    while let Some(delta) = stream.next() {
+    let mut stream =
+        crucible_runtime::answered!(provider.stream(request(&transcript), &Cancel::new())).unwrap();
+    while let Some(delta) = crucible_runtime::answered!(stream.next()) {
         if let Err(error) = delta {
             return Some(error);
         }
@@ -572,8 +558,7 @@ fn astra_replay_rejects_invalid_native_headers_before_sending() {
         .unwrap();
     history.push(answered()).unwrap();
     let previous = replay.sent().body;
-    let error = provider
-        .stream(request(&history), &Cancel::new())
+    let error = crucible_runtime::answered!(provider.stream(request(&history), &Cancel::new()))
         .expect_err("invalid replay headers were accepted");
     assert!(!format!("{error:?} {error}").contains("private-invalid-phase"));
     assert_eq!(
@@ -602,7 +587,7 @@ fn astra_explicit_cache_uses_a_supported_input_block_without_mutating_native_ite
         provider.prompt_cache_encoding(&request),
         crucible_types::PromptCacheEncoding::BreakpointsEncoded(1)
     );
-    provider.stream(request, &Cancel::new()).unwrap();
+    crucible_runtime::answered!(provider.stream(request, &Cancel::new())).unwrap();
     let body: Value = serde_json::from_str(&replay.sent().body).unwrap();
     assert_eq!(
         body.pointer("/input/0/content/0/prompt_cache_breakpoint"),
@@ -645,7 +630,7 @@ fn astra_recap_reports_only_the_explicit_marker_it_actually_writes() {
         provider.prompt_cache_encoding(&request),
         crucible_types::PromptCacheEncoding::BreakpointsEncoded(1)
     );
-    provider.stream(request, &Cancel::new()).unwrap();
+    crucible_runtime::answered!(provider.stream(request, &Cancel::new())).unwrap();
     let body: Value = serde_json::from_str(&replay.sent().body).unwrap();
     assert_eq!(
         body.pointer("/input/0/content/0/prompt_cache_breakpoint"),
@@ -656,12 +641,13 @@ fn astra_recap_reports_only_the_explicit_marker_it_actually_writes() {
 fn bounded_answer(output: &[Value]) -> Result<(), ProviderError> {
     let (provider, _) = provider(SUBSCRIPTION, &sse(&events(output, false)));
     let history = Transcript::new();
-    let mut stream = provider.stream(request(&history), &Cancel::new())?;
+    let mut stream =
+        crucible_runtime::answered!(provider.stream(request(&history), &Cancel::new()))?;
     let mut pending = None;
     let mut text = String::new();
     let mut calls = 0;
     let mut stop = None;
-    while let Some(delta) = stream.next() {
+    while let Some(delta) = crucible_runtime::answered!(stream.next()) {
         match delta? {
             Delta::Text(more) => text.push_str(&more),
             Delta::ToolStarted { .. } => calls += 1,

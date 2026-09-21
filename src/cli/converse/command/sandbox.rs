@@ -9,6 +9,7 @@ use crucible_app::Conversation;
 use crucible_app::client::Performed;
 use crucible_client_api::Command;
 use crucible_core::SandboxService;
+use crucible_runtime::Bridge;
 use crucible_sandbox_local::LocalSandbox;
 use crucible_tui::{Key, Offered, Pressed, Renderer, SandboxPanel, SandboxTab, Terminal};
 
@@ -197,13 +198,14 @@ impl Standing {
 }
 
 fn dependencies() -> Vec<(String, String)> {
-    let status = match LocalSandbox::new().probe() {
-        Ok((identity, _)) => format!(
+    let status = match Bridge::SandboxPanel.cross(LocalSandbox::new().probe()) {
+        Ok(Ok((identity, _))) => format!(
             "available: {} {}",
             identity.id().as_str(),
             identity.version()
         ),
-        Err(problem) => format!("unavailable: {problem}"),
+        Ok(Err(problem)) => format!("unavailable: {problem}"),
+        Err(unready) => format!("unavailable: {unready}"),
     };
     let (backend, setup) = platform();
     vec![(backend.into(), status), ("Setup".into(), setup.into())]

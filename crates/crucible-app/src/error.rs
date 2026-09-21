@@ -67,6 +67,11 @@ pub enum AppError {
     #[error(transparent)]
     Credential(#[from] CredentialError),
 
+    /// The sandbox would have had to wait to be asked what it can enforce,
+    /// and the report is made by a caller that cannot wait yet.
+    #[error(transparent)]
+    Unready(#[from] crucible_runtime::Unready),
+
     /// Sensitive local state could not be made owner-only.
     #[error("{file} could not be protected: {source}")]
     Private {

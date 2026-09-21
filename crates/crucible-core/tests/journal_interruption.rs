@@ -13,6 +13,7 @@ use crucible_core::{
     SandboxLifecycle, SessionId, SessionOwner, SessionStore, StopReason, TOOL_CALL_ID_BYTES,
     TOOL_RESULT_BYTES, ToolArgs, ToolCall, ToolEffect, ToolId, ToolOutcome, ToolResult,
 };
+use crucible_runtime::BoxFuture;
 
 struct MemoryOnlyJournal;
 
@@ -27,25 +28,45 @@ impl SessionStore for MemoryOnlyJournal {
         None
     }
 
-    fn append_message(&self, _message: &Message) {}
+    fn append_message<'a>(&'a self, _message: &'a Message) -> BoxFuture<'a, ()> {
+        Box::pin(async {})
+    }
 
     fn context_snapshot(&self) -> Option<ContextSnapshot> {
         None
     }
 
-    fn contextual(&self, _patch: &ContextPatch) -> Result<(), ContextError> {
-        Ok(())
+    fn contextual<'a>(
+        &'a self,
+        _patch: &'a ContextPatch,
+    ) -> BoxFuture<'a, Result<(), ContextError>> {
+        Box::pin(async move { Ok(()) })
     }
 
-    fn compacted(&self, _replaced: usize, _recap: &str) {}
+    fn compacted<'a>(&'a self, _replaced: usize, _recap: &'a str) -> BoxFuture<'a, ()> {
+        Box::pin(async {})
+    }
 
-    fn display_compacted(&self, _compacted: Compacted, _pruned: bool) {}
+    fn display_compacted(&self, _compacted: Compacted, _pruned: bool) -> BoxFuture<'_, ()> {
+        Box::pin(async {})
+    }
 
-    fn pruned(&self, _freed: usize, _results: &[ToolId]) {}
+    fn pruned<'a>(&'a self, _freed: usize, _results: &'a [ToolId]) -> BoxFuture<'a, ()> {
+        Box::pin(async {})
+    }
 
-    fn restricted(&self, _freed: usize, _results: &[ToolId], _notice: &str) {}
+    fn restricted<'a>(
+        &'a self,
+        _freed: usize,
+        _results: &'a [ToolId],
+        _notice: &'a str,
+    ) -> BoxFuture<'a, ()> {
+        Box::pin(async {})
+    }
 
-    fn measured(&self, _calibration: &Calibration) {}
+    fn measured<'a>(&'a self, _calibration: &'a Calibration) -> BoxFuture<'a, ()> {
+        Box::pin(async {})
+    }
 
     fn calibrated(&self) -> Option<Calibration> {
         None

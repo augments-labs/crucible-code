@@ -11,14 +11,13 @@ use crate::sample::{Sample, allowed};
 
 fn edit(sample: &Sample, args: &str) -> ToolOutput {
     let tool = Edit::new(sample.workspace());
-    tool.run(allowed(&tool, args), &crate::sample::context())
-        .unwrap()
+    crucible_runtime::answered!(tool.run(allowed(&tool, args), &crate::sample::context())).unwrap()
 }
 
 /// A call the tool cannot read, which ends the turn rather than answering.
 fn refuse(sample: &Sample, args: &str) -> ToolError {
     let tool = Edit::new(sample.workspace());
-    tool.run(allowed(&tool, args), &crate::sample::context())
+    crucible_runtime::answered!(tool.run(allowed(&tool, args), &crate::sample::context()))
         .unwrap_err()
 }
 
@@ -332,15 +331,14 @@ fn a_stopped_turn_does_not_scan_or_change_the_file() {
     cancel.request();
     let tool = Edit::new(sample.workspace());
 
-    let problem = tool
-        .run(
-            allowed(
-                &tool,
-                r#"{"path":"one.txt","find":"a","replace":"b","all":true}"#,
-            ),
-            &crate::sample::cancelled_by(&cancel),
-        )
-        .unwrap_err();
+    let problem = crucible_runtime::answered!(tool.run(
+        allowed(
+            &tool,
+            r#"{"path":"one.txt","find":"a","replace":"b","all":true}"#,
+        ),
+        &crate::sample::cancelled_by(&cancel),
+    ))
+    .unwrap_err();
 
     assert!(matches!(
         problem,
@@ -409,12 +407,11 @@ fn a_call_with_no_find_says_what_is_missing() {
     let sample = Sample::new("edit-nofind");
 
     let tool = Edit::new(sample.workspace());
-    let problem = tool
-        .run(
-            allowed(&tool, r#"{"path":"one.rs","replace":"b"}"#),
-            &crate::sample::context(),
-        )
-        .unwrap_err();
+    let problem = crucible_runtime::answered!(tool.run(
+        allowed(&tool, r#"{"path":"one.rs","replace":"b"}"#),
+        &crate::sample::context(),
+    ))
+    .unwrap_err();
 
     assert_eq!(problem.to_string(), "edit: find is required");
 }

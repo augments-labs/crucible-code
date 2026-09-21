@@ -32,6 +32,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use super::output::Pipe;
+use crucible_runtime::{BoxFuture, Bridge};
 use crucible_sandbox::{SandboxError, SandboxProcess};
 use crucible_tools::{CallResultAcceptance, CallResultReceipt};
 
@@ -394,8 +395,10 @@ impl Background {
     ///
     /// # Errors
     ///
-    /// Registry ownership is unavailable or process cleanup failed. A command
-    /// whose cleanup failed keeps its entry and capacity for another attempt.
+    /// Registry ownership is unavailable, or process cleanup failed or would
+    /// have had to wait and was dropped, in which case the error holds the
+    /// refusal. A command whose cleanup failed or was dropped keeps its entry
+    /// and capacity for another attempt.
     pub fn stop(&self, number: usize) -> io::Result<()> {
         let mut standing = self
             .standing
@@ -569,7 +572,9 @@ impl Drop for Kept {
     }
 }
 
-/// Stops a command unless runner finalization binds its receipt.
+/// Stops a command dropped before runner finalization binds its receipt. A
+/// binding that fails or would have had to wait disarms it instead, leaving the
+/// command with the registry like any other background command.
 struct Acceptance {
     standing: Arc<Mutex<Held>>,
     number: usize,
@@ -577,25 +582,43 @@ struct Acceptance {
 }
 
 impl CallResultAcceptance for Acceptance {
-    fn accept(mut self: Box<Self>, receipt: CallResultReceipt) -> Result<(), SandboxError> {
-        let mut standing = self.standing.lock().map_err(|_| {
-            SandboxError::Lifecycle(std::io::Error::other(
-                "background registry ownership is unavailable",
-            ))
-        })?;
-        let left = standing
-            .left
-            .iter_mut()
-            .find(|left| left.number == self.number && left.accepting)
-            .ok_or_else(|| {
+    fn accept<'a>(
+        mut self: Box<Self>,
+        receipt: CallResultReceipt,
+    ) -> BoxFuture<'a, Result<(), SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let mut standing = self.standing.lock().map_err(|_| {
                 SandboxError::Lifecycle(std::io::Error::other(
-                    "background result owner is unavailable",
+                    "background registry ownership is unavailable",
                 ))
             })?;
-        let completed = left.process.complete_background_acceptance(receipt);
-        left.accepting = false;
-        self.armed = false;
-        completed
+            let left = standing
+                .left
+                .iter_mut()
+                .find(|left| left.number == self.number && left.accepting)
+                .ok_or_else(|| {
+                    SandboxError::Lifecycle(std::io::Error::other(
+                        "background result owner is unavailable",
+                    ))
+                })?;
+            // Crossed rather than awaited: the registry stays locked while the
+            // process binds its receipt. Nothing is awaited while it is held,
+            // but binding still waits, synchronously: on Linux the in-tree
+            // backend writes a durable record, and stops the process when that
+            // record fails, all under the lock the drawing thread takes to
+            // `reap` and to `stop`.
+            let completed = Bridge::BashSandbox
+                .cross(left.process.complete_background_acceptance(receipt))
+                .unwrap_or_else(|unready| {
+                    Err(SandboxError::Lifecycle(std::io::Error::other(unready)))
+                });
+            left.accepting = false;
+            self.armed = false;
+            completed
+        })
     }
 }
 

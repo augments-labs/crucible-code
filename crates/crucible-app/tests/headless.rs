@@ -34,7 +34,7 @@ use crucible_models::{
     Request,
 };
 use crucible_runner::{Event, EventEnvelope, Runner, Tools, Turned};
-use crucible_runtime::{Aside, Cancel, Steer};
+use crucible_runtime::{Aside, BoxFuture, Cancel, Steer};
 use crucible_session::Session;
 use crucible_tools::{Ask, Remember, Sensitivity, Verdict};
 use crucible_types::{
@@ -143,23 +143,25 @@ impl Provider for Script {
         PromptCacheEncoding::NoControlIntended
     }
 
-    fn stream(
-        &self,
-        _request: Request<'_>,
-        _cancel: &Cancel,
-    ) -> Result<Box<dyn DeltaStream>, ProviderError> {
-        self.asked.fetch_add(1, Ordering::Relaxed);
-        let round = self
-            .rounds
-            .lock()
-            .map_err(|_| ProviderError::Transport {
-                provider: "script",
-                problem: "poisoned".into(),
-            })?
-            .next()
-            .unwrap_or_default();
+    fn stream<'a>(
+        &'a self,
+        _request: Request<'a>,
+        _cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<Box<dyn DeltaStream>, ProviderError>> {
+        Box::pin(async move {
+            self.asked.fetch_add(1, Ordering::Relaxed);
+            let round = self
+                .rounds
+                .lock()
+                .map_err(|_| ProviderError::Transport {
+                    provider: "script",
+                    problem: "poisoned".into(),
+                })?
+                .next()
+                .unwrap_or_default();
 
-        Ok(Box::new(Reading(round.into_iter())))
+            Ok(Box::new(Reading(round.into_iter())) as Box<dyn DeltaStream>)
+        })
     }
 }
 
@@ -167,8 +169,8 @@ impl Provider for Script {
 struct Reading(std::vec::IntoIter<Delta>);
 
 impl DeltaStream for Reading {
-    fn next(&mut self) -> Option<Result<Delta, ProviderError>> {
-        self.0.next().map(Ok)
+    fn next(&mut self) -> BoxFuture<'_, Option<Result<Delta, ProviderError>>> {
+        Box::pin(async move { self.0.next().map(Ok) })
     }
 }
 

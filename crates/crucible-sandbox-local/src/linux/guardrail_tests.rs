@@ -43,16 +43,15 @@ fn session_denying(sample: &Sample, rule: &[&str]) -> Box<dyn crucible_sandbox::
         .expect("policy")
         .with_command_policy(commands);
     let service = LocalSandbox::new();
-    let mut session = service
-        .prepare(SandboxRequest::new(
-            SandboxId::new(),
-            Ancestry::new(),
-            ToolId::new("guardrail"),
-            policy,
-            SandboxManifest::empty(),
-        ))
-        .expect("prepared sandbox");
-    session.materialize().expect("materialized workspace");
+    let mut session = crucible_runtime::answered!(service.prepare(SandboxRequest::new(
+        SandboxId::new(),
+        Ancestry::new(),
+        ToolId::new("guardrail"),
+        policy,
+        SandboxManifest::empty(),
+    )))
+    .expect("prepared sandbox");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
     session
 }
 
@@ -67,13 +66,15 @@ fn a_denied_program_reached_through_a_shell_is_bounded_by_confinement_instead() 
     let path = secret.display().to_string();
 
     // Named as the program, the rule matches and nothing is launched.
-    let refused = session_denying(&sample, &["*/cat", "*"]).start(
-        SandboxCommand::new(
-            "/bin/cat",
-            [OsString::from(&path)],
-            SandboxEnvironment::empty(),
+    let refused = crucible_runtime::answered!(
+        session_denying(&sample, &["*/cat", "*"]).start(
+            SandboxCommand::new(
+                "/bin/cat",
+                [OsString::from(&path)],
+                SandboxEnvironment::empty(),
+            )
+            .expect("command"),
         )
-        .expect("command"),
     );
     assert!(matches!(refused, Err(SandboxError::Guardrail)));
 
@@ -81,9 +82,10 @@ fn a_denied_program_reached_through_a_shell_is_bounded_by_confinement_instead() 
     // invocation. The command starts, and what refuses it is that the path was
     // never granted rather than anything the guardrail said.
     let (status, output, errors) = finish(
-        session_denying(&sample, &["*/cat", "*"])
-            .start(command(&format!("cat {path}")))
-            .expect("started command"),
+        crucible_runtime::answered!(
+            session_denying(&sample, &["*/cat", "*"]).start(command(&format!("cat {path}")))
+        )
+        .expect("started command"),
     );
 
     assert!(!status.success(), "an ungranted path was read");
@@ -107,11 +109,10 @@ fn a_helper_the_script_makes_is_never_a_word_the_guardrail_reads() {
     // says so itself before it reaches for the path, because a helper that
     // failed to run at all would leave this test proving nothing.
     let (status, output, errors) = finish(
-        session_denying(&sample, &["*/helper", "*"])
-            .start(command(&format!(
-                "cp /bin/sh ./helper && ./helper -c 'echo ran; cat {path}'"
-            )))
-            .expect("started command"),
+        crucible_runtime::answered!(session_denying(&sample, &["*/helper", "*"]).start(command(
+            &format!("cp /bin/sh ./helper && ./helper -c 'echo ran; cat {path}'")
+        )))
+        .expect("started command"),
     );
 
     let output = String::from_utf8(output).expect("utf8");

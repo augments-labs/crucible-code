@@ -171,7 +171,9 @@ pub enum TurnOutcome {
         /// Why the model had stopped, where it had been asked at all.
         stop: Option<Stop>,
     },
-    /// The turn could not be taken.
+    /// The turn could not be taken, or was not finished, for the reason the
+    /// problem gives. Where a step would have had to wait and was dropped,
+    /// what it began is unconfirmed rather than undone.
     Failed(Problem),
 }
 
@@ -187,7 +189,11 @@ pub enum RoomOutcome {
     Nothing,
     /// It was cancelled, and the conversation is as it was.
     Stopped,
-    /// The recap could not be had, and the conversation is as it was.
+    /// Making room failed, for the reason the problem gives. Where the recap
+    /// could not be had, nothing was replaced, though old tool output pruned
+    /// before it stays pruned. Where a step would have had to wait and was
+    /// dropped, what it began is unconfirmed and what was done before it
+    /// stands, even a replacement already made.
     Failed(Problem),
 }
 
@@ -339,7 +345,8 @@ pub enum CacheOutcome {
         /// Whether there were more than the ceiling lets through.
         truncated: bool,
     },
-    /// The private store could not be read.
+    /// The private store could not be read, or reading it would have had to
+    /// wait and was dropped.
     Failed(Problem),
 }
 
@@ -357,7 +364,10 @@ pub enum CleanOutcome {
         /// How many nothing owns any more.
         orphaned: u64,
     },
-    /// The private store could not be read or updated.
+    /// The private store could not be read or updated, or a step on it would
+    /// have had to wait and was dropped, which may or may not have acted. It is
+    /// also how the cleanup ends when the provider has no way to delete what
+    /// is recorded, or the cleanup was cancelled.
     Failed(Problem),
 }
 

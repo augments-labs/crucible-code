@@ -19,6 +19,7 @@ use crucible_core::{
     Sensitivity, Steer, Summary, Target, Tool, ToolArgs, ToolCall, ToolContext, ToolError,
     ToolOutput, UsageRate, Verdict, Wrote,
 };
+use crucible_runtime::BoxFuture;
 
 /// The name a scripted provider answers to.
 const SCRIPT: &str = "script";
@@ -457,211 +458,225 @@ impl Provider for Script {
         }
     }
 
-    fn stream(
-        &self,
-        request: Request<'_>,
-        _cancel: &Cancel,
-    ) -> Result<Box<dyn DeltaStream>, ProviderError> {
-        self.sent.lock().unwrap().push(SentRequest {
-            transcript_len: request.transcript.len(),
-            context: request
-                .transcript
-                .messages()
-                .iter()
-                .filter_map(|message| match message {
-                    Message::Context(fragment) => Some(fragment.clone()),
-                    Message::User { .. } | Message::Agent { .. } | Message::ToolResults(_) => None,
-                })
-                .collect(),
-            agent_text: request
-                .transcript
-                .messages()
-                .iter()
-                .filter_map(|message| match message {
-                    Message::Agent { text, .. } => Some(fingerprint(text)),
-                    Message::Context(_) | Message::User { .. } | Message::ToolResults(_) => None,
-                })
-                .collect(),
-            result_text: request
-                .transcript
-                .messages()
-                .iter()
-                .filter_map(|message| match message {
-                    Message::ToolResults(results) => Some(results.iter()),
-                    Message::Context(_) | Message::User { .. } | Message::Agent { .. } => None,
-                })
-                .flatten()
-                .map(|result| fingerprint(result.output.text()))
-                .collect(),
-            tools: request
-                .tools
-                .iter()
-                .map(|tool| SentToolSchema {
-                    name: tool.name.into(),
-                })
-                .collect(),
-            model: request.model.into(),
-            max_tokens: request.max_tokens,
-            effort: request.effort,
-            had_system: request.system.is_some(),
-            cache_attempt: request.prompt_cache.map(|cache| cache.attempt),
-            cache_identity: request.prompt_cache.map(|cache| cache.identity),
-            cache_selection: request.prompt_cache.map(|cache| cache.selection),
-            cache_resource: request
-                .prompt_cache
-                .and_then(|cache| cache.resource)
-                .is_some(),
-        });
-
-        // Before anything is answered: the line is meant to arrive while the
-        // request is out, not once it has been read.
-        if let Some((steer, line)) = self.types.lock().unwrap().take() {
-            steer.say(line.into());
-        }
-
-        if self.over_window {
-            return Err(ProviderError::WindowExceeded { provider: SCRIPT });
-        }
-
-        if let Some(status) = self.refuses {
-            return Err(ProviderError::Refused {
-                provider: SCRIPT,
-                status,
-                message: "no".into(),
-            });
-        }
-
-        // Before a round is taken, because a response that went away said
-        // nothing and cost the script nothing: the answer it was going to give
-        // is still the next one.
-        let mut drops = self.drops.lock().unwrap();
-        if *drops > 0 {
-            *drops -= 1;
-            return Ok(Box::new(Recited {
-                deltas: self
-                    .drop_usage
-                    .clone()
-                    .map(Delta::Usage)
-                    .into_iter()
+    fn stream<'a>(
+        &'a self,
+        request: Request<'a>,
+        _cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<Box<dyn DeltaStream>, ProviderError>> {
+        Box::pin(async move {
+            self.sent.lock().unwrap().push(SentRequest {
+                transcript_len: request.transcript.len(),
+                context: request
+                    .transcript
+                    .messages()
+                    .iter()
+                    .filter_map(|message| match message {
+                        Message::Context(fragment) => Some(fragment.clone()),
+                        Message::User { .. } | Message::Agent { .. } | Message::ToolResults(_) => {
+                            None
+                        }
+                    })
                     .collect(),
-                breaks: true,
-            }));
-        }
-        drop(drops);
+                agent_text: request
+                    .transcript
+                    .messages()
+                    .iter()
+                    .filter_map(|message| match message {
+                        Message::Agent { text, .. } => Some(fingerprint(text)),
+                        Message::Context(_) | Message::User { .. } | Message::ToolResults(_) => {
+                            None
+                        }
+                    })
+                    .collect(),
+                result_text: request
+                    .transcript
+                    .messages()
+                    .iter()
+                    .filter_map(|message| match message {
+                        Message::ToolResults(results) => Some(results.iter()),
+                        Message::Context(_) | Message::User { .. } | Message::Agent { .. } => None,
+                    })
+                    .flatten()
+                    .map(|result| fingerprint(result.output.text()))
+                    .collect(),
+                tools: request
+                    .tools
+                    .iter()
+                    .map(|tool| SentToolSchema {
+                        name: tool.name.into(),
+                    })
+                    .collect(),
+                model: request.model.into(),
+                max_tokens: request.max_tokens,
+                effort: request.effort,
+                had_system: request.system.is_some(),
+                cache_attempt: request.prompt_cache.map(|cache| cache.attempt),
+                cache_identity: request.prompt_cache.map(|cache| cache.identity),
+                cache_selection: request.prompt_cache.map(|cache| cache.selection),
+                cache_resource: request
+                    .prompt_cache
+                    .and_then(|cache| cache.resource)
+                    .is_some(),
+            });
 
-        let Some(round) = self.rounds.lock().unwrap().pop_front() else {
-            if self.cancels_when_empty {
-                return Err(ProviderError::Cancelled(SCRIPT));
+            // Before anything is answered: the line is meant to arrive while the
+            // request is out, not once it has been read.
+            if let Some((steer, line)) = self.types.lock().unwrap().take() {
+                steer.say(line.into());
             }
-            return Ok(Box::new(Recited {
-                deltas: VecDeque::new(),
+
+            if self.over_window {
+                return Err(ProviderError::WindowExceeded { provider: SCRIPT });
+            }
+
+            if let Some(status) = self.refuses {
+                return Err(ProviderError::Refused {
+                    provider: SCRIPT,
+                    status,
+                    message: "no".into(),
+                });
+            }
+
+            // Before a round is taken, because a response that went away said
+            // nothing and cost the script nothing: the answer it was going to give
+            // is still the next one.
+            let mut drops = self.drops.lock().unwrap();
+            if *drops > 0 {
+                *drops -= 1;
+                return Ok(Box::new(Recited {
+                    deltas: self
+                        .drop_usage
+                        .clone()
+                        .map(Delta::Usage)
+                        .into_iter()
+                        .collect(),
+                    breaks: true,
+                }) as Box<dyn DeltaStream>);
+            }
+            drop(drops);
+
+            let Some(round) = self.rounds.lock().unwrap().pop_front() else {
+                if self.cancels_when_empty {
+                    return Err(ProviderError::Cancelled(SCRIPT));
+                }
+                return Ok(Box::new(Recited {
+                    deltas: VecDeque::new(),
+                    breaks: self.breaks,
+                }) as Box<dyn DeltaStream>);
+            };
+            Ok(Box::new(Recited {
+                deltas: round.into(),
                 breaks: self.breaks,
-            }));
-        };
-        Ok(Box::new(Recited {
-            deltas: round.into(),
-            breaks: self.breaks,
-        }))
+            }) as Box<dyn DeltaStream>)
+        })
     }
 }
 
 impl PromptCacheResourceLifecycle for Script {
-    fn create(
-        &self,
-        request: PromptCacheResourceCreate<'_>,
-        cancel: &Cancel,
-    ) -> Result<PromptCacheResourceCreated, PromptCacheResourceError> {
-        if cancel.requested() {
-            return Err(PromptCacheResourceError::Cancelled);
-        }
-        if request.deadline.expired() {
-            return Err(PromptCacheResourceError::Deadline);
-        }
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        Ok(PromptCacheResourceCreated {
-            handle: crucible_core::PromptCacheResourceHandle::new("script-remote-resource")
-                .expect("bounded fixture handle"),
-            expires_at: now.saturating_add(600),
+    fn create<'a>(
+        &'a self,
+        request: PromptCacheResourceCreate<'a>,
+        cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<PromptCacheResourceCreated, PromptCacheResourceError>> {
+        Box::pin(async move {
+            if cancel.requested() {
+                return Err(PromptCacheResourceError::Cancelled);
+            }
+            if request.deadline.expired() {
+                return Err(PromptCacheResourceError::Deadline);
+            }
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            Ok(PromptCacheResourceCreated {
+                handle: crucible_core::PromptCacheResourceHandle::new("script-remote-resource")
+                    .expect("bounded fixture handle"),
+                expires_at: now.saturating_add(600),
+            })
         })
     }
 
-    fn resolve(
-        &self,
-        record: &PromptCacheResourceRecord,
+    fn resolve<'a>(
+        &'a self,
+        record: &'a PromptCacheResourceRecord,
         deadline: PromptCacheResourceDeadline,
-        cancel: &Cancel,
-    ) -> Result<PromptCacheResourceRemote, PromptCacheResourceError> {
-        if cancel.requested() {
-            return Err(PromptCacheResourceError::Cancelled);
-        }
-        if deadline.expired() {
-            return Err(PromptCacheResourceError::Deadline);
-        }
-        Ok(PromptCacheResourceRemote {
-            handle: record.handle().cloned(),
-            state: PromptCacheResourceState::Ready,
-            expires_at: record.expires_at(),
-        })
-    }
-
-    fn renew(
-        &self,
-        record: &PromptCacheResourceRecord,
-        _retention: crucible_core::PromptCacheRetention,
-        deadline: PromptCacheResourceDeadline,
-        cancel: &Cancel,
-    ) -> Result<PromptCacheResourceRemote, PromptCacheResourceError> {
-        self.resolve(record, deadline, cancel)
-    }
-
-    fn delete(
-        &self,
-        record: &PromptCacheResourceRecord,
-        _deadline: PromptCacheResourceDeadline,
-        cancel: &Cancel,
-    ) -> Result<PromptCacheResourceRemote, PromptCacheResourceError> {
-        if cancel.requested() {
-            return Err(PromptCacheResourceError::Cancelled);
-        }
-        match self.resource_delete {
-            ResourceDelete::Deleted => Ok(PromptCacheResourceRemote {
-                handle: None,
-                state: PromptCacheResourceState::Deleted,
-                expires_at: None,
-            }),
-            ResourceDelete::StillReady => Ok(PromptCacheResourceRemote {
+        cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<PromptCacheResourceRemote, PromptCacheResourceError>> {
+        Box::pin(async move {
+            if cancel.requested() {
+                return Err(PromptCacheResourceError::Cancelled);
+            }
+            if deadline.expired() {
+                return Err(PromptCacheResourceError::Deadline);
+            }
+            Ok(PromptCacheResourceRemote {
                 handle: record.handle().cloned(),
                 state: PromptCacheResourceState::Ready,
                 expires_at: record.expires_at(),
-            }),
-            ResourceDelete::Ambiguous => Err(PromptCacheResourceError::Ambiguous(
-                crucible_core::PromptCacheResourceOperation::Delete,
-            )),
-        }
+            })
+        })
     }
 
-    fn reconcile(
-        &self,
-        record: &PromptCacheResourceRecord,
+    fn renew<'a>(
+        &'a self,
+        record: &'a PromptCacheResourceRecord,
+        _retention: crucible_core::PromptCacheRetention,
         deadline: PromptCacheResourceDeadline,
-        cancel: &Cancel,
-    ) -> Result<PromptCacheResourceRemote, PromptCacheResourceError> {
-        if record.pending() == Some(crucible_core::PromptCacheResourceOperation::Delete) {
-            return self.delete(record, deadline, cancel);
-        }
-        self.resolve(record, deadline, cancel)
+        cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<PromptCacheResourceRemote, PromptCacheResourceError>> {
+        Box::pin(async move { self.resolve(record, deadline, cancel).await })
     }
 
-    fn inspect(
-        &self,
-        record: &PromptCacheResourceRecord,
+    fn delete<'a>(
+        &'a self,
+        record: &'a PromptCacheResourceRecord,
+        _deadline: PromptCacheResourceDeadline,
+        cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<PromptCacheResourceRemote, PromptCacheResourceError>> {
+        Box::pin(async move {
+            if cancel.requested() {
+                return Err(PromptCacheResourceError::Cancelled);
+            }
+            match self.resource_delete {
+                ResourceDelete::Deleted => Ok(PromptCacheResourceRemote {
+                    handle: None,
+                    state: PromptCacheResourceState::Deleted,
+                    expires_at: None,
+                }),
+                ResourceDelete::StillReady => Ok(PromptCacheResourceRemote {
+                    handle: record.handle().cloned(),
+                    state: PromptCacheResourceState::Ready,
+                    expires_at: record.expires_at(),
+                }),
+                ResourceDelete::Ambiguous => Err(PromptCacheResourceError::Ambiguous(
+                    crucible_core::PromptCacheResourceOperation::Delete,
+                )),
+            }
+        })
+    }
+
+    fn reconcile<'a>(
+        &'a self,
+        record: &'a PromptCacheResourceRecord,
         deadline: PromptCacheResourceDeadline,
-        cancel: &Cancel,
-    ) -> Result<PromptCacheResourceRemote, PromptCacheResourceError> {
-        self.resolve(record, deadline, cancel)
+        cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<PromptCacheResourceRemote, PromptCacheResourceError>> {
+        Box::pin(async move {
+            if record.pending() == Some(crucible_core::PromptCacheResourceOperation::Delete) {
+                return self.delete(record, deadline, cancel).await;
+            }
+            self.resolve(record, deadline, cancel).await
+        })
+    }
+
+    fn inspect<'a>(
+        &'a self,
+        record: &'a PromptCacheResourceRecord,
+        deadline: PromptCacheResourceDeadline,
+        cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<PromptCacheResourceRemote, PromptCacheResourceError>> {
+        Box::pin(async move { self.resolve(record, deadline, cancel).await })
     }
 }
 
@@ -674,16 +689,18 @@ struct Recited {
 }
 
 impl DeltaStream for Recited {
-    fn next(&mut self) -> Option<Result<Delta, ProviderError>> {
-        if let Some(delta) = self.deltas.pop_front() {
-            return Some(Ok(delta));
-        }
+    fn next(&mut self) -> BoxFuture<'_, Option<Result<Delta, ProviderError>>> {
+        Box::pin(async move {
+            if let Some(delta) = self.deltas.pop_front() {
+                return Some(Ok(delta));
+            }
 
-        self.breaks.then(|| {
-            self.breaks = false;
-            Err(ProviderError::Transport {
-                provider: SCRIPT,
-                problem: "the connection went away".into(),
+            self.breaks.then(|| {
+                self.breaks = false;
+                Err(ProviderError::Transport {
+                    provider: SCRIPT,
+                    problem: "the connection went away".into(),
+                })
             })
         })
     }
@@ -800,26 +817,32 @@ impl Tool for Fixed {
         self.backgroundable
     }
 
-    fn run(&self, _approved: Approved, context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
-        for piece in &self.writes {
-            context.wrote(Wrote::new(piece.clone()));
-        }
-
-        if self.cancels {
-            return Err(ToolError::Cancelled(self.name.into()));
-        }
-
-        match &self.problem {
-            Some(problem) => Err(ToolError::Arguments {
-                tool: self.name.into(),
-                problem: problem.clone(),
-            }),
-            None => Ok(match &self.diff {
-                Some(diff) => ToolOutput::ok(self.answer.clone()).showing(diff.clone()),
-                None => ToolOutput::ok(self.answer.clone()),
+    fn run<'a>(
+        &'a self,
+        _approved: Approved,
+        context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            for piece in &self.writes {
+                context.wrote(Wrote::new(piece.clone()));
             }
-            .answered_by(self.provenance.clone())),
-        }
+
+            if self.cancels {
+                return Err(ToolError::Cancelled(self.name.into()));
+            }
+
+            match &self.problem {
+                Some(problem) => Err(ToolError::Arguments {
+                    tool: self.name.into(),
+                    problem: problem.clone(),
+                }),
+                None => Ok(match &self.diff {
+                    Some(diff) => ToolOutput::ok(self.answer.clone()).showing(diff.clone()),
+                    None => ToolOutput::ok(self.answer.clone()),
+                }
+                .answered_by(self.provenance.clone())),
+            }
+        })
     }
 }
 
@@ -871,13 +894,15 @@ impl Tool for Typing {
         Summary::new(args.as_str())
     }
 
-    fn run(
-        &self,
+    fn run<'a>(
+        &'a self,
         _approved: Approved,
-        _context: &ToolContext<'_>,
-    ) -> Result<ToolOutput, ToolError> {
-        self.steer.say(self.line.to_string());
-        Ok(ToolOutput::ok("done"))
+        _context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            self.steer.say(self.line.to_string());
+            Ok(ToolOutput::ok("done"))
+        })
     }
 }
 

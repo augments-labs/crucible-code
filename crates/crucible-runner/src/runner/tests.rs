@@ -8,16 +8,17 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    AgentId, Approved, Aside, Attachment, Carried, Change, DescribeTool, Diff, InputTokenUsage,
-    JournalStore, Line, Modalities, Modality, PromptCacheFact, PromptCacheFingerprint,
-    PromptCacheIsolation, PromptCachePersistentMode, PromptCachePolicy, PromptCachePolicyDigest,
-    PromptCacheResourceBinding, PromptCacheResourceError, PromptCacheResourceHandle,
-    PromptCacheResourceId, PromptCacheResourceOperation, PromptCacheResourceOwner,
-    PromptCacheResourceRecord, PromptCacheResourceState, PromptCacheResourceStore,
-    PromptCacheScopeDigest, ProviderError, ProviderLimit, ProviderUsage, RunItem, Sensitivity,
-    SessionStore, Spend, Summary, Target, Tool, ToolArgs, ToolContext, ToolError, ToolId,
-    ToolOutput, ToolResult, Verdict,
+    AgentId, Ancestry, Approved, Aside, Attachment, Carried, Change, DescribeTool, Diff,
+    InputTokenUsage, JournalStore, Line, Modalities, Modality, PromptCacheFact,
+    PromptCacheFingerprint, PromptCacheIsolation, PromptCachePersistentMode, PromptCachePolicy,
+    PromptCachePolicyDigest, PromptCacheResourceBinding, PromptCacheResourceError,
+    PromptCacheResourceHandle, PromptCacheResourceId, PromptCacheResourceOperation,
+    PromptCacheResourceOwner, PromptCacheResourceRecord, PromptCacheResourceState,
+    PromptCacheResourceStore, PromptCacheScopeDigest, ProviderError, ProviderLimit, ProviderUsage,
+    RunItem, Sensitivity, SessionStore, Spend, Summary, Target, Tool, ToolArgs, ToolContext,
+    ToolError, ToolId, ToolOutput, ToolResult, Verdict,
 };
+use crucible_runtime::BoxFuture;
 
 use sha2::{Digest as _, Sha256};
 
@@ -52,7 +53,8 @@ fn conversation(transcript: &Transcript) -> Vec<Message> {
         .collect()
 }
 
-/// The one tool result a restricted-result test is about.
+/// The first tool result in the transcript: the one a test about a single
+/// call's result reads.
 fn only_result(scripted: &Scripted) -> &ToolResult {
     scripted
         .runner
@@ -63,7 +65,7 @@ fn only_result(scripted: &Scripted) -> &ToolResult {
             Message::ToolResults(results) => results.first(),
             _ => None,
         })
-        .expect("the search result the turn produced")
+        .expect("a tool result in the transcript")
 }
 
 /// The sentence a vendor that restricts its results leaves in their place.
@@ -95,6 +97,7 @@ mod preserved;
 mod reporting;
 mod spending;
 mod storage;
+mod unanswered;
 
 /// A destination that keeps the event and lets the attribution go.
 ///
@@ -113,47 +116,61 @@ impl Post for Watching {
 struct SharedStore(Arc<Mutex<Vec<PromptCacheResourceRecord>>>);
 
 impl PromptCacheResourceStore for SharedStore {
-    fn matching(
-        &mut self,
-        binding: &PromptCacheResourceBinding,
-    ) -> Result<Option<PromptCacheResourceRecord>, PromptCacheResourceError> {
-        Ok(self
-            .0
-            .lock()
-            .unwrap()
-            .iter()
-            .rev()
-            .find(|record| record.binding() == binding)
-            .cloned())
+    fn matching<'a>(
+        &'a mut self,
+        binding: &'a PromptCacheResourceBinding,
+    ) -> BoxFuture<'a, Result<Option<PromptCacheResourceRecord>, PromptCacheResourceError>> {
+        Box::pin(async move {
+            Ok(self
+                .0
+                .lock()
+                .unwrap()
+                .iter()
+                .rev()
+                .find(|record| record.binding() == binding)
+                .cloned())
+        })
     }
 
-    fn put(&mut self, record: &PromptCacheResourceRecord) -> Result<(), PromptCacheResourceError> {
-        let mut records = self.0.lock().unwrap();
-        if let Some(found) = records.iter_mut().find(|found| found.id() == record.id()) {
-            *found = record.clone();
-        } else {
-            records.push(record.clone());
-        }
-        Ok(())
+    fn put<'a>(
+        &'a mut self,
+        record: &'a PromptCacheResourceRecord,
+    ) -> BoxFuture<'a, Result<(), PromptCacheResourceError>> {
+        Box::pin(async move {
+            let mut records = self.0.lock().unwrap();
+            if let Some(found) = records.iter_mut().find(|found| found.id() == record.id()) {
+                *found = record.clone();
+            } else {
+                records.push(record.clone());
+            }
+            Ok(())
+        })
     }
 
-    fn remove(&mut self, id: &PromptCacheResourceId) -> Result<(), PromptCacheResourceError> {
-        self.0.lock().unwrap().retain(|record| record.id() != id);
-        Ok(())
+    fn remove<'a>(
+        &'a mut self,
+        id: &'a PromptCacheResourceId,
+    ) -> BoxFuture<'a, Result<(), PromptCacheResourceError>> {
+        Box::pin(async move {
+            self.0.lock().unwrap().retain(|record| record.id() != id);
+            Ok(())
+        })
     }
 
     fn inspect(
         &mut self,
         maximum: usize,
-    ) -> Result<Vec<PromptCacheResourceRecord>, PromptCacheResourceError> {
-        Ok(self
-            .0
-            .lock()
-            .unwrap()
-            .iter()
-            .take(maximum)
-            .cloned()
-            .collect())
+    ) -> BoxFuture<'_, Result<Vec<PromptCacheResourceRecord>, PromptCacheResourceError>> {
+        Box::pin(async move {
+            Ok(self
+                .0
+                .lock()
+                .unwrap()
+                .iter()
+                .take(maximum)
+                .cloned()
+                .collect())
+        })
     }
 }
 

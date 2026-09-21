@@ -51,7 +51,7 @@ use crucible_models::{
     PromptCacheMechanismCapability, PromptCachePricing, PromptCacheProvenance, PromptCacheRates,
     PromptCacheRoute, Provider, ProviderError, Request, StatefulTransportCapability, UsageRate,
 };
-use crucible_runtime::Cancel;
+use crucible_runtime::{BoxFuture, Cancel};
 use crucible_types::{
     CredentialScopeId, Modalities, Modality, PricingCurrency, PricingDate, PricingError,
     PricingUnit, PromptCacheRetentionClass, PromptCacheUsageReporting,
@@ -466,47 +466,51 @@ impl Provider for OpenAi {
         body::prompt_cache_encoding(request, Serving::of(&self.endpoint))
     }
 
-    fn stream(
-        &self,
-        request: Request<'_>,
-        cancel: &Cancel,
-    ) -> Result<Box<dyn DeltaStream>, ProviderError> {
-        // Nothing is sent for a turn the user has already abandoned. Once the
-        // request is away, cancelling is the stream's business.
-        if cancel.requested() {
-            return Err(ProviderError::Cancelled(NAME));
-        }
+    fn stream<'a>(
+        &'a self,
+        request: Request<'a>,
+        cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<Box<dyn DeltaStream>, ProviderError>> {
+        Box::pin(async move {
+            // Nothing is sent for a turn the user has already abandoned. Once the
+            // request is away, cancelling is the stream's business.
+            if cancel.requested() {
+                return Err(ProviderError::Cancelled(NAME));
+            }
 
-        let outgoing = self.headers()?;
-        let redactions = outgoing.redactions();
-        let scope =
-            crucible_types::ContinuationScope::new(self.credential_scope, self.endpoint.as_str());
-        let body = body::serialize(
-            &request,
-            Serving::of(&self.endpoint),
-            (request.model == ASTRA).then_some(scope),
-        )?;
+            let outgoing = self.headers()?;
+            let redactions = outgoing.redactions();
+            let scope = crucible_types::ContinuationScope::new(
+                self.credential_scope,
+                self.endpoint.as_str(),
+            );
+            let body = body::serialize(
+                &request,
+                Serving::of(&self.endpoint),
+                (request.model == ASTRA).then_some(scope),
+            )?;
 
-        let response = self
-            .transport
-            .post(self.endpoint.as_str(), outgoing, body, cancel)
-            .map_err(|problem| problem.for_provider(NAME).redacted(&redactions))?;
+            let response = self
+                .transport
+                .post(self.endpoint.as_str(), outgoing, body, cancel)
+                .map_err(|problem| problem.for_provider(NAME).redacted(&redactions))?;
 
-        if response.status != 200 {
-            let error = refused(NAME, response.status, response.body, &redactions, cancel);
-            return Err(if request.model == ASTRA {
-                continuation::refusal(error)
-            } else {
-                error
-            });
-        }
+            if response.status != 200 {
+                let error = refused(NAME, response.status, response.body, &redactions, cancel);
+                return Err(if request.model == ASTRA {
+                    continuation::refusal(error)
+                } else {
+                    error
+                });
+            }
 
-        Ok(Box::new(Stream::with_wire(
-            response.body,
-            cancel.clone(),
-            redactions,
-            wire::Responses::for_request(&request, scope)?,
-        )))
+            Ok(Box::new(Stream::with_wire(
+                response.body,
+                cancel.clone(),
+                redactions,
+                wire::Responses::for_request(&request, scope)?,
+            )) as Box<dyn DeltaStream>)
+        })
     }
 }
 
@@ -701,7 +705,7 @@ mod tests {
             Box::new(std::sync::Arc::clone(&replay)),
         );
 
-        provider.stream(asking("hello"), &Cancel::new()).unwrap();
+        crucible_runtime::answered!(provider.stream(asking("hello"), &Cancel::new())).unwrap();
 
         assert_eq!(replay.sent().url, "http://localhost:8080/v1");
     }
@@ -720,7 +724,7 @@ mod tests {
             Box::new(std::sync::Arc::clone(&replay)),
         );
 
-        provider.stream(asking("hello"), &Cancel::new()).unwrap();
+        crucible_runtime::answered!(provider.stream(asking("hello"), &Cancel::new())).unwrap();
 
         assert_eq!(
             replay.sent().url,
@@ -742,7 +746,7 @@ mod tests {
             Box::new(std::sync::Arc::clone(&replay)),
         );
 
-        provider.stream(asking("hello"), &Cancel::new()).unwrap();
+        crucible_runtime::answered!(provider.stream(asking("hello"), &Cancel::new())).unwrap();
 
         assert!(
             !replay.sent().body.contains("max_output_tokens"),
@@ -780,7 +784,7 @@ mod tests {
     fn a_request_goes_to_responses_and_asks_for_a_stream() {
         let (openai, replay) = provider(200, ANSWER);
 
-        openai.stream(asking("hello"), &Cancel::new()).unwrap();
+        crucible_runtime::answered!(openai.stream(asking("hello"), &Cancel::new())).unwrap();
 
         let sent = replay.sent();
         assert_eq!(sent.url, OpenAi::VENDOR.as_str());
@@ -795,7 +799,7 @@ mod tests {
         // point of keeping authentication off the protocol axis.
         let (openai, replay) = provider(200, ANSWER);
 
-        openai.stream(asking("hello"), &Cancel::new()).unwrap();
+        crucible_runtime::answered!(openai.stream(asking("hello"), &Cancel::new())).unwrap();
 
         assert_eq!(
             header(&replay.sent(), "authorization"),
@@ -820,7 +824,8 @@ mod tests {
         // reaches the caller as deltas, with nothing in between to arrange it.
         let (openai, _) = provider(200, ANSWER);
 
-        let mut stream = openai.stream(asking("hello"), &Cancel::new()).unwrap();
+        let mut stream =
+            crucible_runtime::answered!(openai.stream(asking("hello"), &Cancel::new())).unwrap();
 
         assert_eq!(
             deltas(stream.as_mut()),
@@ -838,7 +843,8 @@ mod tests {
         let said = r#"{"error":{"message":"The model `gpt-nope` does not exist","type":"invalid_request_error"}}"#;
         let (openai, _) = provider(404, said);
 
-        let problem = openai.stream(asking("hello"), &Cancel::new()).unwrap_err();
+        let problem = crucible_runtime::answered!(openai.stream(asking("hello"), &Cancel::new()))
+            .unwrap_err();
 
         assert_eq!(
             problem.to_string(),
@@ -853,7 +859,8 @@ mod tests {
         );
         let (openai, _) = provider(401, &said);
 
-        let problem = openai.stream(asking("hello"), &Cancel::new()).unwrap_err();
+        let problem = crucible_runtime::answered!(openai.stream(asking("hello"), &Cancel::new()))
+            .unwrap_err();
         let displayed = problem.to_string();
         let debugged = format!("{problem:?}");
 
@@ -869,8 +876,11 @@ mod tests {
         );
         let (openai, _) = provider(200, &body);
 
-        let mut stream = openai.stream(asking("hello"), &Cancel::new()).unwrap();
-        let problem = stream.next().unwrap().unwrap_err();
+        let mut stream =
+            crucible_runtime::answered!(openai.stream(asking("hello"), &Cancel::new())).unwrap();
+        let problem = crucible_runtime::answered!(stream.next())
+            .unwrap()
+            .unwrap_err();
         let displayed = problem.to_string();
         let debugged = format!("{problem:?}");
 
@@ -885,7 +895,8 @@ mod tests {
         let cancel = Cancel::new();
         cancel.request();
 
-        let problem = openai.stream(asking("hello"), &cancel).unwrap_err();
+        let problem =
+            crucible_runtime::answered!(openai.stream(asking("hello"), &cancel)).unwrap_err();
 
         assert!(matches!(problem, ProviderError::Cancelled(_)));
         assert!(

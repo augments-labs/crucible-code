@@ -34,6 +34,8 @@ crucible-sandbox-local.workspace = true
 # SHA-256 of a finished test result, so its receipt is identified by what it
 # contains rather than by when it was put there.
 sha2.workspace = true
+# `answered!`, which the tests ask a tool's future once with.
+crucible-runtime = { workspace = true, features = ["proof"] }
 
 [target.'cfg(windows)'.dependencies]
 # Windows refuses std::fs::rename over an existing file. Those bindings stay

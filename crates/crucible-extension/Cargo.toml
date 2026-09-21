@@ -16,6 +16,10 @@ authors.workspace = true
 # `SourceKind`, which is how a manifest records where its bytes came from and
 # what a trust decision is made against.
 crucible-registry.workspace = true
+# `Unready`, what a stop that would have had to wait is dropped with, so that a
+# process whose stop was refused is told apart from one whose stop failed, and
+# `BoxFuture`, which a stand-in process in the tests returns from its stop.
+crucible-runtime.workspace = true
 # The process an extension runs as: `SandboxProcess` to watch and stop it, and
 # `SandboxOutput` for the stream it talks over.
 crucible-sandbox.workspace = true

@@ -16,8 +16,7 @@ fn started(sample: &Sample, left: &Background, command: &str) -> Bash {
     .leaving(left.clone());
     let context = crate::sample::context();
     let args = format!(r#"{{"command":{command},"background":true}}"#);
-    let output = tool
-        .run(allowed(&tool, &args), &context)
+    let output = crucible_runtime::answered!(tool.run(allowed(&tool, &args), &context))
         .expect("the command started");
     crate::sample::finalize_call_result(&context, &output);
     assert!(!output.is_failed(), "{}", output.text());
@@ -39,9 +38,10 @@ fn a_command_still_running_says_what_it_has_printed() {
     let tool = BashOutput::new(left.clone());
     let deadline = Instant::now() + Duration::from_secs(5);
     let text = loop {
-        let output = tool
-            .run(allowed(&tool, r#"{"number":1}"#), &crate::sample::context())
-            .expect("the registry answered");
+        let output = crucible_runtime::answered!(
+            tool.run(allowed(&tool, r#"{"number":1}"#), &crate::sample::context())
+        )
+        .expect("the registry answered");
         assert!(!output.is_failed(), "{}", output.text());
         if output.text().contains("listening on 5173") || Instant::now() >= deadline {
             break output.text().to_owned();
@@ -67,9 +67,10 @@ fn a_number_nothing_answers_to_says_what_is_running() {
     let _tool = started(&sample, &left, r#""sleep 30""#);
 
     let tool = BashOutput::new(left.clone());
-    let output = tool
-        .run(allowed(&tool, r#"{"number":9}"#), &crate::sample::context())
-        .expect("the registry answered");
+    let output = crucible_runtime::answered!(
+        tool.run(allowed(&tool, r#"{"number":9}"#), &crate::sample::context())
+    )
+    .expect("the registry answered");
 
     assert!(output.is_failed(), "{}", output.text());
     assert!(
@@ -94,9 +95,10 @@ fn a_command_that_has_printed_nothing_says_so_rather_than_nothing() {
     let _tool = started(&sample, &left, r#""sleep 30""#);
 
     let tool = BashOutput::new(left.clone());
-    let output = tool
-        .run(allowed(&tool, r#"{"number":1}"#), &crate::sample::context())
-        .expect("the registry answered");
+    let output = crucible_runtime::answered!(
+        tool.run(allowed(&tool, r#"{"number":1}"#), &crate::sample::context())
+    )
+    .expect("the registry answered");
 
     assert!(!output.is_failed(), "{}", output.text());
     assert!(

@@ -26,6 +26,7 @@ use crucible_core::{
     ToolOutput,
 };
 use crucible_runner::{EventEnvelope, Tools};
+use crucible_runtime::BoxFuture;
 use crucible_session::Session;
 use crucible_tui::{Editor, Recording, Renderer};
 
@@ -152,14 +153,16 @@ impl Tool for Counting {
         Summary::new(args.as_str())
     }
 
-    fn run(
-        &self,
+    fn run<'a>(
+        &'a self,
         _approved: Approved,
-        _context: &ToolContext<'_>,
-    ) -> Result<ToolOutput, ToolError> {
-        self.ran.fetch_add(1, Ordering::Relaxed);
-        (self.pressing)();
-        Ok(ToolOutput::ok("done"))
+        _context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            self.ran.fetch_add(1, Ordering::Relaxed);
+            (self.pressing)();
+            Ok(ToolOutput::ok("done"))
+        })
     }
 }
 

@@ -10,6 +10,7 @@ use crucible_core::{
     SandboxError, SandboxInspection, SandboxLaunch, SandboxOutput, SandboxProcess, SandboxRequest,
     SandboxService, SandboxSession, SandboxUsage, SandboxViolation,
 };
+use crucible_runtime::BoxFuture;
 use crucible_sandbox_local::LocalSandbox;
 
 pub(super) const PRIVATE_ERROR: &str = "synthetic-private-cleanup-details";
@@ -31,15 +32,22 @@ struct Fallible<T: ?Sized> {
 }
 
 impl SandboxService for Fallible<LocalSandbox> {
-    fn probe(&self) -> Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError> {
-        self.inner.probe()
+    fn probe(
+        &self,
+    ) -> BoxFuture<'_, Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>> {
+        Box::pin(async move { self.inner.probe().await })
     }
 
-    fn prepare(&self, request: SandboxRequest) -> Result<Box<dyn SandboxSession>, SandboxError> {
-        Ok(Box::new(Fallible {
-            inner: self.inner.prepare(request)?,
-            denied: Arc::clone(&self.denied),
-        }))
+    fn prepare(
+        &self,
+        request: SandboxRequest,
+    ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
+        Box::pin(async move {
+            Ok(Box::new(Fallible {
+                inner: self.inner.prepare(request).await?,
+                denied: Arc::clone(&self.denied),
+            }) as Box<dyn SandboxSession>)
+        })
     }
 }
 
@@ -48,18 +56,23 @@ impl SandboxSession for Fallible<dyn SandboxSession> {
         self.inner.inspection()
     }
 
-    fn materialize(&mut self) -> Result<(), SandboxError> {
-        self.inner.materialize()
+    fn materialize(&mut self) -> BoxFuture<'_, Result<(), SandboxError>> {
+        Box::pin(async move { self.inner.materialize().await })
     }
 
-    fn stage(
+    fn stage<'a>(
         self: Box<Self>,
         command: SandboxCommand,
-    ) -> Result<Box<dyn SandboxLaunch>, SandboxError> {
-        Ok(Box::new(Fallible {
-            inner: self.inner.stage(command)?,
-            denied: self.denied,
-        }))
+    ) -> BoxFuture<'a, Result<Box<dyn SandboxLaunch>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            Ok(Box::new(Fallible {
+                inner: self.inner.stage(command).await?,
+                denied: self.denied,
+            }) as Box<dyn SandboxLaunch>)
+        })
     }
 }
 
@@ -72,11 +85,16 @@ impl SandboxLaunch for Fallible<dyn SandboxLaunch> {
         self.inner.transfer_owner()
     }
 
-    fn release(self: Box<Self>) -> Result<Box<dyn SandboxProcess>, SandboxError> {
-        Ok(Box::new(Fallible {
-            inner: self.inner.release()?,
-            denied: self.denied,
-        }))
+    fn release<'a>(self: Box<Self>) -> BoxFuture<'a, Result<Box<dyn SandboxProcess>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            Ok(Box::new(Fallible {
+                inner: self.inner.release().await?,
+                denied: self.denied,
+            }) as Box<dyn SandboxProcess>)
+        })
     }
 }
 
@@ -101,12 +119,14 @@ impl SandboxProcess for Fallible<dyn SandboxProcess> {
         self.inner.ended()
     }
 
-    fn stop(&mut self) -> io::Result<()> {
-        if self.denied.swap(false, Ordering::Relaxed) {
-            Err(io::Error::other(PRIVATE_ERROR))
-        } else {
-            self.inner.stop()
-        }
+    fn stop(&mut self) -> BoxFuture<'_, io::Result<()>> {
+        Box::pin(async move {
+            if self.denied.swap(false, Ordering::Relaxed) {
+                Err(io::Error::other(PRIVATE_ERROR))
+            } else {
+                self.inner.stop().await
+            }
+        })
     }
 
     fn inspection(&self) -> &SandboxInspection {
@@ -121,15 +141,18 @@ impl SandboxProcess for Fallible<dyn SandboxProcess> {
         self.inner.violation()
     }
 
-    fn begin_background_acceptance(&mut self, key: CallResultKey) -> Result<(), SandboxError> {
-        self.inner.begin_background_acceptance(key)
+    fn begin_background_acceptance(
+        &mut self,
+        key: CallResultKey,
+    ) -> BoxFuture<'_, Result<(), SandboxError>> {
+        Box::pin(async move { self.inner.begin_background_acceptance(key).await })
     }
 
     fn complete_background_acceptance(
         &mut self,
         receipt: CallResultReceipt,
-    ) -> Result<(), SandboxError> {
-        self.inner.complete_background_acceptance(receipt)
+    ) -> BoxFuture<'_, Result<(), SandboxError>> {
+        Box::pin(async move { self.inner.complete_background_acceptance(receipt).await })
     }
 }
 

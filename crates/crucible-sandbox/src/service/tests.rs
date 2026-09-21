@@ -460,8 +460,8 @@ impl SandboxProcess for Counted {
         Ok(self.exited.then(ended_status))
     }
 
-    fn stop(&mut self) -> io::Result<()> {
-        Ok(())
+    fn stop(&mut self) -> BoxFuture<'_, io::Result<()>> {
+        Box::pin(std::future::ready(Ok(())))
     }
 
     fn inspection(&self) -> &SandboxInspection {

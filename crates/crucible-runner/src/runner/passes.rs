@@ -24,6 +24,7 @@ use crucible_core::{
     Ask, Compacting, Message, ProviderContinuation, ProviderError, RunId, Spend, StopReason,
     ToolCall, ToolsetContext,
 };
+use crucible_runtime::Bridge;
 
 use crate::context::RunContext;
 use crate::outcome::{RunResult, Turned};
@@ -205,7 +206,24 @@ impl<'a> AgentLoop<'a> {
     /// nothing, and [`TurnError::Refused`] where the reader declined a call.
     /// None of the four is a failure, and all four end a turn the way one
     /// does, which is why they leave through here rather than through
-    /// [`StopReason`].
+    /// [`StopReason`]. A step that would have had to wait ends it wherever
+    /// [`Runner::turn`] says one does, and leaves what that says: as
+    /// [`TurnError::Unready`], as [`TurnError::RecordUnready`] beside what
+    /// ended the turn where it was the write of what the turn had reached, or
+    /// as the source's failure where it was a tool source's own step.
+    ///
+    /// Every step the turn crosses to that would have had to wait ends it on
+    /// the refusal, even where a stop was asked for, except a call's run and a
+    /// background result's acceptance, which never end it on a refusal:
+    /// [`Runner::turn`] says what becomes of each. The turn's requests to the
+    /// model, its cache steps, its session lines and its toolset's steps all
+    /// end it so. The line recording the last answer, the part of an answer a
+    /// full window cut short, and the results of a pass are each written
+    /// before the ending they lead to is reached, so a refusal of one is what
+    /// the turn ends on. A compaction's steps end it as [`Runner::compact`]
+    /// says. A pass that ended on a refused call or on the output boundary,
+    /// and whose results line was refused, ends as
+    /// [`TurnError::RecordUnready`] with both.
     pub(super) fn drive(&mut self, counting: &mut Counting) -> Result<Ending, TurnError> {
         let run = self.run;
         let events = run.reporting();
@@ -229,10 +247,12 @@ impl<'a> AgentLoop<'a> {
             } else {
                 self.runner.toolset.refresh(self.toolsets)
             };
-            let tools = super::combine_sandbox_audit(
-                tools.map_err(TurnError::from),
-                self.runner.flush_sandbox_audits(events),
-            )?;
+            let tools = Bridge::TurnTools
+                .cross(tools)
+                .map_err(TurnError::from)
+                .and_then(|tools| tools.map_err(TurnError::from));
+            let tools =
+                super::combine_sandbox_audit(tools, self.runner.flush_sandbox_audits(events))?;
             // Narrowed to what this agent declares, against the exact
             // generation the pass admitted rather than a later one. The
             // request advertises this and a call is admitted through this, so
@@ -447,8 +467,12 @@ impl<'a> AgentLoop<'a> {
 
             bounds.tool_output = bounds.tool_output.saturating_add(output_bytes);
 
-            self.runner
-                .record(run.ancestry(), Message::ToolResults(results))?;
+            if let Err(problem) = self
+                .runner
+                .record(run.ancestry(), Message::ToolResults(results))
+            {
+                return Err(unrecorded(problem, went, tool_output_maximum));
+            }
             events.post(Event::Carried {
                 left: self
                     .runner
@@ -468,5 +492,31 @@ impl<'a> AgentLoop<'a> {
                 }
             }
         }
+    }
+}
+
+/// How a pass ends when recording its results met `problem`, given how the
+/// pass went.
+///
+/// A refusal outranks a stop. The results line is written before the pass's
+/// ending is reached, and a write that would have had to wait was dropped
+/// before it answered, so a pass that a stop ended, or that would have gone
+/// on, ends as that refusal: a clean stop would say nothing of a line that
+/// may be missing from the log. A pass that ended on a call the reader
+/// refused, or on the output boundary, ends on that with the refusal beside
+/// it, since either alone would hide the other. Whatever else recording the
+/// results met is returned as it is.
+fn unrecorded(problem: TurnError, went: Went, maximum: usize) -> TurnError {
+    let TurnError::Unready(record) = problem else {
+        return problem;
+    };
+    let primary = match went {
+        Went::On | Went::Stopped(_) => return TurnError::Unready(record),
+        Went::Refused(name) => TurnError::Refused(name),
+        Went::OutputLimit => TurnError::ToolOutputBytes { maximum },
+    };
+    TurnError::RecordUnready {
+        primary: Box::new(primary),
+        record,
     }
 }

@@ -8,6 +8,7 @@ use crucible_core::{
     Summary, Target, Tool, ToolArgs, ToolContext, ToolDescriptor, ToolEntry, ToolError, ToolOutput,
     ToolProvenance, ToolSnapshot, ToolSourceKind, Toolset, ToolsetContext, ToolsetError, Verdict,
 };
+use crucible_runtime::{BoxFuture, Bridge};
 
 use super::*;
 
@@ -19,6 +20,15 @@ struct Live {
     disposed: Arc<AtomicBool>,
     prepare_fails: bool,
     dispose_fails: bool,
+    /// The step that never answers, so a turn that cannot wait drops it.
+    waits: Option<Waits>,
+}
+
+/// The one step of a [`Live`] toolset that never answers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Waits {
+    Preparing,
+    Disposing,
 }
 
 impl Live {
@@ -29,6 +39,7 @@ impl Live {
             disposed: Arc::new(AtomicBool::new(true)),
             prepare_fails: false,
             dispose_fails: false,
+            waits: None,
         }
     }
 
@@ -56,6 +67,11 @@ impl Live {
         self
     }
 
+    fn waiting(mut self, at: Waits) -> Self {
+        self.waits = Some(at);
+        self
+    }
+
     fn calls(&self) -> Vec<&'static str> {
         self.calls.lock().unwrap().clone()
     }
@@ -66,41 +82,67 @@ impl Live {
 }
 
 impl Toolset for Live {
-    fn prepare(&self, _context: &ToolsetContext) -> Result<(), ToolsetError> {
-        self.disposed.store(false, Ordering::Release);
-        self.saw("prepare");
-        if self.prepare_fails {
-            Err(ToolsetError::Entries {
-                maximum: 0,
-                actual: 1,
-            })
-        } else {
-            Ok(())
-        }
+    fn prepare<'a>(
+        &'a self,
+        _context: &'a ToolsetContext,
+    ) -> BoxFuture<'a, Result<(), ToolsetError>> {
+        Box::pin(async move {
+            self.disposed.store(false, Ordering::Release);
+            self.saw("prepare");
+            if self.waits == Some(Waits::Preparing) {
+                std::future::pending::<()>().await;
+            }
+            if self.prepare_fails {
+                Err(ToolsetError::Entries {
+                    maximum: 0,
+                    actual: 1,
+                })
+            } else {
+                Ok(())
+            }
+        })
     }
 
-    fn snapshot(&self, _context: &ToolsetContext) -> Result<ToolSnapshot, ToolsetError> {
-        self.saw("snapshot");
-        Ok(self.snapshot.clone())
+    fn snapshot<'a>(
+        &'a self,
+        _context: &'a ToolsetContext,
+    ) -> BoxFuture<'a, Result<ToolSnapshot, ToolsetError>> {
+        Box::pin(async move {
+            self.saw("snapshot");
+            Ok(self.snapshot.clone())
+        })
     }
 
-    fn refresh(&self, _context: &ToolsetContext) -> Result<ToolSnapshot, ToolsetError> {
-        self.saw("refresh");
-        Ok(self.snapshot.clone())
+    fn refresh<'a>(
+        &'a self,
+        _context: &'a ToolsetContext,
+    ) -> BoxFuture<'a, Result<ToolSnapshot, ToolsetError>> {
+        Box::pin(async move {
+            self.saw("refresh");
+            Ok(self.snapshot.clone())
+        })
     }
 
-    fn dispose(&self, _context: &ToolsetContext) -> Result<(), ToolsetError> {
-        if !self.disposed.swap(true, Ordering::AcqRel) {
-            self.saw("dispose");
-        }
-        if self.dispose_fails {
-            Err(ToolsetError::Bytes {
-                maximum: 0,
-                actual: 1,
-            })
-        } else {
-            Ok(())
-        }
+    fn dispose<'a>(
+        &'a self,
+        _context: &'a ToolsetContext,
+    ) -> BoxFuture<'a, Result<(), ToolsetError>> {
+        Box::pin(async move {
+            if !self.disposed.swap(true, Ordering::AcqRel) {
+                self.saw("dispose");
+            }
+            if self.waits == Some(Waits::Disposing) {
+                std::future::pending::<()>().await;
+            }
+            if self.dispose_fails {
+                Err(ToolsetError::Bytes {
+                    maximum: 0,
+                    actual: 1,
+                })
+            } else {
+                Ok(())
+            }
+        })
     }
 }
 
@@ -157,13 +199,15 @@ impl Tool for Marks {
         Summary::new(self.version)
     }
 
-    fn run(
-        &self,
+    fn run<'a>(
+        &'a self,
         _approved: Approved,
-        _context: &ToolContext<'_>,
-    ) -> Result<ToolOutput, ToolError> {
-        self.ran.lock().unwrap().push(self.version);
-        Ok(ToolOutput::ok(self.version))
+        _context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            self.ran.lock().unwrap().push(self.version);
+            Ok(ToolOutput::ok(self.version))
+        })
     }
 }
 
@@ -217,24 +261,44 @@ impl Changing {
 }
 
 impl Toolset for Changing {
-    fn prepare(&self, _context: &ToolsetContext) -> Result<(), ToolsetError> {
-        self.calls.lock().unwrap().push("prepare");
-        Ok(())
+    fn prepare<'a>(
+        &'a self,
+        _context: &'a ToolsetContext,
+    ) -> BoxFuture<'a, Result<(), ToolsetError>> {
+        Box::pin(async move {
+            self.calls.lock().unwrap().push("prepare");
+            Ok(())
+        })
     }
 
-    fn snapshot(&self, _context: &ToolsetContext) -> Result<ToolSnapshot, ToolsetError> {
-        self.calls.lock().unwrap().push("snapshot");
-        Ok(self.old.clone())
+    fn snapshot<'a>(
+        &'a self,
+        _context: &'a ToolsetContext,
+    ) -> BoxFuture<'a, Result<ToolSnapshot, ToolsetError>> {
+        Box::pin(async move {
+            self.calls.lock().unwrap().push("snapshot");
+            Ok(self.old.clone())
+        })
     }
 
-    fn refresh(&self, _context: &ToolsetContext) -> Result<ToolSnapshot, ToolsetError> {
-        self.calls.lock().unwrap().push("refresh");
-        Ok(self.new.clone())
+    fn refresh<'a>(
+        &'a self,
+        _context: &'a ToolsetContext,
+    ) -> BoxFuture<'a, Result<ToolSnapshot, ToolsetError>> {
+        Box::pin(async move {
+            self.calls.lock().unwrap().push("refresh");
+            Ok(self.new.clone())
+        })
     }
 
-    fn dispose(&self, _context: &ToolsetContext) -> Result<(), ToolsetError> {
-        self.calls.lock().unwrap().push("dispose");
-        Ok(())
+    fn dispose<'a>(
+        &'a self,
+        _context: &'a ToolsetContext,
+    ) -> BoxFuture<'a, Result<(), ToolsetError>> {
+        Box::pin(async move {
+            self.calls.lock().unwrap().push("dispose");
+            Ok(())
+        })
     }
 }
 
@@ -320,10 +384,10 @@ fn cancellation_from_a_running_tool_disposes_the_prepared_toolset() {
 fn repeated_disposal_reuses_the_first_cleanup_outcome_without_repeating_effects() {
     let live = Live::new().failing_dispose();
     let context = ToolsetContext::new(Ancestry::new(), Cancel::new(), None);
-    live.prepare(&context).unwrap();
+    crucible_runtime::answered!(live.prepare(&context)).unwrap();
 
-    assert!(live.dispose(&context).is_err());
-    assert!(live.dispose(&context).is_err());
+    assert!(crucible_runtime::answered!(live.dispose(&context)).is_err());
+    assert!(crucible_runtime::answered!(live.dispose(&context)).is_err());
 
     assert_eq!(live.calls(), ["prepare", "dispose"]);
 }
@@ -336,4 +400,46 @@ fn cleanup_failure_does_not_hide_the_failure_that_required_cleanup() {
 
     assert!(matches!(problem, TurnError::ToolsetCleanup { .. }));
     assert_eq!(live.calls(), ["prepare", "dispose"]);
+}
+
+#[test]
+fn a_preparation_that_never_answers_ends_the_turn_refused_and_is_still_disposed() {
+    let live = Live::new().waiting(Waits::Preparing);
+
+    let problem = run(live.clone(), Script::new(Vec::new())).unwrap_err();
+
+    assert!(
+        matches!(
+            &problem,
+            TurnError::Unready(unready) if unready.bridge() == Bridge::TurnTools
+        ),
+        "{problem:?}"
+    );
+    assert_eq!(live.calls(), ["prepare", "dispose"]);
+}
+
+#[test]
+fn a_disposal_that_never_answers_does_not_hide_the_failure_that_required_it() {
+    let live = Live::new().waiting(Waits::Disposing);
+
+    let problem = run(live.clone(), Script::failing()).unwrap_err();
+    let shown = problem.to_string();
+
+    match problem {
+        TurnError::ToolsetCleanupUnready { primary, cleanup } => {
+            assert!(matches!(*primary, TurnError::Provider(_)), "{primary:?}");
+            assert_eq!(cleanup.bridge(), Bridge::TurnTools);
+            // The disposal was dropped before it answered: the reader is told
+            // that it is unconfirmed, not that it failed, and not whether it
+            // happened.
+            assert_eq!(
+                shown,
+                "script: HTTP 401: no; then disposing of the toolset: the turn's tools would \
+                 have had to wait, and the caller cannot; the waiting step was dropped before it \
+                 answered, so whatever that step began is unconfirmed"
+            );
+        }
+        other => panic!("the failure and the refusal together, not {other:?}"),
+    }
+    assert_eq!(live.calls(), ["prepare", "snapshot", "dispose"]);
 }

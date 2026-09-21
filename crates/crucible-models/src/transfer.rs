@@ -62,7 +62,7 @@ pub fn transfer<'a>(
 
 #[cfg(test)]
 mod tests {
-    use crucible_runtime::Cancel;
+    use crucible_runtime::{BoxFuture, Cancel};
     use crucible_types::{CredentialScopeId, Modalities, PromptCacheEncoding, ResultProvenance};
 
     use super::{Transfer, transfer};
@@ -119,14 +119,16 @@ mod tests {
         fn prompt_cache_encoding(&self, _request: &Request<'_>) -> PromptCacheEncoding {
             PromptCacheEncoding::NoControlIntended
         }
-        fn stream(
-            &self,
-            _request: Request<'_>,
-            _cancel: &Cancel,
-        ) -> Result<Box<dyn DeltaStream>, ProviderError> {
-            Err(ProviderError::Unconfigured(
-                "a test provider answers nothing".into(),
-            ))
+        fn stream<'a>(
+            &'a self,
+            _request: Request<'a>,
+            _cancel: &'a Cancel,
+        ) -> BoxFuture<'a, Result<Box<dyn DeltaStream>, ProviderError>> {
+            Box::pin(async {
+                Err(ProviderError::Unconfigured(
+                    "a test provider answers nothing".into(),
+                ))
+            })
         }
     }
 

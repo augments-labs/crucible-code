@@ -14,6 +14,7 @@ use crucible_core::{
     ProviderError, Request, Sensitivity, Summary, Target, Tool, ToolArgs, ToolContext, ToolError,
     ToolOutput,
 };
+use crucible_runtime::BoxFuture;
 
 /// How many requests a script has been given, readable after it has moved into
 /// a runner.
@@ -104,51 +105,56 @@ impl Provider for Script {
         PromptCacheEncoding::NoControlIntended
     }
 
-    fn stream(
-        &self,
-        request: Request<'_>,
-        _cancel: &Cancel,
-    ) -> Result<Box<dyn DeltaStream>, ProviderError> {
-        self.asked.fetch_add(1, Ordering::Relaxed);
+    fn stream<'a>(
+        &'a self,
+        request: Request<'a>,
+        _cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<Box<dyn DeltaStream>, ProviderError>> {
+        Box::pin(async move {
+            self.asked.fetch_add(1, Ordering::Relaxed);
 
-        // A poisoned lock is a panic in another test's thread, which this one
-        // cannot report better than by having nothing to assert on.
-        if let Ok(mut under) = self.under.lock() {
-            let mut assembled = request.system.unwrap_or_default().to_owned();
-            for fragment in request
-                .transcript
-                .messages()
-                .iter()
-                .filter_map(|message| match message {
-                    Message::Context(fragment) => Some(fragment),
-                    Message::User { .. } | Message::Agent { .. } | Message::ToolResults(_) => None,
-                })
-            {
-                assembled.push_str("\n\n");
-                assembled.push_str(fragment.text());
+            // A poisoned lock is a panic in another test's thread, which this one
+            // cannot report better than by having nothing to assert on.
+            if let Ok(mut under) = self.under.lock() {
+                let mut assembled = request.system.unwrap_or_default().to_owned();
+                for fragment in
+                    request
+                        .transcript
+                        .messages()
+                        .iter()
+                        .filter_map(|message| match message {
+                            Message::Context(fragment) => Some(fragment),
+                            Message::User { .. }
+                            | Message::Agent { .. }
+                            | Message::ToolResults(_) => None,
+                        })
+                {
+                    assembled.push_str("\n\n");
+                    assembled.push_str(fragment.text());
+                }
+                under.push(assembled);
             }
-            under.push(assembled);
-        }
 
-        if self.refusing {
-            return Err(ProviderError::Refused {
-                provider: "script",
-                status: 401,
-                message: "no".into(),
-            });
-        }
+            if self.refusing {
+                return Err(ProviderError::Refused {
+                    provider: "script",
+                    status: 401,
+                    message: "no".into(),
+                });
+            }
 
-        let round = self
-            .rounds
-            .lock()
-            .map_err(|_| ProviderError::Transport {
-                provider: "script",
-                problem: "poisoned".into(),
-            })?
-            .next()
-            .unwrap_or_default();
+            let round = self
+                .rounds
+                .lock()
+                .map_err(|_| ProviderError::Transport {
+                    provider: "script",
+                    problem: "poisoned".into(),
+                })?
+                .next()
+                .unwrap_or_default();
 
-        Ok(Box::new(Reading(round.into_iter())))
+            Ok(Box::new(Reading(round.into_iter())) as Box<dyn DeltaStream>)
+        })
     }
 }
 
@@ -156,8 +162,8 @@ impl Provider for Script {
 struct Reading(std::vec::IntoIter<Delta>);
 
 impl DeltaStream for Reading {
-    fn next(&mut self) -> Option<Result<Delta, ProviderError>> {
-        self.0.next().map(Ok)
+    fn next(&mut self) -> BoxFuture<'_, Option<Result<Delta, ProviderError>>> {
+        Box::pin(async move { self.0.next().map(Ok) })
     }
 }
 
@@ -216,15 +222,17 @@ impl Provider for Stalling {
         PromptCacheEncoding::NoControlIntended
     }
 
-    fn stream(
-        &self,
-        _request: Request<'_>,
-        cancel: &Cancel,
-    ) -> Result<Box<dyn DeltaStream>, ProviderError> {
-        Ok(Box::new(Quiet {
-            cancel: cancel.clone(),
-            escaped: Arc::clone(&self.escaped),
-        }))
+    fn stream<'a>(
+        &'a self,
+        _request: Request<'a>,
+        cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<Box<dyn DeltaStream>, ProviderError>> {
+        Box::pin(async move {
+            Ok(Box::new(Quiet {
+                cancel: cancel.clone(),
+                escaped: Arc::clone(&self.escaped),
+            }) as Box<dyn DeltaStream>)
+        })
     }
 }
 
@@ -235,20 +243,22 @@ struct Quiet {
 }
 
 impl DeltaStream for Quiet {
-    fn next(&mut self) -> Option<Result<Delta, ProviderError>> {
-        let escape = Instant::now() + Duration::from_millis(250);
-        while !self.cancel.requested() {
-            if Instant::now() >= escape {
-                self.escaped.store(true, Ordering::Release);
-                return Some(Err(ProviderError::Transport {
-                    provider: "stalling",
-                    problem: "test escape deadline elapsed".into(),
-                }));
+    fn next(&mut self) -> BoxFuture<'_, Option<Result<Delta, ProviderError>>> {
+        Box::pin(async move {
+            let escape = Instant::now() + Duration::from_millis(250);
+            while !self.cancel.requested() {
+                if Instant::now() >= escape {
+                    self.escaped.store(true, Ordering::Release);
+                    return Some(Err(ProviderError::Transport {
+                        provider: "stalling",
+                        problem: "test escape deadline elapsed".into(),
+                    }));
+                }
+                std::thread::park_timeout(Duration::from_millis(1));
             }
-            std::thread::park_timeout(Duration::from_millis(1));
-        }
 
-        Some(Err(ProviderError::Cancelled("stalling")))
+            Some(Err(ProviderError::Cancelled("stalling")))
+        })
     }
 }
 
@@ -296,12 +306,12 @@ impl Tool for Fixed {
         Summary::new(args.as_str())
     }
 
-    fn run(
-        &self,
+    fn run<'a>(
+        &'a self,
         _approved: Approved,
-        _context: &ToolContext<'_>,
-    ) -> Result<ToolOutput, ToolError> {
-        Ok(ToolOutput::ok(self.answer))
+        _context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move { Ok(ToolOutput::ok(self.answer)) })
     }
 }
 

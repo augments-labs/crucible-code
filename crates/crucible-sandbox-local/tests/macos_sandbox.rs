@@ -99,9 +99,10 @@ fn command(program: &str, arguments: impl IntoIterator<Item = OsString>) -> Sand
 
 fn start(request: SandboxRequest, command: SandboxCommand) -> Box<dyn SandboxProcess> {
     let service = LocalSandbox::new();
-    let mut session = service.prepare(request).expect("prepared sandbox");
-    session.materialize().expect("materialized sandbox");
-    session.start(command).expect("started command")
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request)).expect("prepared sandbox");
+    crucible_runtime::answered!(session.materialize()).expect("materialized sandbox");
+    crucible_runtime::answered!(session.start(command)).expect("started command")
 }
 
 fn finish(mut process: Box<dyn SandboxProcess>) -> (std::process::ExitStatus, Vec<u8>, Vec<u8>) {
@@ -118,7 +119,7 @@ fn finish(mut process: Box<dyn SandboxProcess>) -> (std::process::ExitStatus, Ve
         assert!(Instant::now() < deadline, "sandbox command timed out");
         thread::sleep(Duration::from_millis(10));
     }
-    process.stop().expect("cleanup");
+    crucible_runtime::answered!(process.stop()).expect("cleanup");
     (status.expect("status"), output, errors)
 }
 

@@ -31,6 +31,7 @@
 use std::fmt::Write as _;
 use std::sync::{Arc, LazyLock};
 
+use crucible_runtime::BoxFuture;
 use crucible_tools::{
     Approved, DescribeTool, Put, Sensitivity, Summary, Target, Tool, ToolContext, ToolError,
     ToolOutput,
@@ -280,17 +281,23 @@ impl Tool for AskUser {
         }
     }
 
-    fn run(&self, approved: Approved, _context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
-        let args = Args::parse(NAME, approved.args())?;
-        let asked = questions(&args)?;
+    fn run<'a>(
+        &'a self,
+        approved: Approved,
+        _context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            let args = Args::parse(NAME, approved.args())?;
+            let asked = questions(&args)?;
 
-        let Some(given) = self.put.put(&asked) else {
-            return Ok(ToolOutput::ok(
-                "Nobody answered. Ask in the prompt instead, in your own words.",
-            ));
-        };
+            let Some(given) = self.put.put(&asked) else {
+                return Ok(ToolOutput::ok(
+                    "Nobody answered. Ask in the prompt instead, in your own words.",
+                ));
+            };
 
-        Ok(ToolOutput::ok(said(&asked, &given)))
+            Ok(ToolOutput::ok(said(&asked, &given)))
+        })
     }
 }
 

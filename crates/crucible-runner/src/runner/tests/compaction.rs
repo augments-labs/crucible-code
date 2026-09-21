@@ -1,7 +1,9 @@
 //! What making room changes, preserves, and reports.
 
+use super::unanswered::{Withheld, Withholding};
 use super::*;
 use crucible_core::TOOL_RESULT_BYTES;
+use crucible_runtime::Bridge;
 
 /// A response that reports it carried `carried` tokens and then calls a tool.
 fn carrying(carried: u64, id: &str) -> Vec<Delta> {
@@ -651,6 +653,52 @@ fn a_full_window_prunes_tool_output_from_the_active_turn_and_carries_on() {
             .count(),
         3,
         "the durable provider transcript lost its model-visible elision accounting"
+    );
+}
+
+#[test]
+fn a_pruning_the_session_never_takes_ends_the_turn_refused() {
+    // The window of the test above, over a session that never answers the
+    // pruning's line. The transcript has moved by then and the log may not
+    // have, so the turn stops there rather than asking on from a record that
+    // cannot say what it holds.
+    let script = Script::new(vec![
+        calling("a", "read", "{}"),
+        calling("b", "read", "{}"),
+        calling("c", "read", "{}"),
+        saying("never asked"),
+    ]);
+    let output = "x".repeat(90_000);
+    let store = Recording::started("making room");
+    let mut scripted = Scripted::recording(
+        script,
+        tools([Fixed::new("read").answering(&output)]),
+        Verdict::Allow,
+        Arc::clone(&store),
+    );
+    scripted.runner.store = Arc::new(Withholding {
+        recording: store,
+        withheld: Withheld::Pruned,
+    });
+    scripted.runner.state.window = Some(25_000);
+    scripted.runner.policy.compaction = Compaction {
+        reserve: Some(1),
+        ..Compaction::default()
+    };
+
+    let problem = scripted.turn("go").unwrap_err();
+
+    assert!(
+        matches!(
+            &problem,
+            TurnError::Unready(unready) if unready.bridge() == Bridge::TurnSession
+        ),
+        "{problem:?}"
+    );
+    assert_eq!(
+        scripted.asked(),
+        [7, 9, 11],
+        "the request the pruning made room for was sent anyway"
     );
 }
 

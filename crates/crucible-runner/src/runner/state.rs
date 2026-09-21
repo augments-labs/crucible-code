@@ -66,6 +66,15 @@ pub struct RunState {
 
     /// The scope the last attempt's persistent resources were owned under.
     pub(super) prompt_cache_owner_scope: Option<PromptCacheScopeDigest>,
+
+    /// The first line the session would not take between turns, held for the
+    /// next turn or compaction to end on before it records or sends anything.
+    ///
+    /// Only the first refusal is kept. It survives picking a session up and is
+    /// then reported on the session picked up, naming the bridge rather than
+    /// the session; one still held when the runner is dropped is reported to
+    /// nobody.
+    pub(super) unwritten: Option<crucible_runtime::Unready>,
 }
 
 impl RunState {
@@ -81,6 +90,7 @@ impl RunState {
             checked: None,
             prompt_cache_attempt: None,
             prompt_cache_owner_scope: None,
+            unwritten: None,
         }
     }
 

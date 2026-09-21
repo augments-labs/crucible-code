@@ -24,17 +24,28 @@
 //! dropped, because a reader shown a truncated stream that does not say it was
 //! truncated has been told something false.
 //!
+//! Where the service contracts hand back a future and the caller is still
+//! synchronous, [`Bridge`] is how it crosses: once, without waiting, and with
+//! [`Unready`] where the future would have had to wait. Its variants are the
+//! ledger of every such caller, and [`BoxFuture`] is the one shape every
+//! contract hands back.
+//!
 //! Nothing here starts a runtime. A library that built its own would decide
 //! for the application how many threads it gets; [`Group`] runs on the runtime
-//! of whoever called it.
+//! of whoever called it, and a crossing enters none.
 
 mod aside;
+mod bridge;
 mod cancel;
 mod group;
 mod progress;
 mod steer;
 
 pub use aside::Aside;
+#[cfg(feature = "proof")]
+#[doc(hidden)]
+pub use bridge::__answered;
+pub use bridge::{BoxFuture, Bridge, Unready};
 pub use cancel::Cancel;
 pub use group::{Ended, Full, Group};
 pub use progress::{Progress, Told};

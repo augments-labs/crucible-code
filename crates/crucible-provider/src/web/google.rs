@@ -7,7 +7,7 @@ use super::{CEILING, FETCH_CEILING, host_of};
 use crate::{Endpoint, Transport};
 use crucible_core::{Fetch, Host, Page, Search, SearchResponse, SourceError};
 use crucible_credentials::{Credential, Outgoing};
-use crucible_models::{Delta, DeltaStream};
+use crucible_models::Delta;
 use crucible_runtime::Cancel;
 use crucible_types::{ContinuationScope, ProviderContinuation, StopReason};
 
@@ -114,7 +114,7 @@ impl GoogleWeb {
         let mut text = String::new();
         let mut state = None;
         let mut stop = None;
-        while let Some(delta) = stream.next() {
+        while let Some(delta) = stream.next_delta() {
             if cancel.requested() {
                 return Err(SourceError::Cancelled(NAME));
             }

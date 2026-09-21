@@ -443,6 +443,7 @@ dependencies = [
  "crucible-privacy",
  "crucible-provider",
  "crucible-runner",
+ "crucible-runtime",
  "crucible-sandbox-broker",
  "crucible-sandbox-local",
  "crucible-session",
@@ -510,6 +511,7 @@ name = "crucible-extension"
 version = "0.42.0"
 dependencies = [
  "crucible-registry",
+ "crucible-runtime",
  "crucible-sandbox",
  "crucible-transport",
  "crucible-types",
@@ -583,6 +585,7 @@ dependencies = [
  "crucible-context",
  "crucible-core",
  "crucible-models",
+ "crucible-runtime",
  "crucible-types",
  "sha2",
  "thiserror",
@@ -599,6 +602,7 @@ dependencies = [
 name = "crucible-sandbox"
 version = "0.42.0"
 dependencies = [
+ "crucible-runtime",
  "crucible-storage",
  "crucible-types",
  "crucible-workspace",
@@ -624,6 +628,7 @@ version = "0.42.0"
 dependencies = [
  "base64 0.23.1",
  "crucible-privacy",
+ "crucible-runtime",
  "crucible-sandbox",
  "crucible-sandbox-broker",
  "crucible-storage",
@@ -643,6 +648,7 @@ version = "0.42.0"
 dependencies = [
  "crucible-core",
  "crucible-privacy",
+ "crucible-runtime",
  "crucible-storage",
  "crucible-types",
  "serde_json",

@@ -18,6 +18,7 @@
 
 use std::sync::LazyLock;
 
+use crucible_runtime::BoxFuture;
 use crucible_tools::{
     Approved, DescribeTool, Sensitivity, Summary, Target, Tool, ToolContext, ToolError, ToolOutput,
 };
@@ -107,25 +108,31 @@ impl Tool for BashOutput {
             )
     }
 
-    fn run(&self, approved: Approved, _context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
-        let args = Args::parse(NAME, approved.args())?;
-        let number = asked(&args)?;
+    fn run<'a>(
+        &'a self,
+        approved: Approved,
+        _context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            let args = Args::parse(NAME, approved.args())?;
+            let number = asked(&args)?;
 
-        let Some(printed) = self.left.wrote(number) else {
-            return Ok(ToolOutput::failed(missing(number, &self.left)));
-        };
+            let Some(printed) = self.left.wrote(number) else {
+                return Ok(ToolOutput::failed(missing(number, &self.left)));
+            };
 
-        // Both of a command's streams are kept to the retained ceiling apiece,
-        // so what the registry hands over can be twice what one answer may
-        // carry. Cut here, where it becomes an answer.
-        let printed = super::output::excerpt(&printed, super::output::CAPTURE_TEXT);
-        if printed.trim().is_empty() {
-            return Ok(ToolOutput::ok(format!(
-                "[#{number} is running and has printed nothing yet]"
-            )));
-        }
+            // Both of a command's streams are kept to the retained ceiling apiece,
+            // so what the registry hands over can be twice what one answer may
+            // carry. Cut here, where it becomes an answer.
+            let printed = super::output::excerpt(&printed, super::output::CAPTURE_TEXT);
+            if printed.trim().is_empty() {
+                return Ok(ToolOutput::ok(format!(
+                    "[#{number} is running and has printed nothing yet]"
+                )));
+            }
 
-        Ok(ToolOutput::ok(printed))
+            Ok(ToolOutput::ok(printed))
+        })
     }
 }
 

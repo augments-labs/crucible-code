@@ -48,7 +48,7 @@ pub(super) mod tests {
     /// Every delta a response produces.
     pub(in crate::anthropic) fn deltas(stream: &mut dyn DeltaStream) -> Vec<Delta> {
         let mut out = Vec::new();
-        while let Some(delta) = stream.next() {
+        while let Some(delta) = crucible_runtime::answered!(stream.next()) {
             out.push(delta.unwrap());
         }
         out
@@ -120,15 +120,20 @@ pub(super) mod tests {
         );
         let mut stream = reading(body, &Cancel::new());
 
-        assert_eq!(stream.next().unwrap().unwrap(), Delta::Text("Hel".into()));
-        let problem = stream.next().unwrap().unwrap_err();
+        assert_eq!(
+            crucible_runtime::answered!(stream.next()).unwrap().unwrap(),
+            Delta::Text("Hel".into())
+        );
+        let problem = crucible_runtime::answered!(stream.next())
+            .unwrap()
+            .unwrap_err();
 
         assert_eq!(
             problem.to_string(),
             "anthropic: overloaded_error: Overloaded"
         );
         assert!(
-            stream.next().is_none(),
+            crucible_runtime::answered!(stream.next()).is_none(),
             "the stream continued past a failure"
         );
     }
@@ -140,14 +145,19 @@ pub(super) mod tests {
         let body = "event: content_block_delta\ndata: {\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hel\"}}\n\n";
         let mut stream = reading(body, &Cancel::new());
 
-        assert_eq!(stream.next().unwrap().unwrap(), Delta::Text("Hel".into()));
-        let problem = stream.next().unwrap().unwrap_err();
+        assert_eq!(
+            crucible_runtime::answered!(stream.next()).unwrap().unwrap(),
+            Delta::Text("Hel".into())
+        );
+        let problem = crucible_runtime::answered!(stream.next())
+            .unwrap()
+            .unwrap_err();
 
         assert!(
             matches!(problem, ProviderError::Transport { .. }),
             "expected a truncated response to be reported, got {problem:?}"
         );
-        assert!(stream.next().is_none());
+        assert!(crucible_runtime::answered!(stream.next()).is_none());
     }
 
     #[test]
@@ -156,7 +166,7 @@ pub(super) mod tests {
 
         deltas(&mut stream);
 
-        assert!(stream.next().is_none());
+        assert!(crucible_runtime::answered!(stream.next()).is_none());
     }
 
     #[test]
@@ -165,14 +175,20 @@ pub(super) mod tests {
         let cancel = Cancel::new();
         let mut stream = reading(ANSWER, &cancel);
 
-        assert_eq!(stream.next().unwrap().unwrap(), Delta::Text("Hello".into()));
+        assert_eq!(
+            crucible_runtime::answered!(stream.next()).unwrap().unwrap(),
+            Delta::Text("Hello".into())
+        );
         cancel.request();
 
         assert_eq!(
-            stream.next().unwrap().unwrap(),
+            crucible_runtime::answered!(stream.next()).unwrap().unwrap(),
             Delta::Stopped(StopReason::Cancelled)
         );
-        assert!(stream.next().is_none(), "the stream continued after a stop");
+        assert!(
+            crucible_runtime::answered!(stream.next()).is_none(),
+            "the stream continued after a stop"
+        );
     }
 
     #[test]
@@ -196,14 +212,17 @@ pub(super) mod tests {
             crucible_credentials::Redactions::default(),
         );
 
-        assert_eq!(stream.next().unwrap().unwrap(), Delta::Text("Hel".into()));
+        assert_eq!(
+            crucible_runtime::answered!(stream.next()).unwrap().unwrap(),
+            Delta::Text("Hel".into())
+        );
 
         assert_eq!(
-            stream.next().unwrap().unwrap(),
+            crucible_runtime::answered!(stream.next()).unwrap().unwrap(),
             Delta::Stopped(StopReason::Cancelled),
             "the stream waited out a silent provider with a cancel raised"
         );
-        assert!(stream.next().is_none());
+        assert!(crucible_runtime::answered!(stream.next()).is_none());
     }
 
     #[test]

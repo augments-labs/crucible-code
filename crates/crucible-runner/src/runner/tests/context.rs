@@ -1,6 +1,7 @@
 //! Per-pass context assembly, including the history-rewrite adversary.
 
 use crucible_core::{ContextSection, Fragment, Revealed, Seen, ToolOutput, WorkspaceSection};
+use crucible_runtime::BoxFuture;
 
 use super::*;
 
@@ -225,17 +226,19 @@ impl Tool for ToggleReveal {
         Summary::new(self.name)
     }
 
-    fn run(
-        &self,
+    fn run<'a>(
+        &'a self,
         _approved: Approved,
-        _context: &ToolContext<'_>,
-    ) -> Result<ToolOutput, ToolError> {
-        if self.present {
-            self.revealed.reveal("web_search");
-        } else {
-            self.revealed.forget();
-        }
-        Ok(ToolOutput::ok("done"))
+        _context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            if self.present {
+                self.revealed.reveal("web_search");
+            } else {
+                self.revealed.forget();
+            }
+            Ok(ToolOutput::ok("done"))
+        })
     }
 }
 

@@ -4,7 +4,7 @@ use std::io::{self, BufRead, BufReader, ErrorKind, Read as _};
 use std::sync::LazyLock;
 
 use crucible_attachments::{AttachmentError, Kind, Opened, kind};
-use crucible_runtime::Cancel;
+use crucible_runtime::{BoxFuture, Cancel};
 use crucible_tools::{
     Approved, DescribeTool, Looking, Remembered, Sensitivity, Summary, Tool, ToolContext,
     ToolEffect, ToolError, ToolOutput,
@@ -752,61 +752,67 @@ impl Tool for Read {
         summary::remembered(NAME, args, false)
     }
 
-    fn run(&self, approved: Approved, context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
-        let args = Args::parse(NAME, approved.args())?;
-        let requested = args.text(PATH)?;
-        let from = args.count(OFFSET, 1)?;
-        let limit = args.count(LIMIT, LINES)?.min(CEILING);
+    fn run<'a>(
+        &'a self,
+        approved: Approved,
+        context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            let args = Args::parse(NAME, approved.args())?;
+            let requested = args.text(PATH)?;
+            let from = args.count(OFFSET, 1)?;
+            let limit = args.count(LIMIT, LINES)?.min(CEILING);
 
-        // A path that is not there is something the model can correct by
-        // sending a different path. One outside the workspace is opened only
-        // on the say-so the `Approved` in hand carries.
-        let path = match target::opened(&self.workspace, &approved, requested) {
-            Ok(path) => path,
-            Err(problem) => return Ok(ToolOutput::failed(problem)),
-        };
+            // A path that is not there is something the model can correct by
+            // sending a different path. One outside the workspace is opened only
+            // on the say-so the `Approved` in hand carries.
+            let path = match target::opened(&self.workspace, &approved, requested) {
+                Ok(path) => path,
+                Err(problem) => return Ok(ToolOutput::failed(problem)),
+            };
 
-        if path.as_path().is_dir() {
-            return Ok(ToolOutput::failed(format!("{requested} is a directory")));
-        }
+            if path.as_path().is_dir() {
+                return Ok(ToolOutput::failed(format!("{requested} is a directory")));
+            }
 
-        // Asked before the file is opened for lines, because a picture is not
-        // made of them and nothing a decoder found in it would change the
-        // answer. A file that turns out not to be one falls through.
-        if let Some(output) =
-            kind(requested).and_then(|kind| Self::looked_at(&approved, kind, requested, &path))
-        {
-            if !output.is_failed() {
+            // Asked before the file is opened for lines, because a picture is not
+            // made of them and nothing a decoder found in it would change the
+            // answer. A file that turns out not to be one falls through.
+            if let Some(output) =
+                kind(requested).and_then(|kind| Self::looked_at(&approved, kind, requested, &path))
+            {
+                if !output.is_failed() {
+                    self.seen.record(path.as_path());
+                }
+                return Ok(output);
+            }
+
+            // Through the workspace rather than by name, so a last component
+            // replaced with a symbolic link since the check above is refused rather
+            // than read out of the tree and into the transcript, where the answer
+            // to a question about a file in the project would be a file elsewhere.
+            let file = match path.open_regular() {
+                Ok(file) => file,
+                Err(problem) => return Ok(ToolOutput::failed(problem.to_string())),
+            };
+
+            let (output, shown) = Self::numbered(
+                BufReader::new(file),
+                requested,
+                from,
+                limit,
+                context.cancel(),
+            )?;
+
+            // The resolved path rather than the requested one, because `write` asks
+            // with a resolved path too — otherwise `./one.txt` and `one.txt` would
+            // be two different files to a record that exists to say they are one.
+            if shown > 0 {
                 self.seen.record(path.as_path());
             }
-            return Ok(output);
-        }
 
-        // Through the workspace rather than by name, so a last component
-        // replaced with a symbolic link since the check above is refused rather
-        // than read out of the tree and into the transcript, where the answer
-        // to a question about a file in the project would be a file elsewhere.
-        let file = match path.open_regular() {
-            Ok(file) => file,
-            Err(problem) => return Ok(ToolOutput::failed(problem.to_string())),
-        };
-
-        let (output, shown) = Self::numbered(
-            BufReader::new(file),
-            requested,
-            from,
-            limit,
-            context.cancel(),
-        )?;
-
-        // The resolved path rather than the requested one, because `write` asks
-        // with a resolved path too — otherwise `./one.txt` and `one.txt` would
-        // be two different files to a record that exists to say they are one.
-        if shown > 0 {
-            self.seen.record(path.as_path());
-        }
-
-        Ok(output)
+            Ok(output)
+        })
     }
 }
 
@@ -939,7 +945,7 @@ mod tests {
 
     fn reading(sample: &Sample, args: &str, seen: &Ledger) -> ToolOutput {
         let tool = Read::new(sample.workspace(), seen.clone());
-        tool.run(allowed(&tool, args), &crate::sample::context())
+        crucible_runtime::answered!(tool.run(allowed(&tool, args), &crate::sample::context()))
             .unwrap()
     }
 
@@ -1081,7 +1087,8 @@ mod tests {
         std::fs::remove_file(sample.root().join("door.txt")).expect("the link is there");
         crate::sample::symlink(&secret, sample.root().join("door.txt"));
 
-        let output = tool.run(approved, &crate::sample::context()).unwrap();
+        let output =
+            crucible_runtime::answered!(tool.run(approved, &crate::sample::context())).unwrap();
         assert!(output.is_failed(), "{}", output.text());
         assert!(
             !output.text().contains("nobody was asked"),
@@ -1127,7 +1134,8 @@ mod tests {
         let Settled::Approved(approved) = settled else {
             panic!("the answer above was yes");
         };
-        let output = tool.run(approved, &crate::sample::context()).unwrap();
+        let output =
+            crucible_runtime::answered!(tool.run(approved, &crate::sample::context())).unwrap();
         assert!(output.text().contains("classified"));
     }
 
@@ -1561,9 +1569,9 @@ mod tests {
         let sample = Sample::new("read-nopath");
 
         let tool = Read::new(sample.workspace(), Ledger::new());
-        let problem = tool
-            .run(allowed(&tool, "{}"), &crate::sample::context())
-            .unwrap_err();
+        let problem =
+            crucible_runtime::answered!(tool.run(allowed(&tool, "{}"), &crate::sample::context()))
+                .unwrap_err();
 
         assert_eq!(problem.to_string(), "read: path is required");
     }

@@ -7,8 +7,10 @@
 //! runner's own fields, which is what keeps a swap that set every one of them
 //! correctly from passing while the record it left behind said something else.
 
+use crucible_runtime::Bridge;
 use crucible_types::ResultProvenance;
 
+use super::unanswered::{Withheld, Withholding};
 use super::*;
 
 /// Whose sessions these are. One reader throughout, since nothing here is
@@ -18,13 +20,13 @@ const OWNER: &str = "a reader's own sessions";
 /// A session holding one turn, closed, ready to be picked up.
 fn earlier() -> Arc<Recording> {
     let store = Recording::started(OWNER);
-    store.append_message(&Message::said("what came before"));
-    store.append_message(&Message::Agent {
+    crucible_runtime::answered!(store.append_message(&Message::said("what came before")));
+    crucible_runtime::answered!(store.append_message(&Message::Agent {
         continuation: None,
         text: "an answer from before".into(),
         calls: Vec::new(),
         stop: Some(StopReason::Yielded),
-    });
+    }));
     store
 }
 
@@ -41,7 +43,7 @@ fn picking(scripted: &mut Scripted, store: &Recording) -> Arc<Recording> {
 }
 
 /// What each clearing this store was told about freed, in order.
-fn restrictions(store: &Recording) -> Vec<usize> {
+pub(super) fn restrictions(store: &Recording) -> Vec<usize> {
     store
         .kept()
         .iter()
@@ -558,5 +560,92 @@ fn a_session_picked_up_where_nothing_is_set_up_keeps_what_its_vendor_answered() 
     assert!(
         restrictions(&picked).is_empty(),
         "a clearing was written for a provider nothing is sent to"
+    );
+}
+
+#[test]
+fn a_clearing_line_the_session_never_took_ends_the_next_turn_before_anything_is_sent() {
+    // Changing vendor happens between turns, where no caller waits on an
+    // error, so a clearing line the session would not take is held for the
+    // turn that follows. Whether it was kept is not known, and a session that
+    // cannot say what it recorded is not one to carry on writing to.
+    let (mut scripted, store) = restricted_search();
+    scripted.runner.store = Arc::new(Withholding {
+        recording: store,
+        withheld: Withheld::Restricted,
+    });
+    scripted.turn("search for rust").expect("a search turn");
+    let anthropic = Script::new(vec![saying("never asked")]).with_name("anthropic");
+    let sent = anthropic.sent();
+
+    scripted.runner.serve(Box::new(anthropic));
+
+    assert_eq!(
+        only_result(&scripted).output.text(),
+        RESTRICTED,
+        "the clearing was not made because its line was not taken"
+    );
+    let problem = scripted.turn("and now?").unwrap_err();
+    assert!(
+        matches!(
+            &problem,
+            TurnError::Unready(unready) if unready.bridge() == Bridge::TurnSession
+        ),
+        "{problem:?}"
+    );
+    assert!(
+        sent.lock().unwrap().is_empty(),
+        "the turn asked the provider before reporting the line it held"
+    );
+}
+
+#[test]
+fn a_clearing_line_the_session_never_took_ends_the_next_compaction_before_anything_is_sent() {
+    // `/compact` is admitted between turns the way a turn is, and the line it
+    // would write past is as unknown to it. Two turns, so there is a middle to
+    // recap: a compaction that carried on would record and ask the provider on
+    // top of a record that cannot say what it holds.
+    let store = Recording::started(OWNER);
+    let restricting = Script::new(vec![
+        calling("call_search", "web_search", r#"{"query":"rust"}"#),
+        saying("an answer from the vendor that restricts its results"),
+        saying("a second answer, so the first turn is a middle to recap"),
+    ])
+    .with_name("google")
+    .restricting(RESTRICTED);
+    let mut scripted =
+        Scripted::recording(restricting, searching(), Verdict::Allow, Arc::clone(&store));
+    scripted.runner.store = Arc::new(Withholding {
+        recording: Arc::clone(&store),
+        withheld: Withheld::Restricted,
+    });
+    scripted.runner.policy.compaction = Compaction {
+        keep_tokens: 1,
+        ..Compaction::default()
+    };
+    scripted.turn("search for rust").expect("a search turn");
+    scripted.turn("and then?").expect("a turn to keep");
+    let anthropic = Script::new(vec![recap("never asked")]).with_name("anthropic");
+    let sent = anthropic.sent();
+
+    scripted.runner.serve(Box::new(anthropic));
+    let recorded = store.kept().len();
+    let compacted = scripted.compacting();
+
+    assert!(
+        matches!(
+            &compacted,
+            Err(TurnError::Unready(unready)) if unready.bridge() == Bridge::TurnSession
+        ),
+        "{compacted:?}"
+    );
+    assert_eq!(
+        store.kept().len(),
+        recorded,
+        "the compaction recorded past the line it held"
+    );
+    assert!(
+        sent.lock().unwrap().is_empty(),
+        "the compaction asked the provider before reporting the line it held"
     );
 }

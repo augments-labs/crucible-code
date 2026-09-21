@@ -70,7 +70,7 @@ pub(super) fn finish(mut process: Box<dyn SandboxProcess>) -> (ExitStatus, Vec<u
         assert!(Instant::now() < deadline, "sandbox command did not finish");
         thread::sleep(Duration::from_millis(10));
     }
-    process.stop().expect("cleanup");
+    crucible_runtime::answered!(process.stop()).expect("cleanup");
     (status.expect("status"), output, errors)
 }
 
@@ -137,14 +137,14 @@ fn inline_manifest_files_are_committed_before_the_command_starts() {
     )
     .expect("entry")])
     .expect("manifest");
-    let mut session = service
-        .prepare(request(&sample, manifest))
+    let mut session = crucible_runtime::answered!(service.prepare(request(&sample, manifest)))
         .expect("prepared sandbox");
-    session.materialize().expect("materialized workspace");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
     let (status, output, _) = finish(
-        session
-            .start(command("cat /crucible/manifest/inputs/message.txt"))
-            .expect("started command"),
+        crucible_runtime::answered!(
+            session.start(command("cat /crucible/manifest/inputs/message.txt"))
+        )
+        .expect("started command"),
     );
 
     assert!(status.success(), "{status}");
@@ -167,14 +167,14 @@ fn explicit_read_only_mounts_are_descriptor_backed() {
     )
     .expect("entry")])
     .expect("manifest");
-    let mut session = service
-        .prepare(request(&sample, manifest))
+    let mut session = crucible_runtime::answered!(service.prepare(request(&sample, manifest)))
         .expect("prepared sandbox");
-    session.materialize().expect("materialized workspace");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
     let (status, output, _) = finish(
-        session
-            .start(command("cat /crucible/manifest/mounted/source.txt"))
-            .expect("started command"),
+        crucible_runtime::answered!(
+            session.start(command("cat /crucible/manifest/mounted/source.txt"))
+        )
+        .expect("started command"),
     );
 
     assert!(status.success(), "{status}");
@@ -200,16 +200,14 @@ fn explicit_writable_directory_mounts_preserve_parent_authority() {
     )
     .expect("entry")])
     .expect("manifest");
-    let mut session = service
-        .prepare(request(&sample, manifest))
+    let mut session = crucible_runtime::answered!(service.prepare(request(&sample, manifest)))
         .expect("prepared sandbox");
-    session.materialize().expect("materialized workspace");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
     let (status, _, _) = finish(
-        session
-            .start(command(
-                "printf 'after\\n' > /crucible/manifest/mounted/shared/generated.txt",
-            ))
-            .expect("started command"),
+        crucible_runtime::answered!(session.start(command(
+            "printf 'after\\n' > /crucible/manifest/mounted/shared/generated.txt",
+        )))
+        .expect("started command"),
     );
 
     assert!(status.success(), "{status}");
@@ -227,15 +225,14 @@ fn writable_effects_stay_private_until_terminal_publication() {
         return;
     }
     let sample = Sample::new("sandbox-private-writes");
-    let mut session = service
-        .prepare(request(&sample, SandboxManifest::empty()))
-        .expect("prepared sandbox");
-    session.materialize().expect("materialized workspace");
-    let mut process = session
-        .start(command(
-            "printf 'private\n' > delayed.txt; printf 'ready\n'; sleep 0.2",
-        ))
-        .expect("started command");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request(&sample, SandboxManifest::empty())))
+            .expect("prepared sandbox");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
+    let mut process = crucible_runtime::answered!(session.start(command(
+        "printf 'private\n' > delayed.txt; printf 'ready\n'; sleep 0.2",
+    )))
+    .expect("started command");
     let mut stdout = process.take_stdout();
     let _ = wait_for_marker(process.as_mut(), &mut stdout, b"ready\n");
 
@@ -252,7 +249,7 @@ fn writable_effects_stay_private_until_terminal_publication() {
         assert!(Instant::now() < deadline, "command did not terminate");
         thread::sleep(Duration::from_millis(10));
     };
-    process.stop().expect("cleanup");
+    crucible_runtime::answered!(process.stop()).expect("cleanup");
     assert!(status.success(), "{status}");
     assert_eq!(
         std::fs::read_to_string(sample.root().join("delayed.txt")).expect("published file"),
@@ -272,10 +269,12 @@ fn staging_a_writable_directory_does_not_copy_its_file_contents() {
     sparse.set_len(64 * 1024 * 1024).expect("sparse length");
     let request = request(&sample, SandboxManifest::empty());
     let sandbox = request.id();
-    let mut session = service.prepare(request).expect("prepared sandbox");
-    session.materialize().expect("materialized workspace");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request)).expect("prepared sandbox");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
 
-    let launch = session.stage(command("exit 0")).expect("staged launch");
+    let launch =
+        crucible_runtime::answered!(session.stage(command("exit 0"))).expect("staged launch");
     let stage = super::transaction::stage_root(sandbox).expect("stage location");
     assert!(
         !stage.join("roots/0/large-sparse.bin").exists(),
@@ -293,19 +292,19 @@ fn cancellation_discards_private_workspace_effects() {
     let sample = Sample::new("sandbox-cancelled-writes");
     let request = request(&sample, SandboxManifest::empty());
     let audit = request.audit().clone();
-    let mut session = service.prepare(request).expect("prepared sandbox");
-    session.materialize().expect("materialized workspace");
-    let mut process = session
-        .start(command(
-            "printf 'discarded\n' > cancelled.txt; printf 'ready\n'; sleep 30",
-        ))
-        .expect("started command");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request)).expect("prepared sandbox");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
+    let mut process = crucible_runtime::answered!(session.start(command(
+        "printf 'discarded\n' > cancelled.txt; printf 'ready\n'; sleep 30",
+    )))
+    .expect("started command");
     let mut stdout = process.take_stdout();
     let _ = wait_for_marker(process.as_mut(), &mut stdout, b"ready\n");
 
     assert!(!sample.root().join("cancelled.txt").exists());
     let stopping = Instant::now();
-    process.stop().expect("cancel and clean scope");
+    crucible_runtime::answered!(process.stop()).expect("cancel and clean scope");
     assert!(
         stopping.elapsed() < Duration::from_secs(2),
         "cancellation did not promptly stop the complete sandbox scope"
@@ -335,16 +334,15 @@ fn signal_terminated_leader_discards_private_workspace_effects() {
         return;
     }
     let sample = Sample::new("sandbox-signalled-writes");
-    let mut session = service
-        .prepare(request(&sample, SandboxManifest::empty()))
-        .expect("prepared sandbox");
-    session.materialize().expect("materialized workspace");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request(&sample, SandboxManifest::empty())))
+            .expect("prepared sandbox");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
     let (status, _, _) = finish(
-        session
-            .start(command(
-                "printf 'discarded\n' > signalled.txt; kill -TERM $$",
-            ))
-            .expect("started command"),
+        crucible_runtime::answered!(session.start(command(
+            "printf 'discarded\n' > signalled.txt; kill -TERM $$",
+        )))
+        .expect("started command"),
     );
 
     assert!(!status.success(), "leader unexpectedly exited successfully");
@@ -361,14 +359,15 @@ fn ordinary_nonzero_exit_publishes_valid_workspace_effects() {
         return;
     }
     let sample = Sample::new("sandbox-nonzero-writes");
-    let mut session = service
-        .prepare(request(&sample, SandboxManifest::empty()))
-        .expect("prepared sandbox");
-    session.materialize().expect("materialized workspace");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request(&sample, SandboxManifest::empty())))
+            .expect("prepared sandbox");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
     let (status, _, _) = finish(
-        session
-            .start(command("printf 'published\n' > nonzero.txt; exit 17"))
-            .expect("started command"),
+        crucible_runtime::answered!(
+            session.start(command("printf 'published\n' > nonzero.txt; exit 17"))
+        )
+        .expect("started command"),
     );
 
     assert_eq!(status.code(), Some(17));
@@ -385,14 +384,15 @@ fn ordinary_high_nonzero_exit_is_not_confused_with_signal_termination() {
         return;
     }
     let sample = Sample::new("sandbox-high-nonzero-writes");
-    let mut session = service
-        .prepare(request(&sample, SandboxManifest::empty()))
-        .expect("prepared sandbox");
-    session.materialize().expect("materialized workspace");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request(&sample, SandboxManifest::empty())))
+            .expect("prepared sandbox");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
     let (status, _, _) = finish(
-        session
-            .start(command("printf 'published\n' > high-nonzero.txt; exit 143"))
-            .expect("started command"),
+        crucible_runtime::answered!(
+            session.start(command("printf 'published\n' > high-nonzero.txt; exit 143"))
+        )
+        .expect("started command"),
     );
 
     assert_eq!(status.code(), Some(143));
@@ -415,18 +415,18 @@ fn create_update_delete_rename_and_mode_publish_as_one_terminal_delta() {
     sample.write("mode.txt", "mode\n");
     let request = request(&sample, SandboxManifest::empty());
     let audit = request.audit().clone();
-    let mut session = service.prepare(request).expect("prepared sandbox");
-    session.materialize().expect("materialized workspace");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request)).expect("prepared sandbox");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
     let (status, _, errors) = finish(
-        session
-            .start(command(
-                "printf 'after\\n' > updated.txt; \
+        crucible_runtime::answered!(session.start(command(
+            "printf 'after\\n' > updated.txt; \
                  printf 'created\\n' > created.txt; \
                  rm deleted.txt; \
                  mv renamed-before.txt renamed-after.txt; \
                  chmod 640 mode.txt",
-            ))
-            .expect("started command"),
+        )))
+        .expect("started command"),
     );
 
     assert!(status.success(), "{}", String::from_utf8_lossy(&errors));
@@ -481,14 +481,14 @@ fn unsupported_terminal_metadata_refuses_the_complete_private_delta() {
     let sample = Sample::new("sandbox-terminal-metadata-refusal");
     let request = request(&sample, SandboxManifest::empty());
     let audit = request.audit().clone();
-    let mut session = service.prepare(request).expect("prepared sandbox");
-    session.materialize().expect("materialized workspace");
-    let mut process = session
-        .start(command(
-            "printf 'ordinary\n' > ordinary.txt; \
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request)).expect("prepared sandbox");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
+    let mut process = crucible_runtime::answered!(session.start(command(
+        "printf 'ordinary\n' > ordinary.txt; \
              printf 'special\n' > special.txt; chmod 4755 special.txt",
-        ))
-        .expect("started command");
+    )))
+    .expect("started command");
 
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
@@ -503,9 +503,7 @@ fn unsupported_terminal_metadata_refuses_the_complete_private_delta() {
         );
         thread::sleep(Duration::from_millis(10));
     }
-    process
-        .stop()
-        .expect("a refused writer's cleanup is confirmed");
+    crucible_runtime::answered!(process.stop()).expect("a refused writer's cleanup is confirmed");
     assert!(
         !lifecycles(&audit).contains(&SandboxLifecycle::Quarantined),
         "{:?}",
@@ -536,17 +534,16 @@ fn an_external_baseline_conflict_publishes_none_of_the_private_delta() {
     }
     let sample = Sample::new("sandbox-publication-conflict");
     sample.write("shared.txt", "baseline\n");
-    let mut session = service
-        .prepare(request(&sample, SandboxManifest::empty()))
-        .expect("prepared sandbox");
-    session.materialize().expect("materialized workspace");
-    let mut process = session
-        .start(command(
-            "printf 'private\\n' > shared.txt; \
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request(&sample, SandboxManifest::empty())))
+            .expect("prepared sandbox");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
+    let mut process = crucible_runtime::answered!(session.start(command(
+        "printf 'private\\n' > shared.txt; \
              printf 'private new\\n' > private-new.txt; \
              printf 'ready\\n'; sleep 0.2",
-        ))
-        .expect("started command");
+    )))
+    .expect("started command");
     let mut stdout = process.take_stdout();
     let _ = wait_for_marker(process.as_mut(), &mut stdout, b"ready\n");
     std::fs::write(sample.root().join("shared.txt"), "external\n")
@@ -565,9 +562,7 @@ fn an_external_baseline_conflict_publishes_none_of_the_private_delta() {
         );
         thread::sleep(Duration::from_millis(10));
     }
-    process
-        .stop()
-        .expect("a refused writer's cleanup is confirmed");
+    crucible_runtime::answered!(process.stop()).expect("a refused writer's cleanup is confirmed");
     assert_eq!(
         std::fs::read_to_string(sample.root().join("shared.txt")).expect("external content"),
         "external\n"
@@ -588,14 +583,15 @@ fn complete_workspace_hardlink_groups_keep_one_projected_inode() {
         sample.root().join("second.txt"),
     )
     .expect("hardlink fixture");
-    let mut session = service
-        .prepare(request(&sample, SandboxManifest::empty()))
-        .expect("complete hardlink group is admissible");
-    session.materialize().expect("materialized workspace");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request(&sample, SandboxManifest::empty())))
+            .expect("complete hardlink group is admissible");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
     let (status, output, _) = finish(
-        session
-            .start(command("printf 'after\n' > first.txt; cat second.txt"))
-            .expect("started command"),
+        crucible_runtime::answered!(
+            session.start(command("printf 'after\n' > first.txt; cat second.txt"))
+        )
+        .expect("started command"),
     );
 
     assert!(status.success(), "{status}");
@@ -613,17 +609,16 @@ fn a_new_sparse_file_keeps_its_holes_after_terminal_publication() {
         return;
     }
     let sample = Sample::new("sandbox-sparse-publication");
-    let mut session = service
-        .prepare(request(&sample, SandboxManifest::empty()))
-        .expect("prepared sandbox");
-    session.materialize().expect("materialized workspace");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request(&sample, SandboxManifest::empty())))
+            .expect("prepared sandbox");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
     let (status, _, errors) = finish(
-        session
-            .start(command(
-                "truncate -s 8388608 sparse.bin; \
+        crucible_runtime::answered!(session.start(command(
+            "truncate -s 8388608 sparse.bin; \
                  printf x | dd of=sparse.bin bs=1 seek=8388607 conv=notrunc status=none",
-            ))
-            .expect("started command"),
+        )))
+        .expect("started command"),
     );
 
     assert!(status.success(), "{}", String::from_utf8_lossy(&errors));
@@ -645,12 +640,14 @@ fn dropping_a_staged_launch_refuses_it_before_go_and_completes_cleanup() {
     let sample = Sample::new("sandbox-pre-release-refusal");
     let request = request(&sample, SandboxManifest::empty());
     let audit = request.audit().clone();
-    let mut session = service.prepare(request).expect("prepared sandbox");
-    session.materialize().expect("materialized workspace");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request)).expect("prepared sandbox");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
 
-    let launch = session
-        .stage(command("printf 'must-not-run\\n' > refused.txt"))
-        .expect("staged launch");
+    let launch = crucible_runtime::answered!(
+        session.stage(command("printf 'must-not-run\\n' > refused.txt"))
+    )
+    .expect("staged launch");
     drop(launch);
 
     assert!(!sample.root().join("refused.txt").exists());
@@ -699,17 +696,19 @@ fn background_ownership_precedes_release_and_command_start() {
         .with_invocation_mode(SandboxInvocationMode::Background)
         .with_call_result_key(key);
     let audit = request.audit().clone();
-    let mut session = service.prepare(request).expect("prepared sandbox");
-    session.materialize().expect("materialized workspace");
-    let mut launch = session.stage(command("exit 0")).expect("staged launch");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request)).expect("prepared sandbox");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
+    let mut launch =
+        crucible_runtime::answered!(session.stage(command("exit 0"))).expect("staged launch");
     launch.transfer_owner().expect("application owner transfer");
-    let mut process = launch.release().expect("released launch");
-    process
-        .begin_background_acceptance(key)
+    let mut process = crucible_runtime::answered!(launch.release()).expect("released launch");
+    crucible_runtime::answered!(process.begin_background_acceptance(key))
         .expect("acceptance intent");
-    process
-        .complete_background_acceptance(CallResultReceipt::from_digest([0x31; 32]))
-        .expect("acceptance completion");
+    crucible_runtime::answered!(
+        process.complete_background_acceptance(CallResultReceipt::from_digest([0x31; 32]))
+    )
+    .expect("acceptance completion");
     let (status, _, _) = finish(process);
     assert!(status.success(), "{status}");
 
@@ -770,19 +769,20 @@ fn read_only_background_commands_have_a_durable_lifecycle() {
     )
     .with_invocation_mode(SandboxInvocationMode::Background)
     .with_call_result_key(key);
-    let mut session = service.prepare(request).expect("prepared sandbox");
-    session.materialize().expect("materialized workspace");
-    let mut launch = session
-        .stage(command("cat input.txt"))
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request)).expect("prepared sandbox");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
+    let mut launch = crucible_runtime::answered!(session.stage(command("cat input.txt")))
         .expect("staged read-only launch");
     launch.transfer_owner().expect("application owner transfer");
-    let mut process = launch.release().expect("released read-only launch");
-    process
-        .begin_background_acceptance(key)
+    let mut process =
+        crucible_runtime::answered!(launch.release()).expect("released read-only launch");
+    crucible_runtime::answered!(process.begin_background_acceptance(key))
         .expect("read-only acceptance intent");
-    process
-        .complete_background_acceptance(CallResultReceipt::from_digest([0x32; 32]))
-        .expect("read-only acceptance completion");
+    crucible_runtime::answered!(
+        process.complete_background_acceptance(CallResultReceipt::from_digest([0x32; 32]))
+    )
+    .expect("read-only acceptance completion");
 
     let (status, output, errors) = finish(process);
 
@@ -802,13 +802,14 @@ fn background_release_without_an_application_owner_is_refused_before_go() {
         .with_invocation_mode(SandboxInvocationMode::Background)
         .with_call_result_key(key);
     let audit = request.audit().clone();
-    let mut session = service.prepare(request).expect("prepared sandbox");
-    session.materialize().expect("materialized workspace");
-    let launch = session
-        .stage(command("printf 'escaped\n' > ownerless.txt"))
-        .expect("staged launch");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request)).expect("prepared sandbox");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
+    let launch =
+        crucible_runtime::answered!(session.stage(command("printf 'escaped\n' > ownerless.txt")))
+            .expect("staged launch");
 
-    assert!(launch.release().is_err());
+    assert!(crucible_runtime::answered!(launch.release()).is_err());
     assert!(!sample.root().join("ownerless.txt").exists());
     assert!(
         audit
@@ -842,16 +843,14 @@ fn read_only_mounts_cannot_be_mutated() {
     )
     .expect("entry")])
     .expect("manifest");
-    let mut session = service
-        .prepare(request(&sample, manifest))
+    let mut session = crucible_runtime::answered!(service.prepare(request(&sample, manifest)))
         .expect("prepared sandbox");
-    session.materialize().expect("materialized workspace");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
     let (status, _, _) = finish(
-        session
-            .start(command(
-                "printf 'changed\\n' > /crucible/manifest/mounted/source.txt",
-            ))
-            .expect("started command"),
+        crucible_runtime::answered!(session.start(command(
+            "printf 'changed\\n' > /crucible/manifest/mounted/source.txt",
+        )))
+        .expect("started command"),
     );
 
     assert!(!status.success(), "read-only write unexpectedly succeeded");
@@ -903,18 +902,19 @@ fn replacing_a_writable_file_after_stage_cannot_retarget_publication() {
         policy,
         manifest,
     );
-    let mut session = service.prepare(request).expect("prepared sandbox");
-    session.materialize().expect("materialized workspace");
-    let launch = session
-        .stage(command(
-            "printf 'published through file authority\n' > /crucible/manifest/mounted/source.txt",
-        ))
-        .expect("staged command");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request)).expect("prepared sandbox");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
+    let launch = crucible_runtime::answered!(session.stage(command(
+        "printf 'published through file authority\n' > /crucible/manifest/mounted/source.txt",
+    )))
+    .expect("staged command");
     let validated = external.join("validated.txt");
     std::fs::rename(&source, &validated).expect("rename validated inode");
     std::fs::write(&source, "replacement inode\n").expect("replacement fixture");
 
-    let (status, _, errors) = finish(launch.release().expect("released command"));
+    let (status, _, errors) =
+        finish(crucible_runtime::answered!(launch.release()).expect("released command"));
 
     assert!(status.success(), "{}", String::from_utf8_lossy(&errors));
     assert_eq!(
@@ -944,17 +944,17 @@ fn a_replaced_mount_source_cannot_retarget_the_prepared_descriptor() {
     )
     .expect("entry")])
     .expect("manifest");
-    let mut session = service
-        .prepare(request(&sample, manifest))
+    let mut session = crucible_runtime::answered!(service.prepare(request(&sample, manifest)))
         .expect("prepared sandbox");
-    session.materialize().expect("materialized workspace");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
     std::fs::rename(&source, sample.root().join("validated.txt")).expect("replace source");
     std::fs::write(&source, "replacement inode\n").expect("replacement source");
 
     let (status, output, _) = finish(
-        session
-            .start(command("cat /crucible/manifest/mounted/source.txt"))
-            .expect("started command"),
+        crucible_runtime::answered!(
+            session.start(command("cat /crucible/manifest/mounted/source.txt"))
+        )
+        .expect("started command"),
     );
 
     assert!(status.success(), "{status}");
@@ -980,16 +980,14 @@ fn mount_source_descriptors_do_not_reach_the_untrusted_command() {
     )
     .expect("entry")])
     .expect("manifest");
-    let mut session = service
-        .prepare(request(&sample, manifest))
+    let mut session = crucible_runtime::answered!(service.prepare(request(&sample, manifest)))
         .expect("prepared sandbox");
-    session.materialize().expect("materialized workspace");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
     let (status, output, _) = finish(
-        session
-            .start(command(
-                "for fd in /proc/self/fd/[3-9]*; do readlink \"$fd\" 2>/dev/null || true; done",
-            ))
-            .expect("started command"),
+        crucible_runtime::answered!(session.start(command(
+            "for fd in /proc/self/fd/[3-9]*; do readlink \"$fd\" 2>/dev/null || true; done",
+        )))
+        .expect("started command"),
     );
     let output = String::from_utf8(output).expect("utf8");
 
@@ -1006,10 +1004,10 @@ fn replacing_a_workspace_root_after_prepare_cannot_retarget_it() {
     }
     let sample = Sample::new("sandbox-workspace-source-replacement");
     sample.write("identity.txt", "validated workspace\n");
-    let mut session = service
-        .prepare(request(&sample, SandboxManifest::empty()))
-        .expect("prepared sandbox");
-    session.materialize().expect("materialized workspace");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request(&sample, SandboxManifest::empty())))
+            .expect("prepared sandbox");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
     let validated = sample.root().with_file_name("validated-inside");
     std::fs::rename(sample.root(), &validated).expect("rename validated workspace");
     std::fs::create_dir(sample.root()).expect("replacement workspace");
@@ -1020,11 +1018,10 @@ fn replacing_a_workspace_root_after_prepare_cannot_retarget_it() {
     .expect("replacement file");
 
     let (status, output, _) = finish(
-        session
-            .start(command(
-                "cat identity.txt; printf 'published through authority\n' > published.txt",
-            ))
-            .expect("started command"),
+        crucible_runtime::answered!(session.start(command(
+            "cat identity.txt; printf 'published through authority\n' > published.txt",
+        )))
+        .expect("started command"),
     );
 
     assert!(status.success(), "{status}");
@@ -1051,14 +1048,13 @@ fn workspace_symlinks_cannot_escape_the_mounted_view() {
     let sample = Sample::new("sandbox-workspace-symlink-escape");
     let outside = sample.outside("secret.txt", "outside secret\n");
     symlink(&outside, sample.root().join("escape.txt"));
-    let mut session = service
-        .prepare(request(&sample, SandboxManifest::empty()))
-        .expect("prepared sandbox");
-    session.materialize().expect("materialized workspace");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request(&sample, SandboxManifest::empty())))
+            .expect("prepared sandbox");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
 
     let (status, output, _) = finish(
-        session
-            .start(command("cat escape.txt"))
+        crucible_runtime::answered!(session.start(command("cat escape.txt")))
             .expect("started command"),
     );
 
@@ -1075,19 +1071,18 @@ fn nested_repository_and_crucible_metadata_stay_read_only_beneath_a_writable_roo
     let sample = Sample::new("sandbox-nested-protected-metadata");
     sample.write("nested/.git/config", "protected\n");
     sample.write("nested/.crucible/auth.json", "credential\n");
-    let mut session = service
-        .prepare(request(&sample, SandboxManifest::empty()))
-        .expect("prepared sandbox");
-    session.materialize().expect("materialized workspace");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request(&sample, SandboxManifest::empty())))
+            .expect("prepared sandbox");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
 
     let (status, _, _) = finish(
-        session
-            .start(command(
-                "printf 'ordinary\\n' > nested/file.txt; \
+        crucible_runtime::answered!(session.start(command(
+            "printf 'ordinary\\n' > nested/file.txt; \
                  printf 'changed\\n' > nested/.git/config; \
                  printf 'changed\\n' > nested/.crucible/auth.json",
-            ))
-            .expect("started command"),
+        )))
+        .expect("started command"),
     );
 
     assert!(
@@ -1146,15 +1141,15 @@ fn unreadable_rules_mask_only_the_selected_path() {
         policy,
         SandboxManifest::empty(),
     );
-    let mut session = service.prepare(request).expect("prepared sandbox");
-    session.materialize().expect("materialized workspace");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request)).expect("prepared sandbox");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
 
     let (status, output, errors) = finish(
-        session
-            .start(command(
-                "cat visible.txt; if cat secret.txt 2>/dev/null; then exit 71; fi",
-            ))
-            .expect("started command"),
+        crucible_runtime::answered!(session.start(command(
+            "cat visible.txt; if cat secret.txt 2>/dev/null; then exit 71; fi",
+        )))
+        .expect("started command"),
     );
 
     assert!(
@@ -1197,16 +1192,16 @@ fn unreadable_patterns_expand_deterministically_without_hiding_siblings() {
         policy,
         SandboxManifest::empty(),
     );
-    let mut session = service.prepare(request).expect("prepared sandbox");
-    session.materialize().expect("materialized workspace");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request)).expect("prepared sandbox");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
     let (status, output, errors) = finish(
-        session
-            .start(command(
-                "if cat .env 2>/dev/null; then exit 71; fi; \
+        crucible_runtime::answered!(session.start(command(
+            "if cat .env 2>/dev/null; then exit 71; fi; \
                  if cat nested/secret.pem 2>/dev/null; then exit 72; fi; \
                  cat nested/visible.txt",
-            ))
-            .expect("started command"),
+        )))
+        .expect("started command"),
     );
 
     assert!(status.success(), "{}", String::from_utf8_lossy(&errors));
@@ -1228,10 +1223,10 @@ fn closed_network_cannot_reach_host_loopback_unix_sockets_dns_or_metadata() {
         .expect("sample parent")
         .join("host.sock");
     let _unix = UnixListener::bind(&socket_path).expect("host Unix listener");
-    let mut session = service
-        .prepare(request(&sample, SandboxManifest::empty()))
-        .expect("prepared sandbox");
-    session.materialize().expect("materialized workspace");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request(&sample, SandboxManifest::empty())))
+            .expect("prepared sandbox");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
     let script = r#"
 import signal
 import socket
@@ -1274,17 +1269,16 @@ finally:
     signal.alarm(0)
 "#;
     let (status, _, errors) = finish(
-        session
-            .start(direct(
-                "/usr/bin/python3",
-                [
-                    OsString::from("-c"),
-                    OsString::from(script),
-                    OsString::from(port.to_string()),
-                    socket_path.into_os_string(),
-                ],
-            ))
-            .expect("started command"),
+        crucible_runtime::answered!(session.start(direct(
+            "/usr/bin/python3",
+            [
+                OsString::from("-c"),
+                OsString::from(script),
+                OsString::from(port.to_string()),
+                socket_path.into_os_string(),
+            ],
+        )))
+        .expect("started command"),
     );
 
     assert!(
@@ -1310,10 +1304,10 @@ fn ungranted_sibling_home_and_credential_paths_are_unreachable() {
         .join("outside");
     std::fs::write(sibling.join("secret"), b"not for the sandbox").expect("sibling secret");
     let host_home = std::env::var_os("HOME").expect("host HOME");
-    let mut session = service
-        .prepare(request(&sample, SandboxManifest::empty()))
-        .expect("prepared sandbox");
-    session.materialize().expect("materialized workspace");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request(&sample, SandboxManifest::empty())))
+            .expect("prepared sandbox");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
     let script = r#"
 import os
 import sys
@@ -1347,18 +1341,17 @@ for hidden in (".ssh", ".gnupg", ".config", ".crucible", ".aws"):
     raise SystemExit(f"host credential path was listable: {hidden}")
 "#;
     let (status, _, errors) = finish(
-        session
-            .start(direct(
-                "/usr/bin/python3",
-                [
-                    OsString::from("-c"),
-                    OsString::from(script),
-                    sibling.clone().into_os_string(),
-                    sibling.join("secret").into_os_string(),
-                    host_home,
-                ],
-            ))
-            .expect("started command"),
+        crucible_runtime::answered!(session.start(direct(
+            "/usr/bin/python3",
+            [
+                OsString::from("-c"),
+                OsString::from(script),
+                sibling.clone().into_os_string(),
+                sibling.join("secret").into_os_string(),
+                host_home,
+            ],
+        )))
+        .expect("started command"),
     );
 
     assert!(
@@ -1383,13 +1376,13 @@ fn arbitrary_inheritable_host_descriptors_do_not_reach_the_command() {
     rustix::io::fcntl_setfd(&listener, rustix::io::FdFlags::empty())
         .expect("make descriptor inheritable");
 
-    let mut session = service
-        .prepare(request(&sample, SandboxManifest::empty()))
-        .expect("prepared sandbox");
-    session.materialize().expect("materialized workspace");
-    let started = session.start(command(
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request(&sample, SandboxManifest::empty())))
+            .expect("prepared sandbox");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
+    let started = crucible_runtime::answered!(session.start(command(
         "for fd in /proc/self/fd/[3-9]*; do readlink \"$fd\" 2>/dev/null || true; done",
-    ));
+    )));
     rustix::io::fcntl_setfd(&listener, flags).expect("restore descriptor flags");
     let (status, output, errors) = finish(started.expect("started command"));
 
@@ -1447,11 +1440,11 @@ fn explicit_credential_projection_reaches_only_its_named_environment_slot() {
     assert!(!shown.contains(canary), "{shown}");
     assert!(!shown.contains("provider/openai/test-account"), "{shown}");
 
-    let mut session = service
-        .prepare(request(&sample, SandboxManifest::empty()))
-        .expect("prepared sandbox");
-    session.materialize().expect("materialized workspace");
-    let process = session.start(command).expect("started command");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request(&sample, SandboxManifest::empty())))
+            .expect("prepared sandbox");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
+    let process = crucible_runtime::answered!(session.start(command)).expect("started command");
 
     // Every process's command line is world-readable under /proc, so a value
     // that is projected as an argument of the backend is a value any local
@@ -1493,11 +1486,13 @@ fn proc_devices_capabilities_and_nested_user_namespaces_are_minimal() {
          set -- /proc/[0-9]*; test \"$#\" -le 4 && \
          if command -v unshare >/dev/null 2>&1; then ! unshare -U /bin/true 2>/dev/null; fi"
     );
-    let mut session = service
-        .prepare(request(&sample, SandboxManifest::empty()))
-        .expect("prepared sandbox");
-    session.materialize().expect("materialized workspace");
-    let (status, _, errors) = finish(session.start(command(&script)).expect("started command"));
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request(&sample, SandboxManifest::empty())))
+            .expect("prepared sandbox");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
+    let (status, _, errors) = finish(
+        crucible_runtime::answered!(session.start(command(&script))).expect("started command"),
+    );
 
     assert!(
         status.success(),
@@ -1536,8 +1531,9 @@ fn command_deadline_kills_the_complete_bubblewrap_process_tree() {
         policy,
         SandboxManifest::empty(),
     );
-    let mut session = service.prepare(request).expect("prepared sandbox");
-    session.materialize().expect("materialized workspace");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request)).expect("prepared sandbox");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
     let script = format!(
         "if command -v setsid >/dev/null 2>&1; then \
              setsid /bin/sh -c 'sleep 30; :' {marker} & \
@@ -1546,7 +1542,8 @@ fn command_deadline_kills_the_complete_bubblewrap_process_tree() {
          fi; \
          printf 'ready\n'; wait"
     );
-    let mut process = session.start(command(&script)).expect("started command");
+    let mut process =
+        crucible_runtime::answered!(session.start(command(&script))).expect("started command");
     let mut stdout = process.take_stdout();
     let _ = wait_for_marker(process.as_mut(), &mut stdout, b"ready\n");
     assert!(
@@ -1568,7 +1565,7 @@ fn command_deadline_kills_the_complete_bubblewrap_process_tree() {
         thread::sleep(Duration::from_millis(20));
     };
     let violation = process.violation();
-    process.stop().expect("cleanup");
+    crucible_runtime::answered!(process.stop()).expect("cleanup");
 
     assert_eq!(
         status.signal(),
@@ -1618,19 +1615,20 @@ fn sandbox_crash_helper_process() {
     .with_invocation_mode(SandboxInvocationMode::Background)
     .with_call_result_key(key);
     let service = LocalSandbox::new();
-    let mut session = service.prepare(request).expect("helper prepare");
-    session.materialize().expect("helper materialize");
-    let mut launch = session
-        .stage(command(&format!(": {marker}; exec sleep 300")))
-        .expect("helper stage");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request)).expect("helper prepare");
+    crucible_runtime::answered!(session.materialize()).expect("helper materialize");
+    let mut launch =
+        crucible_runtime::answered!(session.stage(command(&format!(": {marker}; exec sleep 300"))))
+            .expect("helper stage");
     launch.transfer_owner().expect("helper ownership");
-    let mut process = launch.release().expect("helper release");
-    process
-        .begin_background_acceptance(key)
+    let mut process = crucible_runtime::answered!(launch.release()).expect("helper release");
+    crucible_runtime::answered!(process.begin_background_acceptance(key))
         .expect("helper acceptance intent");
-    process
-        .complete_background_acceptance(CallResultReceipt::from_digest([0x7d; 32]))
-        .expect("helper acceptance");
+    crucible_runtime::answered!(
+        process.complete_background_acceptance(CallResultReceipt::from_digest([0x7d; 32]))
+    )
+    .expect("helper acceptance");
     std::fs::write(ready, b"accepted\n").expect("announce durable acceptance");
 
     loop {
@@ -1698,9 +1696,9 @@ fn abrupt_host_loss_kills_the_scope_and_the_next_prepare_reconciles_its_wal() {
         "a confined workload survived abrupt host loss"
     );
 
-    let recovered = service
-        .prepare(request(&sample, SandboxManifest::empty()))
-        .expect("next prepare reconciles the abandoned WAL");
+    let recovered =
+        crucible_runtime::answered!(service.prepare(request(&sample, SandboxManifest::empty())))
+            .expect("next prepare reconciles the abandoned WAL");
     assert!(!stage.exists(), "the abandoned lifecycle was not settled");
     drop(recovered);
 }
