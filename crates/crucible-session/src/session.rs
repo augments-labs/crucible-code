@@ -199,7 +199,7 @@ pub struct Session {
     writer: Option<JoinHandle<()>>,
     /// What keeps another crucible from continuing a log this one is still
     /// writing. `None` where the filesystem has no locks to take, and in a
-    /// session that records nothing — see [`claim`].
+    /// session that records nothing — see [`fn@claim`].
     ///
     /// Released after the queue has drained: [`Drop`] runs before a struct's
     /// fields do, and joining the writer is the first thing it does.
@@ -245,8 +245,8 @@ impl Session {
     ///
     /// `branch` is what the workspace's version control had checked out, where
     /// the caller could look — this crate does not run git. It goes into the
-    /// header once and is served back by [`recent`]; a caller that cannot say
-    /// passes `None` and the header simply never learns one.
+    /// header once and is served back by [`fn@recent`]; a caller that cannot
+    /// say passes `None` and the header simply never learns one.
     ///
     /// # Errors
     ///
@@ -842,7 +842,7 @@ pub fn retitle(directory: &Path, id: &SessionId, title: &str) -> Result<(), Sess
 /// # Errors
 ///
 /// [`SessionError`] when the claim could not be attempted at all — see
-/// [`claim`] — or when the log could not be made for any reason other than
+/// [`fn@claim`] — or when the log could not be made for any reason other than
 /// already being there. A mark that cannot be made stops the session rather
 /// than costing it a name: it goes in a directory the caller has just made, so
 /// what failed is that directory, and every name minted after this one would

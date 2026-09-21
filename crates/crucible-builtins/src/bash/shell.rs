@@ -1,9 +1,8 @@
 //! Which shell reads a command line.
 //!
-//! POSIX on every platform, Windows included. [`super::command`] and
-//! [`super::reach`] read the line the way a POSIX shell would, and that reading
-//! is what a permission rule is written against and what proves a `mkdir` lands
-//! inside the workspace. Handing the same line to `cmd.exe` — whose quoting,
+//! POSIX on every platform, Windows included. [`super::command`] reads the line
+//! the way a POSIX shell would, and that reading is what a permission rule is
+//! written against. Handing the same line to `cmd.exe` — whose quoting,
 //! globbing and redirection are a different language — would decide the question
 //! in one language and answer it in another, which is a permission engine that
 //! is wrong rather than one that is strict.

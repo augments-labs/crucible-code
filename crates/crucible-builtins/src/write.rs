@@ -43,7 +43,7 @@ const CONTENT: &str = "content";
 /// may run, and they arrive with the call because the thread holding the
 /// terminal has no provider to ask when the panel opens. Neither is required:
 /// a call that says nothing about itself gets the panel it would have got
-/// before either existed. [`crate::account`] is what reads them.
+/// before either existed. [`fn@crate::account`] is what reads them.
 static SCHEMA: LazyLock<String> = LazyLock::new(|| {
     let mut fields = vec![
         Field {

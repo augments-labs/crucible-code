@@ -722,7 +722,7 @@ pub(crate) fn restriction(line: &str) -> Option<(Vec<ToolId>, String)> {
 /// Written after the message it belongs to, and read the same way, because
 /// order is the only thing that says which transcript it covers: everything
 /// above it was sent, and anything below it was not. That is why a reader takes
-/// it only where it is the last thing in the file — see [`super::replay`].
+/// it only where it is the last thing in the file — see [`fn@super::replay`].
 ///
 /// It records lengths and token counts and nothing else. Not the model's name,
 /// not the instructions, not a hash of them: the fixed content of a request is

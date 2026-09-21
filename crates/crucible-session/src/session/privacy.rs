@@ -12,8 +12,9 @@
 //!
 //! What differs between platforms is only how that is said. Unix has a file
 //! mode. Windows has an access control list, and the call that writes one is
-//! FFI: [`windows`] is the single module in this tree that opts out of
-//! `unsafe_code`, and it does so there precisely so that nothing else has to.
+//! FFI: `windows`, which only a Windows build has, is the single module in this
+//! tree that opts out of `unsafe_code`, and it does so there precisely so that
+//! nothing else has to.
 
 #[cfg(unix)]
 mod unix;

@@ -1,10 +1,10 @@
 //! What happened in this directory before, as much of it as a screen holds.
 //!
-//! A different read from [`super::replay`], for a different reason. That one
-//! finds one log and hands back everything in it, because a session is about to
-//! be continued. This one finds a few and takes one line from each, because
-//! somebody is about to be shown a list — and it runs before the first frame,
-//! where twenty milliseconds is the whole budget.
+//! A different read from [`mod@super::replay`], for a different reason. That
+//! one finds one log and hands back everything in it, because a session is
+//! about to be continued. This one finds a few and takes one line from each,
+//! because somebody is about to be shown a list — and it runs before the first
+//! frame, where twenty milliseconds is the whole budget.
 //!
 //! Candidate names come from the fixed recent-session index. An older flat log
 //! directory is indexed once by session start, after the first frame; this
