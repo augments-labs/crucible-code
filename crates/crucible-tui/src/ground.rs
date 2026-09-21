@@ -8,7 +8,7 @@
 //! The other answer — the exact channels, asked for over the wire — is read by
 //! the crate that asks for it. `XParseColor` has more spellings than are worth
 //! writing twice, and a second parser here would be a second thing to be wrong
-//! about somebody else's format. See [`crate::asked`].
+//! about somebody else's format. See [`fn@crate::asked`].
 //!
 //! **Nothing here guesses.** A variable in a spelling this does not know is
 //! `None` rather than a default: what the caller does about an unanswered

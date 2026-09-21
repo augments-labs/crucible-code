@@ -417,6 +417,8 @@ impl StoredCredentials {
     /// The protected state an in-crate subscription implementation resolves.
     /// Tokens remain crate-private: callers receive only a [`Credential`]
     /// through [`crate::SubscriptionLogin::credential`].
+    ///
+    /// [`Credential`]: crucible_core::Credential
     pub(crate) fn subscription(&self, provider: &str) -> Option<(Store, Tokens)> {
         Some((
             self.store.as_ref()?.clone(),

@@ -693,9 +693,9 @@ impl Kept {
         String::from_utf8_lossy(arrived.get(..whole).unwrap_or_default()).into_owned()
     }
 
-    /// The two ends, in order, with the gap between them unmarked — [`cut`] is
-    /// where it gets said, because that is where the two streams have been put
-    /// together and there is one gap to describe.
+    /// The two ends, in order, with the gap between them unmarked — [`joined`]
+    /// is where it gets said, because that is where the two streams have been
+    /// put together and there is one gap to describe.
     fn bytes(&self) -> Vec<u8> {
         // Bounded by `OUTPUT` however long the command ran, which is what this
         // type exists to guarantee.

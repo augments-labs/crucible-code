@@ -132,6 +132,14 @@ if ! RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps -
     printf '    FAIL public documentation did not compile cleanly; fix the first rustdoc diagnostic\n'
     failed=1
 fi
+# Private items as well, which the run above leaves out of every library: their
+# documentation is what a contributor reads before changing the code under it.
+# This run has a tree of its own because the two modes invalidate each other in
+# a shared one, so every warm check would document every library twice.
+if ! RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --locked --document-private-items --target-dir generated/rustdoc-private; then
+    printf '    FAIL private documentation did not compile cleanly; fix the first rustdoc diagnostic\n'
+    failed=1
+fi
 
 section "generated files"
 for index in "${!generated[@]}"; do

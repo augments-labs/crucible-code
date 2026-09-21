@@ -153,7 +153,7 @@ static PACED: LazyLock<String> = LazyLock::new(|| {
 /// rather than being asked for when the panel opens is that the thread holding
 /// the terminal has no provider to ask. So they are declared here, at the one
 /// place a model is told what it may send, and read a layer up by
-/// [`crate::account`].
+/// [`fn@crate::account`].
 ///
 /// Neither is required, and that is the whole of what keeps them optional in
 /// practice too: a call that says nothing about itself gets the panel it would

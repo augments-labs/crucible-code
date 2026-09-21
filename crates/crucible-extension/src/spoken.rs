@@ -1,9 +1,9 @@
 //! What one frame says.
 //!
-//! [`Frames`](crate::Frames) finds the boundaries; this reads what is inside
-//! them. The two are apart on purpose: a boundary can be found in bytes nobody
-//! has trusted yet, and everything here is a document somebody else's program
-//! wrote.
+//! [`Frames`](crucible_transport::Frames) finds the boundaries; this reads
+//! what is inside them. The two are apart on purpose: a boundary can be found
+//! in bytes nobody has trusted yet, and everything here is a document somebody
+//! else's program wrote.
 //!
 //! Three things can be said. A request expects exactly one answer, an answer
 //! settles exactly one request, and a telling expects nothing back. Both ends

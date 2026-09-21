@@ -1,11 +1,11 @@
 //! The end of one session's log, as much of it as a preview pane wants.
 //!
-//! A third read, beside [`super::recent`]'s first line and [`super::replay`]'s
-//! everything, for a third reason: somebody is deciding whether to pick a
-//! session back up, and what says most about one is how it left off. The read
-//! is bounded from the end of the file, so a log of any size costs the same —
-//! and a glimpse that could not hold the whole conversation says so, rather
-//! than reading as all there was.
+//! A third read, beside [`mod@super::recent`]'s first line and
+//! [`mod@super::replay`]'s everything, for a third reason: somebody is deciding
+//! whether to pick a session back up, and what says most about one is how it
+//! left off. The read is bounded from the end of the file, so a log of any size
+//! costs the same — and a glimpse that could not hold the whole conversation
+//! says so, rather than reading as all there was.
 //!
 //! The glimpse also answers the one question a picker cannot ask any other
 //! way without consequences: whether another crucible still holds the log

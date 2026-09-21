@@ -358,6 +358,8 @@ impl Runner {
     /// was only read afterwards. The runner keeps no list of its own across
     /// compactions; the recaps already written are the record, and this reads
     /// them back rather than hold a second copy that could drift from it.
+    ///
+    /// [`Tool::remember`]: crucible_core::Tool::remember
     fn tracked(&self, replacing: usize) -> TrackedFiles {
         let mut files = TrackedFiles::default();
 
