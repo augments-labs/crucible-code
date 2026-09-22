@@ -3,6 +3,18 @@
 use crate::document::{Document, Origin};
 use crate::{ConfigError, Settings};
 
+/// This crate's own directory, as a workspace.
+///
+/// A policy is rules about paths, so the root has to be a directory that is
+/// really there; a fabricated one would only be testing the fabrication.
+/// `compiled` owns the question of whether the path a test binary carries is
+/// still on disk, so a binary older than the checkout running it says so here
+/// rather than reporting a directory the reader has never seen.
+fn workspace() -> crucible_core::Workspace {
+    crucible_core::Workspace::open(crate::compiled::manifest_directory())
+        .expect("the crate directory proved to be there")
+}
+
 #[test]
 fn sandbox_mode_is_an_unknown_key_in_every_configuration_layer() {
     for origin in [Origin::User, Origin::Project, Origin::ProjectLocal] {
@@ -112,7 +124,7 @@ fn filesystem_and_command_limits_are_real_configuration_settings() {
 
 #[test]
 fn command_limits_have_defaults_and_projects_may_only_lower_them() {
-    let workspace = crucible_core::Workspace::open(env!("CARGO_MANIFEST_DIR")).unwrap();
+    let workspace = workspace();
     let defaults = Settings::default().sandbox().policy(&workspace).unwrap();
     assert_eq!(
         defaults.limits().command_time,
@@ -205,7 +217,7 @@ fn filesystem_policy_preserves_restrictions_and_their_sources() {
     use crucible_core::{
         SandboxFilesystemAccess as Access, SandboxFilesystemProvenance as Provenance,
     };
-    let workspace = crucible_core::Workspace::open(env!("CARGO_MANIFEST_DIR")).unwrap();
+    let workspace = workspace();
     let user = Document::sample(
         r#"{"sandbox":{"enabled":true,"filesystem":{"readOnly":["vendor"],"writable":["vendor/build"],"protected":["policy.json"],"unreadable":["private"]}}}"#,
         Origin::User,
@@ -242,7 +254,7 @@ fn filesystem_policy_preserves_restrictions_and_their_sources() {
 
 #[test]
 fn a_project_read_rule_cannot_create_access_to_another_directory() {
-    let workspace = crucible_core::Workspace::open(env!("CARGO_MANIFEST_DIR")).unwrap();
+    let workspace = workspace();
     let outside = workspace.root().parent().unwrap();
     for access in ["readOnly", "protected"] {
         let text = serde_json::json!({"sandbox":{"filesystem":{access:[outside]}}}).to_string();
@@ -261,7 +273,7 @@ fn domain_configuration_narrows_user_grants_and_retains_denies() {
     let user = Document::parse(r#"{"sandbox":{"network":{"allowedDomains":["*.example.com"],"deniedDomains":["blocked.example.com"],"allowLocalBinding":true,"allowUnixSockets":["service.sock"]}}}"#, "user.json", Origin::User).unwrap();
     let project = Document::parse(r#"{"sandbox":{"network":{"allowedDomains":["build.example.com"],"deniedDomains":["extra.example.com"],"allowLocalBinding":false,"allowUnixSockets":[]}}}"#, "project.json", Origin::Project).unwrap();
     let settings = Settings::resolve_checked(vec![project, user.clone()]).unwrap();
-    let workspace = crucible_core::Workspace::open(env!("CARGO_MANIFEST_DIR")).unwrap();
+    let workspace = workspace();
     let effective = settings.sandbox().enforcing_policy(&workspace).unwrap();
     let crucible_core::SandboxNetworkPolicy::Domains(network) = effective.network() else {
         panic!("domain policy expected")
