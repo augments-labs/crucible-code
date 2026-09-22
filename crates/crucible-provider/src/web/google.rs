@@ -3,7 +3,7 @@
 //! Fetch offers only URL context with one supplied URL, requires retrieval
 //! evidence, and returns model-extracted text rather than claiming raw HTML.
 
-use super::{CEILING, FETCH_CEILING, host_of};
+use super::{CEILING, FETCH_CEILING, host_of, undelivered};
 use crate::{Endpoint, Transport};
 use crucible_core::{Fetch, Host, Page, Search, SearchResponse, SourceError};
 use crucible_credentials::{Credential, Outgoing};
@@ -86,16 +86,7 @@ impl GoogleWeb {
         let response = self
             .transport
             .post(self.endpoint.as_str(), outgoing, json.finish(), cancel)
-            .map_err(|error| {
-                if cancel.requested() || matches!(error, crate::TransportError::Cancelled) {
-                    SourceError::Cancelled(NAME)
-                } else {
-                    SourceError::Transport {
-                        named: NAME,
-                        problem: redactions.redact(&error.to_string()).into(),
-                    }
-                }
-            })?;
+            .map_err(|error| undelivered(NAME, &error, &redactions, cancel))?;
         if cancel.requested() {
             return Err(SourceError::Cancelled(NAME));
         }

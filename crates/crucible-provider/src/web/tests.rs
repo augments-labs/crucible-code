@@ -1248,3 +1248,175 @@ fn a_body_that_keeps_producing_bytes_cannot_outlive_the_elapsed_deadline() {
         "{problem}"
     );
 }
+
+/// A transport that never reaches the service because the user left the turn
+/// while the request was still being set up — resolving, connecting, waiting
+/// for headers. It is the one failure the transport spells as a cancel rather
+/// than as a network problem, and a source that reads it as a network problem
+/// answers a call nobody is waiting on any more with a vendor-named transport
+/// failure, and leaves the turn loop to end it.
+#[derive(Debug)]
+struct CancelledDuringSetup;
+
+impl Transport for CancelledDuringSetup {
+    fn post(
+        &self,
+        _url: &str,
+        _headers: Outgoing,
+        _body: String,
+        _cancel: &Cancel,
+    ) -> Result<Response, TransportError> {
+        Err(TransportError::Cancelled)
+    }
+}
+
+/// The same moment seen from the other side: the cancel is raised while setup
+/// is under way and setup then fails of its own accord, so what comes back
+/// names a broken connection and the cancel is only visible on the control.
+#[derive(Debug)]
+struct BrokenAfterCancelling;
+
+impl Transport for BrokenAfterCancelling {
+    fn post(
+        &self,
+        _url: &str,
+        _headers: Outgoing,
+        _body: String,
+        cancel: &Cancel,
+    ) -> Result<Response, TransportError> {
+        cancel.request();
+        Err(TransportError::Unreachable("connection reset".into()))
+    }
+}
+
+fn anthropic_over(transport: impl Transport + 'static) -> AnthropicWeb {
+    AnthropicWeb::new(
+        Endpoint::fixed("https://api.anthropic.com/v1/messages"),
+        Box::new(HeaderKey::new(
+            ApiKey::new(SECRET),
+            Header::bare("x-api-key"),
+        )),
+        Box::new(transport),
+        "claude-opus-5",
+    )
+}
+
+fn openai_over(model: &str, transport: impl Transport + 'static) -> OpenAiWeb {
+    OpenAiWeb::new(
+        Endpoint::fixed("https://api.openai.com/v1/responses"),
+        Box::new(HeaderKey::new(ApiKey::new(SECRET), Header::bearer())),
+        Box::new(transport),
+        model,
+    )
+}
+
+fn kimi_over(transport: impl Transport + 'static) -> MoonshotWeb {
+    MoonshotWeb::new(
+        Box::new(HeaderKey::new(ApiKey::new(SECRET), Header::bearer())),
+        Box::new(transport),
+    )
+}
+
+#[test]
+fn an_anthropic_search_cancelled_before_its_answer_arrives_ends_the_call() {
+    let problem = anthropic_over(CancelledDuringSetup)
+        .search("x", &Cancel::new())
+        .expect_err("a cancelled setup to end the call");
+
+    assert!(
+        matches!(problem, SourceError::Cancelled("anthropic")),
+        "{problem}"
+    );
+}
+
+#[test]
+fn an_anthropic_fetch_cancelled_before_its_answer_arrives_ends_the_call() {
+    let problem = anthropic_over(CancelledDuringSetup)
+        .fetch("https://example.com/page", &Cancel::new())
+        .expect_err("a cancelled setup to end the call");
+
+    assert!(
+        matches!(problem, SourceError::Cancelled("anthropic")),
+        "{problem}"
+    );
+}
+
+#[test]
+fn an_openai_search_cancelled_before_its_answer_arrives_ends_the_call() {
+    let problem = openai_over("gpt-5.6", CancelledDuringSetup)
+        .search("x", &Cancel::new())
+        .expect_err("a cancelled setup to end the call");
+
+    assert!(
+        matches!(problem, SourceError::Cancelled("openai")),
+        "{problem}"
+    );
+}
+
+#[test]
+fn a_model_that_remaps_every_openai_failure_still_ends_a_cancelled_call() {
+    // This one rewrites each failure this source reports, to keep private
+    // response details out of a diagnostic. A cancel rewritten there is a
+    // cancel lost, so it goes through the remap untouched.
+    let problem = openai_over("gpt-6-astra", CancelledDuringSetup)
+        .search("x", &Cancel::new())
+        .expect_err("a cancelled setup to end the call");
+
+    assert!(
+        matches!(problem, SourceError::Cancelled("openai")),
+        "{problem}"
+    );
+}
+
+#[test]
+fn an_openai_fetch_cancelled_before_its_answer_arrives_ends_the_call() {
+    // Fetch reaches the same posting helper as this source's search does.
+    // Its own test is what keeps a later split of the two from quietly
+    // leaving one of them failing a call the user stopped.
+    let problem = openai_over("gpt-5.6", CancelledDuringSetup)
+        .fetch("https://example.com/page", &Cancel::new())
+        .expect_err("a cancelled setup to end the call");
+
+    assert!(
+        matches!(problem, SourceError::Cancelled("openai")),
+        "{problem}"
+    );
+}
+
+#[test]
+fn a_kimi_search_cancelled_before_its_answer_arrives_ends_the_call() {
+    let problem = kimi_over(CancelledDuringSetup)
+        .search("x", &Cancel::new())
+        .expect_err("a cancelled setup to end the call");
+
+    assert!(
+        matches!(problem, SourceError::Cancelled("moonshot")),
+        "{problem}"
+    );
+}
+
+#[test]
+fn a_kimi_fetch_cancelled_before_its_answer_arrives_ends_the_call() {
+    let problem = kimi_over(CancelledDuringSetup)
+        .fetch("https://serde.rs/", &Cancel::new())
+        .expect_err("a cancelled setup to end the call");
+
+    assert!(
+        matches!(problem, SourceError::Cancelled("moonshot")),
+        "{problem}"
+    );
+}
+
+#[test]
+fn a_setup_that_broke_after_the_user_cancelled_is_still_a_cancel() {
+    // Nothing promises the transport notices the cancel first. What the user
+    // did is on the control, so the control is what decides.
+    let problem = anthropic_over(BrokenAfterCancelling)
+        .search("x", &Cancel::new())
+        .expect_err("a cancelled setup to end the call");
+
+    assert!(
+        matches!(problem, SourceError::Cancelled("anthropic")),
+        "{problem}"
+    );
+}

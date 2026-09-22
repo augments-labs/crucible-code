@@ -30,7 +30,7 @@ use serde_json::Value;
 use crate::endpoint::Endpoint;
 use crate::json::Json;
 use crate::sse::{Events, Framed};
-use crate::transport::{Response, Transport};
+use crate::transport::{Response, Transport, TransportError};
 
 mod google;
 pub use google::GoogleWeb;
@@ -334,6 +334,33 @@ struct Sending<'a> {
     endpoint: &'a str,
 }
 
+/// What a request that produced no response means to the source that made it.
+///
+/// A cancel is an outcome and not a failure. The transport reports one where
+/// the user left the turn before response headers arrived — while the address
+/// was being resolved, the connection made, or the answer awaited — and a
+/// source that reads that as a network problem answers a call nobody is
+/// waiting on any more with a vendor-named transport failure, leaving the
+/// turn loop to be what ends it. The control is consulted as well as the
+/// error, because nothing promises the transport noticed the cancel before
+/// its own setup broke. Anything else keeps the transport's own words,
+/// redacted against the headers that carried the key.
+fn undelivered(
+    named: &'static str,
+    problem: &TransportError,
+    redactions: &Redactions,
+    cancel: &Cancel,
+) -> SourceError {
+    if cancel.requested() || matches!(problem, TransportError::Cancelled) {
+        return SourceError::Cancelled(named);
+    }
+
+    SourceError::Transport {
+        named,
+        problem: redactions.redact(&problem.to_string()).into(),
+    }
+}
+
 /// Posts one body and reads the whole answer as JSON.
 ///
 /// Shared because the difference between two vendors here is the body and the
@@ -355,10 +382,7 @@ fn posted(
 
     let response = transport
         .post(endpoint, outgoing, body, cancel)
-        .map_err(|problem| SourceError::Transport {
-            named,
-            problem: redactions.redact(&problem.to_string()).into(),
-        })?;
+        .map_err(|problem| undelivered(named, &problem, &redactions, cancel))?;
 
     let answered = read(named, response.body, cancel)?;
 
@@ -396,10 +420,7 @@ fn posted_text(
 
     let response = transport
         .post(endpoint, outgoing, body, cancel)
-        .map_err(|problem| SourceError::Transport {
-            named,
-            problem: redactions.redact(&problem.to_string()).into(),
-        })?;
+        .map_err(|problem| undelivered(named, &problem, &redactions, cancel))?;
 
     let answered = read(named, response.body, cancel)?;
 
@@ -755,13 +776,9 @@ fn posted_openai(
         endpoint,
     } = sending;
     let redactions = outgoing.redactions();
-    let Response { status, body } =
-        transport
-            .post(endpoint, outgoing, body, cancel)
-            .map_err(|problem| SourceError::Transport {
-                named,
-                problem: redactions.redact(&problem.to_string()).into(),
-            })?;
+    let Response { status, body } = transport
+        .post(endpoint, outgoing, body, cancel)
+        .map_err(|problem| undelivered(named, &problem, &redactions, cancel))?;
 
     if status != 200 {
         let answered = read(named, body, cancel)?;
