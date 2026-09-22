@@ -478,10 +478,7 @@ impl SandboxProcess for Counted {
 }
 
 fn ended_status() -> ExitStatus {
-    #[cfg(unix)]
     use std::os::unix::process::ExitStatusExt as _;
-    #[cfg(windows)]
-    use std::os::windows::process::ExitStatusExt as _;
 
     ExitStatus::from_raw(0)
 }
