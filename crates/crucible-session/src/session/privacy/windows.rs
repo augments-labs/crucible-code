@@ -21,10 +21,11 @@
 #![allow(
     unsafe_code,
     reason = "Setting an access control list is FFI, and the safe wrapper on \
-              crates.io has not been published since 2021. This is the one \
-              module in the tree that opts in; the workspace lint in Cargo.toml \
-              is `deny` rather than `forbid` so that it can, and so that it \
-              shows up in a diff when another tries."
+              crates.io has not been published since 2021. The allowance is \
+              confined to this module; the workspace lint in Cargo.toml is \
+              `deny` rather than `forbid` so that a module can opt in, and so \
+              it shows up in a diff, spelled out, where it can be argued \
+              with."
 )]
 
 use std::ffi::c_void;
