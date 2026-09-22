@@ -582,8 +582,8 @@ anything about releases.
 ### `env`
 
 Environment variables for the commands crucible runs — the bash tool's children,
-and nothing else. crucible cannot put a variable in its own environment: writing
-to one is `unsafe` in a process with threads, and crucible forbids unsafe code.
+and nothing else. crucible does not put a variable in its own environment,
+because writing to it is `unsafe` in a process with threads.
 
 ```json
 { "env": { "RUST_LOG": "warn", "PAGER": "cat" } }
